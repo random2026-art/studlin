@@ -5205,6 +5205,22 @@ function computeStudyPlanParams(examWeight,baseDuration,confidenceLevel,material
   const sessionDuration=Math.max(15,Math.round((baseDuration||25)*level.durationMultiplier*importanceMultiplier/5)*5);
   return {sessionCount,sessionDuration,difficultyValue:level.difficultyValue};
 }
+// Scales flashcard/practice-exam question counts with how much real
+// material was actually attached, instead of the flat 10-card/8-question
+// defaults that used to fire regardless of whether the student pasted one
+// paragraph or a 59-page syllabus. Rough "content per card/question"
+// density rather than anything exam-weight/confidence-driven -- unlike
+// computeStudyPlanParams' session count, a deck or quiz isn't trying to
+// fit a calendar, so days-until-exam has no bearing here. Capped well
+// under what a single AI call reliably returns in one pass.
+function scaledFlashcardCount(materialCharCount){
+  if(!materialCharCount)return 10;
+  return Math.max(10,Math.min(40,Math.round(materialCharCount/600)));
+}
+function scaledQuizCount(materialCharCount){
+  if(!materialCharCount)return 8;
+  return Math.max(8,Math.min(25,Math.round(materialCharCount/1800)));
+}
 // The unified Build/Redo study plan flow's optional "how many hours do you
 // want to study for this" field -- a soft cap, not a second independent
 // input fighting with confidence: only ever scales the confidence-driven
@@ -6752,8 +6768,12 @@ async function generateFlashcardsFromText(content,context,count=10){
     const countInstruction=count==="auto"
       ?"Create as many flashcards as needed to cover the key concepts in this "+context+" — typically 5 to 30. Don't pad with filler or skip real content just to hit a number."
       :"Create "+count+" flashcards from this "+context+".";
-    const prompt=countInstruction+" Base every card on real academic content only -- concepts, definitions, facts, processes. If the material also contains course-administrative or policy information (grading breakdowns, exam schedule/count, attendance rules, syllabus logistics), ignore that entirely; it's never something to be tested on. Format as a JSON array where each object has a \"q\" key (question) and \"a\" key (answer). Return only the JSON array, no other text. Material:\n\n"+content.slice(0,15000);
-    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
+    const prompt=countInstruction+" Base every card on real academic content only -- concepts, definitions, facts, processes. If the material also contains course-administrative or policy information (grading breakdowns, exam schedule/count, attendance rules, syllabus logistics), ignore that entirely; it's never something to be tested on. Format as a JSON array where each object has a \"q\" key (question) and \"a\" key (answer). Return only the JSON array, no other text. Material:\n\n"+content.slice(0,MATERIAL_TEXT_CAP);
+    // format:"json" gets the extraction-only system prompt (no chatty
+    // tutor persona bleeding into card text) and the larger 4096-token
+    // budget -- without it a big card count for a large material dump
+    // could get cut off mid-array by the smaller default budget.
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard",format:"json"})});
     const data=await res.json();
     let raw=(data.reply||"").replace(/```json?|```/g,"").trim();
     const jsonStart=raw.indexOf("[");const jsonEnd=raw.lastIndexOf("]");
@@ -6764,7 +6784,15 @@ async function generateFlashcardsFromText(content,context,count=10){
       for(let i=0;i<Math.min(qMatches.length,aMatches.length);i++){cards.push({q:qMatches[i].replace(/"q"\s*:\s*"/,"").replace(/"$/,""),a:aMatches[i].replace(/"a"\s*:\s*"/,"").replace(/"$/,"")});}
       return cards;
     }
-  }catch(e){return [{q:"Error generating cards",a:e.message||"Try again"}];}
+  }catch(e){
+    // Was returning a fake single card ({q:"Error generating cards",...})
+    // on failure -- every caller's own cards.length===0 empty-check
+    // (createDeck, doGenDeckForExam, genFlashcardsFromNote) then saw a
+    // length of 1, not 0, and silently created a real deck with that one
+    // fake card in it instead of showing the intended error message.
+    // Returning an empty array lets those existing guards actually fire.
+    return [];
+  }
 }
 // Generates a multiple-choice practice quiz from source material (used by
 // practice exams and exam-prep quiz generation). Multiple-choice only (no
@@ -6774,12 +6802,15 @@ async function generateFlashcardsFromText(content,context,count=10){
 // which is a worse experience than promising less but being consistent
 // about it.
 async function generateQuizFromText(text,subject,count){
-  const n=Math.max(3,Math.min(12,count||8));
+  const n=Math.max(3,Math.min(25,count||8));
   const prompt="You're building a "+n+"-question multiple-choice practice quiz for a student studying "+(subject||"this material")+". Read the source material and return ONLY this JSON, no other text: "+
     "{\"questions\":[{\"q\":\"the question text\",\"choices\":[\"four answer options, exactly 4, in any order\"],\"answerIndex\":0,\"topic\":\"a short 2-4 word topic label for what this question tests, e.g. 'cell membrane transport'\"}]}. "+
-    "answerIndex is the 0-based index into choices of the single correct answer. Base every question directly on real academic content in the material below -- concepts, definitions, facts, processes -- never invent facts not present in it. If the material also contains course-administrative or policy information (grading breakdowns, exam schedule/count, attendance rules, syllabus logistics), ignore that entirely; it's never something to be tested on.\n\nMaterial:\n\n"+text.slice(0,15000);
+    "answerIndex is the 0-based index into choices of the single correct answer. Base every question directly on real academic content in the material below -- concepts, definitions, facts, processes -- never invent facts not present in it. If the material also contains course-administrative or policy information (grading breakdowns, exam schedule/count, attendance rules, syllabus logistics), ignore that entirely; it's never something to be tested on.\n\nMaterial:\n\n"+text.slice(0,MATERIAL_TEXT_CAP);
   try{
-    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
+    // Same format:"json" reasoning as generateFlashcardsFromText above --
+    // extraction-only prompt plus the larger token budget so a bigger
+    // question count doesn't get truncated mid-array.
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard",format:"json"})});
     const data=await res.json();
     let raw=(data.reply||"").replace(/```json?|```/g,"").trim();
     const jsonStart=raw.indexOf("{");const jsonEnd=raw.lastIndexOf("}");
@@ -7129,11 +7160,6 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   // opened from the exam list or the detail view, so it's fully
   // self-sufficient rather than assuming a particular exam is "selected".
   const buildPlanExam=buildPlanExamId?lsGet("events",[]).find(e=>e.id===buildPlanExamId):null;
-  const buildPlanMaterialText=buildPlanExam?(
-    buildPlanExam.sourceMaterials&&buildPlanExam.sourceMaterials.length>0
-      ?buildPlanExam.sourceMaterials.map(f=>f.text).join("\n\n")
-      :(buildPlanExam.sourceMaterial||"")
-  ):"";
   const openBuildPlan=(exam)=>{
     const hasMaterial=(exam.sourceMaterials&&exam.sourceMaterials.length>0)||(exam.referenceLinks&&exam.referenceLinks.length>0)||!!exam.sourceMaterial;
     // Syncs the shared material-editing state to THIS exam, same
@@ -7191,7 +7217,11 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
     const params=computeStudyPlanParams(buildPlanExam.examWeight,baseDuration,buildPlanConfidence,buildPlanMaterialText.length,buildPlanExam.importanceLevel);
     const {sessionCount,sessionDuration}=applyHoursTargetCap(params.sessionCount,params.sessionDuration,parseFloat(buildPlanHoursTarget));
     const dates=computeReviewDates(buildPlanExam.date,dayKey(),sessionCount);
-    setBuildPlanPreview({sessionCount,sessionDuration,difficultyValue:params.difficultyValue,dates});
+    // computeReviewDates can return fewer dates than requested (e.g. an
+    // exam that's only 2 days out can't fit a 4-session spread) -- show
+    // the count the student will actually get, not the pre-clamp request,
+    // so the preview screen and the real outcome never disagree.
+    setBuildPlanPreview({sessionCount:dates.length,sessionDuration,difficultyValue:params.difficultyValue,dates});
     setBuildPlanStep("preview");
     setBuildPlanFocuses(dates.map(()=>""));
     // One {date,duration}|null per session index -- null means "use the
@@ -7208,17 +7238,21 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   };
   const adjustBuildPlanCount=(count)=>{
     if(!buildPlanExam)return;
-    setBuildPlanPreview(p=>p?{...p,sessionCount:count,dates:computeReviewDates(buildPlanExam.date,dayKey(),count)}:p);
+    const dates=computeReviewDates(buildPlanExam.date,dayKey(),count);
+    // Same reconciliation as generatePreview -- a manually-requested count
+    // can still get clamped by computeReviewDates, so mirror dates.length
+    // back into sessionCount rather than trusting the raw request.
+    setBuildPlanPreview(p=>p?{...p,sessionCount:dates.length,dates}:p);
     // Keep the focuses array in sync with the new count -- truncate or pad
     // with blanks rather than re-calling the AI on every count tweak.
     setBuildPlanFocuses(f=>{
-      const next=f.slice(0,count);
-      while(next.length<count)next.push("");
+      const next=f.slice(0,dates.length);
+      while(next.length<dates.length)next.push("");
       return next;
     });
     setBuildPlanOverrides(o=>{
-      const next=o.slice(0,count);
-      while(next.length<count)next.push(null);
+      const next=o.slice(0,dates.length);
+      while(next.length<dates.length)next.push(null);
       return next;
     });
   };
@@ -7229,6 +7263,13 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
     const routines=getWeeklyRoutine();
     const prefs=getSchedulePreferences();
     const sessions=buildExamSessionEvents(buildPlanExam.title,buildPlanExam.date,buildPlanExam.subject,buildPlanPreview.sessionCount,"prep-"+buildPlanExam.id+"-"+Date.now(),events,routines,prefs,{dueEventId:buildPlanExam.id},buildPlanPreview.difficultyValue,buildPlanPreview.sessionDuration,buildPlanExam.examWeight,buildPlanExam.confidenceLog);
+    // buildExamSessionEvents can still place fewer sessions than requested
+    // (findReliableSlotFor comes back empty for a given date -- a packed
+    // calendar with no legal slot before the exam) even after the preview
+    // step already reconciled sessionCount to what computeReviewDates
+    // could offer. Surface that honestly instead of silently confirming a
+    // plan with fewer sessions than what the student just saw and approved.
+    const requestedCount=buildPlanPreview.sessionCount;
     // Apply any per-row date/duration edits made in the preview step.
     // Re-resolved through the exact same findReliableSlotFor
     // buildExamSessionEvents already uses internally, so a manually-picked
@@ -7280,6 +7321,10 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
       if(existingPE)deletePracticeExamAndSessions(existingPE.id);
       await doGenPracticeExamForExam();
     }
+    if(placedSessions.length<requestedCount){
+      setSyllabusToast("Fit "+placedSessions.length+" of "+requestedCount+" sessions before this exam. Your calendar didn't have room for the rest.");
+      setTimeout(()=>setSyllabusToast(""),4200);
+    }
     setBuildPlanLoading(false);
     closeBuildPlan();
     refresh();
@@ -7326,6 +7371,28 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   // ── Material upload -- one text pool per open hub, shared by both the
   // flashcard and practice-exam generators, so nothing gets uploaded twice. ──
   const [fileTexts,setFileTexts]=useState([]); // [{name,text}]
+  // Was reading buildPlanExam.sourceMaterials/sourceMaterial straight from
+  // storage -- correct for material already persisted from a PRIOR
+  // session, but blind to anything just pasted/uploaded in THIS one, since
+  // that only lives in fileTexts (React state) until
+  // persistBuildPlanMaterial() copies it back to storage. That copy itself
+  // only ever ran once hasMaterial was ALREADY true (see generatePreview
+  // below) -- circular, so newly-added material could never flip
+  // hasMaterial true in the first place, which is exactly the "No
+  // material yet" warning firing right under a material list that visibly
+  // shows what was just added. fileTexts is already the live source of
+  // truth for "what material is in this modal right now" -- openBuildPlan
+  // seeds it from the exam's persisted material on open, and the modal's
+  // own paste/upload UI writes to nothing else -- so deriving from it here
+  // covers both the already-had-material and just-added-material cases
+  // correctly, instead of only the first. Declared here (after fileTexts'
+  // own useState) rather than up near buildPlanExam/openBuildPlan, since a
+  // plain top-level const referencing fileTexts before its useState line
+  // runs is a temporal-dead-zone crash on every render, not just a stale
+  // read -- this isn't inside a function body that runs later, it's
+  // evaluated top-to-bottom on every render pass like the rest of this
+  // component's body.
+  const buildPlanMaterialText=fileTexts.map(f=>f.text).join("\n\n");
   const [genLoading,setGenLoading]=useState(null); // null | "cards" | "quiz"
   const [genMsg,setGenMsg]=useState("");
   // "From your syllabus" (see the exam-card onClick below, and
@@ -7402,7 +7469,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
       return;
     }
     setGenLoading("cards");setGenMsg("");
-    const cards=await generateFlashcardsFromText(materialText,selectedExam.subject||"this exam",10);
+    const cards=await generateFlashcardsFromText(materialText,selectedExam.subject||"this exam",scaledFlashcardCount(materialText.length));
     setGenLoading(null);
     if(cards.length===0){setGenMsg("Couldn't generate cards. Try again.");return;}
     recordFlashcardGen();
@@ -7418,7 +7485,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
       return;
     }
     setGenLoading("quiz");setGenMsg("");
-    const questions=await generateQuizFromText(materialText,selectedExam.subject||"this exam",8);
+    const questions=await generateQuizFromText(materialText,selectedExam.subject||"this exam",scaledQuizCount(materialText.length));
     setGenLoading(null);
     if(questions.length===0){setGenMsg("Couldn't generate a practice exam. Try again.");return;}
     recordQuizGen();
@@ -7484,7 +7551,14 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   };
   const openSchedulePracticeExam=(pe)=>{
     if(!selectedExam)return;
-    const sessions=buildSpacedSessionPreviews(selectedExam.date,selectedExam.subject,1,60);
+    // Was a flat 60 minutes regardless of question count -- an 8-question
+    // quiz claimed a full hour. ~2 min/question at review pace (not
+    // timed-exam pace), rounded to a clean 5-minute block. Falls back to
+    // buildSpacedSessionPreviews' own suggestDurationFor(...)||25 default
+    // (same as openScheduleDeckReviews) if there's somehow no question
+    // count yet, rather than forcing a number.
+    const duration=pe.questions&&pe.questions.length?Math.max(10,Math.min(90,Math.round(pe.questions.length*2/5)*5)):undefined;
+    const sessions=buildSpacedSessionPreviews(selectedExam.date,selectedExam.subject,1,duration);
     if(sessions.length===0)return;
     setSchedulePreview({kind:"quiz",refId:pe.id,title:pe.name,examId:selectedExam.id,examDate:selectedExam.date,subject:selectedExam.subject,count:1,sessions});
   };
@@ -8794,6 +8868,13 @@ function Flashcards() {
   const [dSource,setDSource]=useState("manual");
   const [aiLoading,setAiLoading]=useState(false);
   const [createDeckError,setCreateDeckError]=useState("");
+  // Unlike every other AI flashcard-generation entry point (Studlin Prep's
+  // exam hub, Notes), this standalone Add Deck flow had no free-tier quota
+  // gate at all -- it could fire AI generations without ever checking or
+  // counting against FLASHCARD_GEN_LIMIT. Same UpgradeModal pattern as
+  // StudlinPrep (see its own upgradeModal state) rather than inventing a
+  // new one.
+  const [upgradeModal,setUpgradeModal]=useState(null); // {feature,detail}
   const [fileTexts,setFileTexts]=useState([]); // [{name,text}] — one entry per uploaded file, so more than one can contribute to the same deck
   const fileRef=useRef(null);
   const [cardCount,setCardCount]=useState(10);
@@ -8910,14 +8991,24 @@ function Flashcards() {
     }
     else if(dSource==="file"){
       if(fileTexts.length===0){setCreateDeckError("Upload a file first.");return;}
+      if(!canGenFlashcards()){
+        setUpgradeModal({feature:"AI flashcard generations",detail:"You've used all "+FLASHCARD_GEN_LIMIT+" free flashcard generations this month. They reset in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")+", or upgrade for unlimited right now."});
+        return;
+      }
       const combined=fileTexts.map(f=>"--- "+f.name+" ---\n"+f.text).join("\n\n");
       cards=await aiGenCards(combined,"document/notes",cardCount);
       if(cards.length===0){setCreateDeckError("Card generation failed. Try again, or build the deck manually instead.");return;}
+      recordFlashcardGen();
     }
     else if(dSource==="record"){
       if(!recText){setCreateDeckError("Record a lecture first.");return;}
+      if(!canGenFlashcards()){
+        setUpgradeModal({feature:"AI flashcard generations",detail:"You've used all "+FLASHCARD_GEN_LIMIT+" free flashcard generations this month. They reset in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")+", or upgrade for unlimited right now."});
+        return;
+      }
       cards=await aiGenCards("Lecture transcription:\n\n"+recText,"lecture transcription",cardCount);
       if(cards.length===0){setCreateDeckError("Card generation failed. Try again, or build the deck manually instead.");return;}
+      recordFlashcardGen();
     }
     const nd={id:String(Date.now()),name:name,count:cards.length,done:0,color:T.lime,cards:cards,examEventId:null};
     const next=[nd,...deckList];setDeckList(next);lsSet("decks",next);
@@ -9300,6 +9391,7 @@ function Flashcards() {
           })()}
         </div>
       )}
+      <UpgradeModal open={!!upgradeModal} feature={upgradeModal?upgradeModal.feature:""} detail={upgradeModal?upgradeModal.detail:""} onClose={()=>setUpgradeModal(null)} onUpgraded={()=>setUpgradeModal(null)} />
     </div>
   );
 }
@@ -22526,7 +22618,21 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Profile basics</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:16}}>How you appear across Studlin.</div>
               <Field label="Display name"><Input value={profile.name} onChange={e=>updProfile({name:e.target.value})} /></Field>
-              <Field label="Email"><Input value={profile.email} onChange={e=>updProfile({email:e.target.value})} type="email" /></Field>
+              {/* Was bound to profile.email -- a cosmetic field in the
+                  separate "studlin-profile" blob that onboarding's own
+                  finishOnboarding() deliberately never writes an email
+                  into (see its own comment: "name/email/provider are
+                  deliberately NOT written here"), so this showed blank
+                  for essentially every user post-onboarding, and typing
+                  into it never actually changed anyone's real sign-in
+                  email either -- it just wrote to that same unused field.
+                  account.email (below) is the real one: it already falls
+                  back through firebase.auth().currentUser?.email and gets
+                  refreshed from the server via fetchUserProfile. Read-only
+                  here since there's no real change-email flow to back an
+                  editable field -- same info already shown as plain text
+                  in the danger-zone "Signed in as {email}" line. */}
+              <Field label="Email"><Input value={account.email||""} disabled /></Field>
               {/* School/affiliation used to be editable here too, a second
                   control silently writing the same profile.school field
                   Profile's own "Your profile" card already owns -- and that

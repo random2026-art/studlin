@@ -484,40 +484,77 @@ async function cancelStripe(data) {
 async function handleDeleteAccount(user, res) {
   if (!db || !auth) return res.status(503).json({ error: 'Account service unavailable.' });
 
-  try {
-    const uid = user.uid;
-    const userRef = db.collection('users').doc(uid);
-    const userDoc = await userRef.get();
-    const userData = userDoc.exists ? userDoc.data() : {};
+  const uid = user.uid;
+  const userRef = db.collection('users').doc(uid);
 
-    await cancelStripe(userData);
-
-    const stats = {
-      courses: await deleteQuery(db.collection('courses').where('userId', '==', uid)),
-      assignments: await deleteQuery(db.collection('assignments').where('userId', '==', uid)),
-      sentFriendships: await deleteQuery(db.collection('friendships').where('senderId', '==', uid)),
-      receivedFriendships: await deleteQuery(db.collection('friendships').where('receiverId', '==', uid)),
-      usernames: await deleteQuery(db.collection('usernames').where('uid', '==', uid)),
-      sharedChats: 0,
-      chatRooms: await removeFromChatRooms(uid),
-    };
-
-    for (const field of ['uid', 'userId', 'ownerUid', 'createdBy']) {
-      stats.sharedChats += await deleteQuery(db.collection('shared_chats').where(field, '==', uid)).catch(() => 0);
+  // Every step below is secondary/shared-record cleanup (billing, other
+  // users' friend lists, chat rooms, username reservations, etc). None of
+  // it should be able to block what actually constitutes "the account is
+  // deleted" -- previously this whole function was one try/catch, so a
+  // single failure ANYWHERE (e.g. a transient Stripe error) aborted before
+  // ever reaching userRef.delete()/auth.deleteUser() below, while the
+  // client only saw a generic error and otherwise left everything
+  // (Firebase Auth session, all of Firestore) fully intact -- a silently
+  // failed "delete" that looks identical to a real one from the student's
+  // side, and re-signing-in afterward (Google OAuth doesn't distinguish
+  // "new" from "returning") lands back in the exact same never-deleted
+  // account, onboarding and all. Each step is now isolated: a real failure
+  // is logged and reported back in cleanupErrors, but never stops the
+  // steps after it, including the critical ones at the end.
+  const cleanupErrors = [];
+  const safeStep = async (label, fn) => {
+    try {
+      return await fn();
+    } catch (err) {
+      console.error(`delete account cleanup step "${label}" failed:`, err);
+      cleanupErrors.push(label);
+      return null;
     }
+  };
 
-    await db.collection('profiles').doc(uid).delete().catch(() => {});
-    await db.collection('emailOtps').doc(uid).delete().catch(() => {});
-    await userRef.delete().catch(() => {});
+  const userDoc = await userRef.get().catch(() => null);
+  const userData = userDoc && userDoc.exists ? userDoc.data() : {};
+
+  await safeStep('stripe', () => cancelStripe(userData));
+
+  const stats = {
+    courses: (await safeStep('courses', () => deleteQuery(db.collection('courses').where('userId', '==', uid)))) || 0,
+    assignments: (await safeStep('assignments', () => deleteQuery(db.collection('assignments').where('userId', '==', uid)))) || 0,
+    sentFriendships: (await safeStep('sentFriendships', () => deleteQuery(db.collection('friendships').where('senderId', '==', uid)))) || 0,
+    receivedFriendships: (await safeStep('receivedFriendships', () => deleteQuery(db.collection('friendships').where('receiverId', '==', uid)))) || 0,
+    usernames: (await safeStep('usernames', () => deleteQuery(db.collection('usernames').where('uid', '==', uid)))) || 0,
+    sharedChats: 0,
+    chatRooms: (await safeStep('chatRooms', () => removeFromChatRooms(uid))) || 0,
+  };
+
+  for (const field of ['uid', 'userId', 'ownerUid', 'createdBy']) {
+    stats.sharedChats += (await safeStep(`sharedChats:${field}`, () => deleteQuery(db.collection('shared_chats').where(field, '==', uid)))) || 0;
+  }
+
+  await safeStep('profiles', () => db.collection('profiles').doc(uid).delete());
+  await safeStep('emailOtps', () => db.collection('emailOtps').doc(uid).delete());
+
+  // The two critical steps -- deliberately NOT wrapped in safeStep. If
+  // either genuinely fails, the account is NOT deleted and the student
+  // needs to see a real error, not a false "success" toast.
+  // deleteDocTree (not a bare userRef.delete()) because Firestore never
+  // cascade-deletes subcollections on its own -- a plain userRef.delete()
+  // silently orphans users/{uid}/events, notes, decks, timerLogs,
+  // practiceExams, and _sync forever (confirmed: firestore.rules denies
+  // client-side delete on every one of those, so nothing else can ever
+  // clean them up either). Same recursive-delete helper this file already
+  // trusts for chat rooms below.
+  try {
+    await deleteDocTree(userRef);
     await auth.deleteUser(uid).catch((err) => {
       if (err && err.code !== 'auth/user-not-found') throw err;
     });
-
-    return res.status(200).json({ ok: true, stats, displayName: DELETED_USER_NAME });
   } catch (err) {
-    console.error('delete account error:', err);
-    return res.status(500).json({ error: 'Could not delete account. Please contact support.' });
+    console.error('delete account error (critical step):', err);
+    return res.status(500).json({ error: 'Could not fully delete your account. Please contact support so we can finish removing it.' });
   }
+
+  return res.status(200).json({ ok: true, stats, cleanupErrors, displayName: DELETED_USER_NAME });
 }
 
 module.exports = withSentry(async (req, res) => {

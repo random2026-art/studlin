@@ -3411,6 +3411,14 @@ function computeStudyPlanParams(examWeight, baseDuration, confidenceLevel, mater
   const sessionDuration = Math.max(15, Math.round((baseDuration || 25) * level.durationMultiplier * importanceMultiplier / 5) * 5);
   return { sessionCount, sessionDuration, difficultyValue: level.difficultyValue };
 }
+function scaledFlashcardCount(materialCharCount) {
+  if (!materialCharCount) return 10;
+  return Math.max(10, Math.min(40, Math.round(materialCharCount / 600)));
+}
+function scaledQuizCount(materialCharCount) {
+  if (!materialCharCount) return 8;
+  return Math.max(8, Math.min(25, Math.round(materialCharCount / 1800)));
+}
 function applyHoursTargetCap(sessionCount, sessionDuration, hoursTarget) {
   if (!(hoursTarget > 0)) return { sessionCount, sessionDuration };
   const targetMins = hoursTarget * 60;
@@ -4386,8 +4394,8 @@ async function generateFlashcardsFromText(content, context, count = 10) {
     const countInstruction = count === "auto" ? "Create as many flashcards as needed to cover the key concepts in this " + context + " \u2014 typically 5 to 30. Don't pad with filler or skip real content just to hit a number." : "Create " + count + " flashcards from this " + context + ".";
     const prompt = countInstruction + ` Base every card on real academic content only -- concepts, definitions, facts, processes. If the material also contains course-administrative or policy information (grading breakdowns, exam schedule/count, attendance rules, syllabus logistics), ignore that entirely; it's never something to be tested on. Format as a JSON array where each object has a "q" key (question) and "a" key (answer). Return only the JSON array, no other text. Material:
 
-` + content.slice(0, 15e3);
-    const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt }], model: "standard" }) });
+` + content.slice(0, MATERIAL_TEXT_CAP);
+    const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt }], model: "standard", format: "json" }) });
     const data = await res.json();
     let raw = (data.reply || "").replace(/```json?|```/g, "").trim();
     const jsonStart = raw.indexOf("[");
@@ -4408,18 +4416,18 @@ async function generateFlashcardsFromText(content, context, count = 10) {
       return cards;
     }
   } catch (e) {
-    return [{ q: "Error generating cards", a: e.message || "Try again" }];
+    return [];
   }
 }
 async function generateQuizFromText(text, subject, count) {
-  const n = Math.max(3, Math.min(12, count || 8));
+  const n = Math.max(3, Math.min(25, count || 8));
   const prompt = "You're building a " + n + "-question multiple-choice practice quiz for a student studying " + (subject || "this material") + `. Read the source material and return ONLY this JSON, no other text: {"questions":[{"q":"the question text","choices":["four answer options, exactly 4, in any order"],"answerIndex":0,"topic":"a short 2-4 word topic label for what this question tests, e.g. 'cell membrane transport'"}]}. answerIndex is the 0-based index into choices of the single correct answer. Base every question directly on real academic content in the material below -- concepts, definitions, facts, processes -- never invent facts not present in it. If the material also contains course-administrative or policy information (grading breakdowns, exam schedule/count, attendance rules, syllabus logistics), ignore that entirely; it's never something to be tested on.
 
 Material:
 
-` + text.slice(0, 15e3);
+` + text.slice(0, MATERIAL_TEXT_CAP);
   try {
-    const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt }], model: "standard" }) });
+    const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt }], model: "standard", format: "json" }) });
     const data = await res.json();
     let raw = (data.reply || "").replace(/```json?|```/g, "").trim();
     const jsonStart = raw.indexOf("{");
@@ -4665,7 +4673,6 @@ function StudlinPrep({ setActive = () => {
     return h + ":" + p[1] + ap;
   };
   const buildPlanExam = buildPlanExamId ? lsGet("events", []).find((e) => e.id === buildPlanExamId) : null;
-  const buildPlanMaterialText = buildPlanExam ? buildPlanExam.sourceMaterials && buildPlanExam.sourceMaterials.length > 0 ? buildPlanExam.sourceMaterials.map((f) => f.text).join("\n\n") : buildPlanExam.sourceMaterial || "" : "";
   const openBuildPlan = (exam) => {
     const hasMaterial = exam.sourceMaterials && exam.sourceMaterials.length > 0 || exam.referenceLinks && exam.referenceLinks.length > 0 || !!exam.sourceMaterial;
     setFileTexts(exam.sourceMaterials && exam.sourceMaterials.length > 0 ? exam.sourceMaterials : exam.sourceMaterial ? [{ name: "From your syllabus", text: exam.sourceMaterial }] : []);
@@ -4709,7 +4716,7 @@ function StudlinPrep({ setActive = () => {
     const params = computeStudyPlanParams(buildPlanExam.examWeight, baseDuration, buildPlanConfidence, buildPlanMaterialText.length, buildPlanExam.importanceLevel);
     const { sessionCount, sessionDuration } = applyHoursTargetCap(params.sessionCount, params.sessionDuration, parseFloat(buildPlanHoursTarget));
     const dates = computeReviewDates(buildPlanExam.date, dayKey(), sessionCount);
-    setBuildPlanPreview({ sessionCount, sessionDuration, difficultyValue: params.difficultyValue, dates });
+    setBuildPlanPreview({ sessionCount: dates.length, sessionDuration, difficultyValue: params.difficultyValue, dates });
     setBuildPlanStep("preview");
     setBuildPlanFocuses(dates.map(() => ""));
     setBuildPlanOverrides(dates.map(() => null));
@@ -4722,15 +4729,16 @@ function StudlinPrep({ setActive = () => {
   };
   const adjustBuildPlanCount = (count) => {
     if (!buildPlanExam) return;
-    setBuildPlanPreview((p) => p ? { ...p, sessionCount: count, dates: computeReviewDates(buildPlanExam.date, dayKey(), count) } : p);
+    const dates = computeReviewDates(buildPlanExam.date, dayKey(), count);
+    setBuildPlanPreview((p) => p ? { ...p, sessionCount: dates.length, dates } : p);
     setBuildPlanFocuses((f) => {
-      const next = f.slice(0, count);
-      while (next.length < count) next.push("");
+      const next = f.slice(0, dates.length);
+      while (next.length < dates.length) next.push("");
       return next;
     });
     setBuildPlanOverrides((o) => {
-      const next = o.slice(0, count);
-      while (next.length < count) next.push(null);
+      const next = o.slice(0, dates.length);
+      while (next.length < dates.length) next.push(null);
       return next;
     });
   };
@@ -4741,6 +4749,7 @@ function StudlinPrep({ setActive = () => {
     const routines = getWeeklyRoutine();
     const prefs = getSchedulePreferences();
     const sessions = buildExamSessionEvents(buildPlanExam.title, buildPlanExam.date, buildPlanExam.subject, buildPlanPreview.sessionCount, "prep-" + buildPlanExam.id + "-" + Date.now(), events, routines, prefs, { dueEventId: buildPlanExam.id }, buildPlanPreview.difficultyValue, buildPlanPreview.sessionDuration, buildPlanExam.examWeight, buildPlanExam.confidenceLog);
+    const requestedCount = buildPlanPreview.sessionCount;
     let working = events.concat(sessions);
     const placedSessions = sessions.map((s, i) => {
       const ov = buildPlanOverrides[i];
@@ -4769,6 +4778,10 @@ function StudlinPrep({ setActive = () => {
       if (existingPE) deletePracticeExamAndSessions(existingPE.id);
       await doGenPracticeExamForExam();
     }
+    if (placedSessions.length < requestedCount) {
+      setSyllabusToast("Fit " + placedSessions.length + " of " + requestedCount + " sessions before this exam. Your calendar didn't have room for the rest.");
+      setTimeout(() => setSyllabusToast(""), 4200);
+    }
     setBuildPlanLoading(false);
     closeBuildPlan();
     refresh();
@@ -4796,6 +4809,7 @@ function StudlinPrep({ setActive = () => {
     return v <= 333 ? "low" : v <= 666 ? "medium" : "high";
   };
   const [fileTexts, setFileTexts] = useState([]);
+  const buildPlanMaterialText = fileTexts.map((f) => f.text).join("\n\n");
   const [genLoading, setGenLoading] = useState(null);
   const [genMsg, setGenMsg] = useState("");
   const materialText = fileTexts.filter((f) => f.name !== "From your syllabus").map((f) => f.text).join("\n\n");
@@ -4835,7 +4849,7 @@ function StudlinPrep({ setActive = () => {
     }
     setGenLoading("cards");
     setGenMsg("");
-    const cards = await generateFlashcardsFromText(materialText, selectedExam.subject || "this exam", 10);
+    const cards = await generateFlashcardsFromText(materialText, selectedExam.subject || "this exam", scaledFlashcardCount(materialText.length));
     setGenLoading(null);
     if (cards.length === 0) {
       setGenMsg("Couldn't generate cards. Try again.");
@@ -4855,7 +4869,7 @@ function StudlinPrep({ setActive = () => {
     }
     setGenLoading("quiz");
     setGenMsg("");
-    const questions = await generateQuizFromText(materialText, selectedExam.subject || "this exam", 8);
+    const questions = await generateQuizFromText(materialText, selectedExam.subject || "this exam", scaledQuizCount(materialText.length));
     setGenLoading(null);
     if (questions.length === 0) {
       setGenMsg("Couldn't generate a practice exam. Try again.");
@@ -4903,7 +4917,8 @@ function StudlinPrep({ setActive = () => {
   };
   const openSchedulePracticeExam = (pe) => {
     if (!selectedExam) return;
-    const sessions = buildSpacedSessionPreviews(selectedExam.date, selectedExam.subject, 1, 60);
+    const duration = pe.questions && pe.questions.length ? Math.max(10, Math.min(90, Math.round(pe.questions.length * 2 / 5) * 5)) : void 0;
+    const sessions = buildSpacedSessionPreviews(selectedExam.date, selectedExam.subject, 1, duration);
     if (sessions.length === 0) return;
     setSchedulePreview({ kind: "quiz", refId: pe.id, title: pe.name, examId: selectedExam.id, examDate: selectedExam.date, subject: selectedExam.subject, count: 1, sessions });
   };
@@ -5527,6 +5542,7 @@ function Flashcards() {
   const [dSource, setDSource] = useState("manual");
   const [aiLoading, setAiLoading] = useState(false);
   const [createDeckError, setCreateDeckError] = useState("");
+  const [upgradeModal, setUpgradeModal] = useState(null);
   const [fileTexts, setFileTexts] = useState([]);
   const fileRef = useRef(null);
   const [cardCount, setCardCount] = useState(10);
@@ -5662,15 +5678,24 @@ function Flashcards() {
         setCreateDeckError("Upload a file first.");
         return;
       }
+      if (!canGenFlashcards()) {
+        setUpgradeModal({ feature: "AI flashcard generations", detail: "You've used all " + FLASHCARD_GEN_LIMIT + " free flashcard generations this month. They reset in " + daysUntilReset() + " day" + (daysUntilReset() !== 1 ? "s" : "") + ", or upgrade for unlimited right now." });
+        return;
+      }
       const combined = fileTexts.map((f) => "--- " + f.name + " ---\n" + f.text).join("\n\n");
       cards = await aiGenCards(combined, "document/notes", cardCount);
       if (cards.length === 0) {
         setCreateDeckError("Card generation failed. Try again, or build the deck manually instead.");
         return;
       }
+      recordFlashcardGen();
     } else if (dSource === "record") {
       if (!recText) {
         setCreateDeckError("Record a lecture first.");
+        return;
+      }
+      if (!canGenFlashcards()) {
+        setUpgradeModal({ feature: "AI flashcard generations", detail: "You've used all " + FLASHCARD_GEN_LIMIT + " free flashcard generations this month. They reset in " + daysUntilReset() + " day" + (daysUntilReset() !== 1 ? "s" : "") + ", or upgrade for unlimited right now." });
         return;
       }
       cards = await aiGenCards("Lecture transcription:\n\n" + recText, "lecture transcription", cardCount);
@@ -5678,6 +5703,7 @@ function Flashcards() {
         setCreateDeckError("Card generation failed. Try again, or build the deck manually instead.");
         return;
       }
+      recordFlashcardGen();
     }
     const nd = { id: String(Date.now()), name, count: cards.length, done: 0, color: T.lime, cards, examEventId: null };
     const next = [nd, ...deckList];
@@ -5982,7 +6008,7 @@ function Flashcards() {
     const ownDecks = deckList.filter((d) => d.source !== "imported");
     const importedDecks = deckList.filter((d) => d.source === "imported");
     return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } }, ownDecks.map(renderDeckCard)), importedDecks.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: T.faint, margin: "18px 0 10px" } }, "Imported Decks"), importedDecks.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } }, importedDecks.map(renderDeckCard)));
-  })()));
+  })()), /* @__PURE__ */ React.createElement(UpgradeModal, { open: !!upgradeModal, feature: upgradeModal ? upgradeModal.feature : "", detail: upgradeModal ? upgradeModal.detail : "", onClose: () => setUpgradeModal(null), onUpgraded: () => setUpgradeModal(null) }));
 }
 function Notes({ setActive = () => {
 } }) {
@@ -6010,7 +6036,7 @@ function Notes({ setActive = () => {
   const [fileUploadError, setFileUploadError] = useState("");
   const fileRef = useRef(null);
   const [syllabusReview, setSyllabusReview] = useState(null);
-  const [syllabusToast, setSyllabusToast] = useState("");
+  const [syllabusToast, setSyllabusToast2] = useState("");
   const [deleteNoteConfirm, setDeleteNoteConfirm] = useState(null);
   const [upgradeModal, setUpgradeModal] = useState(null);
   const resetNote = (feature, limit, saved) => "You've used all " + limit + " free " + feature + " this month" + (saved ? " \u2014 " + saved : "") + ". They reset in " + daysUntilReset() + " day" + (daysUntilReset() !== 1 ? "s" : "") + ", or upgrade for unlimited right now.";
@@ -6249,8 +6275,8 @@ Be direct. Sound like a smart tutor, not a textbook. Keep it under 150 words.`;
     if (found.length > 0) {
       setSyllabusReview({ noteId: notes[sel].id, tag: notes[sel].tag, sourceText: plain, priorScanCount: priorSyllabusScanCount(notes[sel].tag, notes[sel].id), items: found.map((d, i) => ({ id: "si-" + i, ...d, include: true, attackBlock: d.kind === "deadline", proposeSessions: false, sessionCount: defaultSessionCountFor(d.examWeight), difficulty: 500, moreOpen: false })) });
     } else {
-      setSyllabusToast("No dates found in this note");
-      setTimeout(() => setSyllabusToast(""), 3200);
+      setSyllabusToast2("No dates found in this note");
+      setTimeout(() => setSyllabusToast2(""), 3200);
     }
   };
   const noteScansLeft = Math.max(0, NOTE_SCAN_LIMIT - getNoteScanUsage().count);
@@ -6660,11 +6686,11 @@ Be direct. Sound like a smart tutor, not a textbook. Keep it under 150 words.`;
         commitSyllabusEvents(syllabusReview.noteId, syllabusReview.tag, included, syllabusReview.sourceText, cid);
         attachSessionFocusesToSyllabusExams(syllabusReview.noteId, syllabusReview.tag, included).then((patchedCount) => {
           if (patchedCount === 0) return;
-          setSyllabusToast("Added study focus to " + patchedCount + " exam" + (patchedCount !== 1 ? "s'" : "'s") + " sessions");
-          setTimeout(() => setSyllabusToast(""), 3200);
+          setSyllabusToast2("Added study focus to " + patchedCount + " exam" + (patchedCount !== 1 ? "s'" : "'s") + " sessions");
+          setTimeout(() => setSyllabusToast2(""), 3200);
         });
-        setSyllabusToast(included.length + " deadline" + (included.length !== 1 ? "s" : "") + " added to your calendar");
-        setTimeout(() => setSyllabusToast(""), 3200);
+        setSyllabusToast2(included.length + " deadline" + (included.length !== 1 ? "s" : "") + " added to your calendar");
+        setTimeout(() => setSyllabusToast2(""), 3200);
         setSyllabusReview(null);
       } }, aiLoading ? "Processing\u2026" : "Add " + (syllabusReview ? syllabusReview.items.filter((i) => i.include).length : 0) + " to Calendar \u2192"))
     },
@@ -14658,7 +14684,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     setCourseDeleteSnapshots(null);
     setCourseDeleteToast("");
   };
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(PH, { title: "Settings", sub: "Manage your account and preferences" }), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "200px 1fr", gap: 16 } }, /* @__PURE__ */ React.createElement("div", null, sections.map((s) => /* @__PURE__ */ React.createElement("div", { key: s.id, onClick: () => setActive(s.id), style: { display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 6, marginBottom: 3, fontSize: 12.5, cursor: "pointer", background: active === s.id ? T.lime + "10" : "transparent", color: active === s.id ? T.lime : T.muted, fontWeight: active === s.id ? 600 : 400, border: `1px solid ${active === s.id ? T.lime + "22" : "transparent"}`, transition: "all 0.15s" } }, /* @__PURE__ */ React.createElement("span", { style: { color: active === s.id ? T.lime : T.faint, width: 14, height: 14, display: "flex" } }, s.icon), s.id))), /* @__PURE__ */ React.createElement("div", null, active === "General" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "Profile basics"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 16 } }, "How you appear across Studlin."), /* @__PURE__ */ React.createElement(Field, { label: "Display name" }, /* @__PURE__ */ React.createElement(Input, { value: profile.name, onChange: (e) => updProfile({ name: e.target.value }) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement(Input, { value: profile.email, onChange: (e) => updProfile({ email: e.target.value }), type: "email" })), /* @__PURE__ */ React.createElement(Field, { label: "School / status" }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 12px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, profile.school || "Not set", profile.status ? " \xB7 " + (profile.status === "highschool" ? "High School" : "College") : ""), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setActivePage("profile"), style: { background: "none", border: "none", color: T.lime, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: T.font, textDecoration: "underline", padding: 0, flexShrink: 0 } }, "Edit in Profile")))), dupGroups.length > 0 && /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12, border: `1px solid ${T.amber}44` } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "Possible duplicate classes"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 16 } }, "These look like the same class under slightly different names -- pick which one to keep, and everything from the others moves over to it."), dupGroups.map((group, gi) => {
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(PH, { title: "Settings", sub: "Manage your account and preferences" }), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "200px 1fr", gap: 16 } }, /* @__PURE__ */ React.createElement("div", null, sections.map((s) => /* @__PURE__ */ React.createElement("div", { key: s.id, onClick: () => setActive(s.id), style: { display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 6, marginBottom: 3, fontSize: 12.5, cursor: "pointer", background: active === s.id ? T.lime + "10" : "transparent", color: active === s.id ? T.lime : T.muted, fontWeight: active === s.id ? 600 : 400, border: `1px solid ${active === s.id ? T.lime + "22" : "transparent"}`, transition: "all 0.15s" } }, /* @__PURE__ */ React.createElement("span", { style: { color: active === s.id ? T.lime : T.faint, width: 14, height: 14, display: "flex" } }, s.icon), s.id))), /* @__PURE__ */ React.createElement("div", null, active === "General" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "Profile basics"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 16 } }, "How you appear across Studlin."), /* @__PURE__ */ React.createElement(Field, { label: "Display name" }, /* @__PURE__ */ React.createElement(Input, { value: profile.name, onChange: (e) => updProfile({ name: e.target.value }) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement(Input, { value: account.email || "", disabled: true })), /* @__PURE__ */ React.createElement(Field, { label: "School / status" }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 12px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, profile.school || "Not set", profile.status ? " \xB7 " + (profile.status === "highschool" ? "High School" : "College") : ""), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setActivePage("profile"), style: { background: "none", border: "none", color: T.lime, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: T.font, textDecoration: "underline", padding: 0, flexShrink: 0 } }, "Edit in Profile")))), dupGroups.length > 0 && /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12, border: `1px solid ${T.amber}44` } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "Possible duplicate classes"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 16 } }, "These look like the same class under slightly different names -- pick which one to keep, and everything from the others moves over to it."), dupGroups.map((group, gi) => {
     const withCounts = group.map((s) => ({ ...s, count: courseItemCount(s) })).sort((a, b) => b.count - a.count);
     return /* @__PURE__ */ React.createElement("div", { key: gi, style: { padding: "10px 0", borderTop: gi > 0 ? `1px solid ${T.border}` : "none" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 8 } }, withCounts.map((s) => /* @__PURE__ */ React.createElement(
       "button",
