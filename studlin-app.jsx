@@ -6889,6 +6889,36 @@ function finalizeExtractedText(raw){
     empty:trimmed.length<20,
   };
 }
+// Shown in place of the upload dropzone while extractFileText (below) is
+// working through a file -- reuses the same thin lime progress-bar
+// language as Dashboard's plan-completion bar (the only other percentage
+// bar in the app) instead of inventing new visual language. stage
+// distinguishes the two things a material upload can be doing: "extract"
+// (real per-page progress, see extractFileText's onProgress) vs "analyze"
+// (an AI call with no measurable progress, so it gets a label and an
+// indeterminate pulsing bar instead of a fake percentage).
+function ExtractionProgress({fileName,pct,index,total,stage}){
+  const analyzing=stage==="analyze";
+  return (
+    <div style={{padding:"12px 14px",borderRadius:10,border:`1px solid ${T.border}`,background:T.card2}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+        <span style={{color:T.muted,display:"flex",flexShrink:0}}>{Icon.file}</span>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:12.5,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{fileName}</div>
+          <div style={{fontSize:11,color:T.muted,marginTop:1}}>{analyzing?"Finding what matters in your material...":"Converting to text..."}{total>1?" · file "+index+" of "+total:""}</div>
+        </div>
+        {!analyzing&&<div style={{fontSize:12,fontWeight:700,color:T.lime,flexShrink:0}}>{Math.round(pct*100)}%</div>}
+      </div>
+      <div style={{height:4,background:T.card,borderRadius:99,overflow:"hidden"}}>
+        {analyzing?(
+          <div style={{height:"100%",width:"40%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,animation:"studlinExtractPulse 1.1s ease-in-out infinite"}} />
+        ):(
+          <div style={{height:"100%",width:Math.round(pct*100)+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.25s ease"}} />
+        )}
+      </div>
+    </div>
+  );
+}
 // Generic "get readable text out of an uploaded file" -- PDF via pdfjsLib,
 // DOCX via mammoth, plain-text fallback for everything else, a clear
 // rejection message for the old .doc format Studlin can't parse. Module-
@@ -6897,7 +6927,14 @@ function finalizeExtractedText(raw){
 // instead of two that could quietly drift apart. Returns
 // {text,truncated,empty} rather than a bare string so callers can warn
 // the student instead of silently storing something unreadable/oversized.
-async function extractFileText(file){
+// onProgress is optional -- a (fraction:0-1)=>void callback, called as each
+// PDF page finishes (the only extraction path slow enough on real material,
+// e.g. a 50+ page syllabus, to make silent waiting feel broken). docx/txt
+// parsing is a single library/FileReader call with no natural midpoint, so
+// those paths just report 1 right before resolving rather than faking
+// intermediate steps. Callers that don't pass onProgress see no behavior
+// change at all.
+async function extractFileText(file,onProgress){
   const ext=file.name.split(".").pop().toLowerCase();
   if(ext==="pdf"){
     try{
@@ -6905,7 +6942,10 @@ async function extractFileText(file){
       const buf=await file.arrayBuffer();
       const pdf=await pdfjsLib.getDocument({data:buf}).promise;
       let text="";
-      for(let i=1;i<=pdf.numPages;i++){const pg=await pdf.getPage(i);const tc=await pg.getTextContent();text+=tc.items.map(it=>it.str).join(" ")+"\n\n";}
+      for(let i=1;i<=pdf.numPages;i++){
+        const pg=await pdf.getPage(i);const tc=await pg.getTextContent();text+=tc.items.map(it=>it.str).join(" ")+"\n\n";
+        if(onProgress)onProgress(i/pdf.numPages);
+      }
       return finalizeExtractedText(text);
     }catch(err){return {text:"Could not read PDF: "+err.message,truncated:false,empty:true};}
   }
@@ -6914,13 +6954,14 @@ async function extractFileText(file){
       if(!window.mammoth)throw new Error("Document reader still loading — try again in a moment.");
       const buf=await file.arrayBuffer();
       const result=await window.mammoth.extractRawText({arrayBuffer:buf});
+      if(onProgress)onProgress(1);
       return finalizeExtractedText(result.value);
     }catch(err){return {text:"Could not read this document: "+err.message,truncated:false,empty:true};}
   }
   if(ext==="doc")return {text:"This is an older .doc file — Studlin can only read .docx. Try re-saving it as .docx or PDF.",truncated:false,empty:true};
   return await new Promise(resolve=>{
     const reader=new FileReader();
-    reader.onload=()=>resolve(finalizeExtractedText(reader.result));
+    reader.onload=()=>{if(onProgress)onProgress(1);resolve(finalizeExtractedText(reader.result));};
     reader.readAsText(file);
   });
 }
@@ -7118,10 +7159,13 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   const handlePeFile=async(e)=>{
     const files=Array.from(e.target.files||[]);
     e.target.value="";
-    for(const file of files){
-      const{text,truncated,empty}=await extractFileText(file);
+    for(let i=0;i<files.length;i++){
+      const file=files[i];
+      setExtractProgress({name:file.name,pct:0,index:i+1,total:files.length});
+      const{text,truncated,empty}=await extractFileText(file,pct=>setExtractProgress(p=>p?{...p,pct}:p));
       setPeFileTexts(prev=>[...prev,{name:file.name,text,truncated,empty}]);
     }
+    setExtractProgress(null);
   };
   const removePeFile=(name)=>setPeFileTexts(prev=>prev.filter(f=>f.name!==name));
   const peMaterialText=peFileTexts.map(f=>f.text).join("\n\n");
@@ -7393,6 +7437,11 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   // evaluated top-to-bottom on every render pass like the rest of this
   // component's body.
   const buildPlanMaterialText=fileTexts.map(f=>f.text).join("\n\n");
+  // Shown in place of the upload dropzone (both the exam-material section
+  // and the Build Study Plan modal's own material step share fileTexts/
+  // handlePrepFile, so they share this too) while a file is being read --
+  // null when idle. See ExtractionProgress/extractFileText's onProgress.
+  const [extractProgress,setExtractProgress]=useState(null); // {name,pct,index,total}
   const [genLoading,setGenLoading]=useState(null); // null | "cards" | "quiz"
   const [genMsg,setGenMsg]=useState("");
   // "From your syllabus" (see the exam-card onClick below, and
@@ -7447,10 +7496,13 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   const handlePrepFile=async(e)=>{
     const files=Array.from(e.target.files||[]);
     e.target.value="";
-    for(const file of files){
-      const {text,truncated,empty}=await extractFileText(file);
+    for(let i=0;i<files.length;i++){
+      const file=files[i];
+      setExtractProgress({name:file.name,pct:0,index:i+1,total:files.length});
+      const {text,truncated,empty}=await extractFileText(file,pct=>setExtractProgress(p=>p?{...p,pct}:p));
       setFileTexts(prev=>[...prev,{name:file.name,text,truncated,empty}]);
     }
+    setExtractProgress(null);
   };
   const removePrepFile=(name)=>setFileTexts(prev=>prev.filter(f=>f.name!==name));
 
@@ -8233,9 +8285,13 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
               )}
               {(materialAddOpen||(fileTexts.length===0&&materialLinks.length===0))&&(<>
                 <input type="file" ref={fileInputRef} onChange={handlePrepFile} accept=".txt,.md,.pdf,.docx" style={{display:"none"}} multiple />
-                <div onClick={()=>fileInputRef.current&&fileInputRef.current.click()} style={{border:`1px dashed ${T.borderHover}`,borderRadius:10,padding:18,textAlign:"center",background:T.card2,cursor:"pointer",marginBottom:10}}>
-                  <div style={{fontSize:12.5,color:T.text,fontWeight:500}}>Click to upload: PDF, DOCX, or TXT</div>
-                </div>
+                {extractProgress?(
+                  <div style={{marginBottom:10}}><ExtractionProgress {...extractProgress} /></div>
+                ):(
+                  <div onClick={()=>fileInputRef.current&&fileInputRef.current.click()} style={{border:`1px dashed ${T.borderHover}`,borderRadius:10,padding:18,textAlign:"center",background:T.card2,cursor:"pointer",marginBottom:10}}>
+                    <div style={{fontSize:12.5,color:T.text,fontWeight:500}}>Click to upload: PDF, DOCX, or TXT</div>
+                  </div>
+                )}
                 <button type="button" onClick={()=>setPasteMode(m=>!m)} style={{width:"100%",textAlign:"center",padding:"9px",borderRadius:8,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12,marginBottom:pasteMode?10:14}}>{pasteMode?"Upload a file instead":"Or paste text instead"}</button>
                 {pasteMode&&(
                   <div style={{marginBottom:14}}>
@@ -8527,9 +8583,13 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
               ):(
                 <div>
                   <input type="file" ref={fileInputRef} onChange={handlePrepFile} accept=".txt,.md,.pdf,.docx" style={{display:"none"}} multiple />
-                  <div onClick={()=>fileInputRef.current&&fileInputRef.current.click()} style={{border:`1px dashed ${T.borderHover}`,borderRadius:10,padding:14,textAlign:"center",background:T.card2,cursor:"pointer",marginBottom:8}}>
-                    <div style={{fontSize:12,color:T.text,fontWeight:500}}>Click to upload: PDF, DOCX, or TXT</div>
-                  </div>
+                  {extractProgress?(
+                    <div style={{marginBottom:8}}><ExtractionProgress {...extractProgress} /></div>
+                  ):(
+                    <div onClick={()=>fileInputRef.current&&fileInputRef.current.click()} style={{border:`1px dashed ${T.borderHover}`,borderRadius:10,padding:14,textAlign:"center",background:T.card2,cursor:"pointer",marginBottom:8}}>
+                      <div style={{fontSize:12,color:T.text,fontWeight:500}}>Click to upload: PDF, DOCX, or TXT</div>
+                    </div>
+                  )}
                   <button type="button" onClick={()=>setPasteMode(m=>!m)} style={{width:"100%",textAlign:"center",padding:"7px",borderRadius:8,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:11.5,marginBottom:pasteMode?8:10}}>{pasteMode?"Upload a file instead":"Or paste text instead"}</button>
                   {pasteMode&&(
                     <div style={{marginBottom:10}}>
@@ -8676,9 +8736,13 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
         </Field>
         <Field label="Material" hint="Upload files or paste text — the more real content, the better the questions.">
           <input type="file" ref={peFileRef} onChange={handlePeFile} accept=".txt,.md,.pdf,.docx" style={{display:"none"}} multiple />
-          <div onClick={()=>peFileRef.current&&peFileRef.current.click()} style={{border:`1px dashed ${T.borderHover}`,borderRadius:10,padding:18,textAlign:"center",background:T.card2,cursor:"pointer",marginBottom:10}}>
-            <div style={{fontSize:12.5,color:T.text,fontWeight:500}}>Click to upload: PDF, DOCX, or TXT</div>
-          </div>
+          {extractProgress?(
+            <div style={{marginBottom:10}}><ExtractionProgress {...extractProgress} /></div>
+          ):(
+            <div onClick={()=>peFileRef.current&&peFileRef.current.click()} style={{border:`1px dashed ${T.borderHover}`,borderRadius:10,padding:18,textAlign:"center",background:T.card2,cursor:"pointer",marginBottom:10}}>
+              <div style={{fontSize:12.5,color:T.text,fontWeight:500}}>Click to upload: PDF, DOCX, or TXT</div>
+            </div>
+          )}
           {peFileTexts.length>0&&(
             <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:10}}>
               {peFileTexts.map(f=>(
@@ -8876,6 +8940,7 @@ function Flashcards() {
   // new one.
   const [upgradeModal,setUpgradeModal]=useState(null); // {feature,detail}
   const [fileTexts,setFileTexts]=useState([]); // [{name,text}] — one entry per uploaded file, so more than one can contribute to the same deck
+  const [extractProgress,setExtractProgress]=useState(null); // {name,pct,index,total} — shown in place of the upload dropzone while extracting, see ExtractionProgress
   const fileRef=useRef(null);
   const [cardCount,setCardCount]=useState(10);
   const [recOn,setRecOn]=useState(false);
@@ -8960,16 +9025,18 @@ function Flashcards() {
     e.target.value="";
     if(files.length===0)return;
     if(!dName)setDName(files.length===1?"Cards from "+files[0].name:"Cards from "+files.length+" files");
-    for(const file of files){
-      // Was storing extractFileText's whole return object as f.text instead
-      // of destructuring it -- createDeck's own prompt-building
-      // ("--- "+f.name+" ---\n"+f.text) then string-coerced that object to
-      // literally "[object Object]", so the AI never saw real material at
-      // all. Every other extractFileText caller in this file already
-      // destructures correctly; this was the one that didn't.
-      const {text,truncated,empty}=await extractFileText(file);
+    for(let i=0;i<files.length;i++){
+      const file=files[i];
+      setExtractProgress({name:file.name,pct:0,index:i+1,total:files.length});
+      // Was storing extractFileText's whole {text,truncated,empty} return
+      // object as f.text instead of destructuring it -- createDeck's own
+      // prompt-building ("--- "+f.name+" ---\n"+f.text) then string-coerced
+      // that object to literally "[object Object]", so the AI never saw
+      // real material through this upload path at all.
+      const {text,truncated,empty}=await extractFileText(file,pct=>setExtractProgress(p=>p?{...p,pct}:p));
       setFileTexts(prev=>[...prev,{name:file.name,text,truncated,empty}]);
     }
+    setExtractProgress(null);
   };
   const removeFile=(name)=>setFileTexts(prev=>prev.filter(f=>f.name!==name));
 
@@ -9294,10 +9361,12 @@ function Flashcards() {
         {dSource==="file"&&(
           <Field label="Upload files" hint="AI reads the content and generates Q&A flashcards. Add as many files as you need — e.g. several chapters or lecture sets.">
             <input type="file" multiple ref={fileRef} onChange={handleFile} accept=".txt,.md,.csv,.pdf,.doc,.docx,.rtf" style={{display:"none"}} />
+            {extractProgress?<ExtractionProgress {...extractProgress} />:(
             <div onClick={()=>fileRef.current&&fileRef.current.click()} style={{border:"1px dashed "+T.borderHover,borderRadius:10,padding:22,textAlign:"center",background:T.card2,cursor:"pointer"}}>
               <div style={{color:T.muted,marginBottom:6,display:"flex",justifyContent:"center"}}>{Icon.file}</div>
               <div style={{fontSize:13,color:T.text,fontWeight:500}}>{fileTexts.length>0?fileTexts.length+" file"+(fileTexts.length!==1?"s":"")+" loaded — click to add more":"Click to browse or drop files"}</div>
             </div>
+            )}
             {fileTexts.length>0&&(
               <div style={{display:"flex",flexDirection:"column",gap:4,marginTop:8}}>
                 {fileTexts.map(f=>(
@@ -15212,6 +15281,7 @@ const classSetupChoiceStyle={width:"100%",textAlign:"left",padding:"14px 16px",b
 // label association doesn't break.
 function MaterialEditor({item,onChange,label,idPrefix}){
   const hasMaterial=item.materialFiles.length>0||item.materialLinks.length>0;
+  const [extractProgress,setExtractProgress]=useState(null); // {name,pct,index,total}
   // Accumulates locally across the loop instead of reading item.materialFiles
   // fresh each iteration -- item is a prop snapshot from when this render
   // started, so without this a second file in the same multi-select would
@@ -15219,11 +15289,14 @@ function MaterialEditor({item,onChange,label,idPrefix}){
   const handleFiles=async(fileList)=>{
     const files=Array.from(fileList||[]);
     let acc=item.materialFiles;
-    for(const file of files){
-      const{text,truncated,empty}=await extractFileText(file);
+    for(let i=0;i<files.length;i++){
+      const file=files[i];
+      setExtractProgress({name:file.name,pct:0,index:i+1,total:files.length});
+      const{text,truncated,empty}=await extractFileText(file,pct=>setExtractProgress(p=>p?{...p,pct}:p));
       acc=[...acc,{name:file.name,text,truncated,empty}];
       onChange({materialFiles:acc});
     }
+    setExtractProgress(null);
   };
   const addPasted=()=>{
     if(!item.pasteMaterialText.trim())return;
@@ -15245,9 +15318,13 @@ function MaterialEditor({item,onChange,label,idPrefix}){
       {item.materialOpen&&(
         <div style={{padding:"10px 12px",display:"flex",flexDirection:"column",gap:8}}>
           <input type="file" id={fileInputId} onChange={e=>{handleFiles(e.target.files);e.target.value="";}} accept=".txt,.md,.pdf,.docx" style={{display:"none"}} multiple />
-          <label htmlFor={fileInputId} style={{border:`1px dashed ${T.borderHover}`,borderRadius:8,padding:"12px",textAlign:"center",background:T.card,cursor:"pointer",fontSize:11.5,color:T.muted}}>
-            Click to upload — PDF, DOCX, or TXT (you can pick more than one)
-          </label>
+          {extractProgress?(
+            <ExtractionProgress {...extractProgress} />
+          ):(
+            <label htmlFor={fileInputId} style={{border:`1px dashed ${T.borderHover}`,borderRadius:8,padding:"12px",textAlign:"center",background:T.card,cursor:"pointer",fontSize:11.5,color:T.muted}}>
+              Click to upload — PDF, DOCX, or TXT (you can pick more than one)
+            </label>
+          )}
           <button type="button" onClick={()=>onChange({pasteMaterialMode:!item.pasteMaterialMode})} style={{background:"none",border:"none",color:T.muted,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>
             {item.pasteMaterialMode?"Cancel pasting":"Or paste text instead"}
           </button>
@@ -26622,6 +26699,7 @@ function App() {
         @keyframes studlinGlow { 0%,100%{box-shadow:0 0 0 0 var(--glow)} 50%{box-shadow:0 0 32px 8px var(--glow)} }
         @keyframes studlinFade { from{opacity:0} to{opacity:1} }
         @keyframes studlinPop { from{opacity:0;transform:scale(0.96) translateY(8px)} to{opacity:1;transform:none} }
+        @keyframes studlinExtractPulse { 0%{margin-left:0%} 50%{margin-left:60%} 100%{margin-left:0%} }
         @keyframes studlinRise {
           0% { opacity:0; transform: perspective(1100px) rotateX(7deg) translateY(26px) scale(.985); filter: blur(4px); }
           65% { filter: blur(0); }
