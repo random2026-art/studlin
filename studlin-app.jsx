@@ -14319,6 +14319,24 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
       weekScrollRef.current.scrollTop = Math.max(0, hour - 1) * WK_PX_HR;
     }
   },[]);
+  // jumpToSession (e.g. Reschedule's "I'll pick it myself" link) sets
+  // highlightedSessionId and outlines the block, but an outline does
+  // nothing if the block is actually off-screen above or below the
+  // current scroll position -- defeats the point of jumping to it at all.
+  // Scrolls to center that block's own start time. Deliberately guarded
+  // on highlightedSessionId being truthy, not just present in the deps
+  // array: jumpToSession clears it back to null itself after 3s (see its
+  // own comment), and this effect firing again on THAT transition would
+  // snap the view back to wherever "now" happens to be right as the
+  // student's trying to look at or drag the block it just centered.
+  useEffect(()=>{
+    if(!highlightedSessionId||!weekScrollRef.current)return;
+    const highlighted=events.find(e=>e.id===highlightedSessionId);
+    if(!highlighted||!highlighted.time)return;
+    const targetMins=timeToMinutes(highlighted.time);
+    const viewportPx=weekScrollRef.current.clientHeight||600;
+    weekScrollRef.current.scrollTop=Math.max(0,(targetMins/60)*WK_PX_HR-viewportPx/2);
+  },[highlightedSessionId]);
   // Google-Calendar-style "now" line — minutes-since-midnight, refreshed
   // every 60s. Only today's column ever reads this (see isToday below), so
   // there's no work wasted redrawing six other days every tick.
@@ -18299,7 +18317,7 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
   ), document.body);
 }
 
-function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRoutineCenterOpenedFromSettings,setDetailEventId,registerSetEvents,onTaskCompleted,catchUpPending,onWizardOpenChange}={}){
+function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRoutineCenterOpenedFromSettings,setDetailEventId,registerSetEvents,onTaskCompleted,catchUpPending,onWizardOpenChange,jumpToSessionOnMount,onJumpSessionConsumed}={}){
   const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
   const SUBJ=[{value:"None",label:"None",color:T.lime},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
   // Accepts either a real course id or a label, same as StudlinPrep/Notes'
@@ -18526,6 +18544,18 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   useEffect(()=>{
     if(openRoutineCenterOnMount){setRoutineCenterOpen(true);if(onRoutineCenterOpenedFromSettings)onRoutineCenterOpenedFromSettings();}
   },[openRoutineCenterOnMount]);
+  // Same "pending action, consumed once CalendarTab actually mounts"
+  // pattern as openRoutineCenterOnMount above -- Dashboard's Reschedule
+  // modal lives at App level (rescheduleTask there is a sibling of
+  // [data-page], not inside CalendarTab), so it can't call jumpToSession
+  // directly; it hands the task off here instead, and this fires the
+  // instant CalendarTab is actually on-screen to receive it. jumpToSession
+  // itself is defined further down this same component -- fine to
+  // reference here since effects only ever run after the full render
+  // (including that declaration) has already completed.
+  useEffect(()=>{
+    if(jumpToSessionOnMount){jumpToSession(jumpToSessionOnMount);if(onJumpSessionConsumed)onJumpSessionConsumed();}
+  },[jumpToSessionOnMount]);
   // ClassSetupWizard's own finish/skip -- both mark subjects AND routine
   // "handled" together (it's one combined flow now), then re-sync this
   // component's React state from what the wizard just wrote straight to
@@ -20986,7 +21016,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         </>
       )}
       {rescheduleTask&&(
-        <RescheduleModal task={rescheduleTask} events={events} onClose={()=>setRescheduleTask(null)} onManual={()=>setSelDay(rescheduleTask.date)} commit={(next,evictedCount)=>{
+        <RescheduleModal task={rescheduleTask} events={events} onClose={()=>setRescheduleTask(null)} onManual={()=>jumpToSession(rescheduleTask)} commit={(next,evictedCount)=>{
           setEvents(next);lsSet("events",next);
           setRescheduleToast(evictedCount>0?`Task rescheduled — ${evictedCount} other${evictedCount!==1?"s":""} shifted to make room.`:"Task rescheduled.");
           setTimeout(()=>setRescheduleToast(""),2800);
@@ -25256,6 +25286,10 @@ function App() {
   // link — CalendarTab owns the wizard's actual open/closed state, so this
   // just switches tabs and leaves a one-shot flag for it to pick up on mount.
   const [pendingRoutineCenter,setPendingRoutineCenter]=useState(false);
+  // Same pending-until-mounted handoff as pendingRoutineCenter above, for
+  // Dashboard's Reschedule modal's own "I'll pick it myself" link -- see
+  // CalendarTab's jumpToSessionOnMount for the consuming side.
+  const [pendingJumpSession,setPendingJumpSession]=useState(null);
   const openRoutineCenterOnCalendar=()=>{setActive("calendar");setPendingRoutineCenter(true);};
   const myUid=firebase.auth().currentUser?.uid||null;
 
@@ -25955,7 +25989,7 @@ function App() {
         <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?T.bg:undefined}}>
           {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} setDetailEventId={setDetailEventId} onTaskCompleted={handleTaskCompleted} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineCenter={openRoutineCenterOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} setActivePage={setActive} />:
-           active==="calendar"?<CalendarTab setActive={setActive} onTaskSaved={handleTaskSaved} openRoutineCenterOnMount={pendingRoutineCenter} onRoutineCenterOpenedFromSettings={()=>setPendingRoutineCenter(false)} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} onWizardOpenChange={setCalendarWizardOpen} />:
+           active==="calendar"?<CalendarTab setActive={setActive} onTaskSaved={handleTaskSaved} openRoutineCenterOnMount={pendingRoutineCenter} onRoutineCenterOpenedFromSettings={()=>setPendingRoutineCenter(false)} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} onWizardOpenChange={setCalendarWizardOpen} jumpToSessionOnMount={pendingJumpSession} onJumpSessionConsumed={()=>setPendingJumpSession(null)} />:
            active==="notes"?<Notes setActive={setActive} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
            active==="profile"?<Profile setActive={setActive} seriousMode={seriousMode} />:
@@ -25967,7 +26001,7 @@ function App() {
       {/* DASHBOARD RESCHEDULE CONFIRM + TOAST — true sibling of [data-page],
           see the state declaration above for why. */}
       {rescheduleTask&&(
-        <RescheduleModal task={rescheduleTask} events={lsGet("events",[])} onClose={()=>setRescheduleTask(null)} onManual={()=>setActive("calendar")} commit={(next,evictedCount)=>{
+        <RescheduleModal task={rescheduleTask} events={lsGet("events",[])} onClose={()=>setRescheduleTask(null)} onManual={()=>{setActive("calendar");setPendingJumpSession(rescheduleTask);}} commit={(next,evictedCount)=>{
           lsSet("events",next);
           setDashToast(evictedCount>0?`Task rescheduled — ${evictedCount} other${evictedCount!==1?"s":""} shifted to make room.`:"Task rescheduled.");
           setTimeout(()=>setDashToast(""),2800);
