@@ -6901,7 +6901,7 @@ function finalizeExtractedText(raw){
 // (real per-page progress, see extractFileText's onProgress) vs "analyze"
 // (an AI call with no measurable progress, so it gets a label and an
 // indeterminate pulsing bar instead of a fake percentage).
-function ExtractionProgress({fileName,pct,index,total,stage}){
+function ExtractionProgress({fileName,pct,index,total,stage,analyzeLabel}){
   const analyzing=stage==="analyze";
   return (
     <div style={{padding:"12px 14px",borderRadius:10,border:`1px solid ${T.border}`,background:T.card2}}>
@@ -6909,7 +6909,7 @@ function ExtractionProgress({fileName,pct,index,total,stage}){
         <span style={{color:T.muted,display:"flex",flexShrink:0}}>{Icon.file}</span>
         <div style={{flex:1,minWidth:0}}>
           <div style={{fontSize:12.5,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{fileName}</div>
-          <div style={{fontSize:11,color:T.muted,marginTop:1}}>{analyzing?"Finding what matters in your material...":"Converting to text..."}{total>1?" · file "+index+" of "+total:""}</div>
+          <div style={{fontSize:11,color:T.muted,marginTop:1}}>{analyzing?(analyzeLabel||"Finding what matters in your material..."):"Converting to text..."}{total>1?" · file "+index+" of "+total:""}</div>
         </div>
         {!analyzing&&<div style={{fontSize:12,fontWeight:700,color:T.lime,flexShrink:0}}>{Math.round(pct*100)}%</div>}
       </div>
@@ -16366,7 +16366,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
           {step==="classes"&&addMode==="collegeSchedule"&&(<>
             <TitleSub title="Scan my whole schedule" sub="A screenshot of your schedule grid, or paste the text list — Studlin splits it into every class, with its meeting time and any exam dates it finds." />
             {scanning
-              ? <div style={{padding:"40px 0",textAlign:"center",color:T.muted,fontSize:13}}>Reading your schedule…</div>
+              ? <div style={{padding:"20px 0"}}><ExtractionProgress fileName="Your schedule" stage="analyze" analyzeLabel="Finding your classes and exam dates..." /></div>
               : pasteMode ? (
                 <div>
                   <textarea value={pasteText} onChange={e=>setPasteText(e.target.value)} placeholder="Paste your schedule text here" rows={8}
@@ -16412,7 +16412,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
               <TimeField label="School ends" value={schoolEnd} onChange={setSchoolEnd} />
             </div>
             {scanning
-              ? <div style={{padding:"40px 0",textAlign:"center",color:T.muted,fontSize:13}}>Reading your schedule…</div>
+              ? <div style={{padding:"20px 0"}}><ExtractionProgress fileName="Your schedule" stage="analyze" analyzeLabel="Finding your classes and exam dates..." /></div>
               : hsPasteMode ? (
                 <div>
                   <textarea value={hsPasteText} onChange={e=>setHsPasteText(e.target.value)} placeholder="Paste your weekly schedule here" rows={8}
@@ -23475,7 +23475,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               )}>
               {!workScanReview?(<>
                 {workScanning
-                  ? <div style={{padding:"40px 0",textAlign:"center",color:T.muted,fontSize:13}}>Reading your schedule…</div>
+                  ? <div style={{padding:"20px 0"}}><ExtractionProgress fileName="Your schedule" stage="analyze" analyzeLabel="Finding your shifts..." /></div>
                   : <button type="button" onClick={()=>workFileInputRef.current&&workFileInputRef.current.click()} style={{width:"100%",padding:"32px",borderRadius:12,border:`1.5px dashed ${T.borderHover}`,background:T.card2,color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:13,textAlign:"center"}}>Tap to choose a photo</button>
                 }
                 <input ref={workFileInputRef} type="file" accept=".png,.jpg,.jpeg,.webp,.gif" style={{display:"none"}} onChange={handleWorkScheduleFile} />

@@ -361,8 +361,15 @@ module.exports = withSentry(async (req, res) => {
     };
     if (format === 'json') requestBody.temperature = 0.2;
 
+    // Raised alongside vercel.json's maxDuration (30s -> 60s): flashcard/quiz
+    // generation now sends up to MATERIAL_TEXT_CAP (50,000 chars, was 15,000)
+    // of material with a larger format:"json" response budget, which was
+    // regularly taking long enough to hit the old 25s abort on real
+    // material -- confirmed live (504 on a real PDF upload) after that
+    // change shipped. Same 5s safety margin under the platform limit as
+    // before, just scaled up with it.
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 25000);
+    const timeout = setTimeout(() => controller.abort(), 55000);
     let response;
     try {
       response = await fetch('https://api.anthropic.com/v1/messages', {
