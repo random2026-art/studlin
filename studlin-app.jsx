@@ -7352,7 +7352,16 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
       // actually confirmed, don't silently regenerate a second set here.
       finalSessions=placedSessions.map((s,i)=>buildPlanFocuses[i]?{...s,notes:buildPlanFocuses[i]}:s);
     }
-    lsSet("events",events.concat(finalSessions));
+    // The exam list's "Difficulty" column reads ex.difficulty, which used
+    // to be frozen at its creation-time default (5/500) forever -- the
+    // confidence answered right here (buildPlanPreview.difficultyValue:
+    // 750 shaky / 500 okay / 250 solid) already computes exactly the value
+    // that column should show; it just never got patched back onto the
+    // exam itself, only onto the newly-built sessions. Folded into this
+    // same write (not a separate patchExam call) since `events` was
+    // captured earlier in this function -- a later separate write would
+    // get clobbered by this one.
+    lsSet("events",events.concat(finalSessions).map(e=>e.id===buildPlanExam.id?{...e,difficulty:buildPlanPreview.difficultyValue}:e));
     // Also generate flashcards/a practice exam if requested -- replaces
     // any existing ones for this exam outright. This whole flow is
     // already preview-then-confirm (the Confirm plan click just made); a
@@ -8675,6 +8684,20 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
         )}
         {buildPlanExam&&buildPlanStep==="preview"&&buildPlanPreview&&(
           <div>
+            {buildPlanLoading?(
+              // Was just a disabled "Building…" button label with nothing
+              // else -- this step now genuinely generates flashcards/a
+              // practice exam via AI (can take up to ~55s on real
+              // material), so it needs real, honest feedback instead of
+              // leaving an editable session list visible during a commit
+              // that's already in flight. Reuses ExtractionProgress's
+              // "analyze" stage (no measurable progress for an AI call,
+              // same as the material-reading indicator below).
+              <div style={{padding:"20px 0"}}>
+                <ExtractionProgress fileName={buildPlanExam.title} stage="analyze"
+                  analyzeLabel={"Building your sessions"+(buildPlanGenFlashcards&&buildPlanGenPE?", flashcards, and a practice exam":buildPlanGenFlashcards?" and flashcards":buildPlanGenPE?" and a practice exam":"")+"…"} />
+              </div>
+            ):(<>
             {/* P1 in the audit: weekPrepLoad/pressuredExamItems already
                 exist and work in Syllabus Review and Brain Dump, but this
                 flow -- Studlin Prep's own Build Study Plan, one of the two
@@ -8732,6 +8755,15 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
               <div style={{fontSize:12.5,color:T.muted,textAlign:"center",padding:"14px 0",marginBottom:14}}>Too close to the exam to fit a session.</div>
             ):(
               <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
+                {/* Was a static "Reading your material…" placeholder
+                    swapped into each session's own (otherwise empty)
+                    input -- looked frozen rather than in-progress, and
+                    repeated once per session row. One real, animated
+                    indicator above the list instead; each row's input
+                    stays plain and still typable while this runs. */}
+                {buildPlanFocusesLoading&&(
+                  <div style={{marginBottom:2}}><ExtractionProgress fileName={buildPlanExam.title} stage="analyze" analyzeLabel="Reading your material for session ideas…" /></div>
+                )}
                 {buildPlanPreview.dates.map((d,i)=>{
                   const ov=buildPlanOverrides[i];
                   const setOv=(patch)=>setBuildPlanOverrides(o=>o.map((v,vi)=>vi===i?{date:v?.date??d,duration:v?.duration??buildPlanPreview.sessionDuration,...patch}:v));
@@ -8747,7 +8779,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                     </div>
                     {!buildPlanGeneric&&(
                       <Input value={buildPlanFocuses[i]||""} onChange={e=>setBuildPlanFocuses(f=>f.map((v,vi)=>vi===i?e.target.value:v))}
-                        placeholder={buildPlanFocusesLoading?"Reading your material…":"What to study this session (optional)"}
+                        placeholder="What to study this session (optional)"
                         style={{width:"100%",fontSize:12}} />
                     )}
                   </div>
@@ -8759,6 +8791,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
               <span style={{fontSize:12,color:T.muted}}>Sessions:</span>
               <NumField min={1} max={6} fallback={4} value={buildPlanPreview.sessionCount} onChange={adjustBuildPlanCount} style={{width:52}} />
             </div>
+            </>)}
           </div>
         )}
       </Modal>
@@ -12055,11 +12088,18 @@ function restampSessionPriorities(examId){
   const exam=all.find(e=>e.id===examId);
   if(!exam)return;
   const sessionPriority=computeSessionPriority(exam,dayKey());
-  const next=all.map(e=>
-    (e.dueEventId===examId&&e.status==="pending"&&e.isExamPrepSession&&e.priorityAutoManaged!==false)
-      ?{...e,priority:sessionPriority}
-      :e
-  );
+  const next=all.map(e=>{
+    // The exam's own priority field (read by the exam list's "Urgency"
+    // column) used to only ever get set to a hardcoded 5 at creation and
+    // never touched again -- every trigger of this function (importance/
+    // exam-weight changes, confidence check-ins, practice-exam results)
+    // already recomputes sessionPriority for the exam's sessions; patching
+    // the exam itself with the same value here means Urgency updates
+    // everywhere restamping already happens, with no new call sites.
+    if(e.id===examId)return {...e,priority:sessionPriority};
+    if(e.dueEventId===examId&&e.status==="pending"&&e.isExamPrepSession&&e.priorityAutoManaged!==false)return {...e,priority:sessionPriority};
+    return e;
+  });
   lsSet("events",next);
 }
 
@@ -15212,6 +15252,20 @@ function WizardHsBuilder({schoolStart,setSchoolStart,schoolEnd,setSchoolEnd,item
 // student to retype the same name a second time before "+ Add" will work.
 // Omit it and behavior is unchanged -- an empty, always-visible Title
 // field, exactly as before.
+// Shared with the "Review this class" screen's own collapsed-by-default
+// summary (see meetingTimeExpandedManually) -- was trapped as a private
+// IIFE inside WizardCollegeBuilder, so the review screen had no way to
+// show "Meets: Fri 10:45 AM" without also rendering the full add-tool
+// underneath it.
+function formatMeetingTimes(items){
+  const fmt12=(t)=>{if(!t)return"";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+" "+ap;};
+  const parts=ROUTINE_DOW.map((d,i)=>{
+    const dayItems=(items||[]).filter(r=>r.days.includes(i)).sort((a,b)=>a.startTime<b.startTime?-1:1);
+    if(dayItems.length===0)return null;
+    return d+" "+dayItems.map(it=>fmt12(it.startTime)).join(", ");
+  }).filter(Boolean);
+  return parts.length>0?parts.join(" · "):null;
+}
 function WizardCollegeBuilder({items,addItem,removeItem,updateItem,defaultTitle,hideHeading}){
   const [title,setTitle]=useState(defaultTitle||"");
   const [kind,setKind]=useState("class");
@@ -15262,17 +15316,9 @@ function WizardCollegeBuilder({items,addItem,removeItem,updateItem,defaultTitle,
           match existing days risked an accidental duplicate add). Days
           with more than one meeting time show each time, since a class
           can legitimately meet twice in one day (lecture + recitation). */}
-      {items.length>0&&(()=>{
-        const fmt12=(t)=>{if(!t)return"";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+" "+ap;};
-        const parts=ROUTINE_DOW.map((d,i)=>{
-          const dayItems=items.filter(r=>r.days.includes(i)).sort((a,b)=>a.startTime<b.startTime?-1:1);
-          if(dayItems.length===0)return null;
-          return d+" "+dayItems.map(it=>fmt12(it.startTime)).join(", ");
-        }).filter(Boolean);
-        return parts.length>0?(
-          <div style={{fontSize:11.5,color:T.muted,marginTop:12,marginBottom:2}}>Meets: {parts.join(" · ")}</div>
-        ):null;
-      })()}
+      {items.length>0&&formatMeetingTimes(items)&&(
+        <div style={{fontSize:11.5,color:T.muted,marginTop:12,marginBottom:2}}>Meets: {formatMeetingTimes(items)}</div>
+      )}
       <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:6,marginTop:18}}>
         {ROUTINE_DOW.map((d,i)=>{
           const dayItems=items.filter(r=>r.days.includes(i)).sort((a,b)=>a.startTime<b.startTime?-1:1);
@@ -15838,9 +15884,16 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     setEditingPendingId(null);
     setReviewSub("items");
     setAddMode("review");
-    // Auto-expand when the scan already found real meeting times -- no
-    // reason to hide data Studlin already correctly extracted.
-    setMeetingTimeExpandedManually((result.meetingTimes||[]).length>0);
+    // Was auto-expanding the raw add-tool (day pills/time/+Add) whenever
+    // the scan found real meeting times -- backwards: that made a
+    // correctly-extracted "Meets: Fri 10:45 AM" look like nothing was
+    // found, buried under a blank add-form, and risked a confused student
+    // re-entering it and creating a duplicate. Now always starts
+    // collapsed; the review screen itself shows the extracted summary
+    // read-only when there's data, or the original "+ Add" prompt when
+    // there isn't -- expanding the actual editor is now always an
+    // explicit action either way.
+    setMeetingTimeExpandedManually(false);
   };
 
   const IMAGE_EXT_MEDIA_TYPES={png:"image/png",jpg:"image/jpeg",jpeg:"image/jpeg",webp:"image/webp",gif:"image/gif"};
@@ -15895,7 +15948,36 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   // takes the first extracted class through the exact same
   // buildReviewFromExtraction a single-class scan already uses, stashes
   // the rest for finishReviewingClass to advance through automatically.
-  const startClassQueue=(classes,sourceText)=>{
+  // A registrar "my schedule" export lists one row per course SECTION --
+  // e.g. a lecture and its lab/recitation are two separate rows with the
+  // exact same course name, each with its own meeting time. The extraction
+  // prompt (COLLEGE_SCHEDULE_JSON_CONTRACT) allows a second meeting
+  // pattern to become its own `classes` entry (intended for a genuinely
+  // different-named recitation), but nothing merges entries that share the
+  // same name back together -- so two rows for "Calculus II" became two
+  // separate classes all the way through review and into two duplicate
+  // sidebar course entries. Merging here, before queuing for review, means
+  // the student only ever reviews (and ends up with) one "Calculus II"
+  // with both meeting times attached, not two of the same class in a row.
+  const mergeClassesByName=(classes)=>{
+    const merged=[];
+    const byName=new Map();
+    for(const c of classes){
+      const key=(c.subject.name||"").trim().toLowerCase();
+      const existing=byName.get(key);
+      if(existing){
+        existing.meetingTimes=existing.meetingTimes.concat(c.meetingTimes);
+        existing.deadlines=existing.deadlines.concat(c.deadlines);
+      }else{
+        const copy={...c,meetingTimes:[...c.meetingTimes],deadlines:[...c.deadlines]};
+        merged.push(copy);
+        byName.set(key,copy);
+      }
+    }
+    return merged;
+  };
+  const startClassQueue=(classesIn,sourceText)=>{
+    const classes=mergeClassesByName(classesIn||[]);
     if(!classes||classes.length===0){setScanError("Couldn't find any classes in that. Try a clearer photo or paste more of the text.");return;}
     buildReviewFromExtraction(classes[0],sourceText);
     setScanQueue(classes.slice(1));
@@ -16508,18 +16590,30 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                 </div>
               </Field>
               <div style={{marginTop:16,marginBottom:16}}>
-                {/* Collapsed by default for a manual entry with nothing
-                    extracted yet -- meeting time isn't required during
-                    setup anymore, it can be set later by dragging the
-                    class onto the calendar. Auto-expands (and stays
-                    expanded) the moment there's a real meeting time to
-                    show, e.g. from a syllabus scan. */}
-                {!meetingTimeExpandedManually&&review.meetingTimes.length===0?(
+                {/* Collapsed by default either way now -- for a manual
+                    entry with nothing extracted yet (meeting time isn't
+                    required during setup, it can be set later by dragging
+                    the class onto the calendar), AND for a syllabus scan
+                    that already found real meeting time(s), which used to
+                    force this open to the raw add-tool instead of just
+                    showing what was found -- looked like extraction had
+                    failed, and risked a confused student re-adding a
+                    duplicate. Read-only summary by default when there's
+                    data; the full editor (with its own add/remove/click-
+                    to-edit) is only ever shown once the student explicitly
+                    asks for it. */}
+                {meetingTimeExpandedManually?(<>
+                  <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:8}}>When does it meet?</div>
+                  <WizardCollegeBuilder items={meetingItemsForBuilder} addItem={addMeetingTime} removeItem={removeMeetingTime} updateItem={updateMeetingTime} defaultTitle={review.subjectName||"Class"} hideHeading />
+                </>):review.meetingTimes.length===0?(
                   <button type="button" onClick={()=>setMeetingTimeExpandedManually(true)}
                     style={{width:"100%",padding:"10px 12px",borderRadius:6,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12,textAlign:"left"}}>+ Add a meeting time (optional, or set this later by dragging the class onto your calendar)</button>
-                ):(<>
-                  <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:8}}>When does it meet?</div>
-                  <WizardCollegeBuilder items={meetingItemsForBuilder} addItem={addMeetingTime} removeItem={removeMeetingTime} updateItem={updateMeetingTime} defaultTitle={review.subjectName||"Class"} hideHeading /></>)}
+                ):(
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"10px 12px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2}}>
+                    <span style={{fontSize:12,color:T.text}}>Meets: {formatMeetingTimes(meetingItemsForBuilder)}</span>
+                    <button type="button" onClick={()=>setMeetingTimeExpandedManually(true)} style={{background:"none",border:"none",color:T.muted,fontSize:11.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",flexShrink:0}}>Edit</button>
+                  </div>
+                )}
               </div>
               <div style={{marginBottom:8}}>
                 <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:2}}>Assignments, exams &amp; projects</div>
@@ -16775,7 +16869,16 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
               <Btn onClick={()=>quickScan?setStep("finalReview"):setStep("activities")}>{(pendingClasses.length>0||hsClassesCommitted>0)?"Done adding classes":"Skip, I'll add classes later"}</Btn>
             )}
             {step==="classes"&&addMode==="review"&&reviewSub==="items"&&(
-              <Btn onClick={()=>setReviewSub("sessions")} disabled={!review.subjectName.trim()} style={{opacity:review.subjectName.trim()?1:0.45}}>Continue</Btn>
+              // The Sessions sub-step is only worth showing when there's
+              // something dated to plan around -- same predicate it uses
+              // itself to render "Nothing dated to plan yet." Skipping
+              // straight to finishReviewingClass here is safe: reviewSub
+              // is local-only state, not part of WIZARD_STEP_ORDER/goBack/
+              // canGoBack, so this can't affect Back/Continue anywhere else.
+              <Btn onClick={()=>{
+                const hasDated=review.items.some(it=>it.include&&!it.noDate);
+                if(hasDated)setReviewSub("sessions");else finishReviewingClass();
+              }} disabled={!review.subjectName.trim()} style={{opacity:review.subjectName.trim()?1:0.45}}>Continue</Btn>
             )}
             {step==="classes"&&addMode==="review"&&reviewSub==="sessions"&&(
               <Btn onClick={finishReviewingClass}>{editingPendingId?"Save changes":"Done"}</Btn>
