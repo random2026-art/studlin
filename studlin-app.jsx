@@ -21798,7 +21798,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     setMergeConfirm(null);
   };
   const [canvasSeeding,setCanvasSeeding]=useState(false);
-  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,sr:true,auto:true,analytics:false,onlineStatus:true,incognito:false,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false},...lsGet("settings",{})}));
+  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,analytics:false,onlineStatus:true,incognito:false,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false},...lsGet("settings",{})}));
   const tog=k=>setToggles(t=>{const n={...t,[k]:!t[k]};lsSet("settings",n);return n;});
   const [sysPushStatus,setSysPushStatus]=useState(()=>{
     if(typeof Notification==="undefined")return "unsupported";
@@ -22456,11 +22456,6 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   );
   const [verb,setVerb]=useState(()=>lsGet("pref-verb","Balanced"));
   const [tutorStyle,setTutorStyle]=useState(()=>lsGet("pref-tutorStyle","Socratic"));
-  // Used to be an uncontrolled input with a defaultValue -- looked saved,
-  // never wrote anywhere, reset to 180/30 on every reload. Real state now,
-  // same immediate-persist-on-change pattern as verb/tutorStyle above.
-  const [dailyFocusTarget,setDailyFocusTarget]=useState(()=>lsGet("pref-dailyFocusTarget",180));
-  const [dailyFlashcardTarget,setDailyFlashcardTarget]=useState(()=>lsGet("pref-dailyFlashcardTarget",30));
   const accents=[{n:"Lime",c:"#AECE5E"},{n:"Forest",c:"#3E9576"},{n:"Sky",c:"#4F95D6"},{n:"Lilac",c:"#9474C9"},{n:"Peach",c:"#D07C4C"}];
   const [mgmtSubjs,setMgmtSubjs]=useState(()=>getSubjects().map(s=>({...s})));
   const [mgmtSaved,setMgmtSaved]=useState(false);
@@ -22793,19 +22788,23 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
           </>)}
 
           {active==="Study preferences" && (<>
-            <Card style={{marginBottom:12}}>
+            {/* Spaced repetition engine / Auto-save drafts toggles and the
+                whole Daily targets card (focus minutes + flashcard count)
+                were removed (2026-08-12) -- confirmed dead. Nothing in the
+                app ever reads pref-dailyFocusTarget/pref-dailyFlashcardTarget
+                or the sr/auto toggle keys; the "spaced repetition" and
+                "auto-save" behavior they claimed to control already run
+                unconditionally regardless of what these said (interval-
+                spaced exam review sessions, and the general debounced
+                cloud-sync that saves every real change, not on a 30s
+                timer). Response verbosity/Tutor style are real -- they
+                feed getAiPrefs() into the actual AI Tutor prompt calls. */}
+            <Card>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:16}}>AI tutor</div>
               <Field label="Response verbosity"><div style={{display:"flex",gap:6}}>{["Concise","Balanced","Comprehensive"].map(t=><Chip key={t} active={verb===t} onClick={()=>{setVerb(t);lsSet("pref-verb",t);}}>{t}</Chip>)}</div></Field>
               <Field label="Tutor style">
                 <SelectChip options={["Socratic","Direct","Encouraging","Strict"]} value={tutorStyle} onChange={v=>{setTutorStyle(v);lsSet("pref-tutorStyle",v);}} />
               </Field>
-              <Row label="Spaced repetition engine" sub="Intelligent scheduling based on recall performance." k="sr" />
-              <Row label="Auto-save drafts" sub="Save essay and note changes every 30 seconds." k="auto" />
-            </Card>
-            <Card>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:16}}>Daily targets</div>
-              <Field label="Daily focus target (minutes)"><Input type="number" value={dailyFocusTarget} onChange={e=>{const n=Math.max(0,parseInt(e.target.value,10)||0);setDailyFocusTarget(n);lsSet("pref-dailyFocusTarget",n);}} /></Field>
-              <Field label="Daily flashcard target"><Input type="number" value={dailyFlashcardTarget} onChange={e=>{const n=Math.max(0,parseInt(e.target.value,10)||0);setDailyFlashcardTarget(n);lsSet("pref-dailyFlashcardTarget",n);}} /></Field>
             </Card>
           </>)}
 
