@@ -5652,8 +5652,8 @@ function Flashcards() {
     if (files.length === 0) return;
     if (!dName) setDName(files.length === 1 ? "Cards from " + files[0].name : "Cards from " + files.length + " files");
     for (const file of files) {
-      const text = await extractFileText2(file);
-      setFileTexts((prev) => [...prev, { name: file.name, text }]);
+      const { text, truncated, empty } = await extractFileText2(file);
+      setFileTexts((prev) => [...prev, { name: file.name, text, truncated, empty }]);
     }
   };
   const removeFile = (name) => setFileTexts((prev) => prev.filter((f) => f.name !== name));

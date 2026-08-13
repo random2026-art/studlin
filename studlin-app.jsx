@@ -8961,8 +8961,14 @@ function Flashcards() {
     if(files.length===0)return;
     if(!dName)setDName(files.length===1?"Cards from "+files[0].name:"Cards from "+files.length+" files");
     for(const file of files){
-      const text=await extractFileText(file);
-      setFileTexts(prev=>[...prev,{name:file.name,text}]);
+      // Was storing extractFileText's whole return object as f.text instead
+      // of destructuring it -- createDeck's own prompt-building
+      // ("--- "+f.name+" ---\n"+f.text) then string-coerced that object to
+      // literally "[object Object]", so the AI never saw real material at
+      // all. Every other extractFileText caller in this file already
+      // destructures correctly; this was the one that didn't.
+      const {text,truncated,empty}=await extractFileText(file);
+      setFileTexts(prev=>[...prev,{name:file.name,text,truncated,empty}]);
     }
   };
   const removeFile=(name)=>setFileTexts(prev=>prev.filter(f=>f.name!==name));
