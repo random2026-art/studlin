@@ -96,6 +96,7 @@ function applyTheme(name, accent, density) {
     document.body.style.fontFamily = T.font;
     document.body.setAttribute("data-density", density || "Comfortable");
     document.body.setAttribute("data-theme", name === "light" ? "light" : "dark");
+    document.documentElement.style.colorScheme = name === "light" ? "light" : "dark";
   }
 }
 applyTheme(
@@ -5158,7 +5159,7 @@ function StudlinPrep({ setActive = () => {
           onChange: (v) => patchExam(ex.id, { sessionsMovable: v === "flexible" }),
           options: [{ value: "flexible", label: "Flex" }, { value: "rigid", label: "Rigid" }]
         }
-      ), /* @__PURE__ */ React.createElement("input", { type: "date", value: ex.date, onChange: (e) => patchExam(ex.id, { date: e.target.value }), style: { ...cellSelStyle, colorScheme: "dark" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: daysUntil <= 1 ? T.red : T.muted } }, daysLabel), /* @__PURE__ */ React.createElement(
+      ), /* @__PURE__ */ React.createElement("input", { type: "date", value: ex.date, onChange: (e) => patchExam(ex.id, { date: e.target.value }), style: { ...cellSelStyle } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: daysUntil <= 1 ? T.red : T.muted } }, daysLabel), /* @__PURE__ */ React.createElement(
         CustomSelect,
         {
           value: bucketOf(ex.priority),
@@ -5208,7 +5209,7 @@ function StudlinPrep({ setActive = () => {
       const pending = chainId ? allEventsForRow.filter((e) => e.attackChainId === chainId && e.status !== "done") : [];
       const rowPace = computeAssignmentPace(a, allEventsForRow, today);
       const statusLabel = rowPace && rowPace.behind ? "behind pace" : rowPace && rowPace.ahead ? "ahead of pace" : pending.length === 0 ? "no blocks yet" : pending.length + " block" + (pending.length !== 1 ? "s" : "") + " scheduled";
-      return /* @__PURE__ */ React.createElement("div", { key: a.id, style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, padding: "7px 10px", borderBottom: `1px solid ${T.border}`, alignItems: "center" } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setDetailEventId(a.id), style: { fontSize: 11.5, fontWeight: 600, color: T.white, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: a.title }, a.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, a.subject || "\u2014"), /* @__PURE__ */ React.createElement("input", { type: "date", value: a.date || "", onChange: (e) => e.target.value && patchExam(a.id, { date: e.target.value, checklist: false, time: a.time || "23:59" }), style: { ...cellSelStyle, colorScheme: "dark" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: daysUntil == null ? T.amber : daysUntil <= 1 ? T.red : T.muted, fontStyle: daysUntil == null ? "italic" : "normal" } }, daysLabel), /* @__PURE__ */ React.createElement(
+      return /* @__PURE__ */ React.createElement("div", { key: a.id, style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, padding: "7px 10px", borderBottom: `1px solid ${T.border}`, alignItems: "center" } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setDetailEventId(a.id), style: { fontSize: 11.5, fontWeight: 600, color: T.white, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: a.title }, a.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, a.subject || "\u2014"), /* @__PURE__ */ React.createElement("input", { type: "date", value: a.date || "", onChange: (e) => e.target.value && patchExam(a.id, { date: e.target.value, checklist: false, time: a.time || "23:59" }), style: { ...cellSelStyle } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: daysUntil == null ? T.amber : daysUntil <= 1 ? T.red : T.muted, fontStyle: daysUntil == null ? "italic" : "normal" } }, daysLabel), /* @__PURE__ */ React.createElement(
         CustomSelect,
         {
           value: bucketOf(a.priority),
@@ -5251,7 +5252,7 @@ function StudlinPrep({ setActive = () => {
       const hasPhases = p.phases && p.phases.length > 0;
       const steps = hasPhases ? p.phases : p.outline || [];
       const doneCount = hasPhases ? steps.filter((s) => s.status === "done").length : steps.filter((s) => s.done).length;
-      return /* @__PURE__ */ React.createElement("div", { key: p.id, style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, padding: "7px 10px", borderBottom: `1px solid ${T.border}`, alignItems: "center" } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setDetailEventId(p.id), style: { fontSize: 11.5, fontWeight: 600, color: T.white, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: p.title }, p.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, p.subject || "\u2014"), /* @__PURE__ */ React.createElement("input", { type: "date", value: p.date || "", onChange: (e) => e.target.value && patchExam(p.id, { date: e.target.value, checklist: false, time: p.time || "23:59" }), style: { ...cellSelStyle, colorScheme: "dark" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: daysUntil == null ? T.amber : daysUntil <= 1 ? T.red : T.muted, fontStyle: daysUntil == null ? "italic" : "normal" } }, daysLabel), /* @__PURE__ */ React.createElement(
+      return /* @__PURE__ */ React.createElement("div", { key: p.id, style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, padding: "7px 10px", borderBottom: `1px solid ${T.border}`, alignItems: "center" } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setDetailEventId(p.id), style: { fontSize: 11.5, fontWeight: 600, color: T.white, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: p.title }, p.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, p.subject || "\u2014"), /* @__PURE__ */ React.createElement("input", { type: "date", value: p.date || "", onChange: (e) => e.target.value && patchExam(p.id, { date: e.target.value, checklist: false, time: p.time || "23:59" }), style: { ...cellSelStyle } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: daysUntil == null ? T.amber : daysUntil <= 1 ? T.red : T.muted, fontStyle: daysUntil == null ? "italic" : "normal" } }, daysLabel), /* @__PURE__ */ React.createElement(
         CustomSelect,
         {
           value: bucketOf(p.priority),

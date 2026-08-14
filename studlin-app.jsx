@@ -93,6 +93,14 @@ function applyTheme(name, accent, density) {
     document.body.style.fontFamily = T.font;
     document.body.setAttribute('data-density', density||'Comfortable');
     document.body.setAttribute('data-theme', name==='light'?'light':'dark');
+    // Without this, every *unstyled* native control (checkboxes, radios,
+    // scrollbars, and any <select>/<input type=date> popup this file
+    // doesn't explicitly re-theme) falls back to the OS's default chrome
+    // no matter what color the rest of the page is -- the same "white
+    // popup on a dark app" bug as the Urgency dropdown, just for controls
+    // we haven't individually patched. Setting color-scheme on the root
+    // keeps that whole class of control in sync with the actual theme.
+    document.documentElement.style.colorScheme = name==='light'?'light':'dark';
   }
 }
 applyTheme(
@@ -7900,7 +7908,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                               matching this file's additive-field convention. */}
                           <CustomSelect value={isFlexible?"flexible":"rigid"} onChange={v=>patchExam(ex.id,{sessionsMovable:v==="flexible"})}
                             options={[{value:"flexible",label:"Flex"},{value:"rigid",label:"Rigid"}]} />
-                          <input type="date" value={ex.date} onChange={e=>patchExam(ex.id,{date:e.target.value})} style={{...cellSelStyle,colorScheme:"dark"}} />
+                          <input type="date" value={ex.date} onChange={e=>patchExam(ex.id,{date:e.target.value})} style={{...cellSelStyle}} />
                           <div style={{fontSize:10.5,color:daysUntil<=1?T.red:T.muted}}>{daysLabel}</div>
                           <CustomSelect value={bucketOf(ex.priority)} onChange={v=>patchExam(ex.id,{priority:BUCKET_VALS[v]})}
                             options={[{value:"low",label:"Low"},{value:"medium",label:"Med"},{value:"high",label:"High"}]} />
@@ -7994,7 +8002,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                           (checklist:true -- see upcomingAssignments' own
                           comment) graduates it into a real dated deadline,
                           same as Dashboard's retired setNoDateItemDate did. */}
-                      <input type="date" value={a.date||""} onChange={e=>e.target.value&&patchExam(a.id,{date:e.target.value,checklist:false,time:a.time||"23:59"})} style={{...cellSelStyle,colorScheme:"dark"}} />
+                      <input type="date" value={a.date||""} onChange={e=>e.target.value&&patchExam(a.id,{date:e.target.value,checklist:false,time:a.time||"23:59"})} style={{...cellSelStyle}} />
                       <div style={{fontSize:10.5,color:daysUntil==null?T.amber:daysUntil<=1?T.red:T.muted,fontStyle:daysUntil==null?"italic":"normal"}}>{daysLabel}</div>
                       <CustomSelect value={bucketOf(a.priority)} onChange={v=>patchExam(a.id,{priority:BUCKET_VALS[v]})}
                         options={[{value:"low",label:"Low"},{value:"medium",label:"Med"},{value:"high",label:"High"}]} />
@@ -8052,7 +8060,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                     <div key={p.id} style={{display:"grid",gridTemplateColumns:gridCols,gap:8,padding:"7px 10px",borderBottom:`1px solid ${T.border}`,alignItems:"center"}}>
                       <div onClick={()=>setDetailEventId(p.id)} style={{fontSize:11.5,fontWeight:600,color:T.white,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={p.title}>{p.title}</div>
                       <div style={{fontSize:10.5,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.subject||"—"}</div>
-                      <input type="date" value={p.date||""} onChange={e=>e.target.value&&patchExam(p.id,{date:e.target.value,checklist:false,time:p.time||"23:59"})} style={{...cellSelStyle,colorScheme:"dark"}} />
+                      <input type="date" value={p.date||""} onChange={e=>e.target.value&&patchExam(p.id,{date:e.target.value,checklist:false,time:p.time||"23:59"})} style={{...cellSelStyle}} />
                       <div style={{fontSize:10.5,color:daysUntil==null?T.amber:daysUntil<=1?T.red:T.muted,fontStyle:daysUntil==null?"italic":"normal"}}>{daysLabel}</div>
                       <CustomSelect value={bucketOf(p.priority)} onChange={v=>patchExam(p.id,{priority:BUCKET_VALS[v]})}
                         options={[{value:"low",label:"Low"},{value:"medium",label:"Med"},{value:"high",label:"High"}]} />
