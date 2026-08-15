@@ -93,6 +93,14 @@ function applyTheme(name, accent, density) {
     document.body.style.fontFamily = T.font;
     document.body.setAttribute('data-density', density||'Comfortable');
     document.body.setAttribute('data-theme', name==='light'?'light':'dark');
+    // Without this, every *unstyled* native control (checkboxes, radios,
+    // scrollbars, and any <select>/<input type=date> popup this file
+    // doesn't explicitly re-theme) falls back to the OS's default chrome
+    // no matter what color the rest of the page is -- the same "white
+    // popup on a dark app" bug as the Urgency dropdown, just for controls
+    // we haven't individually patched. Setting color-scheme on the root
+    // keeps that whole class of control in sync with the actual theme.
+    document.documentElement.style.colorScheme = name==='light'?'light':'dark';
   }
 }
 applyTheme(
@@ -1216,6 +1224,49 @@ const ColorSelect=({value,onChange})=>{
                   style={{flex:1,minWidth:0,background:T.card2,border:`1px solid ${T.border}`,borderRadius:6,padding:"5px 7px",color:T.text,fontSize:11,fontFamily:T.mono,outline:"none"}} />
               </div>
             </div>
+          </div>
+        </>
+      ), document.body)}
+    </>
+  );
+};
+// Native <select> popups render with default OS chrome (white background,
+// system font) no matter what CSS is applied to the closed box -- there is
+// no cross-browser way to style the open dropdown list of a real <select>.
+// This reimplements the same value/options/onChange contract as a button +
+// portal popover (identical shape to ColorSelect above) so it inherits the
+// app's dark theme and survives sitting inside a scroll-clipped table cell.
+const CustomSelect=({value,options,onChange,minWidth,fontSize,boxed})=>{
+  const [open,setOpen]=useState(false);
+  const [anchor,setAnchor]=useState(null);
+  const triggerRef=useRef(null);
+  const norm=options.map(o=>typeof o==="string"?{value:o,label:o}:o);
+  const current=norm.find(o=>o.value===value);
+  const openPopover=()=>{
+    const r=triggerRef.current&&triggerRef.current.getBoundingClientRect();
+    setAnchor(r?{top:r.bottom+4,left:r.left,width:Math.max(r.width,minWidth||90)}:{top:100,left:100,width:minWidth||90});
+    setOpen(true);
+  };
+  return (
+    <>
+      <button type="button" ref={triggerRef} onClick={openPopover}
+        style={boxed?{width:minWidth||"100%",display:"flex",alignItems:"center",justifyContent:"space-between",gap:6,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,color:T.text,fontSize:fontSize||13,fontFamily:T.font,outline:"none",cursor:"pointer",padding:"10px 8px"}
+          :{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",gap:4,background:"transparent",border:"none",color:T.text,fontSize:fontSize||10.5,fontFamily:T.font,outline:"none",cursor:"pointer",padding:"2px 0"}}>
+        <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{current?current.label:value}</span>
+        <span style={{color:T.faint,fontSize:9,flexShrink:0}}>▾</span>
+      </button>
+      {open&&anchor&&ReactDOM.createPortal((
+        <>
+          <div onClick={()=>setOpen(false)} style={{position:"fixed",inset:0,zIndex:998}} />
+          <div onClick={e=>e.stopPropagation()} style={{position:"fixed",top:anchor.top,left:anchor.left,minWidth:anchor.width,zIndex:999,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:4,boxShadow:"0 12px 28px -12px rgba(0,0,0,0.5)",animation:"studlinPop 0.15s cubic-bezier(.2,.85,.3,1)"}}>
+            {norm.map(o=>(
+              <div key={o.value} onClick={()=>{onChange(o.value);setOpen(false);}}
+                style={{padding:"6px 8px",borderRadius:5,fontSize:fontSize||11,fontFamily:T.font,color:o.value===value?T.lime:T.text,background:o.value===value?T.lime+"14":"transparent",cursor:"pointer",whiteSpace:"nowrap"}}
+                onMouseEnter={e=>{if(o.value!==value)e.currentTarget.style.background=T.card2;}}
+                onMouseLeave={e=>{if(o.value!==value)e.currentTarget.style.background="transparent";}}>
+                {o.label}
+              </div>
+            ))}
           </div>
         </>
       ), document.body)}
@@ -7804,10 +7855,8 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                 <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
                   <Input placeholder="Search your exams…" value={examSearch} onChange={e=>setExamSearch(e.target.value)} style={{flex:1,minWidth:160}} />
                   {examClasses.length>1&&(
-                    <select value={examClassFilter} onChange={e=>setExamClassFilter(e.target.value)} style={{...wizardSelectStyle,width:150}}>
-                      <option value="">All classes</option>
-                      {examClasses.map(c=><option key={c} value={c}>{c}</option>)}
-                    </select>
+                    <CustomSelect boxed value={examClassFilter} onChange={setExamClassFilter} minWidth={150}
+                      options={[{value:"",label:"All classes"},...examClasses.map(c=>({value:c,label:c}))]} />
                   )}
                 </div>
                 {visibleExams.length===0&&(
@@ -7846,14 +7895,8 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                               would misrepresent it, and "major" alone
                               carries real weight in priority math that a
                               wrong guess could silently change). */}
-                          <select value={ex.examType||""} onChange={e=>{const v=e.target.value;const level=EXAM_TYPE_TO_IMPORTANCE[v]||"moderate";patchExam(ex.id,{examType:v,importanceLevel:level,examWeight:examWeightFromImportance(level)});}} style={cellSelStyle}>
-                            <option value="" disabled>Type</option>
-                            <option value="quiz">Quiz</option>
-                            <option value="midterm">Midterm</option>
-                            <option value="final">Final</option>
-                            <option value="project">Project</option>
-                            <option value="other">Other</option>
-                          </select>
+                          <CustomSelect value={ex.examType||""} onChange={v=>{const level=EXAM_TYPE_TO_IMPORTANCE[v]||"moderate";patchExam(ex.id,{examType:v,importanceLevel:level,examWeight:examWeightFromImportance(level)});}}
+                            options={[{value:"",label:"Type"},{value:"quiz",label:"Quiz"},{value:"midterm",label:"Midterm"},{value:"final",label:"Final"},{value:"project",label:"Project"},{value:"other",label:"Other"}]} />
                           {/* sessionsMovable (new field, Phase 9): whether Studlin
                               can auto-shuffle THIS exam's already-scheduled study
                               sessions. Distinct from Phase 7's routine-level
@@ -7863,22 +7906,14 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                               get confused in code or copy. Unset/undefined reads
                               as Flexible (the pre-existing default behavior),
                               matching this file's additive-field convention. */}
-                          <select value={isFlexible?"flexible":"rigid"} onChange={e=>patchExam(ex.id,{sessionsMovable:e.target.value==="flexible"})} style={cellSelStyle}>
-                            <option value="flexible">Flex</option>
-                            <option value="rigid">Rigid</option>
-                          </select>
-                          <input type="date" value={ex.date} onChange={e=>patchExam(ex.id,{date:e.target.value})} style={{...cellSelStyle,colorScheme:"dark"}} />
+                          <CustomSelect value={isFlexible?"flexible":"rigid"} onChange={v=>patchExam(ex.id,{sessionsMovable:v==="flexible"})}
+                            options={[{value:"flexible",label:"Flex"},{value:"rigid",label:"Rigid"}]} />
+                          <input type="date" value={ex.date} onChange={e=>patchExam(ex.id,{date:e.target.value})} style={{...cellSelStyle}} />
                           <div style={{fontSize:10.5,color:daysUntil<=1?T.red:T.muted}}>{daysLabel}</div>
-                          <select value={bucketOf(ex.priority)} onChange={e=>patchExam(ex.id,{priority:BUCKET_VALS[e.target.value]})} style={cellSelStyle}>
-                            <option value="low">Low</option>
-                            <option value="medium">Med</option>
-                            <option value="high">High</option>
-                          </select>
-                          <select value={bucketOf(ex.difficulty)} onChange={e=>patchExam(ex.id,{difficulty:BUCKET_VALS[e.target.value]})} style={cellSelStyle}>
-                            <option value="low">Easy</option>
-                            <option value="medium">Med</option>
-                            <option value="high">Hard</option>
-                          </select>
+                          <CustomSelect value={bucketOf(ex.priority)} onChange={v=>patchExam(ex.id,{priority:BUCKET_VALS[v]})}
+                            options={[{value:"low",label:"Low"},{value:"medium",label:"Med"},{value:"high",label:"High"}]} />
+                          <CustomSelect value={bucketOf(ex.difficulty)} onChange={v=>patchExam(ex.id,{difficulty:BUCKET_VALS[v]})}
+                            options={[{value:"low",label:"Easy"},{value:"medium",label:"Med"},{value:"high",label:"Hard"}]} />
                           <div onClick={()=>viewPlan(ex)} style={{fontSize:10.5,color:T.muted,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title="Click to open the study plan">
                             {sessionsLabel}
                           </div>
@@ -7933,10 +7968,8 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
             <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
               <Input placeholder="Search your assignments…" value={assignSearch} onChange={e=>setAssignSearch(e.target.value)} style={{flex:1,minWidth:160}} />
               {assignClasses.length>1&&(
-                <select value={assignClassFilter} onChange={e=>setAssignClassFilter(e.target.value)} style={{...wizardSelectStyle,width:150}}>
-                  <option value="">All classes</option>
-                  {assignClasses.map(c=><option key={c} value={c}>{c}</option>)}
-                </select>
+                <CustomSelect boxed value={assignClassFilter} onChange={setAssignClassFilter} minWidth={150}
+                  options={[{value:"",label:"All classes"},...assignClasses.map(c=>({value:c,label:c}))]} />
               )}
             </div>
             {assignments.length===0
@@ -7969,14 +8002,12 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                           (checklist:true -- see upcomingAssignments' own
                           comment) graduates it into a real dated deadline,
                           same as Dashboard's retired setNoDateItemDate did. */}
-                      <input type="date" value={a.date||""} onChange={e=>e.target.value&&patchExam(a.id,{date:e.target.value,checklist:false,time:a.time||"23:59"})} style={{...cellSelStyle,colorScheme:"dark"}} />
+                      <input type="date" value={a.date||""} onChange={e=>e.target.value&&patchExam(a.id,{date:e.target.value,checklist:false,time:a.time||"23:59"})} style={{...cellSelStyle}} />
                       <div style={{fontSize:10.5,color:daysUntil==null?T.amber:daysUntil<=1?T.red:T.muted,fontStyle:daysUntil==null?"italic":"normal"}}>{daysLabel}</div>
-                      <select value={bucketOf(a.priority)} onChange={e=>patchExam(a.id,{priority:BUCKET_VALS[e.target.value]})} style={cellSelStyle}>
-                        <option value="low">Low</option><option value="medium">Med</option><option value="high">High</option>
-                      </select>
-                      <select value={bucketOf(a.difficulty)} onChange={e=>patchExam(a.id,{difficulty:BUCKET_VALS[e.target.value]})} style={cellSelStyle}>
-                        <option value="low">Easy</option><option value="medium">Med</option><option value="high">Hard</option>
-                      </select>
+                      <CustomSelect value={bucketOf(a.priority)} onChange={v=>patchExam(a.id,{priority:BUCKET_VALS[v]})}
+                        options={[{value:"low",label:"Low"},{value:"medium",label:"Med"},{value:"high",label:"High"}]} />
+                      <CustomSelect value={bucketOf(a.difficulty)} onChange={v=>patchExam(a.id,{difficulty:BUCKET_VALS[v]})}
+                        options={[{value:"low",label:"Easy"},{value:"medium",label:"Med"},{value:"high",label:"Hard"}]} />
                       <div onClick={()=>setDetailEventId(a.id)} style={{fontSize:10.5,fontWeight:rowPace&&(rowPace.behind||rowPace.ahead)?700:400,color:rowPace&&rowPace.behind?T.amber:rowPace&&rowPace.ahead?T.teal:T.muted,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title="Click to open">{statusLabel}</div>
                     </div>
                   );
@@ -8004,10 +8035,8 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
             <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
               <Input placeholder="Search your projects…" value={projectSearch} onChange={e=>setProjectSearch(e.target.value)} style={{flex:1,minWidth:160}} />
               {projectClasses.length>1&&(
-                <select value={projectClassFilter} onChange={e=>setProjectClassFilter(e.target.value)} style={{...wizardSelectStyle,width:150}}>
-                  <option value="">All classes</option>
-                  {projectClasses.map(c=><option key={c} value={c}>{c}</option>)}
-                </select>
+                <CustomSelect boxed value={projectClassFilter} onChange={setProjectClassFilter} minWidth={150}
+                  options={[{value:"",label:"All classes"},...projectClasses.map(c=>({value:c,label:c}))]} />
               )}
             </div>
             {projects.length===0
@@ -8031,14 +8060,12 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                     <div key={p.id} style={{display:"grid",gridTemplateColumns:gridCols,gap:8,padding:"7px 10px",borderBottom:`1px solid ${T.border}`,alignItems:"center"}}>
                       <div onClick={()=>setDetailEventId(p.id)} style={{fontSize:11.5,fontWeight:600,color:T.white,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={p.title}>{p.title}</div>
                       <div style={{fontSize:10.5,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.subject||"—"}</div>
-                      <input type="date" value={p.date||""} onChange={e=>e.target.value&&patchExam(p.id,{date:e.target.value,checklist:false,time:p.time||"23:59"})} style={{...cellSelStyle,colorScheme:"dark"}} />
+                      <input type="date" value={p.date||""} onChange={e=>e.target.value&&patchExam(p.id,{date:e.target.value,checklist:false,time:p.time||"23:59"})} style={{...cellSelStyle}} />
                       <div style={{fontSize:10.5,color:daysUntil==null?T.amber:daysUntil<=1?T.red:T.muted,fontStyle:daysUntil==null?"italic":"normal"}}>{daysLabel}</div>
-                      <select value={bucketOf(p.priority)} onChange={e=>patchExam(p.id,{priority:BUCKET_VALS[e.target.value]})} style={cellSelStyle}>
-                        <option value="low">Low</option><option value="medium">Med</option><option value="high">High</option>
-                      </select>
-                      <select value={bucketOf(p.difficulty)} onChange={e=>patchExam(p.id,{difficulty:BUCKET_VALS[e.target.value]})} style={cellSelStyle}>
-                        <option value="low">Easy</option><option value="medium">Med</option><option value="high">Hard</option>
-                      </select>
+                      <CustomSelect value={bucketOf(p.priority)} onChange={v=>patchExam(p.id,{priority:BUCKET_VALS[v]})}
+                        options={[{value:"low",label:"Low"},{value:"medium",label:"Med"},{value:"high",label:"High"}]} />
+                      <CustomSelect value={bucketOf(p.difficulty)} onChange={v=>patchExam(p.id,{difficulty:BUCKET_VALS[v]})}
+                        options={[{value:"low",label:"Easy"},{value:"medium",label:"Med"},{value:"high",label:"Hard"}]} />
                       <div onClick={()=>setDetailEventId(p.id)} style={{fontSize:10.5,color:T.muted,cursor:"pointer"}} title="Click to open">{steps.length===0?"no checklist yet":doneCount+"/"+steps.length+" steps"}</div>
                     </div>
                   );
@@ -19364,6 +19391,34 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // drifted into conflict for any other reason. Run it once on every Calendar
   // visit too, so stale conflicts don't sit there forever.
   useEffect(()=>{ reconcileRoutineConflicts(routines); },[]);
+  // One-time cleanup for a since-fixed bug (ab7a55a/acde552): before groupId
+  // existed, each drag-and-drop placement of an activity landed as its own
+  // standalone routine record, so accounts with pre-fix history can still
+  // show the same activity as several duplicate-looking sidebar rows.
+  // Backfilling a shared groupId onto same-title/-color siblings collapses
+  // them into the existing "N placements" view -- no days/times/ids touched,
+  // so it's safe to run silently, and it naturally no-ops once every routine
+  // already has a groupId.
+  useEffect(()=>{
+    const byKey=new Map();
+    routines.forEach(r=>{
+      if(r.kind==="class"||r.groupId)return;
+      const key=(r.title||"").trim().toLowerCase()+"|"+(r.color||"");
+      if(!byKey.has(key))byKey.set(key,[]);
+      byKey.get(key).push(r);
+    });
+    let changed=false;
+    const next=routines.map(r=>({...r}));
+    byKey.forEach(group=>{
+      if(group.length<2)return;
+      const gid=group[0].id;
+      group.forEach(r=>{
+        const idx=next.findIndex(x=>x.id===r.id);
+        if(idx!==-1){next[idx]={...next[idx],groupId:gid};changed=true;}
+      });
+    });
+    if(changed)persistRoutines(next);
+  },[]);
   // The reserved "hs-school" rule (synthesized by the Weekly Routine wizard
   // for High School accounts) doubles as the School Hours grid-tint window —
   // no separate profile-status prop needed, since only HS accounts ever get
