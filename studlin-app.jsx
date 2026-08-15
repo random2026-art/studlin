@@ -9310,28 +9310,37 @@ function Flashcards() {
     setReviewSchedulePreview(null);
   };
 
-  // Live username autocomplete for "Send deck to a friend" — same
-  // prefix-range Firestore query pattern Studlin Network's own search uses,
-  // so typing "v" toward "vene" narrows to real registered usernames.
-  const [sendDeckResults,setSendDeckResults]=useState([]);
-  const [sendDeckSearching,setSendDeckSearching]=useState(false);
-  const [sendDeckDropdownOpen,setSendDeckDropdownOpen]=useState(false);
+  // Friends-only autocomplete for "Send deck to a friend" — decks can only
+  // go to accepted friends, so this loads the student's own friend list
+  // (via the same accepted-friendships lookup FriendsChat uses) and filters
+  // it locally, instead of querying the `profiles` collection by prefix —
+  // which let typing here search every Studlin user, not just friends.
+  const [myFriendProfiles,setMyFriendProfiles]=useState([]);
+  const [friendsLoading,setFriendsLoading]=useState(false);
   useEffect(()=>{
-    const raw=sendDeckTarget.trim().toLowerCase().replace(/^@/,"");
-    if(!raw){setSendDeckResults([]);setSendDeckSearching(false);return;}
-    setSendDeckSearching(true);
-    let active=true;
+    if(!sendDeckOpen)return;
     const myUid=firebase.auth().currentUser?.uid||null;
-    const t=setTimeout(async()=>{
+    if(!myUid)return;
+    let active=true;
+    setFriendsLoading(true);
+    (async()=>{
       try{
-        const snap=await fsdb().collection('profiles').where('usernameLower','>=',raw).where('usernameLower','<=',raw+String.fromCharCode(0xf8ff)).limit(6).get();
+        const uids=await getAcceptedFriendUids(myUid);
+        const docs=await Promise.all(uids.map(uid=>fsdb().collection('profiles').doc(uid).get().catch(()=>null)));
         if(!active)return;
-        setSendDeckResults(snap.docs.map(d=>({uid:d.id,...d.data()})).filter(u=>u.uid!==myUid));
-      }catch(e){if(active)setSendDeckResults([]);}
-      if(active)setSendDeckSearching(false);
-    },250);
-    return ()=>{active=false;clearTimeout(t);};
-  },[sendDeckTarget]);
+        setMyFriendProfiles(docs.filter(d=>d&&d.exists).map(d=>({uid:d.id,...d.data()})));
+      }catch(e){if(active)setMyFriendProfiles([]);}
+      if(active)setFriendsLoading(false);
+    })();
+    return ()=>{active=false;};
+  },[sendDeckOpen]);
+  const [sendDeckDropdownOpen,setSendDeckDropdownOpen]=useState(false);
+  const sendDeckSearching=friendsLoading;
+  const sendDeckResults=(()=>{
+    const raw=sendDeckTarget.trim().toLowerCase().replace(/^@/,"");
+    if(!raw)return[];
+    return myFriendProfiles.filter(u=>(u.username||"").toLowerCase().startsWith(raw)||(u.name||"").toLowerCase().startsWith(raw)).slice(0,6);
+  })();
 
   // Edit deck — rename + correct individual front/back card pairs, opened via
   // the card's Edit button or a double-click on its title.
@@ -9380,17 +9389,18 @@ function Flashcards() {
             </div>
           :<>
               {sendDeckId&&(()=>{const d=deckList.find(x=>x.id===sendDeckId);return d?<div style={{padding:"12px 14px",background:T.card2,borderRadius:8,border:`1px solid ${T.border}`,marginBottom:14}}><div style={{fontSize:12,fontWeight:600,color:T.white,marginBottom:2}}>{d.name}</div><div style={{fontSize:11,color:T.muted}}>{d.cards?d.cards.length:0} cards</div></div>:null;})()}
-              <Field label="Friend's Studlin username or email">
+              <Field label="Search your friends">
                 <div style={{position:"relative"}}>
-                  <Input placeholder="e.g. @alex or alex@school.edu" value={sendDeckTarget}
+                  <Input placeholder={myFriendProfiles.length===0&&!friendsLoading?"Add friends to send decks to them":"e.g. @alex"} value={sendDeckTarget}
                     onChange={e=>{setSendDeckTarget(e.target.value);setSendDeckDropdownOpen(true);}}
                     onFocus={()=>setSendDeckDropdownOpen(true)}
                     onBlur={()=>setTimeout(()=>setSendDeckDropdownOpen(false),150)}
+                    disabled={myFriendProfiles.length===0&&!friendsLoading}
                     autoFocus />
                   {sendDeckDropdownOpen&&sendDeckTarget.trim()&&(
                     <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,right:0,zIndex:20,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,overflow:"hidden",boxShadow:"0 12px 28px -12px rgba(0,0,0,0.35)"}}>
                       {sendDeckSearching
-                        ? <div style={{padding:"10px 12px",fontSize:12,color:T.muted}}>Searching…</div>
+                        ? <div style={{padding:"10px 12px",fontSize:12,color:T.muted}}>Loading friends…</div>
                         : sendDeckResults.length>0
                           ? sendDeckResults.map(u=>(
                               <div key={u.uid} onMouseDown={e=>e.preventDefault()} onClick={()=>{setSendDeckTarget("@"+(u.username||u.uid));setSendDeckDropdownOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",cursor:"pointer",borderBottom:`1px solid ${T.border}`}}>
@@ -9401,7 +9411,7 @@ function Flashcards() {
                                 </div>
                               </div>
                             ))
-                          : <div style={{padding:"10px 12px",fontSize:12,color:T.muted}}>No matches.</div>
+                          : <div style={{padding:"10px 12px",fontSize:12,color:T.muted}}>No friends match "{sendDeckTarget}".</div>
                       }
                     </div>
                   )}
