@@ -9238,19 +9238,39 @@ function Flashcards() {
   const deleteDeck=(id)=>{const next=deckList.filter(d=>d.id!==id);setDeckList(next);lsSet("decks",next);if(studyDeck&&studyDeck.id===id){setStudyDeck(null);setTab("decks");}};
   const [sendDeckOpen,setSendDeckOpen]=useState(false);
   const [sendDeckTarget,setSendDeckTarget]=useState("");
+  const [sendDeckSelectedUid,setSendDeckSelectedUid]=useState(null);
   const [sendDeckId,setSendDeckId]=useState(null);
-  const [sendDeckStatus,setSendDeckStatus]=useState("");
+  const [sendDeckStatus,setSendDeckStatus]=useState(""); // ""|"sending"|"sent"|"error"
   const sendDeck=(deck)=>{setSendDeckId(deck.id);setSendDeckOpen(true);};
-  const confirmSendDeck=()=>{
-    const t=sendDeckTarget.trim();
-    if(!t||!sendDeckId)return;
+  // Delivers into the actual chatRooms/messages Firestore path the DM chat
+  // (ChatDrawer's sendMessage/attachDeck) already writes to and renders —
+  // same room-doc-then-message shape, so the deck shows up as a real
+  // pending share in the recipient's chat, with the same Approve & Accept
+  // flow that copies it into their Flashcards workspace. Requires an actual
+  // picked friend (sendDeckSelectedUid), not just typed text, since a
+  // uid — not a username string — is what the room id and message need.
+  const confirmSendDeck=async()=>{
+    if(!sendDeckSelectedUid||!sendDeckId)return;
     const deck=deckList.find(d=>d.id===sendDeckId);
-    if(!deck)return;
-    const pending=lsGet("pendingShares",[]);
-    pending.push({type:"deck",name:deck.name,cards:deck.cards,to:t,from:getUserName(),date:dayKey()});
-    lsSet("pendingShares",pending);
-    setSendDeckStatus("sent");
-    setTimeout(()=>{setSendDeckOpen(false);setSendDeckTarget("");setSendDeckId(null);setSendDeckStatus("");},1800);
+    const myUid=firebase.auth().currentUser?.uid||null;
+    if(!deck||!myUid)return;
+    setSendDeckStatus("sending");
+    try{
+      const roomId=dmRoomId(myUid,sendDeckSelectedUid);
+      const roomRef=fsdb().collection('chatRooms').doc(roomId);
+      const now=new Date().toISOString();
+      await roomRef.set({type:"dm",memberUids:[myUid,sendDeckSelectedUid].sort(),createdBy:myUid,createdAt:now,updatedAt:now,lastMessage:null},{merge:true});
+      const ts=Date.now();
+      const meta={name:deck.name,count:deck.cards?deck.cards.length:(deck.count||0),id:deck.id,cards:deck.cards};
+      await roomRef.collection('messages').add({senderId:myUid,ts,kind:"deck",status:"pending",meta});
+      await roomRef.update({lastMessage:{text:null,kind:"deck",ts,senderId:myUid},updatedAt:new Date().toISOString()});
+      authFetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"push",roomId,preview:"Deck shared"})}).catch(reportError("sendDeck-push"));
+      setSendDeckStatus("sent");
+      setTimeout(()=>{setSendDeckOpen(false);setSendDeckTarget("");setSendDeckSelectedUid(null);setSendDeckId(null);setSendDeckStatus("");},1800);
+    }catch(e){
+      reportError("confirmSendDeck")(e);
+      setSendDeckStatus("error");
+    }
   };
 
   // Phase 3 — link a deck to an exam on the calendar, then propose real
@@ -9379,8 +9399,8 @@ function Flashcards() {
           <button onClick={dismissExamLinkTip} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:18,padding:"2px 6px",fontFamily:T.font,lineHeight:1,flexShrink:0}}>×</button>
         </div>
       )}
-      <Modal open={sendDeckOpen} onClose={()=>{setSendDeckOpen(false);setSendDeckTarget("");setSendDeckId(null);setSendDeckStatus("");}} title="Send deck to a friend" sub="Beam this entire deck into a friend's Studlin workspace." width={440}
-        footer={sendDeckStatus==="sent"?null:<><Btn variant="subtle" onClick={()=>{setSendDeckOpen(false);setSendDeckTarget("");setSendDeckId(null);setSendDeckStatus("");}}>Cancel</Btn><Btn onClick={confirmSendDeck} style={{opacity:sendDeckTarget.trim()?1:0.45}}>{Icon.send} Send deck</Btn></>}>
+      <Modal open={sendDeckOpen} onClose={()=>{setSendDeckOpen(false);setSendDeckTarget("");setSendDeckSelectedUid(null);setSendDeckId(null);setSendDeckStatus("");}} title="Send deck to a friend" sub="Beam this entire deck into a friend's Studlin workspace." width={440}
+        footer={sendDeckStatus==="sent"?null:<><Btn variant="subtle" onClick={()=>{setSendDeckOpen(false);setSendDeckTarget("");setSendDeckSelectedUid(null);setSendDeckId(null);setSendDeckStatus("");}}>Cancel</Btn><Btn onClick={confirmSendDeck} disabled={!sendDeckSelectedUid||sendDeckStatus==="sending"} style={{opacity:sendDeckSelectedUid&&sendDeckStatus!=="sending"?1:0.45}}>{sendDeckStatus==="sending"?"Sending…":<>{Icon.send} Send deck</>}</Btn></>}>
         {sendDeckStatus==="sent"
           ?<div style={{textAlign:"center",padding:"24px 0"}}>
               <div style={{fontSize:32,marginBottom:12}}>✓</div>
@@ -9392,7 +9412,7 @@ function Flashcards() {
               <Field label="Search your friends">
                 <div style={{position:"relative"}}>
                   <Input placeholder={myFriendProfiles.length===0&&!friendsLoading?"Add friends to send decks to them":"e.g. @alex"} value={sendDeckTarget}
-                    onChange={e=>{setSendDeckTarget(e.target.value);setSendDeckDropdownOpen(true);}}
+                    onChange={e=>{setSendDeckTarget(e.target.value);setSendDeckSelectedUid(null);setSendDeckDropdownOpen(true);}}
                     onFocus={()=>setSendDeckDropdownOpen(true)}
                     onBlur={()=>setTimeout(()=>setSendDeckDropdownOpen(false),150)}
                     disabled={myFriendProfiles.length===0&&!friendsLoading}
@@ -9403,7 +9423,7 @@ function Flashcards() {
                         ? <div style={{padding:"10px 12px",fontSize:12,color:T.muted}}>Loading friends…</div>
                         : sendDeckResults.length>0
                           ? sendDeckResults.map(u=>(
-                              <div key={u.uid} onMouseDown={e=>e.preventDefault()} onClick={()=>{setSendDeckTarget("@"+(u.username||u.uid));setSendDeckDropdownOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",cursor:"pointer",borderBottom:`1px solid ${T.border}`}}>
+                              <div key={u.uid} onMouseDown={e=>e.preventDefault()} onClick={()=>{setSendDeckTarget("@"+(u.username||u.uid));setSendDeckSelectedUid(u.uid);setSendDeckDropdownOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",cursor:"pointer",borderBottom:`1px solid ${T.border}`}}>
                                 <Av initials={(u.name||"S").split(" ").map(x=>x[0]).join("")} color={T.lime} size={26} picUrl="" />
                                 <div style={{minWidth:0}}>
                                   <div style={{fontSize:12.5,fontWeight:600,color:T.white}}>{u.name||"Studlin User"}</div>
@@ -9417,6 +9437,7 @@ function Flashcards() {
                   )}
                 </div>
               </Field>
+              {sendDeckStatus==="error"&&<div style={{fontSize:12,color:T.red,marginTop:8}}>Couldn't send that deck. Try again.</div>}
             </>
         }
       </Modal>
