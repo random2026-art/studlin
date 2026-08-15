@@ -5948,27 +5948,41 @@ function Flashcards() {
   };
   const [sendDeckOpen, setSendDeckOpen] = useState(false);
   const [sendDeckTarget, setSendDeckTarget] = useState("");
+  const [sendDeckSelectedUid, setSendDeckSelectedUid] = useState(null);
   const [sendDeckId, setSendDeckId] = useState(null);
   const [sendDeckStatus, setSendDeckStatus] = useState("");
   const sendDeck = (deck) => {
     setSendDeckId(deck.id);
     setSendDeckOpen(true);
   };
-  const confirmSendDeck = () => {
-    const t = sendDeckTarget.trim();
-    if (!t || !sendDeckId) return;
+  const confirmSendDeck = async () => {
+    if (!sendDeckSelectedUid || !sendDeckId) return;
     const deck = deckList.find((d) => d.id === sendDeckId);
-    if (!deck) return;
-    const pending = lsGet("pendingShares", []);
-    pending.push({ type: "deck", name: deck.name, cards: deck.cards, to: t, from: getUserName(), date: dayKey() });
-    lsSet("pendingShares", pending);
-    setSendDeckStatus("sent");
-    setTimeout(() => {
-      setSendDeckOpen(false);
-      setSendDeckTarget("");
-      setSendDeckId(null);
-      setSendDeckStatus("");
-    }, 1800);
+    const myUid = firebase.auth().currentUser?.uid || null;
+    if (!deck || !myUid) return;
+    setSendDeckStatus("sending");
+    try {
+      const roomId = dmRoomId(myUid, sendDeckSelectedUid);
+      const roomRef = fsdb().collection("chatRooms").doc(roomId);
+      const now = (/* @__PURE__ */ new Date()).toISOString();
+      await roomRef.set({ type: "dm", memberUids: [myUid, sendDeckSelectedUid].sort(), createdBy: myUid, createdAt: now, updatedAt: now, lastMessage: null }, { merge: true });
+      const ts = Date.now();
+      const meta = { name: deck.name, count: deck.cards ? deck.cards.length : deck.count || 0, id: deck.id, cards: deck.cards };
+      await roomRef.collection("messages").add({ senderId: myUid, ts, kind: "deck", status: "pending", meta });
+      await roomRef.update({ lastMessage: { text: null, kind: "deck", ts, senderId: myUid }, updatedAt: (/* @__PURE__ */ new Date()).toISOString() });
+      authFetch("/api/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "push", roomId, preview: "Deck shared" }) }).catch(reportError("sendDeck-push"));
+      setSendDeckStatus("sent");
+      setTimeout(() => {
+        setSendDeckOpen(false);
+        setSendDeckTarget("");
+        setSendDeckSelectedUid(null);
+        setSendDeckId(null);
+        setSendDeckStatus("");
+      }, 1800);
+    } catch (e) {
+      reportError("confirmSendDeck")(e);
+      setSendDeckStatus("error");
+    }
   };
   const [linkExamDeckId, setLinkExamDeckId] = useState(null);
   const [reviewSchedulePreview, setReviewSchedulePreview] = useState(null);
@@ -6025,34 +6039,36 @@ function Flashcards() {
     lsSet("events", events.concat(newEvents));
     setReviewSchedulePreview(null);
   };
-  const [sendDeckResults, setSendDeckResults] = useState([]);
-  const [sendDeckSearching, setSendDeckSearching] = useState(false);
-  const [sendDeckDropdownOpen, setSendDeckDropdownOpen] = useState(false);
+  const [myFriendProfiles, setMyFriendProfiles] = useState([]);
+  const [friendsLoading, setFriendsLoading] = useState(false);
   useEffect(() => {
-    const raw = sendDeckTarget.trim().toLowerCase().replace(/^@/, "");
-    if (!raw) {
-      setSendDeckResults([]);
-      setSendDeckSearching(false);
-      return;
-    }
-    setSendDeckSearching(true);
-    let active = true;
+    if (!sendDeckOpen) return;
     const myUid = firebase.auth().currentUser?.uid || null;
-    const t = setTimeout(async () => {
+    if (!myUid) return;
+    let active = true;
+    setFriendsLoading(true);
+    (async () => {
       try {
-        const snap = await fsdb().collection("profiles").where("usernameLower", ">=", raw).where("usernameLower", "<=", raw + String.fromCharCode(63743)).limit(6).get();
+        const uids = await getAcceptedFriendUids(myUid);
+        const docs = await Promise.all(uids.map((uid) => fsdb().collection("profiles").doc(uid).get().catch(() => null)));
         if (!active) return;
-        setSendDeckResults(snap.docs.map((d) => ({ uid: d.id, ...d.data() })).filter((u) => u.uid !== myUid));
+        setMyFriendProfiles(docs.filter((d) => d && d.exists).map((d) => ({ uid: d.id, ...d.data() })));
       } catch (e) {
-        if (active) setSendDeckResults([]);
+        if (active) setMyFriendProfiles([]);
       }
-      if (active) setSendDeckSearching(false);
-    }, 250);
+      if (active) setFriendsLoading(false);
+    })();
     return () => {
       active = false;
-      clearTimeout(t);
     };
-  }, [sendDeckTarget]);
+  }, [sendDeckOpen]);
+  const [sendDeckDropdownOpen, setSendDeckDropdownOpen] = useState(false);
+  const sendDeckSearching = friendsLoading;
+  const sendDeckResults = (() => {
+    const raw = sendDeckTarget.trim().toLowerCase().replace(/^@/, "");
+    if (!raw) return [];
+    return myFriendProfiles.filter((u) => (u.username || "").toLowerCase().startsWith(raw) || (u.name || "").toLowerCase().startsWith(raw)).slice(0, 6);
+  })();
   const [editDeckOpen, setEditDeckOpen] = useState(false);
   const [editDeckId, setEditDeckId] = useState(null);
   const [editDeckName, setEditDeckName] = useState("");
@@ -6084,6 +6100,7 @@ function Flashcards() {
       onClose: () => {
         setSendDeckOpen(false);
         setSendDeckTarget("");
+        setSendDeckSelectedUid(null);
         setSendDeckId(null);
         setSendDeckStatus("");
       },
@@ -6093,30 +6110,34 @@ function Flashcards() {
       footer: sendDeckStatus === "sent" ? null : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => {
         setSendDeckOpen(false);
         setSendDeckTarget("");
+        setSendDeckSelectedUid(null);
         setSendDeckId(null);
         setSendDeckStatus("");
-      } }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: confirmSendDeck, style: { opacity: sendDeckTarget.trim() ? 1 : 0.45 } }, Icon.send, " Send deck"))
+      } }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: confirmSendDeck, disabled: !sendDeckSelectedUid || sendDeckStatus === "sending", style: { opacity: sendDeckSelectedUid && sendDeckStatus !== "sending" ? 1 : 0.45 } }, sendDeckStatus === "sending" ? "Sending\u2026" : /* @__PURE__ */ React.createElement(React.Fragment, null, Icon.send, " Send deck")))
     },
     sendDeckStatus === "sent" ? /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", padding: "24px 0" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 32, marginBottom: 12 } }, "\u2713"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 15, fontWeight: 600, color: T.white, marginBottom: 4 } }, "Deck sent!"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted } }, "Sent to ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, sendDeckTarget))) : /* @__PURE__ */ React.createElement(React.Fragment, null, sendDeckId && (() => {
       const d = deckList.find((x) => x.id === sendDeckId);
       return d ? /* @__PURE__ */ React.createElement("div", { style: { padding: "12px 14px", background: T.card2, borderRadius: 8, border: `1px solid ${T.border}`, marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 600, color: T.white, marginBottom: 2 } }, d.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted } }, d.cards ? d.cards.length : 0, " cards")) : null;
-    })(), /* @__PURE__ */ React.createElement(Field, { label: "Friend's Studlin username or email" }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(
+    })(), /* @__PURE__ */ React.createElement(Field, { label: "Search your friends" }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(
       Input,
       {
-        placeholder: "e.g. @alex or alex@school.edu",
+        placeholder: myFriendProfiles.length === 0 && !friendsLoading ? "Add friends to send decks to them" : "e.g. @alex",
         value: sendDeckTarget,
         onChange: (e) => {
           setSendDeckTarget(e.target.value);
+          setSendDeckSelectedUid(null);
           setSendDeckDropdownOpen(true);
         },
         onFocus: () => setSendDeckDropdownOpen(true),
         onBlur: () => setTimeout(() => setSendDeckDropdownOpen(false), 150),
+        disabled: myFriendProfiles.length === 0 && !friendsLoading,
         autoFocus: true
       }
-    ), sendDeckDropdownOpen && sendDeckTarget.trim() && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 20, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden", boxShadow: "0 12px 28px -12px rgba(0,0,0,0.35)" } }, sendDeckSearching ? /* @__PURE__ */ React.createElement("div", { style: { padding: "10px 12px", fontSize: 12, color: T.muted } }, "Searching\u2026") : sendDeckResults.length > 0 ? sendDeckResults.map((u) => /* @__PURE__ */ React.createElement("div", { key: u.uid, onMouseDown: (e) => e.preventDefault(), onClick: () => {
+    ), sendDeckDropdownOpen && sendDeckTarget.trim() && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 20, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden", boxShadow: "0 12px 28px -12px rgba(0,0,0,0.35)" } }, sendDeckSearching ? /* @__PURE__ */ React.createElement("div", { style: { padding: "10px 12px", fontSize: 12, color: T.muted } }, "Loading friends\u2026") : sendDeckResults.length > 0 ? sendDeckResults.map((u) => /* @__PURE__ */ React.createElement("div", { key: u.uid, onMouseDown: (e) => e.preventDefault(), onClick: () => {
       setSendDeckTarget("@" + (u.username || u.uid));
+      setSendDeckSelectedUid(u.uid);
       setSendDeckDropdownOpen(false);
-    }, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", cursor: "pointer", borderBottom: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement(Av, { initials: (u.name || "S").split(" ").map((x) => x[0]).join(""), color: T.lime, size: 26, picUrl: "" }), /* @__PURE__ */ React.createElement("div", { style: { minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.white } }, u.name || "Studlin User"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.muted } }, "@", u.username, u.school ? " \xB7 " + u.school : "")))) : /* @__PURE__ */ React.createElement("div", { style: { padding: "10px 12px", fontSize: 12, color: T.muted } }, "No matches.")))))
+    }, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", cursor: "pointer", borderBottom: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement(Av, { initials: (u.name || "S").split(" ").map((x) => x[0]).join(""), color: T.lime, size: 26, picUrl: "" }), /* @__PURE__ */ React.createElement("div", { style: { minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.white } }, u.name || "Studlin User"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.muted } }, "@", u.username, u.school ? " \xB7 " + u.school : "")))) : /* @__PURE__ */ React.createElement("div", { style: { padding: "10px 12px", fontSize: 12, color: T.muted } }, 'No friends match "', sendDeckTarget, '".')))), sendDeckStatus === "error" && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: 8 } }, "Couldn't send that deck. Try again."))
   ), /* @__PURE__ */ React.createElement(Modal, { open: !!linkExamDeckId, onClose: () => setLinkExamDeckId(null), title: "Link to an exam", sub: "Studlin will propose review sessions counting down to the exam date.", width: 440 }, (() => {
     const linkingDeck = deckList.find((d) => d.id === linkExamDeckId);
     const alreadyLinked = linkingDeck ? deckExamIds(linkingDeck) : [];
