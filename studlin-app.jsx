@@ -9065,7 +9065,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
 }
 
 // ─── FLASHCARDS ───────────────────────────────────────────────────────────────
-function Flashcards({setActive=()=>{}}={}) {
+function Flashcards() {
   const MicIcon=<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0,display:"block"}}><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/></svg>;
   const [deckList,setDeckList]=useState(()=>{const d=lsGet("decks",null);return(d&&Array.isArray(d))?d:[];});
   const [showExamLinkTip,setShowExamLinkTip]=useState(()=>!lsGet("seenFlashcardsExamTip",false));
@@ -9574,13 +9574,6 @@ function Flashcards({setActive=()=>{}}={}) {
       {tab==="study"&&(
         studyDeck&&studyCards.length>0?
         <div style={{maxWidth:600,margin:"0 auto"}}>
-          {/* Same "← Back to X" breadcrumb the Studlin Prep flashcard
-              overlay already has (its own copy sits above <Flashcards />
-              at line ~9058) -- this standalone page had no equivalent, so
-              a student who jumped straight into studying a deck from the
-              Dashboard's "Pick up where you left off" had no way back
-              except the sidebar. */}
-          <button onClick={()=>setActive("dashboard")} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontWeight:600,fontFamily:T.font,cursor:"pointer",padding:"0 0 12px",display:"flex",alignItems:"center",gap:6}}>← Back to Dashboard</button>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
             <div style={{fontSize:13,fontWeight:600,color:T.white}}>{studyDeck.name}</div>
             <div style={{fontSize:12,color:T.muted}}>Card {idx+1} of {studyCards.length}</div>
@@ -24416,20 +24409,10 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   // app is built around, not a narrow single-feature usage count.
   const doneThisWeek=allEvents.filter(ev=>ev.status==="done"&&ev.date>=dayKey(weekDays7[0]));
   const tasksCompletedTotal=doneThisWeek.length;
-  // Top subject this week, by time -- real tracked timeSpent when a task's
-  // timer was actually run, falling back to its planned duration for tasks
-  // just checked off manually. Replaces the old plain-count version (most
-  // completed ITEMS, regardless of how long each took) -- "which subject
-  // ate the most of my week" is the more honest question a recap should
-  // answer, and it's what this stat now replaces "Cards reviewed" with
-  // below, not just the small pill it used to be.
-  const subjMinutes={};
-  doneThisWeek.forEach(ev=>{
-    const subj=(ev.subject||"").trim();
-    if(!subj)return;
-    subjMinutes[subj]=(subjMinutes[subj]||0)+(ev.timeSpent||ev.duration||0);
-  });
-  const topSubjectEntry=Object.entries(subjMinutes).sort((a,b)=>b[1]-a[1])[0];
+  // Top subject this week — from completed plan tasks' subject field
+  const subjCounts={};
+  doneThisWeek.forEach(ev=>{subjCounts[ev.subject]=(subjCounts[ev.subject]||0)+1;});
+  const topSubjectEntry=Object.entries(subjCounts).sort((a,b)=>b[1]-a[1])[0];
   const topSubjectThisWeek=topSubjectEntry?topSubjectEntry[0]:null;
   // Per-day focus minutes -- used by the Weekly Wrapped bar chart below.
   const minsByDay={};
@@ -24731,7 +24714,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
             <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:14}}>
               {[
                 {ln:"Focus hours",vn:fmtH(weeklyFocusMin)||"0m"},
-                {ln:"Top subject",vn:topSubjectThisWeek||"—"},
+                {ln:"Cards reviewed",vn:cardsMasteredTotal},
                 {ln:"Tasks completed",vn:tasksCompletedTotal},
               ].map((ins,i)=>(
                 <div key={i} style={{background:"rgba(246,241,230,0.05)",borderRadius:10,padding:"9px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -24743,6 +24726,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
           )}
           <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:12,marginBottom:20}}>
             <span style={{fontSize:10.5,padding:"5px 10px",background:"rgba(246,241,230,0.08)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:5,color:T.cream,fontWeight:600}}>{realStreak}-day streak</span>
+            {topSubjectThisWeek&&<span style={{fontSize:10.5,padding:"5px 10px",background:"rgba(246,241,230,0.08)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:5,color:T.cream,fontWeight:600}}>{topSubjectThisWeek} focus</span>}
           </div>
           <button onClick={dismissWrapped} style={{width:"100%",padding:"11px 0",borderRadius:6,background:T.lime,color:T.ink,border:"none",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Done</button>
         </div>
@@ -26599,7 +26583,6 @@ function App() {
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
            active==="profile"?<Profile setActive={setActive} seriousMode={seriousMode} />:
            active==="prep"?<StudlinPrep setActive={setActive} setDetailEventId={setDetailEventId} />:
-           active==="flashcards"?<Flashcards setActive={setActive} />:
            ActivePage?<ActivePage />:null}
         </div>
       </div>
