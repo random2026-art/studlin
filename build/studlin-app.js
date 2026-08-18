@@ -116,8 +116,6 @@ const Icon = {
   user: ic(/* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("path", { d: "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" }), /* @__PURE__ */ React.createElement("circle", { cx: "12", cy: "7", r: "4" }))),
   check: ic(/* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("polyline", { points: "20 6 9 17 4 12" }))),
   refresh: ic(/* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("polyline", { points: "1 4 1 10 7 10" }), /* @__PURE__ */ React.createElement("path", { d: "M3.51 15a9 9 0 1 0 .49-3.51" }))),
-  undo: ic(/* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("polyline", { points: "9 14 4 9 9 4" }), /* @__PURE__ */ React.createElement("path", { d: "M20 20v-7a4 4 0 0 0-4-4H4" }))),
-  redo: ic(/* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("polyline", { points: "15 14 20 9 15 4" }), /* @__PURE__ */ React.createElement("path", { d: "M4 20v-7a4 4 0 0 1 4-4h12" }))),
   music: ic(/* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("path", { d: "M9 18V5l12-2v13" }), /* @__PURE__ */ React.createElement("circle", { cx: "6", cy: "18", r: "3" }), /* @__PURE__ */ React.createElement("circle", { cx: "18", cy: "16", r: "3" }))),
   mic: ic(/* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("path", { d: "M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" }), /* @__PURE__ */ React.createElement("path", { d: "M19 10v2a7 7 0 0 1-14 0v-2" }), /* @__PURE__ */ React.createElement("line", { x1: "12", y1: "19", x2: "12", y2: "23" }), /* @__PURE__ */ React.createElement("line", { x1: "8", y1: "23", x2: "16", y2: "23" }))),
   users: ic(/* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("path", { d: "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" }), /* @__PURE__ */ React.createElement("circle", { cx: "9", cy: "7", r: "4" }), /* @__PURE__ */ React.createElement("path", { d: "M23 21v-2a4 4 0 0 0-3-3.87" }), /* @__PURE__ */ React.createElement("path", { d: "M16 3.13a4 4 0 0 1 0 7.75" }))),
@@ -9471,7 +9469,7 @@ function computeEventBlockHeightPx(durationMins, gapToNextMins, pxPerHr) {
   if (gapToNextMins == null) return floored;
   return Math.min(floored, Math.max(4, gapToNextMins * (pxPerHr / 60)));
 }
-function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent }) {
+function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange }) {
   const [WK_PX_HR, setWkPxHr] = useState(() => getCalZoom());
   const wkZoomDrag = useRef(null);
   const [wkZoomDragging, setWkZoomDragging] = useState(false);
@@ -9566,7 +9564,6 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
   const closePopover = () => {
     setPopoverAnchor(null);
     setSelectedEventId(null);
-    if (onSelectEvent) onSelectEvent(null);
   };
   useEffect(() => {
     if (!selectedEventId) return;
@@ -9577,12 +9574,11 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
       if (typing) return;
       const ev = events.find((x) => x.id === selectedEventId);
       setSelectedEventId(null);
-      if (onSelectEvent) onSelectEvent(null);
       if (ev && onDeleteEvent) onDeleteEvent(ev);
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [selectedEventId, events, onDeleteEvent, onSelectEvent]);
+  }, [selectedEventId, events, onDeleteEvent]);
   useEffect(() => {
     if (weekScrollRef.current) {
       const hour = (/* @__PURE__ */ new Date()).getHours();
@@ -9894,7 +9890,6 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
                 } else {
                   setSelectedEventId(ev.id);
                   setPopoverAnchor({ id: ev.id, rect: e.currentTarget.getBoundingClientRect() });
-                  if (onSelectEvent) onSelectEvent(ev.id);
                 }
               },
               onMouseEnter: () => {
@@ -12052,94 +12047,6 @@ function CalendarTab({ setActive = () => {
       if (registerSetEvents) registerSetEvents(null);
     };
   }, []);
-  const calHistoryUndo = useRef([]);
-  const calHistoryRedo = useRef([]);
-  const calHistorySkip = useRef(false);
-  const calHistoryPrev = useRef(events);
-  const [, setCalHistoryTick] = useState(0);
-  useEffect(() => {
-    if (calHistorySkip.current) {
-      calHistorySkip.current = false;
-      calHistoryPrev.current = events;
-      return;
-    }
-    if (calHistoryPrev.current !== events) {
-      calHistoryUndo.current = [...calHistoryUndo.current, calHistoryPrev.current].slice(-50);
-      calHistoryRedo.current = [];
-      calHistoryPrev.current = events;
-      setCalHistoryTick((t) => t + 1);
-    }
-  }, [events]);
-  const undoCal = () => {
-    if (calHistoryUndo.current.length === 0) return;
-    const prev = calHistoryUndo.current[calHistoryUndo.current.length - 1];
-    calHistoryUndo.current = calHistoryUndo.current.slice(0, -1);
-    calHistoryRedo.current = [...calHistoryRedo.current, events];
-    calHistorySkip.current = true;
-    setEvents2(prev);
-    lsSet("events", prev);
-    setCalHistoryTick((t) => t + 1);
-  };
-  const redoCal = () => {
-    if (calHistoryRedo.current.length === 0) return;
-    const next = calHistoryRedo.current[calHistoryRedo.current.length - 1];
-    calHistoryRedo.current = calHistoryRedo.current.slice(0, -1);
-    calHistoryUndo.current = [...calHistoryUndo.current, events];
-    calHistorySkip.current = true;
-    setEvents2(next);
-    lsSet("events", next);
-    setCalHistoryTick((t) => t + 1);
-  };
-  const [selectedCalEventId, setSelectedCalEventId] = useState(null);
-  const copiedEventRef = useRef(null);
-  const [calClipToast, setCalClipToast] = useState("");
-  useEffect(() => {
-    const handler = (e) => {
-      const mod = e.ctrlKey || e.metaKey;
-      if (!mod) return;
-      const el = document.activeElement;
-      const typing = el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
-      if (typing) return;
-      const key = e.key.toLowerCase();
-      if (key === "z") {
-        e.preventDefault();
-        if (e.shiftKey) redoCal();
-        else undoCal();
-        return;
-      }
-      if (key === "y") {
-        e.preventDefault();
-        redoCal();
-        return;
-      }
-      if (key === "c") {
-        if (!selectedCalEventId) return;
-        const ev = events.find((x) => x.id === selectedCalEventId);
-        if (!ev) return;
-        e.preventDefault();
-        copiedEventRef.current = ev;
-        setCalClipToast(`Copied "${ev.title}"`);
-        setTimeout(() => setCalClipToast(""), 2e3);
-        return;
-      }
-      if (key === "v") {
-        if (!copiedEventRef.current) return;
-        e.preventDefault();
-        const src = copiedEventRef.current;
-        const nd = /* @__PURE__ */ new Date(src.date + "T12:00:00");
-        nd.setDate(nd.getDate() + 1);
-        const newDate = dayKey(nd);
-        const dup = { ...src, id: String(Date.now() + Math.random() * 1e3), date: newDate, userPinned: false, movedByStudlin: false, movedFrom: null, status: "pending", timeSpent: 0, completedAt: null };
-        const next = [...events, dup];
-        setEvents2(next);
-        lsSet("events", next);
-        setCalClipToast(`Duplicated "${src.title}" to ${nd.toLocaleDateString(void 0, { weekday: "short", month: "short", day: "numeric" })}`);
-        setTimeout(() => setCalClipToast(""), 2600);
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [selectedCalEventId, events]);
   const now = /* @__PURE__ */ new Date();
   const [ym, setYm] = useState({ y: now.getFullYear(), m: now.getMonth() });
   const [selDay, setSelDay] = useState(dayKey());
@@ -13761,7 +13668,7 @@ Examples:
     } else {
       setSelDay(todayK);
     }
-  }, title: "Jump to today", style: { fontSize: 13, fontWeight: 500, color: T.text, padding: "0 5px", cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" } }, calView === "monthly" ? monthNames[ym.m] + " " + ym.y : calView === "weekly" ? weekRangeLabel : niceDate(selDay)), /* @__PURE__ */ React.createElement("button", { onClick: () => calView === "monthly" ? nav(1) : calView === "weekly" ? setWeekOffset((o) => o + 1) : stepSelDay(1), style: { width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: `1px solid ${T.border}`, borderRadius: 4, color: T.muted, cursor: "pointer", fontSize: 11 } }, "\u203A")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 3 } }, /* @__PURE__ */ React.createElement("button", { onClick: undoCal, disabled: calHistoryUndo.current.length === 0, title: "Undo (Ctrl+Z)", style: { width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: `1px solid ${T.border}`, borderRadius: 4, color: calHistoryUndo.current.length === 0 ? T.faint : T.muted, cursor: calHistoryUndo.current.length === 0 ? "default" : "pointer", opacity: calHistoryUndo.current.length === 0 ? 0.5 : 1 } }, Icon.undo), /* @__PURE__ */ React.createElement("button", { onClick: redoCal, disabled: calHistoryRedo.current.length === 0, title: "Redo (Ctrl+Shift+Z)", style: { width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: `1px solid ${T.border}`, borderRadius: 4, color: calHistoryRedo.current.length === 0 ? T.faint : T.muted, cursor: calHistoryRedo.current.length === 0 ? "default" : "pointer", opacity: calHistoryRedo.current.length === 0 ? 0.5 : 1 } }, Icon.redo)), /* @__PURE__ */ React.createElement("div", { style: { marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 2, background: T.card2, padding: 2, borderRadius: 4 } }, [{ id: "daily", label: "Day" }, { id: "weekly", label: "Week" }, { id: "monthly", label: "Month" }].map((v) => /* @__PURE__ */ React.createElement("button", { key: v.id, onClick: () => setCalView(v.id), style: { padding: "3px 9px", borderRadius: 4, fontSize: 11.5, fontWeight: calView === v.id ? 500 : 400, cursor: "pointer", background: calView === v.id ? T.card : "transparent", color: calView === v.id ? T.text : T.muted, border: "none", fontFamily: T.font, transition: "all 0.15s" } }, v.label))), /* @__PURE__ */ React.createElement("div", { style: { position: "relative" }, ref: rescheduleBtnRef }, /* @__PURE__ */ React.createElement("button", { onClick: () => setToolsMenuOpen((o) => !o), title: "More tools", style: { width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", background: editRoutineMode ? T.lime + "18" : "transparent", border: `1px solid ${editRoutineMode ? T.lime + "55" : T.border}`, borderRadius: 4, color: editRoutineMode ? T.lime : T.muted, cursor: "pointer", fontSize: 13, lineHeight: 1 } }, "\u22EF"), toolsMenuOpen && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: () => setToolsMenuOpen(false), style: { position: "fixed", inset: 0, zIndex: 40 } }), /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: "calc(100% + 6px)", right: 0, width: 220, background: T.card, border: `1px solid ${T.border}`, borderRadius: 6, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)", zIndex: 50, overflow: "hidden", animation: "studlinPop 0.18s cubic-bezier(.2,.85,.3,1)" } }, [
+  }, title: "Jump to today", style: { fontSize: 13, fontWeight: 500, color: T.text, padding: "0 5px", cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" } }, calView === "monthly" ? monthNames[ym.m] + " " + ym.y : calView === "weekly" ? weekRangeLabel : niceDate(selDay)), /* @__PURE__ */ React.createElement("button", { onClick: () => calView === "monthly" ? nav(1) : calView === "weekly" ? setWeekOffset((o) => o + 1) : stepSelDay(1), style: { width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: `1px solid ${T.border}`, borderRadius: 4, color: T.muted, cursor: "pointer", fontSize: 11 } }, "\u203A")), /* @__PURE__ */ React.createElement("div", { style: { marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 2, background: T.card2, padding: 2, borderRadius: 4 } }, [{ id: "daily", label: "Day" }, { id: "weekly", label: "Week" }, { id: "monthly", label: "Month" }].map((v) => /* @__PURE__ */ React.createElement("button", { key: v.id, onClick: () => setCalView(v.id), style: { padding: "3px 9px", borderRadius: 4, fontSize: 11.5, fontWeight: calView === v.id ? 500 : 400, cursor: "pointer", background: calView === v.id ? T.card : "transparent", color: calView === v.id ? T.text : T.muted, border: "none", fontFamily: T.font, transition: "all 0.15s" } }, v.label))), /* @__PURE__ */ React.createElement("div", { style: { position: "relative" }, ref: rescheduleBtnRef }, /* @__PURE__ */ React.createElement("button", { onClick: () => setToolsMenuOpen((o) => !o), title: "More tools", style: { width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", background: editRoutineMode ? T.lime + "18" : "transparent", border: `1px solid ${editRoutineMode ? T.lime + "55" : T.border}`, borderRadius: 4, color: editRoutineMode ? T.lime : T.muted, cursor: "pointer", fontSize: 13, lineHeight: 1 } }, "\u22EF"), toolsMenuOpen && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: () => setToolsMenuOpen(false), style: { position: "fixed", inset: 0, zIndex: 40 } }), /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: "calc(100% + 6px)", right: 0, width: 220, background: T.card, border: `1px solid ${T.border}`, borderRadius: 6, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)", zIndex: 50, overflow: "hidden", animation: "studlinPop 0.18s cubic-bezier(.2,.85,.3,1)" } }, [
     // Brain Dump leads -- it's the "get everything out of your
     // head first" action and doesn't presuppose anything is
     // scheduled yet, unlike the reschedule/balance options
@@ -13902,8 +13809,7 @@ Examples:
       highlightedSessionId,
       onPreviewMove: (date, startTime, endTime) => setPreviewOverride({ date, startTime, endTime }),
       onPreviewResize: (endTime) => setPreviewOverride((o) => ({ date: o && o.date || previewEvent.date, startTime: o && o.startTime || previewEvent.startTime, endTime })),
-      onPreviewDraggingChange: setPreviewDragActive,
-      onSelectEvent: setSelectedCalEventId
+      onPreviewDraggingChange: setPreviewDragActive
     }
   ), calView === "daily" && /* @__PURE__ */ React.createElement(DayPlanner, { dayEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, openEdit, markDone, uncrossDone, prefs: getSchedulePreferences(), setSelDay, catchUpPending, openNew })), /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, display: "flex", position: "relative", height: "calc(100vh - 150px)" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 0, bottom: 0, left: calRightColCollapsed ? 0 : 14, width: 1, background: T.border, boxShadow: `-1px 0 3px rgba(0,0,0,0.12)` } }), !calRightColCollapsed && /* @__PURE__ */ React.createElement("div", { style: { width: 220, marginLeft: 34, maxHeight: "100%", overflowY: "auto" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontWeight: 700, color: T.white } }, selectedCourse ? selectedCourse.label : "Upcoming"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: toggleCalRightColCollapsed, style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontWeight: 600, fontFamily: T.font, cursor: "pointer", padding: 0 } }, "Close \u203A")), sidebarRecentItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 10, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setRecentlyCreatedOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.faint, transform: recentlyCreatedOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.text } }, "Recently created")), recentlyCreatedOpen && sidebarRecentItems.map(renderSidebarItem)), sidebarOverdueItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setOverdueSectionOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.red, transform: overdueSectionOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.red } }, "Overdue (", sidebarOverdueItems.length, ")")), overdueSectionOpen && sidebarOverdueItems.map(renderSidebarItem)), sidebarUpcomingItems.length === 0 && sidebarRecentItems.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.faint } }, "Nothing upcoming."), sidebarUpcomingGroups.map((group) => /* @__PURE__ */ React.createElement("div", { key: group.label, style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, color: group.label === "Overdue" ? T.red : T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 } }, "Due: ", group.label), group.items.map(renderSidebarItem)))), calRightColCollapsed && /* @__PURE__ */ React.createElement(
     "button",
@@ -14029,7 +13935,7 @@ Examples:
       footer: /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setEvCollabPickerOpen(false) }, "Done")
     },
     evCollabLoading ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "Loading your friends\u2026") : evCollabCandidates.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "No friends yet \u2014 add some in Studlin Network first.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, evCollabCandidates.map((c) => /* @__PURE__ */ React.createElement("label", { key: c.uid, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 10, border: `1px solid ${T.border}`, cursor: "pointer", background: evCollabSelected.includes(c.uid) ? T.card2 : "transparent" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: evCollabSelected.includes(c.uid), onChange: () => toggleEvCollabSelected(c.uid), style: { cursor: "pointer" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text } }, c.name))))
-  ), toast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.lime, color: T.ink, fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 8 } }, Icon.check, " Task added"), placementToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.lime, color: T.ink, fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 8 } }, Icon.check, " ", placementToast), deadlineToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.red, color: "#fff", fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)" } }, deadlineToast), rescheduleToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.lime, color: T.ink, fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 8 } }, Icon.check, " ", rescheduleToast), reconcileToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.amber, color: T.ink, fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 8 } }, Icon.check, " ", reconcileToast), calClipToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.lime, color: T.ink, fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 8 } }, Icon.check, " ", calClipToast), deleteUndoToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.card, border: `1px solid ${T.border}`, color: T.white, fontSize: 12.5, fontWeight: 600, padding: "10px 16px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("span", null, deleteUndoToast), /* @__PURE__ */ React.createElement("button", { onClick: undoDelete, style: { background: "none", border: "none", color: T.lime, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: T.font, textDecoration: "underline", padding: 0 } }, "Undo")), fillPrompt && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: dismissFillPrompt, style: { position: "fixed", inset: 0, zIndex: 79 } }), /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 360 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, "Freed up ", fmtMinsDur(fillPrompt.duration), " at ", fmtTime(fillPrompt.time), fillPrompt.date !== dayKey() ? " on " + (/* @__PURE__ */ new Date(fillPrompt.date + "T12:00:00")).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) : "", ". Fill it with something?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 10, maxHeight: 160, overflowY: "auto" } }, fillPrompt.suggestions.map((s) => /* @__PURE__ */ React.createElement("button", { key: s.id, onClick: () => acceptFillSuggestion(s.id), style: { display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12, padding: "8px 10px", background: T.card2, borderRadius: 8, border: `1px solid ${T.border}`, color: T.text, cursor: "pointer", fontFamily: T.font, textAlign: "left" } }, /* @__PURE__ */ React.createElement("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, s.title), /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, flexShrink: 0 } }, s.duration, "m")))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => openNewAtSlot(fillPrompt.date, fillPrompt.time, fillPrompt.duration), style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Add something"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: dismissFillPrompt, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Leave it")))), rescheduleTask && /* @__PURE__ */ React.createElement(RescheduleModal, { task: rescheduleTask, events, onClose: () => setRescheduleTask(null), onManual: () => jumpToSession(rescheduleTask), commit: (next, evictedCount) => {
+  ), toast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.lime, color: T.ink, fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 8 } }, Icon.check, " Task added"), placementToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.lime, color: T.ink, fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 8 } }, Icon.check, " ", placementToast), deadlineToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.red, color: "#fff", fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)" } }, deadlineToast), rescheduleToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.lime, color: T.ink, fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 8 } }, Icon.check, " ", rescheduleToast), reconcileToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.amber, color: T.ink, fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 8 } }, Icon.check, " ", reconcileToast), deleteUndoToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.card, border: `1px solid ${T.border}`, color: T.white, fontSize: 12.5, fontWeight: 600, padding: "10px 16px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("span", null, deleteUndoToast), /* @__PURE__ */ React.createElement("button", { onClick: undoDelete, style: { background: "none", border: "none", color: T.lime, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: T.font, textDecoration: "underline", padding: 0 } }, "Undo")), fillPrompt && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: dismissFillPrompt, style: { position: "fixed", inset: 0, zIndex: 79 } }), /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 360 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, "Freed up ", fmtMinsDur(fillPrompt.duration), " at ", fmtTime(fillPrompt.time), fillPrompt.date !== dayKey() ? " on " + (/* @__PURE__ */ new Date(fillPrompt.date + "T12:00:00")).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) : "", ". Fill it with something?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 10, maxHeight: 160, overflowY: "auto" } }, fillPrompt.suggestions.map((s) => /* @__PURE__ */ React.createElement("button", { key: s.id, onClick: () => acceptFillSuggestion(s.id), style: { display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12, padding: "8px 10px", background: T.card2, borderRadius: 8, border: `1px solid ${T.border}`, color: T.text, cursor: "pointer", fontFamily: T.font, textAlign: "left" } }, /* @__PURE__ */ React.createElement("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, s.title), /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, flexShrink: 0 } }, s.duration, "m")))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => openNewAtSlot(fillPrompt.date, fillPrompt.time, fillPrompt.duration), style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Add something"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: dismissFillPrompt, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Leave it")))), rescheduleTask && /* @__PURE__ */ React.createElement(RescheduleModal, { task: rescheduleTask, events, onClose: () => setRescheduleTask(null), onManual: () => jumpToSession(rescheduleTask), commit: (next, evictedCount) => {
     setEvents2(next);
     lsSet("events", next);
     setRescheduleToast(evictedCount > 0 ? `Task rescheduled \u2014 ${evictedCount} other${evictedCount !== 1 ? "s" : ""} shifted to make room.` : "Task rescheduled.");
