@@ -9471,7 +9471,7 @@ function computeEventBlockHeightPx(durationMins, gapToNextMins, pxPerHr) {
   if (gapToNextMins == null) return floored;
   return Math.min(floored, Math.max(4, gapToNextMins * (pxPerHr / 60)));
 }
-function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent }) {
+function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent, selectedRoutineKey, onSelectRoutineOccurrence }) {
   const [WK_PX_HR, setWkPxHr] = useState(() => getCalZoom());
   const wkZoomDrag = useRef(null);
   const [wkZoomDragging, setWkZoomDragging] = useState(false);
@@ -9862,6 +9862,7 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
           const dimmedByRoutineMode = editRoutineMode && !isRoutine;
           const highlightedByRoutineMode = editRoutineMode && isRoutine;
           const isSelected = !isRoutine && selectedEventId === ev.id;
+          const isRoutineSelected = isRoutine && selectedRoutineKey === ev.routineId + "|" + ev.date;
           const leftPct = displayCol / displayTotalCols * 100;
           const widthPct = 100 / displayTotalCols;
           const commuteStripStyle = (mins, edge) => ({ position: "absolute", top: edge === "before" ? topPx - mins * (WK_PX_HR / 60) : topPx + heightPx, left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`, height: mins * (WK_PX_HR / 60), borderRadius: edge === "before" ? "5px 5px 0 0" : "0 0 5px 5px", background: `repeating-linear-gradient(135deg, ${subjectColor}26, ${subjectColor}26 4px, transparent 4px, transparent 8px)`, border: `1px dashed ${subjectColor}55`, [edge === "before" ? "borderBottom" : "borderTop"]: "none", zIndex: 2, pointerEvents: "none", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" });
@@ -9885,10 +9886,17 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
               },
               onClick: (e) => {
                 if (isRoutine) {
-                  if (editRoutineMode && onEditRoutine) onEditRoutine(ev.routineId);
+                  if (editRoutineMode && onEditRoutine) {
+                    onEditRoutine(ev.routineId);
+                    return;
+                  }
+                  e.stopPropagation();
+                  if (selectedEventId) closePopover();
+                  if (onSelectRoutineOccurrence) onSelectRoutineOccurrence(isRoutineSelected ? null : { routineId: ev.routineId, date: ev.date, title: ev.title });
                   return;
                 }
                 e.stopPropagation();
+                if (onSelectRoutineOccurrence) onSelectRoutineOccurrence(null);
                 if (selectedEventId === ev.id) {
                   closePopover();
                 } else {
@@ -9903,8 +9911,8 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
               onMouseLeave: () => {
                 if (isRoutine && setHoveredRoutineId) setHoveredRoutineId(null);
               },
-              title: isRoutine ? "Drag to reschedule \xB7 Double-click to edit" : "Click for actions (Backspace to delete) \xB7 Double-click to edit \xB7 Drag to reschedule",
-              style: { position: "absolute", top: topPx, left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`, height: heightPx, borderRadius: 5, padding: "2px 5px 2px 8px", cursor: "grab", overflow: "hidden", zIndex: 3, opacity: dimmedByRoutineMode ? 0.3 : isDone ? 0.6 : 1, boxSizing: "border-box", userSelect: "none", ...kindStyle, ...highlightedByRoutineMode ? { outline: `2px solid ${T.lime}`, outlineOffset: 1 } : {}, ...isSelected ? { outline: `2px solid ${T.lime}`, outlineOffset: 1, boxShadow: `0 0 0 4px ${T.lime}22` } : {}, ...!isRoutine && highlightedSessionId === ev.id ? { outline: `2px solid ${T.amber}`, outlineOffset: 1, boxShadow: `0 0 0 4px ${T.amber}33` } : {} }
+              title: isRoutine ? "Click to select (Ctrl+C to copy) \xB7 Double-click to edit \xB7 Drag to reschedule" : "Click for actions (Backspace to delete) \xB7 Double-click to edit \xB7 Drag to reschedule",
+              style: { position: "absolute", top: topPx, left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`, height: heightPx, borderRadius: 5, padding: "2px 5px 2px 8px", cursor: "grab", overflow: "hidden", zIndex: 3, opacity: dimmedByRoutineMode ? 0.3 : isDone ? 0.6 : 1, boxSizing: "border-box", userSelect: "none", ...kindStyle, ...highlightedByRoutineMode ? { outline: `2px solid ${T.lime}`, outlineOffset: 1 } : {}, ...isSelected || isRoutineSelected ? { outline: `2px solid ${T.lime}`, outlineOffset: 1, boxShadow: `0 0 0 4px ${T.lime}22` } : {}, ...!isRoutine && highlightedSessionId === ev.id ? { outline: `2px solid ${T.amber}`, outlineOffset: 1, boxShadow: `0 0 0 4px ${T.amber}33` } : {} }
             },
             /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: subjectColor, borderRadius: "5px 0 0 5px" } }),
             !catchUpPending && over > 0 && /* @__PURE__ */ React.createElement("span", { title: over + "d overdue", style: { position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: "50%", background: T.red, boxShadow: "0 0 0 1.5px rgba(255,255,255,0.9)", zIndex: 1 } }),
@@ -12091,6 +12099,7 @@ function CalendarTab({ setActive = () => {
     setCalHistoryTick((t) => t + 1);
   };
   const [selectedCalEventId, setSelectedCalEventId] = useState(null);
+  const [selectedRoutineOccurrence, setSelectedRoutineOccurrence] = useState(null);
   const copiedEventRef = useRef(null);
   const [calClipToast, setCalClipToast] = useState("");
   useEffect(() => {
@@ -12113,33 +12122,55 @@ function CalendarTab({ setActive = () => {
         return;
       }
       if (key === "c") {
-        if (!selectedCalEventId) return;
-        const ev = events.find((x) => x.id === selectedCalEventId);
-        if (!ev) return;
-        e.preventDefault();
-        copiedEventRef.current = ev;
-        setCalClipToast(`Copied "${ev.title}"`);
-        setTimeout(() => setCalClipToast(""), 2e3);
+        if (selectedCalEventId) {
+          const ev = events.find((x) => x.id === selectedCalEventId);
+          if (!ev) return;
+          e.preventDefault();
+          copiedEventRef.current = { type: "event", data: ev };
+          setCalClipToast(`Copied "${ev.title}"`);
+          setTimeout(() => setCalClipToast(""), 2e3);
+          return;
+        }
+        if (selectedRoutineOccurrence) {
+          const rule = routines.find((r) => r.id === selectedRoutineOccurrence.routineId);
+          if (!rule) return;
+          e.preventDefault();
+          copiedEventRef.current = { type: "routine", data: { rule, date: selectedRoutineOccurrence.date, title: selectedRoutineOccurrence.title } };
+          setCalClipToast(`Copied "${selectedRoutineOccurrence.title}"`);
+          setTimeout(() => setCalClipToast(""), 2e3);
+        }
         return;
       }
       if (key === "v") {
-        if (!copiedEventRef.current) return;
+        const clip = copiedEventRef.current;
+        if (!clip) return;
         e.preventDefault();
-        const src = copiedEventRef.current;
-        const nd = /* @__PURE__ */ new Date(src.date + "T12:00:00");
-        nd.setDate(nd.getDate() + 1);
-        const newDate = dayKey(nd);
-        const dup = { ...src, id: String(Date.now() + Math.random() * 1e3), date: newDate, userPinned: false, movedByStudlin: false, movedFrom: null, status: "pending", timeSpent: 0, completedAt: null };
-        const next = [...events, dup];
-        setEvents2(next);
-        lsSet("events", next);
-        setCalClipToast(`Duplicated "${src.title}" to ${nd.toLocaleDateString(void 0, { weekday: "short", month: "short", day: "numeric" })}`);
-        setTimeout(() => setCalClipToast(""), 2600);
+        if (clip.type === "event") {
+          const src = clip.data;
+          const nd = /* @__PURE__ */ new Date(src.date + "T12:00:00");
+          nd.setDate(nd.getDate() + 1);
+          const newDate = dayKey(nd);
+          const dup = { ...src, id: String(Date.now() + Math.random() * 1e3), date: newDate, userPinned: false, movedByStudlin: false, movedFrom: null, status: "pending", timeSpent: 0, completedAt: null };
+          const next = [...events, dup];
+          setEvents2(next);
+          lsSet("events", next);
+          setCalClipToast(`Duplicated "${src.title}" to ${nd.toLocaleDateString(void 0, { weekday: "short", month: "short", day: "numeric" })}`);
+          setTimeout(() => setCalClipToast(""), 2600);
+        } else if (clip.type === "routine") {
+          const { rule, date, title } = clip.data;
+          const d = /* @__PURE__ */ new Date(date + "T12:00:00");
+          const sourceDow = (d.getDay() + 6) % 7;
+          const targetDow = (sourceDow + 1) % 7;
+          const newRoutine = { ...rule, id: String(Date.now() + Math.random() * 1e3), days: [targetDow], groupId: rule.groupId || rule.id };
+          persistRoutines([...routines, newRoutine]);
+          setCalClipToast(`Duplicated "${title}" to ${ROUTINE_DOW[targetDow]}`);
+          setTimeout(() => setCalClipToast(""), 2600);
+        }
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selectedCalEventId, events]);
+  }, [selectedCalEventId, events, selectedRoutineOccurrence, routines]);
   const now = /* @__PURE__ */ new Date();
   const [ym, setYm] = useState({ y: now.getFullYear(), m: now.getMonth() });
   const [selDay, setSelDay] = useState(dayKey());
@@ -13903,7 +13934,9 @@ Examples:
       onPreviewMove: (date, startTime, endTime) => setPreviewOverride({ date, startTime, endTime }),
       onPreviewResize: (endTime) => setPreviewOverride((o) => ({ date: o && o.date || previewEvent.date, startTime: o && o.startTime || previewEvent.startTime, endTime })),
       onPreviewDraggingChange: setPreviewDragActive,
-      onSelectEvent: setSelectedCalEventId
+      onSelectEvent: setSelectedCalEventId,
+      selectedRoutineKey: selectedRoutineOccurrence ? selectedRoutineOccurrence.routineId + "|" + selectedRoutineOccurrence.date : null,
+      onSelectRoutineOccurrence: setSelectedRoutineOccurrence
     }
   ), calView === "daily" && /* @__PURE__ */ React.createElement(DayPlanner, { dayEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, openEdit, markDone, uncrossDone, prefs: getSchedulePreferences(), setSelDay, catchUpPending, openNew })), /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, display: "flex", position: "relative", height: "calc(100vh - 150px)" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 0, bottom: 0, left: calRightColCollapsed ? 0 : 14, width: 1, background: T.border, boxShadow: `-1px 0 3px rgba(0,0,0,0.12)` } }), !calRightColCollapsed && /* @__PURE__ */ React.createElement("div", { style: { width: 220, marginLeft: 34, maxHeight: "100%", overflowY: "auto" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontWeight: 700, color: T.white } }, selectedCourse ? selectedCourse.label : "Upcoming"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: toggleCalRightColCollapsed, style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontWeight: 600, fontFamily: T.font, cursor: "pointer", padding: 0 } }, "Close \u203A")), sidebarRecentItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 10, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setRecentlyCreatedOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.faint, transform: recentlyCreatedOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.text } }, "Recently created")), recentlyCreatedOpen && sidebarRecentItems.map(renderSidebarItem)), sidebarOverdueItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setOverdueSectionOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.red, transform: overdueSectionOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.red } }, "Overdue (", sidebarOverdueItems.length, ")")), overdueSectionOpen && sidebarOverdueItems.map(renderSidebarItem)), sidebarUpcomingItems.length === 0 && sidebarRecentItems.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.faint } }, "Nothing upcoming."), sidebarUpcomingGroups.map((group) => /* @__PURE__ */ React.createElement("div", { key: group.label, style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, color: group.label === "Overdue" ? T.red : T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 } }, "Due: ", group.label), group.items.map(renderSidebarItem)))), calRightColCollapsed && /* @__PURE__ */ React.createElement(
     "button",
