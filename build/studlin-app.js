@@ -17202,6 +17202,7 @@ class ErrorBoundary extends React.Component {
     return { hasError: true };
   }
   componentDidCatch(error, info) {
+    console.error("[ErrorBoundary]", error && error.message, error && error.stack, info && info.componentStack);
     if (typeof Sentry !== "undefined") Sentry.captureException(error, { extra: { componentStack: info.componentStack } });
   }
   render() {

@@ -27370,6 +27370,12 @@ class ErrorBoundary extends React.Component{
   constructor(props){super(props);this.state={hasError:false};}
   static getDerivedStateFromError(){return{hasError:true};}
   componentDidCatch(error,info){
+    // Temporary diagnostic logging -- production React swallows the real
+    // error/stack for a caught render exception, so there's normally no
+    // way to see what actually threw short of a Sentry dashboard. Logs it
+    // straight to console so it's visible via any console reader, not just
+    // Sentry. Remove once the live crash this was added to chase is found.
+    console.error("[ErrorBoundary]",error&&error.message,error&&error.stack,info&&info.componentStack);
     if(typeof Sentry!=="undefined")Sentry.captureException(error,{extra:{componentStack:info.componentStack}});
   }
   render(){
