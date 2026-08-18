@@ -17203,6 +17203,10 @@ class ErrorBoundary extends React.Component {
   }
   componentDidCatch(error, info) {
     console.error("[ErrorBoundary]", error && error.message, error && error.stack, info && info.componentStack);
+    try {
+      sessionStorage.setItem("studlin-debug-lastError", JSON.stringify({ message: error && error.message, stack: error && error.stack, componentStack: info && info.componentStack, at: (/* @__PURE__ */ new Date()).toISOString() }));
+    } catch (e) {
+    }
     if (typeof Sentry !== "undefined") Sentry.captureException(error, { extra: { componentStack: info.componentStack } });
   }
   render() {

@@ -27376,6 +27376,7 @@ class ErrorBoundary extends React.Component{
     // straight to console so it's visible via any console reader, not just
     // Sentry. Remove once the live crash this was added to chase is found.
     console.error("[ErrorBoundary]",error&&error.message,error&&error.stack,info&&info.componentStack);
+    try{sessionStorage.setItem("studlin-debug-lastError",JSON.stringify({message:error&&error.message,stack:error&&error.stack,componentStack:info&&info.componentStack,at:new Date().toISOString()}));}catch(e){}
     if(typeof Sentry!=="undefined")Sentry.captureException(error,{extra:{componentStack:info.componentStack}});
   }
   render(){
