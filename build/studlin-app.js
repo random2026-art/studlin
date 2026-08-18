@@ -12062,117 +12062,6 @@ function CalendarTab({ setActive = () => {
       if (registerSetEvents) registerSetEvents(null);
     };
   }, []);
-  const calHistoryUndo = useRef([]);
-  const calHistoryRedo = useRef([]);
-  const calHistorySkip = useRef(false);
-  const calHistoryPrev = useRef(events);
-  const [, setCalHistoryTick] = useState(0);
-  useEffect(() => {
-    if (calHistorySkip.current) {
-      calHistorySkip.current = false;
-      calHistoryPrev.current = events;
-      return;
-    }
-    if (calHistoryPrev.current !== events) {
-      calHistoryUndo.current = [...calHistoryUndo.current, calHistoryPrev.current].slice(-50);
-      calHistoryRedo.current = [];
-      calHistoryPrev.current = events;
-      setCalHistoryTick((t) => t + 1);
-    }
-  }, [events]);
-  const undoCal = () => {
-    if (calHistoryUndo.current.length === 0) return;
-    const prev = calHistoryUndo.current[calHistoryUndo.current.length - 1];
-    calHistoryUndo.current = calHistoryUndo.current.slice(0, -1);
-    calHistoryRedo.current = [...calHistoryRedo.current, events];
-    calHistorySkip.current = true;
-    setEvents2(prev);
-    lsSet("events", prev);
-    setCalHistoryTick((t) => t + 1);
-  };
-  const redoCal = () => {
-    if (calHistoryRedo.current.length === 0) return;
-    const next = calHistoryRedo.current[calHistoryRedo.current.length - 1];
-    calHistoryRedo.current = calHistoryRedo.current.slice(0, -1);
-    calHistoryUndo.current = [...calHistoryUndo.current, events];
-    calHistorySkip.current = true;
-    setEvents2(next);
-    lsSet("events", next);
-    setCalHistoryTick((t) => t + 1);
-  };
-  const [selectedCalEventId, setSelectedCalEventId] = useState(null);
-  const [selectedRoutineOccurrence, setSelectedRoutineOccurrence] = useState(null);
-  const copiedEventRef = useRef(null);
-  const [calClipToast, setCalClipToast] = useState("");
-  useEffect(() => {
-    const handler = (e) => {
-      const mod = e.ctrlKey || e.metaKey;
-      if (!mod) return;
-      const el = document.activeElement;
-      const typing = el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
-      if (typing) return;
-      const key = e.key.toLowerCase();
-      if (key === "z") {
-        e.preventDefault();
-        if (e.shiftKey) redoCal();
-        else undoCal();
-        return;
-      }
-      if (key === "y") {
-        e.preventDefault();
-        redoCal();
-        return;
-      }
-      if (key === "c") {
-        if (selectedCalEventId) {
-          const ev = events.find((x) => x.id === selectedCalEventId);
-          if (!ev) return;
-          e.preventDefault();
-          copiedEventRef.current = { type: "event", data: ev };
-          setCalClipToast(`Copied "${ev.title}"`);
-          setTimeout(() => setCalClipToast(""), 2e3);
-          return;
-        }
-        if (selectedRoutineOccurrence) {
-          const rule = routines.find((r) => r.id === selectedRoutineOccurrence.routineId);
-          if (!rule) return;
-          e.preventDefault();
-          copiedEventRef.current = { type: "routine", data: { rule, date: selectedRoutineOccurrence.date, title: selectedRoutineOccurrence.title } };
-          setCalClipToast(`Copied "${selectedRoutineOccurrence.title}"`);
-          setTimeout(() => setCalClipToast(""), 2e3);
-        }
-        return;
-      }
-      if (key === "v") {
-        const clip = copiedEventRef.current;
-        if (!clip) return;
-        e.preventDefault();
-        if (clip.type === "event") {
-          const src = clip.data;
-          const nd = /* @__PURE__ */ new Date(src.date + "T12:00:00");
-          nd.setDate(nd.getDate() + 1);
-          const newDate = dayKey(nd);
-          const dup = { ...src, id: String(Date.now() + Math.random() * 1e3), date: newDate, userPinned: false, movedByStudlin: false, movedFrom: null, status: "pending", timeSpent: 0, completedAt: null };
-          const next = [...events, dup];
-          setEvents2(next);
-          lsSet("events", next);
-          setCalClipToast(`Duplicated "${src.title}" to ${nd.toLocaleDateString(void 0, { weekday: "short", month: "short", day: "numeric" })}`);
-          setTimeout(() => setCalClipToast(""), 2600);
-        } else if (clip.type === "routine") {
-          const { rule, date, title } = clip.data;
-          const d = /* @__PURE__ */ new Date(date + "T12:00:00");
-          const sourceDow = (d.getDay() + 6) % 7;
-          const targetDow = (sourceDow + 1) % 7;
-          const newRoutine = { ...rule, id: String(Date.now() + Math.random() * 1e3), days: [targetDow], groupId: rule.groupId || rule.id };
-          persistRoutines([...routines, newRoutine]);
-          setCalClipToast(`Duplicated "${title}" to ${ROUTINE_DOW[targetDow]}`);
-          setTimeout(() => setCalClipToast(""), 2600);
-        }
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [selectedCalEventId, events, selectedRoutineOccurrence, routines]);
   const now = /* @__PURE__ */ new Date();
   const [ym, setYm] = useState({ y: now.getFullYear(), m: now.getMonth() });
   const [selDay, setSelDay] = useState(dayKey());
@@ -12440,6 +12329,117 @@ function CalendarTab({ setActive = () => {
     saveWeeklyRoutine(next);
     reconcileRoutineConflicts(next);
   };
+  const calHistoryUndo = useRef([]);
+  const calHistoryRedo = useRef([]);
+  const calHistorySkip = useRef(false);
+  const calHistoryPrev = useRef(events);
+  const [, setCalHistoryTick] = useState(0);
+  useEffect(() => {
+    if (calHistorySkip.current) {
+      calHistorySkip.current = false;
+      calHistoryPrev.current = events;
+      return;
+    }
+    if (calHistoryPrev.current !== events) {
+      calHistoryUndo.current = [...calHistoryUndo.current, calHistoryPrev.current].slice(-50);
+      calHistoryRedo.current = [];
+      calHistoryPrev.current = events;
+      setCalHistoryTick((t) => t + 1);
+    }
+  }, [events]);
+  const undoCal = () => {
+    if (calHistoryUndo.current.length === 0) return;
+    const prev = calHistoryUndo.current[calHistoryUndo.current.length - 1];
+    calHistoryUndo.current = calHistoryUndo.current.slice(0, -1);
+    calHistoryRedo.current = [...calHistoryRedo.current, events];
+    calHistorySkip.current = true;
+    setEvents2(prev);
+    lsSet("events", prev);
+    setCalHistoryTick((t) => t + 1);
+  };
+  const redoCal = () => {
+    if (calHistoryRedo.current.length === 0) return;
+    const next = calHistoryRedo.current[calHistoryRedo.current.length - 1];
+    calHistoryRedo.current = calHistoryRedo.current.slice(0, -1);
+    calHistoryUndo.current = [...calHistoryUndo.current, events];
+    calHistorySkip.current = true;
+    setEvents2(next);
+    lsSet("events", next);
+    setCalHistoryTick((t) => t + 1);
+  };
+  const [selectedCalEventId, setSelectedCalEventId] = useState(null);
+  const [selectedRoutineOccurrence, setSelectedRoutineOccurrence] = useState(null);
+  const copiedEventRef = useRef(null);
+  const [calClipToast, setCalClipToast] = useState("");
+  useEffect(() => {
+    const handler = (e) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod) return;
+      const el = document.activeElement;
+      const typing = el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+      if (typing) return;
+      const key = e.key.toLowerCase();
+      if (key === "z") {
+        e.preventDefault();
+        if (e.shiftKey) redoCal();
+        else undoCal();
+        return;
+      }
+      if (key === "y") {
+        e.preventDefault();
+        redoCal();
+        return;
+      }
+      if (key === "c") {
+        if (selectedCalEventId) {
+          const ev = events.find((x) => x.id === selectedCalEventId);
+          if (!ev) return;
+          e.preventDefault();
+          copiedEventRef.current = { type: "event", data: ev };
+          setCalClipToast(`Copied "${ev.title}"`);
+          setTimeout(() => setCalClipToast(""), 2e3);
+          return;
+        }
+        if (selectedRoutineOccurrence) {
+          const rule = routines.find((r) => r.id === selectedRoutineOccurrence.routineId);
+          if (!rule) return;
+          e.preventDefault();
+          copiedEventRef.current = { type: "routine", data: { rule, date: selectedRoutineOccurrence.date, title: selectedRoutineOccurrence.title } };
+          setCalClipToast(`Copied "${selectedRoutineOccurrence.title}"`);
+          setTimeout(() => setCalClipToast(""), 2e3);
+        }
+        return;
+      }
+      if (key === "v") {
+        const clip = copiedEventRef.current;
+        if (!clip) return;
+        e.preventDefault();
+        if (clip.type === "event") {
+          const src = clip.data;
+          const nd = /* @__PURE__ */ new Date(src.date + "T12:00:00");
+          nd.setDate(nd.getDate() + 1);
+          const newDate = dayKey(nd);
+          const dup = { ...src, id: String(Date.now() + Math.random() * 1e3), date: newDate, userPinned: false, movedByStudlin: false, movedFrom: null, status: "pending", timeSpent: 0, completedAt: null };
+          const next = [...events, dup];
+          setEvents2(next);
+          lsSet("events", next);
+          setCalClipToast(`Duplicated "${src.title}" to ${nd.toLocaleDateString(void 0, { weekday: "short", month: "short", day: "numeric" })}`);
+          setTimeout(() => setCalClipToast(""), 2600);
+        } else if (clip.type === "routine") {
+          const { rule, date, title } = clip.data;
+          const d = /* @__PURE__ */ new Date(date + "T12:00:00");
+          const sourceDow = (d.getDay() + 6) % 7;
+          const targetDow = (sourceDow + 1) % 7;
+          const newRoutine = { ...rule, id: String(Date.now() + Math.random() * 1e3), days: [targetDow], groupId: rule.groupId || rule.id };
+          persistRoutines([...routines, newRoutine]);
+          setCalClipToast(`Duplicated "${title}" to ${ROUTINE_DOW[targetDow]}`);
+          setTimeout(() => setCalClipToast(""), 2600);
+        }
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [selectedCalEventId, events, selectedRoutineOccurrence, routines]);
   useEffect(() => {
     reconcileRoutineConflicts(routines);
   }, []);
@@ -17203,10 +17203,6 @@ class ErrorBoundary extends React.Component {
   }
   componentDidCatch(error, info) {
     console.error("[ErrorBoundary]", error && error.message, error && error.stack, info && info.componentStack);
-    try {
-      sessionStorage.setItem("studlin-debug-lastError", JSON.stringify({ message: error && error.message, stack: error && error.stack, componentStack: info && info.componentStack, at: (/* @__PURE__ */ new Date()).toISOString() }));
-    } catch (e) {
-    }
     if (typeof Sentry !== "undefined") Sentry.captureException(error, { extra: { componentStack: info.componentStack } });
   }
   render() {

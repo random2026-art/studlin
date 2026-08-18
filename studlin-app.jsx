@@ -19084,147 +19084,6 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     return ()=>{if(registerSetEvents)registerSetEvents(null);};
   },[]);
 
-  // Calendar-wide undo/redo history -- watches `events` itself rather than
-  // wrapping every individual setEvents call site (there are 25+, including
-  // the App-level EventDetailModal commit path via registerSetEvents above),
-  // so it transparently covers every way the grid can change: drag-move,
-  // resize, delete, create, routine edits, the paste-duplicate below. A ref
-  // flag (calHistorySkip) tells the watcher "this change WAS an undo/redo,
-  // don't re-record it" so undo doesn't immediately push its own reversal
-  // back onto the stack. Deliberately session-only -- lives in refs, so a
-  // tab switch or reload clears it, same as Google Docs' own undo after a
-  // refresh. No localStorage/Firestore snapshot of the stack, which sidesteps
-  // any stale-history-vs-server-sync question entirely.
-  const calHistoryUndo=useRef([]);
-  const calHistoryRedo=useRef([]);
-  const calHistorySkip=useRef(false);
-  const calHistoryPrev=useRef(events);
-  const [,setCalHistoryTick]=useState(0);
-  useEffect(()=>{
-    if(calHistorySkip.current){
-      calHistorySkip.current=false;
-      calHistoryPrev.current=events;
-      return;
-    }
-    if(calHistoryPrev.current!==events){
-      calHistoryUndo.current=[...calHistoryUndo.current,calHistoryPrev.current].slice(-50);
-      calHistoryRedo.current=[];
-      calHistoryPrev.current=events;
-      setCalHistoryTick(t=>t+1);
-    }
-  },[events]);
-  const undoCal=()=>{
-    if(calHistoryUndo.current.length===0)return;
-    const prev=calHistoryUndo.current[calHistoryUndo.current.length-1];
-    calHistoryUndo.current=calHistoryUndo.current.slice(0,-1);
-    calHistoryRedo.current=[...calHistoryRedo.current,events];
-    calHistorySkip.current=true;
-    setEvents(prev);lsSet("events",prev);
-    setCalHistoryTick(t=>t+1);
-  };
-  const redoCal=()=>{
-    if(calHistoryRedo.current.length===0)return;
-    const next=calHistoryRedo.current[calHistoryRedo.current.length-1];
-    calHistoryRedo.current=calHistoryRedo.current.slice(0,-1);
-    calHistoryUndo.current=[...calHistoryUndo.current,events];
-    calHistorySkip.current=true;
-    setEvents(next);lsSet("events",next);
-    setCalHistoryTick(t=>t+1);
-  };
-
-  // Copy/paste for the Week grid -- Ctrl+C copies whichever block is
-  // currently selected (selectedCalEventId, mirrored up from WeeklyPlanner's
-  // own click-to-select via onSelectEvent), Ctrl+V drops a duplicate one day
-  // later at the same time (the "same time, next day" placement students
-  // asked for -- simplest, most predictable option, no auto-placement
-  // guessing). Both routed through the same undo history above for free.
-  // Guarded against typing focus the same way WeeklyPlanner's own
-  // Backspace-to-delete already is, so Ctrl+C/Ctrl+V in a text field (task
-  // title, notes, chat) still does normal browser copy/paste.
-  //
-  // selectedRoutineOccurrence extends the same idea to routine blocks
-  // (classes AND activities -- both just `routines` entries differing only
-  // by `kind`) drawn on the grid, which aren't real `events` at all --
-  // they're synthesized per-occurrence from a weekly rule (see the
-  // "routine-"+r.id+"-"+dk objects a few hundred lines up). copiedEventRef
-  // holds a tagged {type,data} so Ctrl+V knows which branch to run. Pasting
-  // a routine occurrence doesn't touch the original rule -- it creates an
-  // independent new routine row for the next day of the week, sharing the
-  // same groupId so Activities' own "N placements" sidebar grouping picks
-  // it up as the same activity meeting an extra day, exactly like a
-  // student manually adding a second placement would.
-  const [selectedCalEventId,setSelectedCalEventId]=useState(null);
-  const [selectedRoutineOccurrence,setSelectedRoutineOccurrence]=useState(null); // {routineId,date,title}|null
-  const copiedEventRef=useRef(null); // {type:"event",data:ev} | {type:"routine",data:{rule,date,title}} | null
-  const [calClipToast,setCalClipToast]=useState("");
-  useEffect(()=>{
-    const handler=(e)=>{
-      const mod=e.ctrlKey||e.metaKey;
-      if(!mod)return;
-      const el=document.activeElement;
-      const typing=el&&(el.tagName==="INPUT"||el.tagName==="TEXTAREA"||el.isContentEditable);
-      if(typing)return;
-      const key=e.key.toLowerCase();
-      if(key==="z"){
-        e.preventDefault();
-        if(e.shiftKey)redoCal();else undoCal();
-        return;
-      }
-      if(key==="y"){e.preventDefault();redoCal();return;}
-      if(key==="c"){
-        if(selectedCalEventId){
-          const ev=events.find(x=>x.id===selectedCalEventId);
-          if(!ev)return;
-          e.preventDefault();
-          copiedEventRef.current={type:"event",data:ev};
-          setCalClipToast(`Copied "${ev.title}"`);
-          setTimeout(()=>setCalClipToast(""),2000);
-          return;
-        }
-        if(selectedRoutineOccurrence){
-          const rule=routines.find(r=>r.id===selectedRoutineOccurrence.routineId);
-          if(!rule)return;
-          e.preventDefault();
-          copiedEventRef.current={type:"routine",data:{rule,date:selectedRoutineOccurrence.date,title:selectedRoutineOccurrence.title}};
-          setCalClipToast(`Copied "${selectedRoutineOccurrence.title}"`);
-          setTimeout(()=>setCalClipToast(""),2000);
-        }
-        return;
-      }
-      if(key==="v"){
-        const clip=copiedEventRef.current;
-        if(!clip)return;
-        e.preventDefault();
-        if(clip.type==="event"){
-          const src=clip.data;
-          const nd=new Date(src.date+"T12:00:00");
-          nd.setDate(nd.getDate()+1);
-          const newDate=dayKey(nd);
-          // Resets completion/progress state the same way every other
-          // "create a new task" path in this file already does (see e.g.
-          // openNewAI's own object literal) -- otherwise duplicating a
-          // finished task would paste a copy that's already checked off.
-          const dup={...src,id:String(Date.now()+Math.random()*1000),date:newDate,userPinned:false,movedByStudlin:false,movedFrom:null,status:"pending",timeSpent:0,completedAt:null};
-          const next=[...events,dup];
-          setEvents(next);lsSet("events",next);
-          setCalClipToast(`Duplicated "${src.title}" to ${nd.toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})}`);
-          setTimeout(()=>setCalClipToast(""),2600);
-        } else if(clip.type==="routine"){
-          const {rule,date,title}=clip.data;
-          const d=new Date(date+"T12:00:00");
-          const sourceDow=(d.getDay()+6)%7;
-          const targetDow=(sourceDow+1)%7;
-          const newRoutine={...rule,id:String(Date.now()+Math.random()*1000),days:[targetDow],groupId:rule.groupId||rule.id};
-          persistRoutines([...routines,newRoutine]);
-          setCalClipToast(`Duplicated "${title}" to ${ROUTINE_DOW[targetDow]}`);
-          setTimeout(()=>setCalClipToast(""),2600);
-        }
-      }
-    };
-    window.addEventListener("keydown",handler);
-    return ()=>window.removeEventListener("keydown",handler);
-  },[selectedCalEventId,events,selectedRoutineOccurrence,routines]);
-
   const now=new Date();
   const [ym,setYm]=useState({y:now.getFullYear(),m:now.getMonth()});
   const [selDay,setSelDay]=useState(dayKey());
@@ -19607,6 +19466,159 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // got added" call site separately -- this is the one real choke point
   // all of them already share.
   const persistRoutines=(r)=>{const next=ensureSubjectsForClassRoutines(r);setRoutinesState(next);saveWeeklyRoutine(next);reconcileRoutineConflicts(next);};
+
+  // Calendar-wide undo/redo history -- watches `events` itself rather than
+  // wrapping every individual setEvents call site (there are 25+, including
+  // the App-level EventDetailModal commit path via registerSetEvents above),
+  // so it transparently covers every way the grid can change: drag-move,
+  // resize, delete, create, routine edits, the paste-duplicate below. A ref
+  // flag (calHistorySkip) tells the watcher "this change WAS an undo/redo,
+  // don't re-record it" so undo doesn't immediately push its own reversal
+  // back onto the stack. Deliberately session-only -- lives in refs, so a
+  // tab switch or reload clears it, same as Google Docs' own undo after a
+  // refresh. No localStorage/Firestore snapshot of the stack, which sidesteps
+  // any stale-history-vs-server-sync question entirely.
+  //
+  // Placed here (after routines/persistRoutines are declared, not right
+  // after registerSetEvents above where this originally lived) because the
+  // copy/paste handler below reads `routines` in its own dependency array --
+  // a live production crash (ReferenceError: Cannot access 'routines'
+  // before initialization) traced this exact block back to sitting above
+  // the `const [routines,...]=useState(...)` it depends on. Dependency
+  // arrays evaluate eagerly during render, unlike the handler body itself
+  // (which only runs later, on a real keydown, by which point every
+  // declaration in the component has long since run) -- so unlike a normal
+  // closure, this one genuinely needed to move, not just look safe.
+  const calHistoryUndo=useRef([]);
+  const calHistoryRedo=useRef([]);
+  const calHistorySkip=useRef(false);
+  const calHistoryPrev=useRef(events);
+  const [,setCalHistoryTick]=useState(0);
+  useEffect(()=>{
+    if(calHistorySkip.current){
+      calHistorySkip.current=false;
+      calHistoryPrev.current=events;
+      return;
+    }
+    if(calHistoryPrev.current!==events){
+      calHistoryUndo.current=[...calHistoryUndo.current,calHistoryPrev.current].slice(-50);
+      calHistoryRedo.current=[];
+      calHistoryPrev.current=events;
+      setCalHistoryTick(t=>t+1);
+    }
+  },[events]);
+  const undoCal=()=>{
+    if(calHistoryUndo.current.length===0)return;
+    const prev=calHistoryUndo.current[calHistoryUndo.current.length-1];
+    calHistoryUndo.current=calHistoryUndo.current.slice(0,-1);
+    calHistoryRedo.current=[...calHistoryRedo.current,events];
+    calHistorySkip.current=true;
+    setEvents(prev);lsSet("events",prev);
+    setCalHistoryTick(t=>t+1);
+  };
+  const redoCal=()=>{
+    if(calHistoryRedo.current.length===0)return;
+    const next=calHistoryRedo.current[calHistoryRedo.current.length-1];
+    calHistoryRedo.current=calHistoryRedo.current.slice(0,-1);
+    calHistoryUndo.current=[...calHistoryUndo.current,events];
+    calHistorySkip.current=true;
+    setEvents(next);lsSet("events",next);
+    setCalHistoryTick(t=>t+1);
+  };
+
+  // Copy/paste for the Week grid -- Ctrl+C copies whichever block is
+  // currently selected (selectedCalEventId, mirrored up from WeeklyPlanner's
+  // own click-to-select via onSelectEvent), Ctrl+V drops a duplicate one day
+  // later at the same time (the "same time, next day" placement students
+  // asked for -- simplest, most predictable option, no auto-placement
+  // guessing). Both routed through the same undo history above for free.
+  // Guarded against typing focus the same way WeeklyPlanner's own
+  // Backspace-to-delete already is, so Ctrl+C/Ctrl+V in a text field (task
+  // title, notes, chat) still does normal browser copy/paste.
+  //
+  // selectedRoutineOccurrence extends the same idea to routine blocks
+  // (classes AND activities -- both just `routines` entries differing only
+  // by `kind`) drawn on the grid, which aren't real `events` at all --
+  // they're synthesized per-occurrence from a weekly rule (see the
+  // "routine-"+r.id+"-"+dk objects a few hundred lines up). copiedEventRef
+  // holds a tagged {type,data} so Ctrl+V knows which branch to run. Pasting
+  // a routine occurrence doesn't touch the original rule -- it creates an
+  // independent new routine row for the next day of the week, sharing the
+  // same groupId so Activities' own "N placements" sidebar grouping picks
+  // it up as the same activity meeting an extra day, exactly like a
+  // student manually adding a second placement would.
+  const [selectedCalEventId,setSelectedCalEventId]=useState(null);
+  const [selectedRoutineOccurrence,setSelectedRoutineOccurrence]=useState(null); // {routineId,date,title}|null
+  const copiedEventRef=useRef(null); // {type:"event",data:ev} | {type:"routine",data:{rule,date,title}} | null
+  const [calClipToast,setCalClipToast]=useState("");
+  useEffect(()=>{
+    const handler=(e)=>{
+      const mod=e.ctrlKey||e.metaKey;
+      if(!mod)return;
+      const el=document.activeElement;
+      const typing=el&&(el.tagName==="INPUT"||el.tagName==="TEXTAREA"||el.isContentEditable);
+      if(typing)return;
+      const key=e.key.toLowerCase();
+      if(key==="z"){
+        e.preventDefault();
+        if(e.shiftKey)redoCal();else undoCal();
+        return;
+      }
+      if(key==="y"){e.preventDefault();redoCal();return;}
+      if(key==="c"){
+        if(selectedCalEventId){
+          const ev=events.find(x=>x.id===selectedCalEventId);
+          if(!ev)return;
+          e.preventDefault();
+          copiedEventRef.current={type:"event",data:ev};
+          setCalClipToast(`Copied "${ev.title}"`);
+          setTimeout(()=>setCalClipToast(""),2000);
+          return;
+        }
+        if(selectedRoutineOccurrence){
+          const rule=routines.find(r=>r.id===selectedRoutineOccurrence.routineId);
+          if(!rule)return;
+          e.preventDefault();
+          copiedEventRef.current={type:"routine",data:{rule,date:selectedRoutineOccurrence.date,title:selectedRoutineOccurrence.title}};
+          setCalClipToast(`Copied "${selectedRoutineOccurrence.title}"`);
+          setTimeout(()=>setCalClipToast(""),2000);
+        }
+        return;
+      }
+      if(key==="v"){
+        const clip=copiedEventRef.current;
+        if(!clip)return;
+        e.preventDefault();
+        if(clip.type==="event"){
+          const src=clip.data;
+          const nd=new Date(src.date+"T12:00:00");
+          nd.setDate(nd.getDate()+1);
+          const newDate=dayKey(nd);
+          // Resets completion/progress state the same way every other
+          // "create a new task" path in this file already does (see e.g.
+          // openNewAI's own object literal) -- otherwise duplicating a
+          // finished task would paste a copy that's already checked off.
+          const dup={...src,id:String(Date.now()+Math.random()*1000),date:newDate,userPinned:false,movedByStudlin:false,movedFrom:null,status:"pending",timeSpent:0,completedAt:null};
+          const next=[...events,dup];
+          setEvents(next);lsSet("events",next);
+          setCalClipToast(`Duplicated "${src.title}" to ${nd.toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})}`);
+          setTimeout(()=>setCalClipToast(""),2600);
+        } else if(clip.type==="routine"){
+          const {rule,date,title}=clip.data;
+          const d=new Date(date+"T12:00:00");
+          const sourceDow=(d.getDay()+6)%7;
+          const targetDow=(sourceDow+1)%7;
+          const newRoutine={...rule,id:String(Date.now()+Math.random()*1000),days:[targetDow],groupId:rule.groupId||rule.id};
+          persistRoutines([...routines,newRoutine]);
+          setCalClipToast(`Duplicated "${title}" to ${ROUTINE_DOW[targetDow]}`);
+          setTimeout(()=>setCalClipToast(""),2600);
+        }
+      }
+    };
+    window.addEventListener("keydown",handler);
+    return ()=>window.removeEventListener("keydown",handler);
+  },[selectedCalEventId,events,selectedRoutineOccurrence,routines]);
+
   // Reconciliation above only fires on a routine *change* — it never touches
   // tasks that were already conflicting before this logic existed, or that
   // drifted into conflict for any other reason. Run it once on every Calendar
@@ -27370,13 +27382,12 @@ class ErrorBoundary extends React.Component{
   constructor(props){super(props);this.state={hasError:false};}
   static getDerivedStateFromError(){return{hasError:true};}
   componentDidCatch(error,info){
-    // Temporary diagnostic logging -- production React swallows the real
-    // error/stack for a caught render exception, so there's normally no
-    // way to see what actually threw short of a Sentry dashboard. Logs it
-    // straight to console so it's visible via any console reader, not just
-    // Sentry. Remove once the live crash this was added to chase is found.
+    // Production React otherwise swallows the real error/stack for a caught
+    // render exception entirely -- the only trace was Sentry, which meant
+    // diagnosing a live crash required dashboard access. Logging it here too
+    // means any console reader (browser DevTools, a debugging tool) can see
+    // it directly, the same moment it happens.
     console.error("[ErrorBoundary]",error&&error.message,error&&error.stack,info&&info.componentStack);
-    try{sessionStorage.setItem("studlin-debug-lastError",JSON.stringify({message:error&&error.message,stack:error&&error.stack,componentStack:info&&info.componentStack,at:new Date().toISOString()}));}catch(e){}
     if(typeof Sentry!=="undefined")Sentry.captureException(error,{extra:{componentStack:info.componentStack}});
   }
   render(){
