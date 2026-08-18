@@ -14541,7 +14541,7 @@ function computeEventBlockHeightPx(durationMins, gapToNextMins, pxPerHr) {
   return Math.min(floored, Math.max(4, gapToNextMins * (pxPerHr / 60)));
 }
 
-function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent}) {
+function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent, selectedRoutineKey, onSelectRoutineOccurrence}) {
   // Phase 10b: user-driven zoom (drag handle below), replacing the old
   // fixed constant. Persisted via getCalZoom/saveCalZoom so it's
   // remembered across visits and shared with DayPlanner. Deliberately not
@@ -15117,6 +15117,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   const dimmedByRoutineMode = editRoutineMode && !isRoutine;
                   const highlightedByRoutineMode = editRoutineMode && isRoutine;
                   const isSelected = !isRoutine && selectedEventId === ev.id;
+                  const isRoutineSelected = isRoutine && selectedRoutineKey === (ev.routineId+"|"+ev.date);
                   const leftPct = (displayCol / displayTotalCols) * 100;
                   const widthPct = 100 / displayTotalCols;
                   // Commute buffer strips (2026-07-30) -- effectiveLeadIn/
@@ -15139,15 +15140,28 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                       onDragStart={()=>{ if(!isRoutine){setWkDragId(ev.id); setWkDragDeadline(ev.deadline||null);closePopover();} else {if(onRoutineDragStateChange)onRoutineDragStateChange(true);setWkDragRoutineOccurrence({routineId:ev.routineId,fromDate:ev.date});} }}
                       onDoubleClick={()=>{ if(!isRoutine)openEdit(ev); else if(onEditRoutine)onEditRoutine(ev.routineId); }}
                       onClick={(e)=>{
-                        if(isRoutine){ if(editRoutineMode&&onEditRoutine)onEditRoutine(ev.routineId); return; }
+                        if(isRoutine){
+                          if(editRoutineMode&&onEditRoutine){onEditRoutine(ev.routineId);return;}
+                          // Outside edit-routine mode, a click selects this
+                          // specific occurrence (which day, not just which
+                          // rule) so Ctrl+C knows exactly which placement to
+                          // copy -- same selection concept as a plain event
+                          // just above, routed to a separate callback since
+                          // routines live in a different array/shape.
+                          e.stopPropagation();
+                          if(selectedEventId)closePopover();
+                          if(onSelectRoutineOccurrence)onSelectRoutineOccurrence(isRoutineSelected?null:{routineId:ev.routineId,date:ev.date,title:ev.title});
+                          return;
+                        }
                         e.stopPropagation();
+                        if(onSelectRoutineOccurrence)onSelectRoutineOccurrence(null);
                         if(selectedEventId===ev.id){closePopover();}
                         else{setSelectedEventId(ev.id);setPopoverAnchor({id:ev.id,rect:e.currentTarget.getBoundingClientRect()});if(onSelectEvent)onSelectEvent(ev.id);}
                       }}
                       onMouseEnter={()=>{ if(isRoutine&&setHoveredRoutineId)setHoveredRoutineId(ev.routineId); }}
                       onMouseLeave={()=>{ if(isRoutine&&setHoveredRoutineId)setHoveredRoutineId(null); }}
-                      title={isRoutine?"Drag to reschedule · Double-click to edit":"Click for actions (Backspace to delete) · Double-click to edit · Drag to reschedule"}
-                      style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:5,padding:"2px 5px 2px 8px",cursor:"grab",overflow:"hidden",zIndex:3,opacity:dimmedByRoutineMode?0.3:(isDone?0.6:1),boxSizing:"border-box",userSelect:"none",...kindStyle,...(highlightedByRoutineMode?{outline:`2px solid ${T.lime}`,outlineOffset:1}:{}),...(isSelected?{outline:`2px solid ${T.lime}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.lime}22`}:{}),...(!isRoutine&&highlightedSessionId===ev.id?{outline:`2px solid ${T.amber}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.amber}33`}:{})}}>
+                      title={isRoutine?"Click to select (Ctrl+C to copy) · Double-click to edit · Drag to reschedule":"Click for actions (Backspace to delete) · Double-click to edit · Drag to reschedule"}
+                      style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:5,padding:"2px 5px 2px 8px",cursor:"grab",overflow:"hidden",zIndex:3,opacity:dimmedByRoutineMode?0.3:(isDone?0.6:1),boxSizing:"border-box",userSelect:"none",...kindStyle,...(highlightedByRoutineMode?{outline:`2px solid ${T.lime}`,outlineOffset:1}:{}),...((isSelected||isRoutineSelected)?{outline:`2px solid ${T.lime}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.lime}22`}:{}),...(!isRoutine&&highlightedSessionId===ev.id?{outline:`2px solid ${T.amber}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.amber}33`}:{})}}>
                       {/* Subject marker -- see comment above kindStyle */}
                       <div style={{position:"absolute",left:0,top:0,bottom:0,width:3,background:subjectColor,borderRadius:"5px 0 0 5px"}} />
                       {/* Suppressed while a Catch Me Up rebuild is pending -- the
@@ -19127,8 +19141,21 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // Guarded against typing focus the same way WeeklyPlanner's own
   // Backspace-to-delete already is, so Ctrl+C/Ctrl+V in a text field (task
   // title, notes, chat) still does normal browser copy/paste.
+  //
+  // selectedRoutineOccurrence extends the same idea to routine blocks
+  // (classes AND activities -- both just `routines` entries differing only
+  // by `kind`) drawn on the grid, which aren't real `events` at all --
+  // they're synthesized per-occurrence from a weekly rule (see the
+  // "routine-"+r.id+"-"+dk objects a few hundred lines up). copiedEventRef
+  // holds a tagged {type,data} so Ctrl+V knows which branch to run. Pasting
+  // a routine occurrence doesn't touch the original rule -- it creates an
+  // independent new routine row for the next day of the week, sharing the
+  // same groupId so Activities' own "N placements" sidebar grouping picks
+  // it up as the same activity meeting an extra day, exactly like a
+  // student manually adding a second placement would.
   const [selectedCalEventId,setSelectedCalEventId]=useState(null);
-  const copiedEventRef=useRef(null);
+  const [selectedRoutineOccurrence,setSelectedRoutineOccurrence]=useState(null); // {routineId,date,title}|null
+  const copiedEventRef=useRef(null); // {type:"event",data:ev} | {type:"routine",data:{rule,date,title}} | null
   const [calClipToast,setCalClipToast]=useState("");
   useEffect(()=>{
     const handler=(e)=>{
@@ -19145,36 +19172,58 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       }
       if(key==="y"){e.preventDefault();redoCal();return;}
       if(key==="c"){
-        if(!selectedCalEventId)return;
-        const ev=events.find(x=>x.id===selectedCalEventId);
-        if(!ev)return;
-        e.preventDefault();
-        copiedEventRef.current=ev;
-        setCalClipToast(`Copied "${ev.title}"`);
-        setTimeout(()=>setCalClipToast(""),2000);
+        if(selectedCalEventId){
+          const ev=events.find(x=>x.id===selectedCalEventId);
+          if(!ev)return;
+          e.preventDefault();
+          copiedEventRef.current={type:"event",data:ev};
+          setCalClipToast(`Copied "${ev.title}"`);
+          setTimeout(()=>setCalClipToast(""),2000);
+          return;
+        }
+        if(selectedRoutineOccurrence){
+          const rule=routines.find(r=>r.id===selectedRoutineOccurrence.routineId);
+          if(!rule)return;
+          e.preventDefault();
+          copiedEventRef.current={type:"routine",data:{rule,date:selectedRoutineOccurrence.date,title:selectedRoutineOccurrence.title}};
+          setCalClipToast(`Copied "${selectedRoutineOccurrence.title}"`);
+          setTimeout(()=>setCalClipToast(""),2000);
+        }
         return;
       }
       if(key==="v"){
-        if(!copiedEventRef.current)return;
+        const clip=copiedEventRef.current;
+        if(!clip)return;
         e.preventDefault();
-        const src=copiedEventRef.current;
-        const nd=new Date(src.date+"T12:00:00");
-        nd.setDate(nd.getDate()+1);
-        const newDate=dayKey(nd);
-        // Resets completion/progress state the same way every other
-        // "create a new task" path in this file already does (see e.g.
-        // openNewAI's own object literal) -- otherwise duplicating a
-        // finished task would paste a copy that's already checked off.
-        const dup={...src,id:String(Date.now()+Math.random()*1000),date:newDate,userPinned:false,movedByStudlin:false,movedFrom:null,status:"pending",timeSpent:0,completedAt:null};
-        const next=[...events,dup];
-        setEvents(next);lsSet("events",next);
-        setCalClipToast(`Duplicated "${src.title}" to ${nd.toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})}`);
-        setTimeout(()=>setCalClipToast(""),2600);
+        if(clip.type==="event"){
+          const src=clip.data;
+          const nd=new Date(src.date+"T12:00:00");
+          nd.setDate(nd.getDate()+1);
+          const newDate=dayKey(nd);
+          // Resets completion/progress state the same way every other
+          // "create a new task" path in this file already does (see e.g.
+          // openNewAI's own object literal) -- otherwise duplicating a
+          // finished task would paste a copy that's already checked off.
+          const dup={...src,id:String(Date.now()+Math.random()*1000),date:newDate,userPinned:false,movedByStudlin:false,movedFrom:null,status:"pending",timeSpent:0,completedAt:null};
+          const next=[...events,dup];
+          setEvents(next);lsSet("events",next);
+          setCalClipToast(`Duplicated "${src.title}" to ${nd.toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})}`);
+          setTimeout(()=>setCalClipToast(""),2600);
+        } else if(clip.type==="routine"){
+          const {rule,date,title}=clip.data;
+          const d=new Date(date+"T12:00:00");
+          const sourceDow=(d.getDay()+6)%7;
+          const targetDow=(sourceDow+1)%7;
+          const newRoutine={...rule,id:String(Date.now()+Math.random()*1000),days:[targetDow],groupId:rule.groupId||rule.id};
+          persistRoutines([...routines,newRoutine]);
+          setCalClipToast(`Duplicated "${title}" to ${ROUTINE_DOW[targetDow]}`);
+          setTimeout(()=>setCalClipToast(""),2600);
+        }
       }
     };
     window.addEventListener("keydown",handler);
     return ()=>window.removeEventListener("keydown",handler);
-  },[selectedCalEventId,events]);
+  },[selectedCalEventId,events,selectedRoutineOccurrence,routines]);
 
   const now=new Date();
   const [ym,setYm]=useState({y:now.getFullYear(),m:now.getMonth()});
@@ -21361,7 +21410,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           onDropRoutineOccurrence={onDropRoutineOccurrence} onResizeRoutineOccurrence={onResizeRoutineOccurrence} pendingRoutineChange={routineDropPending} onRoutineDragStateChange={setRoutineDragActive} previewEvent={previewEvent} highlightedSessionId={highlightedSessionId}
           onPreviewMove={(date,startTime,endTime)=>setPreviewOverride({date,startTime,endTime})}
           onPreviewResize={(endTime)=>setPreviewOverride(o=>({date:(o&&o.date)||previewEvent.date,startTime:(o&&o.startTime)||previewEvent.startTime,endTime}))}
-          onPreviewDraggingChange={setPreviewDragActive} onSelectEvent={setSelectedCalEventId} />
+          onPreviewDraggingChange={setPreviewDragActive} onSelectEvent={setSelectedCalEventId}
+          selectedRoutineKey={selectedRoutineOccurrence?selectedRoutineOccurrence.routineId+"|"+selectedRoutineOccurrence.date:null}
+          onSelectRoutineOccurrence={setSelectedRoutineOccurrence} />
       )}
       {calView==="daily"&&(
         <DayPlanner dayEvents={dayEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} fmtTimeRange={fmtTimeRange} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} catchUpPending={catchUpPending} openNew={openNew} />
