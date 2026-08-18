@@ -13,6 +13,7 @@ const Ic = {
   flame: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/></svg>,
   spark: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2l2.4 6.5L21 11l-6.6 2.5L12 20l-2.4-6.5L3 11l6.6-2.5z"/></svg>,
   clock: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
+  lifeBuoy: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="4.93" y1="4.93" x2="9.17" y2="9.17"/><line x1="14.83" y1="14.83" x2="19.07" y2="19.07"/><line x1="14.83" y1="9.17" x2="19.07" y2="4.93"/><line x1="4.93" y1="19.07" x2="9.17" y2="14.83"/></svg>,
 };
 
 const APP_URL = "/app";
@@ -81,13 +82,13 @@ function LeftRail() {
         </div>
         <div className="rail-tile">
           <div className="ic">{Ic.spark}</div>
-          <div className="t">Everything synced</div>
+          <div className="t">Your entire life, synced</div>
           <div className="s">Notes, flashcards, and calendar, right where you left them</div>
         </div>
         <div className="rail-tile">
-          <div className="ic">{Ic.clock}</div>
-          <div className="t">Back in seconds</div>
-          <div className="s">One tap with Google, or use your email</div>
+          <div className="ic">{Ic.lifeBuoy}</div>
+          <div className="t">When life falls apart</div>
+          <div className="s">Studlin helps you put it back together</div>
         </div>
       </div>
     </aside>
