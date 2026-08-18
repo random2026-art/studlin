@@ -7431,9 +7431,39 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   const commitBuildPlan=async()=>{
     if(!buildPlanExam||!buildPlanPreview)return;
     setBuildPlanLoading(true);
-    const events=removeGenericExamPrepSessions(lsGet("events",[]),buildPlanExam.id);
     const routines=getWeeklyRoutine();
     const prefs=getSchedulePreferences();
+    // Flashcards/a practice exam generate FIRST now, still only here at
+    // Confirm (never at preview time -- see the "Also included" comment
+    // below in the render for why: burning the monthly generation quota
+    // or writing a real deck before the student has actually committed to
+    // this plan would be wrong). The difference from before is what
+    // happens with the result: genDeck/genPE get woven into the SAME N
+    // sessions below instead of sitting as a disconnected, separately-
+    // scheduled deck/quiz nobody asked to see twice. Deletes-and-replaces
+    // any existing ones outright, same as before -- this flow is already
+    // preview-then-confirm, so a second nested "are you sure" here would
+    // just be extra friction for something the student already explicitly
+    // asked for by checking the box and confirming.
+    // Deliberately run BEFORE the `events` snapshot just below --
+    // deleteDeckAndSessions/deletePracticeExamAndSessions each do their own
+    // lsSet("events",...) to drop the old deck/PE-linked sessions they're
+    // replacing. Capturing `events` before those deletes ran (the original
+    // ordering here) would hold a stale snapshot that still had the
+    // old sessions in it, and the final lsSet at the bottom of this
+    // function would silently resurrect them.
+    let genDeck=null,genPE=null;
+    if(buildPlanGenFlashcards&&materialText.trim()){
+      const existingDeck=allDecks.find(d=>deckLinkedToExam(d,buildPlanExam.id));
+      if(existingDeck)deleteDeckAndSessions(existingDeck.id,buildPlanExam.id);
+      genDeck=await doGenDeckForExam();
+    }
+    if(buildPlanGenPE&&materialText.trim()){
+      const existingPE=allPracticeExams.find(p=>p.examEventId===buildPlanExam.id);
+      if(existingPE)deletePracticeExamAndSessions(existingPE.id);
+      genPE=await doGenPracticeExamForExam();
+    }
+    const events=removeGenericExamPrepSessions(lsGet("events",[]),buildPlanExam.id);
     const sessions=buildExamSessionEvents(buildPlanExam.title,buildPlanExam.date,buildPlanExam.subject,buildPlanPreview.sessionCount,"prep-"+buildPlanExam.id+"-"+Date.now(),events,routines,prefs,{dueEventId:buildPlanExam.id},buildPlanPreview.difficultyValue,buildPlanPreview.sessionDuration,buildPlanExam.examWeight,buildPlanExam.confidenceLog);
     // buildExamSessionEvents can still place fewer sessions than requested
     // (findReliableSlotFor comes back empty for a given date -- a packed
@@ -7474,7 +7504,32 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
       // Focuses were already generated (and are editable) back in
       // chooseConfidence/the preview step -- use whatever the student
       // actually confirmed, don't silently regenerate a second set here.
-      finalSessions=placedSessions.map((s,i)=>buildPlanFocuses[i]?{...s,notes:buildPlanFocuses[i]}:s);
+      // Interleaving: the LAST session becomes the sit-down practice exam
+      // when one was generated this run -- the exact slot the taper
+      // already lightens into a "final review" reads naturally as "take
+      // the practice exam" instead. Every session (including that last
+      // one) gets a flashcard-review warm-up folded into its own notes
+      // when a deck was generated -- retrieval practice before the
+      // session's real focus, not a separate block competing for a
+      // different slot on the calendar.
+      finalSessions=placedSessions.map((s,i)=>{
+        const isLast=i===placedSessions.length-1;
+        const extra={};
+        // interleavedReview marks this as a Build-Study-Plan-owned session
+        // that happens to carry deckId/practiceExamId -- see
+        // removeGenericExamPrepSessions, which needs to tell these apart
+        // from the separate standalone kit-schedule sessions Flashcards'
+        // own review-scheduling flow creates (those never set this).
+        if(genDeck){extra.deckId=genDeck.id;extra.interleavedReview=true;}
+        if(genPE&&isLast){extra.practiceExamId=genPE.id;extra.interleavedReview=true;}
+        const focus=buildPlanFocuses[i]||"";
+        let notes=null;
+        if(genPE&&isLast)notes=genDeck?"Review flashcards, then take your practice exam.":"Take your practice exam for this material.";
+        else if(genDeck)notes="Review flashcards first"+(focus?", then: "+focus:".");
+        else if(focus)notes=focus;
+        if(Object.keys(extra).length===0&&notes===null)return s;
+        return {...s,...extra,notes:notes??s.notes};
+      });
     }
     // The exam list's "Difficulty" column reads ex.difficulty, which used
     // to be frozen at its creation-time default (5/500) forever -- the
@@ -7486,22 +7541,6 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
     // captured earlier in this function -- a later separate write would
     // get clobbered by this one.
     lsSet("events",events.concat(finalSessions).map(e=>e.id===buildPlanExam.id?{...e,difficulty:buildPlanPreview.difficultyValue}:e));
-    // Also generate flashcards/a practice exam if requested -- replaces
-    // any existing ones for this exam outright. This whole flow is
-    // already preview-then-confirm (the Confirm plan click just made); a
-    // second nested "are you sure you want to replace it" on top of that
-    // would just be extra friction for something the student already
-    // explicitly asked for by checking the box and confirming.
-    if(buildPlanGenFlashcards&&materialText.trim()){
-      const existingDeck=allDecks.find(d=>deckLinkedToExam(d,buildPlanExam.id));
-      if(existingDeck)deleteDeckAndSessions(existingDeck.id,buildPlanExam.id);
-      await doGenDeckForExam();
-    }
-    if(buildPlanGenPE&&materialText.trim()){
-      const existingPE=allPracticeExams.find(p=>p.examEventId===buildPlanExam.id);
-      if(existingPE)deletePracticeExamAndSessions(existingPE.id);
-      await doGenPracticeExamForExam();
-    }
     if(placedSessions.length<requestedCount){
       setSyllabusToast("Fit "+placedSessions.length+" of "+requestedCount+" sessions before this exam. Your calendar didn't have room for the rest.");
       setTimeout(()=>setSyllabusToast(""),4200);
@@ -7666,6 +7705,10 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
     lsSet("decks",[nd,...lsGet("decks",[])]);
     setGenMsg("✓ Flashcards ready for "+selectedExam.title);
     refresh();
+    // Returned so commitBuildPlan (the only other caller) can weave this
+    // deck's id straight into the study-plan sessions it's building in the
+    // same commit, instead of the deck sitting disconnected from them.
+    return nd;
   };
   const doGenPracticeExamForExam=async()=>{
     if(!materialText.trim()||!selectedExam)return;
@@ -7678,9 +7721,12 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
     setGenLoading(null);
     if(questions.length===0){setGenMsg("Couldn't generate a practice exam. Try again.");return;}
     recordQuizGen();
-    createPracticeExam(selectedExam.title,selectedExam.subject,selectedExam.id,questions);
+    const pe=createPracticeExam(selectedExam.title,selectedExam.subject,selectedExam.id,questions);
     setGenMsg("✓ Practice exam ready for "+selectedExam.title);
     refresh();
+    // Same reason as doGenDeckForExam's return above -- commitBuildPlan
+    // needs the real id to attach this practice exam to a session.
+    return pe;
   };
   // Deletes a deck's own object plus this exam's own linked sessions
   // (deckId+dueEventId tagged -- scoped to this exam specifically, since
@@ -8835,12 +8881,15 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                 nothing about the plan should be a surprise once Confirm is
                 clicked -- these counts are the same deterministic
                 scaledFlashcardCount/scaledQuizCount math Confirm will
-                actually use, just computed here for free to preview. */}
+                actually use, just computed here for free to preview.
+                Copy matches what commitBuildPlan's interleaving actually
+                does now -- woven into these same sessions, not a second,
+                separately-scheduled deck/quiz. */}
             {(buildPlanGenFlashcards||buildPlanGenPE)&&materialText.trim()&&(
               <div style={{fontSize:12,color:T.text,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",marginBottom:14,lineHeight:1.6}}>
                 <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Also included</div>
-                {buildPlanGenFlashcards&&<div>~{scaledFlashcardCount(materialText.length)} flashcards, with their own spaced review sessions on your calendar.</div>}
-                {buildPlanGenPE&&<div>A {scaledQuizCount(materialText.length)}-question practice exam, scheduled the same way.</div>}
+                {buildPlanGenFlashcards&&<div>~{scaledFlashcardCount(materialText.length)} flashcards, woven into every session below as a quick review before you start.</div>}
+                {buildPlanGenPE&&<div>A {scaledQuizCount(materialText.length)}-question practice exam -- your last session becomes a sit-down for it instead of new material.</div>}
               </div>
             )}
             {/* P1 in the audit: weekPrepLoad/pressuredExamItems already
@@ -8872,7 +8921,11 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                 only ever removes pending ones) -- they're not shown here
                 since nothing about them is changing. */}
             {(()=>{
-              const oldPending=lsGet("events",[]).filter(e=>e.dueEventId===buildPlanExam.id&&e.status==="pending"&&e.isExamPrepSession&&!e.deckId&&!e.practiceExamId);
+              // Same interleavedReview carve-out as removeGenericExamPrepSessions
+              // -- a prior interleaved session carries deckId/practiceExamId
+              // too, but Redo IS about to replace it, so it belongs in this
+              // list same as any other generic session would.
+              const oldPending=lsGet("events",[]).filter(e=>e.dueEventId===buildPlanExam.id&&e.status==="pending"&&e.isExamPrepSession&&(e.interleavedReview||(!e.deckId&&!e.practiceExamId)));
               if(oldPending.length===0)return null;
               return (
                 <div style={{marginBottom:14}}>
@@ -8912,19 +8965,41 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                 {buildPlanPreview.dates.map((d,i)=>{
                   const ov=buildPlanOverrides[i];
                   const setOv=(patch)=>setBuildPlanOverrides(o=>o.map((v,vi)=>vi===i?{date:v?.date??d,duration:v?.duration??buildPlanPreview.sessionDuration,...patch}:v));
+                  // Same interleaving commitBuildPlan actually does (isLast
+                  // -> the practice exam session, every row -> a flashcard
+                  // warm-up when a deck was requested) -- shown per-row here
+                  // too, not just in the general "Also included" summary
+                  // above, so the preview never disagrees with what
+                  // Confirm is about to do.
+                  const isLastRow=i===buildPlanPreview.dates.length-1;
+                  const rowGetsPE=buildPlanGenPE&&isLastRow&&materialText.trim();
+                  const rowGetsCards=buildPlanGenFlashcards&&materialText.trim();
                   return (
                   <div key={i} style={{padding:"8px 10px",background:T.card2,borderRadius:8}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:12.5,marginBottom:6,gap:8}}>
-                      <span style={{color:T.text,flexShrink:0}}>Session {i+1}</span>
+                      <span style={{color:T.text,flexShrink:0,display:"flex",alignItems:"center",gap:6}}>
+                        Session {i+1}
+                        {rowGetsPE&&<span style={{fontSize:9.5,fontWeight:700,padding:"2px 6px",borderRadius:99,background:T.lime+"14",color:T.lime,border:`1px solid ${T.lime}33`}}>PRACTICE EXAM</span>}
+                        {rowGetsCards&&<span style={{fontSize:9.5,fontWeight:700,padding:"2px 6px",borderRadius:99,background:T.teal+"14",color:T.teal,border:`1px solid ${T.teal}33`}}>+ FLASHCARDS</span>}
+                      </span>
                       <div style={{display:"flex",alignItems:"center",gap:6}}>
                         <Input type="date" value={ov?.date??d} onChange={e=>setOv({date:e.target.value})} style={{width:130,fontSize:11.5,padding:"5px 8px"}} />
                         <NumField min={5} max={240} fallback={buildPlanPreview.sessionDuration} value={ov?.duration??buildPlanPreview.sessionDuration} onChange={v=>setOv({duration:v})} style={{width:56}} />
                         <span style={{fontSize:10.5,color:T.muted,flexShrink:0}}>min</span>
                       </div>
                     </div>
-                    {!buildPlanGeneric&&(
+                    {/* The PE row's notes get fully replaced by
+                        commitBuildPlan's interleaving (see the "Take your
+                        practice exam" line there) -- a focus input here
+                        would be a dead control that silently gets
+                        overwritten at Confirm, so it's swapped for the
+                        actual fixed line instead of showing something
+                        editable that secretly isn't. */}
+                    {rowGetsPE?(
+                      <div style={{fontSize:12,color:T.muted}}>{rowGetsCards?"Review flashcards, then take your practice exam.":"Take your practice exam for this material."}</div>
+                    ):!buildPlanGeneric&&(
                       <Input value={buildPlanFocuses[i]||""} onChange={e=>setBuildPlanFocuses(f=>f.map((v,vi)=>vi===i?e.target.value:v))}
-                        placeholder="What to study this session (optional)"
+                        placeholder={rowGetsCards?"What to study after flashcards (optional)":"What to study this session (optional)"}
                         style={{width:"100%",fontSize:12}} />
                     )}
                   </div>
@@ -11947,11 +12022,33 @@ function pressuredExamItems(items,events,prefs){
 //   packed it says so honestly instead of silently overloading it. The
 //   last scheduled session before the exam gets an honest heads-up
 //   instead of inventing a slot this close to the date.
+// - "Getting there" ("okay") used to be a pure no-op regardless of how
+//   many times in a row a student gave it -- the single most common
+//   answer, and the only one Studlin never had anything to say about. A
+//   lone "okay" still means nothing (an average session, nothing more),
+//   but three in a row -- never dipping to shaky, never climbing to
+//   solid -- is a real plateau: the material isn't clicking any faster
+//   than it was three sessions ago. Requires a HARDER bar than solid's
+//   two-in-a-row, since "okay" is a weaker, more ambiguous signal to
+//   begin with. Proposes the mirror of solid's own "shorten" move (a
+//   modest extension instead of a cut), reusing the exact same
+//   accept/dismiss mechanism -- never applied until the student clicks
+//   Extend.
 function evaluateExamPrepAdjustment(examEvent,events,prefs){
   const log=examEvent.confidenceLog||[];
   const rating=log[log.length-1];
-  if(!rating||rating==="okay")return null;
+  if(!rating)return null;
   const remaining=events.filter(e=>e.dueEventId===examEvent.id&&e.status==="pending").sort((a,b)=>a.date<b.date?-1:1);
+  if(rating==="okay"){
+    const lastThree=log.slice(-3);
+    const isPlateau=lastThree.length===3&&lastThree.every(r=>r==="okay");
+    if(!isPlateau||remaining.length===0)return null;
+    const next=remaining[0];
+    const newDuration=Math.max(15,Math.round((next.duration*1.15)/5)*5);
+    if(newDuration<=next.duration)return null;
+    return {type:"extend",examId:examEvent.id,sessionId:next.id,oldDuration:next.duration,newDuration,
+      reason:"You've said \"Getting there\" on "+examEvent.title+" three sessions running -- steady, but not quite clicking yet. The next one could run a bit longer, "+next.duration+"m to "+newDuration+"m, to give it more room."};
+  }
   if(rating==="solid"){
     const lastTwoSolid=log.length>=2&&log[log.length-1]==="solid"&&log[log.length-2]==="solid";
     if(!lastTwoSolid||remaining.length===0)return null;
@@ -12342,8 +12439,16 @@ function buildExamSessionEvents(examTitle,examDate,subject,count,idPrefix,workin
 // generic ones never do) and pending-only -- an already-completed
 // generic session is real history, left alone, same rule cancel-all
 // already follows.
+// Also removes commitBuildPlan's own interleaved "Study:"/"Practice Exam:"
+// sessions (see interleavedReview there) -- those carry deckId/
+// practiceExamId too, since the flashcard/PE review lives INSIDE them now
+// rather than as a separate kit session, but they're still "Redo"'s to
+// replace, not a standalone kit schedule from Flashcards/Studlin Prep's
+// other review-scheduling flow. Without the interleavedReview marker,
+// this filter can't tell the two apart -- deckId/practiceExamId alone
+// used to be enough to mean "leave it alone," which isn't true anymore.
 function removeGenericExamPrepSessions(events,examId){
-  return events.filter(e=>!(e.dueEventId===examId&&e.status==="pending"&&e.isExamPrepSession&&!e.deckId&&!e.practiceExamId));
+  return events.filter(e=>!(e.dueEventId===examId&&e.status==="pending"&&e.isExamPrepSession&&(e.interleavedReview||(!e.deckId&&!e.practiceExamId))));
 }
 
 // A brain-dumped item describing a repeating pattern ("work 3-11pm
@@ -25781,7 +25886,7 @@ function App() {
     const s=examPrepSuggestion;
     const events=lsGet("events",[]);
     logSuggestionDecision("examPrepAdjustment","accepted",buildExamPrepLogContext(s,events));
-    if(s.type==="shorten"){
+    if(s.type==="shorten"||s.type==="extend"){
       lsSet("events",events.map(e=>e.id===s.sessionId?{...e,duration:s.newDuration}:e));
     }else if(s.type==="drop-remaining"){
       const ids=new Set(s.sessionIds);
@@ -27291,9 +27396,9 @@ function App() {
         <div style={{position:"fixed",bottom:20,right:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:360}}>
           <div style={{fontSize:13,color:T.text,marginBottom:12,lineHeight:1.5}}>{examPrepSuggestion.reason}</div>
           <div style={{display:"flex",gap:8}}>
-            {["shorten","drop-remaining","pull-closer","shaky-packed"].includes(examPrepSuggestion.type)&&(
+            {["shorten","extend","drop-remaining","pull-closer","shaky-packed"].includes(examPrepSuggestion.type)&&(
               <Btn onClick={acceptExamPrepSuggestion} style={{flex:1,justifyContent:"center",fontSize:12,padding:"7px 14px"}}>
-                {examPrepSuggestion.type==="shorten"?"Shorten it":examPrepSuggestion.type==="drop-remaining"?"Drop them":examPrepSuggestion.type==="shaky-packed"?"Fit it in anyway":"Move it closer"}
+                {examPrepSuggestion.type==="shorten"?"Shorten it":examPrepSuggestion.type==="extend"?"Extend it":examPrepSuggestion.type==="drop-remaining"?"Drop them":examPrepSuggestion.type==="shaky-packed"?"Fit it in anyway":"Move it closer"}
               </Btn>
             )}
             <Btn variant="ghost" onClick={dismissExamPrepSuggestion} style={{flex:1,justifyContent:"center",fontSize:12,padding:"7px 14px"}}>
