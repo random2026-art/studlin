@@ -3388,6 +3388,28 @@ function scheduleStudyBlockExtension(task,totalMins){
 // Broadened from isExamPrepSession||deadline to any pending, timed,
 // non-free-period event: a plain scheduled study block with no linked
 // deadline used to be invisible to this check entirely.
+// Threshold for calling out an inferred (not explicitly declared) window as
+// "usually productive" in checkTimeOffImpact -- deliberately higher than
+// isPressured's 0.65 (that's "is the week tight," a much lower bar than "is
+// this specifically one of the student's best windows"). getBucketReliability
+// already returns null under TIER0_MIN_BUCKET_SAMPLE, so thin data never
+// triggers this either.
+const TIMEOFF_NOTABLE_RELIABILITY=0.75;
+// "Can I go?" used to only ever answer blocked-or-not -- even a clean "ok"
+// hid whether the window being given up was actually one of the student's
+// good ones. Same signals findReliableSlotFor already trusts (declared peak
+// bucket, or inferred completion reliability), evaluated for the requested
+// window's own start time -- a single anchor bucket, same simplification
+// findReliableSlotFor's own scoring already makes rather than trying to
+// average quality across a multi-hour span.
+function timeOffWindowQuality(startTime,prefs){
+  const bucket=hourBucket(startTime);
+  if(!bucket)return null;
+  if((prefs.peakHourBuckets||[]).includes(bucket))return {type:"peak",bucket};
+  const reliability=getBucketReliability(bucket,null);
+  if(reliability!==null&&reliability>=TIMEOFF_NOTABLE_RELIABILITY)return {type:"reliability",bucket,pct:reliability};
+  return null;
+}
 function checkTimeOffImpact(hours,opts){
   const events=lsGet("events",[]);
   const routines=getWeeklyRoutine();
@@ -3397,6 +3419,7 @@ function checkTimeOffImpact(hours,opts){
   const startTime=(opts&&opts.startTime)||minutesToTime(now.getHours()*60+now.getMinutes());
   const startMins=timeToMinutes(startTime);
   const endMins=startMins+hours*60;
+  const timeQuality=timeOffWindowQuality(startTime,prefs);
   const overlapsWindow=(s,en)=>!(endMins<=s||startMins>=en);
   // Fixed commitments (a class, a recurring activity like a weekly church
   // service) never live in `events` at all -- they only ever exist as
@@ -3415,7 +3438,7 @@ function checkTimeOffImpact(hours,opts){
     const s=timeToMinutes(e.time),en=s+(e.duration||30);
     return overlapsWindow(s,en);
   });
-  if(affected.length===0&&fixedConflicts.length===0)return {ok:true};
+  if(affected.length===0&&fixedConflicts.length===0)return {ok:true,timeQuality};
   const synthetic={id:"timeoff-sim",date,time:startTime,duration:hours*60,kind:"busy block",status:"pending"};
   const blocked=[];
   const displaced=[];
@@ -3433,8 +3456,8 @@ function checkTimeOffImpact(hours,opts){
       scratch=others.concat([{...task,date:slot.date,time:slot.time}]);
     }
   }
-  if(blocked.length===0&&displaced.length===0&&fixedConflicts.length===0)return {ok:true};
-  return {ok:false,blocked,displaced,fixedConflicts};
+  if(blocked.length===0&&displaced.length===0&&fixedConflicts.length===0)return {ok:true,timeQuality};
+  return {ok:false,blocked,displaced,fixedConflicts,timeQuality};
 }
 // Attack Block — calibration-based duration estimation. Instead of asking a
 // student to guess how long an ambiguous task takes (the exact skill they're
@@ -5290,6 +5313,31 @@ function applyHoursTargetCap(sessionCount,sessionDuration,hoursTarget){
   const cappedDuration=Math.max(10,Math.round(sessionDuration*scale/5)*5);
   const cappedCount=Math.max(1,Math.round(targetMins/cappedDuration));
   return {sessionCount:cappedCount,sessionDuration:cappedDuration};
+}
+// The plain-language "why" behind the numbers computeStudyPlanParams
+// already computes -- every input here was already driving the math (see
+// STUDY_PLAN_CONFIDENCE_LEVELS, IMPORTANCE_TO_DURATION_MULTIPLIER,
+// materialVolumeBonus, suggestDurationFor), this just translates it into
+// something a student reads on the preview screen before confirming,
+// instead of a bare number with no justification behind it. Takes the
+// final (post-hours-cap) sessionCount/sessionDuration so the copy always
+// matches what's actually on screen, including after a manual
+// adjustBuildPlanCount tweak -- never a stale snapshot from generation time.
+function studyPlanReasoning(confidenceLevel,importanceLevel,materialCharCount,hadHistoricalDuration,hoursTargetCapped,sessionCount,sessionDuration,hasTaperedLastSession){
+  const confPhrase=confidenceLevel==="shaky"?"you said you're shaky on this material"
+    :confidenceLevel==="solid"?"you're already feeling solid on this material"
+    :"you're feeling okay but not solid on this material";
+  const importancePhrase=importanceLevel&&importanceLevel!=="moderate"?", and it's a "+importanceLevel+" exam":"";
+  const countLine=sessionCount+" session"+(sessionCount!==1?"s":"")+" -- "+confPhrase+importancePhrase+".";
+  const durBits=[];
+  if(hadHistoricalDuration)durBits.push("your past study sessions like this one have actually run about this long");
+  else durBits.push(confidenceLevel==="shaky"?"shakier material gets more time per sitting":confidenceLevel==="solid"?"solid material needs less time per sitting":"a standard session length for this kind of material");
+  if(materialVolumeBonus(materialCharCount)>0)durBits.push("there's a lot of material to get through");
+  const durationLine=sessionDuration+" minutes each -- "+durBits.join(", and ")+".";
+  const lines=[countLine,durationLine];
+  if(hasTaperedLastSession)lines.push("Your last session is lighter -- a final review instead of new material, right before the exam.");
+  if(hoursTargetCapped)lines.push("Scaled down to fit the study time you asked for.");
+  return lines;
 }
 // difficulty is optional -- when a caller has a real difficulty value in
 // scope (0-1000 scale, same as everywhere else in this file), this also
@@ -7314,7 +7362,8 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
     const hasMaterial=buildPlanMaterialText.trim().length>0;
     setBuildPlanGeneric(!hasMaterial);
     if(hasMaterial)persistBuildPlanMaterial();
-    const baseDuration=suggestDurationFor(buildPlanExam.subject,"study block")||25;
+    const historicalDuration=suggestDurationFor(buildPlanExam.subject,"study block");
+    const baseDuration=historicalDuration||25;
     const params=computeStudyPlanParams(buildPlanExam.examWeight,baseDuration,buildPlanConfidence,buildPlanMaterialText.length,buildPlanExam.importanceLevel);
     const {sessionCount,sessionDuration}=applyHoursTargetCap(params.sessionCount,params.sessionDuration,parseFloat(buildPlanHoursTarget));
     const dates=computeReviewDates(buildPlanExam.date,dayKey(),sessionCount);
@@ -7322,14 +7371,36 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
     // exam that's only 2 days out can't fit a 4-session spread) -- show
     // the count the student will actually get, not the pre-clamp request,
     // so the preview screen and the real outcome never disagree.
-    setBuildPlanPreview({sessionCount:dates.length,sessionDuration,difficultyValue:params.difficultyValue,dates});
+    // Final-session taper: with a real multi-session spread, the last
+    // sitting before the exam works better as a lighter final review than
+    // a full session identical to the others. Reuses the exact 0.6x ratio
+    // evaluateExamPrepAdjustment's own "shorten" adjustment already uses
+    // (:11845 area) rather than inventing a second one. Only kicks in at
+    // 3+ sessions -- with 1-2 there's no "earlier" session for this one to
+    // read as lighter relative to. Expressed as a normal buildPlanOverrides
+    // entry, the exact mechanism the preview screen already uses for a
+    // manual per-session duration edit -- visible and editable like any
+    // other row, never a hidden behavior baked silently into commit.
+    const hasTaperedLastSession=dates.length>=3;
+    const taperedLastDuration=hasTaperedLastSession?Math.max(15,Math.round((sessionDuration*0.6)/5)*5):null;
+    // reasoningInputs carries just the raw signals studyPlanReasoning needs
+    // -- kept separate from sessionCount/sessionDuration (which can still
+    // change via adjustBuildPlanCount) so the "why" text always recomputes
+    // against whatever's actually on screen, never a stale snapshot from
+    // this one generation moment.
+    setBuildPlanPreview({sessionCount:dates.length,sessionDuration,difficultyValue:params.difficultyValue,dates,
+      reasoningInputs:{confidenceLevel:buildPlanConfidence,importanceLevel:buildPlanExam.importanceLevel,materialCharCount:buildPlanMaterialText.length,
+        hadHistoricalDuration:historicalDuration!=null,
+        hoursTargetCapped:sessionCount!==params.sessionCount||sessionDuration!==params.sessionDuration}});
     setBuildPlanStep("preview");
     setBuildPlanFocuses(dates.map(()=>""));
     // One {date,duration}|null per session index -- null means "use the
     // auto-computed value," matching how buildPlanFocuses' blank string
     // means "no edit yet." Reset on every fresh preview generation, same
-    // as buildPlanFocuses just above.
-    setBuildPlanOverrides(dates.map(()=>null));
+    // as buildPlanFocuses just above. The last row gets a real (still
+    // editable/removable) override when tapered, same as any other
+    // manually-set row -- see hasTaperedLastSession above.
+    setBuildPlanOverrides(dates.map((d,i)=>hasTaperedLastSession&&i===dates.length-1?{date:d,duration:taperedLastDuration}:null));
     if(hasMaterial&&dates.length>0){
       setBuildPlanFocusesLoading(true);
       const focuses=await proposeSessionFocuses(buildPlanExam.title,buildPlanMaterialText,dates.length,buildPlanExam.subject);
@@ -8550,7 +8621,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
         sub={buildPlanExam?buildPlanExam.title:""} width={520}
         footer={buildPlanStep==="preview"?<><Btn variant="subtle" onClick={closeBuildPlan}>Cancel</Btn><Btn onClick={commitBuildPlan} disabled={buildPlanLoading}>{buildPlanLoading?"Building…":"Confirm plan"}</Btn></>
           :buildPlanStep==="manual"?<><Btn variant="subtle" onClick={closeBuildPlan}>Cancel</Btn><Btn onClick={commitManualSessions}>Add session{manualSessionRows.filter(r=>r.text.trim()).length!==1?"s":""}</Btn></>
-          :buildPlanStep==="confidence"?<><Btn variant="subtle" onClick={closeBuildPlan}>Cancel</Btn><Btn onClick={generatePreview}>See preview</Btn></>
+          :buildPlanStep==="confidence"?<><Btn variant="subtle" onClick={closeBuildPlan}>Cancel</Btn><Btn onClick={generatePreview}>Generate Plan</Btn></>
           :<Btn variant="subtle" onClick={closeBuildPlan}>Cancel</Btn>}>
         {/* Correction round (2026-07-31): exactly 2 choices -- the old
             three-way split (add material / just block out time / create
@@ -8657,9 +8728,15 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
             </div>
             <div style={{marginBottom:16}}>
               {!buildPlanMaterialOpen?(
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                  <span style={{fontSize:12,color:T.muted}}>{fileTexts.length>0||materialLinks.length>0?fileTexts.length+materialLinks.length+" material item"+((fileTexts.length+materialLinks.length)!==1?"s":""):"No material added"}</span>
-                  <button type="button" onClick={()=>setBuildPlanMaterialOpen(true)} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>{fileTexts.length>0||materialLinks.length>0?"Edit material":"+ Add material"}</button>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+                  <span style={{fontSize:12,color:T.muted}}>{fileTexts.length>0||materialLinks.length>0?fileTexts.length+materialLinks.length+" material item"+((fileTexts.length+materialLinks.length)!==1?"s":""):"No material added -- Studlin can build a real, focused plan instead of generic review blocks"}</span>
+                  {/* Was a plain muted underlined text link -- easy to miss
+                      against the rest of this muted-text row, especially
+                      "+ Add material" (the one action that unlocks a real,
+                      grounded plan instead of generic review blocks). A
+                      real bordered lime pill, same weight as the other
+                      primary actions on this screen, not a footnote. */}
+                  <button type="button" onClick={()=>setBuildPlanMaterialOpen(true)} style={{flexShrink:0,padding:"6px 12px",borderRadius:7,border:`1px solid ${T.lime}44`,background:T.lime+"14",color:T.lime,fontSize:12,fontWeight:600,fontFamily:T.font,cursor:"pointer"}}>{fileTexts.length>0||materialLinks.length>0?"Edit material":"+ Add material"}</button>
                 </div>
               ):(
                 <div>
@@ -8727,6 +8804,45 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                   analyzeLabel={"Building your sessions"+(buildPlanGenFlashcards&&buildPlanGenPE?", flashcards, and a practice exam":buildPlanGenFlashcards?" and flashcards":buildPlanGenPE?" and a practice exam":"")+"…"} />
               </div>
             ):(<>
+            {/* The "why" behind the plan -- session count and duration were
+                always computed from real signals (confidence, importance,
+                material volume, and this exam subject's own completed-
+                session history), just never shown. Shown for every plan,
+                generic or material-grounded, since the justification is
+                just as real either way. */}
+            {buildPlanPreview.reasoningInputs&&(()=>{
+              // Read straight off the actual last row rather than a flag
+              // frozen at generation time -- adjustBuildPlanCount can shift
+              // which index is "last" (or a student can hand-edit that
+              // row's duration directly), so this always matches whatever
+              // is really about to be confirmed instead of a stale claim.
+              const lastOv=buildPlanOverrides[buildPlanOverrides.length-1];
+              const lastIsLighter=buildPlanPreview.dates.length>=3&&lastOv&&lastOv.duration&&lastOv.duration<buildPlanPreview.sessionDuration;
+              return (
+                <div style={{fontSize:12,color:T.text,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",marginBottom:14,lineHeight:1.6}}>
+                  <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Why this plan</div>
+                  {studyPlanReasoning(buildPlanPreview.reasoningInputs.confidenceLevel,buildPlanPreview.reasoningInputs.importanceLevel,buildPlanPreview.reasoningInputs.materialCharCount,buildPlanPreview.reasoningInputs.hadHistoricalDuration,buildPlanPreview.reasoningInputs.hoursTargetCapped,buildPlanPreview.sessionCount,buildPlanPreview.sessionDuration,lastIsLighter).map((line,i)=>(
+                    <div key={i}>{line}</div>
+                  ))}
+                </div>
+              );
+            })()}
+            {/* The flashcard/practice-exam checkboxes from the calibration
+                screen actually generate via AI at Confirm time (not here --
+                doing it now would burn the monthly generation quota, and
+                write a real deck/practice-exam to storage, before the
+                student has actually committed to this plan). Still,
+                nothing about the plan should be a surprise once Confirm is
+                clicked -- these counts are the same deterministic
+                scaledFlashcardCount/scaledQuizCount math Confirm will
+                actually use, just computed here for free to preview. */}
+            {(buildPlanGenFlashcards||buildPlanGenPE)&&materialText.trim()&&(
+              <div style={{fontSize:12,color:T.text,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",marginBottom:14,lineHeight:1.6}}>
+                <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Also included</div>
+                {buildPlanGenFlashcards&&<div>~{scaledFlashcardCount(materialText.length)} flashcards, with their own spaced review sessions on your calendar.</div>}
+                {buildPlanGenPE&&<div>A {scaledQuizCount(materialText.length)}-question practice exam, scheduled the same way.</div>}
+              </div>
+            )}
             {/* P1 in the audit: weekPrepLoad/pressuredExamItems already
                 exist and work in Syllabus Review and Brain Dump, but this
                 flow -- Studlin Prep's own Build Study Plan, one of the two
@@ -17584,7 +17700,14 @@ function computeRescheduleCandidates(task,events,routines,prefs){
       const orig=events.find(o=>o.id===e.id);
       return orig&&orig.date===d&&e.date!==d;
     }).length;
-    candidates.push({date:d,dayOffset:i,placement,events:relocated,reason,taskMins,baseMins,rawBaseMins,pct,isHigh:pct>=15,evictedCount,isEmpty:rawBaseMins<=0});
+    // Same weekPrepLoad the exam-prep pressure warnings already use
+    // elsewhere (see :8739, :11849, :11863, :21887), reusing the
+    // {id:"__preview__"}-style throwaway-object pattern for a task that
+    // isn't itself an exam -- this is "how loaded does the week get if I
+    // land this task on day d," computed against `relocated` so it
+    // reflects the candidate's own placement, not the pre-move state.
+    const weekPressure=weekPrepLoad(d,{id:task.id},relocated,prefs);
+    candidates.push({date:d,dayOffset:i,placement,events:relocated,reason,taskMins,baseMins,rawBaseMins,pct,isHigh:pct>=15,evictedCount,isEmpty:rawBaseMins<=0,weekPressure});
   }
   candidates.sort((a,b)=>a.rawBaseMins-b.rawBaseMins||a.evictedCount-b.evictedCount||a.dayOffset-b.dayOffset);
   // freeDaysTotal counts every genuinely open day found across the WHOLE
@@ -17746,6 +17869,21 @@ function RescheduleModal({task,events,commit,onClose,onManual}){
                         ?`Keeps all ${freeDaysTotal} of your free day${freeDaysTotal!==1?"s":""} open for something else`
                         :"No fully free days coming up either way")}
                   </div>
+                  {/* Same two signals the rest of the app already trusts for
+                      "why here": the reliability engine's time-of-day pick
+                      (findReliableSlotFor, surfaced everywhere else via
+                      fmtPlacementReason) and weekPrepLoad's week-wide
+                      pressure check. Only shown when there's a real signal --
+                      never fabricated for a candidate that's just a plain
+                      open slot with an unremarkable week around it. */}
+                  {c.reason&&(
+                    <div style={{fontSize:11,color:T.muted,marginTop:3}}>🕒 {fmtPlacementReason(c.reason,c.placement.time)}</div>
+                  )}
+                  {c.weekPressure.isPressured&&(
+                    <div style={{fontSize:11,color:T.amber,marginTop:3}}>
+                      {c.weekPressure.competingTitle?`That week's already busy with ${c.weekPressure.competingTitle}.`:"That week's already busy."}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -21604,6 +21742,20 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                   <div key={d.title} style={{marginBottom:4}}>Cutting it close — "{d.title}" would need to move to {d.newDate}.</div>
                 ))}
               </>)}
+          </div>
+        )}
+        {/* The tradeoff behind a clean "you're good" answer -- nothing was
+            AT RISK, but the window itself might still be one worth
+            protecting. Same peak/reliability signal the reschedule modal
+            and event-detail banner already surface elsewhere (see
+            timeOffWindowQuality), just framed as a heads-up instead of a
+            block -- this never stops the student from going, it just makes
+            the real cost visible instead of silent. */}
+        {timeOffResult&&timeOffResult.timeQuality&&(
+          <div style={{fontSize:12,lineHeight:1.5,padding:"10px 12px",borderRadius:9,background:T.amber+"14",border:`1px solid ${T.amber}33`,color:T.text,marginTop:8}}>
+            {timeOffResult.timeQuality.type==="peak"
+              ?<>Worth knowing — {(PEAK_BUCKET_LABELS[timeOffResult.timeQuality.bucket]||"").toLowerCase()} is one of your declared peak study times.</>
+              :<>Worth knowing — you finish {Math.round(timeOffResult.timeQuality.pct*100)}% of your {(PEAK_BUCKET_LABELS[timeOffResult.timeQuality.bucket]||"").toLowerCase()} tasks. That's usually a strong window for you.</>}
           </div>
         )}
       </Modal>
@@ -27130,7 +27282,7 @@ function App() {
       <Modal open={!!examCheckIn} onClose={()=>setExamCheckIn(null)} title="How'd it go?" width={380}>
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
           <Btn variant="ghost" onClick={()=>submitExamCheckIn("solid")} style={{width:"100%",justifyContent:"center"}}>Nailed it</Btn>
-          <Btn variant="ghost" onClick={()=>submitExamCheckIn("okay")} style={{width:"100%",justifyContent:"center"}}>Still sinking in</Btn>
+          <Btn variant="ghost" onClick={()=>submitExamCheckIn("okay")} style={{width:"100%",justifyContent:"center"}}>Getting there</Btn>
           <Btn variant="ghost" onClick={()=>submitExamCheckIn("shaky")} style={{width:"100%",justifyContent:"center"}}>Still shaky</Btn>
         </div>
       </Modal>
