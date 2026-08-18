@@ -10230,9 +10230,9 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
   useEffect(() => {
     if (!open) return;
     setStatus(initialStatus || "");
-    setStep(quickScan ? "classes" : initialStatus ? "classes" : "term");
-    setTimezone(detectTz());
     const term = getSchoolTerm();
+    setStep(quickScan ? "classes" : term && term.start && term.end ? "classes" : "term");
+    setTimezone(detectTz());
     setTermStart(term && term.start || "");
     setTermEnd(term && term.end || "");
     setHolidays(getHolidays());
