@@ -18376,6 +18376,25 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive}){
         their side (see acceptSharedProject). ── */}
     <Modal open={collabPickerOpen} onClose={()=>setCollabPickerOpen(false)} title="Add collaborators" sub="They'll get an invite and won't see this on their calendar until they accept." width={420}
       footer={<><Btn variant="subtle" onClick={()=>setCollabPickerOpen(false)}>Cancel</Btn><Btn onClick={confirmAddCollaborators} disabled={collabSelected.length===0}>Send {collabSelected.length||""} invite{collabSelected.length!==1?"s":""}</Btn></>}>
+      {/* Disclosure required before an invite can go out whenever this
+          project has a phases/outline plan -- that plan was generated from
+          the student's own private Notes field (see proposeProjectPhases/
+          proposeOutline), and once a collaborator accepts, it's what they
+          see. A collaborator never sees the raw notes themselves, only
+          this derived plan, but the plan can still carry personal/
+          logistical detail through from the notes it was built from, so
+          this is the moment to show exactly what's about to become
+          visible rather than let it go out silently. */}
+      {((ev.phases&&ev.phases.length>0)||(ev.outline&&ev.outline.length>0))&&(
+        <div style={{background:T.amber+"0A",border:`1px solid ${T.amber}33`,borderRadius:8,padding:"10px 12px",marginBottom:14}}>
+          <div style={{fontSize:11.5,fontWeight:600,color:T.text,marginBottom:6}}>This plan was generated from your notes</div>
+          <div style={{fontSize:11,color:T.muted,marginBottom:8,lineHeight:1.5}}>Collaborators will see everything below once they accept. Close this and edit it above first if anything's too personal to share.</div>
+          <div style={{display:"flex",flexDirection:"column",gap:4,maxHeight:140,overflowY:"auto"}}>
+            {(ev.phases||[]).map((p,i)=><div key={"ph"+i} style={{fontSize:11.5,color:T.text}}>{"• "+p.name}</div>)}
+            {(ev.outline||[]).map((o,i)=><div key={"ol"+i} style={{fontSize:11.5,color:T.text}}>{"• "+o.text}</div>)}
+          </div>
+        </div>
+      )}
       {collabLoading?(
         <div style={{fontSize:12.5,color:T.muted}}>Loading your friends…</div>
       ):collabCandidates.length===0?(
@@ -21581,6 +21600,22 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           exists yet; the actual invite fires from commitTasks once saved. ── */}
       <Modal open={evCollabPickerOpen} onClose={()=>setEvCollabPickerOpen(false)} title="Add collaborators" sub="They'll get an invite once you save this project, and won't see it on their calendar until they accept." width={420}
         footer={<Btn variant="subtle" onClick={()=>setEvCollabPickerOpen(false)}>Done</Btn>}>
+        {/* Same disclosure as EventDetailModal's collaborator picker -- see
+            that copy for why. Reads the in-progress draft (evProjectPlan)
+            rather than a saved event, since this flow invites collaborators
+            before the project exists yet; phases/outline items are plain
+            strings (or {text,dueDate}) at this draft stage, not yet
+            normalized into their final saved shape. */}
+        {((evProjectPlan.phases&&evProjectPlan.phases.length>0)||(evProjectPlan.outline&&evProjectPlan.outline.length>0))&&(
+          <div style={{background:T.amber+"0A",border:`1px solid ${T.amber}33`,borderRadius:8,padding:"10px 12px",marginBottom:14}}>
+            <div style={{fontSize:11.5,fontWeight:600,color:T.text,marginBottom:6}}>This plan was generated from your notes</div>
+            <div style={{fontSize:11,color:T.muted,marginBottom:8,lineHeight:1.5}}>Collaborators will see everything below once they accept. Close this and edit it above first if anything's too personal to share.</div>
+            <div style={{display:"flex",flexDirection:"column",gap:4,maxHeight:140,overflowY:"auto"}}>
+              {(evProjectPlan.phases||[]).map((p,i)=><div key={"ph"+i} style={{fontSize:11.5,color:T.text}}>{"• "+(typeof p==="string"?p:(p.name||""))}</div>)}
+              {(evProjectPlan.outline||[]).map((o,i)=><div key={"ol"+i} style={{fontSize:11.5,color:T.text}}>{"• "+(typeof o==="string"?o:(o.text||""))}</div>)}
+            </div>
+          </div>
+        )}
         {evCollabLoading?(
           <div style={{fontSize:12.5,color:T.muted}}>Loading your friends…</div>
         ):evCollabCandidates.length===0?(
