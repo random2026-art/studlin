@@ -125,6 +125,8 @@ const Icon = {
   user:      ic(<><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></>),
   check:     ic(<><polyline points="20 6 9 17 4 12"/></>),
   refresh:   ic(<><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.51"/></>),
+  undo:      ic(<><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></>),
+  redo:      ic(<><polyline points="15 14 20 9 15 4"/><path d="M4 20v-7a4 4 0 0 1 4-4h12"/></>),
   music:     ic(<><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></>),
   mic:       ic(<><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></>),
   users:     ic(<><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></>),
@@ -14532,7 +14534,7 @@ function computeEventBlockHeightPx(durationMins, gapToNextMins, pxPerHr) {
   return Math.min(floored, Math.max(4, gapToNextMins * (pxPerHr / 60)));
 }
 
-function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange}) {
+function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent}) {
   // Phase 10b: user-driven zoom (drag handle below), replacing the old
   // fixed constant. Persisted via getCalZoom/saveCalZoom so it's
   // remembered across visits and shared with DayPlanner. Deliberately not
@@ -14648,7 +14650,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
   // portaled to document.body per the established [data-page] containing-
   // block gotcha (position:fixed elsewhere in this file).
   const [popoverAnchor, setPopoverAnchor] = useState(null);
-  const closePopover = () => { setPopoverAnchor(null); setSelectedEventId(null); };
+  const closePopover = () => { setPopoverAnchor(null); setSelectedEventId(null); if(onSelectEvent)onSelectEvent(null); };
   useEffect(()=>{
     if(!selectedEventId)return;
     const handler=(e)=>{
@@ -14658,11 +14660,12 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
       if(typing)return;
       const ev=events.find(x=>x.id===selectedEventId);
       setSelectedEventId(null);
+      if(onSelectEvent)onSelectEvent(null);
       if(ev&&onDeleteEvent)onDeleteEvent(ev);
     };
     document.addEventListener("keydown",handler);
     return ()=>document.removeEventListener("keydown",handler);
-  },[selectedEventId,events,onDeleteEvent]);
+  },[selectedEventId,events,onDeleteEvent,onSelectEvent]);
   useEffect(()=>{
     if(weekScrollRef.current){
       const hour = new Date().getHours();
@@ -15132,7 +15135,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                         if(isRoutine){ if(editRoutineMode&&onEditRoutine)onEditRoutine(ev.routineId); return; }
                         e.stopPropagation();
                         if(selectedEventId===ev.id){closePopover();}
-                        else{setSelectedEventId(ev.id);setPopoverAnchor({id:ev.id,rect:e.currentTarget.getBoundingClientRect()});}
+                        else{setSelectedEventId(ev.id);setPopoverAnchor({id:ev.id,rect:e.currentTarget.getBoundingClientRect()});if(onSelectEvent)onSelectEvent(ev.id);}
                       }}
                       onMouseEnter={()=>{ if(isRoutine&&setHoveredRoutineId)setHoveredRoutineId(ev.routineId); }}
                       onMouseLeave={()=>{ if(isRoutine&&setHoveredRoutineId)setHoveredRoutineId(null); }}
@@ -19035,6 +19038,108 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     return ()=>{if(registerSetEvents)registerSetEvents(null);};
   },[]);
 
+  // Calendar-wide undo/redo history -- watches `events` itself rather than
+  // wrapping every individual setEvents call site (there are 25+, including
+  // the App-level EventDetailModal commit path via registerSetEvents above),
+  // so it transparently covers every way the grid can change: drag-move,
+  // resize, delete, create, routine edits, the paste-duplicate below. A ref
+  // flag (calHistorySkip) tells the watcher "this change WAS an undo/redo,
+  // don't re-record it" so undo doesn't immediately push its own reversal
+  // back onto the stack. Deliberately session-only -- lives in refs, so a
+  // tab switch or reload clears it, same as Google Docs' own undo after a
+  // refresh. No localStorage/Firestore snapshot of the stack, which sidesteps
+  // any stale-history-vs-server-sync question entirely.
+  const calHistoryUndo=useRef([]);
+  const calHistoryRedo=useRef([]);
+  const calHistorySkip=useRef(false);
+  const calHistoryPrev=useRef(events);
+  const [,setCalHistoryTick]=useState(0);
+  useEffect(()=>{
+    if(calHistorySkip.current){
+      calHistorySkip.current=false;
+      calHistoryPrev.current=events;
+      return;
+    }
+    if(calHistoryPrev.current!==events){
+      calHistoryUndo.current=[...calHistoryUndo.current,calHistoryPrev.current].slice(-50);
+      calHistoryRedo.current=[];
+      calHistoryPrev.current=events;
+      setCalHistoryTick(t=>t+1);
+    }
+  },[events]);
+  const undoCal=()=>{
+    if(calHistoryUndo.current.length===0)return;
+    const prev=calHistoryUndo.current[calHistoryUndo.current.length-1];
+    calHistoryUndo.current=calHistoryUndo.current.slice(0,-1);
+    calHistoryRedo.current=[...calHistoryRedo.current,events];
+    calHistorySkip.current=true;
+    setEvents(prev);lsSet("events",prev);
+    setCalHistoryTick(t=>t+1);
+  };
+  const redoCal=()=>{
+    if(calHistoryRedo.current.length===0)return;
+    const next=calHistoryRedo.current[calHistoryRedo.current.length-1];
+    calHistoryRedo.current=calHistoryRedo.current.slice(0,-1);
+    calHistoryUndo.current=[...calHistoryUndo.current,events];
+    calHistorySkip.current=true;
+    setEvents(next);lsSet("events",next);
+    setCalHistoryTick(t=>t+1);
+  };
+
+  // Copy/paste for the Week grid -- Ctrl+C copies whichever block is
+  // currently selected (selectedCalEventId, mirrored up from WeeklyPlanner's
+  // own click-to-select via onSelectEvent), Ctrl+V drops a duplicate one day
+  // later at the same time (the "same time, next day" placement students
+  // asked for -- simplest, most predictable option, no auto-placement
+  // guessing). Both routed through the same undo history above for free.
+  // Guarded against typing focus the same way WeeklyPlanner's own
+  // Backspace-to-delete already is, so Ctrl+C/Ctrl+V in a text field (task
+  // title, notes, chat) still does normal browser copy/paste.
+  const [selectedCalEventId,setSelectedCalEventId]=useState(null);
+  const copiedEventRef=useRef(null);
+  const [calClipToast,setCalClipToast]=useState("");
+  useEffect(()=>{
+    const handler=(e)=>{
+      const mod=e.ctrlKey||e.metaKey;
+      if(!mod)return;
+      const el=document.activeElement;
+      const typing=el&&(el.tagName==="INPUT"||el.tagName==="TEXTAREA"||el.isContentEditable);
+      if(typing)return;
+      const key=e.key.toLowerCase();
+      if(key==="z"){
+        e.preventDefault();
+        if(e.shiftKey)redoCal();else undoCal();
+        return;
+      }
+      if(key==="y"){e.preventDefault();redoCal();return;}
+      if(key==="c"){
+        if(!selectedCalEventId)return;
+        const ev=events.find(x=>x.id===selectedCalEventId);
+        if(!ev)return;
+        e.preventDefault();
+        copiedEventRef.current=ev;
+        setCalClipToast(`Copied "${ev.title}"`);
+        setTimeout(()=>setCalClipToast(""),2000);
+        return;
+      }
+      if(key==="v"){
+        if(!copiedEventRef.current)return;
+        e.preventDefault();
+        const src=copiedEventRef.current;
+        const nd=new Date(src.date+"T12:00:00");
+        nd.setDate(nd.getDate()+1);
+        const newDate=dayKey(nd);
+        const dup={...src,id:String(Date.now()+Math.random()*1000),date:newDate,userPinned:false,movedByStudlin:false,movedFrom:null};
+        const next=[...events,dup];
+        setEvents(next);lsSet("events",next);
+        setCalClipToast(`Duplicated "${src.title}" to ${nd.toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})}`);
+        setTimeout(()=>setCalClipToast(""),2600);
+      }
+    };
+    window.addEventListener("keydown",handler);
+    return ()=>window.removeEventListener("keydown",handler);
+  },[selectedCalEventId,events]);
+
   const now=new Date();
   const [ym,setYm]=useState({y:now.getFullYear(),m:now.getMonth()});
   const [selDay,setSelDay]=useState(dayKey());
@@ -21074,6 +21179,15 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           </span>
           <button onClick={()=>calView==="monthly"?nav(1):calView==="weekly"?setWeekOffset(o=>o+1):stepSelDay(1)} style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:11}}>›</button>
         </div>
+        {/* Undo/redo -- same 22x22 icon-button footprint as the day-nav
+            ‹/› pair just to the left, so it reads as one grouped toolbar
+            control instead of a mismatched addition. Grayed + inert when
+            the respective stack is empty rather than hidden, so their
+            position never shifts as you use them. */}
+        <div style={{display:"flex",alignItems:"center",gap:3}}>
+          <button onClick={undoCal} disabled={calHistoryUndo.current.length===0} title="Undo (Ctrl+Z)" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:calHistoryUndo.current.length===0?T.faint:T.muted,cursor:calHistoryUndo.current.length===0?"default":"pointer",opacity:calHistoryUndo.current.length===0?0.5:1}}>{Icon.undo}</button>
+          <button onClick={redoCal} disabled={calHistoryRedo.current.length===0} title="Redo (Ctrl+Shift+Z)" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:calHistoryRedo.current.length===0?T.faint:T.muted,cursor:calHistoryRedo.current.length===0?"default":"pointer",opacity:calHistoryRedo.current.length===0?0.5:1}}>{Icon.redo}</button>
+        </div>
         <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:6}}>
           <div style={{display:"flex",gap:2,background:T.card2,padding:2,borderRadius:4}}>
             {[{id:"daily",label:"Day"},{id:"weekly",label:"Week"},{id:"monthly",label:"Month"}].map(v=>(
@@ -21211,7 +21325,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           onDropRoutineOccurrence={onDropRoutineOccurrence} onResizeRoutineOccurrence={onResizeRoutineOccurrence} pendingRoutineChange={routineDropPending} onRoutineDragStateChange={setRoutineDragActive} previewEvent={previewEvent} highlightedSessionId={highlightedSessionId}
           onPreviewMove={(date,startTime,endTime)=>setPreviewOverride({date,startTime,endTime})}
           onPreviewResize={(endTime)=>setPreviewOverride(o=>({date:(o&&o.date)||previewEvent.date,startTime:(o&&o.startTime)||previewEvent.startTime,endTime}))}
-          onPreviewDraggingChange={setPreviewDragActive} />
+          onPreviewDraggingChange={setPreviewDragActive} onSelectEvent={setSelectedCalEventId} />
       )}
       {calView==="daily"&&(
         <DayPlanner dayEvents={dayEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} fmtTimeRange={fmtTimeRange} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} catchUpPending={catchUpPending} openNew={openNew} />
@@ -21428,6 +21542,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       )}
       {reconcileToast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.amber,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {reconcileToast}</div>
+      )}
+      {calClipToast&&(
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {calClipToast}</div>
       )}
       {deleteUndoToast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.card,border:`1px solid ${T.border}`,color:T.white,fontSize:12.5,fontWeight:600,padding:"10px 16px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:12}}>
