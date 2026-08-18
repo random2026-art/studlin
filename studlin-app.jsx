@@ -15819,19 +15819,25 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   useEffect(()=>{
     if(!open)return;
     setStatus(initialStatus||"");
-    // quickScan (Import syllabus from a course's 3-dot menu) and a
-    // returning user with an already-known status both skip straight to
-    // "classes", same shortcut this wizard already had -- the Phase 8
-    // steps ahead of "status" are only for a brand-new account's very
-    // first full pass. O10 in the audit: this used to start at "timezone",
-    // a step with no input at all beyond a mandatory Continue (its own
-    // copy says "nothing to set here") -- every brand-new account paid
-    // that extra screen for zero actual configuration. Starts at "term"
-    // now; timezone is still detected live via detectTz() wherever it's
-    // actually used, same as before, just never shown as its own step.
-    setStep(quickScan?"classes":(initialStatus?"classes":"term"));
-    setTimezone(detectTz());
     const term=getSchoolTerm();
+    // quickScan (Import syllabus from a course's 3-dot menu) skips
+    // straight to "classes" -- same shortcut this wizard already had, a
+    // narrower "just add one more class" action that shouldn't re-ask
+    // term/holidays. Otherwise, whether to skip depends on whether THIS
+    // account has actually configured a term before (a real saved
+    // schoolTerm) -- NOT on `initialStatus` as it used to. initialStatus
+    // (getProfile().status) is set by onboarding's own Profile step for
+    // every account before they ever reach here, so using it as the
+    // "returning user, already did this wizard" signal meant a brand-new
+    // account's very first pass always skipped term/holidays too -- the
+    // exact bug this fixes. O10 in the audit: this used to start at
+    // "timezone", a step with no input at all beyond a mandatory Continue
+    // (its own copy says "nothing to set here") -- every brand-new account
+    // paid that extra screen for zero actual configuration. Starts at
+    // "term" now; timezone is still detected live via detectTz() wherever
+    // it's actually used, same as before, just never shown as its own step.
+    setStep(quickScan?"classes":((term&&term.start&&term.end)?"classes":"term"));
+    setTimezone(detectTz());
     setTermStart((term&&term.start)||"");
     setTermEnd((term&&term.end)||"");
     setHolidays(getHolidays());
