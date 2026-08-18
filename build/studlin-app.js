@@ -12129,7 +12129,7 @@ function CalendarTab({ setActive = () => {
         const nd = /* @__PURE__ */ new Date(src.date + "T12:00:00");
         nd.setDate(nd.getDate() + 1);
         const newDate = dayKey(nd);
-        const dup = { ...src, id: String(Date.now() + Math.random() * 1e3), date: newDate, userPinned: false, movedByStudlin: false, movedFrom: null };
+        const dup = { ...src, id: String(Date.now() + Math.random() * 1e3), date: newDate, userPinned: false, movedByStudlin: false, movedFrom: null, status: "pending", timeSpent: 0, completedAt: null };
         const next = [...events, dup];
         setEvents2(next);
         lsSet("events", next);

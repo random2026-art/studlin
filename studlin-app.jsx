@@ -19129,7 +19129,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         const nd=new Date(src.date+"T12:00:00");
         nd.setDate(nd.getDate()+1);
         const newDate=dayKey(nd);
-        const dup={...src,id:String(Date.now()+Math.random()*1000),date:newDate,userPinned:false,movedByStudlin:false,movedFrom:null};
+        // Resets completion/progress state the same way every other
+        // "create a new task" path in this file already does (see e.g.
+        // openNewAI's own object literal) -- otherwise duplicating a
+        // finished task would paste a copy that's already checked off.
+        const dup={...src,id:String(Date.now()+Math.random()*1000),date:newDate,userPinned:false,movedByStudlin:false,movedFrom:null,status:"pending",timeSpent:0,completedAt:null};
         const next=[...events,dup];
         setEvents(next);lsSet("events",next);
         setCalClipToast(`Duplicated "${src.title}" to ${nd.toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})}`);
