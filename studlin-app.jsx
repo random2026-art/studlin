@@ -3724,6 +3724,7 @@ function normalizeOutlineDraft(outline){
 // lines, not the whole document.
 async function proposeSessionFocuses(examTitle,materialText,sessionCount,subject){
   if(!materialText||!materialText.trim())return null;
+  if(!canAddSessionFocus())return null;
   try{
     const prompt="A student has "+sessionCount+" spaced study session(s) counting down to their exam: \""+examTitle+"\""+(subject?" ("+subject+")":"")+". "+
       "Here's their study material:\n\n"+materialText.slice(0,6000)+"\n\n"+
@@ -3735,6 +3736,7 @@ async function proposeSessionFocuses(examTitle,materialText,sessionCount,subject
       "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
       "{\"focuses\":[\"Ch 4-6: cell structure\",\"Ch 7-8: energy and metabolism\"]}";
     const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard",format:"json"})});
+    recordSessionFocus();
     const data=await res.json();
     const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
     const parsed=JSON.parse(raw);
@@ -5597,7 +5599,7 @@ const AI_CALL_COST_ESTIMATES={
   syllabusScan:0.026,screenshotScan:0.022,noteScan:0.003,
   flashcardGen:0.033,quizGen:0.037,examPlanBuild:0.009,
   projectBreakdown:0.011,smartReschedule:0.001,brainDump:0.014,
-  aiArrange:0.006,
+  aiArrange:0.006,calendarClassify:0.03,sessionFocus:0.009,
 };
 const PRO_MONTHLY_AI_SPEND_CEILING=3.5; // dollars -- safely under even the $4.99/mo annual price, leaving real margin for non-AI costs
 const getMonthlyAiSpend=makeMonthlyUsage("aiSpendMills");
@@ -5655,6 +5657,26 @@ const getExamPlanUsage=makeMonthlyUsage("examPlanBuilds");
 function canBuildExamPlan(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getExamPlanUsage().count<PRO_EXAM_PLAN_LIMIT;}
 function recordExamPlanBuild(){const u=getExamPlanUsage();lsSet("examPlanBuilds",{month:u.month,count:u.count+1});chargeAiSpend("examPlanBuild");}
 
+// proposeSessionFocuses (session "what to study" labels) has 4 call sites
+// -- 2026-08-19 audit found only 1 of them (Build Study Plan's
+// generatePreview, gated above via canBuildExamPlan) was covered. The
+// other 3 -- attachSessionFocusesToSyllabusExams's two callers (syllabus
+// review commit, ClassSetupWizard) and the standalone "Add study focus
+// from your material" button on the Exams tab -- were completely
+// ungated, real API cost. The syllabus-scan-triggered ones are only
+// reachable after already passing canScanSyllabus upstream so a Free
+// user can't actually reach them, but the Exams-tab button is a direct,
+// unguarded Free-tier bypass. Gated once, at proposeSessionFocuses
+// itself, rather than at all 4 call sites -- it already has a clean
+// "return null, caller skips the enrichment" contract every caller
+// already handles, so this needed zero caller-side changes for the 3
+// fire-and-forget sites. ~$0.009/call (short output even with real
+// material input, same shape costed under examPlanBuild above).
+const PRO_SESSION_FOCUS_LIMIT=100;
+const getSessionFocusUsage=makeMonthlyUsage("sessionFocuses");
+function canAddSessionFocus(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getSessionFocusUsage().count<PRO_SESSION_FOCUS_LIMIT;}
+function recordSessionFocus(){const u=getSessionFocusUsage();lsSet("sessionFocuses",{month:u.month,count:u.count+1});chargeAiSpend("sessionFocus");}
+
 // Attack Block (no phases -- a plain assignment, not a Project) is
 // deterministic probe-then-schedule with no AI call at all, so it's never
 // gated -- unlike the Project phase-breakdown branch just below, which
@@ -5700,6 +5722,30 @@ function recordBrainDump(){const u=getBrainDumpUsage();lsSet("brainDumps",{month
 const PRO_AI_ARRANGE_LIMIT=400;
 const getAiArrangeUsage=makeMonthlyUsage("aiArranges");
 function canUseAiArrange(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getAiArrangeUsage().count<PRO_AI_ARRANGE_LIMIT;}
+
+// Canvas/Schoology/Blackboard calendar-connect classification
+// (classifyImportedCalendarEvents) -- found during a 2026-08-19 audit to
+// NOT be the one-time action it looks like: every connected calendar
+// subscription auto-resyncs silently once a day, forever (see
+// resyncCalendar's own once-a-day useEffect), and each resync that finds
+// genuinely new events fires this exact same real /api/chat call again.
+// A student with a few active connections could rack up real, unbounded,
+// completely free API cost indefinitely with zero gate and zero user
+// action after the initial connect. Unlike every other gate in this
+// file, this one has NO paywall popup -- the two callers that ARE
+// user-initiated (connecting Canvas, pasting a calendar link) already
+// have a graceful classification-failed fallback (generic "assignment"/
+// "Other", student can fix it manually), and the silent daily
+// auto-resync path has no UI to interrupt in the first place. Blocked
+// here degrades exactly like a failed classification already does --
+// never blocks the import/sync itself, just skips the AI categorization.
+// ~$0.03/call average (up to 120 events per batch on a big initial
+// connect, much smaller on a routine resync that only found a couple of
+// new items). Cap sized for ~$1.80/mo worst case.
+const PRO_CALENDAR_CLASSIFY_LIMIT=60;
+const getCalendarClassifyUsage=makeMonthlyUsage("calendarClassifies");
+function canClassifyCalendarImport(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getCalendarClassifyUsage().count<PRO_CALENDAR_CLASSIFY_LIMIT;}
+function recordCalendarClassify(){const u=getCalendarClassifyUsage();lsSet("calendarClassifies",{month:u.month,count:u.count+1});chargeAiSpend("calendarClassify");}
 function recordAiArrange(){const u=getAiArrangeUsage();lsSet("aiArranges",{month:u.month,count:u.count+1});chargeAiSpend("aiArrange");}
 
 // ─── XP · LEVEL · STREAK · PLAN (all derived from real activity) ───────────────
@@ -8353,6 +8399,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
         const addFocusToExisting=async()=>{
           const genericPending=examSessions.filter(s=>!s.deckId&&!s.practiceExamId&&s.status!=="done");
           if(genericPending.length===0)return;
+          if(!canAddSessionFocus()){setUpgradeModal({feature:"AI study focus",detail:"AI study focus is a Pro feature. Upgrade to use it."});return;}
           setSessionScheduleLoading(true);
           const focuses=await proposeSessionFocuses(selectedExam.title,materialText,genericPending.length,selectedExam.subject);
           setSessionScheduleLoading(false);
@@ -15962,7 +16009,7 @@ const WizardStepper=({step})=>{
   );
 };
 
-function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCourseId,onPartialSync}){
+function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCourseId,onPartialSync,setPricingOpen=()=>{}}){
   const [step,setStep]=useState("status"); // timezone | term | holidays | awake | status | classes | activities | calendarSync | window | finalReview
   const [status,setStatus]=useState(initialStatus||"");
   // Classes fully reviewed this session, staged -- nothing in here touches
@@ -16215,14 +16262,17 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   const IMAGE_EXT_MEDIA_TYPES={png:"image/png",jpg:"image/jpeg",jpeg:"image/jpeg",webp:"image/webp",gif:"image/gif"};
   const handleScanFile=async(e)=>{
     const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";
+    const ext=file.name.split(".").pop().toLowerCase();
+    if(IMAGE_EXT_MEDIA_TYPES[ext]){if(!canScanScreenshot()){setPricingOpen("screenshotScan");return;}}
+    else{if(!canScanSyllabus()){setPricingOpen("syllabusScan");return;}}
     setScanning(true);setScanError("");
     try{
-      const ext=file.name.split(".").pop().toLowerCase();
       if(IMAGE_EXT_MEDIA_TYPES[ext]){
         const dataUrl=await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.readAsDataURL(file);});
         const base64=(dataUrl.split(",")[1])||"";
         const result=await extractClassSyllabusImage(base64,IMAGE_EXT_MEDIA_TYPES[ext]);
         if(result.error){setScanError(result.error);return;}
+        recordScreenshotScan();
         buildReviewFromExtraction(result);
         return;
       }
@@ -16244,6 +16294,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
       }
       const result=await extractClassSyllabusText(text);
       if(result.error){setScanError(result.error);return;}
+      recordSyllabusScan();
       buildReviewFromExtraction(result,text);
     }catch(err){setScanError("Couldn't read that file: "+err.message);}
     finally{setScanning(false);}
@@ -16251,10 +16302,12 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
 
   const handlePasteScan=async()=>{
     if(!pasteText.trim())return;
+    if(!canScanSyllabus()){setPricingOpen("syllabusScan");return;}
     setScanning(true);setScanError("");
     try{
       const result=await extractClassSyllabusText(pasteText);
       if(result.error){setScanError(result.error);return;}
+      recordSyllabusScan();
       buildReviewFromExtraction(result,pasteText);
     }catch(err){setScanError("Couldn't read that text: "+err.message);}
     finally{setScanning(false);}
@@ -16300,14 +16353,17 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   };
   const handleCollegeScheduleFile=async(e)=>{
     const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";
+    const ext=file.name.split(".").pop().toLowerCase();
+    if(IMAGE_EXT_MEDIA_TYPES[ext]){if(!canScanScreenshot()){setPricingOpen("screenshotScan");return;}}
+    else{if(!canScanSyllabus()){setPricingOpen("syllabusScan");return;}}
     setScanning(true);setScanError("");
     try{
-      const ext=file.name.split(".").pop().toLowerCase();
       if(IMAGE_EXT_MEDIA_TYPES[ext]){
         const dataUrl=await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.readAsDataURL(file);});
         const base64=(dataUrl.split(",")[1])||"";
         const result=await extractCollegeScheduleImage(base64,IMAGE_EXT_MEDIA_TYPES[ext]);
         if(result.error){setScanError(result.error);return;}
+        recordScreenshotScan();
         startClassQueue(result.classes);
         return;
       }
@@ -16329,16 +16385,19 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
       }
       const result=await extractCollegeScheduleText(text);
       if(result.error){setScanError(result.error);return;}
+      recordSyllabusScan();
       startClassQueue(result.classes,text);
     }catch(err){setScanError("Couldn't read that file: "+err.message);}
     finally{setScanning(false);}
   };
   const handleCollegeSchedulePaste=async()=>{
     if(!pasteText.trim())return;
+    if(!canScanSyllabus()){setPricingOpen("syllabusScan");return;}
     setScanning(true);setScanError("");
     try{
       const result=await extractCollegeScheduleText(pasteText);
       if(result.error){setScanError(result.error);return;}
+      recordSyllabusScan();
       startClassQueue(result.classes,pasteText);
     }catch(err){setScanError("Couldn't read that text: "+err.message);}
     finally{setScanning(false);}
@@ -16370,15 +16429,18 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   // rather than reinvented.
   const handleHsScheduleFile=async(e)=>{
     const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";
+    const ext=file.name.split(".").pop().toLowerCase();
+    if(IMAGE_EXT_MEDIA_TYPES[ext]){if(!canScanScreenshot()){setPricingOpen("screenshotScan");return;}}
+    else{if(!canScanSyllabus()){setPricingOpen("syllabusScan");return;}}
     setScanning(true);setScanError("");
     try{
-      const ext=file.name.split(".").pop().toLowerCase();
       if(IMAGE_EXT_MEDIA_TYPES[ext]){
         const dataUrl=await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.readAsDataURL(file);});
         const base64=(dataUrl.split(",")[1])||"";
         const result=await extractHsScheduleFromImage(base64,IMAGE_EXT_MEDIA_TYPES[ext]);
         if(result.error){setScanError(result.error);return;}
         if(result.periods.length===0){setScanError("Couldn't make out any periods in that image. Try a clearer photo, or add classes manually.");return;}
+        recordScreenshotScan();
         buildHsReviewFromPeriods(result.periods);
         return;
       }
@@ -16405,6 +16467,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
       const result=await extractHsScheduleFromText(text);
       if(result.error){setScanError(result.error);return;}
       if(result.periods.length===0){setScanError("Couldn't find any periods in that. Try a clearer file, or add classes manually.");return;}
+      recordSyllabusScan();
       buildHsReviewFromPeriods(result.periods);
     }catch(err){setScanError("Couldn't read that file: "+err.message);}
     finally{setScanning(false);}
@@ -16412,11 +16475,13 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
 
   const handleHsPasteScan=async()=>{
     if(!hsPasteText.trim())return;
+    if(!canScanSyllabus()){setPricingOpen("syllabusScan");return;}
     setScanning(true);setScanError("");
     try{
       const result=await extractHsScheduleFromText(hsPasteText);
       if(result.error){setScanError(result.error);return;}
       if(result.periods.length===0){setScanError("Couldn't find any periods in that text. Try adding more detail, or add classes manually.");return;}
+      recordSyllabusScan();
       buildHsReviewFromPeriods(result.periods);
     }catch(err){setScanError("Couldn't read that text: "+err.message);}
     finally{setScanning(false);}
@@ -18509,7 +18574,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
       {requiresProjectDetail&&(
         <div style={{marginBottom:14}}>
           <div style={{fontSize:11.5,color:T.muted,marginBottom:8}}>Marked as a Project — use the Detail field below to describe it, and Studlin will suggest phases and a checklist.</div>
-          <PhasesOutlineEditor item={{...projectPlan,title,detail:notes}} onChange={patch=>setProjectPlan(p=>({...p,...patch}))} subject={subject} onGateBlocked={()=>setPricingOpen(true)} />
+          <PhasesOutlineEditor item={{...projectPlan,title,detail:notes}} onChange={patch=>setProjectPlan(p=>({...p,...patch}))} subject={subject} onGateBlocked={()=>setPricingOpen("projectBreakdown")} />
         </div>
       )}
       {isProject&&(
@@ -18531,7 +18596,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
               <Field label="Probe session length"><NumField min={15} max={60} fallback={ATTACK_BLOCK_DEFAULT_PROBE_MINS} value={attackProbeMins} onChange={setAttackProbeMins} /></Field>
             </div>
             {isPhaseCandidate&&(
-              <PhasesOutlineEditor item={{...projectPlan,title,detail:notes}} onChange={patch=>setProjectPlan(p=>({...p,...patch}))} subject={subject} onGateBlocked={()=>setPricingOpen(true)} />
+              <PhasesOutlineEditor item={{...projectPlan,title,detail:notes}} onChange={patch=>setProjectPlan(p=>({...p,...patch}))} subject={subject} onGateBlocked={()=>setPricingOpen("projectBreakdown")} />
             )}
           </>)}
         </div>
@@ -19931,7 +19996,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // confirm-before-delete and "ask before filling the gap" for free, reusing
   // the same modal skip_class already drives.
   const skipOneOccurrence=(ev)=>{
-    if(!canUseSmartReschedule()){setPricingOpen(true);return;}
+    if(!canUseSmartReschedule()){setPricingOpen("smartReschedule");return;}
     setPauseError("");setPauseLastIntent(null);
     setPausePreview(computeClassSkipPlan([ev.routineId],ev.date));
     setPauseOpen(true);
@@ -20504,7 +20569,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // Smart Reschedule already uses in this component, not a separate
     // UpgradeModal (that one lives in a different component's own local
     // state, not reachable from here).
-    if(!canUseBrainDump()){setPricingOpen(true);return;}
+    if(!canUseBrainDump()){setPricingOpen("brainDump");return;}
     if(bdListening)stopBdRec();
     setBrainDumpLoading(true);
     setBdError("");
@@ -20648,7 +20713,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       // A passive toast here used to be a dead end -- told the student
       // it's Pro-only with no way to actually act on that. Opens the real
       // paywall now, same as every other Pro-only gate in this component.
-      if(isProject&&!canBreakDownProject()){setPricingOpen(true);return;}
+      if(isProject&&!canBreakDownProject()){setPricingOpen("projectBreakdown");return;}
       const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
       const prefs=getSchedulePreferences();
       const phases=evKind==="project"?(evProjectPlan.phases||[]).map(p=>p.trim()).filter(Boolean):[];
@@ -20769,7 +20834,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // for a project) -- was completely ungated. Same setPricingOpen
     // paywall as Smart Reschedule/Brain Dump elsewhere in this component,
     // fired before anything AI-costing runs.
-    if(!canUseAiArrange()){setPricingOpen(true);return;}
+    if(!canUseAiArrange()){setPricingOpen("aiArrange");return;}
     if(evKind==="exam"||evKind==="class"||evKind==="busy block")return; // fixed real-world blocks — AI never touches these
     if(taskMode==="manual")return; // Manual Placement is active — use Save to Calendar instead
     if(evKind==="project"&&!evNotes.trim()){setEvDetailErr("Add a bit of detail so Studlin can suggest real phases, not a generic template.");return;}
@@ -21026,7 +21091,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // text box would otherwise let a Free user reach this real AI call
     // (the intent classifier below) without ever passing a gate. Checked
     // here too, right before the AI-costing call, not just at commit.
-    if(!canUseSmartReschedule()){setPricingOpen(true);return;}
+    if(!canUseSmartReschedule()){setPricingOpen("smartReschedule");return;}
     setPauseLoading(true);setPauseError("");
     const today=dayKey();
     const tomorrow=dayKey(new Date(Date.now()+86400000));
@@ -21074,7 +21139,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
 
   const confirmPausePlan=()=>{
     if(!pausePreview)return;
-    if(!canUseSmartReschedule()){setPauseOpen(false);setPricingOpen(true);return;}
+    if(!canUseSmartReschedule()){setPauseOpen(false);setPricingOpen("smartReschedule");return;}
     const all=lsGet("events",[]);
     // A moved/retimed entry whose id points at a virtual routine occurrence
     // (isRoutine:true — never in `events` to begin with, see
@@ -21629,7 +21694,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                   // canUseSmartReschedule) -- deliberately not a capped
                   // free-taste feature like the Prep flows above. Free users
                   // get the pricing modal instead of the pauseOpen flow.
-                  {icon:Icon.refresh,label:"Reschedule",sub:"Push back, clear, or balance your week",onClick:()=>{setToolsMenuOpen(false);if(!canUseSmartReschedule()){setPricingOpen(true);return;}setPauseOpen(true);setPauseError("");setPausePreview(null);},danger:true},
+                  {icon:Icon.refresh,label:"Reschedule",sub:"Push back, clear, or balance your week",onClick:()=>{setToolsMenuOpen(false);if(!canUseSmartReschedule()){setPricingOpen("smartReschedule");return;}setPauseOpen(true);setPauseError("");setPausePreview(null);},danger:true},
                 ].map(item=>(
                   <div key={item.label} onClick={item.onClick} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 14px",cursor:"pointer"}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                     <span style={{width:16,color:item.danger?T.red:T.muted,display:"flex",marginTop:2}}>{item.icon}</span>
@@ -21803,8 +21868,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         <TourStep {...CAL_TOUR_STEPS[calTourStep]} step={calTourStep} total={CAL_TOUR_STEPS.length}
           isLast={calTourStep===CAL_TOUR_STEPS.length-1} onNext={advanceCalTour} onSkip={skipCalTour} />
       )}
-      <ClassSetupWizard open={classSetupOpen} initialStatus={getProfile().status} onFinish={finishClassSetup} onPartialSync={syncClassSetupState} />
-      <ClassSetupWizard open={quickScanOpen} quickScan targetCourseId={quickScanTargetCourseId} initialStatus={getProfile().status} onFinish={finishQuickScan} onSkip={()=>{setQuickScanOpen(false);setQuickScanTargetCourseId(null);syncClassSetupState();}} onPartialSync={syncClassSetupState} />
+      <ClassSetupWizard open={classSetupOpen} initialStatus={getProfile().status} onFinish={finishClassSetup} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} />
+      <ClassSetupWizard open={quickScanOpen} quickScan targetCourseId={quickScanTargetCourseId} initialStatus={getProfile().status} onFinish={finishQuickScan} onSkip={()=>{setQuickScanOpen(false);setQuickScanTargetCourseId(null);syncClassSetupState();}} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} />
       <Modal open={!!weeklyContentCourseId} onClose={()=>setWeeklyContentCourseId(null)} title="Class notes" sub="A short note for each day this class meets -- lecture, lab, homework due, whatever's useful." width={460}
         footer={<><Btn variant="subtle" onClick={()=>setWeeklyContentCourseId(null)}>Cancel</Btn><Btn onClick={saveWeeklyContent}>Save</Btn></>}>
         {(()=>{
@@ -22237,7 +22302,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             <Textarea placeholder="e.g. Build a working demo, write a report, present to the class by the deadline." value={evNotes} onChange={ev=>{setEvNotes(ev.target.value);if(evDetailErr)setEvDetailErr("");}} />
           </Field>
           {evDetailErr&&<div style={{fontSize:12,color:T.red,marginTop:-8,marginBottom:14}}>{evDetailErr}</div>}
-          <PhasesOutlineEditor item={{...evProjectPlan,title:evTitle,detail:evNotes}} onChange={patch=>setEvProjectPlan(p=>({...p,...patch}))} subject={evSubject==="Other"?evCustom:evSubject} onGateBlocked={()=>setPricingOpen(true)} />
+          <PhasesOutlineEditor item={{...evProjectPlan,title:evTitle,detail:evNotes}} onChange={patch=>setEvProjectPlan(p=>({...p,...patch}))} subject={evSubject==="Other"?evCustom:evSubject} onGateBlocked={()=>setPricingOpen("projectBreakdown")} />
           <div style={{marginBottom:14}}>
             {evCollabSelected.length>0
               ?<div style={{display:"flex",flexWrap:"wrap",gap:6,alignItems:"center"}}>
@@ -23162,7 +23227,15 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
       let events=data.events;
       if(events.length>0){
         setImportCalClassifying(true);
-        const classifications=await classifyImportedCalendarEvents(events,"Canvas",mgmtSubjs.map(s=>s.label));
+        // Silent degrade, not a paywall interrupt, when Pro-only/over cap --
+        // see canClassifyCalendarImport's own comment for why. The connect
+        // itself always succeeds either way; only the AI auto-categorization
+        // is gated. Recorded based on whether the call was actually
+        // attempted, not on whether it came back with usable results -- a
+        // real call still costs money even if it fails/parses badly.
+        const canClassify=canClassifyCalendarImport();
+        const classifications=canClassify?await classifyImportedCalendarEvents(events,"Canvas",mgmtSubjs.map(s=>s.label)):{};
+        if(canClassify)recordCalendarClassify();
         setImportCalClassifying(false);
         // Falls back to the real Canvas course name (e.subject) instead of
         // a generic "Other" when classification itself fails -- unlike the
@@ -23206,7 +23279,12 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
       let events=data.events;
       if(classified&&events.length>0){
         setImportCalLoading(false);setImportCalClassifying(true);
-        const classifications=await classifyImportedCalendarEvents(events,label,mgmtSubjs.map(s=>s.label));
+        // Silent degrade when Pro-only/over cap -- see
+        // canClassifyCalendarImport's own comment. The import itself
+        // always succeeds; only the AI auto-categorization is gated.
+        const canClassify=canClassifyCalendarImport();
+        const classifications=canClassify?await classifyImportedCalendarEvents(events,label,mgmtSubjs.map(s=>s.label)):{};
+        if(canClassify)recordCalendarClassify();
         setImportCalClassifying(false);
         // Every item still gets a real, editable kind/subject even when the
         // AI call itself failed outright (classifyImportedCalendarEvents
@@ -23302,8 +23380,14 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
       const existingUids=new Set(lsGet("events",[]).filter(e=>e.importSubId===sub.id).map(e=>e.externalUid));
       const newEvents=data.events.filter(e=>e.uid&&!existingUids.has(e.uid));
       let classifications;
-      if(isAcademicCalendarSource(sub.sourceType)&&newEvents.length>0){
+      // This is the silent, once-a-day AUTOMATIC path (see the useEffect
+      // below) -- there's no UI here to show a paywall to even if this
+      // student is asleep when it fires. Same silent degrade as the two
+      // user-initiated import paths: skip the AI call, fall back to the
+      // generic classification mergeImportedEvents already handles.
+      if(isAcademicCalendarSource(sub.sourceType)&&newEvents.length>0&&canClassifyCalendarImport()){
         classifications=await classifyImportedCalendarEvents(newEvents,sub.sourceType,mgmtSubjs.map(s=>s.label));
+        recordCalendarClassify();
       }
       const merged=mergeImportedEvents(lsGet("events",[]),sub.id,data.events,classifications);
       const result=reconcileFixedEventConflicts(merged.filter(e=>e.importSubId===sub.id));
@@ -23363,7 +23447,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     // zero gate at all, same gap Brain Dump/note summaries had. Reuses
     // canScanScreenshot -- same "image-based AI extraction" cost class as
     // the Canvas/syllabus screenshot import already gated on it.
-    if(!canScanScreenshot()){setWorkScanOpen(false);setPricingOpen(true);return;}
+    if(!canScanScreenshot()){setWorkScanOpen(false);setPricingOpen("screenshotScan");return;}
     const ext=file.name.split(".").pop().toLowerCase();
     if(!WORK_IMAGE_EXT_MEDIA_TYPES[ext]){setWorkScanError("Upload a photo or screenshot of your shift schedule (JPG, PNG, etc).");return;}
     setWorkScanning(true);setWorkScanError("");
@@ -25827,7 +25911,7 @@ function App() {
     // A passive toast here used to be a dead end -- told the student it's
     // Pro-only with no way to actually act on that. Opens the real
     // paywall now, same as every other Pro-only gate in this file.
-    if(isProject&&!canBreakDownProject()){setPricingOpen(true);return;}
+    if(isProject&&!canBreakDownProject()){setPricingOpen("projectBreakdown");return;}
     const events=lsGet("events",[]);
     const routines=getWeeklyRoutine();
     const prefs=getSchedulePreferences();
@@ -26261,7 +26345,29 @@ function App() {
     setPendingBeginTask(null);
   };
   const [creditsOpen,setCreditsOpen]=useState(false);
-  const [pricingOpen,setPricingOpen]=useState(false);
+  const [pricingOpen,setPricingOpenRaw]=useState(false);
+  // 2026-08-19: every canX() gate across the app used to open this exact
+  // same generic "Studlin plans" modal with zero connection to whatever
+  // the student just tried to do -- found during a fresh-user paywall
+  // walkthrough (checking specifically how the Smart Reschedule moment
+  // feels, per direct ask). setPricingOpen is passed to children under
+  // that same prop name so no signature threading changed; children can
+  // now optionally pass a reason string instead of true to get a
+  // specific sub-line here instead of the generic one.
+  const [pricingReason,setPricingReason]=useState("");
+  const setPricingOpen=(reasonOrTrue)=>{
+    if(reasonOrTrue===false){setPricingOpenRaw(false);return;}
+    setPricingReason(typeof reasonOrTrue==="string"?reasonOrTrue:"");
+    setPricingOpenRaw(true);
+  };
+  const PRICING_REASON_COPY={
+    smartReschedule:"Smart Reschedule is a Pro feature.",
+    brainDump:"Brain Dump is a Pro feature.",
+    projectBreakdown:"AI project breakdowns are a Pro feature.",
+    aiArrange:"AI scheduling is a Pro feature.",
+    syllabusScan:"Syllabus & schedule scans are a Pro feature.",
+    screenshotScan:"Screenshot imports are a Pro feature.",
+  };
   // Dashboard's "Reschedule" confirm + its toast — lifted up from Dashboard
   // itself: [data-page]'s own entrance animation makes it a containing
   // block for any position:fixed descendant anywhere inside it, so a
@@ -26638,13 +26744,22 @@ function App() {
     else{setCreditCheckout(null);setCreditProcessing(false);setBoughtMsg("✓ Credits added to your account!");}
   };
 
-  const buyPack=(credits)=>startCreditCheckout(credits,null);
-  const buyCustom=()=>{
-    let v=Math.floor(+customDollars||0);
-    if(v<5){setBoughtMsg("Minimum purchase is $5.");return;}
-    if(v>100000){setBoughtMsg("Maximum purchase is $100,000.");return;}
-    startCreditCheckout(null,v);
-  };
+  // Disabled 2026-08-19: this was a live, fully-functional Stripe charge
+  // (paymentIntents.create needs no Price ID, unlike the subscription
+  // flow, so this kept working even while Pro checkout was broken on
+  // null Price IDs) for a "credits" balance that the 2026-08-18 pricing
+  // pass made completely inert -- every canX() gate now checks
+  // getPlan()==="Pro" and returns false outright for Free regardless of
+  // credit balance, and Pro users already get a 100000-credit monthly
+  // grant (see api/stripe-webhook.js PLAN_CREDITS) they'll never
+  // approach. A Free user completing this purchase would have paid real
+  // money (up to $100,000 via the custom-amount path) for literally zero
+  // unlocked functionality. Flagged for the user rather than redesigned
+  // -- what replaces this surface (drop it, fold it into the Pro
+  // upsell, something else) is a product call, not one to make solo
+  // overnight. See feedback in the morning report.
+  const buyPack=(_credits)=>{setBoughtMsg("Credit top-ups are temporarily unavailable. Upgrade to Pro for full AI access instead.");};
+  const buyCustom=()=>{setBoughtMsg("Credit top-ups are temporarily unavailable. Upgrade to Pro for full AI access instead.");};
   const notifs=(()=>{
     const ev=lsGet("events",[]); const tk=dayKey();
     const rel=(k)=>{const tomorrow=dayKey(new Date(Date.now()+86400000));if(k===tk)return"Today";if(k===tomorrow)return"Tomorrow";const p=k.split("-");return MON_SHORT[+p[1]-1]+" "+(+p[2]);};
@@ -27091,7 +27206,7 @@ function App() {
           setActive={setActive} setPricingOpen={setPricingOpen} />
       )}
       {/* PRICING MODAL */}
-      <Modal open={pricingOpen} onClose={()=>setPricingOpen(false)} title="Studlin plans" sub="Start free. Upgrade when you're ready. Cancel anytime." width={820}>
+      <Modal open={pricingOpen} onClose={()=>setPricingOpen(false)} title="Studlin plans" sub={(PRICING_REASON_COPY[pricingReason]?PRICING_REASON_COPY[pricingReason]+" ":"")+"Start free. Upgrade when you're ready. Cancel anytime."} width={820}>
         <PlanCards billing="monthly" onSelect={(key)=>{
           setPricingOpen(false);
           if(key!=="free")window.location.href="checkout.html?plan="+key+"&billing=monthly";
@@ -27103,7 +27218,7 @@ function App() {
           <div style={{fontSize:12,color:T.muted}}>All plans include a 14-day money-back guarantee. No credit card needed for Free.</div>
         </div>
       </Modal>
-      <Modal open={creditsOpen} onClose={()=>{setCreditsOpen(false);setCreditCheckout(null);setBoughtMsg("");}} title={creditCheckout?"Complete purchase":"AI Credits"} sub={creditCheckout?("Purchase "+creditCheckout.label+" for "+creditCheckout.price):"Every AI action uses credits. Top up, upgrade, or just check your balance."} width={620}
+      <Modal open={creditsOpen} onClose={()=>{setCreditsOpen(false);setCreditCheckout(null);setBoughtMsg("");}} title={creditCheckout?"Complete purchase":"AI Credits"} sub={creditCheckout?("Purchase "+creditCheckout.label+" for "+creditCheckout.price):"Upgrade to Pro for full AI access, or check your balance below."} width={620}
         footer={creditCheckout
           ?<><Btn variant="subtle" onClick={()=>{setCreditCheckout(null);setBoughtMsg("");}}>← Back</Btn><Btn onClick={confirmCreditPurchase} disabled={creditProcessing} style={{background:T.lime,color:T.ink}}>{creditProcessing?"Processing...":"Pay "+creditCheckout.price}</Btn></>
           :<><Btn variant="subtle" onClick={()=>setCreditsOpen(false)}>Close</Btn></>}>

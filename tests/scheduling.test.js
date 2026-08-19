@@ -1964,6 +1964,8 @@ describe("2026-08-18 pricing pass, part 2: Pro gets a real (generous, unadvertis
     ["canUseSmartReschedule", "recordSmartReschedule", "PRO_SMART_RESCHEDULE_LIMIT"],
     ["canUseBrainDump", "recordBrainDump", "PRO_BRAIN_DUMP_LIMIT"],
     ["canUseAiArrange", "recordAiArrange", "PRO_AI_ARRANGE_LIMIT"],
+    ["canClassifyCalendarImport", "recordCalendarClassify", "PRO_CALENDAR_CLASSIFY_LIMIT"],
+    ["canAddSessionFocus", "recordSessionFocus", "PRO_SESSION_FOCUS_LIMIT"],
   ];
   GATES.forEach(([canFn, recordFn, limitConst]) => {
     test(`${canFn}: Free is blocked before AND after recording usage (no free taste at all)`, () => {

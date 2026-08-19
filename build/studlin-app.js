@@ -2346,9 +2346,11 @@ function normalizeOutlineDraft(outline) {
 }
 async function proposeSessionFocuses(examTitle, materialText, sessionCount, subject) {
   if (!materialText || !materialText.trim()) return null;
+  if (!canAddSessionFocus()) return null;
   try {
     const prompt = "A student has " + sessionCount + ' spaced study session(s) counting down to their exam: "' + examTitle + '"' + (subject ? " (" + subject + ")" : "") + ". Here's their study material:\n\n" + materialText.slice(0, 6e3) + "\n\nWrite exactly " + sessionCount + ` short study-focus labels, one per session, in the order the sessions happen (earliest first, working toward full review by the last one). Keep each one under 8 words -- a quick label a student can read in passing, like "Ch 4-6: cell structure" or "Unit 3 practice problems", not a full descriptive sentence. Ground every label in real topics, chapters, or sections that actually appear in the material above. Never use an em dash or semicolon to connect ideas. Use a colon, "and", or just cut one instead. If the material doesn't give you enough to write ` + sessionCount + ` genuinely distinct, specific labels, don't pad with generic filler like "General review" -- respond with {"focuses":[]} instead. Respond with ONLY valid JSON, no markdown fences, no commentary: {"focuses":["Ch 4-6: cell structure","Ch 7-8: energy and metabolism"]}`;
     const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt }], model: "standard", format: "json" }) });
+    recordSessionFocus();
     const data = await res.json();
     const raw = (data.reply || "").replace(/```json?\n?/gi, "").replace(/```/g, "").trim();
     const parsed = JSON.parse(raw);
@@ -3620,7 +3622,9 @@ const AI_CALL_COST_ESTIMATES = {
   projectBreakdown: 0.011,
   smartReschedule: 1e-3,
   brainDump: 0.014,
-  aiArrange: 6e-3
+  aiArrange: 6e-3,
+  calendarClassify: 0.03,
+  sessionFocus: 9e-3
 };
 const PRO_MONTHLY_AI_SPEND_CEILING = 3.5;
 const getMonthlyAiSpend = makeMonthlyUsage("aiSpendMills");
@@ -3692,6 +3696,18 @@ function recordExamPlanBuild() {
   lsSet("examPlanBuilds", { month: u.month, count: u.count + 1 });
   chargeAiSpend("examPlanBuild");
 }
+const PRO_SESSION_FOCUS_LIMIT = 100;
+const getSessionFocusUsage = makeMonthlyUsage("sessionFocuses");
+function canAddSessionFocus() {
+  if (getPlan() === "Free") return false;
+  if (!underAiSpendCeiling()) return false;
+  return getSessionFocusUsage().count < PRO_SESSION_FOCUS_LIMIT;
+}
+function recordSessionFocus() {
+  const u = getSessionFocusUsage();
+  lsSet("sessionFocuses", { month: u.month, count: u.count + 1 });
+  chargeAiSpend("sessionFocus");
+}
 const PRO_PROJECT_BREAKDOWN_LIMIT = 30;
 const getProjectBreakdownUsage = makeMonthlyUsage("projectBreakdowns");
 function canBreakDownProject() {
@@ -3734,6 +3750,18 @@ function canUseAiArrange() {
   if (getPlan() === "Free") return false;
   if (!underAiSpendCeiling()) return false;
   return getAiArrangeUsage().count < PRO_AI_ARRANGE_LIMIT;
+}
+const PRO_CALENDAR_CLASSIFY_LIMIT = 60;
+const getCalendarClassifyUsage = makeMonthlyUsage("calendarClassifies");
+function canClassifyCalendarImport() {
+  if (getPlan() === "Free") return false;
+  if (!underAiSpendCeiling()) return false;
+  return getCalendarClassifyUsage().count < PRO_CALENDAR_CLASSIFY_LIMIT;
+}
+function recordCalendarClassify() {
+  const u = getCalendarClassifyUsage();
+  lsSet("calendarClassifies", { month: u.month, count: u.count + 1 });
+  chargeAiSpend("calendarClassify");
 }
 function recordAiArrange() {
   const u = getAiArrangeUsage();
@@ -5428,6 +5456,10 @@ function StudlinPrep({ setActive = () => {
     const addFocusToExisting = async () => {
       const genericPending = examSessions.filter((s) => !s.deckId && !s.practiceExamId && s.status !== "done");
       if (genericPending.length === 0) return;
+      if (!canAddSessionFocus()) {
+        setUpgradeModal({ feature: "AI study focus", detail: "AI study focus is a Pro feature. Upgrade to use it." });
+        return;
+      }
       setSessionScheduleLoading(true);
       const focuses = await proposeSessionFocuses(selectedExam.title, materialText, genericPending.length, selectedExam.subject);
       setSessionScheduleLoading(false);
@@ -10253,7 +10285,8 @@ const WizardStepper = ({ step }) => {
   const activeLabelIdx = labels.findIndex((s) => s.label === WIZARD_STEPPER[idx].label);
   return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 16, padding: "20px 32px 0" } }, labels.map((s, i) => /* @__PURE__ */ React.createElement("div", { key: s.key, style: { flex: 1 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 600, color: i <= activeLabelIdx ? T.text : T.faint, marginBottom: 6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, s.label), /* @__PURE__ */ React.createElement("div", { style: { height: 2, borderRadius: 2, background: i <= activeLabelIdx ? T.lime : T.border } }))));
 };
-function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, targetCourseId, onPartialSync }) {
+function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, targetCourseId, onPartialSync, setPricingOpen = () => {
+} }) {
   const [step, setStep] = useState("status");
   const [status, setStatus] = useState(initialStatus || "");
   const [pendingClasses, setPendingClasses] = useState([]);
@@ -10423,10 +10456,21 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     const file = e.target.files && e.target.files[0];
     if (!file) return;
     e.target.value = "";
+    const ext = file.name.split(".").pop().toLowerCase();
+    if (IMAGE_EXT_MEDIA_TYPES[ext]) {
+      if (!canScanScreenshot()) {
+        setPricingOpen("screenshotScan");
+        return;
+      }
+    } else {
+      if (!canScanSyllabus()) {
+        setPricingOpen("syllabusScan");
+        return;
+      }
+    }
     setScanning(true);
     setScanError("");
     try {
-      const ext = file.name.split(".").pop().toLowerCase();
       if (IMAGE_EXT_MEDIA_TYPES[ext]) {
         const dataUrl = await new Promise((resolve) => {
           const reader = new FileReader();
@@ -10439,6 +10483,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
           setScanError(result2.error);
           return;
         }
+        recordScreenshotScan();
         buildReviewFromExtraction(result2);
         return;
       }
@@ -10473,6 +10518,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
         setScanError(result.error);
         return;
       }
+      recordSyllabusScan();
       buildReviewFromExtraction(result, text);
     } catch (err) {
       setScanError("Couldn't read that file: " + err.message);
@@ -10482,6 +10528,10 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
   };
   const handlePasteScan = async () => {
     if (!pasteText.trim()) return;
+    if (!canScanSyllabus()) {
+      setPricingOpen("syllabusScan");
+      return;
+    }
     setScanning(true);
     setScanError("");
     try {
@@ -10490,6 +10540,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
         setScanError(result.error);
         return;
       }
+      recordSyllabusScan();
       buildReviewFromExtraction(result, pasteText);
     } catch (err) {
       setScanError("Couldn't read that text: " + err.message);
@@ -10527,10 +10578,21 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     const file = e.target.files && e.target.files[0];
     if (!file) return;
     e.target.value = "";
+    const ext = file.name.split(".").pop().toLowerCase();
+    if (IMAGE_EXT_MEDIA_TYPES[ext]) {
+      if (!canScanScreenshot()) {
+        setPricingOpen("screenshotScan");
+        return;
+      }
+    } else {
+      if (!canScanSyllabus()) {
+        setPricingOpen("syllabusScan");
+        return;
+      }
+    }
     setScanning(true);
     setScanError("");
     try {
-      const ext = file.name.split(".").pop().toLowerCase();
       if (IMAGE_EXT_MEDIA_TYPES[ext]) {
         const dataUrl = await new Promise((resolve) => {
           const reader = new FileReader();
@@ -10543,6 +10605,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
           setScanError(result2.error);
           return;
         }
+        recordScreenshotScan();
         startClassQueue(result2.classes);
         return;
       }
@@ -10577,6 +10640,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
         setScanError(result.error);
         return;
       }
+      recordSyllabusScan();
       startClassQueue(result.classes, text);
     } catch (err) {
       setScanError("Couldn't read that file: " + err.message);
@@ -10586,6 +10650,10 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
   };
   const handleCollegeSchedulePaste = async () => {
     if (!pasteText.trim()) return;
+    if (!canScanSyllabus()) {
+      setPricingOpen("syllabusScan");
+      return;
+    }
     setScanning(true);
     setScanError("");
     try {
@@ -10594,6 +10662,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
         setScanError(result.error);
         return;
       }
+      recordSyllabusScan();
       startClassQueue(result.classes, pasteText);
     } catch (err) {
       setScanError("Couldn't read that text: " + err.message);
@@ -10618,10 +10687,21 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     const file = e.target.files && e.target.files[0];
     if (!file) return;
     e.target.value = "";
+    const ext = file.name.split(".").pop().toLowerCase();
+    if (IMAGE_EXT_MEDIA_TYPES[ext]) {
+      if (!canScanScreenshot()) {
+        setPricingOpen("screenshotScan");
+        return;
+      }
+    } else {
+      if (!canScanSyllabus()) {
+        setPricingOpen("syllabusScan");
+        return;
+      }
+    }
     setScanning(true);
     setScanError("");
     try {
-      const ext = file.name.split(".").pop().toLowerCase();
       if (IMAGE_EXT_MEDIA_TYPES[ext]) {
         const dataUrl = await new Promise((resolve) => {
           const reader = new FileReader();
@@ -10638,6 +10718,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
           setScanError("Couldn't make out any periods in that image. Try a clearer photo, or add classes manually.");
           return;
         }
+        recordScreenshotScan();
         buildHsReviewFromPeriods(result2.periods);
         return;
       }
@@ -10680,6 +10761,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
         setScanError("Couldn't find any periods in that. Try a clearer file, or add classes manually.");
         return;
       }
+      recordSyllabusScan();
       buildHsReviewFromPeriods(result.periods);
     } catch (err) {
       setScanError("Couldn't read that file: " + err.message);
@@ -10689,6 +10771,10 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
   };
   const handleHsPasteScan = async () => {
     if (!hsPasteText.trim()) return;
+    if (!canScanSyllabus()) {
+      setPricingOpen("syllabusScan");
+      return;
+    }
     setScanning(true);
     setScanError("");
     try {
@@ -10701,6 +10787,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
         setScanError("Couldn't find any periods in that text. Try adding more detail, or add classes manually.");
         return;
       }
+      recordSyllabusScan();
       buildHsReviewFromPeriods(result.periods);
     } catch (err) {
       setScanError("Couldn't read that text: " + err.message);
@@ -11756,9 +11843,9 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
       reoptimizeAttackChain(chainIdForReschedule);
       commit(lsGet("events", []));
     } }, "Re-optimize schedule")),
-    requiresProjectDetail && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 8 } }, "Marked as a Project \u2014 use the Detail field below to describe it, and Studlin will suggest phases and a checklist."), /* @__PURE__ */ React.createElement(PhasesOutlineEditor, { item: { ...projectPlan, title, detail: notes }, onChange: (patch) => setProjectPlan((p) => ({ ...p, ...patch })), subject, onGateBlocked: () => setPricingOpen(true) })),
+    requiresProjectDetail && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 8 } }, "Marked as a Project \u2014 use the Detail field below to describe it, and Studlin will suggest phases and a checklist."), /* @__PURE__ */ React.createElement(PhasesOutlineEditor, { item: { ...projectPlan, title, detail: notes }, onChange: (patch) => setProjectPlan((p) => ({ ...p, ...patch })), subject, onGateBlocked: () => setPricingOpen("projectBreakdown") })),
     isProject2 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, ev.sharedProjectId ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted } }, "Shared with collaborators \u2014 they'll see your progress once they accept.") : /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: openCollabPicker }, "+ Add collaborators")),
-    canAddAttackBlock && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "12px 14px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setAddAttackBlock((a) => !a), style: { display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text } }, "Start an Attack Block for this"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, "A short probe session, scheduled the moment you save. Studlin figures out the rest.")), /* @__PURE__ */ React.createElement("div", { style: { width: 36, height: 20, borderRadius: 10, background: addAttackBlock ? T.lime : T.faint, position: "relative", transition: "background 0.2s", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 16, height: 16, borderRadius: "50%", background: "#fff", position: "absolute", top: 2, left: addAttackBlock ? 18 : 2, transition: "left 0.2s" } }))), /* @__PURE__ */ React.createElement(AttackBlockExplainer, null), addAttackBlock && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement(Field, { label: "Probe session length" }, /* @__PURE__ */ React.createElement(NumField, { min: 15, max: 60, fallback: ATTACK_BLOCK_DEFAULT_PROBE_MINS, value: attackProbeMins, onChange: setAttackProbeMins }))), isPhaseCandidate && /* @__PURE__ */ React.createElement(PhasesOutlineEditor, { item: { ...projectPlan, title, detail: notes }, onChange: (patch) => setProjectPlan((p) => ({ ...p, ...patch })), subject, onGateBlocked: () => setPricingOpen(true) })))),
+    canAddAttackBlock && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "12px 14px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setAddAttackBlock((a) => !a), style: { display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text } }, "Start an Attack Block for this"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, "A short probe session, scheduled the moment you save. Studlin figures out the rest.")), /* @__PURE__ */ React.createElement("div", { style: { width: 36, height: 20, borderRadius: 10, background: addAttackBlock ? T.lime : T.faint, position: "relative", transition: "background 0.2s", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 16, height: 16, borderRadius: "50%", background: "#fff", position: "absolute", top: 2, left: addAttackBlock ? 18 : 2, transition: "left 0.2s" } }))), /* @__PURE__ */ React.createElement(AttackBlockExplainer, null), addAttackBlock && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement(Field, { label: "Probe session length" }, /* @__PURE__ */ React.createElement(NumField, { min: 15, max: 60, fallback: ATTACK_BLOCK_DEFAULT_PROBE_MINS, value: attackProbeMins, onChange: setAttackProbeMins }))), isPhaseCandidate && /* @__PURE__ */ React.createElement(PhasesOutlineEditor, { item: { ...projectPlan, title, detail: notes }, onChange: (patch) => setProjectPlan((p) => ({ ...p, ...patch })), subject, onGateBlocked: () => setPricingOpen("projectBreakdown") })))),
     kind === "exam" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "Study material (optional)", hint: "Upload files, paste notes, or drop a link \u2014 you can always add more later in Studlin Prep." }, /* @__PURE__ */ React.createElement(MaterialEditor, { item: examPlan, onChange: (patch) => setExamPlan((m) => ({ ...m, ...patch })), label: title.trim() || "Untitled exam", idPrefix: "edittask-" + ev.id })), linkedSessions.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { background: T.lime + "0A", border: `1px solid ${T.lime}33`, borderRadius: 8, padding: "12px 14px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setExamPlan((m) => ({ ...m, proposeSessions: !m.proposeSessions })), style: { display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "flex-start" } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.lime, flexShrink: 0, marginTop: 1 } }, Icon.zap), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text } }, "Have Studlin make your study plan"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, "Spaced study sessions counting down to the exam date, added the moment you save."))), /* @__PURE__ */ React.createElement("div", { style: { width: 36, height: 20, borderRadius: 10, background: examPlan.proposeSessions ? T.lime : T.faint, position: "relative", transition: "background 0.2s", cursor: "pointer", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 16, height: 16, borderRadius: "50%", background: "#fff", position: "absolute", top: 2, left: examPlan.proposeSessions ? 18 : 2, transition: "left 0.2s" } }))), examPlan.proposeSessions && (() => {
       const dates = date ? computeReviewDates(date, dayKey(), examPlan.sessionCount || 4) : [];
       return /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.muted, marginBottom: 6 } }, "How confident are you on this material?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 12 } }, ["shaky", "okay", "solid"].map((level) => /* @__PURE__ */ React.createElement(
@@ -12552,7 +12639,7 @@ function CalendarTab({ setActive = () => {
   const deleteRoutineGroup = (ids) => persistRoutines(routines.filter((r) => !ids.includes(r.id)));
   const skipOneOccurrence = (ev) => {
     if (!canUseSmartReschedule()) {
-      setPricingOpen(true);
+      setPricingOpen("smartReschedule");
       return;
     }
     setPauseError("");
@@ -13038,7 +13125,7 @@ function CalendarTab({ setActive = () => {
   const submitBrainDump = async () => {
     if (!brainDumpText.trim() || brainDumpLoading) return;
     if (!canUseBrainDump()) {
-      setPricingOpen(true);
+      setPricingOpen("brainDump");
       return;
     }
     if (bdListening) stopBdRec();
@@ -13153,7 +13240,7 @@ function CalendarTab({ setActive = () => {
     if ((evKind === "assignment" || evKind === "project") && evAttackBlock) {
       const isProject2 = evKind === "project";
       if (isProject2 && !canBreakDownProject()) {
-        setPricingOpen(true);
+        setPricingOpen("projectBreakdown");
         return;
       }
       const subj = evSubject === "None" ? "" : evSubject === "Other" && evCustom.trim() ? evCustom.trim() : evSubject;
@@ -13255,7 +13342,7 @@ function CalendarTab({ setActive = () => {
   const aiArrange = async () => {
     if (!evTitle.trim()) return;
     if (!canUseAiArrange()) {
-      setPricingOpen(true);
+      setPricingOpen("aiArrange");
       return;
     }
     if (evKind === "exam" || evKind === "class" || evKind === "busy block") return;
@@ -13487,7 +13574,7 @@ function CalendarTab({ setActive = () => {
   const submitPauseCommand = async () => {
     if (!pauseText.trim() || pauseLoading) return;
     if (!canUseSmartReschedule()) {
-      setPricingOpen(true);
+      setPricingOpen("smartReschedule");
       return;
     }
     setPauseLoading(true);
@@ -13527,7 +13614,7 @@ Examples:
     if (!pausePreview) return;
     if (!canUseSmartReschedule()) {
       setPauseOpen(false);
-      setPricingOpen(true);
+      setPricingOpen("smartReschedule");
       return;
     }
     const all = lsGet("events", []);
@@ -13939,7 +14026,7 @@ Examples:
     { icon: Icon.refresh, label: "Reschedule", sub: "Push back, clear, or balance your week", onClick: () => {
       setToolsMenuOpen(false);
       if (!canUseSmartReschedule()) {
-        setPricingOpen(true);
+        setPricingOpen("smartReschedule");
         return;
       }
       setPauseOpen(true);
@@ -14075,11 +14162,11 @@ Examples:
       onNext: advanceCalTour,
       onSkip: skipCalTour
     }
-  ), /* @__PURE__ */ React.createElement(ClassSetupWizard, { open: classSetupOpen, initialStatus: getProfile().status, onFinish: finishClassSetup, onPartialSync: syncClassSetupState }), /* @__PURE__ */ React.createElement(ClassSetupWizard, { open: quickScanOpen, quickScan: true, targetCourseId: quickScanTargetCourseId, initialStatus: getProfile().status, onFinish: finishQuickScan, onSkip: () => {
+  ), /* @__PURE__ */ React.createElement(ClassSetupWizard, { open: classSetupOpen, initialStatus: getProfile().status, onFinish: finishClassSetup, onPartialSync: syncClassSetupState, setPricingOpen }), /* @__PURE__ */ React.createElement(ClassSetupWizard, { open: quickScanOpen, quickScan: true, targetCourseId: quickScanTargetCourseId, initialStatus: getProfile().status, onFinish: finishQuickScan, onSkip: () => {
     setQuickScanOpen(false);
     setQuickScanTargetCourseId(null);
     syncClassSetupState();
-  }, onPartialSync: syncClassSetupState }), /* @__PURE__ */ React.createElement(
+  }, onPartialSync: syncClassSetupState, setPricingOpen }), /* @__PURE__ */ React.createElement(
     Modal,
     {
       open: !!weeklyContentCourseId,
@@ -14288,7 +14375,7 @@ Examples:
     isProjectKind && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "Describe what you want to do", hint: "A sentence or two is enough \u2014 Studlin uses this to suggest phases and a checklist." }, /* @__PURE__ */ React.createElement(Textarea, { placeholder: "e.g. Build a working demo, write a report, present to the class by the deadline.", value: evNotes, onChange: (ev) => {
       setEvNotes(ev.target.value);
       if (evDetailErr) setEvDetailErr("");
-    } })), evDetailErr && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: -8, marginBottom: 14 } }, evDetailErr), /* @__PURE__ */ React.createElement(PhasesOutlineEditor, { item: { ...evProjectPlan, title: evTitle, detail: evNotes }, onChange: (patch) => setEvProjectPlan((p) => ({ ...p, ...patch })), subject: evSubject === "Other" ? evCustom : evSubject, onGateBlocked: () => setPricingOpen(true) }), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, evCollabSelected.length > 0 ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" } }, evCollabSelected.map((uid) => {
+    } })), evDetailErr && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: -8, marginBottom: 14 } }, evDetailErr), /* @__PURE__ */ React.createElement(PhasesOutlineEditor, { item: { ...evProjectPlan, title: evTitle, detail: evNotes }, onChange: (patch) => setEvProjectPlan((p) => ({ ...p, ...patch })), subject: evSubject === "Other" ? evCustom : evSubject, onGateBlocked: () => setPricingOpen("projectBreakdown") }), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, evCollabSelected.length > 0 ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" } }, evCollabSelected.map((uid) => {
       const name = (evCollabCandidates.find((c) => c.uid === uid) || {}).name || "Studlin User";
       return /* @__PURE__ */ React.createElement("span", { key: uid, style: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 600, color: T.text, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 99, padding: "4px 10px" } }, name, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => toggleEvCollabSelected(uid), style: { background: "none", border: "none", color: T.muted, cursor: "pointer", padding: 0, fontSize: 13, lineHeight: 1 } }, "\xD7"));
     }), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: openEvCollabPicker }, "+ Add more")) : /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: openEvCollabPicker }, "+ Add collaborators"))),
@@ -14926,7 +15013,9 @@ function SettingsTab({ theme = "dark", setTheme = () => {
       let events = data.events;
       if (events.length > 0) {
         setImportCalClassifying(true);
-        const classifications = await classifyImportedCalendarEvents(events, "Canvas", mgmtSubjs.map((s) => s.label));
+        const canClassify = canClassifyCalendarImport();
+        const classifications = canClassify ? await classifyImportedCalendarEvents(events, "Canvas", mgmtSubjs.map((s) => s.label)) : {};
+        if (canClassify) recordCalendarClassify();
         setImportCalClassifying(false);
         events = events.map((e) => {
           const c = e.uid && classifications[e.uid];
@@ -14972,7 +15061,9 @@ function SettingsTab({ theme = "dark", setTheme = () => {
       if (classified && events.length > 0) {
         setImportCalLoading(false);
         setImportCalClassifying(true);
-        const classifications = await classifyImportedCalendarEvents(events, label, mgmtSubjs.map((s) => s.label));
+        const canClassify = canClassifyCalendarImport();
+        const classifications = canClassify ? await classifyImportedCalendarEvents(events, label, mgmtSubjs.map((s) => s.label)) : {};
+        if (canClassify) recordCalendarClassify();
         setImportCalClassifying(false);
         events = events.map((e) => {
           const c = e.uid && classifications[e.uid];
@@ -15036,8 +15127,9 @@ function SettingsTab({ theme = "dark", setTheme = () => {
       const existingUids = new Set(lsGet("events", []).filter((e) => e.importSubId === sub.id).map((e) => e.externalUid));
       const newEvents = data.events.filter((e) => e.uid && !existingUids.has(e.uid));
       let classifications;
-      if (isAcademicCalendarSource(sub.sourceType) && newEvents.length > 0) {
+      if (isAcademicCalendarSource(sub.sourceType) && newEvents.length > 0 && canClassifyCalendarImport()) {
         classifications = await classifyImportedCalendarEvents(newEvents, sub.sourceType, mgmtSubjs.map((s) => s.label));
+        recordCalendarClassify();
       }
       const merged = mergeImportedEvents(lsGet("events", []), sub.id, data.events, classifications);
       const result = reconcileFixedEventConflicts(merged.filter((e) => e.importSubId === sub.id));
@@ -15087,7 +15179,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     e.target.value = "";
     if (!canScanScreenshot()) {
       setWorkScanOpen(false);
-      setPricingOpen(true);
+      setPricingOpen("screenshotScan");
       return;
     }
     const ext = file.name.split(".").pop().toLowerCase();
@@ -16184,7 +16276,7 @@ function App() {
   const acceptPrepPrompt = (item) => {
     const isProject2 = item.phases && item.phases.length > 0;
     if (isProject2 && !canBreakDownProject()) {
-      setPricingOpen(true);
+      setPricingOpen("projectBreakdown");
       return;
     }
     const events = lsGet("events", []);
@@ -16521,7 +16613,24 @@ function App() {
     setPendingBeginTask(null);
   };
   const [creditsOpen, setCreditsOpen] = useState(false);
-  const [pricingOpen, setPricingOpen] = useState(false);
+  const [pricingOpen, setPricingOpenRaw] = useState(false);
+  const [pricingReason, setPricingReason] = useState("");
+  const setPricingOpen = (reasonOrTrue) => {
+    if (reasonOrTrue === false) {
+      setPricingOpenRaw(false);
+      return;
+    }
+    setPricingReason(typeof reasonOrTrue === "string" ? reasonOrTrue : "");
+    setPricingOpenRaw(true);
+  };
+  const PRICING_REASON_COPY = {
+    smartReschedule: "Smart Reschedule is a Pro feature.",
+    brainDump: "Brain Dump is a Pro feature.",
+    projectBreakdown: "AI project breakdowns are a Pro feature.",
+    aiArrange: "AI scheduling is a Pro feature.",
+    syllabusScan: "Syllabus & schedule scans are a Pro feature.",
+    screenshotScan: "Screenshot imports are a Pro feature."
+  };
   const [rescheduleTask, setRescheduleTask] = useState(null);
   const [dashToast, setDashToast] = useState("");
   const [detailEventId, setDetailEventId] = useState(null);
@@ -16797,18 +16906,11 @@ function App() {
       setBoughtMsg("\u2713 Credits added to your account!");
     }
   };
-  const buyPack = (credits) => startCreditCheckout(credits, null);
+  const buyPack = (_credits) => {
+    setBoughtMsg("Credit top-ups are temporarily unavailable. Upgrade to Pro for full AI access instead.");
+  };
   const buyCustom = () => {
-    let v = Math.floor(+customDollars || 0);
-    if (v < 5) {
-      setBoughtMsg("Minimum purchase is $5.");
-      return;
-    }
-    if (v > 1e5) {
-      setBoughtMsg("Maximum purchase is $100,000.");
-      return;
-    }
-    startCreditCheckout(null, v);
+    setBoughtMsg("Credit top-ups are temporarily unavailable. Upgrade to Pro for full AI access instead.");
   };
   const notifs = (() => {
     const ev = lsGet("events", []);
@@ -17057,7 +17159,7 @@ function App() {
       setActive,
       setPricingOpen
     }
-  ), /* @__PURE__ */ React.createElement(Modal, { open: pricingOpen, onClose: () => setPricingOpen(false), title: "Studlin plans", sub: "Start free. Upgrade when you're ready. Cancel anytime.", width: 820 }, /* @__PURE__ */ React.createElement(PlanCards, { billing: "monthly", onSelect: (key) => {
+  ), /* @__PURE__ */ React.createElement(Modal, { open: pricingOpen, onClose: () => setPricingOpen(false), title: "Studlin plans", sub: (PRICING_REASON_COPY[pricingReason] ? PRICING_REASON_COPY[pricingReason] + " " : "") + "Start free. Upgrade when you're ready. Cancel anytime.", width: 820 }, /* @__PURE__ */ React.createElement(PlanCards, { billing: "monthly", onSelect: (key) => {
     setPricingOpen(false);
     if (key !== "free") window.location.href = "checkout.html?plan=" + key + "&billing=monthly";
   } }), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 20, padding: "16px 18px", background: T.card2, borderRadius: 12, border: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, fontWeight: 500 } }, "Grammarly + Quizlet + ChatGPT + Notion = ", /* @__PURE__ */ React.createElement("span", { style: { color: T.red, fontWeight: 700 } }, "$55/mo"), ".\xA0\xA0Pro is ", /* @__PURE__ */ React.createElement("span", { style: { color: T.lime, fontWeight: 700 } }, "$6.99"), "."), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "All plans include a 14-day money-back guarantee. No credit card needed for Free."))), /* @__PURE__ */ React.createElement(
@@ -17070,7 +17172,7 @@ function App() {
         setBoughtMsg("");
       },
       title: creditCheckout ? "Complete purchase" : "AI Credits",
-      sub: creditCheckout ? "Purchase " + creditCheckout.label + " for " + creditCheckout.price : "Every AI action uses credits. Top up, upgrade, or just check your balance.",
+      sub: creditCheckout ? "Purchase " + creditCheckout.label + " for " + creditCheckout.price : "Upgrade to Pro for full AI access, or check your balance below.",
       width: 620,
       footer: creditCheckout ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => {
         setCreditCheckout(null);
