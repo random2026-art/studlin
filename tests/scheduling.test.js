@@ -1958,13 +1958,50 @@ describe("canGenQuiz / recordQuizGen (free-tier practice-quiz limit)", () => {
     assert.equal(m.canGenQuiz(), false, "should block once the monthly limit is reached");
   });
 
-  test("Pro/Max plans are never limited", () => {
+  test("Pro plan is never limited", () => {
     const m = loadStudlinModule();
     m.setPlanLS("Pro");
     for (let i = 0; i < m.QUIZ_GEN_LIMIT + 5; i++) {
       assert.equal(m.canGenQuiz(), true);
       m.recordQuizGen();
     }
+  });
+});
+
+describe("2026-08-10 pricing pass: Studlin Prep free-tier limits + Smart Reschedule paid gate", () => {
+  test("Free plan gets exactly EXAM_PLAN_LIMIT study plan builds, then is blocked", () => {
+    const m = loadStudlinModule();
+    m.setPlanLS("Free");
+    for (let i = 0; i < m.EXAM_PLAN_LIMIT; i++) {
+      assert.equal(m.canBuildExamPlan(), true, `should allow build #${i + 1}`);
+      m.recordExamPlanBuild();
+    }
+    assert.equal(m.canBuildExamPlan(), false);
+  });
+
+  test("Free plan gets exactly PROJECT_BREAKDOWN_LIMIT project breakdowns, then is blocked", () => {
+    const m = loadStudlinModule();
+    m.setPlanLS("Free");
+    for (let i = 0; i < m.PROJECT_BREAKDOWN_LIMIT; i++) {
+      assert.equal(m.canBreakDownProject(), true, `should allow breakdown #${i + 1}`);
+      m.recordProjectBreakdown();
+    }
+    assert.equal(m.canBreakDownProject(), false);
+  });
+
+  test("Pro plan is never limited on study plans or project breakdowns", () => {
+    const m = loadStudlinModule();
+    m.setPlanLS("Pro");
+    for (let i = 0; i < m.EXAM_PLAN_LIMIT + 5; i++) { assert.equal(m.canBuildExamPlan(), true); m.recordExamPlanBuild(); }
+    for (let i = 0; i < m.PROJECT_BREAKDOWN_LIMIT + 5; i++) { assert.equal(m.canBreakDownProject(), true); m.recordProjectBreakdown(); }
+  });
+
+  test("Smart Reschedule is paid-only -- blocked on Free regardless of usage, always allowed on Pro", () => {
+    const m = loadStudlinModule();
+    m.setPlanLS("Free");
+    assert.equal(m.canUseSmartReschedule(), false, "Free should never get Smart Reschedule, not even a capped taste");
+    m.setPlanLS("Pro");
+    assert.equal(m.canUseSmartReschedule(), true);
   });
 });
 

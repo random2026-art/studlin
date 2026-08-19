@@ -155,9 +155,9 @@ function LeftRail({ step, state }) {
         <h1>Sign up and lock in.</h1>
         <p className="lead">Sign up is simple, free and fast. One workspace for everything you study, write, and remember.</p>
         <div className="rail-tiles">
-          <div className="rail-tile"><div className="ic">{Ic.spark}</div><div className="t">AI tutor on every subject</div><div className="s">Drop a PDF · ask anything</div></div>
+          <div className="rail-tile"><div className="ic">{Ic.spark}</div><div className="t">AI study plans, built for you</div><div className="s">Sessions, flashcards, and a practice exam</div></div>
           <div className="rail-tile"><div className="ic">{Ic.flame}</div><div className="t">Streaks that keep you going</div><div className="s">Daily momentum, milestones, and Weekly Wrapped</div></div>
-          <div className="rail-tile"><div className="ic">{Ic.zap}</div><div className="t">All your tools, one price</div><div className="s">Study groups, flashcards, calendar and more</div></div>
+          <div className="rail-tile"><div className="ic">{Ic.zap}</div><div className="t">A calendar that gets you</div><div className="s">Learns your habits, plans your week</div></div>
         </div>
       </aside>
     );
@@ -618,8 +618,8 @@ function App() {
     return 0;
   });
   const [state, setState] = useState(() => {
-    try { const saved = JSON.parse(localStorage.getItem("studlin-onboarding")||"null"); if (saved && typeof saved === "object") return {goals:[],plan:"pro",...saved}; } catch(e){}
-    return { goals: [], plan: "pro" };
+    try { const saved = JSON.parse(localStorage.getItem("studlin-onboarding")||"null"); if (saved && typeof saved === "object") return {goals:[],...saved}; } catch(e){}
+    return { goals: [] };
   });
 
   useEffect(()=>{

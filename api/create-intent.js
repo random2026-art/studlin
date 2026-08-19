@@ -13,11 +13,19 @@ const CREDIT_PACKS = {
 // Subscription price IDs — merged in from api/checkout.js so subscription
 // creation and one-off payment intents share one function (Vercel Hobby's
 // 12-function cap; see vercel.json).
+//
+// 2026-08-10 pricing pass: collapsed Free/Pro/Max down to Free/Pro, new
+// Pro price ($6.99/mo, $4.99/mo billed annually). Deliberately null, not
+// the old $9.99/$7.99 Price IDs -- neither Claude nor this codebase can
+// create real Stripe Price objects, and silently reusing the old ones
+// would charge $9.99 while every price shown to the user says $6.99.
+// null makes the `if (!priceId)` check below fail cleanly with "Invalid
+// plan" instead. Create two new Prices in the Stripe dashboard ($6.99/mo
+// recurring monthly, $59.88/yr recurring annual) and paste their IDs in
+// here before checkout will actually work again.
 const PRICES = {
-  pro_monthly: 'price_1TkZlWFJjTMWMaWhqfDLfirV',
-  pro_annual: 'price_1Tkbr1FJjTMWMaWhC4TyEj4F',
-  max_monthly: 'price_1TkZmXFJjTMWMaWhX2tnwQ89',
-  max_annual: 'price_1Tkbr1FJjTMWMaWhzdBVVWO6',
+  pro_monthly: null, // TODO: new $6.99/mo Price ID
+  pro_annual: null, // TODO: new $4.99/mo ($59.88/yr) Price ID
 };
 
 module.exports = withSentry(async (req, res) => {
@@ -84,10 +92,12 @@ module.exports = withSentry(async (req, res) => {
         metadata: { plan, firebase_uid: user.uid },
       });
 
+      // No trial (2026-08-10 pricing pass -- pure freemium instead: the
+      // free tier itself is the "try before you buy," Pro charges
+      // immediately on signup).
       const subscription = await stripe.subscriptions.create({
         customer: customer.id,
         items: [{ price: priceId }],
-        trial_period_days: 7,
         default_payment_method: paymentMethodId,
         metadata: { firebase_uid: user.uid },
       });

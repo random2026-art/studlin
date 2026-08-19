@@ -475,31 +475,27 @@ function TourStep({ targetRef, title, body, step, total, onNext, onSkip, isLast 
 
 // ─── PRICING PLAN CARDS ───────────────────────────────────────────────────────
 // Shared by the "See Pricing" nav-bar modal and the full-screen post-tour
-// paywall intercept — same 3 plans, same billing-aware pricing (mirrors
-// checkout.html's PLAN_DATA), just rendered inside different wrappers.
+// paywall intercept — 2 plans (Free / Pro, Max retired 2026-08-10), same
+// billing-aware pricing (mirrors checkout.html's PLAN_DATA), just rendered
+// inside different wrappers. No trial tag on Pro -- pure freemium, the Free
+// tier itself is the "try before you buy."
 const PRICING_PLANS=(billing)=>([
   {
     key:"free",name:"Free",price:"$0",per:"forever",tag:null,
     desc:"Get organized. No credit card needed.",
-    features:["120 AI chat messages / month","3 deadline scans / month","3 AI note scans / month (files, lectures & YouTube)","3 AI flashcard generations / month","Manual flashcards & notes: unlimited","Calendar, tasks, focus timer, streaks & XP"],
+    features:["Calendar, tasks, focus timer, streaks & XP: unlimited","Studlin Network & calendar connections: unlimited","Syllabus & schedule imports: 8 / month","1 AI study plan / month (sessions, flashcards & practice exam)","3 AI flashcard generations / month","Attack sessions: unlimited","1 project breakdown / month"],
     cta:"Get started free",variant:"subtle",
   },
   {
-    key:"pro",name:"Pro",price:billing==="annual"?"$7.99":"$9.99",per:billing==="annual"?"/mo · billed yearly":"/mo",tag:"7 DAYS FREE",
-    desc:"Everything on Free is still manual. Pro is where the AI actually does the work.",
-    features:["Unlimited AI chat, deadline scans, note scans & flashcard generation","All AI models: Flash, Standard & Research","AI flashcards from notes, PDFs & YouTube","Full essay suite: grammar, rewrite & citations","AI note cleanup & study groups"],
-    cta:"Start free trial",variant:"lime",featured:true,
-  },
-  {
-    key:"max",name:"Max",price:billing==="annual"?"$19.99":"$24.99",per:billing==="annual"?"/mo · billed yearly":"/mo",tag:null,
-    desc:"For the heaviest workload: every subject, every week, no caps.",
-    features:["Everything in Pro, completely unlimited","Priority AI: faster responses, no queue","Bulk flashcard generation (100 at once)","3× XP multiplier + advanced analytics"],
-    cta:"Upgrade to Max",variant:"ink",
+    key:"pro",name:"Pro",price:billing==="annual"?"$4.99":"$6.99",per:billing==="annual"?"/mo · billed yearly":"/mo",tag:null,
+    desc:"Everything on Free, with no caps, plus Smart Reschedule.",
+    features:["Unlimited AI study plans, flashcards, syllabus scans, attack sessions & project breakdowns","Smart Reschedule, not on Free","All AI models: Flash, Standard & Research","Unlimited AI chat, every day"],
+    cta:"Upgrade to Pro",variant:"lime",featured:true,
   },
 ]);
 function PlanCards({ billing, onSelect }) {
   return (
-    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14}}>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:14}}>
       {PRICING_PLANS(billing).map((plan,i)=>(
         <div key={i} style={{
           background:plan.featured?T.forest:T.card2,
@@ -801,11 +797,6 @@ const lsSet=(k,v)=>{try{localStorage.setItem("studlin-"+k,JSON.stringify(v));}ca
 const reportError=(context)=>(e)=>{
   try{if(typeof Sentry!=="undefined")Sentry.captureException(e,{tags:{context}});}catch(e2){}
 };
-// Read the user's AI Tutor preferences (Settings > Study preferences) for
-// attaching to genuine chat/tutoring /api/chat calls only — one-shot utility
-// generations (citations, grammar, flashcard gen, etc.) never call this, so
-// their output is never affected by these style settings.
-const getAiPrefs=()=>({verbosity:lsGet("pref-verb","Balanced"),tutorStyle:lsGet("pref-tutorStyle","Socratic")});
 const SUBJECT_COLORS=["#D9806B","#7BACDF","#A691DB","#5FCBA8","#DCA64A","#7880A8","#3ECF8E","#FF8A80","#81C784","#CE93D8"];
 // Three lightness tiers of the same 10-hue family SUBJECT_COLORS already
 // established -- not a palette redesign, just lighter/darker versions of
@@ -5535,7 +5526,7 @@ function sessionStats(){
 const fmtH=(m)=>m>=60?Math.floor(m/60)+"h "+(m%60)+"m":m+"m";
 function getPlan(){return lsGet("plan","Free");}
 function setPlanLS(p){lsSet("plan",p);}
-function getCreditLimit(){const p=getPlan();return p==="Max"?500:p==="Pro"?200:120;}
+function getCreditLimit(){return getPlan()==="Pro"?100000:120;}
 function getCredits(){return lsGet("credits",getCreditLimit());}
 function setCreditsLS(n){lsSet("credits",Math.max(0,n));}
 const CREDIT_COST={standard:1,flash:1};
@@ -5554,7 +5545,7 @@ function makeMonthlyUsage(storageKey){
 }
 function daysUntilReset(){const n=new Date();const e=new Date(n.getFullYear(),n.getMonth()+1,1);return Math.ceil((e-n)/86400000);}
 
-const SYLLABUS_SCAN_LIMIT=11;
+const SYLLABUS_SCAN_LIMIT=8;
 const getSyllabusScanUsage=makeMonthlyUsage("syllabusScans");
 function canScanSyllabus(){return getPlan()!=="Free"||getSyllabusScanUsage().count<SYLLABUS_SCAN_LIMIT;}
 function recordSyllabusScan(){const u=getSyllabusScanUsage();lsSet("syllabusScans",{month:u.month,count:u.count+1});}
@@ -5583,6 +5574,30 @@ const FLASHCARD_GEN_LIMIT=3;
 const getFlashcardGenUsage=makeMonthlyUsage("flashcardGens");
 function canGenFlashcards(){return getPlan()!=="Free"||getFlashcardGenUsage().count<FLASHCARD_GEN_LIMIT;}
 function recordFlashcardGen(){const u=getFlashcardGenUsage();lsSet("flashcardGens",{month:u.month,count:u.count+1});}
+
+// Studlin Prep's three AI-driven planning flows (2026-08-10 pricing pass) --
+// same named-limit pattern as the scans/generation above. One study plan a
+// month is enough to prove the whole "confidence question -> sessions ->
+// flashcards -> practice exam" flow is real before asking for money.
+const EXAM_PLAN_LIMIT=1;
+const getExamPlanUsage=makeMonthlyUsage("examPlanBuilds");
+function canBuildExamPlan(){return getPlan()!=="Free"||getExamPlanUsage().count<EXAM_PLAN_LIMIT;}
+function recordExamPlanBuild(){const u=getExamPlanUsage();lsSet("examPlanBuilds",{month:u.month,count:u.count+1});}
+
+// Attack Block (no phases -- a plain assignment, not a Project) is
+// deterministic probe-then-schedule with no AI call at all, so it's never
+// gated -- unlike the Project phase-breakdown branch just below, which
+// does call AI to propose the phases.
+
+const PROJECT_BREAKDOWN_LIMIT=1;
+const getProjectBreakdownUsage=makeMonthlyUsage("projectBreakdowns");
+function canBreakDownProject(){return getPlan()!=="Free"||getProjectBreakdownUsage().count<PROJECT_BREAKDOWN_LIMIT;}
+function recordProjectBreakdown(){const u=getProjectBreakdownUsage();lsSet("projectBreakdowns",{month:u.month,count:u.count+1});}
+
+// Smart Reschedule -- paid-only, no free tier at all (not a capped
+// free-taste feature like the three above). Deliberate: this is the "I'm
+// desperate right now" moment, and desperate moments convert.
+function canUseSmartReschedule(){return getPlan()!=="Free";}
 
 // ─── XP · LEVEL · STREAK · PLAN (all derived from real activity) ───────────────
 const DOW_FULL=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
@@ -6810,33 +6825,25 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
 // ─── UPGRADE MODAL (shared paywall) ───────────────────────────────────────────
 function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
   if(!open)return null;
-  const tiers=[
-    {name:"Pro",price:"$9.99",perks:["Unlimited AI chat, scans & flashcard generation","Every AI model + 4 study modes","Unlimited decks + notes scanning"],color:T.lime},
-    {name:"Max",price:"$24.99",perks:["Everything in Pro, completely unlimited","Priority AI: faster, no queue","Advanced analytics + learning paths"],color:T.purple},
-  ];
-  const choose=(name)=>{setPlanLS(name);onClose();if(onUpgraded)onUpgraded(name);};
+  const tier={name:"Pro",price:"$6.99",perks:["Unlimited AI study plans, flashcards, syllabus scans, attack sessions & project breakdowns","Smart Reschedule, not on Free at all","Every AI model + 4 study modes"],color:T.lime};
+  const choose=()=>{setPlanLS("Pro");onClose();if(onUpgraded)onUpgraded("Pro");};
   return (
     <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:90,background:"rgba(8,12,10,0.72)",backdropFilter:"blur(7px)",display:"flex",alignItems:"center",justifyContent:"center"}}>
-      <div onClick={e=>e.stopPropagation()} style={{width:580,maxWidth:"92vw",background:T.card,border:"1px solid "+T.border,borderRadius:8,padding:26,boxShadow:"0 40px 90px -30px rgba(0,0,0,0.65)"}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:400,maxWidth:"92vw",background:T.card,border:"1px solid "+T.border,borderRadius:8,padding:26,boxShadow:"0 40px 90px -30px rgba(0,0,0,0.65)"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
           <span style={{display:"inline-flex",width:30,height:30,borderRadius:8,background:T.lime+"1c",border:"1px solid "+T.lime+"44",alignItems:"center",justifyContent:"center",color:T.lime}}>{Icon.wand}</span>
           <div style={{fontSize:17,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>You have hit your {feature} limit</div>
         </div>
         <div style={{fontSize:12.5,color:T.text,lineHeight:1.6,marginBottom:18}}>{detail}</div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
-          {tiers.map(t=>(
-            <div key={t.name} style={{background:T.card,border:"1px solid "+(t.name==="Max"?t.color+"55":T.border),borderRadius:12,padding:16,position:"relative"}}>
-              {t.name==="Max"&&<span style={{position:"absolute",top:-8,right:12,fontSize:9,fontWeight:700,letterSpacing:"0.08em",background:t.color,color:"#fff",padding:"2px 8px",borderRadius:4}}>BEST VALUE</span>}
-              <div style={{fontSize:13,fontWeight:700,color:t.color,marginBottom:2}}>{t.name}</div>
-              <div style={{fontSize:24,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>{t.price}<span style={{fontSize:11,color:T.muted,fontWeight:400}}> /month</span></div>
-              <div style={{margin:"10px 0 14px"}}>
-                {t.perks.map((p,i)=>(
-                  <div key={i} style={{display:"flex",gap:7,alignItems:"center",fontSize:11.5,color:T.text,padding:"3px 0"}}><span style={{color:t.color,display:"inline-flex"}}>{Icon.check}</span>{p}</div>
-                ))}
-              </div>
-              <Btn onClick={()=>choose(t.name)} style={{width:"100%",justifyContent:"center",background:t.name==="Max"?t.color:T.lime,color:t.name==="Max"?"#fff":T.ink}}>Upgrade to {t.name}</Btn>
-            </div>
-          ))}
+        <div style={{background:T.card,border:"1px solid "+T.border,borderRadius:12,padding:16,marginBottom:14}}>
+          <div style={{fontSize:13,fontWeight:700,color:tier.color,marginBottom:2}}>{tier.name}</div>
+          <div style={{fontSize:24,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>{tier.price}<span style={{fontSize:11,color:T.muted,fontWeight:400}}> /month</span></div>
+          <div style={{margin:"10px 0 14px"}}>
+            {tier.perks.map((p,i)=>(
+              <div key={i} style={{display:"flex",gap:7,alignItems:"center",fontSize:11.5,color:T.text,padding:"3px 0"}}><span style={{color:tier.color,display:"inline-flex"}}>{Icon.check}</span>{p}</div>
+            ))}
+          </div>
+          <Btn onClick={choose} style={{width:"100%",justifyContent:"center",background:T.lime,color:T.ink}}>Upgrade to Pro</Btn>
         </div>
         <div onClick={onClose} style={{textAlign:"center",fontSize:12,color:T.muted,cursor:"pointer",padding:6}}>Maybe later</div>
       </div>
@@ -6845,7 +6852,7 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
 }
 
 // ─── NAV ICONS MAP ────────────────────────────────────────────────────────────
-const navIcon = {dashboard:Icon.grid,prep:Icon.brain,writestudio:Icon.pen,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,calendar:Icon.cal,friends:Icon.users,lectures:Icon.mic,solve:Icon.zap,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,feedback:Icon.heart,settings:Icon.settings,profile:Icon.user};
+const navIcon = {dashboard:Icon.grid,prep:Icon.brain,writestudio:Icon.pen,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,calendar:Icon.cal,friends:Icon.users,lectures:Icon.mic,solve:Icon.zap,grammar:Icon.check,humanizer:Icon.scan,feedback:Icon.heart,settings:Icon.settings,profile:Icon.user};
 
 // ─── AI CHAT (removed -- see Phase 2 of the Magic-Calendar plan; Studlin AI
 // is no longer a standalone chat surface, AI now shows up embedded in the
@@ -7430,6 +7437,10 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   };
   const commitBuildPlan=async()=>{
     if(!buildPlanExam||!buildPlanPreview)return;
+    if(!canBuildExamPlan()){
+      setUpgradeModal({feature:"AI study plans",detail:"You've used your "+EXAM_PLAN_LIMIT+" free study plan this month. It resets in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")+", or upgrade for unlimited right now."});
+      return;
+    }
     setBuildPlanLoading(true);
     const routines=getWeeklyRoutine();
     const prefs=getSchedulePreferences();
@@ -7541,6 +7552,14 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
     // captured earlier in this function -- a later separate write would
     // get clobbered by this one.
     lsSet("events",events.concat(finalSessions).map(e=>e.id===buildPlanExam.id?{...e,difficulty:buildPlanPreview.difficultyValue}:e));
+    // Counts against the free-tier monthly cap (see canBuildExamPlan's
+    // gate at the top of this function) -- merged in from the landing-page
+    // branch's pricing-limits pass. The old flashcard/practice-exam
+    // generation block that used to live here on that branch's side is
+    // gone -- superseded by this session's interleaving work above, which
+    // already generates (and weaves in) genDeck/genPE earlier in this
+    // same function, before `events` is even captured.
+    recordExamPlanBuild();
     if(placedSessions.length<requestedCount){
       setSyllabusToast("Fit "+placedSessions.length+" of "+requestedCount+" sessions before this exam. Your calendar didn't have room for the rest.");
       setTimeout(()=>setSyllabusToast(""),4200);
@@ -9926,7 +9945,6 @@ function Notes({setActive=()=>{}}){
   const activeSel=useRef(sel); // tracks last sel without re-render side-effects
   const [popover,setPopover]=useState(null); // {x,y,selText}
   const [noteComments,setNoteComments]=useState(()=>lsGet("note-comments",{}));
-  const [noteFlags,setNoteFlags]=useState(()=>lsGet("note-flags",{}));
   const [commentDraft,setCommentDraft]=useState("");
   const [commentInputOpen,setCommentInputOpen]=useState(false);
   const [pendingSel,setPendingSel]=useState(null);
@@ -9938,13 +9956,6 @@ function Notes({setActive=()=>{}}){
   const [sendNoteTarget,setSendNoteTarget]=useState("");
   const [sendNoteStatus,setSendNoteStatus]=useState(""); // "" | "sending" | "sent" | "error"
   const [sendNoteError,setSendNoteError]=useState("");
-
-  // Split-screen AI Tutor sidebar
-  const [tutorOpen,setTutorOpen]=useState(false);
-  const [tutorCtx,setTutorCtx]=useState("");
-  const [tutorMsgs,setTutorMsgs]=useState([]);
-  const [tutorInput,setTutorInput]=useState("");
-  const [tutorSending,setTutorSending]=useState(false);
 
   // AI study-tools panel — turn the active note into flashcards, a quiz, or a summary
   const [panelLoading,setPanelLoading]=useState(null); // "cards" | "quiz" | "summary" | null
@@ -10011,98 +10022,6 @@ function Notes({setActive=()=>{}}){
   const openDocComment=()=>{
     if(sel===null)return;
     setPendingSel(null);setPendingSelGlobal(true);setCommentInputOpen(true);setPopover(null);
-  };
-
-  const doAddFlag=(selText)=>{
-    if(!selText||sel===null)return;
-    const noteId=notes[sel].id;
-    const f={id:String(Date.now()),selectedText:selText,date:new Date().toLocaleDateString()};
-    const updated={...noteFlags,[noteId]:[...(noteFlags[noteId]||[]),f]};
-    setNoteFlags(updated);lsSet("note-flags",updated);
-    const all=lsGet("tutor-flags",[]);
-    all.push({...f,noteTitle:notes[sel].title,noteId,from:"notes"});
-    lsSet("tutor-flags",all);
-    setPopover(null);setPendingSel(null);
-    openTutorWithContext(selText);
-  };
-
-  // Immediately analyze the flagged text via the API and open the sidebar
-  const openTutorWithContext=async(selText)=>{
-    setTutorCtx(selText);
-    setTutorOpen(true);
-    setTutorMsgs([{role:"ai",text:"…",loading:true}]);
-    const analysisPrompt=
-      `A student flagged this passage from their study notes:\n\n"${selText.slice(0,600)}"\n\n`+
-      `Respond as their AI tutor. Follow these rules:\n`+
-      `- If the passage contains a question (has words like why, how, what, explain, define, or ends with "?"), answer it directly with a clear, engaging explanation. Use an analogy if it helps.\n`+
-      `- If the passage is a concept, formula, term, or statement, give a concise 2-sentence explanation of what it means, then ask ONE sharp follow-up question to test whether the student actually understands it.\n`+
-      `Be direct. Sound like a smart tutor, not a textbook. Keep it under 150 words.`;
-    try{
-      const res=await authFetch("/api/chat",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({messages:[{r:"user",t:analysisPrompt}],model:"standard",...getAiPrefs()})
-      });
-      if(!res.ok){
-        const errData=await res.json().catch(()=>({}));
-        throw new Error(errData.error||"HTTP "+res.status);
-      }
-      const data=await res.json();
-      setTutorMsgs([{role:"ai",text:data.reply||"I'm here to help. What would you like to know about this passage?"}]);
-    }catch(e){
-      console.error("[openTutorWithContext] error:",e);
-      setTutorMsgs([{role:"ai",text:"I'm here to help with \""+selText.slice(0,60)+(selText.length>60?"…":"")+"\". What would you like me to explain?"}]);
-    }
-  };
-
-  // Document-level tutor — no highlight required. Pulls the whole note as context
-  // and opens the sidebar ready for the student's first question.
-  const openTutorForDocument=()=>{
-    if(sel===null||!editorRef.current)return;
-    const tmp=document.createElement("div");tmp.innerHTML=editorRef.current.innerHTML;
-    const plain=(tmp.textContent||tmp.innerText||"").trim();
-    setTutorCtx(plain);
-    setTutorOpen(true);
-    setTutorMsgs([{role:"ai",text:plain?"I've got the whole note open — \""+notes[sel].title+"\". Ask me anything about it: a summary, a quiz, or something specific you're stuck on.":"This note is empty — write something first, then I can help you with it."}]);
-    setPopover(null);
-  };
-
-  const sendTutorMsg=async()=>{
-    const txt=tutorInput.trim();
-    if(!txt||tutorSending)return;
-    setTutorMsgs(m=>[...m,{role:"user",text:txt}]);
-    setTutorInput("");
-    setTutorSending(true);
-    try{
-      // Reconstruct conversation for the API. The conversation always starts with
-      // the analysis prompt (user) → initial AI response, then the real turns after.
-      // api/chat expects {r:"user"|"ai", t:"..."} — "ai" maps to assistant inside the API.
-      // Sliced generously since tutorCtx may be an entire note, not just a highlighted passage.
-      const ctx=tutorCtx?`[Notes for context: "${tutorCtx.slice(0,6000)}"]\n\n`:"";
-      const realMsgs=tutorMsgs.filter(m=>!m.loading);
-      // Synthetic opener restores the initial user→ai exchange so the model has context
-      const opener={r:"user",t:ctx+"Help me understand these notes and answer my questions about them."};
-      // Map existing display messages into API format
-      const history=realMsgs.map(m=>({r:m.role==="user"?"user":"ai",t:m.text}));
-      // Full sequence: opener → initial AI response → subsequent turns → new user msg
-      const apiMsgs=[opener,...history,{r:"user",t:txt}];
-      const res=await authFetch("/api/chat",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({messages:apiMsgs,model:"standard",...getAiPrefs()})
-      });
-      if(!res.ok){
-        const errData=await res.json().catch(()=>({}));
-        console.error("[sendTutorMsg] API error response:",res.status,errData);
-        throw new Error(errData.error||"HTTP "+res.status);
-      }
-      const data=await res.json();
-      setTutorMsgs(m=>[...m,{role:"ai",text:data.reply||"No response received."}]);
-    }catch(e){
-      console.error("[sendTutorMsg] error:",e);
-      setTutorMsgs(m=>[...m,{role:"ai",text:"Error: "+e.message+". Please try again."}]);
-    }
-    setTutorSending(false);
   };
 
   const cleanNotes=async()=>{
@@ -10387,10 +10306,6 @@ function Notes({setActive=()=>{}}){
     }
   };
   const removeComment=(nid,cid)=>{const u={...noteComments,[nid]:(noteComments[nid]||[]).filter(c=>c.id!==cid)};setNoteComments(u);lsSet("note-comments",u);};
-  const removeFlag=(nid,fid)=>{
-    const u={...noteFlags,[nid]:(noteFlags[nid]||[]).filter(f=>f.id!==fid)};setNoteFlags(u);lsSet("note-flags",u);
-    lsSet("tutor-flags",lsGet("tutor-flags",[]).filter(f=>f.id!==fid));
-  };
 
   // Plain-text extraction of the active note's canvas content, for feeding to the AI
   const getNotePlainText=()=>{
@@ -10466,8 +10381,7 @@ function Notes({setActive=()=>{}}){
   const activeNote=sel!==null?notes[sel]:null;
   const nid=activeNote?.id;
   const activeComments=nid?noteComments[nid]||[]:[];
-  const activeFlags=nid?noteFlags[nid]||[]:[];
-  const hasMargin=activeComments.length>0||activeFlags.length>0;
+  const hasMargin=activeComments.length>0;
 
   // Toolbar button style helper
   const tbBtn=(active=false)=>({padding:"5px 9px",borderRadius:5,border:`1px solid ${active?T.lime+"55":T.border}`,background:active?T.lime+"14":"transparent",color:active?T.lime:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12,fontWeight:600,display:"inline-flex",alignItems:"center",gap:4,transition:"all 0.12s"});
@@ -10807,8 +10721,8 @@ function Notes({setActive=()=>{}}){
           })()}
         </div>
 
-        {/* Canvas area: editor + optional margin panel + optional tutor sidebar */}
-        <div style={{display:"grid",gridTemplateColumns:tutorOpen?"1fr 340px":hasMargin?"1fr 220px":"1fr",gap:12,alignItems:"start"}}>
+        {/* Canvas area: editor + optional margin panel */}
+        <div style={{display:"grid",gridTemplateColumns:hasMargin?"1fr 220px":"1fr",gap:12,alignItems:"start"}}>
 
           {/* ── RICH TEXT EDITOR CARD ── */}
           <Card style={{padding:0,overflow:"hidden",minHeight:480}}>
@@ -10862,9 +10776,6 @@ function Notes({setActive=()=>{}}){
                   <button onClick={openDocComment} title="Attach a note to the whole document (no highlight needed)" style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${T.blue}44`,background:T.blue+"14",color:T.blue,cursor:"pointer",fontFamily:T.font,fontSize:12,fontWeight:700,display:"inline-flex",alignItems:"center",gap:6,transition:"all 0.15s"}}>
                     {Icon.chat} Add Comment
                   </button>
-                  <button onClick={openTutorForDocument} title="Ask the AI Tutor about this whole note (no highlight needed)" style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${T.amber}44`,background:T.amber+"14",color:T.amber,cursor:"pointer",fontFamily:T.font,fontSize:12,fontWeight:700,display:"inline-flex",alignItems:"center",gap:6,transition:"all 0.15s"}}>
-                    {Icon.brain} Ask Tutor
-                  </button>
                   <button onClick={cleanNotes} disabled={cleaning} style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${T.lime}44`,background:cleaning?T.card2:T.lime+"14",color:cleaning?T.muted:T.lime,cursor:cleaning?"default":"pointer",fontFamily:T.font,fontSize:12,fontWeight:700,display:"inline-flex",alignItems:"center",gap:6,transition:"all 0.15s"}}>
                     {cleaning?<>Cleaning…</>:<>{Icon.wand} Clean Notes</>}
                   </button>
@@ -10880,7 +10791,6 @@ function Notes({setActive=()=>{}}){
                   <div style={{display:"flex",gap:8,alignItems:"center"}}>
                     <Badge color={colorOf(activeNote.tag)}>{activeNote.tag}</Badge>
                     <span style={{fontSize:11,color:T.muted}}>{activeNote.date}</span>
-                    {activeFlags.length>0&&<span style={{fontSize:10.5,color:T.amber,fontWeight:600}}>{activeFlags.length} tutor flag{activeFlags.length!==1?"s":""}</span>}
                     {activeComments.length>0&&<span style={{fontSize:10.5,color:T.blue,fontWeight:600}}>{activeComments.length} comment{activeComments.length!==1?"s":""}</span>}
                   </div>
                 </div>
@@ -10889,8 +10799,6 @@ function Notes({setActive=()=>{}}){
                 {popover&&(
                   <div style={{position:"absolute",top:popover.y,left:popover.x,transform:"translateX(-50%)",zIndex:30,display:"flex",gap:4,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"4px 6px",boxShadow:"0 8px 24px rgba(0,0,0,0.4)",whiteSpace:"nowrap"}}>
                     <button onMouseDown={e=>{e.preventDefault();setPendingSel(popover.selText);setPendingSelGlobal(false);setCommentInputOpen(true);}} style={{padding:"5px 10px",borderRadius:5,border:"none",background:"transparent",color:T.blue,cursor:"pointer",fontSize:12,fontFamily:T.font,fontWeight:600}}>Add Comment</button>
-                    <div style={{width:1,background:T.border}} />
-                    <button onMouseDown={e=>{e.preventDefault();doAddFlag(popover.selText);}} style={{padding:"5px 10px",borderRadius:5,border:"none",background:"transparent",color:T.amber,cursor:"pointer",fontSize:12,fontFamily:T.font,fontWeight:600}}>Flag for Tutor</button>
                   </div>
                 )}
 
@@ -10936,47 +10844,8 @@ function Notes({setActive=()=>{}}){
             )}
           </Card>
 
-          {/* ── TUTOR SIDEBAR — split-screen AI panel ── */}
-          {tutorOpen&&(
-            <div style={{display:"flex",flexDirection:"column",height:"100%",background:T.card,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden",minHeight:480}}>
-              {/* Header */}
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 16px",borderBottom:`1px solid ${T.border}`,background:T.card2,flexShrink:0}}>
-                <div style={{display:"flex",alignItems:"center",gap:8}}>
-                  <div style={{width:26,height:26,borderRadius:7,background:T.amber+"22",border:`1px solid ${T.amber}44`,display:"flex",alignItems:"center",justifyContent:"center",color:T.amber}}>{Icon.brain}</div>
-                  <div>
-                    <div style={{fontSize:12,fontWeight:700,color:T.white}}>AI Tutor</div>
-                    <div style={{fontSize:10,color:T.muted}}>Ask about this note</div>
-                  </div>
-                </div>
-                <button onClick={()=>setTutorOpen(false)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:16,lineHeight:1,padding:4,borderRadius:4,display:"flex",alignItems:"center",justifyContent:"center"}}>{Icon.xmark}</button>
-              </div>
-              {/* Messages */}
-              <div style={{flex:1,overflowY:"auto",padding:"14px 14px 8px",display:"flex",flexDirection:"column",gap:10}}>
-                {tutorMsgs.map((m,i)=>(
-                  <div key={i} style={{display:"flex",flexDirection:"column",alignItems:m.role==="user"?"flex-end":"flex-start"}}>
-                    <div style={{maxWidth:"88%",padding:"9px 12px",borderRadius:m.role==="user"?"10px 10px 3px 10px":"10px 10px 10px 3px",background:m.role==="user"?T.lime+"22":T.card2,border:`1px solid ${m.role==="user"?T.lime+"33":T.border}`,fontSize:12.5,color:m.loading?T.muted:T.text,lineHeight:1.6,whiteSpace:"pre-wrap"}}>
-                      {m.loading?<span style={{animation:"studlinPulse 1.2s ease infinite",display:"inline-block"}}>Analyzing…</span>:m.text}
-                    </div>
-                  </div>
-                ))}
-                {tutorSending&&(
-                  <div style={{display:"flex",alignItems:"flex-start"}}>
-                    <div style={{padding:"9px 14px",borderRadius:"10px 10px 10px 3px",background:T.card2,border:`1px solid ${T.border}`,fontSize:12,color:T.muted}}>
-                      <span style={{animation:"studlinPulse 1.2s ease infinite",display:"inline-block"}}>Thinking…</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-              {/* Input */}
-              <div style={{padding:"10px 12px",borderTop:`1px solid ${T.border}`,flexShrink:0,display:"flex",gap:8,alignItems:"flex-end"}}>
-                <textarea value={tutorInput} onChange={e=>setTutorInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendTutorMsg();}}} placeholder="Ask your tutor…" rows={2} style={{flex:1,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 10px",color:T.text,fontSize:12.5,fontFamily:T.font,resize:"none",outline:"none",lineHeight:1.5}} />
-                <button onClick={sendTutorMsg} disabled={!tutorInput.trim()||tutorSending} style={{padding:"8px 12px",borderRadius:8,border:"none",background:tutorInput.trim()&&!tutorSending?T.amber:T.card2,color:tutorInput.trim()&&!tutorSending?T.ink:T.faint,cursor:tutorInput.trim()&&!tutorSending?"pointer":"default",fontFamily:T.font,fontSize:12,fontWeight:700,transition:"all 0.15s",flexShrink:0}}>{Icon.send}</button>
-              </div>
-            </div>
-          )}
-
-          {/* ── MARGIN PANEL — comments & flags ── */}
-          {!tutorOpen&&hasMargin&&(
+          {/* ── MARGIN PANEL — comments ── */}
+          {hasMargin&&(
             <div style={{display:"flex",flexDirection:"column",gap:10}}>
               <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:2}}>Annotations</div>
               {activeComments.map(c=>(
@@ -10985,17 +10854,6 @@ function Notes({setActive=()=>{}}){
                   <div style={{fontSize:12,color:T.text,lineHeight:1.5}}>{c.text}</div>
                   <div style={{fontSize:10,color:T.faint,marginTop:6}}>{c.date}</div>
                   <button onClick={()=>removeComment(nid,c.id)} style={{position:"absolute",top:6,right:6,background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:13,lineHeight:1,padding:2}}>×</button>
-                </div>
-              ))}
-              {activeFlags.map(f=>(
-                <div key={f.id} style={{background:T.card,border:`1px solid ${T.amber}44`,borderLeft:`3px solid ${T.amber}`,borderRadius:8,padding:"10px 12px",position:"relative"}}>
-                  <div style={{fontSize:10,fontWeight:700,color:T.amber,marginBottom:4,letterSpacing:"0.05em",textTransform:"uppercase"}}>Tutor Flag</div>
-                  <div style={{fontSize:11,color:T.muted,lineHeight:1.5,fontStyle:"italic"}}>"{(f.selectedText||"").slice(0,60)}{f.selectedText&&f.selectedText.length>60?"…":""}"</div>
-                  <div style={{display:"flex",gap:8,marginTop:8,alignItems:"center"}}>
-                    <div style={{fontSize:10,color:T.faint}}>{f.date}</div>
-                    <button onMouseDown={e=>{e.preventDefault();openTutorWithContext(f.selectedText);}} style={{fontSize:10,color:T.amber,background:"none",border:"none",cursor:"pointer",padding:0,fontFamily:T.font,fontWeight:600}}>Open tutor →</button>
-                  </div>
-                  <button onClick={()=>removeFlag(nid,f.id)} style={{position:"absolute",top:6,right:6,background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:13,lineHeight:1,padding:2}}>×</button>
                 </div>
               ))}
             </div>
@@ -13433,14 +13291,12 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
   // Sharing a note/deck posts a pending card first — a lightweight one-click
   // confirmation before it actually goes out (mirrors the same verification
   // loop used for incoming shares below).
-  // Flags/comments live in separate note-flags/note-comments localStorage
-  // maps keyed by note id (see Notes' doAddFlag/doAddComment) — body alone
-  // doesn't carry them, so they're pulled in explicitly here and carried
-  // through respondToShare below so a shared note keeps its tutor context.
+  // Comments live in a separate note-comments localStorage map keyed by note
+  // id (see Notes' doAddComment) — body alone doesn't carry them, so they're
+  // pulled in explicitly here and carried through respondToShare below.
   const attachNote=(note)=>{
-    const flags=lsGet("note-flags",{})[note.id]||[];
     const comments=lsGet("note-comments",{})[note.id]||[];
-    sendMessage({kind:"note",status:"pending",meta:{title:note.title,id:note.id,body:note.body,flags,comments}});
+    sendMessage({kind:"note",status:"pending",meta:{title:note.title,id:note.id,body:note.body,comments}});
     setNotePicker(false);
   };
   const attachDeck=(deck)=>{sendMessage({kind:"deck",status:"pending",meta:{name:deck.name,count:deck.cards?deck.cards.length:(deck.count||0),id:deck.id,cards:deck.cards}});setDeckPicker(false);};
@@ -13483,12 +13339,8 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
         const notes=lsGet("notes",[]);
         const copy={id:String(Date.now()),title:msg.meta.title,body:sanitizeHtml(msg.meta.body||"<p>Shared from "+peerName+".</p>"),tag:"Shared",date:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"}),createdAt:Date.now(),source:"shared",sharedFrom:peerName};
         lsSet("notes",[copy,...notes]);
-        // Carry the sender's flags/comments over onto the recipient's own
-        // copy (re-keyed to its new id) so tutor context survives the share.
-        if(msg.meta.flags&&msg.meta.flags.length){
-          const nf=lsGet("note-flags",{});
-          lsSet("note-flags",{...nf,[copy.id]:msg.meta.flags});
-        }
+        // Carry the sender's comments over onto the recipient's own copy
+        // (re-keyed to its new id).
         if(msg.meta.comments&&msg.meta.comments.length){
           const nc=lsGet("note-comments",{});
           lsSet("note-comments",{...nc,[copy.id]:msg.meta.comments});
@@ -19030,7 +18882,18 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
   ), document.body);
 }
 
-function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRoutineCenterOpenedFromSettings,setDetailEventId,registerSetEvents,onTaskCompleted,catchUpPending,onWizardOpenChange,jumpToSessionOnMount,onJumpSessionConsumed}={}){
+// Merge note: openRoutineCenterOnMount/onRoutineCenterOpenedFromSettings is
+// main's current naming for what the landing-page branch still called
+// openWizardOnMount/onWizardOpenedFromSettings -- same feature, renamed by
+// other work after that branch forked. Keeping main's naming since every
+// other reference to it (below in this function, and the SettingsTab/App
+// call sites) already uses it. setPricingOpen is kept from the
+// landing-page branch's side -- it's load-bearing: the Smart Reschedule
+// paywall gate a few hundred lines down (canUseSmartReschedule/
+// setPricingOpen(true)) already merged into this function's BODY cleanly,
+// so dropping this prop would leave those calls throwing on an undefined
+// setPricingOpen.
+function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRoutineCenterOpenedFromSettings,setDetailEventId,registerSetEvents,onTaskCompleted,catchUpPending,onWizardOpenChange,jumpToSessionOnMount,onJumpSessionConsumed,setPricingOpen=()=>{}}={}){
   const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
   const SUBJ=[{value:"None",label:"None",color:T.lime},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
   // Accepts either a real course id or a label, same as StudlinPrep/Notes'
@@ -19913,6 +19776,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // confirm-before-delete and "ask before filling the gap" for free, reusing
   // the same modal skip_class already drives.
   const skipOneOccurrence=(ev)=>{
+    if(!canUseSmartReschedule()){setPricingOpen(true);return;}
     setPauseError("");setPauseLastIntent(null);
     setPausePreview(computeClassSkipPlan([ev.routineId],ev.date));
     setPauseOpen(true);
@@ -20610,6 +20474,17 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // the linked chain task -- degrades to an unphased chain for a plain
     // Assignment, so this one call covers both types.
     if((evKind==="assignment"||evKind==="project")&&evAttackBlock){
+      // Only the Project branch (AI proposes the phase breakdown) is a real
+      // AI cost worth gating -- a plain Attack Block on an Assignment is
+      // deterministic probe-then-schedule, no AI call at all (see "Attack
+      // Block skips the AI call entirely" below), so it stays free and
+      // unlimited regardless of plan.
+      const isProject=evKind==="project";
+      if(isProject&&!canBreakDownProject()){
+        setDeadlineToast("Free plan's project breakdowns for this month are used up — upgrade for unlimited.");
+        setTimeout(()=>setDeadlineToast(""),3200);
+        return;
+      }
       const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
       const prefs=getSchedulePreferences();
       const phases=evKind==="project"?(evProjectPlan.phases||[]).map(p=>p.trim()).filter(Boolean):[];
@@ -20617,6 +20492,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       const markerId=String(Date.now()+Math.random()*1000);
       const pair=buildAssignmentAttackBlockPair(markerId,{title:evTitle.trim(),subject:subj,courseId:courseIdForLabel(subj),notes:evNotes,deadline:evDeadline||null,priority:evPriority,difficulty:evDifficulty,probeMins:evAttackProbeMins,outline},phases,events,routines,prefs,evDate,evTime);
       if(!pair){setDeadlineToast("That time conflicts and there's no open slot before the deadline.");setTimeout(()=>setDeadlineToast(""),2800);return;}
+      if(isProject)recordProjectBreakdown();
       commitTasks([pair.marker,pair.task]);
       return;
     }
@@ -20754,6 +20630,16 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // deterministic placement, not LLM reasoning about a duration nobody has
     // yet.
     if(evAttackBlock){
+      // Same real-AI-cost-only gate as the other Add-Task submit path above --
+      // plain Attack Block is deterministic (see comment above), only the
+      // Project phase-breakdown branch actually calls AI.
+      const isProject=evKind==="project";
+      if(isProject&&!canBreakDownProject()){
+        setAiLoading(false);
+        setDeadlineToast("Free plan's project breakdowns for this month are used up — upgrade for unlimited.");
+        setTimeout(()=>setDeadlineToast(""),3200);
+        return;
+      }
       const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
       const phases=evKind==="project"?(evProjectPlan.phases||[]).map(p=>p.trim()).filter(Boolean):[];
       const outline=evKind==="project"?normalizeOutlineDraft(evProjectPlan.outline):[];
@@ -20761,6 +20647,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       const pair=buildAssignmentAttackBlockPair(markerId,{title:evTitle.trim(),subject:subj,courseId:courseIdForLabel(subj),notes:evNotes,deadline:evDeadline||null,priority:evPriority,difficulty:evDifficulty,probeMins:evAttackProbeMins,outline},phases,events,routines,prefs,desiredStartDate,windowStartTime);
       setAiLoading(false);
       if(!pair){setDeadlineToast("That time conflicts and there's no open slot before the deadline.");setTimeout(()=>setDeadlineToast(""),2800);return;}
+      if(isProject)recordProjectBreakdown();
       commitTasks([pair.marker,pair.task]);
       return;
     }
@@ -21005,6 +20892,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
 
   const confirmPausePlan=()=>{
     if(!pausePreview)return;
+    if(!canUseSmartReschedule()){setPauseOpen(false);setPricingOpen(true);return;}
     const all=lsGet("events",[]);
     // A moved/retimed entry whose id points at a virtual routine occurrence
     // (isRoutine:true — never in `events` to begin with, see
@@ -21555,7 +21443,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                   // since both are the same underlying job (redistribute
                   // what's already scheduled). See the picker list inside
                   // the pauseOpen modal below.
-                  {icon:Icon.refresh,label:"Reschedule",sub:"Push back, clear, or balance your week",onClick:()=>{setToolsMenuOpen(false);setPauseOpen(true);setPauseError("");setPausePreview(null);},danger:true},
+                  // Smart Reschedule is paid-only, no free tier at all (see
+                  // canUseSmartReschedule) -- deliberately not a capped
+                  // free-taste feature like the Prep flows above. Free users
+                  // get the pricing modal instead of the pauseOpen flow.
+                  {icon:Icon.refresh,label:"Reschedule",sub:"Push back, clear, or balance your week",onClick:()=>{setToolsMenuOpen(false);if(!canUseSmartReschedule()){setPricingOpen(true);return;}setPauseOpen(true);setPauseError("");setPausePreview(null);},danger:true},
                 ].map(item=>(
                   <div key={item.label} onClick={item.onClick} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 14px",cursor:"pointer"}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                     <span style={{width:16,color:item.danger?T.red:T.muted,display:"flex",marginTop:2}}>{item.icon}</span>
@@ -22837,8 +22729,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     try{return new Date(iso).toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});}catch(e){return "the end of your billing period";}
   };
   const planPriceText=(plan,interval)=>{
-    if(plan==="Max")return interval==="year"?"$239.88/year":"$24.99/mo";
-    if(plan==="Pro")return interval==="year"?"$95.88/year":"$9.99/mo";
+    if(plan==="Pro")return interval==="year"?"$59.88/year":"$6.99/mo";
     return "Free";
   };
   const subscriptionPlanLine=()=>{
@@ -23330,7 +23221,6 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     {id:"Appearance",icon:Icon.wand},
     {id:"Notifications",icon:Icon.send},
     {id:"Privacy",icon:Icon.shield},
-    {id:"Study preferences",icon:Icon.brain},
     {id:"Subjects & Labels",icon:Icon.layers},
     {id:"Calendar Preferences",icon:Icon.cal},
     {id:"Integrations",icon:Icon.link},
@@ -23392,8 +23282,18 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   const Chip = ({active,onClick,children}) => (
     <button type="button" onClick={onClick} style={{padding:"7px 14px",borderRadius:7,fontSize:12,cursor:"pointer",border:`1px solid ${active?T.lime+"66":T.border}`,background:active?T.lime+"14":"transparent",color:active?T.lime:T.muted,fontFamily:T.font,fontWeight:active?600:400,transition:"all 0.15s"}}>{children}</button>
   );
-  const [verb,setVerb]=useState(()=>lsGet("pref-verb","Balanced"));
-  const [tutorStyle,setTutorStyle]=useState(()=>lsGet("pref-tutorStyle","Socratic"));
+  // Merge note (both dropped): verb/tutorStyle backed the AI Tutor prompt
+  // settings, which this branch's own 6bd0b9d ("remove the AI Tutor
+  // feature entirely, it's not part of the product anymore," 2026-08-10)
+  // already cut everywhere else (Notes editor sidebar, chat, handlers) --
+  // that removal just hadn't reached main through any merge until now.
+  // dailyFocusTarget/dailyFlashcardTarget were main's own later finding
+  // (3c2dd64, 2026-08-12): confirmed dead, nothing in the app ever reads
+  // pref-dailyFocusTarget/pref-dailyFlashcardTarget or the sr/auto toggle
+  // keys it lived next to -- this branch forked before that finding and
+  // still had the pre-removal code. With both gone, the "Study
+  // preferences" tab (and its Settings nav entry) has nothing legitimate
+  // left in it -- removed below rather than left rendering empty.
   const accents=[{n:"Lime",c:"#AECE5E"},{n:"Forest",c:"#3E9576"},{n:"Sky",c:"#4F95D6"},{n:"Lilac",c:"#9474C9"},{n:"Peach",c:"#D07C4C"}];
   const [mgmtSubjs,setMgmtSubjs]=useState(()=>getSubjects().map(s=>({...s})));
   const [mgmtSaved,setMgmtSaved]=useState(false);
@@ -23739,26 +23639,14 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             </Card>
           </>)}
 
-          {active==="Study preferences" && (<>
-            {/* Spaced repetition engine / Auto-save drafts toggles and the
-                whole Daily targets card (focus minutes + flashcard count)
-                were removed (2026-08-12) -- confirmed dead. Nothing in the
-                app ever reads pref-dailyFocusTarget/pref-dailyFlashcardTarget
-                or the sr/auto toggle keys; the "spaced repetition" and
-                "auto-save" behavior they claimed to control already run
-                unconditionally regardless of what these said (interval-
-                spaced exam review sessions, and the general debounced
-                cloud-sync that saves every real change, not on a 30s
-                timer). Response verbosity/Tutor style are real -- they
-                feed getAiPrefs() into the actual AI Tutor prompt calls. */}
-            <Card>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:16}}>AI tutor</div>
-              <Field label="Response verbosity"><div style={{display:"flex",gap:6}}>{["Concise","Balanced","Comprehensive"].map(t=><Chip key={t} active={verb===t} onClick={()=>{setVerb(t);lsSet("pref-verb",t);}}>{t}</Chip>)}</div></Field>
-              <Field label="Tutor style">
-                <SelectChip options={["Socratic","Direct","Encouraging","Strict"]} value={tutorStyle} onChange={v=>{setTutorStyle(v);lsSet("pref-tutorStyle",v);}} />
-              </Field>
-            </Card>
-          </>)}
+          {/* "Study preferences" tab removed in this merge -- both halves
+              of its content turned out to be dead per each branch's own
+              history (see the useState merge note above): AI Tutor
+              (verb/tutorStyle) was explicitly cut everywhere else on
+              2026-08-10, and Study tools/Daily targets were confirmed
+              unread dead code on main on 2026-08-12. Nothing legitimate
+              was left to show once both are gone, so the tab itself goes
+              too -- see the nav array below, not just this render branch. */}
 
           {active==="Subjects & Labels" && (<>
             <Card>
@@ -24183,26 +24071,34 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <Card style={{marginBottom:12}}>
                 <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:2}}>AI chat messages</div>
                 <div style={{fontSize:12,color:T.muted,marginBottom:18}}>Resets in {daysLeft} day{daysLeft!==1?"s":""} · {plan} plan</div>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                  <span style={{fontSize:12.5,color:T.text}}>{plan} plan</span>
-                  <span style={{fontSize:12.5,color:pct>=80?"#E05252":T.text,fontWeight:600}}>{pct}% used</span>
-                </div>
-                <div style={{height:6,background:T.card2,borderRadius:99,overflow:"hidden",marginBottom:8}}>
-                  <div style={{height:"100%",width:pct+"%",background:barColor,borderRadius:99,transition:"width 0.4s"}} />
-                </div>
-                <div style={{display:"flex",justifyContent:"space-between",fontSize:11.5,color:T.muted}}>
-                  <span>{used} used</span>
-                  <span>{cr} remaining / {lim}</span>
-                </div>
+                {plan==="Pro"?(
+                  <div style={{fontSize:13,color:T.lime,fontWeight:600}}>Unlimited</div>
+                ):(<>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                    <span style={{fontSize:12.5,color:T.text}}>{plan} plan</span>
+                    <span style={{fontSize:12.5,color:pct>=80?"#E05252":T.text,fontWeight:600}}>{pct}% used</span>
+                  </div>
+                  <div style={{height:6,background:T.card2,borderRadius:99,overflow:"hidden",marginBottom:8}}>
+                    <div style={{height:"100%",width:pct+"%",background:barColor,borderRadius:99,transition:"width 0.4s"}} />
+                  </div>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:11.5,color:T.muted}}>
+                    <span>{used} used</span>
+                    <span>{cr} remaining / {lim}</span>
+                  </div>
+                </>)}
               </Card>
               <Card style={{marginBottom:12}}>
                 <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:16}}>Your AI features</div>
                 {[
-                  ["Deadline scans",plan==="Free"?getSyllabusScanUsage().count+" / "+SYLLABUS_SCAN_LIMIT+" this month":"Unlimited"],
+                  ["Syllabus & schedule imports",plan==="Free"?getSyllabusScanUsage().count+" / "+SYLLABUS_SCAN_LIMIT+" this month":"Unlimited"],
                   ["AI note scans (files, lectures & YouTube)",plan==="Free"?getNoteScanUsage().count+" / "+NOTE_SCAN_LIMIT+" this month":"Unlimited"],
                   ["AI flashcard generations",plan==="Free"?getFlashcardGenUsage().count+" / "+FLASHCARD_GEN_LIMIT+" this month":"Unlimited"],
-                ].map(([action,status],i)=>(
-                  <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:i<2?`1px solid ${T.border}`:"none"}}>
+                  ["AI study plans",plan==="Free"?getExamPlanUsage().count+" / "+EXAM_PLAN_LIMIT+" this month":"Unlimited"],
+                  ["Attack sessions","Unlimited"],
+                  ["Project breakdowns",plan==="Free"?getProjectBreakdownUsage().count+" / "+PROJECT_BREAKDOWN_LIMIT+" this month":"Unlimited"],
+                  ["Smart Reschedule",plan==="Free"?"Pro only":"Unlimited"],
+                ].map(([action,status],i,arr)=>(
+                  <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
                     <span style={{fontSize:12.5,color:T.text}}>{action}</span>
                     <span style={{fontSize:12,color:T.muted,fontFamily:T.mono}}>{status}</span>
                   </div>
@@ -24225,13 +24121,13 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                 </div>
                 <div style={{textAlign:"right"}}>
                   <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.bg,opacity:0.6}}>AI CHAT MESSAGES</div>
-                  <div style={{fontSize:26,fontWeight:700,color:T.bg,letterSpacing:"-0.02em",marginTop:4}}>{getCredits()} / {getCreditLimit()}</div>
-                  <div style={{fontSize:13,color:T.bg,opacity:0.75,marginTop:4}}>Resets in {daysUntilReset()} day{daysUntilReset()!==1?"s":""}</div>
+                  <div style={{fontSize:26,fontWeight:700,color:T.bg,letterSpacing:"-0.02em",marginTop:4}}>{getPlan()==="Pro"?"Unlimited":getCredits()+" / "+getCreditLimit()}</div>
+                  <div style={{fontSize:13,color:T.bg,opacity:0.75,marginTop:4}}>{getPlan()==="Pro"?"No monthly cap":"Resets in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")}</div>
                 </div>
               </div>
               <div style={{display:"flex",gap:8,marginTop:18,flexWrap:"wrap"}}>
                 <a href="checkout.html?credits=500" style={{background:T.bg,color:T.lime,padding:"8px 16px",borderRadius:7,fontSize:12.5,fontWeight:600,textDecoration:"none"}}>Buy credit packs</a>
-                <a href="checkout.html?plan=max&billing=monthly" style={{background:"transparent",border:`1px solid ${T.bg}55`,color:T.bg,padding:"8px 16px",borderRadius:7,fontSize:12.5,fontWeight:600,textDecoration:"none"}}>Upgrade to Max</a>
+                {getPlan()!=="Pro"&&<a href="checkout.html?plan=pro&billing=monthly" style={{background:"transparent",border:`1px solid ${T.bg}55`,color:T.bg,padding:"8px 16px",borderRadius:7,fontSize:12.5,fontWeight:600,textDecoration:"none"}}>Upgrade to Pro</a>}
               </div>
             </Card>
             {account.stripeSubscriptionId&&(
@@ -24265,7 +24161,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             </Card>
             <Card>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:10}}>Billing history</div>
-              {[["Jun 1, 2026","Pro plan · monthly","$9.99","Paid"],["May 1, 2026","Pro plan · monthly","$9.99","Paid"],["Apr 28, 2026","Credit pack · 300","$8.99","Paid"],["Apr 1, 2026","Pro plan · monthly","$9.99","Paid"]].map(([d,t,a,s],i)=>(
+              {[["Jun 1, 2026","Pro plan · monthly","$6.99","Paid"],["May 1, 2026","Pro plan · monthly","$6.99","Paid"],["Apr 28, 2026","Credit pack · 300","$8.99","Paid"],["Apr 1, 2026","Pro plan · monthly","$6.99","Paid"]].map(([d,t,a,s],i)=>(
                 <div key={i} style={{display:"grid",gridTemplateColumns:"110px 1fr 80px 70px",gap:14,padding:"11px 0",borderBottom:i<3?`1px solid ${T.border}`:"none",fontSize:12.5,alignItems:"center"}}>
                   <span style={{color:T.muted,fontFamily:T.mono,fontSize:11}}>{d}</span>
                   <span style={{color:T.text}}>{t}</span>
@@ -24385,7 +24281,7 @@ function Profile({setActive,seriousMode=false}={}) {
                 regardless of actual plan -- the Subscription tab already
                 reads the real plan correctly (account.plan||getPlan()),
                 just needed the same check here. */}
-            <Badge color={getPlan()==="Max"?T.purple:T.lime}>{getPlan()}</Badge>
+            <Badge color={T.lime}>{getPlan()}</Badge>
             {!seriousMode&&<span onClick={()=>setStreakModalOpen(true)} style={{cursor:"pointer"}}><Badge color={T.amber}>{streak}-day streak</Badge></span>}
             {!seriousMode&&<Badge color={T.blue}>{lvl.title}</Badge>}
             {status&&<Badge color={T.teal}>{status==="highschool"?"High School":"College"}</Badge>}
@@ -25720,12 +25616,23 @@ function App() {
   // disappear before the student had a chance to read it.
   const [lockInErrorToast,setLockInErrorToast]=useState("");
   const acceptPrepPrompt=(item)=>{
+    const isProject=item.phases&&item.phases.length>0;
+    // Only the Project phase-breakdown branch is a real AI cost -- a plain
+    // attack session is deterministic probe-then-schedule, no AI call, so
+    // it's never gated (see the Add-Task submit handlers for the same
+    // reasoning).
+    if(isProject&&!canBreakDownProject()){
+      setPrepAutoToast("Free plan's project breakdown for this month is used up — upgrade for unlimited.");
+      setTimeout(()=>setPrepAutoToast(""),4200);
+      return;
+    }
     const events=lsGet("events",[]);
     const routines=getWeeklyRoutine();
     const prefs=getSchedulePreferences();
     const task=startPhaseAwareAttackChain({title:item.title,deadline:item.date,priority:item.priority,difficulty:item.difficulty,noteId:item.noteId,dueEventId:item.id},item.phases,events,routines,prefs,dayKey(),prefs.workStartTime);
     const next=events.map(e=>e.id===item.id?{...e,prepPending:false}:e).concat([task]);
     lsSet("events",next);
+    if(isProject)recordProjectBreakdown();
     setPrepPromptBatch(b=>b.filter(x=>x.id!==item.id));
   };
   const declinePrepPrompt=(item)=>{
@@ -26949,7 +26856,7 @@ function App() {
         <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?T.bg:undefined}}>
           {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} setDetailEventId={setDetailEventId} onTaskCompleted={handleTaskCompleted} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineCenter={openRoutineCenterOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} setActivePage={setActive} />:
-           active==="calendar"?<CalendarTab setActive={setActive} onTaskSaved={handleTaskSaved} openRoutineCenterOnMount={pendingRoutineCenter} onRoutineCenterOpenedFromSettings={()=>setPendingRoutineCenter(false)} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} onWizardOpenChange={setCalendarWizardOpen} jumpToSessionOnMount={pendingJumpSession} onJumpSessionConsumed={()=>setPendingJumpSession(null)} />:
+           active==="calendar"?<CalendarTab setActive={setActive} onTaskSaved={handleTaskSaved} openRoutineCenterOnMount={pendingRoutineCenter} onRoutineCenterOpenedFromSettings={()=>setPendingRoutineCenter(false)} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} onWizardOpenChange={setCalendarWizardOpen} jumpToSessionOnMount={pendingJumpSession} onJumpSessionConsumed={()=>setPendingJumpSession(null)} setPricingOpen={setPricingOpen} />:
            active==="notes"?<Notes setActive={setActive} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
            active==="profile"?<Profile setActive={setActive} seriousMode={seriousMode} />:
@@ -26989,9 +26896,9 @@ function App() {
         }} />
         <div style={{marginTop:20,padding:"16px 18px",background:T.card2,borderRadius:12,border:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
           <div style={{fontSize:13,color:T.text,fontWeight:500}}>
-            Grammarly + Quizlet + ChatGPT + Notion = <span style={{color:T.red,fontWeight:700}}>$55/mo</span>.&nbsp;&nbsp;Pro is <span style={{color:T.lime,fontWeight:700}}>$9.99</span>.
+            Grammarly + Quizlet + ChatGPT + Notion = <span style={{color:T.red,fontWeight:700}}>$55/mo</span>.&nbsp;&nbsp;Pro is <span style={{color:T.lime,fontWeight:700}}>$6.99</span>.
           </div>
-          <div style={{fontSize:12,color:T.muted}}>All plans include a 14-day money-back guarantee. No credit card for Free or trial.</div>
+          <div style={{fontSize:12,color:T.muted}}>All plans include a 14-day money-back guarantee. No credit card needed for Free.</div>
         </div>
       </Modal>
       <Modal open={creditsOpen} onClose={()=>{setCreditsOpen(false);setCreditCheckout(null);setBoughtMsg("");}} title={creditCheckout?"Complete purchase":"AI Credits"} sub={creditCheckout?("Purchase "+creditCheckout.label+" for "+creditCheckout.price):"Every AI action uses credits. Top up, upgrade, or just check your balance."} width={620}
@@ -27022,10 +26929,10 @@ function App() {
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",position:"relative"}}>
                 <div>
                   <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",fontWeight:600,color:"rgba(8,12,40,0.6)"}}>CURRENT BALANCE</div>
-                  <div style={{fontFamily:T.hand,fontSize:54,fontWeight:700,color:T.ink,lineHeight:0.9,marginTop:4}}>{getCredits()}<span style={{fontFamily:T.font,fontSize:18,fontWeight:500,color:"rgba(8,12,40,0.55)",marginLeft:4}}>/ {getCreditLimit()}</span></div>
-                  <div style={{fontSize:12,color:"rgba(8,12,40,0.65)",marginTop:4}}>Resets in {daysUntilReset()} day{daysUntilReset()!==1?"s":""} · {getCreditLimit()-getCredits()} used this cycle</div>
+                  <div style={{fontFamily:T.hand,fontSize:54,fontWeight:700,color:T.ink,lineHeight:0.9,marginTop:4}}>{getPlan()==="Pro"?"Unlimited":getCredits()+""}<span style={{fontFamily:T.font,fontSize:18,fontWeight:500,color:"rgba(8,12,40,0.55)",marginLeft:4}}>{getPlan()==="Pro"?"":"/ "+getCreditLimit()}</span></div>
+                  <div style={{fontSize:12,color:"rgba(8,12,40,0.65)",marginTop:4}}>{getPlan()==="Pro"?"No monthly cap":"Resets in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")+" · "+(getCreditLimit()-getCredits())+" used this cycle"}</div>
                 </div>
-                <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.16em",fontWeight:700,background:T.ink,color:T.lime,padding:"4px 8px",borderRadius:5}}>PRO</span>
+                <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.16em",fontWeight:700,background:T.ink,color:T.lime,padding:"4px 8px",borderRadius:5}}>{getPlan().toUpperCase()}</span>
               </div>
               <div style={{height:5,background:"rgba(8,12,40,0.15)",borderRadius:99,marginTop:14,overflow:"hidden",position:"relative"}}><div style={{height:"100%",width:Math.min(100,Math.round(getCredits()/getCreditLimit()*100))+"%",background:T.ink,borderRadius:99}} /></div>
             </div>
@@ -27072,9 +26979,9 @@ function App() {
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:16,padding:"12px 14px",background:T.card2,borderRadius:10,border:`1px solid ${T.border}`}}>
               <div>
                 <div style={{fontSize:12.5,color:T.text,fontWeight:600}}>Hit your cap often?</div>
-                <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>Max plan gives you 500 credits / month.</div>
+                <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>Pro plan gives you unlimited AI chat, no credits needed.</div>
               </div>
-              <a href="checkout.html?plan=max&billing=monthly" style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:7,fontSize:12,fontWeight:600,background:T.ink,color:T.lime,textDecoration:"none",fontFamily:T.font}}>Upgrade to Max</a>
+              <a href="checkout.html?plan=pro&billing=monthly" style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:7,fontSize:12,fontWeight:600,background:T.ink,color:T.lime,textDecoration:"none",fontFamily:T.font}}>Upgrade to Pro</a>
             </div>
           </>
         )}
