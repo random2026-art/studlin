@@ -382,8 +382,8 @@ const PRICING_PLANS = (billing) => [
     price: "$0",
     per: "forever",
     tag: null,
-    desc: "Get organized. No credit card needed.",
-    features: ["Calendar, tasks, focus timer, streaks & XP: unlimited", "Studlin Network & calendar connections: unlimited", "Syllabus & schedule imports: 8 / month", "1 AI study plan / month (sessions, flashcards & practice exam)", "3 AI flashcard generations / month", "Attack sessions: unlimited", "1 project breakdown / month"],
+    desc: "Get organized, manually. No credit card needed.",
+    features: ["Calendar, tasks, focus timer, streaks & XP: unlimited", "Add classes, assignments & exams manually: unlimited", "Studlin Network & calendar connections: unlimited", "Attack sessions: unlimited"],
     cta: "Get started free",
     variant: "subtle"
   },
@@ -393,8 +393,8 @@ const PRICING_PLANS = (billing) => [
     price: billing === "annual" ? "$4.99" : "$6.99",
     per: billing === "annual" ? "/mo \xB7 billed yearly" : "/mo",
     tag: null,
-    desc: "Everything on Free, with no caps, plus Smart Reschedule.",
-    features: ["Unlimited AI study plans, flashcards, syllabus scans, attack sessions & project breakdowns", "Smart Reschedule, not on Free", "All AI models: Flash, Standard & Research", "Unlimited AI chat, every day"],
+    desc: "Every AI feature Studlin has.",
+    features: ["Add Task with AI: Studlin schedules it for you", "AI study plans, flashcards, practice exams, syllabus & schedule scans, brain dump & project breakdowns", "Smart Reschedule", "All AI models: Flash, Standard & Research"],
     cta: "Upgrade to Pro",
     variant: "lime",
     featured: true
@@ -3610,62 +3610,135 @@ function daysUntilReset() {
   const e = new Date(n.getFullYear(), n.getMonth() + 1, 1);
   return Math.ceil((e - n) / 864e5);
 }
-const SYLLABUS_SCAN_LIMIT = 8;
+const AI_CALL_COST_ESTIMATES = {
+  syllabusScan: 0.026,
+  screenshotScan: 0.022,
+  noteScan: 3e-3,
+  flashcardGen: 0.033,
+  quizGen: 0.037,
+  examPlanBuild: 9e-3,
+  projectBreakdown: 0.011,
+  smartReschedule: 1e-3,
+  brainDump: 0.014,
+  aiArrange: 6e-3
+};
+const PRO_MONTHLY_AI_SPEND_CEILING = 3.5;
+const getMonthlyAiSpend = makeMonthlyUsage("aiSpendMills");
+function chargeAiSpend(feature) {
+  const cost = AI_CALL_COST_ESTIMATES[feature] || 0;
+  const u = getMonthlyAiSpend();
+  lsSet("aiSpendMills", { month: u.month, count: u.count + Math.round(cost * 1e3) });
+}
+function underAiSpendCeiling() {
+  return getMonthlyAiSpend().count < PRO_MONTHLY_AI_SPEND_CEILING * 1e3;
+}
+const PRO_SYLLABUS_SCAN_LIMIT = 40;
 const getSyllabusScanUsage = makeMonthlyUsage("syllabusScans");
 function canScanSyllabus() {
-  return getPlan() !== "Free" || getSyllabusScanUsage().count < SYLLABUS_SCAN_LIMIT;
+  if (getPlan() === "Free") return false;
+  if (!underAiSpendCeiling()) return false;
+  return getSyllabusScanUsage().count < PRO_SYLLABUS_SCAN_LIMIT;
 }
 function recordSyllabusScan() {
   const u = getSyllabusScanUsage();
   lsSet("syllabusScans", { month: u.month, count: u.count + 1 });
+  chargeAiSpend("syllabusScan");
 }
-const SCREENSHOT_SCAN_LIMIT = 3;
+const PRO_SCREENSHOT_SCAN_LIMIT = 40;
 const getScreenshotScanUsage = makeMonthlyUsage("screenshotScans");
 function canScanScreenshot() {
-  return getPlan() !== "Free" || getScreenshotScanUsage().count < SCREENSHOT_SCAN_LIMIT;
+  if (getPlan() === "Free") return false;
+  if (!underAiSpendCeiling()) return false;
+  return getScreenshotScanUsage().count < PRO_SCREENSHOT_SCAN_LIMIT;
 }
 function recordScreenshotScan() {
   const u = getScreenshotScanUsage();
   lsSet("screenshotScans", { month: u.month, count: u.count + 1 });
+  chargeAiSpend("screenshotScan");
 }
-const NOTE_SCAN_LIMIT = 3;
+const PRO_NOTE_SCAN_LIMIT = 150;
 const getNoteScanUsage = makeMonthlyUsage("noteScans");
 function canScanNote() {
-  return getPlan() !== "Free" || getNoteScanUsage().count < NOTE_SCAN_LIMIT;
+  if (getPlan() === "Free") return false;
+  if (!underAiSpendCeiling()) return false;
+  return getNoteScanUsage().count < PRO_NOTE_SCAN_LIMIT;
 }
 function recordNoteScan() {
   const u = getNoteScanUsage();
   lsSet("noteScans", { month: u.month, count: u.count + 1 });
+  chargeAiSpend("noteScan");
 }
-const FLASHCARD_GEN_LIMIT = 3;
+const PRO_FLASHCARD_GEN_LIMIT = 60;
 const getFlashcardGenUsage = makeMonthlyUsage("flashcardGens");
 function canGenFlashcards() {
-  return getPlan() !== "Free" || getFlashcardGenUsage().count < FLASHCARD_GEN_LIMIT;
+  if (getPlan() === "Free") return false;
+  if (!underAiSpendCeiling()) return false;
+  return getFlashcardGenUsage().count < PRO_FLASHCARD_GEN_LIMIT;
 }
 function recordFlashcardGen() {
   const u = getFlashcardGenUsage();
   lsSet("flashcardGens", { month: u.month, count: u.count + 1 });
+  chargeAiSpend("flashcardGen");
 }
-const EXAM_PLAN_LIMIT = 1;
+const PRO_EXAM_PLAN_LIMIT = 40;
 const getExamPlanUsage = makeMonthlyUsage("examPlanBuilds");
 function canBuildExamPlan() {
-  return getPlan() !== "Free" || getExamPlanUsage().count < EXAM_PLAN_LIMIT;
+  if (getPlan() === "Free") return false;
+  if (!underAiSpendCeiling()) return false;
+  return getExamPlanUsage().count < PRO_EXAM_PLAN_LIMIT;
 }
 function recordExamPlanBuild() {
   const u = getExamPlanUsage();
   lsSet("examPlanBuilds", { month: u.month, count: u.count + 1 });
+  chargeAiSpend("examPlanBuild");
 }
-const PROJECT_BREAKDOWN_LIMIT = 1;
+const PRO_PROJECT_BREAKDOWN_LIMIT = 30;
 const getProjectBreakdownUsage = makeMonthlyUsage("projectBreakdowns");
 function canBreakDownProject() {
-  return getPlan() !== "Free" || getProjectBreakdownUsage().count < PROJECT_BREAKDOWN_LIMIT;
+  if (getPlan() === "Free") return false;
+  if (!underAiSpendCeiling()) return false;
+  return getProjectBreakdownUsage().count < PRO_PROJECT_BREAKDOWN_LIMIT;
 }
 function recordProjectBreakdown() {
   const u = getProjectBreakdownUsage();
   lsSet("projectBreakdowns", { month: u.month, count: u.count + 1 });
+  chargeAiSpend("projectBreakdown");
 }
+const PRO_SMART_RESCHEDULE_LIMIT = 200;
+const getSmartRescheduleUsage = makeMonthlyUsage("smartReschedules");
 function canUseSmartReschedule() {
-  return getPlan() !== "Free";
+  if (getPlan() === "Free") return false;
+  if (!underAiSpendCeiling()) return false;
+  return getSmartRescheduleUsage().count < PRO_SMART_RESCHEDULE_LIMIT;
+}
+function recordSmartReschedule() {
+  const u = getSmartRescheduleUsage();
+  lsSet("smartReschedules", { month: u.month, count: u.count + 1 });
+  chargeAiSpend("smartReschedule");
+}
+const PRO_BRAIN_DUMP_LIMIT = 100;
+const getBrainDumpUsage = makeMonthlyUsage("brainDumps");
+function canUseBrainDump() {
+  if (getPlan() === "Free") return false;
+  if (!underAiSpendCeiling()) return false;
+  return getBrainDumpUsage().count < PRO_BRAIN_DUMP_LIMIT;
+}
+function recordBrainDump() {
+  const u = getBrainDumpUsage();
+  lsSet("brainDumps", { month: u.month, count: u.count + 1 });
+  chargeAiSpend("brainDump");
+}
+const PRO_AI_ARRANGE_LIMIT = 400;
+const getAiArrangeUsage = makeMonthlyUsage("aiArranges");
+function canUseAiArrange() {
+  if (getPlan() === "Free") return false;
+  if (!underAiSpendCeiling()) return false;
+  return getAiArrangeUsage().count < PRO_AI_ARRANGE_LIMIT;
+}
+function recordAiArrange() {
+  const u = getAiArrangeUsage();
+  lsSet("aiArranges", { month: u.month, count: u.count + 1 });
+  chargeAiSpend("aiArrange");
 }
 const DOW_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const MON_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -4452,13 +4525,13 @@ function ScheduleSettingsPanel({ open, onClose, onSave }) {
 }
 function UpgradeModal({ open, onClose, feature, detail, onUpgraded }) {
   if (!open) return null;
-  const tier = { name: "Pro", price: "$6.99", perks: ["Unlimited AI study plans, flashcards, syllabus scans, attack sessions & project breakdowns", "Smart Reschedule, not on Free at all", "Every AI model + 4 study modes"], color: T.lime };
+  const tier = { name: "Pro", price: "$6.99", perks: ["Add Task with AI", "AI study plans, flashcards, syllabus scans, brain dump & project breakdowns", "Smart Reschedule", "Every AI model + 4 study modes"], color: T.lime };
   const choose = () => {
     setPlanLS("Pro");
     onClose();
     if (onUpgraded) onUpgraded("Pro");
   };
-  return /* @__PURE__ */ React.createElement("div", { onClick: onClose, style: { position: "fixed", inset: 0, zIndex: 90, background: "rgba(8,12,10,0.72)", backdropFilter: "blur(7px)", display: "flex", alignItems: "center", justifyContent: "center" } }, /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { width: 400, maxWidth: "92vw", background: T.card, border: "1px solid " + T.border, borderRadius: 8, padding: 26, boxShadow: "0 40px 90px -30px rgba(0,0,0,0.65)" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 6 } }, /* @__PURE__ */ React.createElement("span", { style: { display: "inline-flex", width: 30, height: 30, borderRadius: 8, background: T.lime + "1c", border: "1px solid " + T.lime + "44", alignItems: "center", justifyContent: "center", color: T.lime } }, Icon.wand), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 17, fontWeight: 700, color: T.white, letterSpacing: "-0.01em" } }, "You have hit your ", feature, " limit")), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, lineHeight: 1.6, marginBottom: 18 } }, detail), /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: "1px solid " + T.border, borderRadius: 12, padding: 16, marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: tier.color, marginBottom: 2 } }, tier.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 24, fontWeight: 700, color: T.white, letterSpacing: "-0.02em" } }, tier.price, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.muted, fontWeight: 400 } }, " /month")), /* @__PURE__ */ React.createElement("div", { style: { margin: "10px 0 14px" } }, tier.perks.map((p, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", gap: 7, alignItems: "center", fontSize: 11.5, color: T.text, padding: "3px 0" } }, /* @__PURE__ */ React.createElement("span", { style: { color: tier.color, display: "inline-flex" } }, Icon.check), p))), /* @__PURE__ */ React.createElement(Btn, { onClick: choose, style: { width: "100%", justifyContent: "center", background: T.lime, color: T.ink } }, "Upgrade to Pro")), /* @__PURE__ */ React.createElement("div", { onClick: onClose, style: { textAlign: "center", fontSize: 12, color: T.muted, cursor: "pointer", padding: 6 } }, "Maybe later")));
+  return /* @__PURE__ */ React.createElement("div", { onClick: onClose, style: { position: "fixed", inset: 0, zIndex: 90, background: "rgba(8,12,10,0.72)", backdropFilter: "blur(7px)", display: "flex", alignItems: "center", justifyContent: "center" } }, /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { width: 400, maxWidth: "92vw", background: T.card, border: "1px solid " + T.border, borderRadius: 8, padding: 26, boxShadow: "0 40px 90px -30px rgba(0,0,0,0.65)" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 6 } }, /* @__PURE__ */ React.createElement("span", { style: { display: "inline-flex", width: 30, height: 30, borderRadius: 8, background: T.lime + "1c", border: "1px solid " + T.lime + "44", alignItems: "center", justifyContent: "center", color: T.lime } }, Icon.wand), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 17, fontWeight: 700, color: T.white, letterSpacing: "-0.01em" } }, feature, " is a Pro feature")), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, lineHeight: 1.6, marginBottom: 18 } }, detail), /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: "1px solid " + T.border, borderRadius: 12, padding: 16, marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: tier.color, marginBottom: 2 } }, tier.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 24, fontWeight: 700, color: T.white, letterSpacing: "-0.02em" } }, tier.price, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.muted, fontWeight: 400 } }, " /month")), /* @__PURE__ */ React.createElement("div", { style: { margin: "10px 0 14px" } }, tier.perks.map((p, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", gap: 7, alignItems: "center", fontSize: 11.5, color: T.text, padding: "3px 0" } }, /* @__PURE__ */ React.createElement("span", { style: { color: tier.color, display: "inline-flex" } }, Icon.check), p))), /* @__PURE__ */ React.createElement(Btn, { onClick: choose, style: { width: "100%", justifyContent: "center", background: T.lime, color: T.ink } }, "Upgrade to Pro")), /* @__PURE__ */ React.createElement("div", { onClick: onClose, style: { textAlign: "center", fontSize: 12, color: T.muted, cursor: "pointer", padding: 6 } }, "Maybe later")));
 }
 const navIcon = { dashboard: Icon.grid, prep: Icon.brain, writestudio: Icon.pen, essays: Icon.pen, flashcards: Icon.layers, notes: Icon.file, calendar: Icon.cal, friends: Icon.users, lectures: Icon.mic, solve: Icon.zap, grammar: Icon.check, humanizer: Icon.scan, feedback: Icon.heart, settings: Icon.settings, profile: Icon.user };
 async function generateFlashcardsFromText(content, context, count = 10) {
@@ -4539,14 +4612,17 @@ function wrongTopicsFor(questions, answers) {
   });
   return topics;
 }
-const QUIZ_GEN_LIMIT = 3;
+const PRO_QUIZ_GEN_LIMIT = 60;
 const getQuizGenUsage = makeMonthlyUsage("quizGens");
 function canGenQuiz() {
-  return getPlan() !== "Free" || getQuizGenUsage().count < QUIZ_GEN_LIMIT;
+  if (getPlan() === "Free") return false;
+  if (!underAiSpendCeiling()) return false;
+  return getQuizGenUsage().count < PRO_QUIZ_GEN_LIMIT;
 }
 function recordQuizGen() {
   const u = getQuizGenUsage();
   lsSet("quizGens", { month: u.month, count: u.count + 1 });
+  chargeAiSpend("quizGen");
 }
 const MATERIAL_TEXT_CAP = 5e4;
 function finalizeExtractedText(raw) {
@@ -4794,6 +4870,10 @@ function StudlinPrep({ setActive = () => {
   };
   const generatePreview = async () => {
     if (!buildPlanExam) return;
+    if (!canBuildExamPlan()) {
+      setUpgradeModal({ feature: "AI study plans", detail: "AI study plans are a Pro feature. Upgrade to use them." });
+      return;
+    }
     const hasMaterial = buildPlanMaterialText.trim().length > 0;
     setBuildPlanGeneric(!hasMaterial);
     if (hasMaterial) persistBuildPlanMaterial();
@@ -4845,7 +4925,7 @@ function StudlinPrep({ setActive = () => {
   const commitBuildPlan = async () => {
     if (!buildPlanExam || !buildPlanPreview) return;
     if (!canBuildExamPlan()) {
-      setUpgradeModal({ feature: "AI study plans", detail: "You've used your " + EXAM_PLAN_LIMIT + " free study plan this month. It resets in " + daysUntilReset() + " day" + (daysUntilReset() !== 1 ? "s" : "") + ", or upgrade for unlimited right now." });
+      setUpgradeModal({ feature: "AI study plans", detail: "AI study plans are a Pro feature. Upgrade to use them." });
       return;
     }
     setBuildPlanLoading(true);
@@ -4972,7 +5052,7 @@ function StudlinPrep({ setActive = () => {
   const doGenDeckForExam = async () => {
     if (!materialText.trim() || !selectedExam) return;
     if (!canGenFlashcards()) {
-      setUpgradeModal({ feature: "AI flashcard generations", detail: "You've used all " + FLASHCARD_GEN_LIMIT + " free flashcard generations this month. They reset in " + daysUntilReset() + " day" + (daysUntilReset() !== 1 ? "s" : "") + ", or upgrade for unlimited right now." });
+      setUpgradeModal({ feature: "AI flashcard generations", detail: "AI flashcard generations are a Pro feature. Upgrade to use them." });
       return;
     }
     setGenLoading("cards");
@@ -4993,7 +5073,7 @@ function StudlinPrep({ setActive = () => {
   const doGenPracticeExamForExam = async () => {
     if (!materialText.trim() || !selectedExam) return;
     if (!canGenQuiz()) {
-      setUpgradeModal({ feature: "AI practice exams", detail: "You've used all " + QUIZ_GEN_LIMIT + " free practice exams this month. They reset in " + daysUntilReset() + " day" + (daysUntilReset() !== 1 ? "s" : "") + ", or upgrade for unlimited right now." });
+      setUpgradeModal({ feature: "AI practice exams", detail: "AI practice exams are a Pro feature. Upgrade to use them." });
       return;
     }
     setGenLoading("quiz");
@@ -5144,7 +5224,7 @@ function StudlinPrep({ setActive = () => {
   const generateFollowUpPracticeExam = async () => {
     if (!takingQuiz || !takingQuiz.done || !takingQuiz.wrongTopics || takingQuiz.wrongTopics.length === 0) return;
     if (!canGenQuiz()) {
-      setUpgradeModal({ feature: "AI practice exams", detail: "You've used all " + QUIZ_GEN_LIMIT + " free practice exams this month. They reset in " + daysUntilReset() + " day" + (daysUntilReset() !== 1 ? "s" : "") + ", or upgrade for unlimited right now." });
+      setUpgradeModal({ feature: "AI practice exams", detail: "AI practice exams are a Pro feature. Upgrade to use them." });
       return;
     }
     setFollowUpLoading(true);
@@ -5968,7 +6048,7 @@ function Flashcards({ setActive = () => {
         return;
       }
       if (!canGenFlashcards()) {
-        setUpgradeModal({ feature: "AI flashcard generations", detail: "You've used all " + FLASHCARD_GEN_LIMIT + " free flashcard generations this month. They reset in " + daysUntilReset() + " day" + (daysUntilReset() !== 1 ? "s" : "") + ", or upgrade for unlimited right now." });
+        setUpgradeModal({ feature: "AI flashcard generations", detail: "AI flashcard generations are a Pro feature. Upgrade to use them." });
         return;
       }
       const combined = fileTexts.map((f) => "--- " + f.name + " ---\n" + f.text).join("\n\n");
@@ -5984,7 +6064,7 @@ function Flashcards({ setActive = () => {
         return;
       }
       if (!canGenFlashcards()) {
-        setUpgradeModal({ feature: "AI flashcard generations", detail: "You've used all " + FLASHCARD_GEN_LIMIT + " free flashcard generations this month. They reset in " + daysUntilReset() + " day" + (daysUntilReset() !== 1 ? "s" : "") + ", or upgrade for unlimited right now." });
+        setUpgradeModal({ feature: "AI flashcard generations", detail: "AI flashcard generations are a Pro feature. Upgrade to use them." });
         return;
       }
       cards = await aiGenCards("Lecture transcription:\n\n" + recText, "lecture transcription", cardCount);
@@ -6349,7 +6429,7 @@ function Notes({ setActive = () => {
   const [syllabusToast, setSyllabusToast2] = useState("");
   const [deleteNoteConfirm, setDeleteNoteConfirm] = useState(null);
   const [upgradeModal, setUpgradeModal] = useState(null);
-  const resetNote = (feature, limit, saved) => "You've used all " + limit + " free " + feature + " this month" + (saved ? " \u2014 " + saved : "") + ". They reset in " + daysUntilReset() + " day" + (daysUntilReset() !== 1 ? "s" : "") + ", or upgrade for unlimited right now.";
+  const proOnlyNote = (feature, saved) => feature + " is a Pro feature" + (saved ? " \u2014 " + saved : "") + ". Upgrade to use it.";
   useEffect(() => {
     const wantId = lsGet("openNoteId", null);
     if (!wantId) return;
@@ -6484,7 +6564,7 @@ function Notes({ setActive = () => {
     const plain = (tmp.textContent || tmp.innerText || "").trim();
     if (!plain) return;
     if (!canScanSyllabus()) {
-      setUpgradeModal({ feature: "deadline scans", detail: resetNote("deadline scans", SYLLABUS_SCAN_LIMIT, "upgrade to keep scanning notes for dates") });
+      setUpgradeModal({ feature: "deadline scans", detail: proOnlyNote("deadline scans", "upgrade to keep scanning notes for dates") });
       return;
     }
     setScanningDates(true);
@@ -6498,8 +6578,7 @@ function Notes({ setActive = () => {
       setTimeout(() => setSyllabusToast2(""), 3200);
     }
   };
-  const noteScansLeft = Math.max(0, NOTE_SCAN_LIMIT - getNoteScanUsage().count);
-  const noteScanBadge = getPlan() === "Free" ? noteScansLeft + " scan" + (noteScansLeft === 1 ? "" : "s") + " left" : null;
+  const noteScanBadge = getPlan() === "Free" ? "Pro" : null;
   const sources = [
     { id: "write", label: "Write", desc: "Type directly on the canvas", icon: Icon.pen, cost: null },
     { id: "file", label: "Scan a file", desc: "PDF, slides, or photos of the board", icon: Icon.file, cost: noteScanBadge }
@@ -6612,8 +6691,8 @@ function Notes({ setActive = () => {
       if (!title) title = viaSyllabusScan ? tag + " Syllabus" : "Scanned notes";
       if (fileImage) {
         if (!canScanScreenshot()) {
-          body = "<p>Screenshot uploaded, but this month's free screenshot imports are used up.</p>";
-          setUpgradeModal({ feature: "screenshot imports", detail: resetNote("screenshot imports", SCREENSHOT_SCAN_LIMIT) });
+          body = "<p>Screenshot uploaded, but screenshot imports are a Pro feature.</p>";
+          setUpgradeModal({ feature: "screenshot imports", detail: proOnlyNote("screenshot imports") });
         } else {
           setAiLoading(true);
           const result = await extractSyllabusDeadlinesFromImage(fileImage.base64, fileImage.mediaType);
@@ -6636,7 +6715,7 @@ function Notes({ setActive = () => {
         await detectDates(fileText);
       } else {
         body = "<p>" + fileText.trim().replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/\n/g, "<br>") + "</p>";
-        setUpgradeModal({ feature: "AI note scans", detail: resetNote("AI note scans", NOTE_SCAN_LIMIT, "this file was saved as plain text, not AI-summarized") });
+        setUpgradeModal({ feature: "AI note scans", detail: proOnlyNote("AI note scans", "this file was saved as plain text, not AI-summarized") });
       }
     }
     const newNote = { id: String(Date.now()), title, body, tag, date: (/* @__PURE__ */ new Date()).toLocaleDateString("en-US", { month: "short", day: "numeric" }), createdAt: Date.now() };
@@ -6746,7 +6825,7 @@ function Notes({ setActive = () => {
       return;
     }
     if (!canGenFlashcards()) {
-      setUpgradeModal({ feature: "AI flashcard generations", detail: resetNote("AI flashcard generations", FLASHCARD_GEN_LIMIT, "you can still build cards manually anytime") });
+      setUpgradeModal({ feature: "AI flashcard generations", detail: proOnlyNote("AI flashcard generations", "you can still build cards manually anytime") });
       return;
     }
     setPanelLoading("cards");
@@ -6775,7 +6854,7 @@ function Notes({ setActive = () => {
       return;
     }
     if (!canGenQuiz()) {
-      setUpgradeModal({ feature: "AI practice quizzes", detail: resetNote("AI practice quizzes", QUIZ_GEN_LIMIT) });
+      setUpgradeModal({ feature: "AI practice quizzes", detail: proOnlyNote("AI practice quizzes") });
       return;
     }
     setPanelLoading("quiz");
@@ -6804,12 +6883,17 @@ function Notes({ setActive = () => {
       setPanelMsg("This note is empty \u2014 write something first.");
       return;
     }
+    if (!canScanNote()) {
+      setUpgradeModal({ feature: "AI note summaries", detail: proOnlyNote("AI note summaries") });
+      return;
+    }
     setPanelLoading("summary");
     setPanelMsg("");
     try {
       const prompt = 'Summarize these study notes into a concise, high-level bulleted summary for quick review \u2014 no more than 8 bullet points. Return only the bullet points as plain text lines, each starting with "- ". No markdown headers, no extra commentary.\n\n' + text.slice(0, 15e3);
       const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt }], model: "flash" }) });
       const data = await res.json();
+      recordNoteScan();
       const raw = (data.reply || "").trim();
       const bullets = raw.split("\n").map((l) => l.replace(/^[-*•]\s*/, "").trim()).filter(Boolean);
       setSummaryOverlay(bullets.length ? bullets : ["No summary available."]);
@@ -7061,7 +7145,7 @@ function Notes({ setActive = () => {
         style: { minHeight: 380, padding: "20px 28px 40px", fontSize: 14.5, lineHeight: 1.85, color: T.text, outline: "none", fontFamily: T.font, boxSizing: "border-box" }
       }
     )
-  ), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, padding: "12px 20px", borderTop: `1px solid ${T.border}`, background: T.card2, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.faint, marginRight: 2 } }, "Turn into"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: genFlashcardsFromNote, disabled: panelLoading !== null }, panelLoading === "cards" ? "Generating\u2026" : /* @__PURE__ */ React.createElement(React.Fragment, null, Icon.layers, " Create Flashcards", getPlan() === "Free" && " (" + Math.max(0, FLASHCARD_GEN_LIMIT - getFlashcardGenUsage().count) + " left)")), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: genQuizFromNote, disabled: panelLoading !== null }, panelLoading === "quiz" ? "Generating\u2026" : /* @__PURE__ */ React.createElement(React.Fragment, null, Icon.check, " Create Practice Quiz", getPlan() === "Free" && " (" + Math.max(0, QUIZ_GEN_LIMIT - getQuizGenUsage().count) + " left)")), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: genSummaryFromNote, disabled: panelLoading !== null }, panelLoading === "summary" ? "Generating\u2026" : /* @__PURE__ */ React.createElement(React.Fragment, null, Icon.file, " Generate Summary")), panelMsg && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: panelMsg.startsWith("\u2713") ? T.teal : T.red, marginLeft: 4 } }, panelMsg))) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: 380, gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { color: T.faint, opacity: 0.4 } }, Icon.file), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, textAlign: "center" } }, "Select a note from the sidebar", /* @__PURE__ */ React.createElement("br", null), "or create a new one to start writing."), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setNewOpen(true) }, Icon.plus, " New note"))), hasMargin && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: T.faint, marginBottom: 2 } }, "Annotations"), activeComments.map((c) => /* @__PURE__ */ React.createElement("div", { key: c.id, style: { background: T.card, border: `1px solid ${T.blue}33`, borderLeft: `3px solid ${T.blue}`, borderRadius: 8, padding: "10px 12px", position: "relative" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.blue, fontWeight: 600, marginBottom: 4, lineHeight: 1.4 } }, c.selectedText ? `"${c.selectedText.slice(0, 48)}${c.selectedText.length > 48 ? "\u2026" : ""}"` : /* @__PURE__ */ React.createElement("span", { style: { textTransform: "uppercase", letterSpacing: "0.05em" } }, "Document note")), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.text, lineHeight: 1.5 } }, c.text), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.faint, marginTop: 6 } }, c.date), /* @__PURE__ */ React.createElement("button", { onClick: () => removeComment(nid, c.id), style: { position: "absolute", top: 6, right: 6, background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 13, lineHeight: 1, padding: 2 } }, "\xD7")))))));
+  ), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, padding: "12px 20px", borderTop: `1px solid ${T.border}`, background: T.card2, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.faint, marginRight: 2 } }, "Turn into"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: genFlashcardsFromNote, disabled: panelLoading !== null }, panelLoading === "cards" ? "Generating\u2026" : /* @__PURE__ */ React.createElement(React.Fragment, null, Icon.layers, " Create Flashcards", getPlan() === "Free" && " (Pro)")), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: genQuizFromNote, disabled: panelLoading !== null }, panelLoading === "quiz" ? "Generating\u2026" : /* @__PURE__ */ React.createElement(React.Fragment, null, Icon.check, " Create Practice Quiz", getPlan() === "Free" && " (Pro)")), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: genSummaryFromNote, disabled: panelLoading !== null }, panelLoading === "summary" ? "Generating\u2026" : /* @__PURE__ */ React.createElement(React.Fragment, null, Icon.file, " Generate Summary", getPlan() === "Free" && " (Pro)")), panelMsg && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: panelMsg.startsWith("\u2713") ? T.teal : T.red, marginLeft: 4 } }, panelMsg))) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: 380, gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { color: T.faint, opacity: 0.4 } }, Icon.file), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, textAlign: "center" } }, "Select a note from the sidebar", /* @__PURE__ */ React.createElement("br", null), "or create a new one to start writing."), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setNewOpen(true) }, Icon.plus, " New note"))), hasMargin && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: T.faint, marginBottom: 2 } }, "Annotations"), activeComments.map((c) => /* @__PURE__ */ React.createElement("div", { key: c.id, style: { background: T.card, border: `1px solid ${T.blue}33`, borderLeft: `3px solid ${T.blue}`, borderRadius: 8, padding: "10px 12px", position: "relative" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.blue, fontWeight: 600, marginBottom: 4, lineHeight: 1.4 } }, c.selectedText ? `"${c.selectedText.slice(0, 48)}${c.selectedText.length > 48 ? "\u2026" : ""}"` : /* @__PURE__ */ React.createElement("span", { style: { textTransform: "uppercase", letterSpacing: "0.05em" } }, "Document note")), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.text, lineHeight: 1.5 } }, c.text), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.faint, marginTop: 6 } }, c.date), /* @__PURE__ */ React.createElement("button", { onClick: () => removeComment(nid, c.id), style: { position: "absolute", top: 6, right: 6, background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 13, lineHeight: 1, padding: 2 } }, "\xD7")))))));
 }
 const GROUP_DURATIONS = [{ label: "1 week", days: 7 }, { label: "2 weeks", days: 14 }, { label: "1 month", days: 30 }, { label: "2 months", days: 60 }, { label: "3 months", days: 90 }];
 const dmRoomId = (a, b) => "dm_" + [a, b].sort().join("_");
@@ -10117,15 +10201,26 @@ function MaterialEditor({ item, onChange, label, idPrefix }) {
     }
   }, placeholder: "Link \u2014 flashcards, slides, anything", style: { flex: 1, minWidth: 0 } }), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addLink, disabled: !item.linkDraft.trim(), style: { padding: "0 12px", borderRadius: 8, border: `1px solid ${T.border}`, background: "transparent", color: T.muted, cursor: item.linkDraft.trim() ? "pointer" : "default", fontFamily: T.font, fontSize: 12, opacity: item.linkDraft.trim() ? 1 : 0.45, flexShrink: 0 } }, "+ Add")), item.materialLinks.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, item.materialLinks.map((link, li) => /* @__PURE__ */ React.createElement("div", { key: li, style: { display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 12, padding: "7px 10px", background: T.card, borderRadius: 8, gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, link.label && /* @__PURE__ */ React.createElement("span", { style: { color: T.text, fontWeight: 600 } }, link.label, ": "), /* @__PURE__ */ React.createElement("span", { style: { color: link.label ? T.muted : T.text } }, link.url)), /* @__PURE__ */ React.createElement("button", { onClick: () => onChange({ materialLinks: item.materialLinks.filter((_, li2) => li2 !== li) }), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 14, lineHeight: 1, flexShrink: 0 } }, "\xD7")))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.faint } }, "You can also add or change this later in Studlin Prep."), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => onChange({ materialOpen: false }), style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline", textAlign: "left" } }, "Collapse")));
 }
-function PhasesOutlineEditor({ item, onChange, subject }) {
+function PhasesOutlineEditor({ item, onChange, subject, onGateBlocked = () => {
+} }) {
   const suggestPhases = async () => {
+    if (!canBreakDownProject()) {
+      onGateBlocked();
+      return;
+    }
     onChange({ phasesLoading: true });
     const names = await proposeProjectPhases(item.title, item.detail || "", subject);
+    recordProjectBreakdown();
     onChange({ phasesLoading: false, phases: names || [] });
   };
   const suggestOutline = async () => {
+    if (!canBreakDownProject()) {
+      onGateBlocked();
+      return;
+    }
     onChange({ outlineLoading: true });
     const steps = await proposeOutline(item.title, item.detail || "", subject);
+    recordProjectBreakdown();
     onChange({ outlineLoading: false, outline: steps || [] });
   };
   return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { marginTop: 8 } }, item.phases === void 0 ? /* @__PURE__ */ React.createElement("button", { type: "button", disabled: !!item.phasesLoading, onClick: suggestPhases, style: { background: "none", border: `1px dashed ${T.borderHover}`, borderRadius: 6, color: T.muted, fontSize: 11, fontFamily: T.font, cursor: item.phasesLoading ? "default" : "pointer", padding: "5px 10px", opacity: item.phasesLoading ? 0.6 : 1 } }, item.phasesLoading ? "Thinking through phases\u2026" : "This looks big. Break it into phases?") : item.phases.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted } }, "Not enough detail here to break into phases. Add detail above, or leave it as one Attack Block.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Phases: only the first gets scheduled now"), item.phases.map((ph, pi) => /* @__PURE__ */ React.createElement("div", { key: pi, style: { display: "flex", alignItems: "center", gap: 6 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10, color: T.faint, width: 14, flexShrink: 0, fontFamily: T.mono } }, pi + 1), /* @__PURE__ */ React.createElement(Input, { value: ph, onChange: (e) => onChange({ phases: item.phases.map((p, ppi) => ppi === pi ? e.target.value : p) }), style: { flex: 1, fontSize: 12, padding: "5px 8px" } }), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => onChange({ phases: item.phases.filter((_, ppi) => ppi !== pi) }), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 15, lineHeight: 1, padding: 2, flexShrink: 0 } }, "\xD7"))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => onChange({ phases: [...item.phases, ""] }), style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline", textAlign: "left" } }, "+ Add phase"))), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 8 } }, item.outline === void 0 ? /* @__PURE__ */ React.createElement("button", { type: "button", disabled: !!item.outlineLoading, onClick: suggestOutline, style: { background: "none", border: `1px dashed ${T.borderHover}`, borderRadius: 6, color: T.muted, fontSize: 11, fontFamily: T.font, cursor: item.outlineLoading ? "default" : "pointer", padding: "5px 10px", opacity: item.outlineLoading ? 0.6 : 1 } }, item.outlineLoading ? "Drafting a checklist\u2026" : "Add a step-by-step checklist?") : item.outline.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted } }, "Not enough detail here for a checklist. Add detail above, or skip it.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Checklist"), item.outline.map((s, si) => {
@@ -11343,7 +11438,8 @@ function RescheduleModal({ task, events, commit, onClose, onManual }) {
     onClose();
   }, style: { display: "block", width: "100%", textAlign: "center", background: "none", border: "none", padding: 0, marginTop: 12, fontSize: 11.5, color: T.muted, textDecoration: "underline", cursor: "pointer", fontFamily: T.font } }, "I'll pick the day, time, and duration myself \u2192")));
 }
-function EventDetailModal({ eventId, onClose, commit, onToast, setActive }) {
+function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPricingOpen = () => {
+} }) {
   const allEvents = lsGet("events", []);
   const ev = allEvents.find((e) => e.id === eventId);
   const routines = getWeeklyRoutine();
@@ -11491,7 +11587,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive }) {
   const canAddAttackBlock = (kind === "deadline" || kind === "study block") && !ev.isAttackBlock && !ev.dueEventId && !ev.deckId && !ev.practiceExamId && !ev.isExamPrepSession && !ev.splitGroup && linkedSessions.length === 0 && !(ev.phases && ev.phases.length > 0);
   const isPhaseCandidate = canAddAttackBlock && isPhaseDecompositionCandidate(ev.estimatedHours, date, dayKey());
   const showsPhaseDetail = addAttackBlock && isPhaseCandidate;
-  const isProject = isProjectMarker(ev);
+  const isProject2 = isProjectMarker(ev);
   const typeChoice = asChecklist ? "todo" : asProject ? "project" : kind;
   const onTypeChange = (v) => {
     if (v === "project") {
@@ -11508,7 +11604,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive }) {
       setKind(v);
     }
   };
-  const requiresProjectDetail = asProject && !isProject;
+  const requiresProjectDetail = asProject && !isProject2;
   const openCollabPicker = async () => {
     setCollabPickerOpen(true);
     setCollabSelected([]);
@@ -11551,7 +11647,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive }) {
     setDetailErr("");
     const timeChanged = time !== ev.time || date !== ev.date;
     const prefs = getSchedulePreferences();
-    const droppedProject = isProject && !asProject;
+    const droppedProject = isProject2 && !asProject;
     const newProjPhases = requiresProjectDetail ? (projectPlan.phases || []).map((p) => p.trim()).filter(Boolean) : [];
     const newProjOutline = requiresProjectDetail ? normalizeOutlineDraft(projectPlan.outline) : [];
     let attackPair = null;
@@ -11660,9 +11756,9 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive }) {
       reoptimizeAttackChain(chainIdForReschedule);
       commit(lsGet("events", []));
     } }, "Re-optimize schedule")),
-    requiresProjectDetail && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 8 } }, "Marked as a Project \u2014 use the Detail field below to describe it, and Studlin will suggest phases and a checklist."), /* @__PURE__ */ React.createElement(PhasesOutlineEditor, { item: { ...projectPlan, title, detail: notes }, onChange: (patch) => setProjectPlan((p) => ({ ...p, ...patch })), subject })),
-    isProject && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, ev.sharedProjectId ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted } }, "Shared with collaborators \u2014 they'll see your progress once they accept.") : /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: openCollabPicker }, "+ Add collaborators")),
-    canAddAttackBlock && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "12px 14px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setAddAttackBlock((a) => !a), style: { display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text } }, "Start an Attack Block for this"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, "A short probe session, scheduled the moment you save. Studlin figures out the rest.")), /* @__PURE__ */ React.createElement("div", { style: { width: 36, height: 20, borderRadius: 10, background: addAttackBlock ? T.lime : T.faint, position: "relative", transition: "background 0.2s", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 16, height: 16, borderRadius: "50%", background: "#fff", position: "absolute", top: 2, left: addAttackBlock ? 18 : 2, transition: "left 0.2s" } }))), /* @__PURE__ */ React.createElement(AttackBlockExplainer, null), addAttackBlock && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement(Field, { label: "Probe session length" }, /* @__PURE__ */ React.createElement(NumField, { min: 15, max: 60, fallback: ATTACK_BLOCK_DEFAULT_PROBE_MINS, value: attackProbeMins, onChange: setAttackProbeMins }))), isPhaseCandidate && /* @__PURE__ */ React.createElement(PhasesOutlineEditor, { item: { ...projectPlan, title, detail: notes }, onChange: (patch) => setProjectPlan((p) => ({ ...p, ...patch })), subject })))),
+    requiresProjectDetail && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 8 } }, "Marked as a Project \u2014 use the Detail field below to describe it, and Studlin will suggest phases and a checklist."), /* @__PURE__ */ React.createElement(PhasesOutlineEditor, { item: { ...projectPlan, title, detail: notes }, onChange: (patch) => setProjectPlan((p) => ({ ...p, ...patch })), subject, onGateBlocked: () => setPricingOpen(true) })),
+    isProject2 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, ev.sharedProjectId ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted } }, "Shared with collaborators \u2014 they'll see your progress once they accept.") : /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: openCollabPicker }, "+ Add collaborators")),
+    canAddAttackBlock && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "12px 14px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setAddAttackBlock((a) => !a), style: { display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text } }, "Start an Attack Block for this"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, "A short probe session, scheduled the moment you save. Studlin figures out the rest.")), /* @__PURE__ */ React.createElement("div", { style: { width: 36, height: 20, borderRadius: 10, background: addAttackBlock ? T.lime : T.faint, position: "relative", transition: "background 0.2s", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 16, height: 16, borderRadius: "50%", background: "#fff", position: "absolute", top: 2, left: addAttackBlock ? 18 : 2, transition: "left 0.2s" } }))), /* @__PURE__ */ React.createElement(AttackBlockExplainer, null), addAttackBlock && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement(Field, { label: "Probe session length" }, /* @__PURE__ */ React.createElement(NumField, { min: 15, max: 60, fallback: ATTACK_BLOCK_DEFAULT_PROBE_MINS, value: attackProbeMins, onChange: setAttackProbeMins }))), isPhaseCandidate && /* @__PURE__ */ React.createElement(PhasesOutlineEditor, { item: { ...projectPlan, title, detail: notes }, onChange: (patch) => setProjectPlan((p) => ({ ...p, ...patch })), subject, onGateBlocked: () => setPricingOpen(true) })))),
     kind === "exam" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "Study material (optional)", hint: "Upload files, paste notes, or drop a link \u2014 you can always add more later in Studlin Prep." }, /* @__PURE__ */ React.createElement(MaterialEditor, { item: examPlan, onChange: (patch) => setExamPlan((m) => ({ ...m, ...patch })), label: title.trim() || "Untitled exam", idPrefix: "edittask-" + ev.id })), linkedSessions.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { background: T.lime + "0A", border: `1px solid ${T.lime}33`, borderRadius: 8, padding: "12px 14px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setExamPlan((m) => ({ ...m, proposeSessions: !m.proposeSessions })), style: { display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "flex-start" } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.lime, flexShrink: 0, marginTop: 1 } }, Icon.zap), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text } }, "Have Studlin make your study plan"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, "Spaced study sessions counting down to the exam date, added the moment you save."))), /* @__PURE__ */ React.createElement("div", { style: { width: 36, height: 20, borderRadius: 10, background: examPlan.proposeSessions ? T.lime : T.faint, position: "relative", transition: "background 0.2s", cursor: "pointer", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 16, height: 16, borderRadius: "50%", background: "#fff", position: "absolute", top: 2, left: examPlan.proposeSessions ? 18 : 2, transition: "left 0.2s" } }))), examPlan.proposeSessions && (() => {
       const dates = date ? computeReviewDates(date, dayKey(), examPlan.sessionCount || 4) : [];
       return /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.muted, marginBottom: 6 } }, "How confident are you on this material?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 12 } }, ["shaky", "okay", "solid"].map((level) => /* @__PURE__ */ React.createElement(
@@ -12922,6 +13018,7 @@ function CalendarTab({ setActive = () => {
       const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt }], model: "standard", format: "json" }) });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) return { items: [], error: data.error || "Couldn't reach Studlin AI. Please try again." };
+      recordBrainDump();
       const raw = (data.reply || "").replace(/```json?\n?/gi, "").replace(/```/g, "").trim();
       let parsed = null;
       try {
@@ -12940,6 +13037,10 @@ function CalendarTab({ setActive = () => {
   const [bdError, setBdError] = useState("");
   const submitBrainDump = async () => {
     if (!brainDumpText.trim() || brainDumpLoading) return;
+    if (!canUseBrainDump()) {
+      setPricingOpen(true);
+      return;
+    }
     if (bdListening) stopBdRec();
     setBrainDumpLoading(true);
     setBdError("");
@@ -13050,10 +13151,9 @@ function CalendarTab({ setActive = () => {
       return;
     }
     if ((evKind === "assignment" || evKind === "project") && evAttackBlock) {
-      const isProject = evKind === "project";
-      if (isProject && !canBreakDownProject()) {
-        setDeadlineToast("Free plan's project breakdowns for this month are used up \u2014 upgrade for unlimited.");
-        setTimeout(() => setDeadlineToast(""), 3200);
+      const isProject2 = evKind === "project";
+      if (isProject2 && !canBreakDownProject()) {
+        setPricingOpen(true);
         return;
       }
       const subj = evSubject === "None" ? "" : evSubject === "Other" && evCustom.trim() ? evCustom.trim() : evSubject;
@@ -13067,7 +13167,7 @@ function CalendarTab({ setActive = () => {
         setTimeout(() => setDeadlineToast(""), 2800);
         return;
       }
-      if (isProject) recordProjectBreakdown();
+      if (isProject2) recordProjectBreakdown();
       commitTasks([pair.marker, pair.task]);
       return;
     }
@@ -13154,6 +13254,10 @@ function CalendarTab({ setActive = () => {
   };
   const aiArrange = async () => {
     if (!evTitle.trim()) return;
+    if (!canUseAiArrange()) {
+      setPricingOpen(true);
+      return;
+    }
     if (evKind === "exam" || evKind === "class" || evKind === "busy block") return;
     if (taskMode === "manual") return;
     if (evKind === "project" && !evNotes.trim()) {
@@ -13181,13 +13285,6 @@ function CalendarTab({ setActive = () => {
     const windowStart = isDesiredToday ? earliestTodayMins : desiredStartMins;
     const windowStartTime = isDesiredToday ? earliestTodayTime : minutesToTime(desiredStartMins);
     if (evAttackBlock) {
-      const isProject = evKind === "project";
-      if (isProject && !canBreakDownProject()) {
-        setAiLoading(false);
-        setDeadlineToast("Free plan's project breakdowns for this month are used up \u2014 upgrade for unlimited.");
-        setTimeout(() => setDeadlineToast(""), 3200);
-        return;
-      }
       const subj = evSubject === "None" ? "" : evSubject === "Other" && evCustom.trim() ? evCustom.trim() : evSubject;
       const phases = evKind === "project" ? (evProjectPlan.phases || []).map((p) => p.trim()).filter(Boolean) : [];
       const outline = evKind === "project" ? normalizeOutlineDraft(evProjectPlan.outline) : [];
@@ -13250,6 +13347,7 @@ function CalendarTab({ setActive = () => {
     try {
       const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt }], model: "flash" }) });
       const data = await res.json();
+      recordAiArrange();
       const raw = data.reply.replace(/```json?|```/g, "").trim();
       const parsed = JSON.parse(raw);
       if (parsed.sessions && parsed.sessions.length > 0) {
@@ -13388,6 +13486,10 @@ function CalendarTab({ setActive = () => {
   };
   const submitPauseCommand = async () => {
     if (!pauseText.trim() || pauseLoading) return;
+    if (!canUseSmartReschedule()) {
+      setPricingOpen(true);
+      return;
+    }
     setPauseLoading(true);
     setPauseError("");
     const today = dayKey();
@@ -13407,6 +13509,7 @@ Examples:
     try {
       const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt }], model: "flash" }) });
       const data = await res.json();
+      recordSmartReschedule();
       const raw = (data.reply || "").replace(/```json?|```/g, "").trim();
       const parsed = JSON.parse(raw);
       if (!parsed || !["shift", "clear_day", "clear_week", "skip_class", "move_event", "retime_event"].includes(parsed.intent)) throw new Error("unsupported");
@@ -13602,7 +13705,7 @@ Examples:
     const tagColor = item.color || colorOf(item.courseId || item.subject);
     const isExpanded = expandedSidebarItemId === item.id;
     const isExam = item.kind === "exam";
-    const isProject = !isExam && isProjectMarker(item);
+    const isProject2 = !isExam && isProjectMarker(item);
     let expandedContent = null;
     if (isExpanded) {
       if (isExam) {
@@ -13641,7 +13744,7 @@ Examples:
             }, title: "Delete this session", style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 12, lineHeight: 1, flexShrink: 0 } }, "\xD7")
           );
         });
-      } else if (isProject) {
+      } else if (isProject2) {
         const hasPhases = item.phases && item.phases.length > 0;
         const steps = hasPhases ? item.phases.map((ph) => ({ label: ph.name, done: ph.status === "done" })) : (item.outline || []).map((o) => ({ label: o.text, done: !!o.done }));
         expandedContent = steps.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint } }, "No checklist steps yet.") : steps.map((s, si) => /* @__PURE__ */ React.createElement("div", { key: si, style: { fontSize: 11, color: s.done ? T.faint : T.text, textDecoration: s.done ? "line-through" : "none" } }, si + 1, ". ", s.label));
@@ -14185,7 +14288,7 @@ Examples:
     isProjectKind && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "Describe what you want to do", hint: "A sentence or two is enough \u2014 Studlin uses this to suggest phases and a checklist." }, /* @__PURE__ */ React.createElement(Textarea, { placeholder: "e.g. Build a working demo, write a report, present to the class by the deadline.", value: evNotes, onChange: (ev) => {
       setEvNotes(ev.target.value);
       if (evDetailErr) setEvDetailErr("");
-    } })), evDetailErr && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: -8, marginBottom: 14 } }, evDetailErr), /* @__PURE__ */ React.createElement(PhasesOutlineEditor, { item: { ...evProjectPlan, title: evTitle, detail: evNotes }, onChange: (patch) => setEvProjectPlan((p) => ({ ...p, ...patch })), subject: evSubject === "Other" ? evCustom : evSubject }), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, evCollabSelected.length > 0 ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" } }, evCollabSelected.map((uid) => {
+    } })), evDetailErr && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: -8, marginBottom: 14 } }, evDetailErr), /* @__PURE__ */ React.createElement(PhasesOutlineEditor, { item: { ...evProjectPlan, title: evTitle, detail: evNotes }, onChange: (patch) => setEvProjectPlan((p) => ({ ...p, ...patch })), subject: evSubject === "Other" ? evCustom : evSubject, onGateBlocked: () => setPricingOpen(true) }), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, evCollabSelected.length > 0 ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" } }, evCollabSelected.map((uid) => {
       const name = (evCollabCandidates.find((c) => c.uid === uid) || {}).name || "Studlin User";
       return /* @__PURE__ */ React.createElement("span", { key: uid, style: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 600, color: T.text, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 99, padding: "4px 10px" } }, name, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => toggleEvCollabSelected(uid), style: { background: "none", border: "none", color: T.muted, cursor: "pointer", padding: 0, fontSize: 13, lineHeight: 1 } }, "\xD7"));
     }), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: openEvCollabPicker }, "+ Add more")) : /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: openEvCollabPicker }, "+ Add collaborators"))),
@@ -14982,6 +15085,11 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
     e.target.value = "";
+    if (!canScanScreenshot()) {
+      setWorkScanOpen(false);
+      setPricingOpen(true);
+      return;
+    }
     const ext = file.name.split(".").pop().toLowerCase();
     if (!WORK_IMAGE_EXT_MEDIA_TYPES[ext]) {
       setWorkScanError("Upload a photo or screenshot of your shift schedule (JPG, PNG, etc).");
@@ -14997,6 +15105,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
       });
       const base64 = dataUrl.split(",")[1] || "";
       const result = await extractWorkScheduleFromImage(base64, WORK_IMAGE_EXT_MEDIA_TYPES[ext]);
+      recordScreenshotScan();
       if (result.error) {
         setWorkScanError(result.error);
         return;
@@ -15265,14 +15374,18 @@ function SettingsTab({ theme = "dark", setTheme = () => {
       return Math.ceil((e - n) / 864e5);
     })();
     return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 2 } }, "AI chat messages"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 18 } }, "Resets in ", daysLeft, " day", daysLeft !== 1 ? "s" : "", " \xB7 ", plan, " plan"), plan === "Pro" ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.lime, fontWeight: 600 } }, "Unlimited") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, plan, " plan"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: pct >= 80 ? "#E05252" : T.text, fontWeight: 600 } }, pct, "% used")), /* @__PURE__ */ React.createElement("div", { style: { height: 6, background: T.card2, borderRadius: 99, overflow: "hidden", marginBottom: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { height: "100%", width: pct + "%", background: barColor, borderRadius: 99, transition: "width 0.4s" } })), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 11.5, color: T.muted } }, /* @__PURE__ */ React.createElement("span", null, used, " used"), /* @__PURE__ */ React.createElement("span", null, cr, " remaining / ", lim)))), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 16 } }, "Your AI features"), [
-      ["Syllabus & schedule imports", plan === "Free" ? getSyllabusScanUsage().count + " / " + SYLLABUS_SCAN_LIMIT + " this month" : "Unlimited"],
-      ["AI note scans (files, lectures & YouTube)", plan === "Free" ? getNoteScanUsage().count + " / " + NOTE_SCAN_LIMIT + " this month" : "Unlimited"],
-      ["AI flashcard generations", plan === "Free" ? getFlashcardGenUsage().count + " / " + FLASHCARD_GEN_LIMIT + " this month" : "Unlimited"],
-      ["AI study plans", plan === "Free" ? getExamPlanUsage().count + " / " + EXAM_PLAN_LIMIT + " this month" : "Unlimited"],
+      ["Syllabus & schedule imports", plan === "Free" ? "Pro only" : "Included"],
+      ["AI note scans (files, lectures & YouTube)", plan === "Free" ? "Pro only" : "Included"],
+      ["AI flashcard generations", plan === "Free" ? "Pro only" : "Included"],
+      ["AI practice exams", plan === "Free" ? "Pro only" : "Included"],
+      ["AI study plans", plan === "Free" ? "Pro only" : "Included"],
+      ["Brain dump", plan === "Free" ? "Pro only" : "Included"],
+      ["Add Task with AI", plan === "Free" ? "Pro only" : "Included"],
       ["Attack sessions", "Unlimited"],
-      ["Project breakdowns", plan === "Free" ? getProjectBreakdownUsage().count + " / " + PROJECT_BREAKDOWN_LIMIT + " this month" : "Unlimited"],
-      ["Smart Reschedule", plan === "Free" ? "Pro only" : "Unlimited"]
-    ].map(([action, status], i, arr) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: i < arr.length - 1 ? `1px solid ${T.border}` : "none" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, action), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted, fontFamily: T.mono } }, status)))), plan === "Free" && /* @__PURE__ */ React.createElement(Card, { style: { background: T.lime, border: "none" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: T.ink, marginBottom: 4 } }, "Unlock unlimited AI"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.ink, opacity: 0.75, marginBottom: 14 } }, "Upgrade to Pro for unlimited AI chat, scans & flashcard generation."), /* @__PURE__ */ React.createElement("button", { onClick: () => setPricingOpen(true), style: { background: T.ink, color: T.lime, border: "none", padding: "8px 18px", borderRadius: 8, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: T.font } }, "Upgrade to Pro")));
+      ["Project breakdowns", plan === "Free" ? "Pro only" : "Included"],
+      ["Smart Reschedule", plan === "Free" ? "Pro only" : "Included"],
+      ["Manual classes, tasks & calendar", "Unlimited"]
+    ].map(([action, status], i, arr) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: i < arr.length - 1 ? `1px solid ${T.border}` : "none" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, action), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted, fontFamily: T.mono } }, status)))), plan === "Free" && /* @__PURE__ */ React.createElement(Card, { style: { background: T.lime, border: "none" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: T.ink, marginBottom: 4 } }, "Unlock Studlin's AI"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.ink, opacity: 0.75, marginBottom: 14 } }, "Upgrade to Pro for AI chat, scans, flashcard generation, and everything else Studlin's AI can do."), /* @__PURE__ */ React.createElement("button", { onClick: () => setPricingOpen(true), style: { background: T.ink, color: T.lime, border: "none", padding: "8px 18px", borderRadius: 8, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: T.font } }, "Upgrade to Pro")));
   })(), active === "Subscription" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12, background: T.lime, border: "none" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: T.bg, opacity: 0.6 } }, "CURRENT PLAN"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 26, fontWeight: 700, color: T.bg, letterSpacing: "-0.02em", marginTop: 4 } }, account.plan || getPlan()), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.bg, opacity: 0.75, marginTop: 4 } }, subscriptionPlanLine())), /* @__PURE__ */ React.createElement("div", { style: { textAlign: "right" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: T.bg, opacity: 0.6 } }, "AI CHAT MESSAGES"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 26, fontWeight: 700, color: T.bg, letterSpacing: "-0.02em", marginTop: 4 } }, getPlan() === "Pro" ? "Unlimited" : getCredits() + " / " + getCreditLimit()), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.bg, opacity: 0.75, marginTop: 4 } }, getPlan() === "Pro" ? "No monthly cap" : "Resets in " + daysUntilReset() + " day" + (daysUntilReset() !== 1 ? "s" : "")))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 18, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("a", { href: "checkout.html?credits=500", style: { background: T.bg, color: T.lime, padding: "8px 16px", borderRadius: 7, fontSize: 12.5, fontWeight: 600, textDecoration: "none" } }, "Buy credit packs"), getPlan() !== "Pro" && /* @__PURE__ */ React.createElement("a", { href: "checkout.html?plan=pro&billing=monthly", style: { background: "transparent", border: `1px solid ${T.bg}55`, color: T.bg, padding: "8px 16px", borderRadius: 7, fontSize: 12.5, fontWeight: 600, textDecoration: "none" } }, "Upgrade to Pro"))), account.stripeSubscriptionId && /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "Manage subscription"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, lineHeight: 1.55 } }, account.subscriptionCancelAtPeriodEnd ? "Your subscription is canceled. You'll keep " + (account.plan || getPlan()) + " perks until " + fmtBillingDate(account.subscriptionCurrentPeriodEnd || account.subscriptionEndsAt) + "." : "Cancel future payments and keep " + (account.plan || getPlan()) + " through " + fmtBillingDate(account.subscriptionCurrentPeriodEnd || account.subscriptionEndsAt) + ".")), account.subscriptionCancelAtPeriodEnd ? /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => {
     setSubscriptionError("");
     setSubscriptionAction("resume");
@@ -16069,10 +16182,9 @@ function App() {
   const [prepAutoToast, setPrepAutoToast] = useState("");
   const [lockInErrorToast, setLockInErrorToast] = useState("");
   const acceptPrepPrompt = (item) => {
-    const isProject = item.phases && item.phases.length > 0;
-    if (isProject && !canBreakDownProject()) {
-      setPrepAutoToast("Free plan's project breakdown for this month is used up \u2014 upgrade for unlimited.");
-      setTimeout(() => setPrepAutoToast(""), 4200);
+    const isProject2 = item.phases && item.phases.length > 0;
+    if (isProject2 && !canBreakDownProject()) {
+      setPricingOpen(true);
       return;
     }
     const events = lsGet("events", []);
@@ -16081,7 +16193,7 @@ function App() {
     const task = startPhaseAwareAttackChain({ title: item.title, deadline: item.date, priority: item.priority, difficulty: item.difficulty, noteId: item.noteId, dueEventId: item.id }, item.phases, events, routines, prefs, dayKey(), prefs.workStartTime);
     const next = events.map((e) => e.id === item.id ? { ...e, prepPending: false } : e).concat([task]);
     lsSet("events", next);
-    if (isProject) recordProjectBreakdown();
+    if (isProject2) recordProjectBreakdown();
     setPrepPromptBatch((b) => b.filter((x) => x.id !== item.id));
   };
   const declinePrepPrompt = (item) => {
@@ -16942,7 +17054,8 @@ function App() {
         setDashToast(msg);
         setTimeout(() => setDashToast(""), 2800);
       },
-      setActive
+      setActive,
+      setPricingOpen
     }
   ), /* @__PURE__ */ React.createElement(Modal, { open: pricingOpen, onClose: () => setPricingOpen(false), title: "Studlin plans", sub: "Start free. Upgrade when you're ready. Cancel anytime.", width: 820 }, /* @__PURE__ */ React.createElement(PlanCards, { billing: "monthly", onSelect: (key) => {
     setPricingOpen(false);

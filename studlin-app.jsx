@@ -479,17 +479,24 @@ function TourStep({ targetRef, title, body, step, total, onNext, onSkip, isLast 
 // billing-aware pricing (mirrors checkout.html's PLAN_DATA), just rendered
 // inside different wrappers. No trial tag on Pro -- pure freemium, the Free
 // tier itself is the "try before you buy."
+// 2026-08-18 pricing pass: Free is everything that costs Studlin nothing
+// to run (manual entry, the calendar itself); every AI-cost feature
+// (scans, generation, Brain Dump, Smart Reschedule, study plans) is
+// Pro-only, zero free taste -- see canScanSyllabus and friends. Attack
+// sessions dropped from Pro's feature list -- it's a deterministic
+// probe-then-schedule with no AI call at all, so it was always free and
+// listing it as a Pro perk was inaccurate.
 const PRICING_PLANS=(billing)=>([
   {
     key:"free",name:"Free",price:"$0",per:"forever",tag:null,
-    desc:"Get organized. No credit card needed.",
-    features:["Calendar, tasks, focus timer, streaks & XP: unlimited","Studlin Network & calendar connections: unlimited","Syllabus & schedule imports: 8 / month","1 AI study plan / month (sessions, flashcards & practice exam)","3 AI flashcard generations / month","Attack sessions: unlimited","1 project breakdown / month"],
+    desc:"Get organized, manually. No credit card needed.",
+    features:["Calendar, tasks, focus timer, streaks & XP: unlimited","Add classes, assignments & exams manually: unlimited","Studlin Network & calendar connections: unlimited","Attack sessions: unlimited"],
     cta:"Get started free",variant:"subtle",
   },
   {
     key:"pro",name:"Pro",price:billing==="annual"?"$4.99":"$6.99",per:billing==="annual"?"/mo · billed yearly":"/mo",tag:null,
-    desc:"Everything on Free, with no caps, plus Smart Reschedule.",
-    features:["Unlimited AI study plans, flashcards, syllabus scans, attack sessions & project breakdowns","Smart Reschedule, not on Free","All AI models: Flash, Standard & Research","Unlimited AI chat, every day"],
+    desc:"Every AI feature Studlin has.",
+    features:["Add Task with AI: Studlin schedules it for you","AI study plans, flashcards, practice exams, syllabus & schedule scans, brain dump & project breakdowns","Smart Reschedule","All AI models: Flash, Standard & Research"],
     cta:"Upgrade to Pro",variant:"lime",featured:true,
   },
 ]);
@@ -5530,12 +5537,13 @@ function getCreditLimit(){return getPlan()==="Pro"?100000:120;}
 function getCredits(){return lsGet("credits",getCreditLimit());}
 function setCreditsLS(n){lsSet("credits",Math.max(0,n));}
 const CREDIT_COST={standard:1,flash:1};
-// Named, per-feature monthly limits on Free — each capped feature gets its
-// own honest counter ("3 syllabus scans left this month") instead of
-// quietly eating into one abstract "AI credits" pool nobody understands.
-// Pro and Max are uncapped on all three. Purely client-side (same trust
-// model as credits everywhere else in this app — no server enforcement
-// exists yet).
+// Named, per-feature monthly usage tracking -- originally doubled as the
+// Free-tier gate itself (a "3 syllabus scans left this month" taste before
+// paying), but the 2026-08-18 pricing pass moved every AI-cost feature to
+// zero free access (see canScanSyllabus and friends below); these counters
+// are now usage analytics only; unused by any canX() gate. Purely
+// client-side (same trust model as credits everywhere else in this app —
+// no server enforcement exists yet).
 function makeMonthlyUsage(storageKey){
   return function(){
     const monthKey=new Date().toISOString().slice(0,7);
@@ -5545,59 +5553,154 @@ function makeMonthlyUsage(storageKey){
 }
 function daysUntilReset(){const n=new Date();const e=new Date(n.getFullYear(),n.getMonth()+1,1);return Math.ceil((e-n)/86400000);}
 
-const SYLLABUS_SCAN_LIMIT=8;
+// 2026-08-18 pricing pass, part 2: Free stays zero free access to any of
+// these (see the "part 1" gate-history above each function). Pro is
+// marketed as flatly "Unlimited" -- and stays that way in every user-
+// facing description, deliberately with no number attached -- but each
+// tool still gets a real, generous monthly ceiling underneath, invisible
+// unless someone actually reaches it. This is a fair-use backstop against
+// a runaway script or an outlier abusing one single endpoint, not a
+// budget any real student is expected to think about.
+//
+// Sizing math, so these numbers aren't arbitrary: api/chat.js's "standard"
+// model is Sonnet-class (~$3/M input tok, ~$15/M output tok); "flash" is
+// Haiku-class (~$0.80/M input, ~$4/M output). Per-call cost below is a
+// realistic-average estimate (typical prompt/material size, not the
+// absolute max token ceiling) for that feature's actual request shape.
+// Each PRO_*_LIMIT is picked so that single tool, maxed out every day for
+// a full month, still costs at most a few dollars against $6.99/mo
+// revenue -- generous enough that hitting it in real, non-abusive use
+// should be essentially unheard of. (These are estimates, not measured
+// production numbers -- worth revisiting once there's real usage data.)
+//
+// Aggregate backstop, on top of the per-tool caps above: they were each
+// individually sized to a few dollars, but never meant to be summed -- a
+// single user maxing out every one of them in the same month could add up
+// to more than $6.99/mo (or the cheaper $4.99/mo annual price) actually
+// brings in. This is the shared ceiling that catches that specific case:
+// total ESTIMATED real spend across every AI tool combined, reset
+// monthly same as everything else, capped safely under even the annual
+// price so there's real margin left for non-AI costs (hosting,
+// Firestore, etc) even in the worst case. Per-call cost estimates here
+// match each tool's own sizing comment below, kept in one table rather
+// than duplicated as a literal inside every recordX() function, so
+// there's exactly one place to correct once real production numbers
+// exist. aiSpendMills stores whole thousandths of a dollar (mills), not
+// cents -- rounding a $0.006/call feature to whole CENTS was overcharging
+// it by 67% every single call (0.6 rounds up to 1), which at real call
+// volume (hundreds/month) compounded into tripping this ceiling well
+// before the tool's own generous per-tool cap. Mills exactly represent
+// every estimate below (all specified to 3 decimal places already), so
+// this reuses makeMonthlyUsage's plain-integer-counter shape with zero
+// rounding error instead.
+const AI_CALL_COST_ESTIMATES={
+  syllabusScan:0.026,screenshotScan:0.022,noteScan:0.003,
+  flashcardGen:0.033,quizGen:0.037,examPlanBuild:0.009,
+  projectBreakdown:0.011,smartReschedule:0.001,brainDump:0.014,
+  aiArrange:0.006,
+};
+const PRO_MONTHLY_AI_SPEND_CEILING=3.5; // dollars -- safely under even the $4.99/mo annual price, leaving real margin for non-AI costs
+const getMonthlyAiSpend=makeMonthlyUsage("aiSpendMills");
+function chargeAiSpend(feature){
+  const cost=AI_CALL_COST_ESTIMATES[feature]||0;
+  const u=getMonthlyAiSpend();
+  lsSet("aiSpendMills",{month:u.month,count:u.count+Math.round(cost*1000)});
+}
+function underAiSpendCeiling(){return getMonthlyAiSpend().count<PRO_MONTHLY_AI_SPEND_CEILING*1000;}
+
+// ~$0.026/call (json extraction, ~2.5k input incl. syllabus text + schema
+// instructions, ~1.2k output). Cap sized for ~$1/mo worst case.
+const PRO_SYLLABUS_SCAN_LIMIT=40;
 const getSyllabusScanUsage=makeMonthlyUsage("syllabusScans");
-function canScanSyllabus(){return getPlan()!=="Free"||getSyllabusScanUsage().count<SYLLABUS_SCAN_LIMIT;}
-function recordSyllabusScan(){const u=getSyllabusScanUsage();lsSet("syllabusScans",{month:u.month,count:u.count+1});}
+function canScanSyllabus(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getSyllabusScanUsage().count<PRO_SYLLABUS_SCAN_LIMIT;}
+function recordSyllabusScan(){const u=getSyllabusScanUsage();lsSet("syllabusScans",{month:u.month,count:u.count+1});chargeAiSpend("syllabusScan");}
 
 // A screenshot import (Canvas weekly view, a photographed syllabus page)
 // costs meaningfully more than a text-only syllabus scan -- image tokens,
 // same reason api/chat.js prices an image-bearing request higher than a
-// plain-text one. Its own pool, separate from SYLLABUS_SCAN_LIMIT, rather
-// than quietly borrowing from that budget.
-const SCREENSHOT_SCAN_LIMIT=3;
+// plain-text one. Its own pool, separate from the syllabus-scan one above,
+// rather than quietly borrowing from that budget. ~$0.022/call (image +
+// json extraction). Cap sized for ~$0.85/mo worst case.
+const PRO_SCREENSHOT_SCAN_LIMIT=40;
 const getScreenshotScanUsage=makeMonthlyUsage("screenshotScans");
-function canScanScreenshot(){return getPlan()!=="Free"||getScreenshotScanUsage().count<SCREENSHOT_SCAN_LIMIT;}
-function recordScreenshotScan(){const u=getScreenshotScanUsage();lsSet("screenshotScans",{month:u.month,count:u.count+1});}
+function canScanScreenshot(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getScreenshotScanUsage().count<PRO_SCREENSHOT_SCAN_LIMIT;}
+function recordScreenshotScan(){const u=getScreenshotScanUsage();lsSet("screenshotScans",{month:u.month,count:u.count+1});chargeAiSpend("screenshotScan");}
 
 // AI note scans — "Scan a file", "Record lecture" and "YouTube link" all
 // turn raw material into AI-summarized notes, so they share one pool
-// (distinct from manual "Write", which stays unlimited).
-const NOTE_SCAN_LIMIT=3;
+// (distinct from manual "Write", which stays unlimited) -- and so does
+// genSummaryFromNote's "Generate Summary" action, which reuses this same
+// gate rather than a separate one. Haiku-class, ~$0.003/call. Cap sized
+// generously (~5/day) since this is cheap enough that frequency, not
+// dollars, is the real ceiling here.
+const PRO_NOTE_SCAN_LIMIT=150;
 const getNoteScanUsage=makeMonthlyUsage("noteScans");
-function canScanNote(){return getPlan()!=="Free"||getNoteScanUsage().count<NOTE_SCAN_LIMIT;}
-function recordNoteScan(){const u=getNoteScanUsage();lsSet("noteScans",{month:u.month,count:u.count+1});}
+function canScanNote(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getNoteScanUsage().count<PRO_NOTE_SCAN_LIMIT;}
+function recordNoteScan(){const u=getNoteScanUsage();lsSet("noteScans",{month:u.month,count:u.count+1});chargeAiSpend("noteScan");}
 
 // AI flashcard generation from notes (distinct from manual deck creation,
-// which stays unlimited).
-const FLASHCARD_GEN_LIMIT=3;
+// which stays unlimited). ~$0.033/call (json extraction, material up to
+// MATERIAL_TEXT_CAP counted at realistic-average, not worst-case, size).
+// Cap sized for ~$2/mo worst case.
+const PRO_FLASHCARD_GEN_LIMIT=60;
 const getFlashcardGenUsage=makeMonthlyUsage("flashcardGens");
-function canGenFlashcards(){return getPlan()!=="Free"||getFlashcardGenUsage().count<FLASHCARD_GEN_LIMIT;}
-function recordFlashcardGen(){const u=getFlashcardGenUsage();lsSet("flashcardGens",{month:u.month,count:u.count+1});}
+function canGenFlashcards(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getFlashcardGenUsage().count<PRO_FLASHCARD_GEN_LIMIT;}
+function recordFlashcardGen(){const u=getFlashcardGenUsage();lsSet("flashcardGens",{month:u.month,count:u.count+1});chargeAiSpend("flashcardGen");}
 
-// Studlin Prep's three AI-driven planning flows (2026-08-10 pricing pass) --
-// same named-limit pattern as the scans/generation above. One study plan a
-// month is enough to prove the whole "confidence question -> sessions ->
-// flashcards -> practice exam" flow is real before asking for money.
-const EXAM_PLAN_LIMIT=1;
+// Studlin Prep's AI-driven planning flows. ~$0.009/call (session-focus
+// text is short output even when material input is real). Cap sized
+// generously -- more than one study plan build per day.
+const PRO_EXAM_PLAN_LIMIT=40;
 const getExamPlanUsage=makeMonthlyUsage("examPlanBuilds");
-function canBuildExamPlan(){return getPlan()!=="Free"||getExamPlanUsage().count<EXAM_PLAN_LIMIT;}
-function recordExamPlanBuild(){const u=getExamPlanUsage();lsSet("examPlanBuilds",{month:u.month,count:u.count+1});}
+function canBuildExamPlan(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getExamPlanUsage().count<PRO_EXAM_PLAN_LIMIT;}
+function recordExamPlanBuild(){const u=getExamPlanUsage();lsSet("examPlanBuilds",{month:u.month,count:u.count+1});chargeAiSpend("examPlanBuild");}
 
 // Attack Block (no phases -- a plain assignment, not a Project) is
 // deterministic probe-then-schedule with no AI call at all, so it's never
 // gated -- unlike the Project phase-breakdown branch just below, which
-// does call AI to propose the phases.
-
-const PROJECT_BREAKDOWN_LIMIT=1;
+// does call AI to propose the phases. ~$0.022/call (proposeProjectPhases
+// + proposeOutline, two calls per breakdown). Cap sized for ~$0.65/mo
+// worst case -- genuinely rare in real use (a handful of projects/month).
+const PRO_PROJECT_BREAKDOWN_LIMIT=30;
 const getProjectBreakdownUsage=makeMonthlyUsage("projectBreakdowns");
-function canBreakDownProject(){return getPlan()!=="Free"||getProjectBreakdownUsage().count<PROJECT_BREAKDOWN_LIMIT;}
-function recordProjectBreakdown(){const u=getProjectBreakdownUsage();lsSet("projectBreakdowns",{month:u.month,count:u.count+1});}
+function canBreakDownProject(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getProjectBreakdownUsage().count<PRO_PROJECT_BREAKDOWN_LIMIT;}
+function recordProjectBreakdown(){const u=getProjectBreakdownUsage();lsSet("projectBreakdowns",{month:u.month,count:u.count+1});chargeAiSpend("projectBreakdown");}
 
-// Smart Reschedule -- paid-only, no free tier at all (not a capped
-// free-taste feature like the three above). Deliberate: this is the "I'm
-// desperate right now" moment, and desperate moments convert.
-function canUseSmartReschedule(){return getPlan()!=="Free";}
+// Smart Reschedule -- paid-only, no free tier at all. Was already the
+// odd one out under the old model (every other AI feature got a free
+// taste, this one never did); now it's just the first of what's the
+// norm. Haiku-class intent classification, ~$0.001/call -- effectively
+// free to Studlin even at heavy use, so the cap exists purely as a sanity
+// ceiling, not a real cost concern.
+const PRO_SMART_RESCHEDULE_LIMIT=200;
+const getSmartRescheduleUsage=makeMonthlyUsage("smartReschedules");
+function canUseSmartReschedule(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getSmartRescheduleUsage().count<PRO_SMART_RESCHEDULE_LIMIT;}
+function recordSmartReschedule(){const u=getSmartRescheduleUsage();lsSet("smartReschedules",{month:u.month,count:u.count+1});chargeAiSpend("smartReschedule");}
+
+// Brain Dump -- turns free-text into scheduled items via a real /api/chat
+// call (see parseBrainDump), but previously had no gate at all: unlimited
+// free AI calls for anyone. ~$0.014/call (json extraction). Cap sized
+// for ~$1.35/mo worst case -- more than 3/day.
+const PRO_BRAIN_DUMP_LIMIT=100;
+const getBrainDumpUsage=makeMonthlyUsage("brainDumps");
+function canUseBrainDump(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getBrainDumpUsage().count<PRO_BRAIN_DUMP_LIMIT;}
+function recordBrainDump(){const u=getBrainDumpUsage();lsSet("brainDumps",{month:u.month,count:u.count+1});chargeAiSpend("brainDump");}
+
+// "Add Task with AI" (CalendarTab's aiArrange) -- the primary AI-scheduling
+// action in the main Add Task modal, real /api/chat cost (directly, and via
+// proposeProjectPhases/proposeOutline when adding a project this way), and
+// likely the single most-used AI action in the app. Was completely
+// ungated. One gate for the whole action regardless of task kind, rather
+// than splitting project-adds off onto canBreakDownProject -- one button,
+// one clear rule, one paywall trigger point. ~$0.006/call (short prompt,
+// short scheduling decision output) -- the cheapest per-call cost of any
+// gated tool here, but also almost certainly the highest-frequency one,
+// so the cap is sized well past a genuinely heavy day-to-day user
+// (13+/day) rather than off dollars alone.
+const PRO_AI_ARRANGE_LIMIT=400;
+const getAiArrangeUsage=makeMonthlyUsage("aiArranges");
+function canUseAiArrange(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getAiArrangeUsage().count<PRO_AI_ARRANGE_LIMIT;}
+function recordAiArrange(){const u=getAiArrangeUsage();lsSet("aiArranges",{month:u.month,count:u.count+1});chargeAiSpend("aiArrange");}
 
 // ─── XP · LEVEL · STREAK · PLAN (all derived from real activity) ───────────────
 const DOW_FULL=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
@@ -6825,14 +6928,19 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
 // ─── UPGRADE MODAL (shared paywall) ───────────────────────────────────────────
 function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
   if(!open)return null;
-  const tier={name:"Pro",price:"$6.99",perks:["Unlimited AI study plans, flashcards, syllabus scans, attack sessions & project breakdowns","Smart Reschedule, not on Free at all","Every AI model + 4 study modes"],color:T.lime};
+  // "Attack sessions" dropped from this list -- Attack Block is a
+  // deterministic probe-then-schedule with no AI call at all (see
+  // canBreakDownProject's own comment), so it was always free and listing
+  // it as a Pro perk was inaccurate, not just imprecise. Brain Dump added
+  // -- newly Pro-only as of the 2026-08-18 pricing pass.
+  const tier={name:"Pro",price:"$6.99",perks:["Add Task with AI","AI study plans, flashcards, syllabus scans, brain dump & project breakdowns","Smart Reschedule","Every AI model + 4 study modes"],color:T.lime};
   const choose=()=>{setPlanLS("Pro");onClose();if(onUpgraded)onUpgraded("Pro");};
   return (
     <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:90,background:"rgba(8,12,10,0.72)",backdropFilter:"blur(7px)",display:"flex",alignItems:"center",justifyContent:"center"}}>
       <div onClick={e=>e.stopPropagation()} style={{width:400,maxWidth:"92vw",background:T.card,border:"1px solid "+T.border,borderRadius:8,padding:26,boxShadow:"0 40px 90px -30px rgba(0,0,0,0.65)"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
           <span style={{display:"inline-flex",width:30,height:30,borderRadius:8,background:T.lime+"1c",border:"1px solid "+T.lime+"44",alignItems:"center",justifyContent:"center",color:T.lime}}>{Icon.wand}</span>
-          <div style={{fontSize:17,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>You have hit your {feature} limit</div>
+          <div style={{fontSize:17,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>{feature} is a Pro feature</div>
         </div>
         <div style={{fontSize:12.5,color:T.text,lineHeight:1.6,marginBottom:18}}>{detail}</div>
         <div style={{background:T.card,border:"1px solid "+T.border,borderRadius:12,padding:16,marginBottom:14}}>
@@ -6973,13 +7081,15 @@ function wrongTopicsFor(questions,answers){
   });
   return topics;
 }
-// Free-tier cap on AI quiz generation — same shape as FLASHCARD_GEN_LIMIT,
-// a separate pool since a quiz is a materially more expensive generation
-// (more output tokens) than a flashcard deck.
-const QUIZ_GEN_LIMIT=3;
+// Pro-only, real monthly cap underneath -- see the 2026-08-18 pricing-pass
+// comment above canScanSyllabus for the full sizing rationale.
+// ~$0.037/call (json extraction, the priciest per-call cost of any gated
+// tool here -- long material input plus a full multi-question output).
+// Cap sized for ~$2.25/mo worst case.
+const PRO_QUIZ_GEN_LIMIT=60;
 const getQuizGenUsage=makeMonthlyUsage("quizGens");
-function canGenQuiz(){return getPlan()!=="Free"||getQuizGenUsage().count<QUIZ_GEN_LIMIT;}
-function recordQuizGen(){const u=getQuizGenUsage();lsSet("quizGens",{month:u.month,count:u.count+1});}
+function canGenQuiz(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getQuizGenUsage().count<PRO_QUIZ_GEN_LIMIT;}
+function recordQuizGen(){const u=getQuizGenUsage();lsSet("quizGens",{month:u.month,count:u.count+1});chargeAiSpend("quizGen");}
 
 // Cap on how much text one uploaded/pasted material entry can contribute --
 // keeps a single huge PDF from blowing up the flashcard/practice-exam
@@ -7366,6 +7476,16 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   // actually added, not a separate top-level choice from a screen ago.
   const generatePreview=async()=>{
     if(!buildPlanExam)return;
+    // commitBuildPlan (Confirm) already gates on canBuildExamPlan, but
+    // this step -- "Generate Plan" -- makes its own real AI call
+    // (proposeSessionFocuses, below) before Confirm is ever reached. Was
+    // a real loophole: a Free user could burn a genuine paid API call by
+    // generating a preview and just never confirming it. Same check
+    // here, before anything AI-costing runs, not just at commit.
+    if(!canBuildExamPlan()){
+      setUpgradeModal({feature:"AI study plans",detail:"AI study plans are a Pro feature. Upgrade to use them."});
+      return;
+    }
     const hasMaterial=buildPlanMaterialText.trim().length>0;
     setBuildPlanGeneric(!hasMaterial);
     if(hasMaterial)persistBuildPlanMaterial();
@@ -7438,7 +7558,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   const commitBuildPlan=async()=>{
     if(!buildPlanExam||!buildPlanPreview)return;
     if(!canBuildExamPlan()){
-      setUpgradeModal({feature:"AI study plans",detail:"You've used your "+EXAM_PLAN_LIMIT+" free study plan this month. It resets in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")+", or upgrade for unlimited right now."});
+      setUpgradeModal({feature:"AI study plans",detail:"AI study plans are a Pro feature. Upgrade to use them."});
       return;
     }
     setBuildPlanLoading(true);
@@ -7712,7 +7832,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   const doGenDeckForExam=async()=>{
     if(!materialText.trim()||!selectedExam)return;
     if(!canGenFlashcards()){
-      setUpgradeModal({feature:"AI flashcard generations",detail:"You've used all "+FLASHCARD_GEN_LIMIT+" free flashcard generations this month. They reset in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")+", or upgrade for unlimited right now."});
+      setUpgradeModal({feature:"AI flashcard generations",detail:"AI flashcard generations are a Pro feature. Upgrade to use them."});
       return;
     }
     setGenLoading("cards");setGenMsg("");
@@ -7732,7 +7852,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   const doGenPracticeExamForExam=async()=>{
     if(!materialText.trim()||!selectedExam)return;
     if(!canGenQuiz()){
-      setUpgradeModal({feature:"AI practice exams",detail:"You've used all "+QUIZ_GEN_LIMIT+" free practice exams this month. They reset in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")+", or upgrade for unlimited right now."});
+      setUpgradeModal({feature:"AI practice exams",detail:"AI practice exams are a Pro feature. Upgrade to use them."});
       return;
     }
     setGenLoading("quiz");setGenMsg("");
@@ -7914,7 +8034,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   const generateFollowUpPracticeExam=async()=>{
     if(!takingQuiz||!takingQuiz.done||!takingQuiz.wrongTopics||takingQuiz.wrongTopics.length===0)return;
     if(!canGenQuiz()){
-      setUpgradeModal({feature:"AI practice exams",detail:"You've used all "+QUIZ_GEN_LIMIT+" free practice exams this month. They reset in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")+", or upgrade for unlimited right now."});
+      setUpgradeModal({feature:"AI practice exams",detail:"AI practice exams are a Pro feature. Upgrade to use them."});
       return;
     }
     setFollowUpLoading(true);setFollowUpError("");
@@ -9422,7 +9542,7 @@ function Flashcards({setActive=()=>{}}={}) {
     else if(dSource==="file"){
       if(fileTexts.length===0){setCreateDeckError("Upload a file first.");return;}
       if(!canGenFlashcards()){
-        setUpgradeModal({feature:"AI flashcard generations",detail:"You've used all "+FLASHCARD_GEN_LIMIT+" free flashcard generations this month. They reset in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")+", or upgrade for unlimited right now."});
+        setUpgradeModal({feature:"AI flashcard generations",detail:"AI flashcard generations are a Pro feature. Upgrade to use them."});
         return;
       }
       const combined=fileTexts.map(f=>"--- "+f.name+" ---\n"+f.text).join("\n\n");
@@ -9433,7 +9553,7 @@ function Flashcards({setActive=()=>{}}={}) {
     else if(dSource==="record"){
       if(!recText){setCreateDeckError("Record a lecture first.");return;}
       if(!canGenFlashcards()){
-        setUpgradeModal({feature:"AI flashcard generations",detail:"You've used all "+FLASHCARD_GEN_LIMIT+" free flashcard generations this month. They reset in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")+", or upgrade for unlimited right now."});
+        setUpgradeModal({feature:"AI flashcard generations",detail:"AI flashcard generations are a Pro feature. Upgrade to use them."});
         return;
       }
       cards=await aiGenCards("Lecture transcription:\n\n"+recText,"lecture transcription",cardCount);
@@ -9907,7 +10027,9 @@ function Notes({setActive=()=>{}}){
   // Contextual paywall — opened at the exact moment a free-tier limit (note
   // scans, flashcard gens, syllabus scans) is actually hit, never before.
   const [upgradeModal,setUpgradeModal]=useState(null); // {feature, detail}
-  const resetNote=(feature,limit,saved)=>"You've used all "+limit+" free "+feature+" this month"+(saved?" — "+saved:"")+". They reset in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")+", or upgrade for unlimited right now.";
+  // Renamed from resetNote (2026-08-18 pricing pass) -- no more monthly
+  // reset to mention, this feature was never on Free to begin with.
+  const proOnlyNote=(feature,saved)=>feature+" is a Pro feature"+(saved?" — "+saved:"")+". Upgrade to use it.";
 
   // One-shot deep-link flag (matches the pendingTour/pendingRoutineCenter
   // pattern used elsewhere) — currently unset by anything since the
@@ -10062,7 +10184,7 @@ function Notes({setActive=()=>{}}){
     const plain=(tmp.textContent||tmp.innerText||"").trim();
     if(!plain)return;
     if(!canScanSyllabus()){
-      setUpgradeModal({feature:"deadline scans",detail:resetNote("deadline scans",SYLLABUS_SCAN_LIMIT,"upgrade to keep scanning notes for dates")});
+      setUpgradeModal({feature:"deadline scans",detail:proOnlyNote("deadline scans","upgrade to keep scanning notes for dates")});
       return;
     }
     setScanningDates(true);
@@ -10084,8 +10206,10 @@ function Notes({setActive=()=>{}}){
     }
   };
 
-  const noteScansLeft=Math.max(0,NOTE_SCAN_LIMIT-getNoteScanUsage().count);
-  const noteScanBadge=getPlan()==="Free"?noteScansLeft+" scan"+(noteScansLeft===1?"":"s")+" left":null;
+  // Was "N scans left" counting down NOTE_SCAN_LIMIT -- with zero free
+  // scans now (2026-08-18 pricing pass), that would show "0 scans left,"
+  // reading like a depleted quota rather than a Pro-only feature.
+  const noteScanBadge=getPlan()==="Free"?"Pro":null;
   const sources=[
     {id:"write",label:"Write",desc:"Type directly on the canvas",icon:Icon.pen,cost:null},
     {id:"file",label:"Scan a file",desc:"PDF, slides, or photos of the board",icon:Icon.file,cost:noteScanBadge},
@@ -10208,8 +10332,8 @@ function Notes({setActive=()=>{}}){
         // vision-based deadline extraction, gated by its own pricier usage
         // pool (SCREENSHOT_SCAN_LIMIT), separate from AI note scans.
         if(!canScanScreenshot()){
-          body="<p>Screenshot uploaded, but this month's free screenshot imports are used up.</p>";
-          setUpgradeModal({feature:"screenshot imports",detail:resetNote("screenshot imports",SCREENSHOT_SCAN_LIMIT)});
+          body="<p>Screenshot uploaded, but screenshot imports are a Pro feature.</p>";
+          setUpgradeModal({feature:"screenshot imports",detail:proOnlyNote("screenshot imports")});
         }else{
           setAiLoading(true);
           const result=await extractSyllabusDeadlinesFromImage(fileImage.base64,fileImage.mediaType);
@@ -10231,7 +10355,7 @@ function Notes({setActive=()=>{}}){
         await detectDates(fileText);
       }else{
         body="<p>"+fileText.trim().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/\n/g,"<br>")+"</p>";
-        setUpgradeModal({feature:"AI note scans",detail:resetNote("AI note scans",NOTE_SCAN_LIMIT,"this file was saved as plain text, not AI-summarized")});
+        setUpgradeModal({feature:"AI note scans",detail:proOnlyNote("AI note scans","this file was saved as plain text, not AI-summarized")});
       }
     }
     const newNote={id:String(Date.now()),title,body,tag,date:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"}),createdAt:Date.now()};
@@ -10318,7 +10442,7 @@ function Notes({setActive=()=>{}}){
     const text=getNotePlainText();
     if(!text){setPanelMsg("This note is empty — write something first.");return;}
     if(!canGenFlashcards()){
-      setUpgradeModal({feature:"AI flashcard generations",detail:resetNote("AI flashcard generations",FLASHCARD_GEN_LIMIT,"you can still build cards manually anytime")});
+      setUpgradeModal({feature:"AI flashcard generations",detail:proOnlyNote("AI flashcard generations","you can still build cards manually anytime")});
       return;
     }
     setPanelLoading("cards");setPanelMsg("");
@@ -10343,7 +10467,7 @@ function Notes({setActive=()=>{}}){
     const text=getNotePlainText();
     if(!text){setPanelMsg("This note is empty — write something first.");return;}
     if(!canGenQuiz()){
-      setUpgradeModal({feature:"AI practice quizzes",detail:resetNote("AI practice quizzes",QUIZ_GEN_LIMIT)});
+      setUpgradeModal({feature:"AI practice quizzes",detail:proOnlyNote("AI practice quizzes")});
       return;
     }
     setPanelLoading("quiz");setPanelMsg("");
@@ -10366,11 +10490,23 @@ function Notes({setActive=()=>{}}){
   const genSummaryFromNote=async()=>{
     const text=getNotePlainText();
     if(!text){setPanelMsg("This note is empty — write something first.");return;}
+    // Was calling /api/chat with zero gate at all -- unlimited free AI
+    // summarization for anyone, same gap Brain Dump had before the
+    // 2026-08-18 pricing pass. Reuses canScanNote rather than a new gate
+    // -- same "AI reads/processes your note" class of cost as a note scan.
+    if(!canScanNote()){
+      setUpgradeModal({feature:"AI note summaries",detail:proOnlyNote("AI note summaries")});
+      return;
+    }
     setPanelLoading("summary");setPanelMsg("");
     try{
       const prompt="Summarize these study notes into a concise, high-level bulleted summary for quick review — no more than 8 bullet points. Return only the bullet points as plain text lines, each starting with \"- \". No markdown headers, no extra commentary.\n\n"+text.slice(0,15000);
       const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash"})});
       const data=await res.json();
+      // Was gated by canScanNote above but never actually recorded --
+      // counted toward neither the per-tool cap nor the aggregate spend
+      // ceiling, silently exempting this action from both.
+      recordNoteScan();
       const raw=(data.reply||"").trim();
       const bullets=raw.split("\n").map(l=>l.replace(/^[-*•]\s*/,"").trim()).filter(Boolean);
       setSummaryOverlay(bullets.length?bullets:["No summary available."]);
@@ -10829,9 +10965,14 @@ function Notes({setActive=()=>{}}){
                 {/* ── AI STUDY TOOLS — turn this note into flashcards, a quiz, or a summary ── */}
                 <div style={{display:"flex",alignItems:"center",gap:8,padding:"12px 20px",borderTop:`1px solid ${T.border}`,background:T.card2,flexWrap:"wrap"}}>
                   <span style={{fontSize:9.5,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.faint,marginRight:2}}>Turn into</span>
-                  <BtnSm variant="subtle" onClick={genFlashcardsFromNote} disabled={panelLoading!==null}>{panelLoading==="cards"?"Generating…":<>{Icon.layers} Create Flashcards{getPlan()==="Free"&&" ("+Math.max(0,FLASHCARD_GEN_LIMIT-getFlashcardGenUsage().count)+" left)"}</>}</BtnSm>
-                  <BtnSm variant="subtle" onClick={genQuizFromNote} disabled={panelLoading!==null}>{panelLoading==="quiz"?"Generating…":<>{Icon.check} Create Practice Quiz{getPlan()==="Free"&&" ("+Math.max(0,QUIZ_GEN_LIMIT-getQuizGenUsage().count)+" left)"}</>}</BtnSm>
-                  <BtnSm variant="subtle" onClick={genSummaryFromNote} disabled={panelLoading!==null}>{panelLoading==="summary"?"Generating…":<>{Icon.file} Generate Summary</>}</BtnSm>
+                  {/* "(N left)" dropped -- with zero free access now
+                      (2026-08-18 pricing pass) it would always read "(0
+                      left)", a depleted-looking state rather than "this
+                      is Pro." "(Pro)" instead, same convention as
+                      noteScanBadge above. */}
+                  <BtnSm variant="subtle" onClick={genFlashcardsFromNote} disabled={panelLoading!==null}>{panelLoading==="cards"?"Generating…":<>{Icon.layers} Create Flashcards{getPlan()==="Free"&&" (Pro)"}</>}</BtnSm>
+                  <BtnSm variant="subtle" onClick={genQuizFromNote} disabled={panelLoading!==null}>{panelLoading==="quiz"?"Generating…":<>{Icon.check} Create Practice Quiz{getPlan()==="Free"&&" (Pro)"}</>}</BtnSm>
+                  <BtnSm variant="subtle" onClick={genSummaryFromNote} disabled={panelLoading!==null}>{panelLoading==="summary"?"Generating…":<>{Icon.file} Generate Summary{getPlan()==="Free"&&" (Pro)"}</>}</BtnSm>
                   {panelMsg&&<span style={{fontSize:11,color:panelMsg.startsWith("✓")?T.teal:T.red,marginLeft:4}}>{panelMsg}</span>}
                 </div>
               </>
@@ -15669,15 +15810,29 @@ function MaterialEditor({item,onChange,label,idPrefix}){
 // `item` needs title/detail/phases/phasesLoading/outline/outlineLoading;
 // `onChange` receives a partial patch, same convention as MaterialEditor
 // above; `subject` feeds the AI prompts the same way it always has.
-function PhasesOutlineEditor({item,onChange,subject}){
+// onGateBlocked defaults to a no-op -- this component is reused across
+// Add Task, Edit Task, and (per its own original comment) possibly other
+// review screens with different access to a pricing-modal trigger, so it
+// can't assume one exists. Real AI cost lives entirely in these two
+// suggest* calls (proposeProjectPhases/proposeOutline) -- was previously
+// completely ungated here, the actual point project breakdown's cost is
+// incurred, while every canBreakDownProject() check elsewhere in the app
+// only fires at a later commit step. recordProjectBreakdown() fires once
+// per real call (phases and outline independently), not once per
+// "session" -- a user can suggest just one or the other.
+function PhasesOutlineEditor({item,onChange,subject,onGateBlocked=()=>{}}){
   const suggestPhases=async()=>{
+    if(!canBreakDownProject()){onGateBlocked();return;}
     onChange({phasesLoading:true});
     const names=await proposeProjectPhases(item.title,item.detail||"",subject);
+    recordProjectBreakdown();
     onChange({phasesLoading:false,phases:names||[]});
   };
   const suggestOutline=async()=>{
+    if(!canBreakDownProject()){onGateBlocked();return;}
     onChange({outlineLoading:true});
     const steps=await proposeOutline(item.title,item.detail||"",subject);
+    recordProjectBreakdown();
     onChange({outlineLoading:false,outline:steps||[]});
   };
   return (<>
@@ -17873,7 +18028,7 @@ function RescheduleModal({task,events,commit,onClose,onManual}){
 // CalendarTab) decides once what "persist" means for it, instead of six
 // different inline lsSet calls each needing to remember to also sync
 // whatever local state that caller happens to hold.
-function EventDetailModal({eventId,onClose,commit,onToast,setActive}){
+function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOpen=()=>{}}){
   const allEvents=lsGet("events",[]);
   const ev=allEvents.find(e=>e.id===eventId);
   const routines=getWeeklyRoutine();
@@ -18354,7 +18509,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive}){
       {requiresProjectDetail&&(
         <div style={{marginBottom:14}}>
           <div style={{fontSize:11.5,color:T.muted,marginBottom:8}}>Marked as a Project — use the Detail field below to describe it, and Studlin will suggest phases and a checklist.</div>
-          <PhasesOutlineEditor item={{...projectPlan,title,detail:notes}} onChange={patch=>setProjectPlan(p=>({...p,...patch}))} subject={subject} />
+          <PhasesOutlineEditor item={{...projectPlan,title,detail:notes}} onChange={patch=>setProjectPlan(p=>({...p,...patch}))} subject={subject} onGateBlocked={()=>setPricingOpen(true)} />
         </div>
       )}
       {isProject&&(
@@ -18376,7 +18531,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive}){
               <Field label="Probe session length"><NumField min={15} max={60} fallback={ATTACK_BLOCK_DEFAULT_PROBE_MINS} value={attackProbeMins} onChange={setAttackProbeMins} /></Field>
             </div>
             {isPhaseCandidate&&(
-              <PhasesOutlineEditor item={{...projectPlan,title,detail:notes}} onChange={patch=>setProjectPlan(p=>({...p,...patch}))} subject={subject} />
+              <PhasesOutlineEditor item={{...projectPlan,title,detail:notes}} onChange={patch=>setProjectPlan(p=>({...p,...patch}))} subject={subject} onGateBlocked={()=>setPricingOpen(true)} />
             )}
           </>)}
         </div>
@@ -20323,6 +20478,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       // which is exactly what looked like "brain dump doesn't work." Surface
       // the real reason instead of pretending it succeeded.
       if(!res.ok)return {items:[],error:data.error||"Couldn't reach Studlin AI. Please try again."};
+      // A real, successful round-trip -- counts against the cap regardless
+      // of what happens to the reply below (a garbled-JSON fallback to
+      // fallbackSplitBrainDump still spent the same real API call).
+      recordBrainDump();
       const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
       let parsed=null;
       try{parsed=JSON.parse(raw);}catch(e){parsed=null;}
@@ -20340,6 +20499,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const [bdError,setBdError]=useState("");
   const submitBrainDump=async()=>{
     if(!brainDumpText.trim()||brainDumpLoading)return;
+    // Brain Dump calls /api/chat (real AI cost) and had no gate at all
+    // before the 2026-08-18 pricing pass -- same setPricingOpen paywall
+    // Smart Reschedule already uses in this component, not a separate
+    // UpgradeModal (that one lives in a different component's own local
+    // state, not reachable from here).
+    if(!canUseBrainDump()){setPricingOpen(true);return;}
     if(bdListening)stopBdRec();
     setBrainDumpLoading(true);
     setBdError("");
@@ -20480,11 +20645,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       // Block skips the AI call entirely" below), so it stays free and
       // unlimited regardless of plan.
       const isProject=evKind==="project";
-      if(isProject&&!canBreakDownProject()){
-        setDeadlineToast("Free plan's project breakdowns for this month are used up — upgrade for unlimited.");
-        setTimeout(()=>setDeadlineToast(""),3200);
-        return;
-      }
+      // A passive toast here used to be a dead end -- told the student
+      // it's Pro-only with no way to actually act on that. Opens the real
+      // paywall now, same as every other Pro-only gate in this component.
+      if(isProject&&!canBreakDownProject()){setPricingOpen(true);return;}
       const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
       const prefs=getSchedulePreferences();
       const phases=evKind==="project"?(evProjectPlan.phases||[]).map(p=>p.trim()).filter(Boolean):[];
@@ -20601,6 +20765,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   };
   const aiArrange=async()=>{
     if(!evTitle.trim())return;
+    // Real AI cost (directly, and via proposeProjectPhases/proposeOutline
+    // for a project) -- was completely ungated. Same setPricingOpen
+    // paywall as Smart Reschedule/Brain Dump elsewhere in this component,
+    // fired before anything AI-costing runs.
+    if(!canUseAiArrange()){setPricingOpen(true);return;}
     if(evKind==="exam"||evKind==="class"||evKind==="busy block")return; // fixed real-world blocks — AI never touches these
     if(taskMode==="manual")return; // Manual Placement is active — use Save to Calendar instead
     if(evKind==="project"&&!evNotes.trim()){setEvDetailErr("Add a bit of detail so Studlin can suggest real phases, not a generic template.");return;}
@@ -20630,16 +20799,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // deterministic placement, not LLM reasoning about a duration nobody has
     // yet.
     if(evAttackBlock){
-      // Same real-AI-cost-only gate as the other Add-Task submit path above --
-      // plain Attack Block is deterministic (see comment above), only the
-      // Project phase-breakdown branch actually calls AI.
-      const isProject=evKind==="project";
-      if(isProject&&!canBreakDownProject()){
-        setAiLoading(false);
-        setDeadlineToast("Free plan's project breakdowns for this month are used up — upgrade for unlimited.");
-        setTimeout(()=>setDeadlineToast(""),3200);
-        return;
-      }
+      // No separate canBreakDownProject check here (unlike the other
+      // Add-Task submit path above, saveManual, which doesn't go through
+      // aiArrange at all) -- aiArrange's own canUseAiArrange gate at the
+      // top of this function already turned back any Free user before
+      // reaching this far, and canBreakDownProject is the exact same
+      // getPlan()!=="Free" check, so it could never fire here anyway.
       const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
       const phases=evKind==="project"?(evProjectPlan.phases||[]).map(p=>p.trim()).filter(Boolean):[];
       const outline=evKind==="project"?normalizeOutlineDraft(evProjectPlan.outline):[];
@@ -20693,6 +20858,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     try{
       const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash"})});
       const data=await res.json();
+      // canUseAiArrange gates entry to this function, but nothing ever
+      // actually recorded a use -- defined, never called. Fixed here,
+      // right after the real round-trip completes.
+      recordAiArrange();
       const raw=data.reply.replace(/```json?|```/g,"").trim();
       const parsed=JSON.parse(raw);
       if(parsed.sessions&&parsed.sessions.length>0){
@@ -20851,6 +21020,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
 
   const submitPauseCommand=async()=>{
     if(!pauseText.trim()||pauseLoading)return;
+    // confirmPausePlan already gates on canUseSmartReschedule, but this
+    // Pause modal can also be opened via onHolidayImpact's deterministic,
+    // ungated reflow path -- which shares the same modal, so the same
+    // text box would otherwise let a Free user reach this real AI call
+    // (the intent classifier below) without ever passing a gate. Checked
+    // here too, right before the AI-costing call, not just at commit.
+    if(!canUseSmartReschedule()){setPricingOpen(true);return;}
     setPauseLoading(true);setPauseError("");
     const today=dayKey();
     const tomorrow=dayKey(new Date(Date.now()+86400000));
@@ -20876,6 +21052,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     try{
       const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash"})});
       const data=await res.json();
+      // Recorded right after the real API round-trip completes, not after
+      // the JSON parse/validation below -- the cost is already spent at
+      // this point regardless of whether this attempt's phrasing turns
+      // out to classify cleanly, and a retry-until-it-parses loop should
+      // still count every real call against the cap.
+      recordSmartReschedule();
       const raw=(data.reply||"").replace(/```json?|```/g,"").trim();
       const parsed=JSON.parse(raw);
       if(!parsed||!["shift","clear_day","clear_week","skip_class","move_event","retime_event"].includes(parsed.intent))throw new Error("unsupported");
@@ -22055,7 +22237,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             <Textarea placeholder="e.g. Build a working demo, write a report, present to the class by the deadline." value={evNotes} onChange={ev=>{setEvNotes(ev.target.value);if(evDetailErr)setEvDetailErr("");}} />
           </Field>
           {evDetailErr&&<div style={{fontSize:12,color:T.red,marginTop:-8,marginBottom:14}}>{evDetailErr}</div>}
-          <PhasesOutlineEditor item={{...evProjectPlan,title:evTitle,detail:evNotes}} onChange={patch=>setEvProjectPlan(p=>({...p,...patch}))} subject={evSubject==="Other"?evCustom:evSubject} />
+          <PhasesOutlineEditor item={{...evProjectPlan,title:evTitle,detail:evNotes}} onChange={patch=>setEvProjectPlan(p=>({...p,...patch}))} subject={evSubject==="Other"?evCustom:evSubject} onGateBlocked={()=>setPricingOpen(true)} />
           <div style={{marginBottom:14}}>
             {evCollabSelected.length>0
               ?<div style={{display:"flex",flexWrap:"wrap",gap:6,alignItems:"center"}}>
@@ -23177,6 +23359,11 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   };
   const handleWorkScheduleFile=async(e)=>{
     const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";
+    // Was calling extractWorkScheduleFromImage (real vision-AI cost) with
+    // zero gate at all, same gap Brain Dump/note summaries had. Reuses
+    // canScanScreenshot -- same "image-based AI extraction" cost class as
+    // the Canvas/syllabus screenshot import already gated on it.
+    if(!canScanScreenshot()){setWorkScanOpen(false);setPricingOpen(true);return;}
     const ext=file.name.split(".").pop().toLowerCase();
     if(!WORK_IMAGE_EXT_MEDIA_TYPES[ext]){setWorkScanError("Upload a photo or screenshot of your shift schedule (JPG, PNG, etc).");return;}
     setWorkScanning(true);setWorkScanError("");
@@ -23184,6 +23371,9 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
       const dataUrl=await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.readAsDataURL(file);});
       const base64=(dataUrl.split(",")[1])||"";
       const result=await extractWorkScheduleFromImage(base64,WORK_IMAGE_EXT_MEDIA_TYPES[ext]);
+      // Was gated by canScanScreenshot above but never actually recorded
+      // -- same gap genSummaryFromNote had, now fixed there too.
+      recordScreenshotScan();
       if(result.error){setWorkScanError(result.error);return;}
       if(result.shifts.length===0){setWorkScanError("Couldn't make out any shifts in that image. Try a clearer photo.");return;}
       setWorkScanReview(result.shifts.map((s,i)=>({id:"ws-"+i,date:s.date||dayKey(),startTime:s.startTime||"09:00",endTime:s.endTime||"17:00",label:s.label||"Shift",include:true})));
@@ -24089,14 +24279,27 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               </Card>
               <Card style={{marginBottom:12}}>
                 <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:16}}>Your AI features</div>
+                {/* 2026-08-19: Pro's own column reads "Included" now, not
+                    "Unlimited" -- each of these AI tools has a real
+                    (generous, unadvertised) monthly cap underneath as of
+                    the 2026-08-18 pricing pass, so "Unlimited" was no
+                    longer literally true. Attack sessions and manual
+                    entry keep "Unlimited" -- those two are genuinely,
+                    permanently uncapped (zero AI cost), so the word is
+                    still accurate there. "Pro only" on Free makes no
+                    quantity claim either way, just states who has access. */}
                 {[
-                  ["Syllabus & schedule imports",plan==="Free"?getSyllabusScanUsage().count+" / "+SYLLABUS_SCAN_LIMIT+" this month":"Unlimited"],
-                  ["AI note scans (files, lectures & YouTube)",plan==="Free"?getNoteScanUsage().count+" / "+NOTE_SCAN_LIMIT+" this month":"Unlimited"],
-                  ["AI flashcard generations",plan==="Free"?getFlashcardGenUsage().count+" / "+FLASHCARD_GEN_LIMIT+" this month":"Unlimited"],
-                  ["AI study plans",plan==="Free"?getExamPlanUsage().count+" / "+EXAM_PLAN_LIMIT+" this month":"Unlimited"],
+                  ["Syllabus & schedule imports",plan==="Free"?"Pro only":"Included"],
+                  ["AI note scans (files, lectures & YouTube)",plan==="Free"?"Pro only":"Included"],
+                  ["AI flashcard generations",plan==="Free"?"Pro only":"Included"],
+                  ["AI practice exams",plan==="Free"?"Pro only":"Included"],
+                  ["AI study plans",plan==="Free"?"Pro only":"Included"],
+                  ["Brain dump",plan==="Free"?"Pro only":"Included"],
+                  ["Add Task with AI",plan==="Free"?"Pro only":"Included"],
                   ["Attack sessions","Unlimited"],
-                  ["Project breakdowns",plan==="Free"?getProjectBreakdownUsage().count+" / "+PROJECT_BREAKDOWN_LIMIT+" this month":"Unlimited"],
-                  ["Smart Reschedule",plan==="Free"?"Pro only":"Unlimited"],
+                  ["Project breakdowns",plan==="Free"?"Pro only":"Included"],
+                  ["Smart Reschedule",plan==="Free"?"Pro only":"Included"],
+                  ["Manual classes, tasks & calendar","Unlimited"],
                 ].map(([action,status],i,arr)=>(
                   <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
                     <span style={{fontSize:12.5,color:T.text}}>{action}</span>
@@ -24105,8 +24308,8 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                 ))}
               </Card>
               {plan==="Free"&&<Card style={{background:T.lime,border:"none"}}>
-                <div style={{fontSize:13,fontWeight:700,color:T.ink,marginBottom:4}}>Unlock unlimited AI</div>
-                <div style={{fontSize:12,color:T.ink,opacity:0.75,marginBottom:14}}>Upgrade to Pro for unlimited AI chat, scans & flashcard generation.</div>
+                <div style={{fontSize:13,fontWeight:700,color:T.ink,marginBottom:4}}>Unlock Studlin's AI</div>
+                <div style={{fontSize:12,color:T.ink,opacity:0.75,marginBottom:14}}>Upgrade to Pro for AI chat, scans, flashcard generation, and everything else Studlin's AI can do.</div>
                 <button onClick={()=>setPricingOpen(true)} style={{background:T.ink,color:T.lime,border:"none",padding:"8px 18px",borderRadius:8,fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Upgrade to Pro</button>
               </Card>}
             </>);
@@ -25621,11 +25824,10 @@ function App() {
     // attack session is deterministic probe-then-schedule, no AI call, so
     // it's never gated (see the Add-Task submit handlers for the same
     // reasoning).
-    if(isProject&&!canBreakDownProject()){
-      setPrepAutoToast("Free plan's project breakdown for this month is used up — upgrade for unlimited.");
-      setTimeout(()=>setPrepAutoToast(""),4200);
-      return;
-    }
+    // A passive toast here used to be a dead end -- told the student it's
+    // Pro-only with no way to actually act on that. Opens the real
+    // paywall now, same as every other Pro-only gate in this file.
+    if(isProject&&!canBreakDownProject()){setPricingOpen(true);return;}
     const events=lsGet("events",[]);
     const routines=getWeeklyRoutine();
     const prefs=getSchedulePreferences();
@@ -26886,7 +27088,7 @@ function App() {
         <EventDetailModal eventId={detailEventId} onClose={()=>setDetailEventId(null)}
           commit={(next)=>{lsSet("events",next);if(calendarSetEventsRef.current)calendarSetEventsRef.current(next);}}
           onToast={(msg)=>{setDashToast(msg);setTimeout(()=>setDashToast(""),2800);}}
-          setActive={setActive} />
+          setActive={setActive} setPricingOpen={setPricingOpen} />
       )}
       {/* PRICING MODAL */}
       <Modal open={pricingOpen} onClose={()=>setPricingOpen(false)} title="Studlin plans" sub="Start free. Upgrade when you're ready. Cancel anytime." width={820}>

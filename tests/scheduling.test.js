@@ -1947,61 +1947,65 @@ describe("computeCapacitySlack (shared 'is there realistically enough time left'
   });
 });
 
-describe("canGenQuiz / recordQuizGen (free-tier practice-quiz limit)", () => {
-  test("Free plan can generate up to QUIZ_GEN_LIMIT quizzes this month, then is blocked", () => {
-    const m = loadStudlinModule();
-    m.setPlanLS("Free");
-    for (let i = 0; i < m.QUIZ_GEN_LIMIT; i++) {
-      assert.equal(m.canGenQuiz(), true, `should allow generation #${i + 1}`);
-      m.recordQuizGen();
-    }
-    assert.equal(m.canGenQuiz(), false, "should block once the monthly limit is reached");
+// 2026-08-18 pricing pass, part 2: Free stays zero free access at all
+// (part 1, unchanged). Pro is marketed flatly as "Unlimited," but each
+// tool now has a real, generous PRO_*_LIMIT ceiling underneath as a
+// fair-use backstop -- see the sizing-rationale comment above
+// canScanSyllabus for the cost math behind each number.
+describe("2026-08-18 pricing pass, part 2: Pro gets a real (generous, unadvertised) monthly cap per tool", () => {
+  const GATES = [
+    ["canGenQuiz", "recordQuizGen", "PRO_QUIZ_GEN_LIMIT"],
+    ["canBuildExamPlan", "recordExamPlanBuild", "PRO_EXAM_PLAN_LIMIT"],
+    ["canBreakDownProject", "recordProjectBreakdown", "PRO_PROJECT_BREAKDOWN_LIMIT"],
+    ["canGenFlashcards", "recordFlashcardGen", "PRO_FLASHCARD_GEN_LIMIT"],
+    ["canScanSyllabus", "recordSyllabusScan", "PRO_SYLLABUS_SCAN_LIMIT"],
+    ["canScanScreenshot", "recordScreenshotScan", "PRO_SCREENSHOT_SCAN_LIMIT"],
+    ["canScanNote", "recordNoteScan", "PRO_NOTE_SCAN_LIMIT"],
+    ["canUseSmartReschedule", "recordSmartReschedule", "PRO_SMART_RESCHEDULE_LIMIT"],
+    ["canUseBrainDump", "recordBrainDump", "PRO_BRAIN_DUMP_LIMIT"],
+    ["canUseAiArrange", "recordAiArrange", "PRO_AI_ARRANGE_LIMIT"],
+  ];
+  GATES.forEach(([canFn, recordFn, limitConst]) => {
+    test(`${canFn}: Free is blocked before AND after recording usage (no free taste at all)`, () => {
+      const m = loadStudlinModule();
+      m.setPlanLS("Free");
+      assert.equal(m[canFn](), false, "should already be blocked with zero usage recorded");
+      m[recordFn]();
+      assert.equal(m[canFn](), false, "recording usage must not unblock -- Free has no limit to still be under");
+    });
+    test(`${canFn}: Pro gets exactly ${limitConst} uses this month, then is blocked`, () => {
+      const m = loadStudlinModule();
+      m.setPlanLS("Pro");
+      for (let i = 0; i < m[limitConst]; i++) {
+        assert.equal(m[canFn](), true, `should allow use #${i + 1}`);
+        m[recordFn]();
+      }
+      assert.equal(m[canFn](), false, "should block once the monthly cap is reached");
+    });
   });
 
-  test("Pro plan is never limited", () => {
-    const m = loadStudlinModule();
-    m.setPlanLS("Pro");
-    for (let i = 0; i < m.QUIZ_GEN_LIMIT + 5; i++) {
-      assert.equal(m.canGenQuiz(), true);
-      m.recordQuizGen();
-    }
-  });
-});
+  describe("aggregate cross-tool spend ceiling (2026-08-19 addition)", () => {
+    test("underAiSpendCeiling is true with zero spend, false once PRO_MONTHLY_AI_SPEND_CEILING is reached", () => {
+      const m = loadStudlinModule();
+      assert.equal(m.underAiSpendCeiling(), true);
+      const dollarsPerCharge = m.AI_CALL_COST_ESTIMATES.flashcardGen;
+      const chargesNeeded = Math.ceil((m.PRO_MONTHLY_AI_SPEND_CEILING / dollarsPerCharge));
+      for (let i = 0; i < chargesNeeded; i++) m.chargeAiSpend("flashcardGen");
+      assert.equal(m.underAiSpendCeiling(), false);
+    });
 
-describe("2026-08-10 pricing pass: Studlin Prep free-tier limits + Smart Reschedule paid gate", () => {
-  test("Free plan gets exactly EXAM_PLAN_LIMIT study plan builds, then is blocked", () => {
-    const m = loadStudlinModule();
-    m.setPlanLS("Free");
-    for (let i = 0; i < m.EXAM_PLAN_LIMIT; i++) {
-      assert.equal(m.canBuildExamPlan(), true, `should allow build #${i + 1}`);
-      m.recordExamPlanBuild();
-    }
-    assert.equal(m.canBuildExamPlan(), false);
-  });
-
-  test("Free plan gets exactly PROJECT_BREAKDOWN_LIMIT project breakdowns, then is blocked", () => {
-    const m = loadStudlinModule();
-    m.setPlanLS("Free");
-    for (let i = 0; i < m.PROJECT_BREAKDOWN_LIMIT; i++) {
-      assert.equal(m.canBreakDownProject(), true, `should allow breakdown #${i + 1}`);
-      m.recordProjectBreakdown();
-    }
-    assert.equal(m.canBreakDownProject(), false);
-  });
-
-  test("Pro plan is never limited on study plans or project breakdowns", () => {
-    const m = loadStudlinModule();
-    m.setPlanLS("Pro");
-    for (let i = 0; i < m.EXAM_PLAN_LIMIT + 5; i++) { assert.equal(m.canBuildExamPlan(), true); m.recordExamPlanBuild(); }
-    for (let i = 0; i < m.PROJECT_BREAKDOWN_LIMIT + 5; i++) { assert.equal(m.canBreakDownProject(), true); m.recordProjectBreakdown(); }
-  });
-
-  test("Smart Reschedule is paid-only -- blocked on Free regardless of usage, always allowed on Pro", () => {
-    const m = loadStudlinModule();
-    m.setPlanLS("Free");
-    assert.equal(m.canUseSmartReschedule(), false, "Free should never get Smart Reschedule, not even a capped taste");
-    m.setPlanLS("Pro");
-    assert.equal(m.canUseSmartReschedule(), true);
+    test("a tool with plenty of its own per-tool quota left still gets blocked once the shared aggregate ceiling is hit by a DIFFERENT tool", () => {
+      const m = loadStudlinModule();
+      m.setPlanLS("Pro");
+      // Burn the aggregate ceiling entirely via flashcard generation...
+      const dollarsPerCharge = m.AI_CALL_COST_ESTIMATES.flashcardGen;
+      const chargesNeeded = Math.ceil((m.PRO_MONTHLY_AI_SPEND_CEILING / dollarsPerCharge));
+      for (let i = 0; i < chargesNeeded; i++) m.recordFlashcardGen();
+      // ...then confirm Smart Reschedule (its own count still at 0, nowhere
+      // near PRO_SMART_RESCHEDULE_LIMIT) is blocked anyway by the shared ceiling.
+      assert.equal(m.getSmartRescheduleUsage().count, 0, "sanity: this tool's own counter was never touched");
+      assert.equal(m.canUseSmartReschedule(), false, "shared spend ceiling should block every tool, not just the one that spent it");
+    });
   });
 });
 

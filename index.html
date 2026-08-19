@@ -988,6 +988,9 @@ body::after{
 .pc-amt{font-size:52px;font-weight:800;line-height:1;letter-spacing:-0.03em;font-variant-numeric:tabular-nums;}
 .pc-per{align-self:flex-end;font-size:13px;color:var(--cream-dim);margin:0 0 9px 5px;}
 .pc-billed{margin-top:8px;font-size:12px;color:var(--cream-faint);min-height:16px;}
+.pc-annual-note{margin-top:6px;font-size:11.5px;color:var(--cream-dim);display:flex;align-items:center;justify-content:center;gap:6px;}
+.pc-annual-note b{color:#16241C;font-weight:700;}
+.pc-annual-note .pc-save-pill{font-size:10px;font-weight:700;color:#173D2D;background:rgba(23,61,45,0.12);border-radius:99px;padding:2px 7px;}
 .pc-feats{list-style:none;margin:22px 0 0;padding:0;display:flex;flex-direction:column;gap:11px;text-align:left;}
 .pc-feats li{display:flex;gap:10px;align-items:flex-start;font-size:13.5px;color:var(--cream);line-height:1.4;}
 .pc-ck{width:18px;height:18px;border-radius:50%;background:rgba(23,61,45,0.10);color:#173D2D;display:grid;place-items:center;flex:none;margin-top:1px;font-size:11px;font-weight:800;}
@@ -1624,29 +1627,35 @@ body::after{
         <div class="pc-name">Free</div>
         <div class="pc-price"><span class="pc-cur">$</span><span class="pc-amt" data-m="0" data-a="0" data-dec="0">0</span><span class="pc-per">/forever</span></div>
         <div class="pc-billed" data-m="Free, forever" data-a="Free, forever">No card needed</div>
+        <!-- 2026-08-18 pricing pass: Free is now everything that costs
+             Studlin nothing to run (manual entry, the calendar itself);
+             every AI-cost feature moved to Pro-only, no more named
+             monthly tastes (was "8 imports/mo," "1 study plan/mo," etc). -->
         <ul class="pc-feats">
           <li><span class="pc-ck">✓</span> Calendar, tasks, focus timer, streaks &amp; XP: unlimited</li>
+          <li><span class="pc-ck">✓</span> Add classes, assignments &amp; exams manually: unlimited</li>
           <li><span class="pc-ck">✓</span> Studlin Network &amp; calendar connections: unlimited</li>
-          <li><span class="pc-ck">✓</span> Syllabus &amp; schedule imports: 8 / month</li>
-          <li><span class="pc-ck">✓</span> 1 AI study plan / month (sessions, flashcards &amp; practice exam)</li>
-          <li><span class="pc-ck">✓</span> 3 AI flashcard generations / month</li>
           <li><span class="pc-ck">✓</span> Attack sessions: unlimited</li>
-          <li><span class="pc-ck">✓</span> 1 project breakdown / month</li>
         </ul>
         <hr class="pc-hr">
         <a href="/app" class="pc-btn">Get started free</a>
-        <div class="pc-desc">The full app. AI unlocks as you grow.</div>
+        <div class="pc-desc">The full app, manually. AI is a Pro thing.</div>
       </div>
       <div class="pc pc-popular" data-plan="pro">
         <div class="pc-badge"><svg viewBox="0 0 24 24"><path d="M12 2l2.9 6.3 6.9.7-5.2 4.6 1.5 6.8L12 17.8 5.9 21.2l1.5-6.8L2.2 9.8l6.9-.7z"></path></svg> Most Popular</div>
         <div class="pc-name">Pro</div>
         <div class="pc-price"><span class="pc-cur">$</span><span class="pc-amt" data-m="6.99" data-a="4.99" data-dec="2">6.99</span><span class="pc-per">/month</span></div>
         <div class="pc-billed" data-m="billed monthly" data-a="billed annually · save $24/yr">billed monthly</div>
+        <!-- Always-visible, independent of the Monthly/Annual toggle above
+             (which still switches the big number + confetti, that stays) --
+             so the annual price/discount is glanceable without a click. -->
+        <div class="pc-annual-note">or <b>$59.88</b>/yr <span class="pc-save-pill">Save 29%</span></div>
         <ul class="pc-feats">
-          <li><span class="pc-ck">✓</span> Unlimited AI study plans, flashcards, syllabus scans &amp; project breakdowns</li>
-          <li><span class="pc-ck">✓</span> Smart Reschedule, not on Free at all</li>
+          <li><span class="pc-ck">✓</span> Add Task with AI: Studlin schedules it for you</li>
+          <li><span class="pc-ck">✓</span> Every AI feature Studlin has: study plans, flashcards, practice exams, syllabus &amp; schedule scans, brain dump &amp; project breakdowns</li>
+          <li><span class="pc-ck">✓</span> Smart Reschedule</li>
           <li><span class="pc-ck">✓</span> All AI models: Flash, Standard &amp; Research</li>
-          <li><span class="pc-ck">✓</span> Unlimited AI chat, every day</li>
+          <li><span class="pc-ck">✓</span> AI chat, whenever you need it</li>
         </ul>
         <hr class="pc-hr">
         <a href="/app" class="pc-btn pc-btn-primary magnetic">Upgrade to Pro <span class="ar">→</span></a>
