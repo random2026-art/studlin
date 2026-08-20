@@ -1554,6 +1554,14 @@ const detectCalendarSourceType=(url)=>{
     if(h==="schoology.com"||h.endsWith(".schoology.com"))return "Schoology";
     if(h==="instructure.com"||h.endsWith(".instructure.com"))return "Canvas";
     if(h==="blackboard.com"||h.endsWith(".blackboard.com"))return "Blackboard";
+    // Moodle is self-hosted per school (Lehigh brands theirs "Course Site"
+    // at coursesite.lehigh.edu, other schools use their own domain/name
+    // entirely), so there's no single shared hostname the way Canvas has
+    // instructure.com. The export URL's own path is standard across every
+    // Moodle install regardless of domain or school branding though (see
+    // PLATFORM_HELP.moodle) -- detecting on that instead of a hostname is
+    // what actually generalizes beyond just Lehigh.
+    if(url.includes("/calendar/export_execute.php"))return "Moodle";
     return "Work schedule";
   }catch(e){return "Calendar";}
 };
@@ -1562,7 +1570,7 @@ const detectCalendarSourceType=(url)=>{
 // fetchCalendarPreview below to run the AI classification pass (see
 // classifyImportedCalendarEvents) instead of leaving every imported item as
 // a generic "busy block."
-const isAcademicCalendarSource=(sourceType)=>sourceType==="Schoology"||sourceType==="Canvas"||sourceType==="Blackboard";
+const isAcademicCalendarSource=(sourceType)=>sourceType==="Schoology"||sourceType==="Canvas"||sourceType==="Blackboard"||sourceType==="Moodle";
 // Step-by-step, platform-specific instructions shown inside the connect
 // modal itself (not a separate help page, not a hover tooltip -- the old
 // Canvas tooltip was hover-only, which doesn't work on touch and collapses
@@ -1598,6 +1606,21 @@ const PLATFORM_HELP={
       "Copy the link it gives you and paste it below",
     ],
     note:"Works whether your school hosts Blackboard on a blackboard.com address or its own custom domain.",
+  },
+  // Lehigh brands its Moodle install "Course Site" (coursesite.lehigh.edu),
+  // but this is standard Moodle -- these are Moodle's own real, current
+  // "Export calendar" steps (verified against Moodle's own docs, current
+  // version), so this works for Course Site and any other school running
+  // Moodle under its own name/domain, not just Lehigh.
+  moodle:{
+    label:"Moodle",
+    steps:[
+      "Log into Moodle (Course Site at Lehigh) and open Calendar",
+      "Scroll to the bottom and click \"Export calendar\"",
+      "Choose \"Events related to courses\" and a time range (\"Recent and next 60 days\" is a safe default)",
+      "Click \"Get URL address\", then copy the link it gives you and paste it below",
+    ],
+    note:"This is the same export feature on every Moodle site, just under whatever name your school gives it (Lehigh calls it Course Site).",
   },
 };
 // Steps for the Canvas Personal Access Token connect flow, shown instead
@@ -7442,6 +7465,33 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   const [projectGroupFilter,setProjectGroupFilter]=useState("");
   const GROUP_BY_OPTIONS=[{value:"",label:"All"},{value:"past-due",label:"Past Due"},{value:"completed",label:"Completed"}];
   const [examCompleteSessionPrompt,setExamCompleteSessionPrompt]=useState(false);
+  const [flashcardSearch,setFlashcardSearch]=useState("");
+  const [flashcardClassFilter,setFlashcardClassFilter]=useState("");
+  const [flashcardGroupFilter,setFlashcardGroupFilter]=useState("");
+  const [peSearch,setPeSearch]=useState("");
+  const [peClassFilter,setPeClassFilter]=useState("");
+  const [peGroupFilter,setPeGroupFilter]=useState("");
+  // A deck/practice exam's own lifecycle is borrowed from whatever exam(s)
+  // it's linked to -- neither has a date or status of its own, so
+  // "completed"/"past due" only ever makes sense in terms of the exam it
+  // was made for. A deck can link to more than one exam (deckExamIds);
+  // treated as completed only once EVERY linked exam is done (still
+  // useful otherwise), past-due once none of them are still upcoming
+  // (all are either done or past their date unconfirmed), and upcoming
+  // whenever at least one linked exam is still genuinely ahead. Unlinked
+  // items have no exam to borrow a state from, so they never match Past
+  // Due/Completed -- they stay visible under "All" only, same as an item
+  // with no date has always meant elsewhere in this file.
+  const linkedExamLifecycleState=(examIds)=>{
+    if(!examIds||examIds.length===0)return null;
+    const exams=examIds.map(id=>lsGet("events",[]).find(e=>e.id===id)).filter(Boolean);
+    if(exams.length===0)return null;
+    const today=dayKey();
+    const states=exams.map(ex=>itemLifecycleState(ex,today));
+    if(states.every(s=>s==="completed"))return "completed";
+    if(states.every(s=>s!=="upcoming"))return "past-due";
+    return "upcoming";
+  };
   // Set when commitBuildPlan comes up short on slots AND Week Balance
   // genuinely has real moves to offer -- see the comment at that call site.
   const [weekTightNudge,setWeekTightNudge]=useState(false);
@@ -8961,14 +9011,39 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
         );
       })()}
 
-      {tab==="flashcards"&&(
+      {tab==="flashcards"&&(()=>{
+        const deckClassOf=d=>{const exs=deckExamIds(d).map(id=>lsGet("events",[]).find(e=>e.id===id)).filter(Boolean);return (exs.find(e=>e.subject)||{}).subject||"";};
+        const flashcardClasses=[...new Set(allDecks.map(deckClassOf).filter(Boolean))];
+        const visibleDecks=allDecks.filter(d=>{
+          if(flashcardGroupFilter&&linkedExamLifecycleState(deckExamIds(d))!==flashcardGroupFilter)return false;
+          if(flashcardClassFilter&&deckClassOf(d)!==flashcardClassFilter)return false;
+          if(!flashcardSearch.trim())return true;
+          return (d.name||"").toLowerCase().includes(flashcardSearch.trim().toLowerCase());
+        });
+        return (
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
           <div style={{display:"flex",justifyContent:"flex-end"}}>
             <BtnSm onClick={()=>{lsSet("openNewDeckOnMount",true);setFlashcardsOverlay(true);}}>{Icon.plus} Add Deck</BtnSm>
           </div>
+          {allDecks.length>0&&(
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"space-between"}}>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+                <span style={{fontSize:11,color:T.muted,flexShrink:0}}>Group by</span>
+                <CustomSelect boxed value={flashcardGroupFilter} onChange={setFlashcardGroupFilter} minWidth={120}
+                  options={GROUP_BY_OPTIONS} />
+                {flashcardClasses.length>1&&(
+                  <CustomSelect boxed value={flashcardClassFilter} onChange={setFlashcardClassFilter} minWidth={150}
+                    options={[{value:"",label:"All classes"},...flashcardClasses.map(c=>({value:c,label:c}))]} />
+                )}
+              </div>
+              <Input placeholder="Search…" value={flashcardSearch} onChange={e=>setFlashcardSearch(e.target.value)} style={{width:200}} />
+            </div>
+          )}
           {allDecks.length===0
             ?<Card style={{padding:"32px 20px",textAlign:"center"}}><div style={{fontSize:13,color:T.muted,marginBottom:14}}>No flashcard decks yet — generate one from an exam's material, or add one yourself.</div><BtnSm onClick={()=>{lsSet("openNewDeckOnMount",true);setFlashcardsOverlay(true);}}>{Icon.plus} Add Deck</BtnSm></Card>
-            :allDecks.map(d=>{
+            :visibleDecks.length===0
+            ?<div style={{fontSize:12.5,color:T.muted,textAlign:"center",padding:"14px 0"}}>No decks match your search.</div>
+            :visibleDecks.map(d=>{
               const linkedExams=deckExamIds(d).map(id=>lsGet("events",[]).find(e=>e.id===id)).filter(Boolean);
               // Reuses the exact Study/Edit/Send actions already built in
               // the standalone Flashcards tab (openDeckId/openDeckAction
@@ -8998,16 +9073,42 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
               );
             })}
         </div>
-      )}
+        );
+      })()}
 
-      {tab==="practiceExams"&&(
+      {tab==="practiceExams"&&(()=>{
+        const peClassOf=pe=>{const ex=pe.examEventId?lsGet("events",[]).find(e=>e.id===pe.examEventId):null;return (ex&&ex.subject)||"";};
+        const peClasses=[...new Set(allPracticeExams.map(peClassOf).filter(Boolean))];
+        const visiblePEs=allPracticeExams.filter(pe=>{
+          if(peGroupFilter&&linkedExamLifecycleState(pe.examEventId?[pe.examEventId]:[])!==peGroupFilter)return false;
+          if(peClassFilter&&peClassOf(pe)!==peClassFilter)return false;
+          if(!peSearch.trim())return true;
+          return (pe.name||"").toLowerCase().includes(peSearch.trim().toLowerCase());
+        });
+        return (
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
           <div style={{display:"flex",justifyContent:"flex-end"}}>
             <BtnSm onClick={()=>setPeCreateOpen(true)}>{Icon.plus} Add Practice Exam</BtnSm>
           </div>
+          {allPracticeExams.length>0&&(
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"space-between"}}>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+                <span style={{fontSize:11,color:T.muted,flexShrink:0}}>Group by</span>
+                <CustomSelect boxed value={peGroupFilter} onChange={setPeGroupFilter} minWidth={120}
+                  options={GROUP_BY_OPTIONS} />
+                {peClasses.length>1&&(
+                  <CustomSelect boxed value={peClassFilter} onChange={setPeClassFilter} minWidth={150}
+                    options={[{value:"",label:"All classes"},...peClasses.map(c=>({value:c,label:c}))]} />
+                )}
+              </div>
+              <Input placeholder="Search…" value={peSearch} onChange={e=>setPeSearch(e.target.value)} style={{width:200}} />
+            </div>
+          )}
           {allPracticeExams.length===0
             ?<Card style={{padding:"32px 20px",textAlign:"center"}}><div style={{fontSize:13,color:T.muted,marginBottom:14}}>No practice exams yet — generate one from an exam's material, or add one yourself.</div><BtnSm onClick={()=>setPeCreateOpen(true)}>{Icon.plus} Add Practice Exam</BtnSm></Card>
-            :allPracticeExams.map(pe=>{
+            :visiblePEs.length===0
+            ?<div style={{fontSize:12.5,color:T.muted,textAlign:"center",padding:"14px 0"}}>No practice exams match your search.</div>
+            :visiblePEs.map(pe=>{
               const lastAttempt=pe.attempts&&pe.attempts.length>0?pe.attempts[pe.attempts.length-1]:null;
               const linkedExam=pe.examEventId?lsGet("events",[]).find(e=>e.id===pe.examEventId):null;
               return(
@@ -9032,7 +9133,8 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
               );
             })}
         </div>
-      )}
+        );
+      })()}
 
       {/* ── Build study plan -- Prep redesign Part C. The opt-in trigger
           replacing auto-generation at exam creation: exactly one question
@@ -16316,6 +16418,23 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   // Settings itself) sees "Connected" here instead of the button again.
   const [wizGoogleLinked,setWizGoogleLinked]=useState(()=>lsGet("cal-google",false));
   const [wizGoogleSyncing,setWizGoogleSyncing]=useState(false);
+  // Canvas/Blackboard/Moodle/work-schedule connect all need the student to
+  // leave Studlin, log into another site, and copy a URL back -- unlike
+  // Google's single-click popup, that's a real multi-step flow. This
+  // wizard has a documented past bug where navigating away mid-flow wiped
+  // progress, so rather than embedding that whole flow here (real risk of
+  // repeating it), a pick here just queues which one to open automatically
+  // once the student lands on Calendar right after finishing -- same
+  // pattern as CalendarTab's own openWeekBalanceOnMount signal. Single
+  // pick, not multi-select: this is a "get started on one" nudge, not a
+  // full setup checklist -- the rest are one click away in Settings after.
+  const [wizPostOnboardConnect,setWizPostOnboardConnect]=useState("");
+  const WIZ_CONNECT_OPTIONS=[
+    {value:"canvas",label:"Canvas"},
+    {value:"blackboard",label:"Blackboard"},
+    {value:"moodle",label:"Moodle / Course Site"},
+    {value:"workschedule",label:"Work schedule"},
+  ];
   const fileInputRef=useRef(null);
   const hsFileInputRef=useRef(null);
   const collegeScheduleFileRef=useRef(null);
@@ -16907,6 +17026,17 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     saveWakeSleep({wakeTime,sleepTime});
     lsSet("classSetupPending",[]);
     setPendingClasses([]);
+    // See wizPostOnboardConnect's own comment -- queues CalendarTab's
+    // connect-a-calendar modal to open with this hint the moment the
+    // student lands there, instead of risking this wizard's own
+    // documented navigate-away bug. "workschedule" has no platform-
+    // specific help text (it's not one school's LMS, so there's nothing
+    // school-specific to explain) -- queued as no hint at all, which opens
+    // the modal on its already-existing generic "paste a calendar or
+    // work-schedule link" state.
+    if(wizPostOnboardConnect){
+      lsSet("openImportCalOnMount",wizPostOnboardConnect==="workschedule"?true:{hint:wizPostOnboardConnect});
+    }
     onFinish();
   };
 
@@ -17363,6 +17493,21 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                     if(result.success)setWizGoogleLinked(true);
                   }}>{wizGoogleSyncing?"Connecting…":"Connect"}</BtnSm>
               }
+            </div>
+            {/* Canvas/Blackboard/Moodle/work-schedule -- see
+                wizPostOnboardConnect's own comment for why these are
+                queued for right after Finish instead of connected inline
+                here the way Google is above. */}
+            <div style={{marginTop:16}}>
+              <div style={{fontSize:12,color:T.muted,marginBottom:8}}>Also want to connect your school's calendar or a work schedule? Pick one to set up right after you finish — the rest are always in Settings.</div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                {WIZ_CONNECT_OPTIONS.map(opt=>(
+                  <button key={opt.value} type="button" onClick={()=>setWizPostOnboardConnect(v=>v===opt.value?"":opt.value)}
+                    style={{padding:"7px 12px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,
+                      background:wizPostOnboardConnect===opt.value?T.lime+"14":T.card2,color:wizPostOnboardConnect===opt.value?T.lime:T.muted,
+                      border:`1px solid ${wizPostOnboardConnect===opt.value?T.lime+"44":T.border}`}}>{opt.label}</button>
+                ))}
+              </div>
             </div>
           </>)}
 
@@ -23506,6 +23651,16 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     setCanvasDomainInput("");setCanvasTokenInput("");
     setImportCalOpen(true);
   };
+  // Cross-component "please open this" signal from the onboarding wizard's
+  // wizPostOnboardConnect pick (see ClassSetupWizard's own comment) --
+  // same openWeekBalanceOnMount pattern, consumed here since
+  // openImportCalModal is only defined at this point in the component.
+  useEffect(()=>{
+    const queued=lsGet("openImportCalOnMount",false);
+    if(!queued)return;
+    lsSet("openImportCalOnMount",false);
+    openImportCalModal(queued===true?null:queued.hint);
+  },[]);
   // The Canvas Personal Access Token connect flow -- a real account
   // credential, so unlike every other calendar import above it's sent to
   // /api/me (server-side storage, never client-side) instead of
@@ -24416,6 +24571,20 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                       </div>
                     </div>
                     <BtnSm variant={blackboardConnected.length>0?"subtle":"lime"} onClick={()=>openImportCalModal("blackboard")} style={{flexShrink:0}}>{blackboardConnected.length>0?"Manage":"Connect"}</BtnSm>
+                  </div>
+                );})()}
+                {(()=>{const moodleConnected=importedCals.filter(c=>c.sourceType==="Moodle");return(
+                  <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${moodleConnected.length>0?T.teal+"44":T.border}`,transition:"border-color 0.2s"}}>
+                    <div style={{width:40,height:40,borderRadius:10,background:T.lime+"14",border:`1px solid ${T.lime}33`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:T.lime}}>
+                      {Icon.link}
+                    </div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:600,color:T.white}}>Moodle</div>
+                      <div style={{fontSize:11,color:moodleConnected.length>0?T.teal:T.muted,marginTop:2}}>
+                        {moodleConnected.length>0?moodleConnected.length+" connected · syncs automatically":"Course Site at Lehigh, or your school's own Moodle"}
+                      </div>
+                    </div>
+                    <BtnSm variant={moodleConnected.length>0?"subtle":"lime"} onClick={()=>openImportCalModal("moodle")} style={{flexShrink:0}}>{moodleConnected.length>0?"Manage":"Connect"}</BtnSm>
                   </div>
                 );})()}
               </div>

@@ -3868,3 +3868,20 @@ describe("computeMonthHeavyDays (regression: Month grid's capacity bar used to f
     assert.equal(heavy.has("d4"), true);
   });
 });
+
+describe("2026-08-19: Moodle/Course Site calendar detection", () => {
+  test("detectCalendarSourceType recognizes a Moodle export URL by path, regardless of hostname", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.detectCalendarSourceType("https://coursesite.lehigh.edu/calendar/export_execute.php?userid=1&authtoken=abc"), "Moodle");
+    assert.equal(m.detectCalendarSourceType("https://moodle.someotherschool.edu/calendar/export_execute.php?authtoken=xyz"), "Moodle");
+  });
+  test("isAcademicCalendarSource treats Moodle the same as Canvas/Blackboard/Schoology (triggers AI classification)", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.isAcademicCalendarSource("Moodle"), true);
+  });
+  test("PLATFORM_HELP.moodle has real steps and a label, same shape as the other platforms", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.PLATFORM_HELP.moodle.label, "Moodle");
+    assert.ok(Array.isArray(m.PLATFORM_HELP.moodle.steps) && m.PLATFORM_HELP.moodle.steps.length > 0);
+  });
+});
