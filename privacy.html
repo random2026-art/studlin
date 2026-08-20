@@ -49,7 +49,7 @@
   <header class="doc">
     <div class="eyebrow">Legal</div>
     <h1>Privacy Policy</h1>
-    <div class="meta">Effective date: July 6, 2026 · Last updated: July 27, 2026</div>
+    <div class="meta">Effective date: July 6, 2026 · Last updated: August 20, 2026</div>
   </header>
 
   <div class="callout">
@@ -73,8 +73,13 @@
 
   <h3>Google Calendar data</h3>
   <p>If you choose to connect Google Calendar, Studlin requests read-only access to your calendar events (Google API scope <code>calendar.events.readonly</code>). This lets us see the times and titles of your existing events so we don't schedule a study block over something you've already committed to. We cannot create, edit, or delete anything in your Google Calendar with this access.</p>
-  <p>To keep imported events current without asking you to reconnect every time, we store a Google-issued refresh token and a snapshot of your synced events, tied to your account, and refresh that snapshot automatically — a daily background sync, plus a near-real-time update whenever Google notifies us your calendar changed. You can disconnect Google Calendar at any time from Settings → Integrations, which deletes this token and snapshot immediately, or revoke access directly from your <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">Google Account permissions page</a>.</p>
+  <p>To keep imported events current without asking you to reconnect every time, we store a Google-issued refresh token and a snapshot of your synced events, tied to your account, and refresh that snapshot automatically: a daily background sync, plus a near-real-time update whenever Google notifies us your calendar changed. You can disconnect Google Calendar at any time from Settings → Integrations, which deletes this token and snapshot immediately, or revoke access directly from your <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">Google Account permissions page</a>.</p>
   <p>Studlin's use and transfer of information received from Google APIs to any other app will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener">Google API Services User Data Policy</a>, including the Limited Use requirements. We do not use your Google Calendar data to serve ads, sell it, or share it with any third party, and we do not allow anyone to read it except as strictly necessary to provide the calendar-sync feature itself, to comply with the law, or with your explicit consent.</p>
+
+  <h3>Canvas, Blackboard, Moodle, and other school calendar data</h3>
+  <p>If you choose to connect Canvas using a personal access token you generate yourself, Studlin uses that token to read your enrolled courses, assignments, assignment due dates, and each course's grading-weight configuration, so Studlin can build a more accurate schedule and better estimate how much a given assignment or exam counts toward your grade. This access is read-only: Studlin never submits coursework, posts grades, or otherwise modifies anything in Canvas on your behalf. We store your Canvas access token securely, tied to your account, so we can keep this synced automatically without asking you to reconnect every time.</p>
+  <p>If you connect Blackboard, Moodle, or another school system, or a work schedule, through a plain calendar feed link instead, Studlin only reads the event times and titles published at that link, the same as subscribing to any other calendar feed, and never receives an access token or credentials for that system.</p>
+  <p>You can disconnect any of these at any time from Settings → Integrations, which deletes the stored token and synced data immediately.</p>
 
   <h3>Payment data</h3>
   <p>If you subscribe to a paid plan, payment is processed by our third-party payment processor. Studlin never receives or stores your full card number. We receive only limited billing metadata (last four digits, card type, and subscription status) necessary to manage your account.</p>
