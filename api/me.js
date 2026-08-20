@@ -43,6 +43,53 @@ function subscriptionPayload(subscription) {
   };
 }
 
+// Real bug found live: Settings' "Payment methods" and "Billing history"
+// cards were hardcoded mock data (a fake VISA •••• 4242, four fake
+// "Paid" transactions) shown identically to every single account
+// regardless of whether they'd ever actually paid -- a beta-trial
+// account with zero real charges saw the exact same fake card and fake
+// $6.99 "Paid" rows as everyone else. This returns the real thing.
+// Subscription invoices only for now, not one-off credit-pack
+// purchases -- those PaymentIntents (api/create-intent.js) are created
+// without a `customer` attached at all, so they can't be looked up via
+// stripeCustomerId the way subscription invoices can; merging them in
+// would need a metadata-based Stripe search, a separate, larger piece
+// of work. Documented here rather than silently missing them.
+async function handleBillingInfo(user, res) {
+  if (!db) return res.status(503).json({ error: 'Database unavailable.' });
+  try {
+    const doc = await db.collection('users').doc(user.uid).get();
+    const data = doc.exists ? doc.data() : {};
+    const customerId = data.stripeCustomerId;
+    if (!customerId) return res.status(200).json({ paymentMethod: null, invoices: [] });
+
+    const [pmList, invoiceList] = await Promise.all([
+      stripe.paymentMethods.list({ customer: customerId, type: 'card', limit: 1 }),
+      stripe.invoices.list({ customer: customerId, limit: 12 }),
+    ]);
+
+    const pm = pmList.data[0];
+    const paymentMethod = pm && pm.card ? {
+      brand: pm.card.brand,
+      last4: pm.card.last4,
+      expMonth: pm.card.exp_month,
+      expYear: pm.card.exp_year,
+    } : null;
+
+    const invoices = invoiceList.data.map((inv) => ({
+      date: isoFromStripeSeconds(inv.created),
+      description: (inv.lines.data[0] && inv.lines.data[0].description) || 'Pro plan',
+      amount: (inv.amount_paid / 100).toFixed(2),
+      status: inv.status === 'paid' ? 'Paid' : (inv.status || 'open'),
+    }));
+
+    return res.status(200).json({ paymentMethod, invoices });
+  } catch (err) {
+    console.error('billing info error:', err);
+    return res.status(500).json({ error: 'Could not load billing info.' });
+  }
+}
+
 async function handleSubscriptionAction(user, req, res) {
   if (!db) return res.status(503).json({ error: 'Database unavailable.' });
   const { action } = req.body || {};
@@ -649,6 +696,7 @@ module.exports = withSentry(async (req, res) => {
     if (action === 'canvas-pull') return handleCanvasPull(user, res);
     if (action === 'canvas-disconnect') return handleCanvasDisconnect(user, res);
     if (action === 'redeem-beta') return handleRedeemBeta(user, req, res);
+    if (action === 'billing-info') return handleBillingInfo(user, res);
     return handleSubscriptionAction(user, req, res);
   }
 

@@ -23808,6 +23808,22 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     fetchUserProfile().then(d=>{if(d&&alive)setAccount(a=>({...a,...d}));});
     return()=>{alive=false;};
   },[]);
+  // Real bug found live: "Payment methods"/"Billing history" below were
+  // hardcoded mock data (a fake VISA card, four fake "Paid" rows) shown
+  // identically to every account, including ones that never paid
+  // anything -- see api/me.js's handleBillingInfo for the real fetch.
+  // null = "still loading," {paymentMethod:null,invoices:[]} = "loaded,
+  // genuinely nothing on file" -- rendered differently below so a real
+  // empty state doesn't flash as a loading spinner forever.
+  const [billingInfo,setBillingInfo]=useState(null);
+  useEffect(()=>{
+    let alive=true;
+    authFetch("/api/me",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"billing-info"})})
+      .then(res=>res.ok?res.json():{paymentMethod:null,invoices:[]})
+      .then(d=>{if(alive)setBillingInfo(d);})
+      .catch(()=>{if(alive)setBillingInfo({paymentMethod:null,invoices:[]});});
+    return()=>{alive=false;};
+  },[]);
   const fmtBillingDate=(iso)=>{
     if(!iso)return "the end of your billing period";
     try{return new Date(iso).toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});}catch(e){return "the end of your billing period";}
@@ -25342,23 +25358,32 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                 <div style={{fontSize:14,fontWeight:700,color:T.white}}>Payment methods</div>
                 <BtnSm variant="subtle" onClick={()=>alert("To add a new card, make any purchase — your card will be saved automatically.")}>+ Add card</BtnSm>
               </div>
-              <div style={{display:"flex",alignItems:"center",gap:12,padding:14,background:T.card2,borderRadius:10,border:`1px solid ${T.lime}33`,marginBottom:8}}>
-                <div style={{width:40,height:28,borderRadius:4,background:"linear-gradient(135deg,#1A1F36,#3F4865)",display:"grid",placeItems:"center",color:"#fff",fontSize:9,fontWeight:700,letterSpacing:"0.06em",fontFamily:T.mono}}>VISA</div>
-                <div style={{fontFamily:T.mono,fontSize:13,color:T.text}}>•••• 4242</div>
-                <Badge color={T.lime}>Default</Badge>
-                <div style={{fontSize:11.5,color:T.muted,marginLeft:"auto"}}>Exp 08/27</div>
-                <BtnSm variant="subtle">Update</BtnSm>
-              </div>
-              <div style={{fontSize:11.5,color:T.muted,lineHeight:1.5}}>Your default card is used for subscription renewals and credit purchases. Add more cards by making a purchase. We'll save it securely via Stripe.</div>
+              {billingInfo===null?(
+                <div style={{fontSize:12,color:T.muted,padding:"14px 0"}}>Loading…</div>
+              ):billingInfo.paymentMethod?(
+                <div style={{display:"flex",alignItems:"center",gap:12,padding:14,background:T.card2,borderRadius:10,border:`1px solid ${T.lime}33`}}>
+                  <div style={{width:40,height:28,borderRadius:4,background:"linear-gradient(135deg,#1A1F36,#3F4865)",display:"grid",placeItems:"center",color:"#fff",fontSize:9,fontWeight:700,letterSpacing:"0.06em",fontFamily:T.mono}}>{billingInfo.paymentMethod.brand.toUpperCase()}</div>
+                  <div style={{fontFamily:T.mono,fontSize:13,color:T.text}}>•••• {billingInfo.paymentMethod.last4}</div>
+                  <Badge color={T.lime}>Default</Badge>
+                  <div style={{fontSize:11.5,color:T.muted,marginLeft:"auto"}}>Exp {String(billingInfo.paymentMethod.expMonth).padStart(2,"0")}/{String(billingInfo.paymentMethod.expYear).slice(-2)}</div>
+                </div>
+              ):(
+                <div style={{fontSize:12.5,color:T.muted,textAlign:"center",padding:"20px 0"}}>No card on file yet. One gets saved automatically the first time you subscribe or buy credits.</div>
+              )}
+              <div style={{fontSize:11.5,color:T.muted,lineHeight:1.5,marginTop:8}}>Your default card is used for subscription renewals and credit purchases. Add more cards by making a purchase. We'll save it securely via Stripe.</div>
             </Card>
             <Card style={{marginBottom:getPlan()!=="Pro"?12:0}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:10}}>Billing history</div>
-              {[["Jun 1, 2026","Pro plan · monthly","$6.99","Paid"],["May 1, 2026","Pro plan · monthly","$6.99","Paid"],["Apr 28, 2026","Credit pack · 300","$8.99","Paid"],["Apr 1, 2026","Pro plan · monthly","$6.99","Paid"]].map(([d,t,a,s],i)=>(
-                <div key={i} style={{display:"grid",gridTemplateColumns:"110px 1fr 80px 70px",gap:14,padding:"11px 0",borderBottom:i<3?`1px solid ${T.border}`:"none",fontSize:12.5,alignItems:"center"}}>
-                  <span style={{color:T.muted,fontFamily:T.mono,fontSize:11}}>{d}</span>
-                  <span style={{color:T.text}}>{t}</span>
-                  <span style={{color:T.text,fontFamily:T.mono,fontWeight:600,textAlign:"right"}}>{a}</span>
-                  <Badge color={T.teal}>{s}</Badge>
+              {billingInfo===null?(
+                <div style={{fontSize:12,color:T.muted,padding:"6px 0"}}>Loading…</div>
+              ):billingInfo.invoices.length===0?(
+                <div style={{fontSize:12.5,color:T.muted,textAlign:"center",padding:"20px 0"}}>No charges yet. Real purchases will show up here.</div>
+              ):billingInfo.invoices.map((inv,i)=>(
+                <div key={i} style={{display:"grid",gridTemplateColumns:"110px 1fr 80px 70px",gap:14,padding:"11px 0",borderBottom:i<billingInfo.invoices.length-1?`1px solid ${T.border}`:"none",fontSize:12.5,alignItems:"center"}}>
+                  <span style={{color:T.muted,fontFamily:T.mono,fontSize:11}}>{new Date(inv.date).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</span>
+                  <span style={{color:T.text}}>{inv.description}</span>
+                  <span style={{color:T.text,fontFamily:T.mono,fontWeight:600,textAlign:"right"}}>${inv.amount}</span>
+                  <Badge color={inv.status==="Paid"?T.teal:T.amber}>{inv.status}</Badge>
                 </div>
               ))}
             </Card>
