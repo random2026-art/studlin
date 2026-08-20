@@ -15247,10 +15247,27 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
   // inverted transform here and clearing it next frame is invisible as a
   // jump -- only the transition back to translate(0,0) actually paints,
   // which is what makes it read as motion instead of a teleport.
+  // Fixed-position, viewport-coordinate afterimages for a block that left
+  // the currently visible week entirely (e.g. "push back 3 days" carrying
+  // something past the current week's last day) -- there's no sensible
+  // FLIP for that case (nothing to slide TO that's actually on screen),
+  // so instead of teleporting away instantly it fades out right where it
+  // was. Uses the exact captured DOMRect from before the update, so no
+  // grid/column math needed -- position:fixed places it correctly
+  // regardless of which day column it used to live in.
+  const [exitGhosts,setExitGhosts]=useState([]);
   useLayoutEffect(()=>{
     if(!flipSeq||!flipOldRectsRef)return;
     const oldRects=flipOldRectsRef.current;
     if(!oldRects||oldRects.size===0)return;
+    const leavers=[];
+    oldRects.forEach((rect,id)=>{
+      if(!blockRefs.current.has(id))leavers.push({id,rect});
+    });
+    if(leavers.length>0){
+      setExitGhosts(leavers);
+      setTimeout(()=>setExitGhosts(g=>g.filter(x=>!leavers.some(l=>l.id===x.id))),450);
+    }
     blockRefs.current.forEach((el,id)=>{
       if(!el||!el.isConnected)return;
       const oldRect=oldRects.get(id);
@@ -16008,6 +16025,17 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
           </>
         ), document.body);
       })()}
+      {exitGhosts.length>0 && ReactDOM.createPortal(
+        // Portaled to document.body, same pattern the popover above
+        // already uses -- guarantees it paints above everything and is
+        // never clipped by an ancestor's overflow:hidden (this Card's
+        // own included), regardless of which day column it used to
+        // render inside.
+        exitGhosts.map(g=>(
+          <div key={"exit-"+g.id} style={{position:"fixed",left:g.rect.left,top:g.rect.top,width:g.rect.width,height:g.rect.height,borderRadius:5,background:T.lime+"1c",border:`1.5px dashed ${T.lime}`,pointerEvents:"none",zIndex:200,boxSizing:"border-box",animation:"studlinDissolve 0.4s ease-out forwards"}} />
+        )),
+        document.body
+      )}
     </Card>
   );
 }

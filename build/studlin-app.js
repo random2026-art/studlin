@@ -9799,10 +9799,19 @@ function computeEventBlockHeightPx(durationMins, gapToNextMins, pxPerHr) {
   return Math.min(floored, Math.max(4, gapToNextMins * (pxPerHr / 60)));
 }
 function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent, selectedRoutineKey, onSelectRoutineOccurrence, blockRefs, flipOldRectsRef, flipSeq }) {
+  const [exitGhosts, setExitGhosts] = useState([]);
   useLayoutEffect(() => {
     if (!flipSeq || !flipOldRectsRef) return;
     const oldRects = flipOldRectsRef.current;
     if (!oldRects || oldRects.size === 0) return;
+    const leavers = [];
+    oldRects.forEach((rect, id) => {
+      if (!blockRefs.current.has(id)) leavers.push({ id, rect });
+    });
+    if (leavers.length > 0) {
+      setExitGhosts(leavers);
+      setTimeout(() => setExitGhosts((g) => g.filter((x) => !leavers.some((l) => l.id === x.id))), 450);
+    }
     blockRefs.current.forEach((el, id) => {
       if (!el || !el.isConnected) return;
       const oldRect = oldRects.get(id);
@@ -10351,7 +10360,15 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
       closePopover();
       if (onDeleteEvent) onDeleteEvent(ev);
     }, style: { ...itemStyle, color: T.red, borderTop: `1px solid ${T.border}` }, onMouseEnter: (e) => e.currentTarget.style.background = T.card2, onMouseLeave: (e) => e.currentTarget.style.background = "none" }, "Delete"))), document.body);
-  })());
+  })(), exitGhosts.length > 0 && ReactDOM.createPortal(
+    // Portaled to document.body, same pattern the popover above
+    // already uses -- guarantees it paints above everything and is
+    // never clipped by an ancestor's overflow:hidden (this Card's
+    // own included), regardless of which day column it used to
+    // render inside.
+    exitGhosts.map((g) => /* @__PURE__ */ React.createElement("div", { key: "exit-" + g.id, style: { position: "fixed", left: g.rect.left, top: g.rect.top, width: g.rect.width, height: g.rect.height, borderRadius: 5, background: T.lime + "1c", border: `1.5px dashed ${T.lime}`, pointerEvents: "none", zIndex: 200, boxSizing: "border-box", animation: "studlinDissolve 0.4s ease-out forwards" } })),
+    document.body
+  ));
 }
 const ROUTINE_DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const fmtTimeShort = (t) => {
