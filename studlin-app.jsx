@@ -15214,7 +15214,6 @@ function computeEventBlockHeightPx(durationMins, gapToNextMins, pxPerHr) {
 }
 
 function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent, selectedRoutineKey, onSelectRoutineOccurrence}) {
-  try{document.title="DIAG:weeklyplanner-start:"+events.length;}catch(e){}
   // Phase 10b: user-driven zoom (drag handle below), replacing the old
   // fixed constant. Persisted via getCalZoom/saveCalZoom so it's
   // remembered across visits and shared with DayPlanner. Deliberately not
@@ -15492,12 +15491,10 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
 
   const byDay = {};
   events.forEach(ev => { (byDay[ev.date] = byDay[ev.date] || []).push(ev); });
-  try{document.title="DIAG:byday-built";}catch(e){}
   // Merge in virtual Weekly Routine occurrences for the visible week — same
   // never-persisted expansion CalendarTab does for the Monthly grid.
   expandRoutineOccurrences(routines||[], dayKey(weekDays[0]), dayKey(weekDays[6]))
     .forEach(ev => { (byDay[ev.date] = byDay[ev.date] || []).push(ev); });
-  try{document.title="DIAG:routines-expanded";}catch(e){}
   // A syllabus-scanned due date (assignment or exam) has no real duration —
   // it's a fact, not an appointment. Positioning it in the timed grid below
   // used to mean a fake 30-min block pinned at 23:59, a near-invisible
@@ -19636,7 +19633,6 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
 // so dropping this prop would leave those calls throwing on an undefined
 // setPricingOpen.
 function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRoutineCenterOpenedFromSettings,setDetailEventId,registerSetEvents,onTaskCompleted,catchUpPending,onWizardOpenChange,jumpToSessionOnMount,onJumpSessionConsumed,setPricingOpen=()=>{}}={}){
-  try{document.title="DIAG:cal-body-start";}catch(e){}
   const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
   const SUBJ=[{value:"None",label:"None",color:T.lime},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
   // Accepts either a real course id or a label, same as StudlinPrep/Notes'
@@ -19923,7 +19919,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // to whatever `events` gets read into React state a few lines down --
   // the routines useState initializer runs after this one, which would be
   // too late for events already captured into state above it.
-  const [events,setEvents]=useState(()=>{try{document.title="DIAG:events-init-start";}catch(e){}backfillCourseIds();const ev=lsGet("events",null);const out=(ev&&Array.isArray(ev))?ev.filter(e=>!e.id.startsWith("seed-")):[];try{document.title="DIAG:events-init-done:"+out.length;}catch(e){}return out;});
+  const [events,setEvents]=useState(()=>{backfillCourseIds();const ev=lsGet("events",null);return(ev&&Array.isArray(ev))?ev.filter(e=>!e.id.startsWith("seed-")):[];});
   // Hands setEvents up to App so a commit made through the shared
   // App-level EventDetailModal (see its own comment) can update this
   // component's live state too, not just localStorage -- otherwise the
@@ -20206,9 +20202,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // re-shown by an unrelated edit.
   useEffect(()=>{
     if(!shouldShowWeekBalanceNudge())return;
-    try{document.title="DIAG:weekbalance-start:"+events.length;}catch(e){}
     const plan=computeWeekBalancePlan(events,routines,getSchedulePreferences(),dayKey());
-    try{document.title="DIAG:weekbalance-done";}catch(e){}
     if(plan.moves.length>0)setWeekBalanceNudge(true);
   },[events]);
   const declineWeekBalanceNudge=()=>{logSuggestionDecision("weekBalanceNudge","dismissed",{});dismissWeekBalanceNudge();setWeekBalanceNudge(false);};
@@ -21963,7 +21957,6 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       </div>
     );
   };
-  try{document.title="DIAG:cal-before-return";}catch(e){}
   return (
     <>
     {/* Main content — this is data-page's direct child, so it's the element
