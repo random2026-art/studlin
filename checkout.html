@@ -148,6 +148,7 @@ let billing=params.get('billing')||'monthly';
 
 const PLAN_DATA={
   pro:{name:'STUDLIN PRO',monthly:'$6.99',annual:'$4.99',annualTotal:'$59.88',features:['Add Task with AI: Studlin schedules it for you','AI study plans, flashcards, practice exams, syllabus scans, brain dump & project breakdowns','Smart Reschedule','AI chat: every model, plus 4 dedicated study modes']},
+  max:{name:'STUDLIN MAX',monthly:'$24.99',annual:'$19.99',annualTotal:'$239.88',features:['Everything in Pro, completely unlimited','Priority AI: faster responses, no queue','Bulk flashcard generation (100 at once)','3× XP multiplier + advanced analytics']},
 };
 
 const CREDIT_PACKS={'150':{price:'$4.99',label:'150 AI Credits'},'500':{price:'$14.99',label:'500 AI Credits'},'1000':{price:'$24.99',label:'1,000 AI Credits'},'3000':{price:'$59.99',label:'3,000 AI Credits'}};
@@ -186,7 +187,7 @@ function updateUI(){
     document.getElementById('summaryFeatures').innerHTML=p.features.map(f=>'<li><span class="ck">✓</span> '+f+'</li>').join('');
     document.getElementById('btnMonthly').className=billing==='monthly'?'active':'';
     document.getElementById('btnAnnual').className=billing==='annual'?'active':'';
-    document.getElementById('payBtn').textContent='Subscribe to Pro';
+    document.getElementById('payBtn').textContent='Subscribe to '+(plan.charAt(0).toUpperCase()+plan.slice(1));
   }
 }
 function setBilling(b){billing=b;updateUI();}

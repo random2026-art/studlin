@@ -499,10 +499,16 @@ const PRICING_PLANS=(billing)=>([
     features:["Add Task with AI: Studlin schedules it for you","AI study plans, flashcards, practice exams, syllabus & schedule scans, brain dump & project breakdowns","Smart Reschedule","All AI models: Flash, Standard & Research"],
     cta:"Upgrade to Pro",variant:"lime",featured:true,
   },
+  {
+    key:"max",name:"Max",price:billing==="annual"?"$19.99":"$24.99",per:billing==="annual"?"/mo · billed yearly":"/mo",tag:null,
+    desc:"For the heaviest workload: every subject, every week, no caps.",
+    features:["Everything in Pro, completely unlimited","Priority AI: faster responses, no queue","Bulk flashcard generation (100 at once)","3× XP multiplier + advanced analytics"],
+    cta:"Upgrade to Max",variant:"ink",
+  },
 ]);
 function PlanCards({ billing, onSelect }) {
   return (
-    <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:14}}>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14}}>
       {PRICING_PLANS(billing).map((plan,i)=>(
         <div key={i} style={{
           background:plan.featured?T.forest:T.card2,
@@ -5291,7 +5297,8 @@ function computeStudyPlanParams(examWeight,baseDuration,confidenceLevel,material
 // under what a single AI call reliably returns in one pass.
 function scaledFlashcardCount(materialCharCount){
   if(!materialCharCount)return 10;
-  return Math.max(10,Math.min(40,Math.round(materialCharCount/600)));
+  const cap=getPlan()==="Max"?100:40;
+  return Math.max(10,Math.min(cap,Math.round(materialCharCount/600)));
 }
 function scaledQuizCount(materialCharCount){
   if(!materialCharCount)return 8;
@@ -5535,7 +5542,7 @@ function sessionStats(){
 const fmtH=(m)=>m>=60?Math.floor(m/60)+"h "+(m%60)+"m":m+"m";
 function getPlan(){return lsGet("plan","Free");}
 function setPlanLS(p){lsSet("plan",p);}
-function getCreditLimit(){return getPlan()==="Pro"?100000:120;}
+function getCreditLimit(){return getPlan()!=="Free"?100000:120;}
 function getCredits(){return lsGet("credits",getCreditLimit());}
 function setCreditsLS(n){lsSet("credits",Math.max(0,n));}
 const CREDIT_COST={standard:1,flash:1};
@@ -5608,13 +5615,13 @@ function chargeAiSpend(feature){
   const u=getMonthlyAiSpend();
   lsSet("aiSpendMills",{month:u.month,count:u.count+Math.round(cost*1000)});
 }
-function underAiSpendCeiling(){return getMonthlyAiSpend().count<PRO_MONTHLY_AI_SPEND_CEILING*1000;}
+function underAiSpendCeiling(){if(getPlan()==="Max")return true;return getMonthlyAiSpend().count<PRO_MONTHLY_AI_SPEND_CEILING*1000;}
 
 // ~$0.026/call (json extraction, ~2.5k input incl. syllabus text + schema
 // instructions, ~1.2k output). Cap sized for ~$1/mo worst case.
 const PRO_SYLLABUS_SCAN_LIMIT=40;
 const getSyllabusScanUsage=makeMonthlyUsage("syllabusScans");
-function canScanSyllabus(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getSyllabusScanUsage().count<PRO_SYLLABUS_SCAN_LIMIT;}
+function canScanSyllabus(){if(getPlan()==="Max")return true;if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getSyllabusScanUsage().count<PRO_SYLLABUS_SCAN_LIMIT;}
 function recordSyllabusScan(){const u=getSyllabusScanUsage();lsSet("syllabusScans",{month:u.month,count:u.count+1});chargeAiSpend("syllabusScan");}
 
 // A screenshot import (Canvas weekly view, a photographed syllabus page)
@@ -5625,7 +5632,7 @@ function recordSyllabusScan(){const u=getSyllabusScanUsage();lsSet("syllabusScan
 // json extraction). Cap sized for ~$0.85/mo worst case.
 const PRO_SCREENSHOT_SCAN_LIMIT=40;
 const getScreenshotScanUsage=makeMonthlyUsage("screenshotScans");
-function canScanScreenshot(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getScreenshotScanUsage().count<PRO_SCREENSHOT_SCAN_LIMIT;}
+function canScanScreenshot(){if(getPlan()==="Max")return true;if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getScreenshotScanUsage().count<PRO_SCREENSHOT_SCAN_LIMIT;}
 function recordScreenshotScan(){const u=getScreenshotScanUsage();lsSet("screenshotScans",{month:u.month,count:u.count+1});chargeAiSpend("screenshotScan");}
 
 // AI note scans — "Scan a file", "Record lecture" and "YouTube link" all
@@ -5637,7 +5644,7 @@ function recordScreenshotScan(){const u=getScreenshotScanUsage();lsSet("screensh
 // dollars, is the real ceiling here.
 const PRO_NOTE_SCAN_LIMIT=150;
 const getNoteScanUsage=makeMonthlyUsage("noteScans");
-function canScanNote(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getNoteScanUsage().count<PRO_NOTE_SCAN_LIMIT;}
+function canScanNote(){if(getPlan()==="Max")return true;if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getNoteScanUsage().count<PRO_NOTE_SCAN_LIMIT;}
 function recordNoteScan(){const u=getNoteScanUsage();lsSet("noteScans",{month:u.month,count:u.count+1});chargeAiSpend("noteScan");}
 
 // AI flashcard generation from notes (distinct from manual deck creation,
@@ -5646,7 +5653,7 @@ function recordNoteScan(){const u=getNoteScanUsage();lsSet("noteScans",{month:u.
 // Cap sized for ~$2/mo worst case.
 const PRO_FLASHCARD_GEN_LIMIT=60;
 const getFlashcardGenUsage=makeMonthlyUsage("flashcardGens");
-function canGenFlashcards(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getFlashcardGenUsage().count<PRO_FLASHCARD_GEN_LIMIT;}
+function canGenFlashcards(){if(getPlan()==="Max")return true;if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getFlashcardGenUsage().count<PRO_FLASHCARD_GEN_LIMIT;}
 function recordFlashcardGen(){const u=getFlashcardGenUsage();lsSet("flashcardGens",{month:u.month,count:u.count+1});chargeAiSpend("flashcardGen");}
 
 // Studlin Prep's AI-driven planning flows. ~$0.009/call (session-focus
@@ -5654,7 +5661,7 @@ function recordFlashcardGen(){const u=getFlashcardGenUsage();lsSet("flashcardGen
 // generously -- more than one study plan build per day.
 const PRO_EXAM_PLAN_LIMIT=40;
 const getExamPlanUsage=makeMonthlyUsage("examPlanBuilds");
-function canBuildExamPlan(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getExamPlanUsage().count<PRO_EXAM_PLAN_LIMIT;}
+function canBuildExamPlan(){if(getPlan()==="Max")return true;if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getExamPlanUsage().count<PRO_EXAM_PLAN_LIMIT;}
 function recordExamPlanBuild(){const u=getExamPlanUsage();lsSet("examPlanBuilds",{month:u.month,count:u.count+1});chargeAiSpend("examPlanBuild");}
 
 // proposeSessionFocuses (session "what to study" labels) has 4 call sites
@@ -5674,7 +5681,7 @@ function recordExamPlanBuild(){const u=getExamPlanUsage();lsSet("examPlanBuilds"
 // material input, same shape costed under examPlanBuild above).
 const PRO_SESSION_FOCUS_LIMIT=100;
 const getSessionFocusUsage=makeMonthlyUsage("sessionFocuses");
-function canAddSessionFocus(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getSessionFocusUsage().count<PRO_SESSION_FOCUS_LIMIT;}
+function canAddSessionFocus(){if(getPlan()==="Max")return true;if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getSessionFocusUsage().count<PRO_SESSION_FOCUS_LIMIT;}
 function recordSessionFocus(){const u=getSessionFocusUsage();lsSet("sessionFocuses",{month:u.month,count:u.count+1});chargeAiSpend("sessionFocus");}
 
 // Attack Block (no phases -- a plain assignment, not a Project) is
@@ -5685,7 +5692,7 @@ function recordSessionFocus(){const u=getSessionFocusUsage();lsSet("sessionFocus
 // worst case -- genuinely rare in real use (a handful of projects/month).
 const PRO_PROJECT_BREAKDOWN_LIMIT=30;
 const getProjectBreakdownUsage=makeMonthlyUsage("projectBreakdowns");
-function canBreakDownProject(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getProjectBreakdownUsage().count<PRO_PROJECT_BREAKDOWN_LIMIT;}
+function canBreakDownProject(){if(getPlan()==="Max")return true;if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getProjectBreakdownUsage().count<PRO_PROJECT_BREAKDOWN_LIMIT;}
 function recordProjectBreakdown(){const u=getProjectBreakdownUsage();lsSet("projectBreakdowns",{month:u.month,count:u.count+1});chargeAiSpend("projectBreakdown");}
 
 // Smart Reschedule -- paid-only, no free tier at all. Was already the
@@ -5696,7 +5703,7 @@ function recordProjectBreakdown(){const u=getProjectBreakdownUsage();lsSet("proj
 // ceiling, not a real cost concern.
 const PRO_SMART_RESCHEDULE_LIMIT=200;
 const getSmartRescheduleUsage=makeMonthlyUsage("smartReschedules");
-function canUseSmartReschedule(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getSmartRescheduleUsage().count<PRO_SMART_RESCHEDULE_LIMIT;}
+function canUseSmartReschedule(){if(getPlan()==="Max")return true;if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getSmartRescheduleUsage().count<PRO_SMART_RESCHEDULE_LIMIT;}
 function recordSmartReschedule(){const u=getSmartRescheduleUsage();lsSet("smartReschedules",{month:u.month,count:u.count+1});chargeAiSpend("smartReschedule");}
 
 // Brain Dump -- turns free-text into scheduled items via a real /api/chat
@@ -5705,7 +5712,7 @@ function recordSmartReschedule(){const u=getSmartRescheduleUsage();lsSet("smartR
 // for ~$1.35/mo worst case -- more than 3/day.
 const PRO_BRAIN_DUMP_LIMIT=100;
 const getBrainDumpUsage=makeMonthlyUsage("brainDumps");
-function canUseBrainDump(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getBrainDumpUsage().count<PRO_BRAIN_DUMP_LIMIT;}
+function canUseBrainDump(){if(getPlan()==="Max")return true;if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getBrainDumpUsage().count<PRO_BRAIN_DUMP_LIMIT;}
 function recordBrainDump(){const u=getBrainDumpUsage();lsSet("brainDumps",{month:u.month,count:u.count+1});chargeAiSpend("brainDump");}
 
 // "Add Task with AI" (CalendarTab's aiArrange) -- the primary AI-scheduling
@@ -5721,7 +5728,7 @@ function recordBrainDump(){const u=getBrainDumpUsage();lsSet("brainDumps",{month
 // (13+/day) rather than off dollars alone.
 const PRO_AI_ARRANGE_LIMIT=400;
 const getAiArrangeUsage=makeMonthlyUsage("aiArranges");
-function canUseAiArrange(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getAiArrangeUsage().count<PRO_AI_ARRANGE_LIMIT;}
+function canUseAiArrange(){if(getPlan()==="Max")return true;if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getAiArrangeUsage().count<PRO_AI_ARRANGE_LIMIT;}
 
 // Canvas/Schoology/Blackboard calendar-connect classification
 // (classifyImportedCalendarEvents) -- found during a 2026-08-19 audit to
@@ -5744,7 +5751,7 @@ function canUseAiArrange(){if(getPlan()==="Free")return false;if(!underAiSpendCe
 // new items). Cap sized for ~$1.80/mo worst case.
 const PRO_CALENDAR_CLASSIFY_LIMIT=60;
 const getCalendarClassifyUsage=makeMonthlyUsage("calendarClassifies");
-function canClassifyCalendarImport(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getCalendarClassifyUsage().count<PRO_CALENDAR_CLASSIFY_LIMIT;}
+function canClassifyCalendarImport(){if(getPlan()==="Max")return true;if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getCalendarClassifyUsage().count<PRO_CALENDAR_CLASSIFY_LIMIT;}
 function recordCalendarClassify(){const u=getCalendarClassifyUsage();lsSet("calendarClassifies",{month:u.month,count:u.count+1});chargeAiSpend("calendarClassify");}
 function recordAiArrange(){const u=getAiArrangeUsage();lsSet("aiArranges",{month:u.month,count:u.count+1});chargeAiSpend("aiArrange");}
 
@@ -5852,7 +5859,7 @@ function cleanupOrphanedPenaltyStorage(){
   try{localStorage.removeItem("studlin-xpPenaltyTotal");localStorage.removeItem("studlin-penalizedTasks");}catch(e){}
   lsSet("penaltyStorageCleaned",true);
 }
-function levelInfo(){const minutes=getTotalMinutesFocused();const per=300;const level=Math.floor(minutes/per)+1;const into=minutes-(level-1)*per;const title=getProfTitle(minutes);const nextTier=PROF_TIERS.find(t=>t.minMinutes>minutes)||null;const curTierMinutes=(PROF_TIERS.slice().reverse().find(t=>minutes>=t.minMinutes)||PROF_TIERS[0]).minMinutes;const tierPct=nextTier?Math.round(Math.max(0,Math.min(100,(minutes-curTierMinutes)/(nextTier.minMinutes-curTierMinutes)*100))):100;return {minutes,level,into,per,toNext:per-into,pct:Math.round(into/per*100),title,nextTier,tierPct};}
+function levelInfo(){const minutes=getTotalMinutesFocused();const effMinutes=getPlan()==="Max"?minutes*3:minutes;const per=300;const level=Math.floor(effMinutes/per)+1;const into=effMinutes-(level-1)*per;const title=getProfTitle(effMinutes);const nextTier=PROF_TIERS.find(t=>t.minMinutes>effMinutes)||null;const curTierMinutes=(PROF_TIERS.slice().reverse().find(t=>effMinutes>=t.minMinutes)||PROF_TIERS[0]).minMinutes;const tierPct=nextTier?Math.round(Math.max(0,Math.min(100,(effMinutes-curTierMinutes)/(nextTier.minMinutes-curTierMinutes)*100))):100;return {minutes,level,into,per,toNext:per-into,pct:Math.round(into/per*100),title,nextTier,tierPct};}
 function weekStreak(){const days=new Set(lsGet("days",[]));const now=new Date();const dow=(now.getDay()+6)%7;const mon=new Date(now);mon.setDate(now.getDate()-dow);return ["M","T","W","T","F","S","S"].map((lab,i)=>{const d=new Date(mon);d.setDate(mon.getDate()+i);const k=dayKey(d);const today=k===dayKey(now);return {lab,on:days.has(k),today,future:d>now&&!today};});}
 // ─── ADVANCED SCHEDULING SYSTEM (5 features integrated) ──────────────────────
 // Feature 1: User preference storage + getters/setters (complete with all onboarding preferences)
@@ -6979,25 +6986,33 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
   // canBreakDownProject's own comment), so it was always free and listing
   // it as a Pro perk was inaccurate, not just imprecise. Brain Dump added
   // -- newly Pro-only as of the 2026-08-18 pricing pass.
-  const tier={name:"Pro",price:"$6.99",perks:["Add Task with AI","AI study plans, flashcards, syllabus scans, brain dump & project breakdowns","Smart Reschedule","Every AI model + 4 study modes"],color:T.lime};
-  const choose=()=>{setPlanLS("Pro");onClose();if(onUpgraded)onUpgraded("Pro");};
+  const plan=getPlan();
+  const proTier={name:"Pro",price:"$6.99",perks:["Add Task with AI","AI study plans, flashcards, syllabus scans, brain dump & project breakdowns","Smart Reschedule","Every AI model + 4 study modes"],color:T.lime};
+  const maxTier={name:"Max",price:"$24.99",perks:["Everything in Pro, completely unlimited","Priority AI: faster responses, no queue","Bulk flashcard generation (100 at once)","3× XP multiplier + advanced analytics"],color:T.purple};
+  const tiers=plan==="Pro"?[maxTier]:[proTier,maxTier];
+  const choose=(name)=>{setPlanLS(name);onClose();if(onUpgraded)onUpgraded(name);};
   return (
     <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:90,background:"rgba(8,12,10,0.72)",backdropFilter:"blur(7px)",display:"flex",alignItems:"center",justifyContent:"center"}}>
-      <div onClick={e=>e.stopPropagation()} style={{width:400,maxWidth:"92vw",background:T.card,border:"1px solid "+T.border,borderRadius:8,padding:26,boxShadow:"0 40px 90px -30px rgba(0,0,0,0.65)"}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:tiers.length>1?580:400,maxWidth:"92vw",background:T.card,border:"1px solid "+T.border,borderRadius:8,padding:26,boxShadow:"0 40px 90px -30px rgba(0,0,0,0.65)"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
           <span style={{display:"inline-flex",width:30,height:30,borderRadius:8,background:T.lime+"1c",border:"1px solid "+T.lime+"44",alignItems:"center",justifyContent:"center",color:T.lime}}>{Icon.wand}</span>
-          <div style={{fontSize:17,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>{feature} is a Pro feature</div>
+          <div style={{fontSize:17,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>{plan==="Free"?`${feature} is a Pro feature`:`${feature} is at this month's cap`}</div>
         </div>
         <div style={{fontSize:12.5,color:T.text,lineHeight:1.6,marginBottom:18}}>{detail}</div>
-        <div style={{background:T.card,border:"1px solid "+T.border,borderRadius:12,padding:16,marginBottom:14}}>
-          <div style={{fontSize:13,fontWeight:700,color:tier.color,marginBottom:2}}>{tier.name}</div>
-          <div style={{fontSize:24,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>{tier.price}<span style={{fontSize:11,color:T.muted,fontWeight:400}}> /month</span></div>
-          <div style={{margin:"10px 0 14px"}}>
-            {tier.perks.map((p,i)=>(
-              <div key={i} style={{display:"flex",gap:7,alignItems:"center",fontSize:11.5,color:T.text,padding:"3px 0"}}><span style={{color:tier.color,display:"inline-flex"}}>{Icon.check}</span>{p}</div>
-            ))}
-          </div>
-          <Btn onClick={choose} style={{width:"100%",justifyContent:"center",background:T.lime,color:T.ink}}>Upgrade to Pro</Btn>
+        <div style={{display:"grid",gridTemplateColumns:`repeat(${tiers.length},1fr)`,gap:10,marginBottom:14}}>
+          {tiers.map(tier=>(
+            <div key={tier.name} style={{background:T.card,border:"1px solid "+(tier.name==="Max"?tier.color+"55":T.border),borderRadius:12,padding:16,position:"relative"}}>
+              {tier.name==="Max"&&<span style={{position:"absolute",top:-8,right:12,fontSize:9,fontWeight:700,letterSpacing:"0.08em",background:tier.color,color:"#fff",padding:"2px 8px",borderRadius:4}}>BEST VALUE</span>}
+              <div style={{fontSize:13,fontWeight:700,color:tier.color,marginBottom:2}}>{tier.name}</div>
+              <div style={{fontSize:24,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>{tier.price}<span style={{fontSize:11,color:T.muted,fontWeight:400}}> /month</span></div>
+              <div style={{margin:"10px 0 14px"}}>
+                {tier.perks.map((p,i)=>(
+                  <div key={i} style={{display:"flex",gap:7,alignItems:"center",fontSize:11.5,color:T.text,padding:"3px 0"}}><span style={{color:tier.color,display:"inline-flex"}}>{Icon.check}</span>{p}</div>
+                ))}
+              </div>
+              <Btn onClick={()=>choose(tier.name)} style={{width:"100%",justifyContent:"center",background:tier.name==="Max"?tier.color:T.lime,color:tier.name==="Max"?"#fff":T.ink}}>Upgrade to {tier.name}</Btn>
+            </div>
+          ))}
         </div>
         <div onClick={onClose} style={{textAlign:"center",fontSize:12,color:T.muted,cursor:"pointer",padding:6}}>Maybe later</div>
       </div>
@@ -7134,7 +7149,7 @@ function wrongTopicsFor(questions,answers){
 // Cap sized for ~$2.25/mo worst case.
 const PRO_QUIZ_GEN_LIMIT=60;
 const getQuizGenUsage=makeMonthlyUsage("quizGens");
-function canGenQuiz(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getQuizGenUsage().count<PRO_QUIZ_GEN_LIMIT;}
+function canGenQuiz(){if(getPlan()==="Max")return true;if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getQuizGenUsage().count<PRO_QUIZ_GEN_LIMIT;}
 function recordQuizGen(){const u=getQuizGenUsage();lsSet("quizGens",{month:u.month,count:u.count+1});chargeAiSpend("quizGen");}
 
 // Cap on how much text one uploaded/pasted material entry can contribute --
@@ -10494,7 +10509,7 @@ function Notes({setActive=()=>{}}){
     }
     setPanelLoading("cards");setPanelMsg("");
     try{
-      const cards=await generateFlashcardsFromText(text,"note",10);
+      const cards=await generateFlashcardsFromText(text,"note",getPlan()==="Max"?100:10);
       if(cards.length===0){setPanelMsg("Couldn't generate cards. Try again.");setPanelLoading(null);return;}
       const nd={id:String(Date.now()),name:activeNote.title,count:cards.length,done:0,color:colorOf(activeNote.tag),cards};
       const decks=lsGet("decks",[]);
@@ -22977,6 +22992,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   };
   const planPriceText=(plan,interval)=>{
     if(plan==="Pro")return interval==="year"?"$59.88/year":"$6.99/mo";
+    if(plan==="Max")return interval==="year"?"$239.88/year":"$24.99/mo";
     return "Free";
   };
   const subscriptionPlanLine=()=>{
@@ -24345,7 +24361,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <Card style={{marginBottom:12}}>
                 <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:2}}>AI chat messages</div>
                 <div style={{fontSize:12,color:T.muted,marginBottom:18}}>Resets in {daysLeft} day{daysLeft!==1?"s":""} · {plan} plan</div>
-                {plan==="Pro"?(
+                {plan!=="Free"?(
                   <div style={{fontSize:13,color:T.lime,fontWeight:600}}>Unlimited</div>
                 ):(<>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
@@ -24408,13 +24424,14 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                 </div>
                 <div style={{textAlign:"right"}}>
                   <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.bg,opacity:0.6}}>AI CHAT MESSAGES</div>
-                  <div style={{fontSize:26,fontWeight:700,color:T.bg,letterSpacing:"-0.02em",marginTop:4}}>{getPlan()==="Pro"?"Unlimited":getCredits()+" / "+getCreditLimit()}</div>
-                  <div style={{fontSize:13,color:T.bg,opacity:0.75,marginTop:4}}>{getPlan()==="Pro"?"No monthly cap":"Resets in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")}</div>
+                  <div style={{fontSize:26,fontWeight:700,color:T.bg,letterSpacing:"-0.02em",marginTop:4}}>{getPlan()!=="Free"?"Unlimited":getCredits()+" / "+getCreditLimit()}</div>
+                  <div style={{fontSize:13,color:T.bg,opacity:0.75,marginTop:4}}>{getPlan()!=="Free"?"No monthly cap":"Resets in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")}</div>
                 </div>
               </div>
               <div style={{display:"flex",gap:8,marginTop:18,flexWrap:"wrap"}}>
                 <a href="checkout.html?credits=500" style={{background:T.bg,color:T.lime,padding:"8px 16px",borderRadius:7,fontSize:12.5,fontWeight:600,textDecoration:"none"}}>Buy credit packs</a>
-                {getPlan()!=="Pro"&&<a href="checkout.html?plan=pro&billing=monthly" style={{background:"transparent",border:`1px solid ${T.bg}55`,color:T.bg,padding:"8px 16px",borderRadius:7,fontSize:12.5,fontWeight:600,textDecoration:"none"}}>Upgrade to Pro</a>}
+                {getPlan()==="Free"&&<a href="checkout.html?plan=pro&billing=monthly" style={{background:"transparent",border:`1px solid ${T.bg}55`,color:T.bg,padding:"8px 16px",borderRadius:7,fontSize:12.5,fontWeight:600,textDecoration:"none"}}>Upgrade to Pro</a>}
+                {getPlan()!=="Max"&&<a href="checkout.html?plan=max&billing=monthly" style={{background:"transparent",border:`1px solid ${T.bg}55`,color:T.bg,padding:"8px 16px",borderRadius:7,fontSize:12.5,fontWeight:600,textDecoration:"none"}}>Upgrade to Max</a>}
               </div>
             </Card>
             {account.stripeSubscriptionId&&(
@@ -24568,7 +24585,7 @@ function Profile({setActive,seriousMode=false}={}) {
                 regardless of actual plan -- the Subscription tab already
                 reads the real plan correctly (account.plan||getPlan()),
                 just needed the same check here. */}
-            <Badge color={T.lime}>{getPlan()}</Badge>
+            <Badge color={getPlan()==="Max"?T.purple:T.lime}>{getPlan()}</Badge>
             {!seriousMode&&<span onClick={()=>setStreakModalOpen(true)} style={{cursor:"pointer"}}><Badge color={T.amber}>{streak}-day streak</Badge></span>}
             {!seriousMode&&<Badge color={T.blue}>{lvl.title}</Badge>}
             {status&&<Badge color={T.teal}>{status==="highschool"?"High School":"College"}</Badge>}
@@ -27246,8 +27263,8 @@ function App() {
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",position:"relative"}}>
                 <div>
                   <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",fontWeight:600,color:"rgba(8,12,40,0.6)"}}>CURRENT BALANCE</div>
-                  <div style={{fontFamily:T.hand,fontSize:54,fontWeight:700,color:T.ink,lineHeight:0.9,marginTop:4}}>{getPlan()==="Pro"?"Unlimited":getCredits()+""}<span style={{fontFamily:T.font,fontSize:18,fontWeight:500,color:"rgba(8,12,40,0.55)",marginLeft:4}}>{getPlan()==="Pro"?"":"/ "+getCreditLimit()}</span></div>
-                  <div style={{fontSize:12,color:"rgba(8,12,40,0.65)",marginTop:4}}>{getPlan()==="Pro"?"No monthly cap":"Resets in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")+" · "+(getCreditLimit()-getCredits())+" used this cycle"}</div>
+                  <div style={{fontFamily:T.hand,fontSize:54,fontWeight:700,color:T.ink,lineHeight:0.9,marginTop:4}}>{getPlan()!=="Free"?"Unlimited":getCredits()+""}<span style={{fontFamily:T.font,fontSize:18,fontWeight:500,color:"rgba(8,12,40,0.55)",marginLeft:4}}>{getPlan()!=="Free"?"":"/ "+getCreditLimit()}</span></div>
+                  <div style={{fontSize:12,color:"rgba(8,12,40,0.65)",marginTop:4}}>{getPlan()!=="Free"?"No monthly cap":"Resets in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")+" · "+(getCreditLimit()-getCredits())+" used this cycle"}</div>
                 </div>
                 <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.16em",fontWeight:700,background:T.ink,color:T.lime,padding:"4px 8px",borderRadius:5}}>{getPlan().toUpperCase()}</span>
               </div>

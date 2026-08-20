@@ -1984,6 +1984,15 @@ describe("2026-08-18 pricing pass, part 2: Pro gets a real (generous, unadvertis
       }
       assert.equal(m[canFn](), false, "should block once the monthly cap is reached");
     });
+    test(`${canFn}: Max is never blocked, no matter how much usage is recorded ("completely unlimited")`, () => {
+      const m = loadStudlinModule();
+      m.setPlanLS("Max");
+      const beyondProLimit = m[limitConst] * 3;
+      for (let i = 0; i < beyondProLimit; i++) {
+        assert.equal(m[canFn](), true, `should still allow use #${i + 1}, well past Pro's own cap`);
+        m[recordFn]();
+      }
+    });
   });
 
   describe("aggregate cross-tool spend ceiling (2026-08-19 addition)", () => {
@@ -2007,6 +2016,15 @@ describe("2026-08-18 pricing pass, part 2: Pro gets a real (generous, unadvertis
       // near PRO_SMART_RESCHEDULE_LIMIT) is blocked anyway by the shared ceiling.
       assert.equal(m.getSmartRescheduleUsage().count, 0, "sanity: this tool's own counter was never touched");
       assert.equal(m.canUseSmartReschedule(), false, "shared spend ceiling should block every tool, not just the one that spent it");
+    });
+
+    test("Max plan bypasses the aggregate spend ceiling entirely", () => {
+      const m = loadStudlinModule();
+      m.setPlanLS("Max");
+      const dollarsPerCharge = m.AI_CALL_COST_ESTIMATES.flashcardGen;
+      const chargesNeeded = Math.ceil((m.PRO_MONTHLY_AI_SPEND_CEILING / dollarsPerCharge)) * 3;
+      for (let i = 0; i < chargesNeeded; i++) m.chargeAiSpend("flashcardGen");
+      assert.equal(m.underAiSpendCeiling(), true, "Max should stay under the ceiling no matter how much is charged");
     });
   });
 });

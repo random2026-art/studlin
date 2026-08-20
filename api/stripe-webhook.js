@@ -10,9 +10,11 @@ const { Sentry, withSentry } = require('./_lib/sentry');
 const PLAN_MAP = {
   REPLACE_WITH_NEW_PRO_MONTHLY_PRICE_ID: 'Pro',
   REPLACE_WITH_NEW_PRO_ANNUAL_PRICE_ID: 'Pro',
+  REPLACE_WITH_NEW_MAX_MONTHLY_PRICE_ID: 'Max',
+  REPLACE_WITH_NEW_MAX_ANNUAL_PRICE_ID: 'Max',
 };
 
-const PLAN_CREDITS = { Pro: 100000 };
+const PLAN_CREDITS = { Pro: 100000, Max: 100000 };
 
 function isoFromStripeSeconds(value) {
   return value ? new Date(value * 1000).toISOString() : null;

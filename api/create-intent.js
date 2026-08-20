@@ -26,6 +26,8 @@ const CREDIT_PACKS = {
 const PRICES = {
   pro_monthly: null, // TODO: new $6.99/mo Price ID
   pro_annual: null, // TODO: new $4.99/mo ($59.88/yr) Price ID
+  max_monthly: null, // TODO: new $24.99/mo Price ID
+  max_annual: null, // TODO: new $19.99/mo ($239.88/yr) Price ID
 };
 
 module.exports = withSentry(async (req, res) => {

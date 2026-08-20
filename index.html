@@ -971,7 +971,7 @@ body::after{
 .switch .knob{position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.22);transition:transform .28s cubic-bezier(.4,0,.2,1);}
 .switch[aria-checked="true"] .knob{transform:translateX(22px);}
 
-.pricing-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:center;max-width:700px;margin:54px auto 0;}
+.pricing-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:center;max-width:1040px;margin:54px auto 0;}
 .pc{position:relative;background:#fff;border:1px solid var(--line);padding:34px 28px;display:flex;flex-direction:column;text-align:center;border-radius:22px;transform:perspective(1200px) translate3d(var(--tx,0),var(--ty,0),0) rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg)) rotateZ(var(--rz,0deg)) scale(var(--s,1));transform-style:preserve-3d;transition:transform .28s cubic-bezier(.2,.7,.3,1),box-shadow .35s ease,opacity .5s ease;will-change:transform;}
 .pc:hover{box-shadow:0 46px 92px -48px rgba(22,54,42,0.5);z-index:4;}
 .pc-popular:hover{box-shadow:0 52px 100px -44px rgba(22,54,42,0.62);}
@@ -1660,6 +1660,21 @@ body::after{
         <hr class="pc-hr">
         <a href="/app" class="pc-btn pc-btn-primary magnetic">Upgrade to Pro <span class="ar">→</span></a>
         <div class="pc-desc">Everything, no caps. Cancel anytime.</div>
+      </div>
+      <div class="pc" data-plan="max">
+        <div class="pc-name">Max</div>
+        <div class="pc-price"><span class="pc-cur">$</span><span class="pc-amt" data-m="24.99" data-a="19.99" data-dec="2">24.99</span><span class="pc-per">/month</span></div>
+        <div class="pc-billed" data-m="billed monthly" data-a="billed annually · save $60/yr">billed monthly</div>
+        <div class="pc-annual-note">or <b>$239.88</b>/yr <span class="pc-save-pill">Save 20%</span></div>
+        <ul class="pc-feats">
+          <li><span class="pc-ck">✓</span> Everything in Pro, completely unlimited</li>
+          <li><span class="pc-ck">✓</span> Priority AI: faster responses, no queue</li>
+          <li><span class="pc-ck">✓</span> Bulk flashcard generation (100 at once)</li>
+          <li><span class="pc-ck">✓</span> 3× XP multiplier + advanced analytics</li>
+        </ul>
+        <hr class="pc-hr">
+        <a href="/app" class="pc-btn magnetic">Upgrade to Max <span class="ar">→</span></a>
+        <div class="pc-desc">For the heaviest workload. Cancel anytime.</div>
       </div>
     </div>
     <div class="pricing-foot">Free to start, no card needed. Upgrade whenever you're ready for more.</div>
