@@ -1,4 +1,4 @@
-const { useState, useEffect, useRef, useMemo } = React;
+const { useState, useEffect, useLayoutEffect, useRef, useMemo } = React;
 
 // ─── DESIGN TOKENS · dark + light themes ──────────────────────────────────────
 const darkT = {
@@ -15238,7 +15238,49 @@ function computeEventBlockHeightPx(durationMins, gapToNextMins, pxPerHr) {
   return Math.min(floored, Math.max(4, gapToNextMins * (pxPerHr / 60)));
 }
 
-function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent, selectedRoutineKey, onSelectRoutineOccurrence, moveHighlightIds, moveGhosts}) {
+function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent, selectedRoutineKey, onSelectRoutineOccurrence, blockRefs, flipOldRectsRef, flipSeq}) {
+  // "Watch it happen" FLIP playback (see CalendarTab's captureFlip) --
+  // flipSeq changing means flipOldRectsRef.current now holds a snapshot
+  // of every block's on-screen position from right before events just
+  // changed. useLayoutEffect fires synchronously after the new DOM (new
+  // positions) has committed but before the browser paints, so setting an
+  // inverted transform here and clearing it next frame is invisible as a
+  // jump -- only the transition back to translate(0,0) actually paints,
+  // which is what makes it read as motion instead of a teleport.
+  useLayoutEffect(()=>{
+    if(!flipSeq||!flipOldRectsRef)return;
+    const oldRects=flipOldRectsRef.current;
+    if(!oldRects||oldRects.size===0)return;
+    blockRefs.current.forEach((el,id)=>{
+      if(!el||!el.isConnected)return;
+      const oldRect=oldRects.get(id);
+      if(!oldRect){
+        // Wasn't on screen before this update (e.g. a routine occurrence
+        // that just materialized into a real event under a fresh id, see
+        // confirmPausePlan's own comment) -- nothing to slide FROM, so it
+        // announces itself arriving instead of teleporting in silently.
+        el.style.animation="studlinPop 0.3s cubic-bezier(.2,.85,.3,1)";
+        setTimeout(()=>{ if(el)el.style.animation=""; },350);
+        return;
+      }
+      const newRect=el.getBoundingClientRect();
+      const dx=oldRect.left-newRect.left;
+      const dy=oldRect.top-newRect.top;
+      if(Math.abs(dx)<0.5&&Math.abs(dy)<0.5)return; // didn't actually move
+      el.style.transition="none";
+      el.style.transform=`translate(${dx}px,${dy}px)`;
+      el.style.zIndex="50";
+      void el.getBoundingClientRect(); // force the invert above to actually paint before we transition away from it
+      requestAnimationFrame(()=>{
+        if(!el.isConnected)return;
+        el.style.transition="transform 0.45s cubic-bezier(.2,.8,.2,1)";
+        el.style.transform="translate(0,0)";
+      });
+      const cleanup=()=>{ if(!el)return; el.style.transition=""; el.style.transform=""; el.style.zIndex=""; el.removeEventListener("transitionend",cleanup); };
+      el.addEventListener("transitionend",cleanup);
+      setTimeout(cleanup,650);
+    });
+  },[flipSeq]);
   // Phase 10b: user-driven zoom (drag handle below), replacing the old
   // fixed constant. Persisted via getCalZoom/saveCalZoom so it's
   // remembered across visits and shared with DayPlanner. Deliberately not
@@ -15661,21 +15703,6 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
               const dur = dragEv ? (dragEv.duration || 30) : (wkDragRoutineOccurrence ? (wkDragRoutineOccurrence.duration || 30) : 30);
               ghostEl = <div style={{position:"absolute",top:(gh*60+gm)*(WK_PX_HR/60),left:2,right:2,height:Math.max(22,dur*(WK_PX_HR/60)),borderRadius:5,background:T.lime+"14",border:`1.5px dashed ${T.lime}`,zIndex:4,pointerEvents:"none",boxSizing:"border-box"}} />;
             }
-            // "Watch it happen" (see CalendarTab's animateMoves) -- the
-            // brief afterimage left at a task's OLD spot right after a bulk
-            // reschedule lands it somewhere new. Same top/height math as
-            // ghostEl above, just keyed off fromDate/fromTime instead of a
-            // live drag, and there can be several at once (a whole day's
-            // worth of tasks can move together), unlike the single active
-            // drag ghost. Nothing renders for a ghost whose fromDate isn't
-            // this visible week at all -- by construction, not a special case.
-            const moveGhostEls = (moveGhosts||[]).filter(g => g.fromDate === dk).map(g => {
-              const parts = (g.fromTime || "09:00").split(":").map(Number);
-              const gColor = colorOf(g.subject) || T.lime;
-              return (
-                <div key={"ghost-" + g.id} style={{position:"absolute",top:(parts[0]*60+parts[1])*(WK_PX_HR/60),left:2,right:2,height:Math.max(22,(g.duration||30)*(WK_PX_HR/60)),borderRadius:5,background:gColor+"14",border:`1.5px dashed ${gColor}`,zIndex:2,pointerEvents:"none",boxSizing:"border-box",animation:"studlinDissolve 0.9s ease-out forwards"}} />
-              );
-            });
             // Live preview (2026-07-30): a dropped course/activity used to
             // stay invisible until Create was clicked -- this renders it
             // as a real-looking block (not just a dashed outline) at
@@ -15880,15 +15907,16 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                       onMouseEnter={()=>{ if(isRoutine&&setHoveredRoutineId)setHoveredRoutineId(ev.routineId); }}
                       onMouseLeave={()=>{ if(isRoutine&&setHoveredRoutineId)setHoveredRoutineId(null); }}
                       title={isRoutine?"Click to select (Ctrl+C to copy) · Double-click to edit · Drag to reschedule":"Click for actions (Backspace to delete) · Double-click to edit · Drag to reschedule"}
-                      style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:5,padding:"2px 5px 2px 8px",cursor:"grab",overflow:"hidden",zIndex:3,opacity:dimmedByRoutineMode?0.3:(isDone?0.6:1),boxSizing:"border-box",userSelect:"none",...kindStyle,...(highlightedByRoutineMode?{outline:`2px solid ${T.lime}`,outlineOffset:1}:{}),...((isSelected||isRoutineSelected)?{outline:`2px solid ${T.lime}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.lime}22`}:{}),...(!isRoutine&&highlightedSessionId===ev.id?{outline:`2px solid ${T.amber}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.amber}33`}:{}),
-                        // "Watch it happen" (see CalendarTab's animateMoves) --
-                        // a task that just landed here via a bulk reschedule
-                        // gets the same outline treatment as the deep-link
-                        // jump-to-session highlight above, just lime instead
-                        // of amber (Studlin's established "confirmed/success"
-                        // color) so the two don't read as the same thing, and
-                        // it animates in via studlinPop rather than snapping on.
-                        ...(moveHighlightIds&&moveHighlightIds.has(ev.id)?{outline:`2px solid ${T.lime}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.lime}33`,animation:"studlinPop 0.3s cubic-bezier(.2,.85,.3,1)"}:{})}}>
+                      // "Watch it happen" (see CalendarTab's captureFlip) --
+                      // registers this exact DOM node under the event's id
+                      // so the FLIP effect above can read its position both
+                      // right before a bulk reschedule commits and right
+                      // after, and animate the difference. Cleared on
+                      // unmount (el is null on the removal call) so a task
+                      // that's no longer rendered here doesn't leave a
+                      // stale/detached node in the map.
+                      ref={el=>{ if(el)blockRefs.current.set(ev.id,el); else blockRefs.current.delete(ev.id); }}
+                      style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:5,padding:"2px 5px 2px 8px",cursor:"grab",overflow:"hidden",zIndex:3,opacity:dimmedByRoutineMode?0.3:(isDone?0.6:1),boxSizing:"border-box",userSelect:"none",...kindStyle,...(highlightedByRoutineMode?{outline:`2px solid ${T.lime}`,outlineOffset:1}:{}),...((isSelected||isRoutineSelected)?{outline:`2px solid ${T.lime}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.lime}22`}:{}),...(!isRoutine&&highlightedSessionId===ev.id?{outline:`2px solid ${T.amber}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.amber}33`}:{})}}>
                       {/* Subject marker -- see comment above kindStyle */}
                       <div style={{position:"absolute",left:0,top:0,bottom:0,width:3,background:subjectColor,borderRadius:"5px 0 0 5px"}} />
                       {/* Suppressed while a Catch Me Up rebuild is pending -- the
@@ -15938,7 +15966,6 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                 }); })()}
                 {ghostEl}
                 {previewEl}
-                {moveGhostEls}
               </div>
             );
           })}
@@ -19726,32 +19753,32 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // just sitting there as inert text (see renderSidebarItem's exam branch
   // + WeeklyPlanner's highlightedSessionId prop below).
   const [highlightedSessionId,setHighlightedSessionId]=useState(null);
-  // "Watch it happen" -- visual feedback when a bulk reschedule (Studlin
-  // Reschedule's presets, Balance my week) actually lands. moveHighlightIds
-  // generalizes highlightedSessionId's single-id outline to N ids at once,
-  // fired on every task that just moved. moveGhosts is the OLD-position
-  // afterimage: a brief dashed box at each moved task's previous day/time,
-  // rendered by WeeklyPlanner using the same top/height math the drag
-  // ghostEl already uses. Deliberately NOT a literal slide-across-the-grid
-  // animation -- that needs the new day to be on screen to animate INTO,
-  // and half of what these presets do (push back days, clear a week) can
-  // easily land somewhere off the currently visible week. A ghost whose
-  // fromDate/toDate isn't in the visible week just renders nothing for
-  // that side -- graceful by construction, not a special case.
-  const [moveHighlightIds,setMoveHighlightIds]=useState(()=>new Set());
-  const [moveGhosts,setMoveGhosts]=useState([]);
-  // moves: [{id,title,subject,kind,fromDate,fromTime,duration}] -- callers
-  // (confirmPausePlan, confirmWeekBalance) each normalize their own move
-  // shape into this before calling. Ghosts dissolve first (short --
-  // reads as "just left"), the new-spot ring holds a beat longer so the
-  // eye has time to travel from the fading old spot to the settled new
-  // one before it fades too.
-  const animateMoves=(moves)=>{
-    if(!moves||moves.length===0)return;
-    setMoveGhosts(moves.map(m=>({id:m.id,title:m.title,subject:m.subject,kind:m.kind,fromDate:m.fromDate,fromTime:m.fromTime,duration:m.duration})));
-    setMoveHighlightIds(new Set(moves.map(m=>m.id)));
-    setTimeout(()=>setMoveGhosts([]),950);
-    setTimeout(()=>setMoveHighlightIds(new Set()),2500);
+  // "Watch it happen" -- a real measured slide when a bulk reschedule
+  // (Studlin Reschedule's presets, Balance my week) actually lands, not
+  // just a highlight ring. This is a FLIP animation (First-Last-Invert-
+  // Play): blockRefs is a live DOM-node map WeeklyPlanner writes into (one
+  // entry per currently-rendered event block, keyed by event id) -- a
+  // plain ref, not state, so writing to it never triggers a render.
+  // captureFlip() must be called synchronously BEFORE the events state
+  // update that's about to move things, while the OLD DOM (old
+  // positions) is still what's actually on screen -- it snapshots
+  // getBoundingClientRect() for every block currently in blockRefs, not
+  // just the ones about to move, so anything that shifts as a SIDE
+  // EFFECT of the change (same-day column repacking when a neighbor
+  // arrives/leaves) gets swept up too, not just the explicitly-moved
+  // ids. flipOldRectsRef holds that snapshot; flipSeq is a plain trigger
+  // (its value doesn't matter, only that it changes) telling
+  // WeeklyPlanner's own useLayoutEffect to compare current positions
+  // against that snapshot and animate whatever actually moved, once the
+  // new DOM has committed.
+  const blockRefs=useRef(new Map());
+  const flipOldRectsRef=useRef(new Map());
+  const [flipSeq,setFlipSeq]=useState(0);
+  const captureFlip=()=>{
+    const rects=new Map();
+    blockRefs.current.forEach((el,id)=>{ if(el&&el.isConnected)rects.set(id,el.getBoundingClientRect()); });
+    flipOldRectsRef.current=rects;
+    setFlipSeq(s=>s+1);
   };
   const [newEventOpen,setNewEventOpen]=useState(false);
   const [newEventPrefill,setNewEventPrefill]=useState({title:"",date:"",startTime:"",chipKind:null,courseId:null,routineId:null,sessionId:null});
@@ -20297,11 +20324,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     const all=lsGet("events",[]);
     const moveMap=new Map(weekBalancePlan.moves.map(m=>[m.id,m]));
     const next=all.map(ev=>moveMap.has(ev.id)?{...ev,date:moveMap.get(ev.id).toDate,time:moveMap.get(ev.id).toTime}:ev);
+    captureFlip();
     setEvents(next);lsSet("events",next);
-    animateMoves(weekBalancePlan.moves.map(m=>{
-      const orig=all.find(e=>e.id===m.id);
-      return {id:m.id,title:m.title,subject:orig?orig.subject:"",kind:orig?orig.kind:"study block",fromDate:m.fromDate,fromTime:m.fromTime,duration:m.duration};
-    }));
     setWeekBalanceOpen(false);setWeekBalancePlan(null);
     setWeekBalanceToast(weekBalancePlan.moves.length+" task"+(weekBalancePlan.moves.length!==1?"s":"")+" rebalanced across your week");
     setTimeout(()=>setWeekBalanceToast(""),3200);
@@ -21773,25 +21797,24 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       const m=oneOffMoves.get(ev.id);
       return{...ev,date:m.newDate,time:m.newTime,duration:m.newDuration!=null?m.newDuration:ev.duration};
     });
-    // Real id a moved task actually lands under, for the animation below --
-    // a one-off keeps its own id (rewritten in place), but a routine
-    // occurrence never had a real id to begin with (see the comment
-    // above), so its animated id has to be whatever fresh id gets minted
-    // for it here, not the virtual "routine-..." one pausePreview carries.
-    const animatedMoves=pausePreview.moved.map(m=>!m.isRoutine?{...m,animId:m.id}:null).filter(Boolean);
     if(routineMoves.length){
       const skips=getRoutineSkips();
       const nextSkips={...skips};
       routineMoves.forEach(m=>{
         nextSkips[m.oldDate]=[...new Set([...(nextSkips[m.oldDate]||[]),m.routineId])];
-        const freshId=String(Date.now()+Math.random()*1000);
-        next=next.concat([{id:freshId,title:m.title,date:m.newDate,time:m.newTime,subject:m.subject||"",kind:m.kind,notes:"",priority:null,difficulty:null,deadline:null,duration:m.newDuration||30,status:"pending",timeSpent:0,completedAt:null}]);
-        animatedMoves.push({...m,animId:freshId});
+        next=next.concat([{id:String(Date.now()+Math.random()*1000),title:m.title,date:m.newDate,time:m.newTime,subject:m.subject||"",kind:m.kind,notes:"",priority:null,difficulty:null,deadline:null,duration:m.newDuration||30,status:"pending",timeSpent:0,completedAt:null}]);
       });
       lsSet("routineSkips",nextSkips);
     }
+    // captureFlip() snapshots every block currently on screen (see its own
+    // comment) BEFORE next commits -- a routine occurrence's old spot is
+    // captured under its virtual "routine-..." id, which no longer exists
+    // once the real event above replaces it, so that specific block gets
+    // WeeklyPlanner's "brand new, pop it in" treatment instead of a slide.
+    // Correct either way: it genuinely is a new real event now, not the
+    // same object relocating.
+    captureFlip();
     setEvents(next);lsSet("events",next);
-    animateMoves(animatedMoves.map(m=>({id:m.animId,title:m.title,subject:m.subject||"",kind:m.kind||"study block",fromDate:m.oldDate,fromTime:m.oldTime,duration:m.newDuration||30})));
     // skip_class only affects a routine RULE, never the one-off `events`
     // array — the skip itself is written here (not in computePausePlan) so
     // nothing is persisted until the student actually confirms the preview.
@@ -22430,7 +22453,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           selDay={selDay} setSelDay={setSelDay} onDeleteEvent={deleteEventWithUndo} catchUpPending={catchUpPending}
           sidebarDragChip={sidebarDragChip} onDropSidebarChip={(dk,time,anchorPoint)=>{openNewEventForDrop(sidebarDragChip,dk,time,anchorPoint);setSidebarDragChip(null);}}
           onDropRoutineOccurrence={onDropRoutineOccurrence} onResizeRoutineOccurrence={onResizeRoutineOccurrence} pendingRoutineChange={routineDropPending} onRoutineDragStateChange={setRoutineDragActive} previewEvent={previewEvent} highlightedSessionId={highlightedSessionId}
-          moveHighlightIds={moveHighlightIds} moveGhosts={moveGhosts}
+          blockRefs={blockRefs} flipOldRectsRef={flipOldRectsRef} flipSeq={flipSeq}
           onPreviewMove={(date,startTime,endTime)=>setPreviewOverride({date,startTime,endTime})}
           onPreviewResize={(endTime)=>setPreviewOverride(o=>({date:(o&&o.date)||previewEvent.date,startTime:(o&&o.startTime)||previewEvent.startTime,endTime}))}
           onPreviewDraggingChange={setPreviewDragActive} onSelectEvent={setSelectedCalEventId}
