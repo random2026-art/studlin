@@ -20342,6 +20342,48 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     lsSet("openWeekBalanceOnMount",false);
     openWeekBalance();
   },[]);
+  // Manual session placement (2026-08-20) -- "I'll place it myself"
+  // instead of auto-placement, for an Attack Block assignment/project or
+  // a flashcard-deck/practice-exam review. Same cross-component
+  // localStorage-flag signal as openWeekBalanceOnMount just above:
+  // whatever screen started this (Add Task, Studlin Prep) sets the flag
+  // and navigates here; this picks it up once actually mounted.
+  // {kind:"attack"|"deck"|"pe", refId, title, subject, deadline,
+  // dueEventId} -- deadline/dueEventId let "+ Add a session" find a real
+  // open slot before the right deadline, same discipline every other
+  // placement in this app already follows, never just dropping it at a
+  // fixed default time regardless of when it's actually due.
+  const [manualPlacement,setManualPlacement]=useState(null);
+  const [manualPlacementCount,setManualPlacementCount]=useState(0);
+  useEffect(()=>{
+    const queued=lsGet("openManualPlacement",null);
+    if(!queued)return;
+    lsSet("openManualPlacement",null);
+    setManualPlacement(queued);
+    setManualPlacementCount(0);
+  },[]);
+  const addManualPlacementSession=()=>{
+    if(!manualPlacement)return;
+    const prefs=getSchedulePreferences();
+    const routines=getWeeklyRoutine();
+    const duration=ATTACK_BLOCK_DEFAULT_PROBE_MINS;
+    const slot=findOpenSlotFor(events,routines,prefs,dayKey(),prefs.workStartTime,duration,manualPlacement.deadline||null);
+    const kindTitle=manualPlacement.kind==="attack"?manualPlacement.title:(manualPlacement.kind==="deck"?"Review: "+manualPlacement.title:"Practice Exam: "+manualPlacement.title);
+    const task={
+      id:String(Date.now()+Math.random()*1000),
+      title:kindTitle,date:slot.date,time:slot.time,
+      subject:manualPlacement.subject||"",notes:"",kind:"study block",duration,
+      priority:500,difficulty:500,deadline:manualPlacement.deadline||null,
+      status:"pending",timeSpent:0,completedAt:null,userPinned:true,
+      ...(manualPlacement.kind==="attack"?{}:manualPlacement.kind==="deck"?{deckId:manualPlacement.refId}:{practiceExamId:manualPlacement.refId}),
+      ...(manualPlacement.dueEventId?{dueEventId:manualPlacement.dueEventId,isExamPrepSession:manualPlacement.kind!=="attack"}:{}),
+    };
+    const next=events.concat([task]);
+    setEvents(next);lsSet("events",next);
+    setManualPlacementCount(c=>c+1);
+    setSelDay(task.date);
+  };
+  const finishManualPlacement=()=>{setManualPlacement(null);setManualPlacementCount(0);};
   // Proactive version of the button above — checked once per Calendar
   // visit (not on every render/keystroke) rather than a real daily gate,
   // since this component only exists while the tab is open; the 3-day
@@ -22442,6 +22484,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         <div style={{display:"flex",alignItems:"center",gap:12,padding:"9px 14px",background:T.lime+"10",border:`1px solid ${T.lime}33`,borderRadius:6,marginBottom:14,fontSize:12.5,color:T.text}}>
           <span style={{flex:1}}>Editing your Weekly Routine. One-off tasks are dimmed. Click a routine block to edit it, or hover and tap × to delete it everywhere it repeats.</span>
           <BtnSm variant="subtle" onClick={()=>{setEditRoutineMode(false);setHoveredRoutineId(null);}}>Done</BtnSm>
+        </div>
+      )}
+      {manualPlacement&&(
+        <div style={{display:"flex",alignItems:"center",gap:12,padding:"9px 14px",background:T.lime+"10",border:`1px solid ${T.lime}33`,borderRadius:6,marginBottom:14,fontSize:12.5,color:T.text}}>
+          <span style={{flex:1}}>Placing sessions for <strong>{manualPlacement.title}</strong>. Drag each one to where you want it, resize to change duration.{manualPlacementCount>0?" "+manualPlacementCount+" placed so far.":""}</span>
+          <BtnSm variant="subtle" onClick={addManualPlacementSession}>+ Add a session</BtnSm>
+          <BtnSm onClick={finishManualPlacement}>Done</BtnSm>
         </div>
       )}
       {calView==="monthly"&&(
