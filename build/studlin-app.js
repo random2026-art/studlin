@@ -9798,7 +9798,7 @@ function computeEventBlockHeightPx(durationMins, gapToNextMins, pxPerHr) {
   if (gapToNextMins == null) return floored;
   return Math.min(floored, Math.max(4, gapToNextMins * (pxPerHr / 60)));
 }
-function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent, selectedRoutineKey, onSelectRoutineOccurrence }) {
+function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent, selectedRoutineKey, onSelectRoutineOccurrence, moveHighlightIds, moveGhosts }) {
   const [WK_PX_HR, setWkPxHr] = useState(() => getCalZoom());
   const wkZoomDrag = useRef(null);
   const [wkZoomDragging, setWkZoomDragging] = useState(false);
@@ -10111,6 +10111,11 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
       const dur = dragEv ? dragEv.duration || 30 : wkDragRoutineOccurrence ? wkDragRoutineOccurrence.duration || 30 : 30;
       ghostEl = /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: (gh * 60 + gm) * (WK_PX_HR / 60), left: 2, right: 2, height: Math.max(22, dur * (WK_PX_HR / 60)), borderRadius: 5, background: T.lime + "14", border: `1.5px dashed ${T.lime}`, zIndex: 4, pointerEvents: "none", boxSizing: "border-box" } });
     }
+    const moveGhostEls = (moveGhosts || []).filter((g) => g.fromDate === dk).map((g) => {
+      const parts = (g.fromTime || "09:00").split(":").map(Number);
+      const gColor = colorOf(g.subject) || T.lime;
+      return /* @__PURE__ */ React.createElement("div", { key: "ghost-" + g.id, style: { position: "absolute", top: (parts[0] * 60 + parts[1]) * (WK_PX_HR / 60), left: 2, right: 2, height: Math.max(22, (g.duration || 30) * (WK_PX_HR / 60)), borderRadius: 5, background: gColor + "14", border: `1.5px dashed ${gColor}`, zIndex: 2, pointerEvents: "none", boxSizing: "border-box", animation: "studlinDissolve 0.9s ease-out forwards" } });
+    });
     let previewEl = null;
     if (previewEvent && previewEvent.date === dk && !previewEvent.allDay) {
       const p = previewEvent.startTime.split(":").map(Number);
@@ -10239,7 +10244,33 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
                 if (isRoutine && setHoveredRoutineId) setHoveredRoutineId(null);
               },
               title: isRoutine ? "Click to select (Ctrl+C to copy) \xB7 Double-click to edit \xB7 Drag to reschedule" : "Click for actions (Backspace to delete) \xB7 Double-click to edit \xB7 Drag to reschedule",
-              style: { position: "absolute", top: topPx, left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`, height: heightPx, borderRadius: 5, padding: "2px 5px 2px 8px", cursor: "grab", overflow: "hidden", zIndex: 3, opacity: dimmedByRoutineMode ? 0.3 : isDone ? 0.6 : 1, boxSizing: "border-box", userSelect: "none", ...kindStyle, ...highlightedByRoutineMode ? { outline: `2px solid ${T.lime}`, outlineOffset: 1 } : {}, ...isSelected || isRoutineSelected ? { outline: `2px solid ${T.lime}`, outlineOffset: 1, boxShadow: `0 0 0 4px ${T.lime}22` } : {}, ...!isRoutine && highlightedSessionId === ev.id ? { outline: `2px solid ${T.amber}`, outlineOffset: 1, boxShadow: `0 0 0 4px ${T.amber}33` } : {} }
+              style: {
+                position: "absolute",
+                top: topPx,
+                left: `calc(${leftPct}% + 2px)`,
+                width: `calc(${widthPct}% - 4px)`,
+                height: heightPx,
+                borderRadius: 5,
+                padding: "2px 5px 2px 8px",
+                cursor: "grab",
+                overflow: "hidden",
+                zIndex: 3,
+                opacity: dimmedByRoutineMode ? 0.3 : isDone ? 0.6 : 1,
+                boxSizing: "border-box",
+                userSelect: "none",
+                ...kindStyle,
+                ...highlightedByRoutineMode ? { outline: `2px solid ${T.lime}`, outlineOffset: 1 } : {},
+                ...isSelected || isRoutineSelected ? { outline: `2px solid ${T.lime}`, outlineOffset: 1, boxShadow: `0 0 0 4px ${T.lime}22` } : {},
+                ...!isRoutine && highlightedSessionId === ev.id ? { outline: `2px solid ${T.amber}`, outlineOffset: 1, boxShadow: `0 0 0 4px ${T.amber}33` } : {},
+                // "Watch it happen" (see CalendarTab's animateMoves) --
+                // a task that just landed here via a bulk reschedule
+                // gets the same outline treatment as the deep-link
+                // jump-to-session highlight above, just lime instead
+                // of amber (Studlin's established "confirmed/success"
+                // color) so the two don't read as the same thing, and
+                // it animates in via studlinPop rather than snapping on.
+                ...moveHighlightIds && moveHighlightIds.has(ev.id) ? { outline: `2px solid ${T.lime}`, outlineOffset: 1, boxShadow: `0 0 0 4px ${T.lime}33`, animation: "studlinPop 0.3s cubic-bezier(.2,.85,.3,1)" } : {}
+              }
             },
             /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: subjectColor, borderRadius: "5px 0 0 5px" } }),
             !catchUpPending && over > 0 && /* @__PURE__ */ React.createElement("span", { title: over + "d overdue", style: { position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: "50%", background: T.red, boxShadow: "0 0 0 1.5px rgba(255,255,255,0.9)", zIndex: 1 } }),
@@ -10282,7 +10313,8 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
         });
       })(),
       ghostEl,
-      previewEl
+      previewEl,
+      moveGhostEls
     );
   }))), popoverAnchor && (() => {
     const ev = events.find((e) => e.id === popoverAnchor.id);
@@ -12402,6 +12434,15 @@ function CalendarTab({ setActive = () => {
   const [pastCoursesOpen, setPastCoursesOpen] = useState(false);
   const [sidebarDragChip, setSidebarDragChip] = useState(null);
   const [highlightedSessionId, setHighlightedSessionId] = useState(null);
+  const [moveHighlightIds, setMoveHighlightIds] = useState(() => /* @__PURE__ */ new Set());
+  const [moveGhosts, setMoveGhosts] = useState([]);
+  const animateMoves = (moves) => {
+    if (!moves || moves.length === 0) return;
+    setMoveGhosts(moves.map((m) => ({ id: m.id, title: m.title, subject: m.subject, kind: m.kind, fromDate: m.fromDate, fromTime: m.fromTime, duration: m.duration })));
+    setMoveHighlightIds(new Set(moves.map((m) => m.id)));
+    setTimeout(() => setMoveGhosts([]), 950);
+    setTimeout(() => setMoveHighlightIds(/* @__PURE__ */ new Set()), 2500);
+  };
   const [newEventOpen, setNewEventOpen] = useState(false);
   const [newEventPrefill, setNewEventPrefill] = useState({ title: "", date: "", startTime: "", chipKind: null, courseId: null, routineId: null, sessionId: null });
   const [previewEvent, setPreviewEvent] = useState(null);
@@ -12733,6 +12774,10 @@ function CalendarTab({ setActive = () => {
     const next = all.map((ev) => moveMap.has(ev.id) ? { ...ev, date: moveMap.get(ev.id).toDate, time: moveMap.get(ev.id).toTime } : ev);
     setEvents2(next);
     lsSet("events", next);
+    animateMoves(weekBalancePlan.moves.map((m) => {
+      const orig = all.find((e) => e.id === m.id);
+      return { id: m.id, title: m.title, subject: orig ? orig.subject : "", kind: orig ? orig.kind : "study block", fromDate: m.fromDate, fromTime: m.fromTime, duration: m.duration };
+    }));
     setWeekBalanceOpen(false);
     setWeekBalancePlan(null);
     setWeekBalanceToast(weekBalancePlan.moves.length + " task" + (weekBalancePlan.moves.length !== 1 ? "s" : "") + " rebalanced across your week");
@@ -13926,17 +13971,21 @@ Examples:
       const m = oneOffMoves.get(ev.id);
       return { ...ev, date: m.newDate, time: m.newTime, duration: m.newDuration != null ? m.newDuration : ev.duration };
     });
+    const animatedMoves = pausePreview.moved.map((m) => !m.isRoutine ? { ...m, animId: m.id } : null).filter(Boolean);
     if (routineMoves.length) {
       const skips = getRoutineSkips();
       const nextSkips = { ...skips };
       routineMoves.forEach((m) => {
         nextSkips[m.oldDate] = [.../* @__PURE__ */ new Set([...nextSkips[m.oldDate] || [], m.routineId])];
-        next = next.concat([{ id: String(Date.now() + Math.random() * 1e3), title: m.title, date: m.newDate, time: m.newTime, subject: m.subject || "", kind: m.kind, notes: "", priority: null, difficulty: null, deadline: null, duration: m.newDuration || 30, status: "pending", timeSpent: 0, completedAt: null }]);
+        const freshId = String(Date.now() + Math.random() * 1e3);
+        next = next.concat([{ id: freshId, title: m.title, date: m.newDate, time: m.newTime, subject: m.subject || "", kind: m.kind, notes: "", priority: null, difficulty: null, deadline: null, duration: m.newDuration || 30, status: "pending", timeSpent: 0, completedAt: null }]);
+        animatedMoves.push({ ...m, animId: freshId });
       });
       lsSet("routineSkips", nextSkips);
     }
     setEvents2(next);
     lsSet("events", next);
+    animateMoves(animatedMoves.map((m) => ({ id: m.animId, title: m.title, subject: m.subject || "", kind: m.kind || "study block", fromDate: m.oldDate, fromTime: m.oldTime, duration: m.newDuration || 30 })));
     if (pausePreview.skipRoutine) {
       const { date, routineIds } = pausePreview.skipRoutine;
       const skips = getRoutineSkips();
@@ -14437,6 +14486,8 @@ Examples:
       onRoutineDragStateChange: setRoutineDragActive,
       previewEvent,
       highlightedSessionId,
+      moveHighlightIds,
+      moveGhosts,
       onPreviewMove: (date, startTime, endTime) => setPreviewOverride({ date, startTime, endTime }),
       onPreviewResize: (endTime) => setPreviewOverride((o) => ({ date: o && o.date || previewEvent.date, startTime: o && o.startTime || previewEvent.startTime, endTime })),
       onPreviewDraggingChange: setPreviewDragActive,
