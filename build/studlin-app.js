@@ -9792,6 +9792,10 @@ function computeEventBlockHeightPx(durationMins, gapToNextMins, pxPerHr) {
   return Math.min(floored, Math.max(4, gapToNextMins * (pxPerHr / 60)));
 }
 function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent, selectedRoutineKey, onSelectRoutineOccurrence }) {
+  try {
+    document.title = "DIAG:weeklyplanner-start:" + events.length;
+  } catch (e) {
+  }
   const [WK_PX_HR, setWkPxHr] = useState(() => getCalZoom());
   const wkZoomDrag = useRef(null);
   const [wkZoomDragging, setWkZoomDragging] = useState(false);
@@ -10010,9 +10014,17 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
   events.forEach((ev) => {
     (byDay[ev.date] = byDay[ev.date] || []).push(ev);
   });
+  try {
+    document.title = "DIAG:byday-built";
+  } catch (e) {
+  }
   expandRoutineOccurrences(routines || [], dayKey(weekDays[0]), dayKey(weekDays[6])).forEach((ev) => {
     (byDay[ev.date] = byDay[ev.date] || []).push(ev);
   });
+  try {
+    document.title = "DIAG:routines-expanded";
+  } catch (e) {
+  }
   const isDuePill = (ev) => !ev.checklist && !ev.duration && (ev.kind === "deadline" || ev.kind === "exam");
   const handleDragOver = (e, dk) => {
     e.preventDefault();
@@ -12373,6 +12385,10 @@ function NewEventModal({ open, initialTitle, initialDate, initialStartTime, init
 function CalendarTab({ setActive = () => {
 }, onTaskSaved, openRoutineCenterOnMount, onRoutineCenterOpenedFromSettings, setDetailEventId, registerSetEvents, onTaskCompleted, catchUpPending, onWizardOpenChange, jumpToSessionOnMount, onJumpSessionConsumed, setPricingOpen = () => {
 } } = {}) {
+  try {
+    document.title = "DIAG:cal-body-start";
+  } catch (e) {
+  }
   const [userSubjects, setUserSubjectsState] = useState(() => getSubjects());
   const SUBJ = [{ value: "None", label: "None", color: T.lime }, ...userSubjects.map((s) => ({ value: s.label, label: s.label, color: s.color })), { value: "Other", label: "Other", color: T.lime }];
   const colorOf = (sub) => {
@@ -12504,9 +12520,18 @@ function CalendarTab({ setActive = () => {
     mk(5, "10:00", "Calculus test \xB7 Derivatives", "Calculus", "exam")
   ];
   const [events, setEvents2] = useState(() => {
+    try {
+      document.title = "DIAG:events-init-start";
+    } catch (e) {
+    }
     backfillCourseIds();
     const ev = lsGet("events", null);
-    return ev && Array.isArray(ev) ? ev.filter((e) => !e.id.startsWith("seed-")) : [];
+    const out = ev && Array.isArray(ev) ? ev.filter((e) => !e.id.startsWith("seed-")) : [];
+    try {
+      document.title = "DIAG:events-init-done:" + out.length;
+    } catch (e) {
+    }
+    return out;
   });
   useEffect(() => {
     if (registerSetEvents) registerSetEvents(setEvents2);
@@ -12701,7 +12726,15 @@ function CalendarTab({ setActive = () => {
   const [weekBalanceNudge, setWeekBalanceNudge] = useState(false);
   useEffect(() => {
     if (!shouldShowWeekBalanceNudge()) return;
+    try {
+      document.title = "DIAG:weekbalance-start:" + events.length;
+    } catch (e) {
+    }
     const plan = computeWeekBalancePlan(events, routines, getSchedulePreferences(), dayKey());
+    try {
+      document.title = "DIAG:weekbalance-done";
+    } catch (e) {
+    }
     if (plan.moves.length > 0) setWeekBalanceNudge(true);
   }, [events]);
   const declineWeekBalanceNudge = () => {
@@ -14146,6 +14179,10 @@ Examples:
       /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.muted, marginTop: 2 } }, item.subject ? item.subject + " \xB7 " : "", item.time ? fmtTime(item.time) : "All day")
     ), isExpanded && /* @__PURE__ */ React.createElement("div", { style: { padding: "6px 0 6px 10px", display: "flex", flexDirection: "column", gap: 4 } }, expandedContent));
   };
+  try {
+    document.title = "DIAG:cal-before-return";
+  } catch (e) {
+  }
   return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "flex-start" } }, /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, display: "flex", position: "relative", height: "calc(100vh - 150px)" } }, !calSidebarCollapsed && /* @__PURE__ */ React.createElement("div", { style: { width: 196, paddingRight: 20, maxHeight: "100%", overflowY: "auto" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Courses"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setQuickScanOpen(true), style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontFamily: T.font, cursor: "pointer", padding: 0 } }, "+ Add new")), (() => {
     const needSyllabus = currentTermSubjects.filter((s) => s.needsSyllabus);
     if (needSyllabus.length === 0 || syllabusNudgeDismissed || !shouldShowSyllabusNudge()) return null;
