@@ -4036,6 +4036,7 @@ function rebalanceDay(dateKey, allEvents, routines, prefs) {
 const WEEK_BALANCE_DAYS = 7;
 const WEEK_BALANCE_HEAVY_THRESHOLD_MINS = 45;
 const WEEK_BALANCE_MIN_TOTAL_MINS = 180;
+const WEEK_BALANCE_MAX_ITER = 50;
 const REBALANCE_RELIABILITY_MINS_WEIGHT = 60;
 function computeWeekBalancePlan(events, routines, prefs, startDateKey) {
   const days = [];
@@ -4056,14 +4057,15 @@ function computeWeekBalancePlan(events, routines, prefs, startDateKey) {
   let working = events.slice();
   const moves = [];
   heavyDays.forEach((heavyDk) => {
-    while (minutesFor(heavyDk, working) - avg >= WEEK_BALANCE_HEAVY_THRESHOLD_MINS) {
+    let iter = 0;
+    while (minutesFor(heavyDk, working) - avg >= WEEK_BALANCE_HEAVY_THRESHOLD_MINS && iter++ < WEEK_BALANCE_MAX_ITER) {
       const candidates = working.filter((e) => e.date === heavyDk && isFlex(e) && e.kind === "study block" && (!e.deadline || daysUntilDeadline(e) > 7) && (e.reshuffleCount || 0) < RESHUFFLE_ESCALATE_THRESHOLD).sort((a, b) => (a.priority ?? 500) + (a.reshuffleCount || 0) * RESHUFFLE_PENALTY - ((b.priority ?? 500) + (b.reshuffleCount || 0) * RESHUFFLE_PENALTY) || (b.duration || 0) - (a.duration || 0));
       if (candidates.length === 0) break;
       const task = candidates[0];
       const tier = difficultyTierOf(task);
       const targets = days.filter((dk) => dk !== heavyDk).map((dk) => {
         const slot = findLegalSlotOrNull(working.filter((e) => e.id !== task.id), routines, prefs, dk, prefs.workStartTime, task.duration, task.deadline || null);
-        if (!slot) return null;
+        if (!slot || slot.date !== dk) return null;
         const reliability = getBucketReliability(hourBucket(slot.time), tier) ?? 0.5;
         return { dk, mins: minutesFor(dk, working), slot, reliability };
       }).filter(Boolean).sort((a, b) => a.mins - a.reliability * REBALANCE_RELIABILITY_MINS_WEIGHT - (b.mins - b.reliability * REBALANCE_RELIABILITY_MINS_WEIGHT));

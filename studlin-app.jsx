@@ -6145,6 +6145,11 @@ const WEEK_BALANCE_HEAVY_THRESHOLD_MINS=45;
 // amount of total flexible work in the window before "lopsided" is even
 // a meaningful question to ask.
 const WEEK_BALANCE_MIN_TOTAL_MINS=180;
+// Hard backstop on the per-heavy-day while loop below -- there are at most
+// WEEK_BALANCE_DAYS-1 other days a task could ever move to, so no single
+// heavy day should legitimately need anywhere close to this many
+// iterations to either empty out or run out of safely-movable candidates.
+const WEEK_BALANCE_MAX_ITER=50;
 // How much a target day's reliability (0-1, from getBucketReliability)
 // can outweigh raw minutes-away-from-average when picking where a
 // shed task lands -- treats a fully-reliable slot as worth up to 60
@@ -6182,7 +6187,14 @@ function computeWeekBalancePlan(events,routines,prefs,startDateKey){
   heavyDays.forEach(heavyDk=>{
     // Recompute fresh — an earlier heavy day's move may have already
     // loaded this one up as a target, or already brought it back to average.
-    while(minutesFor(heavyDk,working)-avg>=WEEK_BALANCE_HEAVY_THRESHOLD_MINS){
+    // Real infinite-loop bug found live: this while loop's only exit
+    // conditions were "no candidates" or "no target found" -- both assume
+    // every successful move actually reduces heavyDk's load. WEEK_BALANCE_MAX_ITER
+    // is a hard backstop in case that assumption is ever wrong for some
+    // data shape this couldn't anticipate, so a scheduling edge case
+    // freezes one nudge's computation instead of the whole app.
+    let iter=0;
+    while(minutesFor(heavyDk,working)-avg>=WEEK_BALANCE_HEAVY_THRESHOLD_MINS&&iter++<WEEK_BALANCE_MAX_ITER){
       // Same "safely movable" criteria findSlotWithEviction already trusts
       // for same-day eviction: real study blocks only, no imminent deadline
       // (more than a week out, or none at all) — never an exam, a fixed
@@ -6215,7 +6227,16 @@ function computeWeekBalancePlan(events,routines,prefs,startDateKey){
       const tier=difficultyTierOf(task);
       const targets=days.filter(dk=>dk!==heavyDk).map(dk=>{
         const slot=findLegalSlotOrNull(working.filter(e=>e.id!==task.id),routines,prefs,dk,prefs.workStartTime,task.duration,task.deadline||null);
-        if(!slot)return null;
+        // Real infinite-loop bug found live: findLegalSlotOrNull's own
+        // findOpenSlotFor scans up to 21 days FORWARD from `dk` looking for
+        // an open slot, and can silently hand back a date that isn't `dk`
+        // at all -- including, on a packed week, heavyDk itself. That
+        // "moved" a task from heavyDk right back onto heavyDk: minutesFor
+        // never dropped, the same candidate got picked again next
+        // iteration, and the while loop above never terminated. A move
+        // that doesn't actually land on the requested lighter day isn't a
+        // real move.
+        if(!slot||slot.date!==dk)return null;
         const reliability=getBucketReliability(hourBucket(slot.time),tier)??0.5;
         return {dk,mins:minutesFor(dk,working),slot,reliability};
       }).filter(Boolean).sort((a,b)=>(a.mins-a.reliability*REBALANCE_RELIABILITY_MINS_WEIGHT)-(b.mins-b.reliability*REBALANCE_RELIABILITY_MINS_WEIGHT));
