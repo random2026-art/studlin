@@ -7495,6 +7495,12 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   // items have no exam to borrow a state from, so they never match Past
   // Due/Completed -- they stay visible under "All" only, same as an item
   // with no date has always meant elsewhere in this file.
+  // A deck can link to more than one exam (deckExamIds) -- the first
+  // linked exam with a real subject is treated as representative for
+  // class-filtering purposes, same simplification linkedExamLifecycleState
+  // documents for lifecycle state.
+  const deckClassOf=d=>{const exs=deckExamIds(d).map(id=>lsGet("events",[]).find(e=>e.id===id)).filter(Boolean);return (exs.find(e=>e.subject)||{}).subject||"";};
+  const peClassOf=pe=>{const ex=pe.examEventId?lsGet("events",[]).find(e=>e.id===pe.examEventId):null;return (ex&&ex.subject)||"";};
   const linkedExamLifecycleState=(examIds)=>{
     if(!examIds||examIds.length===0)return null;
     const exams=examIds.map(id=>lsGet("events",[]).find(e=>e.id===id)).filter(Boolean);
@@ -8234,6 +8240,33 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   const closeTakingQuiz=()=>{setTakingQuiz(null);setFollowUpReady(null);setFollowUpError("");};
   const takeFollowUpNow=()=>{const newPe=followUpReady;setFollowUpReady(null);setFollowUpError("");if(newPe)startPracticeExam(newPe);};
 
+  // 2026-08-19: Group By/class filter/search used to be their own full-
+  // width row underneath the Exams/Assignments/.../Practice Exams tab
+  // pills on every tab -- big, separate, and visually heavier than
+  // anything else on the page. Moved into the SAME row as the tab pills
+  // themselves (right-aligned, compact/small like Shovel's own Group By +
+  // search), one shared toolbar reading whichever tab's own filter state
+  // instead of each tab duplicating its own copy of this row. Only the
+  // rendered UI moved -- every tab's actual filtering logic below is
+  // untouched, still reading the exact same per-tab state.
+  const TOOLBAR_TAB_STATE={
+    exams:{group:examGroupFilter,setGroup:setExamGroupFilter,cls:examClassFilter,setCls:setExamClassFilter,search:examSearch,setSearch:setExamSearch,
+      classes:[...new Set(exams.map(ex=>ex.subject).filter(Boolean))]},
+    assignments:{group:assignGroupFilter,setGroup:setAssignGroupFilter,cls:assignClassFilter,setCls:setAssignClassFilter,search:assignSearch,setSearch:setAssignSearch,
+      classes:[...new Set(upcomingAssignments().map(a=>a.subject).filter(Boolean))]},
+    projects:{group:projectGroupFilter,setGroup:setProjectGroupFilter,cls:projectClassFilter,setCls:setProjectClassFilter,search:projectSearch,setSearch:setProjectSearch,
+      classes:[...new Set(upcomingProjects().map(p=>p.subject).filter(Boolean))]},
+    flashcards:{group:flashcardGroupFilter,setGroup:setFlashcardGroupFilter,cls:flashcardClassFilter,setCls:setFlashcardClassFilter,search:flashcardSearch,setSearch:setFlashcardSearch,
+      classes:[...new Set(allDecks.map(deckClassOf).filter(Boolean))]},
+    practiceExams:{group:peGroupFilter,setGroup:setPeGroupFilter,cls:peClassFilter,setCls:setPeClassFilter,search:peSearch,setSearch:setPeSearch,
+      classes:[...new Set(allPracticeExams.map(peClassOf).filter(Boolean))]},
+  };
+  // No toolbar on the exam detail sub-page (selectedExam) -- Group By/
+  // search only make sense on a list view, and only Exams has a detail
+  // sub-page to begin with.
+  const showTabToolbar=!(tab==="exams"&&selectedExam);
+  const tt=TOOLBAR_TAB_STATE[tab];
+
   return(
     <div>
       {/* Page title/subtitle removed -- sidebar nav already says "Studlin
@@ -8245,10 +8278,23 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
           a multi-select filter was tried here and reverted per direct
           feedback (didn't like being able to have Exams+Assignments both
           up at once). */}
-      <div style={{display:"flex",gap:2,background:T.card2,padding:2,borderRadius:4,width:"fit-content",marginBottom:20,flexWrap:"wrap"}}>
-        {[{id:"exams",label:"Exams"},{id:"assignments",label:"Assignments"},{id:"projects",label:"Projects"},{id:"flashcards",label:"Flashcards"},{id:"practiceExams",label:"Practice Exams"}].map(v=>(
-          <button key={v.id} onClick={()=>{setTab(v.id);setSelectedExamId(null);}} style={{padding:"5px 12px",borderRadius:4,fontSize:12,fontWeight:tab===v.id?600:400,cursor:"pointer",background:tab===v.id?T.card:"transparent",color:tab===v.id?T.text:T.muted,border:"none",fontFamily:T.font,transition:"all 0.15s",whiteSpace:"nowrap"}}>{v.label}</button>
-        ))}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,marginBottom:20,flexWrap:"wrap"}}>
+        <div style={{display:"flex",gap:2,background:T.card2,padding:2,borderRadius:4,width:"fit-content",flexWrap:"wrap"}}>
+          {[{id:"exams",label:"Exams"},{id:"assignments",label:"Assignments"},{id:"projects",label:"Projects"},{id:"flashcards",label:"Flashcards"},{id:"practiceExams",label:"Practice Exams"}].map(v=>(
+            <button key={v.id} onClick={()=>{setTab(v.id);setSelectedExamId(null);}} style={{padding:"5px 12px",borderRadius:4,fontSize:12,fontWeight:tab===v.id?600:400,cursor:"pointer",background:tab===v.id?T.card:"transparent",color:tab===v.id?T.text:T.muted,border:"none",fontFamily:T.font,transition:"all 0.15s",whiteSpace:"nowrap"}}>{v.label}</button>
+          ))}
+        </div>
+        {showTabToolbar&&(
+          <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+            <CustomSelect boxed fontSize={11.5} value={tt.group} onChange={tt.setGroup} minWidth={92}
+              options={GROUP_BY_OPTIONS} />
+            {tt.classes.length>1&&(
+              <CustomSelect boxed fontSize={11.5} value={tt.cls} onChange={tt.setCls} minWidth={110}
+                options={[{value:"",label:"All classes"},...tt.classes.map(c=>({value:c,label:c}))]} />
+            )}
+            <Input placeholder="Search…" value={tt.search} onChange={e=>tt.setSearch(e.target.value)} style={{width:130,fontSize:11.5,padding:"7px 10px"}} />
+          </div>
+        )}
       </div>
 
       {tab==="exams"&&!selectedExam&&(
@@ -8288,23 +8334,6 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
               const gridCols="minmax(120px,1.6fr) 84px 64px 68px 104px 56px 70px 70px 120px 76px";
               return (
               <div>
-                {/* Shovel-inspired: Group By + class filter on the left,
-                    search narrow and right-aligned -- was a single full-
-                    width search bar with no way to see past-due or
-                    completed exams (they used to just vanish once their
-                    date passed, see allExamsForPrep/itemLifecycleState). */}
-                <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap",justifyContent:"space-between"}}>
-                  <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
-                    <span style={{fontSize:11,color:T.muted,flexShrink:0}}>Group by</span>
-                    <CustomSelect boxed value={examGroupFilter} onChange={setExamGroupFilter} minWidth={120}
-                      options={GROUP_BY_OPTIONS} />
-                    {examClasses.length>1&&(
-                      <CustomSelect boxed value={examClassFilter} onChange={setExamClassFilter} minWidth={150}
-                        options={[{value:"",label:"All classes"},...examClasses.map(c=>({value:c,label:c}))]} />
-                    )}
-                  </div>
-                  <Input placeholder="Search…" value={examSearch} onChange={e=>setExamSearch(e.target.value)} style={{width:200}} />
-                </div>
                 {visibleExams.length===0&&(
                   <div style={{fontSize:12.5,color:T.muted,textAlign:"center",padding:"14px 0"}}>No exams match your search.</div>
                 )}
@@ -8421,18 +8450,6 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
         const cellSelStyle={width:"100%",background:"transparent",border:"none",color:T.text,fontSize:10.5,fontFamily:T.font,outline:"none",cursor:"pointer",padding:"2px 0"};
         return (
           <div>
-            <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap",justifyContent:"space-between"}}>
-              <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
-                <span style={{fontSize:11,color:T.muted,flexShrink:0}}>Group by</span>
-                <CustomSelect boxed value={assignGroupFilter} onChange={setAssignGroupFilter} minWidth={120}
-                  options={GROUP_BY_OPTIONS} />
-                {assignClasses.length>1&&(
-                  <CustomSelect boxed value={assignClassFilter} onChange={setAssignClassFilter} minWidth={150}
-                    options={[{value:"",label:"All classes"},...assignClasses.map(c=>({value:c,label:c}))]} />
-                )}
-              </div>
-              <Input placeholder="Search…" value={assignSearch} onChange={e=>setAssignSearch(e.target.value)} style={{width:200}} />
-            </div>
             {assignments.length===0
           ?<Card style={{padding:"32px 20px",textAlign:"center"}}><div style={{fontSize:13,color:T.muted}}>{allAssignments.length===0?"No upcoming assignments.":"No assignments match your search."}</div></Card>
           :(
@@ -8499,18 +8516,6 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
         const cellSelStyle={width:"100%",background:"transparent",border:"none",color:T.text,fontSize:10.5,fontFamily:T.font,outline:"none",cursor:"pointer",padding:"2px 0"};
         return (
           <div>
-            <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap",justifyContent:"space-between"}}>
-              <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
-                <span style={{fontSize:11,color:T.muted,flexShrink:0}}>Group by</span>
-                <CustomSelect boxed value={projectGroupFilter} onChange={setProjectGroupFilter} minWidth={120}
-                  options={GROUP_BY_OPTIONS} />
-                {projectClasses.length>1&&(
-                  <CustomSelect boxed value={projectClassFilter} onChange={setProjectClassFilter} minWidth={150}
-                    options={[{value:"",label:"All classes"},...projectClasses.map(c=>({value:c,label:c}))]} />
-                )}
-              </div>
-              <Input placeholder="Search…" value={projectSearch} onChange={e=>setProjectSearch(e.target.value)} style={{width:200}} />
-            </div>
             {projects.length===0
           ?<Card style={{padding:"32px 20px",textAlign:"center"}}><div style={{fontSize:13,color:T.muted}}>{allProjects.length===0?"No upcoming projects.":"No projects match your search."}</div></Card>
           :(
@@ -9025,8 +9030,6 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
       })()}
 
       {tab==="flashcards"&&(()=>{
-        const deckClassOf=d=>{const exs=deckExamIds(d).map(id=>lsGet("events",[]).find(e=>e.id===id)).filter(Boolean);return (exs.find(e=>e.subject)||{}).subject||"";};
-        const flashcardClasses=[...new Set(allDecks.map(deckClassOf).filter(Boolean))];
         const visibleDecks=allDecks.filter(d=>{
           if(flashcardGroupFilter&&linkedExamLifecycleState(deckExamIds(d))!==flashcardGroupFilter)return false;
           if(flashcardClassFilter&&deckClassOf(d)!==flashcardClassFilter)return false;
@@ -9038,20 +9041,6 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
           <div style={{display:"flex",justifyContent:"flex-end"}}>
             <BtnSm onClick={()=>{lsSet("openNewDeckOnMount",true);setFlashcardsOverlay(true);}}>{Icon.plus} Add Deck</BtnSm>
           </div>
-          {allDecks.length>0&&(
-            <div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"space-between"}}>
-              <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
-                <span style={{fontSize:11,color:T.muted,flexShrink:0}}>Group by</span>
-                <CustomSelect boxed value={flashcardGroupFilter} onChange={setFlashcardGroupFilter} minWidth={120}
-                  options={GROUP_BY_OPTIONS} />
-                {flashcardClasses.length>1&&(
-                  <CustomSelect boxed value={flashcardClassFilter} onChange={setFlashcardClassFilter} minWidth={150}
-                    options={[{value:"",label:"All classes"},...flashcardClasses.map(c=>({value:c,label:c}))]} />
-                )}
-              </div>
-              <Input placeholder="Search…" value={flashcardSearch} onChange={e=>setFlashcardSearch(e.target.value)} style={{width:200}} />
-            </div>
-          )}
           {allDecks.length===0
             ?<Card style={{padding:"32px 20px",textAlign:"center"}}><div style={{fontSize:13,color:T.muted,marginBottom:14}}>No flashcard decks yet — generate one from an exam's material, or add one yourself.</div><BtnSm onClick={()=>{lsSet("openNewDeckOnMount",true);setFlashcardsOverlay(true);}}>{Icon.plus} Add Deck</BtnSm></Card>
             :visibleDecks.length===0
@@ -9090,8 +9079,6 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
       })()}
 
       {tab==="practiceExams"&&(()=>{
-        const peClassOf=pe=>{const ex=pe.examEventId?lsGet("events",[]).find(e=>e.id===pe.examEventId):null;return (ex&&ex.subject)||"";};
-        const peClasses=[...new Set(allPracticeExams.map(peClassOf).filter(Boolean))];
         const visiblePEs=allPracticeExams.filter(pe=>{
           if(peGroupFilter&&linkedExamLifecycleState(pe.examEventId?[pe.examEventId]:[])!==peGroupFilter)return false;
           if(peClassFilter&&peClassOf(pe)!==peClassFilter)return false;
@@ -9103,20 +9090,6 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
           <div style={{display:"flex",justifyContent:"flex-end"}}>
             <BtnSm onClick={()=>setPeCreateOpen(true)}>{Icon.plus} Add Practice Exam</BtnSm>
           </div>
-          {allPracticeExams.length>0&&(
-            <div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"space-between"}}>
-              <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
-                <span style={{fontSize:11,color:T.muted,flexShrink:0}}>Group by</span>
-                <CustomSelect boxed value={peGroupFilter} onChange={setPeGroupFilter} minWidth={120}
-                  options={GROUP_BY_OPTIONS} />
-                {peClasses.length>1&&(
-                  <CustomSelect boxed value={peClassFilter} onChange={setPeClassFilter} minWidth={150}
-                    options={[{value:"",label:"All classes"},...peClasses.map(c=>({value:c,label:c}))]} />
-                )}
-              </div>
-              <Input placeholder="Search…" value={peSearch} onChange={e=>setPeSearch(e.target.value)} style={{width:200}} />
-            </div>
-          )}
           {allPracticeExams.length===0
             ?<Card style={{padding:"32px 20px",textAlign:"center"}}><div style={{fontSize:13,color:T.muted,marginBottom:14}}>No practice exams yet — generate one from an exam's material, or add one yourself.</div><BtnSm onClick={()=>setPeCreateOpen(true)}>{Icon.plus} Add Practice Exam</BtnSm></Card>
             :visiblePEs.length===0

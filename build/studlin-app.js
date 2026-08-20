@@ -4839,6 +4839,14 @@ function StudlinPrep({ setActive = () => {
   const [peSearch, setPeSearch] = useState("");
   const [peClassFilter, setPeClassFilter] = useState("");
   const [peGroupFilter, setPeGroupFilter] = useState("");
+  const deckClassOf = (d) => {
+    const exs = deckExamIds(d).map((id) => lsGet("events", []).find((e) => e.id === id)).filter(Boolean);
+    return (exs.find((e) => e.subject) || {}).subject || "";
+  };
+  const peClassOf = (pe) => {
+    const ex = pe.examEventId ? lsGet("events", []).find((e) => e.id === pe.examEventId) : null;
+    return ex && ex.subject || "";
+  };
   const linkedExamLifecycleState = (examIds) => {
     if (!examIds || examIds.length === 0) return null;
     const exams2 = examIds.map((id) => lsGet("events", []).find((e) => e.id === id)).filter(Boolean);
@@ -5351,10 +5359,79 @@ function StudlinPrep({ setActive = () => {
     setFollowUpError("");
     if (newPe) startPracticeExam(newPe);
   };
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 2, background: T.card2, padding: 2, borderRadius: 4, width: "fit-content", marginBottom: 20, flexWrap: "wrap" } }, [{ id: "exams", label: "Exams" }, { id: "assignments", label: "Assignments" }, { id: "projects", label: "Projects" }, { id: "flashcards", label: "Flashcards" }, { id: "practiceExams", label: "Practice Exams" }].map((v) => /* @__PURE__ */ React.createElement("button", { key: v.id, onClick: () => {
+  const TOOLBAR_TAB_STATE = {
+    exams: {
+      group: examGroupFilter,
+      setGroup: setExamGroupFilter,
+      cls: examClassFilter,
+      setCls: setExamClassFilter,
+      search: examSearch,
+      setSearch: setExamSearch,
+      classes: [...new Set(exams.map((ex) => ex.subject).filter(Boolean))]
+    },
+    assignments: {
+      group: assignGroupFilter,
+      setGroup: setAssignGroupFilter,
+      cls: assignClassFilter,
+      setCls: setAssignClassFilter,
+      search: assignSearch,
+      setSearch: setAssignSearch,
+      classes: [...new Set(upcomingAssignments().map((a) => a.subject).filter(Boolean))]
+    },
+    projects: {
+      group: projectGroupFilter,
+      setGroup: setProjectGroupFilter,
+      cls: projectClassFilter,
+      setCls: setProjectClassFilter,
+      search: projectSearch,
+      setSearch: setProjectSearch,
+      classes: [...new Set(upcomingProjects().map((p) => p.subject).filter(Boolean))]
+    },
+    flashcards: {
+      group: flashcardGroupFilter,
+      setGroup: setFlashcardGroupFilter,
+      cls: flashcardClassFilter,
+      setCls: setFlashcardClassFilter,
+      search: flashcardSearch,
+      setSearch: setFlashcardSearch,
+      classes: [...new Set(allDecks.map(deckClassOf).filter(Boolean))]
+    },
+    practiceExams: {
+      group: peGroupFilter,
+      setGroup: setPeGroupFilter,
+      cls: peClassFilter,
+      setCls: setPeClassFilter,
+      search: peSearch,
+      setSearch: setPeSearch,
+      classes: [...new Set(allPracticeExams.map(peClassOf).filter(Boolean))]
+    }
+  };
+  const showTabToolbar = !(tab === "exams" && selectedExam);
+  const tt = TOOLBAR_TAB_STATE[tab];
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 20, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 2, background: T.card2, padding: 2, borderRadius: 4, width: "fit-content", flexWrap: "wrap" } }, [{ id: "exams", label: "Exams" }, { id: "assignments", label: "Assignments" }, { id: "projects", label: "Projects" }, { id: "flashcards", label: "Flashcards" }, { id: "practiceExams", label: "Practice Exams" }].map((v) => /* @__PURE__ */ React.createElement("button", { key: v.id, onClick: () => {
     setTab(v.id);
     setSelectedExamId(null);
-  }, style: { padding: "5px 12px", borderRadius: 4, fontSize: 12, fontWeight: tab === v.id ? 600 : 400, cursor: "pointer", background: tab === v.id ? T.card : "transparent", color: tab === v.id ? T.text : T.muted, border: "none", fontFamily: T.font, transition: "all 0.15s", whiteSpace: "nowrap" } }, v.label))), tab === "exams" && !selectedExam && (exams.length === 0 ? /* @__PURE__ */ React.createElement(Card, { style: { padding: "32px 20px", textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, marginBottom: 14 } }, "No upcoming exams yet \u2014 add one from your calendar to start building material for it."), /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => setActive("calendar") }, Icon.plus, " Go to Calendar")) : (() => {
+  }, style: { padding: "5px 12px", borderRadius: 4, fontSize: 12, fontWeight: tab === v.id ? 600 : 400, cursor: "pointer", background: tab === v.id ? T.card : "transparent", color: tab === v.id ? T.text : T.muted, border: "none", fontFamily: T.font, transition: "all 0.15s", whiteSpace: "nowrap" } }, v.label))), showTabToolbar && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(
+    CustomSelect,
+    {
+      boxed: true,
+      fontSize: 11.5,
+      value: tt.group,
+      onChange: tt.setGroup,
+      minWidth: 92,
+      options: GROUP_BY_OPTIONS
+    }
+  ), tt.classes.length > 1 && /* @__PURE__ */ React.createElement(
+    CustomSelect,
+    {
+      boxed: true,
+      fontSize: 11.5,
+      value: tt.cls,
+      onChange: tt.setCls,
+      minWidth: 110,
+      options: [{ value: "", label: "All classes" }, ...tt.classes.map((c) => ({ value: c, label: c }))]
+    }
+  ), /* @__PURE__ */ React.createElement(Input, { placeholder: "Search\u2026", value: tt.search, onChange: (e) => tt.setSearch(e.target.value), style: { width: 130, fontSize: 11.5, padding: "7px 10px" } }))), tab === "exams" && !selectedExam && (exams.length === 0 ? /* @__PURE__ */ React.createElement(Card, { style: { padding: "32px 20px", textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, marginBottom: 14 } }, "No upcoming exams yet \u2014 add one from your calendar to start building material for it."), /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => setActive("calendar") }, Icon.plus, " Go to Calendar")) : (() => {
     const viewPlan = (ex) => {
       setSelectedExamId(ex.id);
       setFileTexts(ex.sourceMaterials && ex.sourceMaterials.length > 0 ? ex.sourceMaterials : ex.sourceMaterial ? [{ name: "From your syllabus", text: ex.sourceMaterial }] : []);
@@ -5370,25 +5447,7 @@ function StudlinPrep({ setActive = () => {
     };
     const cellSelStyle = { width: "100%", background: "transparent", border: "none", color: T.text, fontSize: 10.5, fontFamily: T.font, outline: "none", cursor: "pointer", padding: "2px 0" };
     const gridCols = "minmax(120px,1.6fr) 84px 64px 68px 104px 56px 70px 70px 120px 76px";
-    return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap", justifyContent: "space-between" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.muted, flexShrink: 0 } }, "Group by"), /* @__PURE__ */ React.createElement(
-      CustomSelect,
-      {
-        boxed: true,
-        value: examGroupFilter,
-        onChange: setExamGroupFilter,
-        minWidth: 120,
-        options: GROUP_BY_OPTIONS
-      }
-    ), examClasses.length > 1 && /* @__PURE__ */ React.createElement(
-      CustomSelect,
-      {
-        boxed: true,
-        value: examClassFilter,
-        onChange: setExamClassFilter,
-        minWidth: 150,
-        options: [{ value: "", label: "All classes" }, ...examClasses.map((c) => ({ value: c, label: c }))]
-      }
-    )), /* @__PURE__ */ React.createElement(Input, { placeholder: "Search\u2026", value: examSearch, onChange: (e) => setExamSearch(e.target.value), style: { width: 200 } })), visibleExams.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, textAlign: "center", padding: "14px 0" } }, "No exams match your search."), visibleExams.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { overflowX: "auto", border: `1px solid ${T.border}`, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 760 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, padding: "7px 10px", borderBottom: `1px solid ${T.border}`, background: T.card2 } }, ["Name", "Class", "Type", "Flex", "Due", "Days", "Urgency", "Difficulty", "Sessions", "Prep"].map((h, i) => /* @__PURE__ */ React.createElement("div", { key: h + i, style: { fontSize: 9, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, h))), visibleExams.map((ex) => {
+    return /* @__PURE__ */ React.createElement("div", null, visibleExams.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, textAlign: "center", padding: "14px 0" } }, "No exams match your search."), visibleExams.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { overflowX: "auto", border: `1px solid ${T.border}`, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 760 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, padding: "7px 10px", borderBottom: `1px solid ${T.border}`, background: T.card2 } }, ["Name", "Class", "Type", "Flex", "Due", "Days", "Urgency", "Difficulty", "Sessions", "Prep"].map((h, i) => /* @__PURE__ */ React.createElement("div", { key: h + i, style: { fontSize: 9, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, h))), visibleExams.map((ex) => {
       const examSessionsForEx = lsGet("events", []).filter((e) => e.dueEventId === ex.id);
       const pendingSessionsForEx = examSessionsForEx.filter((e) => e.status !== "done");
       const today = dayKey();
@@ -5451,25 +5510,7 @@ function StudlinPrep({ setActive = () => {
     });
     const gridCols = "minmax(140px,1.8fr) 100px 120px 70px 80px 80px 150px";
     const cellSelStyle = { width: "100%", background: "transparent", border: "none", color: T.text, fontSize: 10.5, fontFamily: T.font, outline: "none", cursor: "pointer", padding: "2px 0" };
-    return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap", justifyContent: "space-between" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.muted, flexShrink: 0 } }, "Group by"), /* @__PURE__ */ React.createElement(
-      CustomSelect,
-      {
-        boxed: true,
-        value: assignGroupFilter,
-        onChange: setAssignGroupFilter,
-        minWidth: 120,
-        options: GROUP_BY_OPTIONS
-      }
-    ), assignClasses.length > 1 && /* @__PURE__ */ React.createElement(
-      CustomSelect,
-      {
-        boxed: true,
-        value: assignClassFilter,
-        onChange: setAssignClassFilter,
-        minWidth: 150,
-        options: [{ value: "", label: "All classes" }, ...assignClasses.map((c) => ({ value: c, label: c }))]
-      }
-    )), /* @__PURE__ */ React.createElement(Input, { placeholder: "Search\u2026", value: assignSearch, onChange: (e) => setAssignSearch(e.target.value), style: { width: 200 } })), assignments.length === 0 ? /* @__PURE__ */ React.createElement(Card, { style: { padding: "32px 20px", textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted } }, allAssignments.length === 0 ? "No upcoming assignments." : "No assignments match your search.")) : /* @__PURE__ */ React.createElement("div", { style: { overflowX: "auto", border: `1px solid ${T.border}`, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 700 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, padding: "7px 10px", borderBottom: `1px solid ${T.border}`, background: T.card2 } }, ["Name", "Class", "Due", "Days", "Urgency", "Difficulty", "Attack Blocks"].map((h) => /* @__PURE__ */ React.createElement("div", { key: h, style: { fontSize: 9, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, h))), assignments.map((a) => {
+    return /* @__PURE__ */ React.createElement("div", null, assignments.length === 0 ? /* @__PURE__ */ React.createElement(Card, { style: { padding: "32px 20px", textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted } }, allAssignments.length === 0 ? "No upcoming assignments." : "No assignments match your search.")) : /* @__PURE__ */ React.createElement("div", { style: { overflowX: "auto", border: `1px solid ${T.border}`, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 700 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, padding: "7px 10px", borderBottom: `1px solid ${T.border}`, background: T.card2 } }, ["Name", "Class", "Due", "Days", "Urgency", "Difficulty", "Attack Blocks"].map((h) => /* @__PURE__ */ React.createElement("div", { key: h, style: { fontSize: 9, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, h))), assignments.map((a) => {
       const today2 = dayKey();
       const daysUntil = a.date ? Math.round((/* @__PURE__ */ new Date(a.date + "T12:00:00") - /* @__PURE__ */ new Date(today2 + "T12:00:00")) / 864e5) : null;
       const daysLabel = daysUntil == null ? "No date" : daysUntil <= 0 ? "Today" : daysUntil + "d";
@@ -5511,25 +5552,7 @@ function StudlinPrep({ setActive = () => {
     });
     const gridCols = "minmax(140px,1.8fr) 100px 120px 70px 80px 80px 150px";
     const cellSelStyle = { width: "100%", background: "transparent", border: "none", color: T.text, fontSize: 10.5, fontFamily: T.font, outline: "none", cursor: "pointer", padding: "2px 0" };
-    return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap", justifyContent: "space-between" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.muted, flexShrink: 0 } }, "Group by"), /* @__PURE__ */ React.createElement(
-      CustomSelect,
-      {
-        boxed: true,
-        value: projectGroupFilter,
-        onChange: setProjectGroupFilter,
-        minWidth: 120,
-        options: GROUP_BY_OPTIONS
-      }
-    ), projectClasses.length > 1 && /* @__PURE__ */ React.createElement(
-      CustomSelect,
-      {
-        boxed: true,
-        value: projectClassFilter,
-        onChange: setProjectClassFilter,
-        minWidth: 150,
-        options: [{ value: "", label: "All classes" }, ...projectClasses.map((c) => ({ value: c, label: c }))]
-      }
-    )), /* @__PURE__ */ React.createElement(Input, { placeholder: "Search\u2026", value: projectSearch, onChange: (e) => setProjectSearch(e.target.value), style: { width: 200 } })), projects.length === 0 ? /* @__PURE__ */ React.createElement(Card, { style: { padding: "32px 20px", textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted } }, allProjects.length === 0 ? "No upcoming projects." : "No projects match your search.")) : /* @__PURE__ */ React.createElement("div", { style: { overflowX: "auto", border: `1px solid ${T.border}`, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 700 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, padding: "7px 10px", borderBottom: `1px solid ${T.border}`, background: T.card2 } }, ["Name", "Class", "Due", "Days", "Urgency", "Difficulty", "Checklist"].map((h) => /* @__PURE__ */ React.createElement("div", { key: h, style: { fontSize: 9, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, h))), projects.map((p) => {
+    return /* @__PURE__ */ React.createElement("div", null, projects.length === 0 ? /* @__PURE__ */ React.createElement(Card, { style: { padding: "32px 20px", textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted } }, allProjects.length === 0 ? "No upcoming projects." : "No projects match your search.")) : /* @__PURE__ */ React.createElement("div", { style: { overflowX: "auto", border: `1px solid ${T.border}`, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 700 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, padding: "7px 10px", borderBottom: `1px solid ${T.border}`, background: T.card2 } }, ["Name", "Class", "Due", "Days", "Urgency", "Difficulty", "Checklist"].map((h) => /* @__PURE__ */ React.createElement("div", { key: h, style: { fontSize: 9, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, h))), projects.map((p) => {
       const today2 = dayKey();
       const daysUntil = p.date ? Math.round((/* @__PURE__ */ new Date(p.date + "T12:00:00") - /* @__PURE__ */ new Date(today2 + "T12:00:00")) / 864e5) : null;
       const daysLabel = daysUntil == null ? "No date" : daysUntil <= 0 ? "Today" : daysUntil + "d";
@@ -5779,11 +5802,6 @@ function StudlinPrep({ setActive = () => {
       return /* @__PURE__ */ React.createElement("div", { key: pe.id, style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "9px 12px", background: T.card2, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, fontWeight: 600 } }, pe.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, pe.questions.length, " questions", lastAttempt ? " \xB7 last score " + lastAttempt.score + "/" + lastAttempt.total : " \xB7 not taken yet")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexShrink: 0 } }, /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => openSchedulePracticeExam(pe) }, "Schedule"), /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => startPracticeExam(pe) }, "Take"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setDeleteConfirm({ type: "pe", id: pe.id, name: pe.name }) }, "Delete")));
     })))));
   })(), tab === "flashcards" && (() => {
-    const deckClassOf = (d) => {
-      const exs = deckExamIds(d).map((id) => lsGet("events", []).find((e) => e.id === id)).filter(Boolean);
-      return (exs.find((e) => e.subject) || {}).subject || "";
-    };
-    const flashcardClasses = [...new Set(allDecks.map(deckClassOf).filter(Boolean))];
     const visibleDecks = allDecks.filter((d) => {
       if (flashcardGroupFilter && linkedExamLifecycleState(deckExamIds(d)) !== flashcardGroupFilter) return false;
       if (flashcardClassFilter && deckClassOf(d) !== flashcardClassFilter) return false;
@@ -5793,25 +5811,7 @@ function StudlinPrep({ setActive = () => {
     return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "flex-end" } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
       lsSet("openNewDeckOnMount", true);
       setFlashcardsOverlay(true);
-    } }, Icon.plus, " Add Deck")), allDecks.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "space-between" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.muted, flexShrink: 0 } }, "Group by"), /* @__PURE__ */ React.createElement(
-      CustomSelect,
-      {
-        boxed: true,
-        value: flashcardGroupFilter,
-        onChange: setFlashcardGroupFilter,
-        minWidth: 120,
-        options: GROUP_BY_OPTIONS
-      }
-    ), flashcardClasses.length > 1 && /* @__PURE__ */ React.createElement(
-      CustomSelect,
-      {
-        boxed: true,
-        value: flashcardClassFilter,
-        onChange: setFlashcardClassFilter,
-        minWidth: 150,
-        options: [{ value: "", label: "All classes" }, ...flashcardClasses.map((c) => ({ value: c, label: c }))]
-      }
-    )), /* @__PURE__ */ React.createElement(Input, { placeholder: "Search\u2026", value: flashcardSearch, onChange: (e) => setFlashcardSearch(e.target.value), style: { width: 200 } })), allDecks.length === 0 ? /* @__PURE__ */ React.createElement(Card, { style: { padding: "32px 20px", textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, marginBottom: 14 } }, "No flashcard decks yet \u2014 generate one from an exam's material, or add one yourself."), /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
+    } }, Icon.plus, " Add Deck")), allDecks.length === 0 ? /* @__PURE__ */ React.createElement(Card, { style: { padding: "32px 20px", textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, marginBottom: 14 } }, "No flashcard decks yet \u2014 generate one from an exam's material, or add one yourself."), /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
       lsSet("openNewDeckOnMount", true);
       setFlashcardsOverlay(true);
     } }, Icon.plus, " Add Deck")) : visibleDecks.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, textAlign: "center", padding: "14px 0" } }, "No decks match your search.") : visibleDecks.map((d) => {
@@ -5824,36 +5824,13 @@ function StudlinPrep({ setActive = () => {
       return /* @__PURE__ */ React.createElement("div", { key: d.id, style: { padding: "12px 16px", borderRadius: 12, border: `1px solid ${T.border}`, background: T.card } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 600, color: T.white } }, d.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginTop: 2, marginBottom: 10 } }, d.count, " card", d.count !== 1 ? "s" : ""), linkedExams.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 } }, linkedExams.map((ex) => /* @__PURE__ */ React.createElement("span", { key: ex.id, style: { fontSize: 10.5, fontWeight: 700, padding: "3px 8px", borderRadius: 99, background: T.lime + "14", color: T.lime, border: `1px solid ${T.lime}33` } }, "Exam: ", ex.title, " \xB7 ", ex.date))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => goToDeck("study") }, "Study now"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => goToDeck("edit") }, Icon.pen, " Edit"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => goToDeck("link") }, linkedExams.length > 0 ? "+ Link another exam" : "+ Link to an exam"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => goToDeck("send") }, Icon.send, " Send"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setDeleteConfirm({ type: "deckAll", id: d.id, name: d.name }) }, "Delete")));
     }));
   })(), tab === "practiceExams" && (() => {
-    const peClassOf = (pe) => {
-      const ex = pe.examEventId ? lsGet("events", []).find((e) => e.id === pe.examEventId) : null;
-      return ex && ex.subject || "";
-    };
-    const peClasses = [...new Set(allPracticeExams.map(peClassOf).filter(Boolean))];
     const visiblePEs = allPracticeExams.filter((pe) => {
       if (peGroupFilter && linkedExamLifecycleState(pe.examEventId ? [pe.examEventId] : []) !== peGroupFilter) return false;
       if (peClassFilter && peClassOf(pe) !== peClassFilter) return false;
       if (!peSearch.trim()) return true;
       return (pe.name || "").toLowerCase().includes(peSearch.trim().toLowerCase());
     });
-    return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "flex-end" } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => setPeCreateOpen(true) }, Icon.plus, " Add Practice Exam")), allPracticeExams.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "space-between" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.muted, flexShrink: 0 } }, "Group by"), /* @__PURE__ */ React.createElement(
-      CustomSelect,
-      {
-        boxed: true,
-        value: peGroupFilter,
-        onChange: setPeGroupFilter,
-        minWidth: 120,
-        options: GROUP_BY_OPTIONS
-      }
-    ), peClasses.length > 1 && /* @__PURE__ */ React.createElement(
-      CustomSelect,
-      {
-        boxed: true,
-        value: peClassFilter,
-        onChange: setPeClassFilter,
-        minWidth: 150,
-        options: [{ value: "", label: "All classes" }, ...peClasses.map((c) => ({ value: c, label: c }))]
-      }
-    )), /* @__PURE__ */ React.createElement(Input, { placeholder: "Search\u2026", value: peSearch, onChange: (e) => setPeSearch(e.target.value), style: { width: 200 } })), allPracticeExams.length === 0 ? /* @__PURE__ */ React.createElement(Card, { style: { padding: "32px 20px", textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, marginBottom: 14 } }, "No practice exams yet \u2014 generate one from an exam's material, or add one yourself."), /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => setPeCreateOpen(true) }, Icon.plus, " Add Practice Exam")) : visiblePEs.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, textAlign: "center", padding: "14px 0" } }, "No practice exams match your search.") : visiblePEs.map((pe) => {
+    return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "flex-end" } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => setPeCreateOpen(true) }, Icon.plus, " Add Practice Exam")), allPracticeExams.length === 0 ? /* @__PURE__ */ React.createElement(Card, { style: { padding: "32px 20px", textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, marginBottom: 14 } }, "No practice exams yet \u2014 generate one from an exam's material, or add one yourself."), /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => setPeCreateOpen(true) }, Icon.plus, " Add Practice Exam")) : visiblePEs.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, textAlign: "center", padding: "14px 0" } }, "No practice exams match your search.") : visiblePEs.map((pe) => {
       const lastAttempt = pe.attempts && pe.attempts.length > 0 ? pe.attempts[pe.attempts.length - 1] : null;
       const linkedExam = pe.examEventId ? lsGet("events", []).find((e) => e.id === pe.examEventId) : null;
       return /* @__PURE__ */ React.createElement("div", { key: pe.id, style: { padding: "12px 16px", borderRadius: 12, border: `1px solid ${T.border}`, background: T.card } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 14, marginBottom: linkedExam ? 8 : 0 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 600, color: T.white } }, pe.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginTop: 2 } }, pe.questions.length, " questions", lastAttempt ? " \xB7 last score " + lastAttempt.score + "/" + lastAttempt.total : " \xB7 not taken yet"))), linkedExam && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, fontWeight: 700, padding: "3px 8px", borderRadius: 99, background: T.lime + "14", color: T.lime, border: `1px solid ${T.lime}33` } }, "Exam: ", linkedExam.title, " \xB7 ", linkedExam.date)), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexShrink: 0, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => startPracticeExam(pe) }, "Take"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => setPeLinkExamId(pe.id) }, linkedExam ? "Change exam" : "+ Link to an exam"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setDeleteConfirm({ type: "pe", id: pe.id, name: pe.name }) }, "Delete")));
