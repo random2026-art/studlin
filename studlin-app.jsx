@@ -7505,28 +7505,20 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
     closeBuildPlan();
     refresh();
   };
-  // Progressive disclosure for the exam-detail view -- everything used to
-  // render at once (upload/paste/notes/links, three generate buttons, the
-  // full editable session list) regardless of whether the student had
-  // added anything yet or just wanted the one obvious next step. These
-  // default closed except materialAddOpen, which the render below also
-  // forces open whenever there's genuinely no material yet -- there's
-  // nothing to be less overwhelming than a first-time student's one
-  // real option, so there's no reason to hide it behind a click.
-  const [materialAddOpen,setMaterialAddOpen]=useState(false);
-  // Part B (exam detail timeline) -- materialsOpen collapses everything
-  // that isn't "what do I do next" (material, flashcards, practice exams)
-  // below the timeline; expandedSessionId controls which single timeline
-  // row (if any) shows its action controls (Start/Move), one at a time,
-  // same progressive-disclosure convention as the exam list (Part A).
-  // editingSessionId is a level deeper -- reached only by clicking "Move"
-  // on whichever row is expanded -- and shows that row's date/time/
-  // duration form instead of Start/Move. Split into two pieces of state
-  // (Phase 3 cleanup) because collapsing them into one used to mean any
-  // row other than the auto-shown "next" one skipped Start entirely and
-  // went straight to the edit form the moment it was clicked -- there was
-  // no way to start a session that wasn't the algorithm's chosen "next".
-  const [prepMaterialsOpen,setPrepMaterialsOpen]=useState(false);
+  // Part B (exam detail timeline) -- expandedSessionId controls which
+  // single timeline row (if any) shows its action controls (Start/Move),
+  // one at a time, same progressive-disclosure convention as the exam
+  // list (Part A). editingSessionId is a level deeper -- reached only by
+  // clicking "Move" on whichever row is expanded -- and shows that row's
+  // date/time/duration form instead of Start/Move. Split into two pieces
+  // of state (Phase 3 cleanup) because collapsing them into one used to
+  // mean any row other than the auto-shown "next" one skipped Start
+  // entirely and went straight to the edit form the moment it was
+  // clicked -- there was no way to start a session that wasn't the
+  // algorithm's chosen "next".
+  // (materialAddOpen/prepMaterialsOpen, the on-page Materials & study kit
+  // toggle's own state, removed 2026-08-20 along with that whole
+  // redundant section -- see the comment where it used to render.)
   const [expandedSessionId,setExpandedSessionId]=useState(null);
   const [editingSessionId,setEditingSessionId]=useState(null);
   const [examSearch,setExamSearch]=useState("");
@@ -8973,106 +8965,25 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
               </div>
             )}
 
-            {/* Real UX gap found live: once a study plan already exists,
-                this whole toggle+Add-study-material Card was still the
-                default view every time you opened an exam -- but the only
-                thing left worth doing here at that point is "Redo study
-                plan" (which reuses this exact same fileTexts material list
-                internally, plus has its own upload step -- see
-                openBuildPlan's confidence step), so the full material-
-                management UI was mostly dead weight competing for
-                attention with the actual sessions above it. Flashcards/
-                Practice Exams cards also used to live INSIDE this same
-                collapsed toggle, meaning they were invisible unless you
-                happened to expand "Materials & study kit" first -- moved
-                below, always visible on their own now. */}
-            {examSessions.length===0&&(<>
-            <button type="button" onClick={()=>setPrepMaterialsOpen(o=>!o)} style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"none",color:T.muted,fontSize:12.5,fontWeight:600,fontFamily:T.font,cursor:"pointer",padding:0,marginBottom:prepMaterialsOpen?14:0}}>
-              Materials &amp; study kit {prepMaterialsOpen?"︿":"﹀"}
-            </button>
-            {prepMaterialsOpen&&(
-            <Card style={{padding:20,marginBottom:16}}>
-              <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:10}}>Add study material</div>
-              {/* Phase 3 cleanup: this card used to stack five distinct
-                  jobs (manage material, add material, generate everything,
-                  generate one thing, regenerate session count) with almost
-                  no visual separation. Split into "Your material" (list +
-                  add) and "Generate" (below) with a real divider between
-                  them instead of one undifferentiated block. */}
-              <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Your material</div>
-              {(fileTexts.length>0||materialLinks.length>0)&&(
-                <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:10}}>
-                  {fileTexts.map(f=>(
-                    <div key={f.name} style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:12,padding:"7px 10px",background:T.card2,borderRadius:8,gap:8}}>
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name}</div>
-                        {f.name==="From your syllabus"&&<div style={{fontSize:10,color:T.faint,marginTop:1}}>Background only. Not used for flashcards, practice exams, or study sessions.</div>}
-                        {f.empty&&<div style={{fontSize:10,color:T.amber,marginTop:1}}>Couldn't find readable text in this one. Try a different file.</div>}
-                        {f.truncated&&!f.empty&&<div style={{fontSize:10,color:T.faint,marginTop:1}}>Trimmed. Only the first part will be used.</div>}
-                      </div>
-                      <button onClick={()=>removePrepFile(f.name)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,flexShrink:0}}>×</button>
-                    </div>
-                  ))}
-                  {materialLinks.map((link,li)=>(
-                    <div key={li} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,fontSize:12,padding:"7px 10px",background:T.card2,borderRadius:8}}>
-                      <a href={link.url} target="_blank" rel="noopener noreferrer" style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0,textDecoration:"underline"}}>
-                        {link.label&&<span style={{color:T.text,fontWeight:600}}>{link.label}: </span>}
-                        <span style={{color:link.label?T.muted:T.text}}>{link.url}</span>
-                      </a>
-                      <button onClick={()=>{const next=materialLinks.filter((_,li2)=>li2!==li);setMaterialLinks(next);lsSet("events",lsGet("events",[]).map(e=>e.id===selectedExam.id?{...e,referenceLinks:next}:e));}} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,flexShrink:0}}>×</button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {/* Only offered as a single "+ Add material"/"+ Add more"
-                  trigger once something already exists -- for a fresh
-                  exam with nothing yet, the upload area below is already
-                  the one obvious next step, so it stays open by default
-                  instead of hiding behind an extra click. */}
-              {!materialAddOpen&&(fileTexts.length>0||materialLinks.length>0)&&(
-                <button type="button" onClick={()=>setMaterialAddOpen(true)} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,marginBottom:14,textDecoration:"underline"}}>+ Add more material</button>
-              )}
-              {(materialAddOpen||(fileTexts.length===0&&materialLinks.length===0))&&(<>
-                <input type="file" ref={fileInputRef} onChange={handlePrepFile} accept=".txt,.md,.pdf,.docx" style={{display:"none"}} multiple />
-                {extractProgress?(
-                  <div style={{marginBottom:10}}><ExtractionProgress {...extractProgress} /></div>
-                ):(
-                  <div onClick={()=>fileInputRef.current&&fileInputRef.current.click()} style={{border:`1px dashed ${T.borderHover}`,borderRadius:10,padding:18,textAlign:"center",background:T.card2,cursor:"pointer",marginBottom:10}}>
-                    <div style={{fontSize:12.5,color:T.text,fontWeight:500}}>Click to upload: PDF, DOCX, or TXT</div>
-                  </div>
-                )}
-                <button type="button" onClick={()=>setPasteMode(m=>!m)} style={{width:"100%",textAlign:"center",padding:"9px",borderRadius:8,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12,marginBottom:pasteMode?10:14}}>{pasteMode?"Upload a file instead":"Or paste text instead"}</button>
-                {pasteMode&&(
-                  <div style={{marginBottom:14}}>
-                    <textarea value={pasteText} onChange={e=>setPasteText(e.target.value)} placeholder="Paste your notes or material here" rows={6}
-                      style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box"}} />
-                    <Btn onClick={()=>{setFileTexts(prev=>[...prev,{name:"Pasted text",...finalizeExtractedText(pasteText)}]);setPasteText("");setPasteMode(false);}} disabled={!pasteText.trim()} style={{marginTop:10,width:"100%",justifyContent:"center",opacity:pasteText.trim()?1:0.45}}>Add pasted text</Btn>
-                  </div>
-                )}
-                {matchingNotes.length>0&&(
-                  <button type="button" onClick={()=>setNotesPickerOpen(true)} style={{width:"100%",textAlign:"center",padding:"9px",borderRadius:8,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12,marginBottom:14}}>Pull from your notes ({matchingNotes.length} for {selectedExam.subject})</button>
-                )}
-                <Field label="Reference links (optional)" hint="Saved for your own reference: Studlin doesn't read these, so they won't factor into flashcards or practice exams.">
-                  <div style={{display:"flex",gap:8}}>
-                    <Input value={linkLabelDraft} onChange={e=>setLinkLabelDraft(e.target.value)} placeholder="Label (optional)" style={{width:110,flexShrink:0}} />
-                    <Input type="url" value={linkDraft} onChange={e=>setLinkDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();if(!linkDraft.trim())return;const next=[...materialLinks,{label:linkLabelDraft.trim(),url:linkDraft.trim()}];setMaterialLinks(next);setLinkDraft("");setLinkLabelDraft("");lsSet("events",lsGet("events",[]).map(e=>e.id===selectedExam.id?{...e,referenceLinks:next}:e));}}}
-                      placeholder="https://quizlet.com/..." style={{flex:1,minWidth:0}} />
-                    <BtnSm variant="subtle" disabled={!linkDraft.trim()} onClick={()=>{if(!linkDraft.trim())return;const next=[...materialLinks,{label:linkLabelDraft.trim(),url:linkDraft.trim()}];setMaterialLinks(next);setLinkDraft("");setLinkLabelDraft("");lsSet("events",lsGet("events",[]).map(e=>e.id===selectedExam.id?{...e,referenceLinks:next}:e));}}>+ Add</BtnSm>
-                  </div>
-                </Field>
-                {(fileTexts.length>0||materialLinks.length>0)&&(
-                  <button type="button" onClick={()=>setMaterialAddOpen(false)} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,marginBottom:14,textDecoration:"underline"}}>Done adding material</button>
-                )}
-              </>)}
-              {genMsg&&(
-                <div style={{display:"flex",alignItems:"center",gap:10,marginTop:14,borderTop:`1px solid ${T.border}`,paddingTop:14}}>
-                  <span style={{fontSize:11.5,color:genMsg.startsWith("✓")?T.teal:T.red}}>{genMsg}</span>
-                  <button type="button" onClick={()=>setGenMsg("")} style={{background:"none",border:"none",color:T.faint,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>Hide</button>
-                </div>
-              )}
-            </Card>
-            )}
-            </>)}
+            {/* Real UX gap found live, corrected 2026-08-20: the ENTIRE
+                Materials & study kit toggle+Card was redundant, not just
+                the has-a-plan half of it. The no-plan empty-state card
+                above (see its own comment: "the ONE place 'Build study
+                plan' shows up when there's nothing yet") already has its
+                own Build study plan button, and that modal's confidence
+                step already has a full upload/paste/file-list UI of its
+                own (openBuildPlan's own step, reusing this exact same
+                fileTexts state) -- so this on-page duplicate never had a
+                scenario where it was actually the only way to do
+                something. Flashcards/Practice Exams cards used to live
+                INSIDE this same collapsed toggle too, invisible unless you
+                happened to expand it first -- moved below, always visible
+                on their own now. Real capability lost here, worth naming:
+                "Pull from your notes" and "Reference links" (saved for
+                reference, never fed to AI) existed only in this on-page
+                version, not the modal's -- if those turn out to matter,
+                they'd need to be added to the modal's own material step
+                instead of resurrecting this duplicate. */}
             {/* Once a plan exists, "Redo study plan" (which reuses the
                 exact same material + has its own upload step) is the only
                 thing worth surfacing here -- no toggle, no card, no
