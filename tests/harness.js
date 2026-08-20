@@ -69,7 +69,7 @@ function loadStudlinModule(options) {
   // and explicitly exposes the ones tests actually need.
   const epilogue = `
 ;(function(){
-  var exportNames = ["dayKey","lsGet","lsSet","findOpenSlotFor","findReliableSlotFor",
+  var exportNames = ["dayKey","checklistItemVisible","lsGet","lsSet","findOpenSlotFor","findReliableSlotFor",
     "findLegalSlotOrNull","rebalanceDay","isTier0Missed","computePausePlan",
     "computeHolidayPlan",
     "computeReviewOffsets","computeReviewDates","weekPrepLoad",

@@ -5054,6 +5054,19 @@ syncWriteHooks.notes=(items)=>DataStore.notes.onLocalWrite(items);
 syncWriteHooks.practiceExams=(items)=>DataStore.practiceExams.onLocalWrite(items);
 syncWriteHooks.sessions=(items)=>DataStore.timerLogs.onLocalWrite(items);
 const dayKey=(d)=>{const x=d||new Date();return x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");};
+// Dashboard's plain Checklist card (2026-08-19): checking an item used to
+// remove it from view instantly -- no visible confirmation it registered.
+// A done item now stays visible for the rest of the calendar day it was
+// completed on, gone once the day actually changes -- a real day
+// boundary (dayKey), not a rolling 24h window. A rolling window would
+// carry an item checked late one night into the NEXT day's fresh
+// checklist, reading as clutter for what's meant to be a daily list; the
+// day boundary matches the "today's checklist" mental model this app's
+// other dayKey-based daily concepts (e.g. streaks) already use.
+function checklistItemVisible(ev,todayKey){
+  if(ev.status!=="done")return true;
+  return !!(ev.completedAt&&dayKey(new Date(ev.completedAt))===(todayKey||dayKey()));
+}
 function daysOverdue(ev){if(!ev.deadline)return 0;if(ev.date<=ev.deadline)return 0;const d1=new Date(ev.date),d2=new Date(ev.deadline);return Math.ceil((d1-d2)/86400000);}
 function daysUntilDeadline(ev){if(!ev.deadline)return null;const d1=new Date(ev.deadline),d2=new Date(dayKey());return Math.ceil((d1-d2)/86400000);}
 // Per-task one-shot notification scheduling used to live here, but it only
@@ -25355,7 +25368,10 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   // Assignments/Projects tables instead (see upcomingAssignments' own
   // comment), labeled by class rather than as a bare title in this
   // generic list.
-  const checklistItems=allEvents.filter(ev=>ev.checklist&&ev.status!=="done"&&!ev.subject).sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
+  // See checklistItemVisible's own comment -- a checked item stays until
+  // the calendar day it was completed on ends, instead of vanishing the
+  // instant it's checked.
+  const checklistItems=allEvents.filter(ev=>ev.checklist&&!ev.subject&&checklistItemVisible(ev)).sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
   const [checklistDraft,setChecklistDraft]=useState("");
   const toggleChecklistItem=(id)=>{
     const all=lsGet("events",[]);
@@ -25617,9 +25633,13 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
           {checklistItems.length===0
             ? <div style={{fontSize:12.5,color:T.muted,padding:"6px 0 4px",textAlign:"center"}}>Nothing on your checklist.</div>
             : <div style={{maxHeight:300,overflowY:"auto"}}>{checklistItems.map(item=>(
-              <div key={item.id} onClick={()=>toggleChecklistItem(item.id)} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"9px 12px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer"}}>
-                <div style={{width:18,height:18,borderRadius:"50%",border:`1.5px solid ${T.faint}`,background:"transparent",flex:"none",marginTop:1,display:"grid",placeItems:"center"}} />
-                <div style={{flex:1,minWidth:0,fontSize:12.5,color:T.text,fontWeight:500,lineHeight:1.4,overflowWrap:"break-word"}}>{item.title}</div>
+              // Checked items now stay visible for the rest of the day
+              // (see checklistItems' own comment) instead of vanishing
+              // instantly -- needs a real checked look, or a lingering
+              // done item would be indistinguishable from a pending one.
+              <div key={item.id} onClick={()=>toggleChecklistItem(item.id)} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"9px 12px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer",opacity:item.status==="done"?0.55:1}}>
+                <div style={{width:18,height:18,borderRadius:"50%",border:`1.5px solid ${item.status==="done"?T.lime:T.faint}`,background:item.status==="done"?T.lime:"transparent",flex:"none",marginTop:1,display:"grid",placeItems:"center",color:T.ink,fontSize:11}}>{item.status==="done"&&Icon.check}</div>
+                <div style={{flex:1,minWidth:0,fontSize:12.5,color:T.text,fontWeight:500,lineHeight:1.4,overflowWrap:"break-word",textDecoration:item.status==="done"?"line-through":"none"}}>{item.title}</div>
               </div>
             ))}</div>}
         </div>

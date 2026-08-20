@@ -3885,3 +3885,24 @@ describe("2026-08-19: Moodle/Course Site calendar detection", () => {
     assert.ok(Array.isArray(m.PLATFORM_HELP.moodle.steps) && m.PLATFORM_HELP.moodle.steps.length > 0);
   });
 });
+
+describe("2026-08-19: Dashboard checklist stays visible until the day ends, not instantly on check", () => {
+  test("checklistItemVisible: a pending item is always visible", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.checklistItemVisible({ status: "pending" }, "2026-08-19"), true);
+  });
+  test("checklistItemVisible: a done item completed earlier the same day is still visible", () => {
+    const m = loadStudlinModule();
+    const completedAt = new Date("2026-08-19T10:00:00").getTime();
+    assert.equal(m.checklistItemVisible({ status: "done", completedAt }, "2026-08-19"), true);
+  });
+  test("checklistItemVisible: a done item completed on a previous day is hidden once the day changes", () => {
+    const m = loadStudlinModule();
+    const completedAt = new Date("2026-08-18T23:58:00").getTime();
+    assert.equal(m.checklistItemVisible({ status: "done", completedAt }, "2026-08-19"), false);
+  });
+  test("checklistItemVisible: a done item with no completedAt (legacy data) is hidden rather than shown forever", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.checklistItemVisible({ status: "done" }, "2026-08-19"), false);
+  });
+});
