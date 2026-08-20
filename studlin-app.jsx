@@ -4496,7 +4496,7 @@ const prioLabel=(v)=>{const p=v/10;return p<=20?"Low":p<=40?"Low–Medium":p<=60
 const diffLabel=(v)=>{const p=v/10;return p<=20?"Very Easy":p<=40?"Easy":p<=60?"Medium":p<=80?"Hard":"Very Hard";};
 async function getAuthToken(){try{const u=firebase.auth().currentUser;if(!u)return null;return await u.getIdToken();}catch(e){return null;}}
 async function authFetch(url,opts={}){try{const token=await getAuthToken();const h=Object.assign({},opts.headers||{});if(token)h["Authorization"]="Bearer "+token;return fetch(url,Object.assign({},opts,{headers:h}));}catch(e){return fetch(url,opts);}}
-async function fetchUserProfile(){try{const res=await authFetch("/api/me");if(!res.ok)return null;const d=await res.json();lsSet("credits",d.credits);lsSet("plan",d.plan||"Free");["stripeSubscriptionId","subscriptionStatus","subscriptionInterval","subscriptionCancelAtPeriodEnd","subscriptionCurrentPeriodEnd","subscriptionEndsAt"].forEach(k=>lsSet(k,d[k]===undefined?null:d[k]));
+async function fetchUserProfile(){try{const res=await authFetch("/api/me");if(!res.ok)return null;const d=await res.json();lsSet("credits",d.credits);lsSet("plan",d.plan||"Free");["stripeSubscriptionId","subscriptionStatus","subscriptionInterval","subscriptionCancelAtPeriodEnd","subscriptionCurrentPeriodEnd","subscriptionEndsAt","betaTrialExpiresAt"].forEach(k=>lsSet(k,d[k]===undefined?null:d[k]));
   // "onboarded" otherwise lives only in this browser's localStorage, so a
   // fresh browser/Incognito window/device makes an already-onboarded account
   // repeat the wizard. Only ever upgrades false->true here, never the
@@ -23650,6 +23650,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     subscriptionCancelAtPeriodEnd:!!lsGet("subscriptionCancelAtPeriodEnd",false),
     subscriptionCurrentPeriodEnd:lsGet("subscriptionCurrentPeriodEnd",null),
     subscriptionEndsAt:lsGet("subscriptionEndsAt",null),
+    betaTrialExpiresAt:lsGet("betaTrialExpiresAt",null),
   }));
   useEffect(()=>{
     let alive=true;
@@ -23667,10 +23668,41 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   const subscriptionPlanLine=()=>{
     const plan=account.plan||getPlan();
     if(plan==="Free")return "Free plan";
+    // Beta trial reads as its own real state, not a fake subscription
+    // renewal date -- account.stripeSubscriptionId is only ever set for
+    // an actual paid subscription (see handleRedeemBeta's own comment on
+    // never touching that field), so its absence here plus a set
+    // betaTrialExpiresAt unambiguously means "on the free trial," not
+    // "Pro with unknown billing."
+    if(!account.stripeSubscriptionId&&account.betaTrialExpiresAt)return "Beta trial - Pro until "+fmtBillingDate(account.betaTrialExpiresAt);
     const end=account.subscriptionCurrentPeriodEnd||account.subscriptionEndsAt;
     return account.subscriptionCancelAtPeriodEnd
       ?"Active until "+fmtBillingDate(end)
       :planPriceText(plan,account.subscriptionInterval)+" - renews "+fmtBillingDate(end);
+  };
+  // "betatesters" redeem flow (2026-08-20) -- a curated, email-allowlisted
+  // group gets a real 1-month Pro trial with no Stripe involvement. See
+  // api/me.js's handleRedeemBeta for the actual gating logic; this is
+  // just the input + result message.
+  const [betaCode,setBetaCode]=useState("");
+  const [betaRedeeming,setBetaRedeeming]=useState(false);
+  const [betaMsg,setBetaMsg]=useState("");
+  const redeemBetaCode=async()=>{
+    if(!betaCode.trim()||betaRedeeming)return;
+    setBetaRedeeming(true);setBetaMsg("");
+    try{
+      const res=await authFetch("/api/me",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"redeem-beta",code:betaCode.trim()})});
+      const d=await res.json();
+      if(!res.ok){setBetaMsg(d.error||"That code didn't work.");}
+      else{
+        lsSet("plan",d.plan||"Pro");
+        if(d.betaTrialExpiresAt)lsSet("betaTrialExpiresAt",d.betaTrialExpiresAt);
+        setAccount(a=>({...a,plan:d.plan||"Pro",betaTrialExpiresAt:d.betaTrialExpiresAt||a.betaTrialExpiresAt}));
+        setBetaMsg(d.message||"Pro unlocked.");
+        setBetaCode("");
+      }
+    }catch(e){setBetaMsg("Couldn't reach the server. Try again.");}
+    setBetaRedeeming(false);
   };
 
   // Gathers every studlin-* localStorage key into one JSON file and downloads it.
@@ -25168,7 +25200,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               </div>
               <div style={{fontSize:11.5,color:T.muted,lineHeight:1.5}}>Your default card is used for subscription renewals and credit purchases. Add more cards by making a purchase. We'll save it securely via Stripe.</div>
             </Card>
-            <Card>
+            <Card style={{marginBottom:getPlan()!=="Pro"?12:0}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:10}}>Billing history</div>
               {[["Jun 1, 2026","Pro plan · monthly","$6.99","Paid"],["May 1, 2026","Pro plan · monthly","$6.99","Paid"],["Apr 28, 2026","Credit pack · 300","$8.99","Paid"],["Apr 1, 2026","Pro plan · monthly","$6.99","Paid"]].map(([d,t,a,s],i)=>(
                 <div key={i} style={{display:"grid",gridTemplateColumns:"110px 1fr 80px 70px",gap:14,padding:"11px 0",borderBottom:i<3?`1px solid ${T.border}`:"none",fontSize:12.5,alignItems:"center"}}>
@@ -25179,6 +25211,19 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                 </div>
               ))}
             </Card>
+            {/* Beta tester redeem -- deliberately small/plain, not a
+                promoted upsell card, since this is for a curated group
+                who already know it exists, not a general promo. */}
+            {getPlan()!=="Pro"&&(
+              <Card>
+                <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:8}}>Have a beta code?</div>
+                <div style={{display:"flex",gap:8}}>
+                  <Input value={betaCode} onChange={e=>setBetaCode(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")redeemBetaCode();}} placeholder="Enter code" style={{flex:1,fontSize:12.5}} disabled={betaRedeeming} />
+                  <BtnSm onClick={redeemBetaCode} disabled={!betaCode.trim()||betaRedeeming}>{betaRedeeming?"Checking…":"Redeem"}</BtnSm>
+                </div>
+                {betaMsg&&<div style={{fontSize:11.5,color:betaMsg.indexOf("unlocked")>-1||betaMsg.indexOf("active")>-1?T.lime:T.red,marginTop:8}}>{betaMsg}</div>}
+              </Card>
+            )}
             <Modal open={!!subscriptionAction} onClose={()=>{if(!subscriptionLoading)setSubscriptionAction(null);}} title={subscriptionAction==="cancel"?"Cancel subscription?":"Resume subscription?"}
               sub={subscriptionAction==="cancel"?"Future payments stop, but your paid access stays active through this billing period.":"Your subscription will renew as usual."}
               footer={<>

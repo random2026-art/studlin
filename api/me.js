@@ -14,6 +14,19 @@ const DEFAULT_CREDITS = 120;
 const DELETED_USER_ID = 'deleted-user';
 const DELETED_USER_NAME = 'Deleted user';
 
+// Beta tester Pro trial (2026-08-20) -- a small, curated group gets one
+// month of real Pro access via a shared code, WITHOUT it being a
+// permanent comp and without going through Stripe at all. The code
+// itself ("betatesters") isn't the actual security boundary -- it's a
+// single shared word, easy to leak -- the email allowlist is. Add an
+// email here (lowercase) and redeploy to let that account in; nothing
+// else needs to change. See handleRedeemBeta below for the redemption
+// logic and the GET handler further down for the self-expiring check.
+const BETA_TESTER_EMAILS = [
+];
+const BETA_CODE = 'betatesters';
+const BETA_TRIAL_DAYS = 30;
+
 function isoFromStripeSeconds(value) {
   return value ? new Date(value * 1000).toISOString() : null;
 }
@@ -68,6 +81,46 @@ async function handleSubscriptionAction(user, req, res) {
   } catch (err) {
     console.error('subscription action error:', err);
     return res.status(500).json({ error: 'Could not update subscription. Please try again.' });
+  }
+}
+
+// Beta tester code redemption -- see BETA_TESTER_EMAILS' own comment for
+// why the code alone isn't the real gate. Deliberately does NOT reset
+// the expiry clock on a repeat redemption while already active -- that
+// would turn "one month" into "however many times you feel like typing
+// the word," defeating the entire point of a time-boxed trial. A real
+// paying subscriber's plan is never touched here regardless of what
+// they type, so this can never accidentally downgrade someone.
+async function handleRedeemBeta(user, req, res) {
+  if (!db) return res.status(503).json({ error: 'Database unavailable.' });
+  const { code } = req.body || {};
+  const email = (user.email || '').toLowerCase();
+  if (typeof code !== 'string' || code.trim().toLowerCase() !== BETA_CODE) {
+    return res.status(400).json({ error: 'That code didn\'t work.' });
+  }
+  if (!email || !BETA_TESTER_EMAILS.includes(email)) {
+    return res.status(403).json({ error: 'That code didn\'t work.' });
+  }
+
+  try {
+    const userRef = db.collection('users').doc(user.uid);
+    const userDoc = await userRef.get();
+    const data = userDoc.exists ? userDoc.data() : {};
+
+    if (data.stripeSubscriptionId && data.subscriptionStatus === 'active') {
+      return res.status(200).json({ plan: 'Pro', message: 'You already have Pro.' });
+    }
+    if (data.plan === 'Pro' && data.betaTrialExpiresAt && new Date(data.betaTrialExpiresAt) > new Date()) {
+      return res.status(200).json({ plan: 'Pro', betaTrialExpiresAt: data.betaTrialExpiresAt, message: 'Your beta trial is already active.' });
+    }
+
+    const betaTrialExpiresAt = new Date(Date.now() + BETA_TRIAL_DAYS * 86400000).toISOString();
+    const update = { plan: 'Pro', betaTrialExpiresAt, updatedAt: new Date().toISOString() };
+    await userRef.set(update, { merge: true });
+    return res.status(200).json({ ...update, message: 'Pro unlocked for ' + BETA_TRIAL_DAYS + ' days.' });
+  } catch (err) {
+    console.error('beta redeem error:', err);
+    return res.status(500).json({ error: 'Could not redeem code. Please try again.' });
   }
 }
 
@@ -594,6 +647,7 @@ module.exports = withSentry(async (req, res) => {
     if (action === 'canvas-connect') return handleCanvasConnect(user, req, res);
     if (action === 'canvas-pull') return handleCanvasPull(user, res);
     if (action === 'canvas-disconnect') return handleCanvasDisconnect(user, res);
+    if (action === 'redeem-beta') return handleRedeemBeta(user, req, res);
     return handleSubscriptionAction(user, req, res);
   }
 
@@ -617,10 +671,22 @@ module.exports = withSentry(async (req, res) => {
     }
 
     const data = doc.data();
+    // Self-expiring beta trial (see handleRedeemBeta) -- checked on every
+    // profile read rather than a cron job, same "compute on read" pattern
+    // the client side already uses for its own cooldown timestamps.
+    // Never touches a real paying subscriber (stripeSubscriptionId gates
+    // it out) even if betaTrialExpiresAt happens to still be on their doc
+    // from before they subscribed for real.
+    let plan = data.plan || 'Free';
+    if (plan === 'Pro' && data.betaTrialExpiresAt && !data.stripeSubscriptionId && new Date(data.betaTrialExpiresAt) <= new Date()) {
+      plan = 'Free';
+      await ref.set({ plan: 'Free' }, { merge: true });
+    }
     return res.status(200).json({
-      plan: data.plan || 'Free',
+      plan,
       credits: data.credits ?? DEFAULT_CREDITS,
       email: data.email || user.email || null,
+      betaTrialExpiresAt: data.betaTrialExpiresAt || null,
       stripeSubscriptionId: data.stripeSubscriptionId || null,
       subscriptionStatus: data.subscriptionStatus || null,
       subscriptionInterval: data.subscriptionInterval || null,

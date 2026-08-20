@@ -2913,7 +2913,7 @@ async function fetchUserProfile() {
     const d = await res.json();
     lsSet("credits", d.credits);
     lsSet("plan", d.plan || "Free");
-    ["stripeSubscriptionId", "subscriptionStatus", "subscriptionInterval", "subscriptionCancelAtPeriodEnd", "subscriptionCurrentPeriodEnd", "subscriptionEndsAt"].forEach((k) => lsSet(k, d[k] === void 0 ? null : d[k]));
+    ["stripeSubscriptionId", "subscriptionStatus", "subscriptionInterval", "subscriptionCancelAtPeriodEnd", "subscriptionCurrentPeriodEnd", "subscriptionEndsAt", "betaTrialExpiresAt"].forEach((k) => lsSet(k, d[k] === void 0 ? null : d[k]));
     if (d.onboarded) lsSet("onboarded", true);
     return d;
   } catch (e) {
@@ -15149,7 +15149,8 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     subscriptionInterval: lsGet("subscriptionInterval", null),
     subscriptionCancelAtPeriodEnd: !!lsGet("subscriptionCancelAtPeriodEnd", false),
     subscriptionCurrentPeriodEnd: lsGet("subscriptionCurrentPeriodEnd", null),
-    subscriptionEndsAt: lsGet("subscriptionEndsAt", null)
+    subscriptionEndsAt: lsGet("subscriptionEndsAt", null),
+    betaTrialExpiresAt: lsGet("betaTrialExpiresAt", null)
   }));
   useEffect(() => {
     let alive = true;
@@ -15175,8 +15176,33 @@ function SettingsTab({ theme = "dark", setTheme = () => {
   const subscriptionPlanLine = () => {
     const plan = account.plan || getPlan();
     if (plan === "Free") return "Free plan";
+    if (!account.stripeSubscriptionId && account.betaTrialExpiresAt) return "Beta trial - Pro until " + fmtBillingDate(account.betaTrialExpiresAt);
     const end = account.subscriptionCurrentPeriodEnd || account.subscriptionEndsAt;
     return account.subscriptionCancelAtPeriodEnd ? "Active until " + fmtBillingDate(end) : planPriceText(plan, account.subscriptionInterval) + " - renews " + fmtBillingDate(end);
+  };
+  const [betaCode, setBetaCode] = useState("");
+  const [betaRedeeming, setBetaRedeeming] = useState(false);
+  const [betaMsg, setBetaMsg] = useState("");
+  const redeemBetaCode = async () => {
+    if (!betaCode.trim() || betaRedeeming) return;
+    setBetaRedeeming(true);
+    setBetaMsg("");
+    try {
+      const res = await authFetch("/api/me", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "redeem-beta", code: betaCode.trim() }) });
+      const d = await res.json();
+      if (!res.ok) {
+        setBetaMsg(d.error || "That code didn't work.");
+      } else {
+        lsSet("plan", d.plan || "Pro");
+        if (d.betaTrialExpiresAt) lsSet("betaTrialExpiresAt", d.betaTrialExpiresAt);
+        setAccount((a) => ({ ...a, plan: d.plan || "Pro", betaTrialExpiresAt: d.betaTrialExpiresAt || a.betaTrialExpiresAt }));
+        setBetaMsg(d.message || "Pro unlocked.");
+        setBetaCode("");
+      }
+    } catch (e) {
+      setBetaMsg("Couldn't reach the server. Try again.");
+    }
+    setBetaRedeeming(false);
   };
   const exportAllData = () => {
     const out = {};
@@ -15880,7 +15906,9 @@ function SettingsTab({ theme = "dark", setTheme = () => {
   }, style: { flexShrink: 0 } }, "Resume subscription") : /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => {
     setSubscriptionError("");
     setSubscriptionAction("cancel");
-  }, style: { flexShrink: 0 } }, "Cancel subscription"))), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white } }, "Payment methods"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => alert("To add a new card, make any purchase \u2014 your card will be saved automatically.") }, "+ Add card")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: 14, background: T.card2, borderRadius: 10, border: `1px solid ${T.lime}33`, marginBottom: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 40, height: 28, borderRadius: 4, background: "linear-gradient(135deg,#1A1F36,#3F4865)", display: "grid", placeItems: "center", color: "#fff", fontSize: 9, fontWeight: 700, letterSpacing: "0.06em", fontFamily: T.mono } }, "VISA"), /* @__PURE__ */ React.createElement("div", { style: { fontFamily: T.mono, fontSize: 13, color: T.text } }, "\u2022\u2022\u2022\u2022 4242"), /* @__PURE__ */ React.createElement(Badge, { color: T.lime }, "Default"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginLeft: "auto" } }, "Exp 08/27"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle" }, "Update")), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, lineHeight: 1.5 } }, "Your default card is used for subscription renewals and credit purchases. Add more cards by making a purchase. We'll save it securely via Stripe.")), /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 10 } }, "Billing history"), [["Jun 1, 2026", "Pro plan \xB7 monthly", "$6.99", "Paid"], ["May 1, 2026", "Pro plan \xB7 monthly", "$6.99", "Paid"], ["Apr 28, 2026", "Credit pack \xB7 300", "$8.99", "Paid"], ["Apr 1, 2026", "Pro plan \xB7 monthly", "$6.99", "Paid"]].map(([d, t, a, s], i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "grid", gridTemplateColumns: "110px 1fr 80px 70px", gap: 14, padding: "11px 0", borderBottom: i < 3 ? `1px solid ${T.border}` : "none", fontSize: 12.5, alignItems: "center" } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, fontFamily: T.mono, fontSize: 11 } }, d), /* @__PURE__ */ React.createElement("span", { style: { color: T.text } }, t), /* @__PURE__ */ React.createElement("span", { style: { color: T.text, fontFamily: T.mono, fontWeight: 600, textAlign: "right" } }, a), /* @__PURE__ */ React.createElement(Badge, { color: T.teal }, s)))), /* @__PURE__ */ React.createElement(
+  }, style: { flexShrink: 0 } }, "Cancel subscription"))), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white } }, "Payment methods"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => alert("To add a new card, make any purchase \u2014 your card will be saved automatically.") }, "+ Add card")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: 14, background: T.card2, borderRadius: 10, border: `1px solid ${T.lime}33`, marginBottom: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 40, height: 28, borderRadius: 4, background: "linear-gradient(135deg,#1A1F36,#3F4865)", display: "grid", placeItems: "center", color: "#fff", fontSize: 9, fontWeight: 700, letterSpacing: "0.06em", fontFamily: T.mono } }, "VISA"), /* @__PURE__ */ React.createElement("div", { style: { fontFamily: T.mono, fontSize: 13, color: T.text } }, "\u2022\u2022\u2022\u2022 4242"), /* @__PURE__ */ React.createElement(Badge, { color: T.lime }, "Default"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginLeft: "auto" } }, "Exp 08/27"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle" }, "Update")), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, lineHeight: 1.5 } }, "Your default card is used for subscription renewals and credit purchases. Add more cards by making a purchase. We'll save it securely via Stripe.")), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: getPlan() !== "Pro" ? 12 : 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 10 } }, "Billing history"), [["Jun 1, 2026", "Pro plan \xB7 monthly", "$6.99", "Paid"], ["May 1, 2026", "Pro plan \xB7 monthly", "$6.99", "Paid"], ["Apr 28, 2026", "Credit pack \xB7 300", "$8.99", "Paid"], ["Apr 1, 2026", "Pro plan \xB7 monthly", "$6.99", "Paid"]].map(([d, t, a, s], i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "grid", gridTemplateColumns: "110px 1fr 80px 70px", gap: 14, padding: "11px 0", borderBottom: i < 3 ? `1px solid ${T.border}` : "none", fontSize: 12.5, alignItems: "center" } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, fontFamily: T.mono, fontSize: 11 } }, d), /* @__PURE__ */ React.createElement("span", { style: { color: T.text } }, t), /* @__PURE__ */ React.createElement("span", { style: { color: T.text, fontFamily: T.mono, fontWeight: 600, textAlign: "right" } }, a), /* @__PURE__ */ React.createElement(Badge, { color: T.teal }, s)))), getPlan() !== "Pro" && /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, marginBottom: 8 } }, "Have a beta code?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Input, { value: betaCode, onChange: (e) => setBetaCode(e.target.value), onKeyDown: (e) => {
+    if (e.key === "Enter") redeemBetaCode();
+  }, placeholder: "Enter code", style: { flex: 1, fontSize: 12.5 }, disabled: betaRedeeming }), /* @__PURE__ */ React.createElement(BtnSm, { onClick: redeemBetaCode, disabled: !betaCode.trim() || betaRedeeming }, betaRedeeming ? "Checking\u2026" : "Redeem")), betaMsg && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: betaMsg.indexOf("unlocked") > -1 || betaMsg.indexOf("active") > -1 ? T.lime : T.red, marginTop: 8 } }, betaMsg)), /* @__PURE__ */ React.createElement(
     Modal,
     {
       open: !!subscriptionAction,
