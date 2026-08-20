@@ -146,7 +146,7 @@ function loadStudlinModule(options) {
     "CONFIDENCE_TO_UNIT","EXAM_WEIGHT_TO_IMPACT",
     "confidenceUnitOf","confidenceZoneOf","RATING_UNIT","RATING_COMPLETION_CREDIT","EXAM_CHECKIN_SCALE",
     "computeCapacitySlack","EXAM_READINESS_TIGHT_SLACK_RATIO",
-    "applyHoursTargetCap",
+    "applyHoursTarget",
     "computeAssignmentPace","ASSIGNMENT_BEHIND_THRESHOLD","ATTACK_BLOCK_DEFAULT_ESTIMATE_HOURS",
     "isPaceNudgeDismissed","dismissPaceNudge","PACE_NUDGE_COOLDOWN_MS",
     "computeFillSuggestions","shouldFireStreakNudge","getStreakNudgeSentDate","markStreakNudgeSent",

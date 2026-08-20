@@ -3485,17 +3485,13 @@ function scaledQuizCount(materialCharCount) {
   if (!materialCharCount) return 8;
   return Math.max(8, Math.min(25, Math.round(materialCharCount / 1800)));
 }
-function applyHoursTargetCap(sessionCount, sessionDuration, hoursTarget) {
-  if (!(hoursTarget > 0)) return { sessionCount, sessionDuration };
+function applyHoursTarget(sessionCount, sessionDuration, hoursTarget) {
+  if (!(hoursTarget > 0) || !(sessionCount > 0)) return { sessionCount, sessionDuration };
   const targetMins = hoursTarget * 60;
-  const calculatedMins = sessionCount * sessionDuration;
-  if (calculatedMins <= targetMins) return { sessionCount, sessionDuration };
-  const scale = targetMins / calculatedMins;
-  const cappedDuration = Math.max(10, Math.round(sessionDuration * scale / 5) * 5);
-  const cappedCount = Math.max(1, Math.round(targetMins / cappedDuration));
-  return { sessionCount: cappedCount, sessionDuration: cappedDuration };
+  const perSession = Math.max(10, Math.round(targetMins / sessionCount / 5) * 5);
+  return { sessionCount, sessionDuration: perSession };
 }
-function studyPlanReasoning(confidenceLevel, importanceLevel, materialCharCount, hadHistoricalDuration, hoursTargetCapped, sessionCount, sessionDuration, hasTaperedLastSession) {
+function studyPlanReasoning(confidenceLevel, importanceLevel, materialCharCount, hadHistoricalDuration, hoursTargetAdjusted, sessionCount, sessionDuration, hasTaperedLastSession) {
   const confPhrase = confidenceLevel === "shaky" ? "you said you're shaky on this material" : confidenceLevel === "solid" ? "you're already feeling solid on this material" : "you're feeling okay but not solid on this material";
   const importancePhrase = importanceLevel && importanceLevel !== "moderate" ? ", and it's a " + importanceLevel + " exam" : "";
   const countLine = sessionCount + " session" + (sessionCount !== 1 ? "s" : "") + " -- " + confPhrase + importancePhrase + ".";
@@ -3506,12 +3502,13 @@ function studyPlanReasoning(confidenceLevel, importanceLevel, materialCharCount,
   const durationLine = sessionDuration + " minutes each -- " + durBits.join(", and ") + ".";
   const lines = [countLine, durationLine];
   if (hasTaperedLastSession) lines.push("Your last session is lighter -- a final review instead of new material, right before the exam.");
-  if (hoursTargetCapped) lines.push("Scaled down to fit the study time you asked for.");
+  if (hoursTargetAdjusted) lines.push("Adjusted to match the study time you asked for.");
   return lines;
 }
-function suggestDurationFor(subject, kind, difficulty) {
+function suggestDurationFor(subject, kind, difficulty, minSamples) {
+  const minN = minSamples || TIER0_MIN_BUCKET_SAMPLE;
   const events = lsGet("events", []).filter((e) => e.status === "done" && e.timeSpent && e.subject === subject && e.kind === kind);
-  if (events.length === 0) return null;
+  if (events.length < minN) return null;
   const medianOf = (pool) => {
     const sorted = pool.map((e) => e.timeSpent).sort((a, b) => a - b);
     const mid = Math.floor(sorted.length / 2);
@@ -3520,9 +3517,9 @@ function suggestDurationFor(subject, kind, difficulty) {
   if (difficulty != null) {
     const tier = difficultyTierOf({ difficulty });
     const tiered = events.filter((e) => difficultyTierOf(e) === tier);
-    if (tiered.length >= TIER0_MIN_BUCKET_SAMPLE) return Math.max(5, Math.round(medianOf(tiered) / 5) * 5);
+    if (tiered.length >= minN) return Math.max(15, Math.round(medianOf(tiered) / 5) * 5);
   }
-  return Math.max(5, Math.round(medianOf(events) / 5) * 5);
+  return Math.max(15, Math.round(medianOf(events) / 5) * 5);
 }
 function upcomingExams() {
   return lsGet("events", []).filter((e) => e.kind === "exam" && e.date >= dayKey()).sort((a, b) => a.date.localeCompare(b.date));
@@ -4783,9 +4780,10 @@ function StudlinPrep({ setActive = () => {
   const [buildPlanLoading, setBuildPlanLoading] = useState(false);
   const [buildPlanGenFlashcards, setBuildPlanGenFlashcards] = useState(false);
   const [buildPlanGenPE, setBuildPlanGenPE] = useState(false);
+  const [buildPlanWeaveCards, setBuildPlanWeaveCards] = useState(true);
+  const [buildPlanWeavePE, setBuildPlanWeavePE] = useState(true);
   const [buildPlanHoursTarget, setBuildPlanHoursTarget] = useState("");
   const [buildPlanFocuses, setBuildPlanFocuses] = useState([]);
-  const [buildPlanFocusesLoading, setBuildPlanFocusesLoading] = useState(false);
   const [buildPlanOverrides, setBuildPlanOverrides] = useState([]);
   const [buildPlanConfidence, setBuildPlanConfidence] = useState("okay");
   const [buildPlanMaterialOpen, setBuildPlanMaterialOpen] = useState(false);
@@ -4961,6 +4959,8 @@ function StudlinPrep({ setActive = () => {
     setBuildPlanPreview(null);
     setBuildPlanGenFlashcards(false);
     setBuildPlanGenPE(false);
+    setBuildPlanWeaveCards(true);
+    setBuildPlanWeavePE(true);
     setBuildPlanHoursTarget("");
     setBuildPlanFocuses([]);
     setBuildPlanMaterialOpen(!hasMaterial);
@@ -4976,6 +4976,8 @@ function StudlinPrep({ setActive = () => {
     setBuildPlanPreview(null);
     setBuildPlanGenFlashcards(false);
     setBuildPlanGenPE(false);
+    setBuildPlanWeaveCards(true);
+    setBuildPlanWeavePE(true);
     setBuildPlanHoursTarget("");
     setBuildPlanFocuses([]);
     setManualSessionRows([]);
@@ -4990,16 +4992,21 @@ function StudlinPrep({ setActive = () => {
       setUpgradeModal({ feature: "AI study plans", detail: "AI study plans are a Pro feature. Upgrade to use them." });
       return;
     }
+    setBuildPlanStep("generating");
     const hasMaterial = buildPlanMaterialText.trim().length > 0;
     setBuildPlanGeneric(!hasMaterial);
     if (hasMaterial) persistBuildPlanMaterial();
-    const historicalDuration = suggestDurationFor(buildPlanExam.subject, "study block");
+    const highStakes = buildPlanExam.importanceLevel === "critical" || buildPlanExam.importanceLevel === "major";
+    const historicalDuration = suggestDurationFor(buildPlanExam.subject, "study block", void 0, highStakes ? TIER0_MIN_BUCKET_SAMPLE * 2 : void 0);
     const baseDuration = historicalDuration || 25;
     const params = computeStudyPlanParams(buildPlanExam.examWeight, baseDuration, buildPlanConfidence, buildPlanMaterialText.length, buildPlanExam.importanceLevel);
-    const { sessionCount, sessionDuration } = applyHoursTargetCap(params.sessionCount, params.sessionDuration, parseFloat(buildPlanHoursTarget));
+    const { sessionCount, sessionDuration } = applyHoursTarget(params.sessionCount, params.sessionDuration, parseFloat(buildPlanHoursTarget));
     const dates = computeReviewDates(buildPlanExam.date, dayKey(), sessionCount);
     const hasTaperedLastSession = dates.length >= 3;
     const taperedLastDuration = hasTaperedLastSession ? Math.max(15, Math.round(sessionDuration * 0.6 / 5) * 5) : null;
+    const minDelay = new Promise((r) => setTimeout(r, 900));
+    const focusesPromise = hasMaterial && dates.length > 0 ? proposeSessionFocuses(buildPlanExam.title, buildPlanMaterialText, dates.length, buildPlanExam.subject) : Promise.resolve(null);
+    const [focuses] = await Promise.all([focusesPromise, minDelay]);
     setBuildPlanPreview({
       sessionCount: dates.length,
       sessionDuration,
@@ -5010,23 +5017,25 @@ function StudlinPrep({ setActive = () => {
         importanceLevel: buildPlanExam.importanceLevel,
         materialCharCount: buildPlanMaterialText.length,
         hadHistoricalDuration: historicalDuration != null,
-        hoursTargetCapped: sessionCount !== params.sessionCount || sessionDuration !== params.sessionDuration
+        hoursTargetAdjusted: sessionCount !== params.sessionCount || sessionDuration !== params.sessionDuration
       }
     });
-    setBuildPlanStep("preview");
-    setBuildPlanFocuses(dates.map(() => ""));
+    setBuildPlanFocuses(focuses || dates.map(() => ""));
     setBuildPlanOverrides(dates.map((d, i) => hasTaperedLastSession && i === dates.length - 1 ? { date: d, duration: taperedLastDuration } : null));
-    if (hasMaterial && dates.length > 0) {
-      setBuildPlanFocusesLoading(true);
-      const focuses = await proposeSessionFocuses(buildPlanExam.title, buildPlanMaterialText, dates.length, buildPlanExam.subject);
-      setBuildPlanFocusesLoading(false);
-      if (focuses) setBuildPlanFocuses(focuses);
-    }
+    setBuildPlanStep("preview");
   };
   const adjustBuildPlanCount = (count) => {
     if (!buildPlanExam) return;
     const dates = computeReviewDates(buildPlanExam.date, dayKey(), count);
-    setBuildPlanPreview((p) => p ? { ...p, sessionCount: dates.length, dates } : p);
+    const hoursTarget = parseFloat(buildPlanHoursTarget);
+    setBuildPlanPreview((p) => {
+      if (!p) return p;
+      if (hoursTarget > 0) {
+        const { sessionDuration } = applyHoursTarget(dates.length, p.sessionDuration, hoursTarget);
+        return { ...p, sessionCount: dates.length, dates, sessionDuration };
+      }
+      return { ...p, sessionCount: dates.length, dates };
+    });
     setBuildPlanFocuses((f) => {
       const next = f.slice(0, dates.length);
       while (next.length < dates.length) next.push("");
@@ -5076,21 +5085,23 @@ function StudlinPrep({ setActive = () => {
     if (buildPlanGeneric) {
       finalSessions = placedSessions.map((s) => ({ ...s, notes: "General review. No material attached yet. Add material anytime to unlock real flashcards for this exam.", isGenericStudyPlan: true }));
     } else {
+      const weaveCards = genDeck && buildPlanWeaveCards;
+      const weavePE = genPE && buildPlanWeavePE;
       finalSessions = placedSessions.map((s, i) => {
         const isLast = i === placedSessions.length - 1;
         const extra = {};
-        if (genDeck) {
+        if (weaveCards) {
           extra.deckId = genDeck.id;
           extra.interleavedReview = true;
         }
-        if (genPE && isLast) {
+        if (weavePE && isLast) {
           extra.practiceExamId = genPE.id;
           extra.interleavedReview = true;
         }
         const focus = buildPlanFocuses[i] || "";
         let notes = null;
-        if (genPE && isLast) notes = genDeck ? "Review flashcards, then take your practice exam." : "Take your practice exam for this material.";
-        else if (genDeck) notes = "Review flashcards first" + (focus ? ", then: " + focus : ".");
+        if (weavePE && isLast) notes = weaveCards ? "Review flashcards, then take your practice exam." : "Take your practice exam for this material.";
+        else if (weaveCards) notes = "Review flashcards first" + (focus ? ", then: " + focus : ".");
         else if (focus) notes = focus;
         if (Object.keys(extra).length === 0 && notes === null) return s;
         return { ...s, ...extra, notes: notes ?? s.notes };
@@ -5922,7 +5933,20 @@ function StudlinPrep({ setActive = () => {
       setFileTexts((prev) => [...prev, { name: "Pasted text", ...finalizeExtractedText(pasteText) }]);
       setPasteText("");
       setPasteMode(false);
-    }, disabled: !pasteText.trim(), style: { marginTop: 8, width: "100%", justifyContent: "center", opacity: pasteText.trim() ? 1 : 0.45 } }, "Add pasted text")), fileTexts.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 } }, fileTexts.map((f) => /* @__PURE__ */ React.createElement("div", { key: f.name, style: { display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 12, padding: "6px 10px", background: T.card2, borderRadius: 8, gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 } }, f.name), /* @__PURE__ */ React.createElement("button", { onClick: () => removePrepFile(f.name), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 14, lineHeight: 1, flexShrink: 0 } }, "\xD7")))), (fileTexts.length > 0 || materialLinks.length > 0) && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setBuildPlanMaterialOpen(false), style: { background: "none", border: "none", color: T.muted, fontSize: 11.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, "Done"))), /* @__PURE__ */ React.createElement("div", { style: { borderTop: `1px solid ${T.border}`, paddingTop: 14, display: "flex", flexDirection: "column", gap: 10 } }, /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanGenFlashcards, onChange: (e) => setBuildPlanGenFlashcards(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, "Also generate flashcards")), /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanGenPE, onChange: (e) => setBuildPlanGenPE(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, "Also generate a practice exam")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 4 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Hours to study for this (optional):"), /* @__PURE__ */ React.createElement(Input, { type: "number", min: 0, step: 0.5, value: buildPlanHoursTarget, onChange: (e) => setBuildPlanHoursTarget(e.target.value), placeholder: "0", style: { width: 60 } })))),
+    }, disabled: !pasteText.trim(), style: { marginTop: 8, width: "100%", justifyContent: "center", opacity: pasteText.trim() ? 1 : 0.45 } }, "Add pasted text")), fileTexts.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 } }, fileTexts.map((f) => /* @__PURE__ */ React.createElement("div", { key: f.name, style: { display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 12, padding: "6px 10px", background: T.card2, borderRadius: 8, gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 } }, f.name), /* @__PURE__ */ React.createElement("button", { onClick: () => removePrepFile(f.name), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 14, lineHeight: 1, flexShrink: 0 } }, "\xD7")))), (fileTexts.length > 0 || materialLinks.length > 0) && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setBuildPlanMaterialOpen(false), style: { background: "none", border: "none", color: T.muted, fontSize: 11.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, "Done"))), /* @__PURE__ */ React.createElement("div", { style: { borderTop: `1px solid ${T.border}`, paddingTop: 14, display: "flex", flexDirection: "column", gap: 10 } }, /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanGenFlashcards, onChange: (e) => setBuildPlanGenFlashcards(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, "Also generate flashcards")), buildPlanGenFlashcards && /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginLeft: 24 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanWeaveCards, onChange: (e) => setBuildPlanWeaveCards(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Review them as part of each session")), /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanGenPE, onChange: (e) => setBuildPlanGenPE(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, "Also generate a practice exam")), buildPlanGenPE && /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginLeft: 24 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanWeavePE, onChange: (e) => setBuildPlanWeavePE(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Use my last session to take it")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 4 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Hours to study for this (optional):"), /* @__PURE__ */ React.createElement(Input, { type: "number", min: 0, step: 0.5, value: buildPlanHoursTarget, onChange: (e) => setBuildPlanHoursTarget(e.target.value), placeholder: "0", style: { width: 60 } })))),
+    buildPlanExam && buildPlanStep === "generating" && // The real "thinking" pause -- see generatePreview's minDelay/
+    // Promise.all. Nothing about the plan (session count, duration,
+    // dates) is computed or shown until this resolves, so the
+    // calibration screen never "prefires" the numbers the way an
+    // instant reveal used to.
+    /* @__PURE__ */ React.createElement("div", { style: { padding: "20px 0" } }, /* @__PURE__ */ React.createElement(
+      ExtractionProgress,
+      {
+        fileName: buildPlanExam.title,
+        stage: "analyze",
+        analyzeLabel: "Thinking through your study plan" + (buildPlanGenFlashcards && buildPlanGenPE ? ", flashcards, and a practice exam" : buildPlanGenFlashcards ? " and flashcards" : buildPlanGenPE ? " and a practice exam" : "") + "\u2026"
+      }
+    )),
     buildPlanExam && buildPlanStep === "preview" && buildPlanPreview && /* @__PURE__ */ React.createElement("div", null, buildPlanLoading ? (
       // Was just a disabled "Building…" button label with nothing
       // else -- this step now genuinely generates flashcards/a
@@ -5943,8 +5967,8 @@ function StudlinPrep({ setActive = () => {
     ) : /* @__PURE__ */ React.createElement(React.Fragment, null, buildPlanPreview.reasoningInputs && (() => {
       const lastOv = buildPlanOverrides[buildPlanOverrides.length - 1];
       const lastIsLighter = buildPlanPreview.dates.length >= 3 && lastOv && lastOv.duration && lastOv.duration < buildPlanPreview.sessionDuration;
-      return /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.text, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", marginBottom: 14, lineHeight: 1.6 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "Why this plan"), studyPlanReasoning(buildPlanPreview.reasoningInputs.confidenceLevel, buildPlanPreview.reasoningInputs.importanceLevel, buildPlanPreview.reasoningInputs.materialCharCount, buildPlanPreview.reasoningInputs.hadHistoricalDuration, buildPlanPreview.reasoningInputs.hoursTargetCapped, buildPlanPreview.sessionCount, buildPlanPreview.sessionDuration, lastIsLighter).map((line, i) => /* @__PURE__ */ React.createElement("div", { key: i }, line)));
-    })(), (buildPlanGenFlashcards || buildPlanGenPE) && materialText.trim() && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.text, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", marginBottom: 14, lineHeight: 1.6 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "Also included"), buildPlanGenFlashcards && /* @__PURE__ */ React.createElement("div", null, "~", scaledFlashcardCount(materialText.length), " flashcards, woven into every session below as a quick review before you start."), buildPlanGenPE && /* @__PURE__ */ React.createElement("div", null, "A ", scaledQuizCount(materialText.length), "-question practice exam -- your last session becomes a sit-down for it instead of new material.")), buildPlanPreview.dates.length > 0 && (() => {
+      return /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.text, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", marginBottom: 14, lineHeight: 1.6 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "Why this plan"), studyPlanReasoning(buildPlanPreview.reasoningInputs.confidenceLevel, buildPlanPreview.reasoningInputs.importanceLevel, buildPlanPreview.reasoningInputs.materialCharCount, buildPlanPreview.reasoningInputs.hadHistoricalDuration, buildPlanPreview.reasoningInputs.hoursTargetAdjusted, buildPlanPreview.sessionCount, buildPlanPreview.sessionDuration, lastIsLighter).map((line, i) => /* @__PURE__ */ React.createElement("div", { key: i }, line)));
+    })(), (buildPlanGenFlashcards || buildPlanGenPE) && materialText.trim() && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.text, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", marginBottom: 14, lineHeight: 1.6 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "Also included"), buildPlanGenFlashcards && /* @__PURE__ */ React.createElement("div", null, "~", scaledFlashcardCount(materialText.length), " flashcards", buildPlanWeaveCards ? ", woven into every session below as a quick review before you start." : " -- created on their own, not part of these sessions. Schedule review time separately from Flashcards."), buildPlanGenPE && /* @__PURE__ */ React.createElement("div", null, "A ", scaledQuizCount(materialText.length), "-question practice exam", buildPlanWeavePE ? " -- your last session becomes a sit-down for it instead of new material." : " -- created on its own, not part of these sessions. Schedule it separately from Practice Exams.")), buildPlanPreview.dates.length > 0 && (() => {
       const pressure = weekPrepLoad(buildPlanPreview.dates[0], buildPlanExam, lsGet("events", []), getSchedulePreferences());
       if (!pressure.isPressured) return null;
       return /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.amber, background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 8, padding: "8px 12px", marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 } }, /* @__PURE__ */ React.createElement("span", null, pressure.competingTitle ? "The week this starts in is already busy with " + pressure.competingTitle + "." : "The week this starts in is already busy.", " You can build it as planned, or spread it out."), buildPlanPreview.sessionCount > 1 && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => adjustBuildPlanCount(buildPlanPreview.sessionCount - 1), style: { background: "none", border: "none", color: T.amber, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: T.font, textDecoration: "underline", flexShrink: 0, padding: 0 } }, "Spread out"));
@@ -5952,12 +5976,12 @@ function StudlinPrep({ setActive = () => {
       const oldPending = lsGet("events", []).filter((e) => e.dueEventId === buildPlanExam.id && e.status === "pending" && e.isExamPrepSession && (e.interleavedReview || !e.deckId && !e.practiceExamId));
       if (oldPending.length === 0) return null;
       return /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 } }, "Replacing ", oldPending.length, " current session", oldPending.length !== 1 ? "s" : ""), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4 } }, oldPending.slice().sort((a, b) => a.date + a.time < b.date + b.time ? -1 : 1).map((s) => /* @__PURE__ */ React.createElement("div", { key: s.id, style: { fontSize: 11.5, color: T.faint, textDecoration: "line-through", padding: "2px 0" } }, s.date, " \xB7 ", fmtRolloverClock(s.time), " \xB7 ", s.duration || 25, "min"))));
-    })(), buildPlanGeneric && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, background: T.card2, borderRadius: 8, padding: "10px 12px", marginBottom: 14, lineHeight: 1.5 } }, "No material yet, so these are general review blocks, not focused sessions. Add material anytime to unlock real flashcards for this exam."), (buildPlanGenFlashcards || buildPlanGenPE) && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, background: T.card2, borderRadius: 8, padding: "10px 12px", marginBottom: 14, lineHeight: 1.5 } }, buildPlanGenFlashcards && buildPlanGenPE ? "+ Flashcards and a practice exam will also be generated." : buildPlanGenFlashcards ? "+ Flashcards will also be generated." : "+ A practice exam will also be generated.", allDecks.some((d) => deckLinkedToExam(d, buildPlanExam.id)) || allPracticeExams.some((p) => p.examEventId === buildPlanExam.id) ? " This replaces what's already there for this exam." : ""), buildPlanPreview.dates.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, textAlign: "center", padding: "14px 0", marginBottom: 14 } }, "Too close to the exam to fit a session.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 } }, buildPlanFocusesLoading && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 2 } }, /* @__PURE__ */ React.createElement(ExtractionProgress, { fileName: buildPlanExam.title, stage: "analyze", analyzeLabel: "Reading your material for session ideas\u2026" })), buildPlanPreview.dates.map((d, i) => {
+    })(), buildPlanGeneric && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, background: T.card2, borderRadius: 8, padding: "10px 12px", marginBottom: 14, lineHeight: 1.5 } }, "No material yet, so these are general review blocks, not focused sessions. Add material anytime to unlock real flashcards for this exam."), (buildPlanGenFlashcards || buildPlanGenPE) && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, background: T.card2, borderRadius: 8, padding: "10px 12px", marginBottom: 14, lineHeight: 1.5 } }, buildPlanGenFlashcards && buildPlanGenPE ? "+ Flashcards and a practice exam will also be generated." : buildPlanGenFlashcards ? "+ Flashcards will also be generated." : "+ A practice exam will also be generated.", allDecks.some((d) => deckLinkedToExam(d, buildPlanExam.id)) || allPracticeExams.some((p) => p.examEventId === buildPlanExam.id) ? " This replaces what's already there for this exam." : ""), buildPlanPreview.dates.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, textAlign: "center", padding: "14px 0", marginBottom: 14 } }, "Too close to the exam to fit a session.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 } }, buildPlanPreview.dates.map((d, i) => {
       const ov = buildPlanOverrides[i];
       const setOv = (patch) => setBuildPlanOverrides((o) => o.map((v, vi) => vi === i ? { date: v?.date ?? d, duration: v?.duration ?? buildPlanPreview.sessionDuration, ...patch } : v));
       const isLastRow = i === buildPlanPreview.dates.length - 1;
-      const rowGetsPE = buildPlanGenPE && isLastRow && materialText.trim();
-      const rowGetsCards = buildPlanGenFlashcards && materialText.trim();
+      const rowGetsPE = buildPlanGenPE && buildPlanWeavePE && isLastRow && materialText.trim();
+      const rowGetsCards = buildPlanGenFlashcards && buildPlanWeaveCards && materialText.trim();
       return /* @__PURE__ */ React.createElement("div", { key: i, style: { padding: "8px 10px", background: T.card2, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12.5, marginBottom: 6, gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.text, flexShrink: 0, display: "flex", alignItems: "center", gap: 6 } }, "Session ", i + 1, rowGetsPE && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9.5, fontWeight: 700, padding: "2px 6px", borderRadius: 99, background: T.lime + "14", color: T.lime, border: `1px solid ${T.lime}33` } }, "PRACTICE EXAM"), rowGetsCards && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9.5, fontWeight: 700, padding: "2px 6px", borderRadius: 99, background: T.teal + "14", color: T.teal, border: `1px solid ${T.teal}33` } }, "+ FLASHCARDS")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6 } }, /* @__PURE__ */ React.createElement(Input, { type: "date", value: ov?.date ?? d, onChange: (e) => setOv({ date: e.target.value }), style: { width: 130, fontSize: 11.5, padding: "5px 8px" } }), /* @__PURE__ */ React.createElement(NumField, { min: 5, max: 240, fallback: buildPlanPreview.sessionDuration, value: ov?.duration ?? buildPlanPreview.sessionDuration, onChange: (v) => setOv({ duration: v }), style: { width: 56 } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: T.muted, flexShrink: 0 } }, "min"))), rowGetsPE ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, rowGetsCards ? "Review flashcards, then take your practice exam." : "Take your practice exam for this material.") : !buildPlanGeneric && /* @__PURE__ */ React.createElement(
         Input,
         {

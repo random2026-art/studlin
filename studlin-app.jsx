@@ -5363,21 +5363,21 @@ function scaledQuizCount(materialCharCount){
   return Math.max(8,Math.min(25,Math.round(materialCharCount/1800)));
 }
 // The unified Build/Redo study plan flow's optional "how many hours do you
-// want to study for this" field -- a soft cap, not a second independent
-// input fighting with confidence: only ever scales the confidence-driven
-// plan DOWN when its calculated total exceeds the stated target, never
-// pads it up past what confidence+material already called for. A falsy/
-// zero/negative hoursTarget (field left blank) is a no-op, returning the
-// inputs unchanged.
-function applyHoursTargetCap(sessionCount,sessionDuration,hoursTarget){
-  if(!(hoursTarget>0))return {sessionCount,sessionDuration};
+// want to study for this" field. Used to be a cap-only, one-directional
+// scale: it would shrink the confidence-driven plan down when it came in
+// over the stated target, but silently ignored the target when the
+// student asked for MORE time than confidence+material alone called for
+// -- a real, reported bug ("i chose how many hours wanted to work on it,
+// it didn't recommend that at all"). Now genuinely bidirectional: scales
+// the total up or down to actually land near what was asked for, only
+// ever adjusting duration (never inventing/removing sessions on its own --
+// sessionCount stays whatever the student sees on the preview stepper).
+// A falsy/zero/negative hoursTarget (field left blank) is still a no-op.
+function applyHoursTarget(sessionCount,sessionDuration,hoursTarget){
+  if(!(hoursTarget>0)||!(sessionCount>0))return {sessionCount,sessionDuration};
   const targetMins=hoursTarget*60;
-  const calculatedMins=sessionCount*sessionDuration;
-  if(calculatedMins<=targetMins)return {sessionCount,sessionDuration};
-  const scale=targetMins/calculatedMins;
-  const cappedDuration=Math.max(10,Math.round(sessionDuration*scale/5)*5);
-  const cappedCount=Math.max(1,Math.round(targetMins/cappedDuration));
-  return {sessionCount:cappedCount,sessionDuration:cappedDuration};
+  const perSession=Math.max(10,Math.round((targetMins/sessionCount)/5)*5);
+  return {sessionCount,sessionDuration:perSession};
 }
 // The plain-language "why" behind the numbers computeStudyPlanParams
 // already computes -- every input here was already driving the math (see
@@ -5388,7 +5388,7 @@ function applyHoursTargetCap(sessionCount,sessionDuration,hoursTarget){
 // final (post-hours-cap) sessionCount/sessionDuration so the copy always
 // matches what's actually on screen, including after a manual
 // adjustBuildPlanCount tweak -- never a stale snapshot from generation time.
-function studyPlanReasoning(confidenceLevel,importanceLevel,materialCharCount,hadHistoricalDuration,hoursTargetCapped,sessionCount,sessionDuration,hasTaperedLastSession){
+function studyPlanReasoning(confidenceLevel,importanceLevel,materialCharCount,hadHistoricalDuration,hoursTargetAdjusted,sessionCount,sessionDuration,hasTaperedLastSession){
   const confPhrase=confidenceLevel==="shaky"?"you said you're shaky on this material"
     :confidenceLevel==="solid"?"you're already feeling solid on this material"
     :"you're feeling okay but not solid on this material";
@@ -5401,7 +5401,7 @@ function studyPlanReasoning(confidenceLevel,importanceLevel,materialCharCount,ha
   const durationLine=sessionDuration+" minutes each -- "+durBits.join(", and ")+".";
   const lines=[countLine,durationLine];
   if(hasTaperedLastSession)lines.push("Your last session is lighter -- a final review instead of new material, right before the exam.");
-  if(hoursTargetCapped)lines.push("Scaled down to fit the study time you asked for.");
+  if(hoursTargetAdjusted)lines.push("Adjusted to match the study time you asked for.");
   return lines;
 }
 // difficulty is optional -- when a caller has a real difficulty value in
@@ -5416,9 +5416,22 @@ function studyPlanReasoning(confidenceLevel,importanceLevel,materialCharCount,ha
 // subject+kind-only median (today's exact behavior) whenever the finer
 // bucket doesn't have enough data yet, or no difficulty was passed at all
 // -- every existing caller that omits the new param is unaffected.
-function suggestDurationFor(subject,kind,difficulty){
+// minSamples defaults to TIER0_MIN_BUCKET_SAMPLE -- below that, one gamed
+// "hit Begin then Complete after a minute" entry (or even a couple of
+// genuinely short ones) could single-handedly set this student's whole
+// suggested duration. Callers with extra stakes riding on the number
+// (a critical exam's study-plan duration) can pass a stricter minSamples
+// to require more confirmed history before trusting it at all; every
+// existing caller omits the arg and gets today's default threshold, a
+// real behavior change (was effectively 1 sample) but a strictly safer
+// one for all of them, not just study plans. Floor bumped 5->15: no real
+// study/task block is honestly worth scheduling at under 15 minutes, so
+// this also guards the untiered path against a handful of short entries
+// dragging the median below what's plausible.
+function suggestDurationFor(subject,kind,difficulty,minSamples){
+  const minN=minSamples||TIER0_MIN_BUCKET_SAMPLE;
   const events=lsGet("events",[]).filter(e=>e.status==="done"&&e.timeSpent&&e.subject===subject&&e.kind===kind);
-  if(events.length===0)return null;
+  if(events.length<minN)return null;
   const medianOf=(pool)=>{
     const sorted=pool.map(e=>e.timeSpent).sort((a,b)=>a-b);
     const mid=Math.floor(sorted.length/2);
@@ -5427,9 +5440,9 @@ function suggestDurationFor(subject,kind,difficulty){
   if(difficulty!=null){
     const tier=difficultyTierOf({difficulty});
     const tiered=events.filter(e=>difficultyTierOf(e)===tier);
-    if(tiered.length>=TIER0_MIN_BUCKET_SAMPLE)return Math.max(5,Math.round(medianOf(tiered)/5)*5);
+    if(tiered.length>=minN)return Math.max(15,Math.round(medianOf(tiered)/5)*5);
   }
-  return Math.max(5,Math.round(medianOf(events)/5)*5);
+  return Math.max(15,Math.round(medianOf(events)/5)*5);
 }
 // Shared by deck review scheduling (Flashcards) and practice-exam
 // scheduling (Studlin Prep) -- both are "N spaced sessions counting down
@@ -7440,9 +7453,17 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   // the student sees it, not just baked silently into notes at commit.
   const [buildPlanGenFlashcards,setBuildPlanGenFlashcards]=useState(false);
   const [buildPlanGenPE,setBuildPlanGenPE]=useState(false);
+  // Whether generating flashcards/a practice exam also folds them into the
+  // sessions above (weave), or just creates them standalone -- previously
+  // not a real choice: checking "Also generate flashcards" always wove a
+  // review into every single session with no way to opt out. Default true
+  // so today's behavior is unchanged unless the student turns it off; only
+  // rendered once the matching gen checkbox is checked, since there's
+  // nothing to weave otherwise.
+  const [buildPlanWeaveCards,setBuildPlanWeaveCards]=useState(true);
+  const [buildPlanWeavePE,setBuildPlanWeavePE]=useState(true);
   const [buildPlanHoursTarget,setBuildPlanHoursTarget]=useState("");
   const [buildPlanFocuses,setBuildPlanFocuses]=useState([]);
-  const [buildPlanFocusesLoading,setBuildPlanFocusesLoading]=useState(false);
   // Per-session {date,duration} edits made in the preview step -- null
   // entries mean "still using the auto-computed value." commitBuildPlan
   // re-resolves any overridden row through findReliableSlotFor instead of
@@ -7701,7 +7722,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
     setBuildPlanExamId(exam.id);
     setBuildPlanGeneric(false);
     setBuildPlanPreview(null);
-    setBuildPlanGenFlashcards(false);setBuildPlanGenPE(false);setBuildPlanHoursTarget("");setBuildPlanFocuses([]);
+    setBuildPlanGenFlashcards(false);setBuildPlanGenPE(false);setBuildPlanWeaveCards(true);setBuildPlanWeavePE(true);setBuildPlanHoursTarget("");setBuildPlanFocuses([]);
     setBuildPlanMaterialOpen(!hasMaterial);
     // Pre-fill confidence from the exam's own history -- real correction:
     // this used to reset to a blank slate every time, so "Redo study
@@ -7717,7 +7738,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   };
   const closeBuildPlan=()=>{
     setBuildPlanExamId(null);setBuildPlanStep("choice");setBuildPlanGeneric(false);setBuildPlanPreview(null);
-    setBuildPlanGenFlashcards(false);setBuildPlanGenPE(false);setBuildPlanHoursTarget("");setBuildPlanFocuses([]);
+    setBuildPlanGenFlashcards(false);setBuildPlanGenPE(false);setBuildPlanWeaveCards(true);setBuildPlanWeavePE(true);setBuildPlanHoursTarget("");setBuildPlanFocuses([]);
     setManualSessionRows([]);
   };
   // Persists whatever material the student added in the modal's own
@@ -7749,13 +7770,30 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
       setUpgradeModal({feature:"AI study plans",detail:"AI study plans are a Pro feature. Upgrade to use them."});
       return;
     }
+    // Was an instant reveal -- the numbers are real (confidence, importance,
+    // material, history all genuinely feed the math above), but showing
+    // them the same frame the button is clicked reads as "this didn't
+    // actually think about it," which was itself a reported complaint.
+    // A real "generating" step now sits between calibration and preview:
+    // the math below still runs first (it's fast/local), but nothing is
+    // shown until it -- and the real focus-suggestion AI call, when there's
+    // material -- both finish, via the minDelay/Promise.all below.
+    setBuildPlanStep("generating");
     const hasMaterial=buildPlanMaterialText.trim().length>0;
     setBuildPlanGeneric(!hasMaterial);
     if(hasMaterial)persistBuildPlanMaterial();
-    const historicalDuration=suggestDurationFor(buildPlanExam.subject,"study block");
+    // Higher-stakes exams get a stricter bar before personal history is
+    // trusted at all -- the same "average student first, genuine
+    // personalization only once well-evidenced" principle, weighted by how
+    // much is riding on this plan being right. A critical/major exam falls
+    // back to the sensible 25-minute default until there's real, hard-to-
+    // fake evidence (2x the usual sample floor) that this student's own
+    // history is worth leaning on.
+    const highStakes=buildPlanExam.importanceLevel==="critical"||buildPlanExam.importanceLevel==="major";
+    const historicalDuration=suggestDurationFor(buildPlanExam.subject,"study block",undefined,highStakes?TIER0_MIN_BUCKET_SAMPLE*2:undefined);
     const baseDuration=historicalDuration||25;
     const params=computeStudyPlanParams(buildPlanExam.examWeight,baseDuration,buildPlanConfidence,buildPlanMaterialText.length,buildPlanExam.importanceLevel);
-    const {sessionCount,sessionDuration}=applyHoursTargetCap(params.sessionCount,params.sessionDuration,parseFloat(buildPlanHoursTarget));
+    const {sessionCount,sessionDuration}=applyHoursTarget(params.sessionCount,params.sessionDuration,parseFloat(buildPlanHoursTarget));
     const dates=computeReviewDates(buildPlanExam.date,dayKey(),sessionCount);
     // computeReviewDates can return fewer dates than requested (e.g. an
     // exam that's only 2 days out can't fit a 4-session spread) -- show
@@ -7778,12 +7816,20 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
     // change via adjustBuildPlanCount) so the "why" text always recomputes
     // against whatever's actually on screen, never a stale snapshot from
     // this one generation moment.
+    // minDelay guarantees the "generating" step reads as real thought even
+    // when there's no material to wait on an AI call for (a bare
+    // confidence+importance plan used to resolve in the same tick). When
+    // there IS material, proposeSessionFocuses already takes far longer
+    // than this floor, so it costs nothing extra -- Promise.all just waits
+    // on whichever finishes last.
+    const minDelay=new Promise(r=>setTimeout(r,900));
+    const focusesPromise=(hasMaterial&&dates.length>0)?proposeSessionFocuses(buildPlanExam.title,buildPlanMaterialText,dates.length,buildPlanExam.subject):Promise.resolve(null);
+    const [focuses]=await Promise.all([focusesPromise,minDelay]);
     setBuildPlanPreview({sessionCount:dates.length,sessionDuration,difficultyValue:params.difficultyValue,dates,
       reasoningInputs:{confidenceLevel:buildPlanConfidence,importanceLevel:buildPlanExam.importanceLevel,materialCharCount:buildPlanMaterialText.length,
         hadHistoricalDuration:historicalDuration!=null,
-        hoursTargetCapped:sessionCount!==params.sessionCount||sessionDuration!==params.sessionDuration}});
-    setBuildPlanStep("preview");
-    setBuildPlanFocuses(dates.map(()=>""));
+        hoursTargetAdjusted:sessionCount!==params.sessionCount||sessionDuration!==params.sessionDuration}});
+    setBuildPlanFocuses(focuses||dates.map(()=>""));
     // One {date,duration}|null per session index -- null means "use the
     // auto-computed value," matching how buildPlanFocuses' blank string
     // means "no edit yet." Reset on every fresh preview generation, same
@@ -7791,12 +7837,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
     // editable/removable) override when tapered, same as any other
     // manually-set row -- see hasTaperedLastSession above.
     setBuildPlanOverrides(dates.map((d,i)=>hasTaperedLastSession&&i===dates.length-1?{date:d,duration:taperedLastDuration}:null));
-    if(hasMaterial&&dates.length>0){
-      setBuildPlanFocusesLoading(true);
-      const focuses=await proposeSessionFocuses(buildPlanExam.title,buildPlanMaterialText,dates.length,buildPlanExam.subject);
-      setBuildPlanFocusesLoading(false);
-      if(focuses)setBuildPlanFocuses(focuses);
-    }
+    setBuildPlanStep("preview");
   };
   const adjustBuildPlanCount=(count)=>{
     if(!buildPlanExam)return;
@@ -7804,7 +7845,19 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
     // Same reconciliation as generatePreview -- a manually-requested count
     // can still get clamped by computeReviewDates, so mirror dates.length
     // back into sessionCount rather than trusting the raw request.
-    setBuildPlanPreview(p=>p?{...p,sessionCount:dates.length,dates}:p);
+    // When an hours target is set, moving the count stepper is exactly the
+    // "how many sessions, Studlin figures out how long each one is" flow --
+    // redivide the same target across the new count instead of leaving
+    // sessionDuration stuck at whatever it was for the old count.
+    const hoursTarget=parseFloat(buildPlanHoursTarget);
+    setBuildPlanPreview(p=>{
+      if(!p)return p;
+      if(hoursTarget>0){
+        const {sessionDuration}=applyHoursTarget(dates.length,p.sessionDuration,hoursTarget);
+        return {...p,sessionCount:dates.length,dates,sessionDuration};
+      }
+      return {...p,sessionCount:dates.length,dates};
+    });
     // Keep the focuses array in sync with the new count -- truncate or pad
     // with blanks rather than re-calling the AI on every count tweak.
     setBuildPlanFocuses(f=>{
@@ -7906,6 +7959,16 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
       // when a deck was generated -- retrieval practice before the
       // session's real focus, not a separate block competing for a
       // different slot on the calendar.
+      // weaveCards/weavePE: generating a deck/practice exam no longer
+      // forces it into these sessions -- a real, reported gap ("user can
+      // hit generate flashcards and practice exam but it doesn't combine
+      // it into the study session unless the user asks too"). genDeck/genPE
+      // still get created and linked to the exam either way (visible in
+      // the Flashcards/Practice Exams tabs, schedulable on their own via
+      // "Schedule manually"); weave only controls whether they also take
+      // over these particular sessions' notes/last slot.
+      const weaveCards=genDeck&&buildPlanWeaveCards;
+      const weavePE=genPE&&buildPlanWeavePE;
       finalSessions=placedSessions.map((s,i)=>{
         const isLast=i===placedSessions.length-1;
         const extra={};
@@ -7914,12 +7977,12 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
         // removeGenericExamPrepSessions, which needs to tell these apart
         // from the separate standalone kit-schedule sessions Flashcards'
         // own review-scheduling flow creates (those never set this).
-        if(genDeck){extra.deckId=genDeck.id;extra.interleavedReview=true;}
-        if(genPE&&isLast){extra.practiceExamId=genPE.id;extra.interleavedReview=true;}
+        if(weaveCards){extra.deckId=genDeck.id;extra.interleavedReview=true;}
+        if(weavePE&&isLast){extra.practiceExamId=genPE.id;extra.interleavedReview=true;}
         const focus=buildPlanFocuses[i]||"";
         let notes=null;
-        if(genPE&&isLast)notes=genDeck?"Review flashcards, then take your practice exam.":"Take your practice exam for this material.";
-        else if(genDeck)notes="Review flashcards first"+(focus?", then: "+focus:".");
+        if(weavePE&&isLast)notes=weaveCards?"Review flashcards, then take your practice exam.":"Take your practice exam for this material.";
+        else if(weaveCards)notes="Review flashcards first"+(focus?", then: "+focus:".");
         else if(focus)notes=focus;
         if(Object.keys(extra).length===0&&notes===null)return s;
         return {...s,...extra,notes:notes??s.notes};
@@ -9341,15 +9404,38 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                 <input type="checkbox" checked={buildPlanGenFlashcards} onChange={e=>setBuildPlanGenFlashcards(e.target.checked)} />
                 <span style={{fontSize:12.5,color:T.text}}>Also generate flashcards</span>
               </label>
+              {buildPlanGenFlashcards&&(
+                <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginLeft:24}}>
+                  <input type="checkbox" checked={buildPlanWeaveCards} onChange={e=>setBuildPlanWeaveCards(e.target.checked)} />
+                  <span style={{fontSize:12,color:T.muted}}>Review them as part of each session</span>
+                </label>
+              )}
               <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
                 <input type="checkbox" checked={buildPlanGenPE} onChange={e=>setBuildPlanGenPE(e.target.checked)} />
                 <span style={{fontSize:12.5,color:T.text}}>Also generate a practice exam</span>
               </label>
+              {buildPlanGenPE&&(
+                <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginLeft:24}}>
+                  <input type="checkbox" checked={buildPlanWeavePE} onChange={e=>setBuildPlanWeavePE(e.target.checked)} />
+                  <span style={{fontSize:12,color:T.muted}}>Use my last session to take it</span>
+                </label>
+              )}
               <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
                 <span style={{fontSize:12,color:T.muted}}>Hours to study for this (optional):</span>
                 <Input type="number" min={0} step={0.5} value={buildPlanHoursTarget} onChange={e=>setBuildPlanHoursTarget(e.target.value)} placeholder="0" style={{width:60}} />
               </div>
             </div>
+          </div>
+        )}
+        {buildPlanExam&&buildPlanStep==="generating"&&(
+          // The real "thinking" pause -- see generatePreview's minDelay/
+          // Promise.all. Nothing about the plan (session count, duration,
+          // dates) is computed or shown until this resolves, so the
+          // calibration screen never "prefires" the numbers the way an
+          // instant reveal used to.
+          <div style={{padding:"20px 0"}}>
+            <ExtractionProgress fileName={buildPlanExam.title} stage="analyze"
+              analyzeLabel={"Thinking through your study plan"+(buildPlanGenFlashcards&&buildPlanGenPE?", flashcards, and a practice exam":buildPlanGenFlashcards?" and flashcards":buildPlanGenPE?" and a practice exam":"")+"…"} />
           </div>
         )}
         {buildPlanExam&&buildPlanStep==="preview"&&buildPlanPreview&&(
@@ -9385,7 +9471,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
               return (
                 <div style={{fontSize:12,color:T.text,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",marginBottom:14,lineHeight:1.6}}>
                   <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Why this plan</div>
-                  {studyPlanReasoning(buildPlanPreview.reasoningInputs.confidenceLevel,buildPlanPreview.reasoningInputs.importanceLevel,buildPlanPreview.reasoningInputs.materialCharCount,buildPlanPreview.reasoningInputs.hadHistoricalDuration,buildPlanPreview.reasoningInputs.hoursTargetCapped,buildPlanPreview.sessionCount,buildPlanPreview.sessionDuration,lastIsLighter).map((line,i)=>(
+                  {studyPlanReasoning(buildPlanPreview.reasoningInputs.confidenceLevel,buildPlanPreview.reasoningInputs.importanceLevel,buildPlanPreview.reasoningInputs.materialCharCount,buildPlanPreview.reasoningInputs.hadHistoricalDuration,buildPlanPreview.reasoningInputs.hoursTargetAdjusted,buildPlanPreview.sessionCount,buildPlanPreview.sessionDuration,lastIsLighter).map((line,i)=>(
                     <div key={i}>{line}</div>
                   ))}
                 </div>
@@ -9406,8 +9492,8 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
             {(buildPlanGenFlashcards||buildPlanGenPE)&&materialText.trim()&&(
               <div style={{fontSize:12,color:T.text,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",marginBottom:14,lineHeight:1.6}}>
                 <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Also included</div>
-                {buildPlanGenFlashcards&&<div>~{scaledFlashcardCount(materialText.length)} flashcards, woven into every session below as a quick review before you start.</div>}
-                {buildPlanGenPE&&<div>A {scaledQuizCount(materialText.length)}-question practice exam -- your last session becomes a sit-down for it instead of new material.</div>}
+                {buildPlanGenFlashcards&&<div>~{scaledFlashcardCount(materialText.length)} flashcards{buildPlanWeaveCards?", woven into every session below as a quick review before you start.":" -- created on their own, not part of these sessions. Schedule review time separately from Flashcards."}</div>}
+                {buildPlanGenPE&&<div>A {scaledQuizCount(materialText.length)}-question practice exam{buildPlanWeavePE?" -- your last session becomes a sit-down for it instead of new material.":" -- created on its own, not part of these sessions. Schedule it separately from Practice Exams."}</div>}
               </div>
             )}
             {/* P1 in the audit: weekPrepLoad/pressuredExamItems already
@@ -9471,15 +9557,6 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
               <div style={{fontSize:12.5,color:T.muted,textAlign:"center",padding:"14px 0",marginBottom:14}}>Too close to the exam to fit a session.</div>
             ):(
               <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
-                {/* Was a static "Reading your material…" placeholder
-                    swapped into each session's own (otherwise empty)
-                    input -- looked frozen rather than in-progress, and
-                    repeated once per session row. One real, animated
-                    indicator above the list instead; each row's input
-                    stays plain and still typable while this runs. */}
-                {buildPlanFocusesLoading&&(
-                  <div style={{marginBottom:2}}><ExtractionProgress fileName={buildPlanExam.title} stage="analyze" analyzeLabel="Reading your material for session ideas…" /></div>
-                )}
                 {buildPlanPreview.dates.map((d,i)=>{
                   const ov=buildPlanOverrides[i];
                   const setOv=(patch)=>setBuildPlanOverrides(o=>o.map((v,vi)=>vi===i?{date:v?.date??d,duration:v?.duration??buildPlanPreview.sessionDuration,...patch}:v));
@@ -9490,8 +9567,8 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                   // above, so the preview never disagrees with what
                   // Confirm is about to do.
                   const isLastRow=i===buildPlanPreview.dates.length-1;
-                  const rowGetsPE=buildPlanGenPE&&isLastRow&&materialText.trim();
-                  const rowGetsCards=buildPlanGenFlashcards&&materialText.trim();
+                  const rowGetsPE=buildPlanGenPE&&buildPlanWeavePE&&isLastRow&&materialText.trim();
+                  const rowGetsCards=buildPlanGenFlashcards&&buildPlanWeaveCards&&materialText.trim();
                   return (
                   <div key={i} style={{padding:"8px 10px",background:T.card2,borderRadius:8}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:12.5,marginBottom:6,gap:8}}>

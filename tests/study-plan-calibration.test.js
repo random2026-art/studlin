@@ -119,21 +119,49 @@ describe("suggestDurationFor (historical duration learning)", () => {
     assert.equal(m.suggestDurationFor("Chemistry", "study block"), null);
   });
 
-  test("falls back to the coarse subject+kind median when no difficulty is passed", () => {
+  test("a couple of completed sessions is not enough sample size to trust -- one gamed 'Begin then Complete' entry can't single-handedly set the duration", () => {
     const m = loadStudlinModule();
-    m.lsSet("events", [doneSession({ id: "s1", timeSpent: 20 }), doneSession({ id: "s2", timeSpent: 40 })]);
+    m.lsSet("events", [doneSession({ id: "s1", timeSpent: 1 }), doneSession({ id: "s2", timeSpent: 1 })]);
+    assert.equal(m.suggestDurationFor("Chemistry", "study block"), null, "under the TIER0_MIN_BUCKET_SAMPLE floor -- caller's own baseDuration||25 default should apply instead");
+  });
+
+  test("falls back to the coarse subject+kind median once there are enough samples (>= TIER0_MIN_BUCKET_SAMPLE)", () => {
+    const m = loadStudlinModule();
+    const events = Array.from({ length: 4 }, (_, i) => doneSession({ id: "a-" + i, timeSpent: 20 }))
+      .concat(Array.from({ length: 4 }, (_, i) => doneSession({ id: "b-" + i, timeSpent: 40 })));
+    m.lsSet("events", events);
     assert.equal(m.suggestDurationFor("Chemistry", "study block"), 30);
+  });
+
+  test("an explicit minSamples raises the bar further -- e.g. a critical exam requiring extra-confirmed history", () => {
+    const m = loadStudlinModule();
+    // 8 samples clears the default floor but not a caller-requested 16.
+    const events = Array.from({ length: 8 }, (_, i) => doneSession({ id: "c-" + i, timeSpent: 45 }));
+    m.lsSet("events", events);
+    assert.equal(m.suggestDurationFor("Chemistry", "study block"), 45, "default threshold trusts 8 samples");
+    assert.equal(m.suggestDurationFor("Chemistry", "study block", undefined, 16), null, "a stricter caller-supplied minSamples must not trust the same 8 samples");
+  });
+
+  test("the historical-duration floor never drops below 15 minutes even if real completions ran shorter", () => {
+    const m = loadStudlinModule();
+    const events = Array.from({ length: 8 }, (_, i) => doneSession({ id: "d-" + i, timeSpent: 6 }));
+    m.lsSet("events", events);
+    assert.equal(m.suggestDurationFor("Chemistry", "study block"), 15);
   });
 
   test("falls back to the coarse median when a difficulty bucket is under the minimum sample size", () => {
     const m = loadStudlinModule();
     // Only 2 "hard" sessions -- well under TIER0_MIN_BUCKET_SAMPLE (8) --
     // must not be trusted on its own even though a difficulty was passed.
+    // 6 more untiered sessions bring the overall pool to 8, clearing the
+    // top-level sample gate so this actually exercises the tier-vs-coarse
+    // fallback instead of both sides degenerating to null.
     const events = [
       doneSession({ id: "hard-1", timeSpent: 60, difficulty: 900 }),
       doneSession({ id: "hard-2", timeSpent: 60, difficulty: 900 }),
       doneSession({ id: "easy-1", timeSpent: 20, difficulty: 100 }),
       doneSession({ id: "easy-2", timeSpent: 20, difficulty: 100 }),
+      ...Array.from({ length: 4 }, (_, i) => doneSession({ id: "mid-" + i, timeSpent: 30, difficulty: 500 })),
     ];
     m.lsSet("events", events);
     const coarseMedian = m.suggestDurationFor("Chemistry", "study block");
