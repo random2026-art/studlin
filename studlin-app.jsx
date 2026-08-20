@@ -26212,6 +26212,7 @@ function NotifPermModal({onAllow=()=>{},onDeny=()=>{}}) {
 
 // ─── APP SHELL ────────────────────────────────────────────────────────────────
 function App() {
+  try{document.title="DIAG:app-body-start";}catch(e){}
   seedEventsIfStale();
   // Upcoming-task reminders — polls the live task list every 30s against
   // the real clock, rather than the old approach of arming a single
@@ -27627,6 +27628,7 @@ function App() {
   // once here so all four render blocks below agree on the single winner
   // instead of each independently deciding it's the one to show.
   const bottomRightSlot=bottomRightNotifSlot(lockInErrorToast,prepAutoToast,prepPromptBatch.length,examPrepSuggestion);
+  try{document.title="DIAG:app-before-return";}catch(e){}
   return (
     <div style={{display:"flex",height:"100vh",overflow:"hidden",background:isLight?T.bg:`radial-gradient(1200px 600px at 78% -8%, ${T.glow}, transparent 60%), ${T.bg}`,fontFamily:T.font,color:T.text}}>
       {/* SIDEBAR -- collapses to a ~48px icon rail by default (navCollapsed),
@@ -27767,6 +27769,7 @@ function App() {
             container instead of the real viewport. Clearing it once done
             keeps the entrance animation but stops that side effect. */}
         <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?T.bg:undefined}}>
+          {(()=>{try{document.title="DIAG:before-tab-ternary:"+active;}catch(e){}return null;})()}
           {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} setDetailEventId={setDetailEventId} onTaskCompleted={handleTaskCompleted} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineCenter={openRoutineCenterOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} setActivePage={setActive} />:
            active==="calendar"?<CalendarTab setActive={setActive} onTaskSaved={handleTaskSaved} openRoutineCenterOnMount={pendingRoutineCenter} onRoutineCenterOpenedFromSettings={()=>setPendingRoutineCenter(false)} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} onWizardOpenChange={setCalendarWizardOpen} jumpToSessionOnMount={pendingJumpSession} onJumpSessionConsumed={()=>setPendingJumpSession(null)} setPricingOpen={setPricingOpen} />:
