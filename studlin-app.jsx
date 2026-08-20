@@ -7073,25 +7073,50 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
 
 // ─── UPGRADE MODAL (shared paywall) ───────────────────────────────────────────
 function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
+  // Real bug found live: this used to call setPlanLS("Pro") directly on
+  // click -- setPlanLS is a bare localStorage.setItem("plan","Pro") with
+  // no other caller anywhere in the codebase, so clicking "Upgrade to
+  // Pro" here granted full Pro access with zero payment, no checkout, no
+  // Stripe involvement at all. Every canX() paywall in the app opens this
+  // exact modal (AI study plans, flashcards, practice exams, deadline
+  // scans, screenshot imports, ...), so this was a real, live free-unlock
+  // path. Routes to the same real checkout.html flow PlanCards already
+  // uses instead.
+  const [billing,setBilling]=useState("monthly");
   if(!open)return null;
   // "Attack sessions" dropped from this list -- Attack Block is a
   // deterministic probe-then-schedule with no AI call at all (see
   // canBreakDownProject's own comment), so it was always free and listing
   // it as a Pro perk was inaccurate, not just imprecise. Brain Dump added
   // -- newly Pro-only as of the 2026-08-18 pricing pass.
-  const tier={name:"Pro",price:"$6.99",perks:["Add Task with AI","AI study plans, flashcards, syllabus scans, brain dump & project breakdowns","Smart Reschedule","Every AI model + 4 study modes"],color:T.lime};
-  const choose=()=>{setPlanLS("Pro");onClose();if(onUpgraded)onUpgraded("Pro");};
+  const tier={name:"Pro",price:billing==="annual"?"$4.99":"$6.99",perks:["Add Task with AI","AI study plans, flashcards, syllabus scans, brain dump & project breakdowns","Smart Reschedule","Every AI model + 4 study modes"],color:T.lime};
+  const choose=()=>{onClose();window.location.href="checkout.html?plan=pro&billing="+billing;};
   return (
-    <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:90,background:"rgba(8,12,10,0.72)",backdropFilter:"blur(7px)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+    // Real bug found live: this modal opens from inside StudlinPrep's own
+    // "Build study plan" Modal (the shared Modal component, zIndex:1000)
+    // without closing it first -- at the old zIndex:90 the paywall
+    // rendered fully behind that still-open modal, invisible. 1010 sits
+    // above every shared Modal instance.
+    <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:1010,background:"rgba(8,12,10,0.72)",backdropFilter:"blur(7px)",display:"flex",alignItems:"center",justifyContent:"center"}}>
       <div onClick={e=>e.stopPropagation()} style={{width:400,maxWidth:"92vw",background:T.card,border:"1px solid "+T.border,borderRadius:8,padding:26,boxShadow:"0 40px 90px -30px rgba(0,0,0,0.65)"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
           <span style={{display:"inline-flex",width:30,height:30,borderRadius:8,background:T.lime+"1c",border:"1px solid "+T.lime+"44",alignItems:"center",justifyContent:"center",color:T.lime}}>{Icon.wand}</span>
           <div style={{fontSize:17,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>{feature} is a Pro feature</div>
         </div>
         <div style={{fontSize:12.5,color:T.text,lineHeight:1.6,marginBottom:18}}>{detail}</div>
+        <div style={{display:"flex",justifyContent:"center",marginBottom:14}}>
+          <div style={{display:"flex",gap:0,background:T.card2,border:`1px solid ${T.border}`,padding:3,borderRadius:99}}>
+            {["monthly","annual"].map(b=>(
+              <button key={b} type="button" onClick={()=>setBilling(b)} style={{padding:"6px 12px",border:"none",borderRadius:99,background:billing===b?T.ink:"transparent",color:billing===b?T.cream:T.muted,fontFamily:T.font,fontSize:12,fontWeight:500,cursor:"pointer",display:"flex",alignItems:"center",gap:5}}>
+                {b==="monthly"?"Monthly":"Annual"}
+                {b==="annual"&&<span style={{fontFamily:T.mono,fontSize:8.5,fontWeight:700,background:T.lime,color:T.ink,padding:"1.5px 5px",borderRadius:99}}>Save 29%</span>}
+              </button>
+            ))}
+          </div>
+        </div>
         <div style={{background:T.card,border:"1px solid "+T.border,borderRadius:12,padding:16,marginBottom:14}}>
           <div style={{fontSize:13,fontWeight:700,color:tier.color,marginBottom:2}}>{tier.name}</div>
-          <div style={{fontSize:24,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>{tier.price}<span style={{fontSize:11,color:T.muted,fontWeight:400}}> /month</span></div>
+          <div style={{fontSize:24,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>{tier.price}<span style={{fontSize:11,color:T.muted,fontWeight:400}}> /month{billing==="annual"?" · billed yearly":""}</span></div>
           <div style={{margin:"10px 0 14px"}}>
             {tier.perks.map((p,i)=>(
               <div key={i} style={{display:"flex",gap:7,alignItems:"center",fontSize:11.5,color:T.text,padding:"3px 0"}}><span style={{color:tier.color,display:"inline-flex"}}>{Icon.check}</span>{p}</div>
@@ -23301,7 +23326,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
               {pausePreview.moved.map(m=>(
                 <div key={m.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:T.card2,borderRadius:8,border:`1px solid ${T.border}`}}>
                   <div style={{flex:1,fontSize:13,color:T.text,fontWeight:500}}>{m.title}</div>
-                  <div style={{fontSize:11,color:T.muted,flexShrink:0}}>{m.oldDate} {m.oldTime} → <strong style={{color:T.lime}}>{m.newDate} {m.newTime}</strong></div>
+                  {/* Raw "2026-08-20 07:45 → 2026-08-21 10:00" read as a
+                      wall of digits -- same weekday-short/"Today" +
+                      12-hour clock convention the catch-up rollover list
+                      already uses elsewhere in this file, for one glance
+                      instead of parsing two ISO dates. */}
+                  <div style={{fontSize:11,color:T.muted,flexShrink:0}}>{m.oldDate===dayKey()?"Today":dayOfWeekLabel(m.oldDate).slice(0,3)} {fmtClock12(m.oldTime)} → <strong style={{color:T.lime}}>{m.newDate===dayKey()?"Today":dayOfWeekLabel(m.newDate).slice(0,3)} {fmtClock12(m.newTime)}</strong></div>
                 </div>
               ))}
             </div>
