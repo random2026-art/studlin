@@ -2506,8 +2506,17 @@ function applyCheckInRating(taskId,rating){
 // ever contribute to the fallback, never get miscounted into a tier.
 const TIER0_MIN_BUCKET_SAMPLE=8;
 const SHAKY_COMPLETION_CREDIT=0.5;
+// 2026-08-19: e.rating can now be a 1-5 post-session check-in value (see
+// EXAM_CHECKIN_SCALE) instead of only the old shaky/okay/solid strings --
+// a small graduated table instead of one binary shaky-or-not discount, so
+// a "still lost" (1) completion counts for less than a "pretty solid" (4)
+// one instead of both landing on the same flat 0.5. 2/3/4 keep the exact
+// credit their string equivalents always had (shaky/okay/solid untouched),
+// 1 and 5 are the two new, more extreme values this scale now reaches.
+const RATING_COMPLETION_CREDIT={1:0.25,2:SHAKY_COMPLETION_CREDIT,3:1,4:1,5:1};
 function completionCredit(e){
   if(e.outcome!=="done")return 0;
+  if(typeof e.rating==="number")return RATING_COMPLETION_CREDIT[e.rating]??1;
   return e.rating==="shaky"?SHAKY_COMPLETION_CREDIT:1;
 }
 function getBucketReliability(bucket,tier){
@@ -5375,25 +5384,59 @@ function suggestDurationFor(subject,kind,difficulty){
 // exams. Not a pure function -- reads live events/routines/prefs, same as
 // every other scheduling helper in this file -- but deterministic given
 // the same stored state, same as those.
-// Shared by Flashcards' exam-link picker and Studlin Prep's exam hub list
-// -- both need "every exam still ahead of today, soonest first."
+// Shared by Flashcards' exam-link picker and a few other "pick a real,
+// still-relevant exam" pickers -- these genuinely want date-filtered
+// upcoming-only results (linking a deck to an exam that already happened
+// makes no sense), so this stays exactly as it always has. Studlin Prep's
+// own exam hub list does NOT use this anymore -- see allExamsForPrep below,
+// which needs past/completed exams too for the Past Due/Completed views.
 function upcomingExams(){
   return lsGet("events",[]).filter(e=>e.kind==="exam"&&e.date>=dayKey()).sort((a,b)=>a.date.localeCompare(b.date));
 }
-// Same "deadline kind, still pending" query Dashboard's masterAssignments/
-// masterProjects used to use before "Your Classes" was retired in favor of
-// Studlin Prep's own dense tables (2026-07-30) -- pulled out here so those
-// tables can reuse it without duplicating the filter logic a second time.
+// Studlin Prep's exam hub list: every exam regardless of date or status --
+// past-due and completed ones no longer just vanish, they move into the
+// Group By filter's Past Due/Completed buckets (see itemLifecycleState).
+// Soonest-first still leads, but completed/past items sort to the end
+// rather than interleaving with what's still ahead.
+function allExamsForPrep(){
+  const today=dayKey();
+  return lsGet("events",[]).filter(e=>e.kind==="exam").sort((a,b)=>{
+    const aPast=a.status!=="done"&&a.date<today,bPast=b.status!=="done"&&b.date<today;
+    const aDone=a.status==="done",bDone=b.status==="done";
+    const aOver=aPast||aDone,bOver=bPast||bDone;
+    if(aOver!==bOver)return aOver?1:-1;
+    return a.date.localeCompare(b.date);
+  });
+}
+// One shared classification, reused by every Group By control (Exams/
+// Assignments/Projects) so "past due" and "completed" mean exactly the
+// same thing everywhere in Prep. "Past due" is deliberately never stored --
+// always derived live against today's date -- so it can't go stale the way
+// a persisted flag would the moment a day passes.
+function itemLifecycleState(item,today){
+  if(item.status==="done")return "completed";
+  if(item.date&&item.date<(today||dayKey()))return "past-due";
+  return "upcoming";
+}
+// Same "deadline kind" query Dashboard's masterAssignments/masterProjects
+// used to use before "Your Classes" was retired in favor of Studlin Prep's
+// own dense tables (2026-07-30) -- pulled out here so those tables can
+// reuse it without duplicating the filter logic a second time.
 // Includes class-linked no-date-yet items (checklist:true with a real
 // subject -- a syllabus scan, or a manually-tagged item) so Prep is now the
 // one place that shows them; a plain subject-less checklist:true to-do
 // (no class attached) is still excluded -- that one only ever belonged on
 // the standalone Checklist card, never here.
+// No longer excludes status==="done" -- these now feed Prep's own Group By
+// (All/Past Due/Completed), so a finished assignment/project needs to stay
+// queryable instead of disappearing the moment it's marked done. The name
+// is legacy (kept since nothing outside Prep calls these) -- "upcoming" now
+// really means "every real assignment/project," filtered client-side.
 function upcomingAssignments(){
-  return lsGet("events",[]).filter(e=>e.kind==="deadline"&&(!e.checklist||e.subject)&&!isProjectMarker(e)&&e.status!=="done").sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
+  return lsGet("events",[]).filter(e=>e.kind==="deadline"&&(!e.checklist||e.subject)&&!isProjectMarker(e)).sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
 }
 function upcomingProjects(){
-  return lsGet("events",[]).filter(e=>e.kind==="deadline"&&(!e.checklist||e.subject)&&isProjectMarker(e)&&e.status!=="done").sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
+  return lsGet("events",[]).filter(e=>e.kind==="deadline"&&(!e.checklist||e.subject)&&isProjectMarker(e)).sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
 }
 // Storage-only half of linking a deck to an exam -- callers that keep
 // their own local mirror of "decks" in React state (Flashcards) are
@@ -7391,6 +7434,17 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   const [assignClassFilter,setAssignClassFilter]=useState("");
   const [projectSearch,setProjectSearch]=useState("");
   const [projectClassFilter,setProjectClassFilter]=useState("");
+  // Group By (Shovel-inspired): All/Past Due/Completed, backed by
+  // itemLifecycleState -- one filter per tab since a class filter picked on
+  // Exams shouldn't leak into Assignments. Default "" (All) everywhere.
+  const [examGroupFilter,setExamGroupFilter]=useState("");
+  const [assignGroupFilter,setAssignGroupFilter]=useState("");
+  const [projectGroupFilter,setProjectGroupFilter]=useState("");
+  const GROUP_BY_OPTIONS=[{value:"",label:"All"},{value:"past-due",label:"Past Due"},{value:"completed",label:"Completed"}];
+  const [examCompleteSessionPrompt,setExamCompleteSessionPrompt]=useState(false);
+  // Set when commitBuildPlan comes up short on slots AND Week Balance
+  // genuinely has real moves to offer -- see the comment at that call site.
+  const [weekTightNudge,setWeekTightNudge]=useState(false);
   // Study/Edit/Send/Add Deck used to hard-navigate to the standalone
   // Flashcards page (setActive("flashcards")), fully unmounting Studlin Prep
   // and leaving no way back except clicking a different sidebar item --
@@ -7490,7 +7544,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
     // this used to reset to a blank slate every time, so "Redo study
     // plan" never actually showed you what you'd said last time.
     const log=exam.confidenceLog||[];
-    setBuildPlanConfidence(log[log.length-1]||"okay");
+    setBuildPlanConfidence(log.length>0?confidenceZoneOf(log[log.length-1]):"okay");
     // Zero sessions -> Build (show the Generate/Manual choice). Any
     // sessions already scheduled -> Redo, skip straight to calibration,
     // now pre-filled and editable instead of silently re-running the
@@ -7729,15 +7783,30 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
     if(placedSessions.length<requestedCount){
       setSyllabusToast("Fit "+placedSessions.length+" of "+requestedCount+" sessions before this exam. Your calendar didn't have room for the rest.");
       setTimeout(()=>setSyllabusToast(""),4200);
+      // 2026-08-19: rather than inventing new priority-comparison/eviction
+      // logic to decide what to bump for this exam, point at the Week
+      // Balance flow that already exists (see computeWeekBalancePlan) --
+      // it already sheds the lowest-priority flexible sessions first, and
+      // priority already factors in confidence (see confidenceUnitOf/
+      // computeSessionPriority), so it already tends to prefer moving a
+      // "solid" exam's session over a "shaky" one's. Only offered when
+      // there's genuinely something to balance -- checked here so the CTA
+      // is never a dead end once the student gets to Calendar.
+      const wbPlan=computeWeekBalancePlan(lsGet("events",[]),routines,prefs,dayKey());
+      if(wbPlan.moves.length>0){
+        lsSet("openWeekBalanceOnMount",true);
+        setWeekTightNudge(true);
+      }
     }
     setBuildPlanLoading(false);
     closeBuildPlan();
     refresh();
   };
 
-  const exams=upcomingExams();
+  const exams=allExamsForPrep();
   const examClasses=[...new Set(exams.map(ex=>ex.subject).filter(Boolean))];
   const visibleExams=exams.filter(ex=>{
+    if(examGroupFilter&&itemLifecycleState(ex,dayKey())!==examGroupFilter)return false;
     if(examClassFilter&&ex.subject!==examClassFilter)return false;
     if(!examSearch.trim())return true;
     const q=examSearch.trim().toLowerCase();
@@ -8156,12 +8225,22 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
               const gridCols="minmax(120px,1.6fr) 84px 64px 68px 104px 56px 70px 70px 120px 76px";
               return (
               <div>
-                <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
-                  <Input placeholder="Search your exams…" value={examSearch} onChange={e=>setExamSearch(e.target.value)} style={{flex:1,minWidth:160}} />
-                  {examClasses.length>1&&(
-                    <CustomSelect boxed value={examClassFilter} onChange={setExamClassFilter} minWidth={150}
-                      options={[{value:"",label:"All classes"},...examClasses.map(c=>({value:c,label:c}))]} />
-                  )}
+                {/* Shovel-inspired: Group By + class filter on the left,
+                    search narrow and right-aligned -- was a single full-
+                    width search bar with no way to see past-due or
+                    completed exams (they used to just vanish once their
+                    date passed, see allExamsForPrep/itemLifecycleState). */}
+                <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap",justifyContent:"space-between"}}>
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+                    <span style={{fontSize:11,color:T.muted,flexShrink:0}}>Group by</span>
+                    <CustomSelect boxed value={examGroupFilter} onChange={setExamGroupFilter} minWidth={120}
+                      options={GROUP_BY_OPTIONS} />
+                    {examClasses.length>1&&(
+                      <CustomSelect boxed value={examClassFilter} onChange={setExamClassFilter} minWidth={150}
+                        options={[{value:"",label:"All classes"},...examClasses.map(c=>({value:c,label:c}))]} />
+                    )}
+                  </div>
+                  <Input placeholder="Search…" value={examSearch} onChange={e=>setExamSearch(e.target.value)} style={{width:200}} />
                 </div>
                 {visibleExams.length===0&&(
                   <div style={{fontSize:12.5,color:T.muted,textAlign:"center",padding:"14px 0"}}>No exams match your search.</div>
@@ -8257,24 +8336,39 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
           assignment, checklist completion for a project -- rather than
           forcing both through the exam's study-session shape. */}
       {tab==="assignments"&&(()=>{
+        const today=dayKey();
         const allAssignments=upcomingAssignments();
         const assignClasses=[...new Set(allAssignments.map(a=>a.subject).filter(Boolean))];
         const assignments=allAssignments.filter(a=>{
+          if(assignGroupFilter&&itemLifecycleState(a,today)!==assignGroupFilter)return false;
           if(assignClassFilter&&a.subject!==assignClassFilter)return false;
           if(!assignSearch.trim())return true;
           const q=assignSearch.trim().toLowerCase();
           return (a.title||"").toLowerCase().includes(q)||(a.subject||"").toLowerCase().includes(q);
+        }).sort((a,b)=>{
+          // Same "completed/past-due sink to the end" ordering
+          // allExamsForPrep uses -- without this, a finished assignment
+          // with an old date would otherwise interleave with what's
+          // actually still ahead when viewing "All".
+          const aOver=itemLifecycleState(a,today)!=="upcoming",bOver=itemLifecycleState(b,today)!=="upcoming";
+          if(aOver!==bOver)return aOver?1:-1;
+          return (a.date||"9999").localeCompare(b.date||"9999");
         });
         const gridCols="minmax(140px,1.8fr) 100px 120px 70px 80px 80px 150px";
         const cellSelStyle={width:"100%",background:"transparent",border:"none",color:T.text,fontSize:10.5,fontFamily:T.font,outline:"none",cursor:"pointer",padding:"2px 0"};
         return (
           <div>
-            <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
-              <Input placeholder="Search your assignments…" value={assignSearch} onChange={e=>setAssignSearch(e.target.value)} style={{flex:1,minWidth:160}} />
-              {assignClasses.length>1&&(
-                <CustomSelect boxed value={assignClassFilter} onChange={setAssignClassFilter} minWidth={150}
-                  options={[{value:"",label:"All classes"},...assignClasses.map(c=>({value:c,label:c}))]} />
-              )}
+            <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap",justifyContent:"space-between"}}>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+                <span style={{fontSize:11,color:T.muted,flexShrink:0}}>Group by</span>
+                <CustomSelect boxed value={assignGroupFilter} onChange={setAssignGroupFilter} minWidth={120}
+                  options={GROUP_BY_OPTIONS} />
+                {assignClasses.length>1&&(
+                  <CustomSelect boxed value={assignClassFilter} onChange={setAssignClassFilter} minWidth={150}
+                    options={[{value:"",label:"All classes"},...assignClasses.map(c=>({value:c,label:c}))]} />
+                )}
+              </div>
+              <Input placeholder="Search…" value={assignSearch} onChange={e=>setAssignSearch(e.target.value)} style={{width:200}} />
             </div>
             {assignments.length===0
           ?<Card style={{padding:"32px 20px",textAlign:"center"}}><div style={{fontSize:13,color:T.muted}}>{allAssignments.length===0?"No upcoming assignments.":"No assignments match your search."}</div></Card>
@@ -8324,24 +8418,35 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
       })()}
 
       {tab==="projects"&&(()=>{
+        const today=dayKey();
         const allProjects=upcomingProjects();
         const projectClasses=[...new Set(allProjects.map(p=>p.subject).filter(Boolean))];
         const projects=allProjects.filter(p=>{
+          if(projectGroupFilter&&itemLifecycleState(p,today)!==projectGroupFilter)return false;
           if(projectClassFilter&&p.subject!==projectClassFilter)return false;
           if(!projectSearch.trim())return true;
           const q=projectSearch.trim().toLowerCase();
           return (p.title||"").toLowerCase().includes(q)||(p.subject||"").toLowerCase().includes(q);
+        }).sort((a,b)=>{
+          const aOver=itemLifecycleState(a,today)!=="upcoming",bOver=itemLifecycleState(b,today)!=="upcoming";
+          if(aOver!==bOver)return aOver?1:-1;
+          return (a.date||"9999").localeCompare(b.date||"9999");
         });
         const gridCols="minmax(140px,1.8fr) 100px 120px 70px 80px 80px 150px";
         const cellSelStyle={width:"100%",background:"transparent",border:"none",color:T.text,fontSize:10.5,fontFamily:T.font,outline:"none",cursor:"pointer",padding:"2px 0"};
         return (
           <div>
-            <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
-              <Input placeholder="Search your projects…" value={projectSearch} onChange={e=>setProjectSearch(e.target.value)} style={{flex:1,minWidth:160}} />
-              {projectClasses.length>1&&(
-                <CustomSelect boxed value={projectClassFilter} onChange={setProjectClassFilter} minWidth={150}
-                  options={[{value:"",label:"All classes"},...projectClasses.map(c=>({value:c,label:c}))]} />
-              )}
+            <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap",justifyContent:"space-between"}}>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+                <span style={{fontSize:11,color:T.muted,flexShrink:0}}>Group by</span>
+                <CustomSelect boxed value={projectGroupFilter} onChange={setProjectGroupFilter} minWidth={120}
+                  options={GROUP_BY_OPTIONS} />
+                {projectClasses.length>1&&(
+                  <CustomSelect boxed value={projectClassFilter} onChange={setProjectClassFilter} minWidth={150}
+                    options={[{value:"",label:"All classes"},...projectClasses.map(c=>({value:c,label:c}))]} />
+                )}
+              </div>
+              <Input placeholder="Search…" value={projectSearch} onChange={e=>setProjectSearch(e.target.value)} style={{width:200}} />
             </div>
             {projects.length===0
           ?<Card style={{padding:"32px 20px",textAlign:"center"}}><div style={{fontSize:13,color:T.muted}}>{allProjects.length===0?"No upcoming projects.":"No projects match your search."}</div></Card>
@@ -8391,6 +8496,46 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
         // this marker, so one query is the single source of truth instead
         // of three separate un-editable summaries.
         const examSessions=lsGet("events",[]).filter(e=>e.dueEventId===selectedExam.id).sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
+        // Mark as completed/uncompleted -- fully reversible (just flips
+        // status back), so no confirm modal for the toggle itself per
+        // CLAUDE.md's data-safety rule (that's for destructive/hard-to-undo
+        // actions, this isn't one). The one thing that DOES need a real
+        // choice is what happens to sessions still pending when the exam
+        // itself is marked done -- offered inline rather than silently
+        // deleting them or leaving stale pending tasks on the calendar
+        // forever (see itemLifecycleState/allExamsForPrep for how this
+        // status now drives the Past Due/Completed Group By views).
+        const examPendingSessions=examSessions.filter(s=>s.status!=="done");
+        const isExamCompleted=selectedExam.status==="done";
+        const toggleExamCompleted=()=>{
+          if(isExamCompleted){patchExam(selectedExam.id,{status:"pending"});refresh();return;}
+          if(examPendingSessions.length>0){setExamCompleteSessionPrompt(true);return;}
+          patchExam(selectedExam.id,{status:"done"});refresh();
+        };
+        const finishMarkingComplete=(cancelSessions)=>{
+          if(cancelSessions){
+            const idsToCancel=new Set(examPendingSessions.map(s=>s.id));
+            lsSet("events",lsGet("events",[]).filter(e=>!idsToCancel.has(e.id)));
+          }
+          patchExam(selectedExam.id,{status:"done"});
+          setExamCompleteSessionPrompt(false);
+          refresh();
+        };
+        // Silent-reprioritization surfacing (2026-08-19): restampSessionPriorities
+        // already re-scores this exam's remaining sessions the moment a
+        // check-in comes in (see submitExamCheckIn) -- a "solid" streak
+        // genuinely lowers priority, "shaky" raises it, but nothing ever
+        // told the student that happened. Same 2-in-a-row bar
+        // evaluateExamPrepAdjustment's own solid branch already uses,
+        // reused here rather than inventing a new threshold.
+        const priorityShiftNote=(()=>{
+          const log=selectedExam.confidenceLog||[];
+          if(log.length<2)return null;
+          const lastTwo=log.slice(-2).map(confidenceZoneOf);
+          if(lastTwo[0]==="solid"&&lastTwo[1]==="solid")return "Lower priority now — you've said solid twice in a row.";
+          if(lastTwo[0]==="shaky"&&lastTwo[1]==="shaky")return "Higher priority now — you've said shaky twice in a row.";
+          return null;
+        })();
         // Offered once material exists but at least one already-scheduled
         // generic (non deck/PE) session still has no focus line -- patches
         // notes onto the existing pending sessions in place rather than
@@ -8445,6 +8590,53 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
             <button onClick={()=>setSelectedExamId(null)} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,marginBottom:14,display:"flex",alignItems:"center",gap:4}}>← All exams</button>
             <div style={{fontSize:24,fontWeight:800,color:T.white,letterSpacing:"-0.01em",marginBottom:4,lineHeight:1.2}}>{selectedExam.title} · {countdownLabel}</div>
             <div style={{fontSize:12.5,color:T.muted,marginBottom:14}}>{metaParts.join(" · ")}</div>
+            {/* Completion lifecycle (2026-08-19): exams used to just
+                silently vanish from every Prep list the day after their
+                date passed, with no way to mark one done or look back at
+                it -- see itemLifecycleState/allExamsForPrep. Status is
+                date-driven for the Past Due bucket (the exam having
+                happened is ground truth, not session completion -- a
+                student can finish every session a week early without the
+                exam itself being over), with a real manual confirm here
+                once they've actually taken it. */}
+            <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:14}}>
+              {isExamCompleted?(
+                <span style={{fontSize:11,fontWeight:700,color:T.lime,background:T.lime+"14",border:`1px solid ${T.lime}44`,borderRadius:6,padding:"4px 10px"}}>COMPLETED</span>
+              ):itemLifecycleState(selectedExam,dayKey())==="past-due"&&(
+                <span style={{fontSize:11,fontWeight:700,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}44`,borderRadius:6,padding:"4px 10px"}}>PAST DUE</span>
+              )}
+              <BtnSm variant={isExamCompleted?"ghost":"subtle"} onClick={toggleExamCompleted}>{isExamCompleted?"Mark as uncomplete":"Mark as completed"}</BtnSm>
+              {/* Was buried two levels deep inside the collapsed "Materials
+                  & study kit" section's Generate subsection -- promoted
+                  here since adjusting difficulty/hours/material is a far
+                  more common action than raw file management once a plan
+                  already exists. */}
+              {examSessions.length>0&&(
+                <BtnSm variant="ghost" onClick={()=>openBuildPlan(selectedExam)}>Redo study plan</BtnSm>
+              )}
+            </div>
+            {examCompleteSessionPrompt&&(
+              <div style={{background:T.card,border:`1px solid ${T.amber}44`,borderRadius:8,padding:"12px 14px",marginBottom:20,fontSize:12.5,color:T.text,lineHeight:1.5}}>
+                You still have {examPendingSessions.length} session{examPendingSessions.length!==1?"s":""} scheduled for this — cancel {examPendingSessions.length!==1?"them":"it"} too?
+                <div style={{display:"flex",gap:8,marginTop:10}}>
+                  <BtnSm onClick={()=>finishMarkingComplete(true)}>Cancel {examPendingSessions.length!==1?"them":"it"}</BtnSm>
+                  <BtnSm variant="ghost" onClick={()=>finishMarkingComplete(false)}>Keep them</BtnSm>
+                  <BtnSm variant="ghost" onClick={()=>setExamCompleteSessionPrompt(false)}>Never mind</BtnSm>
+                </div>
+              </div>
+            )}
+            {priorityShiftNote&&(
+              <div style={{fontSize:11.5,color:T.muted,marginBottom:14}}>{priorityShiftNote}</div>
+            )}
+            {weekTightNudge&&(
+              <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:20,fontSize:12.5,color:T.text,lineHeight:1.5}}>
+                Your week's tight — Studlin found room by moving some lower-priority sessions around.
+                <div style={{display:"flex",gap:8,marginTop:10}}>
+                  <BtnSm onClick={()=>{setWeekTightNudge(false);setActive("calendar");}}>See what's using the time</BtnSm>
+                  <BtnSm variant="ghost" onClick={()=>{lsSet("openWeekBalanceOnMount",false);setWeekTightNudge(false);}}>Not now</BtnSm>
+                </div>
+              </div>
+            )}
             {readiness&&(()=>{
               // Phase 9b: ported from Dashboard's renderExamItem pill
               // (same computeExamReadiness, same color mapping) -- Prep's
@@ -8961,14 +9153,20 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
             <div style={{marginBottom:16}}>
               {!buildPlanMaterialOpen?(
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
-                  <span style={{fontSize:12,color:T.muted}}>{fileTexts.length>0||materialLinks.length>0?fileTexts.length+materialLinks.length+" material item"+((fileTexts.length+materialLinks.length)!==1?"s":""):"No material added -- Studlin can build a real, focused plan instead of generic review blocks"}</span>
                   {/* Was a plain muted underlined text link -- easy to miss
                       against the rest of this muted-text row, especially
-                      "+ Add material" (the one action that unlocks a real,
-                      grounded plan instead of generic review blocks). A
-                      real bordered lime pill, same weight as the other
-                      primary actions on this screen, not a footnote. */}
-                  <button type="button" onClick={()=>setBuildPlanMaterialOpen(true)} style={{flexShrink:0,padding:"6px 12px",borderRadius:7,border:`1px solid ${T.lime}44`,background:T.lime+"14",color:T.lime,fontSize:12,fontWeight:600,fontFamily:T.font,cursor:"pointer"}}>{fileTexts.length>0||materialLinks.length>0?"Edit material":"+ Add material"}</button>
+                      "+ Add study material" (the one action that unlocks a
+                      real, grounded plan instead of generic review blocks).
+                      A real bordered lime pill, same weight as the other
+                      primary actions on this screen, not a footnote.
+                      2026-08-19: moved to the left of the row (was right,
+                      opposite the item-count text) -- the action belongs
+                      first, not trailing. Copy keeps the existing Add-vs-
+                      Edit distinction (accurate: nothing to edit yet vs.
+                      something real already there), just warmed with
+                      "study" for consistency with the rest of the app. */}
+                  <button type="button" onClick={()=>setBuildPlanMaterialOpen(true)} style={{flexShrink:0,padding:"6px 12px",borderRadius:7,border:`1px solid ${T.lime}44`,background:T.lime+"14",color:T.lime,fontSize:12,fontWeight:600,fontFamily:T.font,cursor:"pointer"}}>{fileTexts.length>0||materialLinks.length>0?"Edit study material":"+ Add study material"}</button>
+                  <span style={{fontSize:12,color:T.muted}}>{fileTexts.length>0||materialLinks.length>0?fileTexts.length+materialLinks.length+" material item"+((fileTexts.length+materialLinks.length)!==1?"s":""):"No material added -- Studlin can build a real, focused plan instead of generic review blocks"}</span>
                 </div>
               ):(
                 <div>
@@ -12082,12 +12280,16 @@ function pressuredExamItems(items,events,prefs){
 //   Extend.
 function evaluateExamPrepAdjustment(examEvent,events,prefs){
   const log=examEvent.confidenceLog||[];
-  const rating=log[log.length-1];
-  if(!rating)return null;
+  const rawRating=log[log.length-1];
+  if(!rawRating&&rawRating!==0)return null;
+  // Bucketed to the 3 zones this decision tree was tuned against -- see
+  // confidenceZoneOf's own comment. A 1-5 check-in rating and a legacy
+  // "okay" string behave identically to every branch below.
+  const rating=confidenceZoneOf(rawRating);
   const remaining=events.filter(e=>e.dueEventId===examEvent.id&&e.status==="pending").sort((a,b)=>a.date<b.date?-1:1);
   if(rating==="okay"){
     const lastThree=log.slice(-3);
-    const isPlateau=lastThree.length===3&&lastThree.every(r=>r==="okay");
+    const isPlateau=lastThree.length===3&&lastThree.every(r=>confidenceZoneOf(r)==="okay");
     if(!isPlateau||remaining.length===0)return null;
     const next=remaining[0];
     const newDuration=Math.max(15,Math.round((next.duration*1.15)/5)*5);
@@ -12096,7 +12298,7 @@ function evaluateExamPrepAdjustment(examEvent,events,prefs){
       reason:"You've said \"Getting there\" on "+examEvent.title+" three sessions running -- steady, but not quite clicking yet. The next one could run a bit longer, "+next.duration+"m to "+newDuration+"m, to give it more room."};
   }
   if(rating==="solid"){
-    const lastTwoSolid=log.length>=2&&log[log.length-1]==="solid"&&log[log.length-2]==="solid";
+    const lastTwoSolid=log.length>=2&&confidenceZoneOf(log[log.length-1])==="solid"&&confidenceZoneOf(log[log.length-2])==="solid";
     if(!lastTwoSolid||remaining.length===0)return null;
     const next=remaining[0];
     if(examEvent.examWeight==="major"){
@@ -12163,7 +12365,7 @@ function computeExamReadiness(examEvent,events,todayKey){
   const overdueMissed=sessions.filter(e=>e.status==="pending"&&e.date<today).length;
   const completionRate=done/total;
   const log=examEvent.confidenceLog||[];
-  const lastRating=log[log.length-1]||null;
+  const lastRating=confidenceZoneOf(log[log.length-1])||null;
   const dayWord=daysUntil+" day"+(daysUntil!==1?"s":"");
   let base;
   // Calm and factual, never shame-based -- these three used to read like
@@ -12213,6 +12415,40 @@ function computeExamReadiness(examEvent,events,todayKey){
 // prepared score) -- one source of truth instead of two separately
 // hardcoded tables.
 const CONFIDENCE_TO_UNIT={shaky:0.2,okay:0.6,solid:1.0};
+// 2026-08-19: the post-session "how'd it go" check-in was upgraded from 3
+// buttons to a 5-point scale (see submitExamCheckIn/EXAM_CHECKIN_SCALE) --
+// confidenceLog now mixes old string entries ("shaky"/"okay"/"solid",
+// still written by the upfront confidence selector and the performance-
+// correction nudge, both deliberately left 3-tier -- different question,
+// different moment, not part of what changed) with new 1-5 integers from
+// the post-session check-in. These two functions are the single point of
+// translation every reader goes through, so nothing downstream needs to
+// know which shape a given log entry is.
+const RATING_UNIT={1:0,2:0.25,3:0.5,4:0.75,5:1};
+function confidenceUnitOf(rating){
+  if(typeof rating==="number")return RATING_UNIT[rating]??RATING_UNIT[3];
+  return CONFIDENCE_TO_UNIT[rating]??CONFIDENCE_TO_UNIT.okay;
+}
+// Buckets either shape back down to the 3 zones evaluateExamPrepAdjustment's
+// already-tuned decision tree understands (rating<=2 behaves like "shaky",
+// 3 like "okay", >=4 like "solid") -- keeps the existing thresholds
+// (3-in-a-row plateau, 2-in-a-row solid) working unchanged for the new
+// scale rather than redesigning the adaptive logic itself.
+function confidenceZoneOf(rating){
+  if(typeof rating==="number")return rating<=2?"shaky":rating===3?"okay":"solid";
+  return rating;
+}
+// Post-session check-in options (2026-08-19, was 3 plain buttons). 2/3/4
+// anchor at the exact words the old shaky/okay/solid scale used, so
+// nothing already-tuned changes meaning -- 1 and 5 are the two genuinely
+// new, more extreme options this adds.
+const EXAM_CHECKIN_SCALE=[
+  {value:1,label:"Still lost"},
+  {value:2,label:"Shaky"},
+  {value:3,label:"Getting there"},
+  {value:4,label:"Pretty solid"},
+  {value:5,label:"Nailed it"},
+];
 // "quiz" vs "major" -- how much this exam should matter when it's
 // competing for a limited time slot. Missing entirely (an exam added
 // through the Add Task modal never sets this field) defaults to
@@ -12293,7 +12529,7 @@ function computeSessionPriority(examLike,todayKey){
   // neutral "okay", deliberately not "shaky" (would over-prioritize every
   // brand-new exam) or "solid" (would under-prioritize one no one has
   // actually looked at yet).
-  const confidenceUnit=CONFIDENCE_TO_UNIT[lastRating]??CONFIDENCE_TO_UNIT.okay;
+  const confidenceUnit=lastRating!=null?confidenceUnitOf(lastRating):CONFIDENCE_TO_UNIT.okay;
   const confidenceInverse=1-confidenceUnit;
   const raw=0.35*urgency+0.30*impact+0.20*confidenceInverse+0.15*difficultyNorm;
   return Math.round(Math.min(1,raw)*1000);
@@ -12320,7 +12556,7 @@ function computePreparedness(examEvent,events,todayKey){
   const components=[{key:"completion",value:completion,weight:0.45}];
   const log=examEvent.confidenceLog||[];
   if(log.length>0){
-    components.push({key:"confidence",value:CONFIDENCE_TO_UNIT[log[log.length-1]]??0.6,weight:0.30});
+    components.push({key:"confidence",value:confidenceUnitOf(log[log.length-1]),weight:0.30});
   }
   // Real exam-performance signal: most recent quiz score and most recent
   // practice-exam attempt (recordPracticeExamAttempt already stores
@@ -12385,11 +12621,15 @@ function performanceConfidenceSuggestion(examEvent){
   if(!suggested)return null;
   const log=examEvent.confidenceLog||[];
   const lastSelf=log.length>0?log[log.length-1]:null;
-  if(!lastSelf)return null;
-  if(CONFIDENCE_TO_UNIT[suggested]>=CONFIDENCE_TO_UNIT[lastSelf])return null;
+  if(!lastSelf&&lastSelf!==0)return null;
+  // lastSelf may now be a 1-5 check-in rating rather than a shaky/okay/
+  // solid string -- compare on unit (works for either shape) but display
+  // the zone word so "the X you last said" still reads as a real word,
+  // not a bare number.
+  if(CONFIDENCE_TO_UNIT[suggested]>=confidenceUnitOf(lastSelf))return null;
   const dismissed=lsGet("performanceConfidenceDismissedAt",{});
   if(dismissed[examEvent.id]&&Date.now()-dismissed[examEvent.id]<PERFORMANCE_CONFIDENCE_COOLDOWN_MS)return null;
-  return {suggested,current:lastSelf};
+  return {suggested,current:confidenceZoneOf(lastSelf)};
 }
 function dismissPerformanceConfidence(examId){
   const dismissed=lsGet("performanceConfidenceDismissedAt",{});
@@ -18125,6 +18365,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   const [asChecklist,setAsChecklist]=useState(false);
   const [notes,setNotes]=useState("");
   const [cancelConfirmOpen,setCancelConfirmOpen]=useState(false);
+  const [completeSessionPrompt,setCompleteSessionPrompt]=useState(false);
   // Add-collaborators picker (shared/group projects) -- fetched fresh each
   // time the picker opens rather than a live subscription, same one-shot
   // pattern Studlin Prep's "Pull from your notes" picker already uses for a
@@ -18376,6 +18617,32 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
     const next=allEvents.filter(e=>!(e.dueEventId===ev.id&&e.status==="pending"));
     commit(next);setCancelConfirmOpen(false);onClose();
   };
+  // Completion lifecycle for assignments/projects (2026-08-19) -- mirrors
+  // the exam-side toggle in StudlinPrep (see itemLifecycleState/
+  // allExamsForPrep), scoped to kind==="deadline" here since that's the
+  // real underlying kind for both an assignment and a project marker
+  // (isProjectMarker just distinguishes which). Finishing the actual work
+  // IS finishing the deliverable for these two (unlike an exam, where the
+  // date itself is the ground truth, not session completion), so this
+  // stays a plain toggle rather than the exam page's date-vs-manual split.
+  const isDeadlineKind=kind==="deadline";
+  const isEvCompleted=ev&&ev.status==="done";
+  const evPendingLinked=linkedSessions.filter(s=>s.status!=="done");
+  const toggleEvCompleted=()=>{
+    if(!ev)return;
+    if(isEvCompleted){commit(allEvents.map(e=>e.id===ev.id?{...e,status:"pending"}:e));return;}
+    if(evPendingLinked.length>0){setCompleteSessionPrompt(true);return;}
+    commit(allEvents.map(e=>e.id===ev.id?{...e,status:"done"}:e));onClose();
+  };
+  const finishMarkingEvComplete=(cancelSessions)=>{
+    let next=allEvents;
+    if(cancelSessions){
+      const idsToCancel=new Set(evPendingLinked.map(s=>s.id));
+      next=next.filter(e=>!idsToCancel.has(e.id));
+    }
+    next=next.map(e=>e.id===ev.id?{...e,status:"done"}:e);
+    commit(next);setCompleteSessionPrompt(false);onClose();
+  };
 
   return (<>
     <Modal open={true} onClose={onClose} title="Edit task" sub="Update this task's details." width={580}
@@ -18418,6 +18685,26 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
             if(result.blocked&&onToast)onToast("Can't undo — something else is already using that time.");
             onClose();
           }} style={{background:"none",border:"none",color:T.lime,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline"}}>Undo</button>
+        </div>
+      )}
+      {isDeadlineKind&&(
+        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:14}}>
+          {isEvCompleted?(
+            <span style={{fontSize:11,fontWeight:700,color:T.lime,background:T.lime+"14",border:`1px solid ${T.lime}44`,borderRadius:6,padding:"4px 10px"}}>COMPLETED</span>
+          ):itemLifecycleState(ev,dayKey())==="past-due"&&(
+            <span style={{fontSize:11,fontWeight:700,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}44`,borderRadius:6,padding:"4px 10px"}}>PAST DUE</span>
+          )}
+          <BtnSm variant={isEvCompleted?"ghost":"subtle"} onClick={toggleEvCompleted}>{isEvCompleted?"Mark as uncomplete":"Mark as completed"}</BtnSm>
+        </div>
+      )}
+      {completeSessionPrompt&&(
+        <div style={{background:T.card,border:`1px solid ${T.amber}44`,borderRadius:8,padding:"12px 14px",marginBottom:14,fontSize:12.5,color:T.text,lineHeight:1.5}}>
+          You still have {evPendingLinked.length} scheduled block{evPendingLinked.length!==1?"s":""} for this — cancel {evPendingLinked.length!==1?"them":"it"} too?
+          <div style={{display:"flex",gap:8,marginTop:10}}>
+            <BtnSm onClick={()=>finishMarkingEvComplete(true)}>Cancel {evPendingLinked.length!==1?"them":"it"}</BtnSm>
+            <BtnSm variant="ghost" onClick={()=>finishMarkingEvComplete(false)}>Keep them</BtnSm>
+            <BtnSm variant="ghost" onClick={()=>setCompleteSessionPrompt(false)}>Never mind</BtnSm>
+          </div>
         </div>
       )}
       {ev.placementReason&&(
@@ -19653,6 +19940,18 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     setWeekBalancePlan(plan);
     setWeekBalanceOpen(true);
   };
+  // Cross-component "please open this" signal from Studlin Prep's
+  // weekTightNudge (see commitBuildPlan) -- a plain localStorage flag,
+  // same pattern openDeckId/openDeckAction already use for Flashcards.
+  // Explicit click-through, so it deliberately bypasses
+  // shouldShowWeekBalanceNudge's ambient cooldown -- the student just
+  // asked directly, a "don't nag" cooldown meant for the passive nudge
+  // shouldn't block that.
+  useEffect(()=>{
+    if(!lsGet("openWeekBalanceOnMount",false))return;
+    lsSet("openWeekBalanceOnMount",false);
+    openWeekBalance();
+  },[]);
   // Proactive version of the button above — checked once per Calendar
   // visit (not on every render/keystroke) rather than a real daily gate,
   // since this component only exists while the tab is open; the 3-day
@@ -27608,11 +27907,21 @@ function App() {
           {lockInErrorToast}
         </div>
       )}
-      <Modal open={!!examCheckIn} onClose={()=>setExamCheckIn(null)} title="How'd it go?" width={380}>
+      {/* 2026-08-19: upgraded from 3 buttons to a 5-point scale -- "okay"
+          (now the middle "Getting there") was the single most common
+          answer and the widest, most ambiguous bucket (see
+          evaluateExamPrepAdjustment's own comment on the plateau logic).
+          Labels anchor at the same words the old 3 buttons used (2/3/4)
+          so nothing already-tuned changes meaning, with two new, genuinely
+          more extreme options (1/5) now reachable. submitExamCheckIn takes
+          the raw 1-5 integer -- see confidenceUnitOf/confidenceZoneOf for
+          how every downstream reader (priority, readiness, plateau
+          detection) treats it identically to the old strings. */}
+      <Modal open={!!examCheckIn} onClose={()=>setExamCheckIn(null)} title="How do you feel about the exam so far?" width={380}>
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
-          <Btn variant="ghost" onClick={()=>submitExamCheckIn("solid")} style={{width:"100%",justifyContent:"center"}}>Nailed it</Btn>
-          <Btn variant="ghost" onClick={()=>submitExamCheckIn("okay")} style={{width:"100%",justifyContent:"center"}}>Getting there</Btn>
-          <Btn variant="ghost" onClick={()=>submitExamCheckIn("shaky")} style={{width:"100%",justifyContent:"center"}}>Still shaky</Btn>
+          {EXAM_CHECKIN_SCALE.map(opt=>(
+            <Btn key={opt.value} variant="ghost" onClick={()=>submitExamCheckIn(opt.value)} style={{width:"100%",justifyContent:"center"}}>{opt.label}</Btn>
+          ))}
         </div>
       </Modal>
       <ProjectCheckInModal taskId={projectCheckInTaskId} onClose={()=>setProjectCheckInTaskId(null)} onToast={(msg)=>{setDashToast(msg);setTimeout(()=>setDashToast(""),2800);}} />
