@@ -7514,6 +7514,32 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   // Set when commitBuildPlan comes up short on slots AND Week Balance
   // genuinely has real moves to offer -- see the comment at that call site.
   const [weekTightNudge,setWeekTightNudge]=useState(false);
+  // 2026-08-19: editing Type/Due date/Urgency/Difficulty right in this
+  // table used to just silently write the field and do nothing else --
+  // already-scheduled sessions kept their old priority stamp (stale the
+  // moment examWeight/importanceLevel/difficulty/date changed under them)
+  // and, for a due-date move especially, could end up scheduled after the
+  // exam or oddly spaced for no visible reason. Every one of these 4
+  // fields now restamps this exam's real session priority immediately
+  // (restampSessionPriorities, same call the confidence check-in already
+  // triggers) -- that alone is the complete fix for Urgency/Difficulty,
+  // which only ever affect priority/eviction ordering, never the plan's
+  // actual shape. Only Type and Due date can also make session COUNT/
+  // spacing wrong (computeStudyPlanParams reads examWeight/importanceLevel
+  // and the exam date, not difficulty), so shapeAffecting=true there
+  // additionally offers a real "redo the plan?" prompt -- narrowed to just
+  // those two after a live "is this over-triggering" pass: prompting for
+  // an Urgency/Difficulty tweak the restamp already fully resolves was
+  // pure friction with no benefit, and this table is built for fast
+  // inline multi-row editing, not a modal after every single cell.
+  const [examFieldChangePrompt,setExamFieldChangePrompt]=useState(null); // {id,title}|null
+  const handleExamFieldChange=(ex,patch,shapeAffecting)=>{
+    patchExam(ex.id,patch);
+    restampSessionPriorities(ex.id);
+    if(!shapeAffecting)return;
+    const hasSessions=lsGet("events",[]).some(e=>e.dueEventId===ex.id);
+    if(hasSessions)setExamFieldChangePrompt({id:ex.id,title:ex.title});
+  };
   // Study/Edit/Send/Add Deck used to hard-navigate to the standalone
   // Flashcards page (setActive("flashcards")), fully unmounting Studlin Prep
   // and leaving no way back except clicking a different sidebar item --
@@ -8370,7 +8396,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                               would misrepresent it, and "major" alone
                               carries real weight in priority math that a
                               wrong guess could silently change). */}
-                          <CustomSelect value={ex.examType||""} onChange={v=>{const level=EXAM_TYPE_TO_IMPORTANCE[v]||"moderate";patchExam(ex.id,{examType:v,importanceLevel:level,examWeight:examWeightFromImportance(level)});}}
+                          <CustomSelect value={ex.examType||""} onChange={v=>{const level=EXAM_TYPE_TO_IMPORTANCE[v]||"moderate";handleExamFieldChange(ex,{examType:v,importanceLevel:level,examWeight:examWeightFromImportance(level)},true);}}
                             options={[{value:"",label:"Type"},{value:"quiz",label:"Quiz"},{value:"midterm",label:"Midterm"},{value:"final",label:"Final"},{value:"project",label:"Project"},{value:"other",label:"Other"}]} />
                           {/* sessionsMovable (new field, Phase 9): whether Studlin
                               can auto-shuffle THIS exam's already-scheduled study
@@ -8383,11 +8409,11 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                               matching this file's additive-field convention. */}
                           <CustomSelect value={isFlexible?"flexible":"rigid"} onChange={v=>patchExam(ex.id,{sessionsMovable:v==="flexible"})}
                             options={[{value:"flexible",label:"Flex"},{value:"rigid",label:"Rigid"}]} />
-                          <input type="date" value={ex.date} onChange={e=>patchExam(ex.id,{date:e.target.value})} style={{...cellSelStyle}} />
+                          <input type="date" value={ex.date} onChange={e=>handleExamFieldChange(ex,{date:e.target.value},true)} style={{...cellSelStyle}} />
                           <div style={{fontSize:10.5,color:daysUntil<=1?T.red:T.muted}}>{daysLabel}</div>
-                          <CustomSelect value={bucketOf(ex.priority)} onChange={v=>patchExam(ex.id,{priority:BUCKET_VALS[v]})}
+                          <CustomSelect value={bucketOf(ex.priority)} onChange={v=>handleExamFieldChange(ex,{priority:BUCKET_VALS[v]})}
                             options={[{value:"low",label:"Low"},{value:"medium",label:"Med"},{value:"high",label:"High"}]} />
-                          <CustomSelect value={bucketOf(ex.difficulty)} onChange={v=>patchExam(ex.id,{difficulty:BUCKET_VALS[v]})}
+                          <CustomSelect value={bucketOf(ex.difficulty)} onChange={v=>handleExamFieldChange(ex,{difficulty:BUCKET_VALS[v]})}
                             options={[{value:"low",label:"Easy"},{value:"medium",label:"Med"},{value:"high",label:"Hard"}]} />
                           <div onClick={()=>viewPlan(ex)} style={{fontSize:10.5,color:T.muted,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title="Click to open the study plan">
                             {sessionsLabel}
@@ -8600,8 +8626,8 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
           const log=selectedExam.confidenceLog||[];
           if(log.length<2)return null;
           const lastTwo=log.slice(-2).map(confidenceZoneOf);
-          if(lastTwo[0]==="solid"&&lastTwo[1]==="solid")return "Lower priority now — you've said solid twice in a row.";
-          if(lastTwo[0]==="shaky"&&lastTwo[1]==="shaky")return "Higher priority now — you've said shaky twice in a row.";
+          if(lastTwo[0]==="solid"&&lastTwo[1]==="solid")return "Lower priority now: you've said solid twice in a row.";
+          if(lastTwo[0]==="shaky"&&lastTwo[1]==="shaky")return "Higher priority now: you've said shaky twice in a row.";
           return null;
         })();
         // Offered once material exists but at least one already-scheduled
@@ -8698,7 +8724,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
             )}
             {weekTightNudge&&(
               <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:20,fontSize:12.5,color:T.text,lineHeight:1.5}}>
-                Your week's tight — Studlin found room by moving some lower-priority sessions around.
+                Your week's tight. Studlin found room by moving some lower-priority sessions around.
                 <div style={{display:"flex",gap:8,marginTop:10}}>
                   <BtnSm onClick={()=>{setWeekTightNudge(false);setActive("calendar");}}>See what's using the time</BtnSm>
                   <BtnSm variant="ghost" onClick={()=>{lsSet("openWeekBalanceOnMount",false);setWeekTightNudge(false);}}>Not now</BtnSm>
@@ -9589,6 +9615,29 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
             {deleteConfirm.type==="pe"
               ?<>This deletes <strong>{deleteConfirm.name}</strong> and any scheduled sessions for it. This can't be undone.</>
               :<>This deletes <strong>{deleteConfirm.name}</strong> and its scheduled review sessions. This can't be undone.</>}
+          </div>
+        )}
+      </Modal>
+
+      {/* See handleExamFieldChange's own comment -- Type/Due date/Urgency/
+          Difficulty all restamp real session priority immediately, but a
+          due-date move or a Type change (which also drives session count/
+          duration via computeStudyPlanParams) can leave the EXISTING
+          plan's shape/spacing stale in a way restamping priority alone
+          can't fix. Offered, never auto-applied -- same discipline every
+          other adaptive suggestion in this file follows. */}
+      <Modal open={!!examFieldChangePrompt} onClose={()=>setExamFieldChangePrompt(null)} title="Update the study plan?" width={420}
+        footer={<>
+          <Btn variant="subtle" onClick={()=>setExamFieldChangePrompt(null)}>Not now</Btn>
+          <Btn onClick={()=>{
+            const ex=examFieldChangePrompt&&lsGet("events",[]).find(e=>e.id===examFieldChangePrompt.id);
+            setExamFieldChangePrompt(null);
+            if(ex)openBuildPlan(ex);
+          }}>Redo study plan</Btn>
+        </>}>
+        {examFieldChangePrompt&&(
+          <div style={{fontSize:13,color:T.text,lineHeight:1.5}}>
+            <strong>{examFieldChangePrompt.title}</strong>'s plan was built around the old settings. Redo it to match what just changed, or leave the existing sessions as they are.
           </div>
         )}
       </Modal>
@@ -12589,7 +12638,20 @@ function computeSessionPriority(examLike,todayKey){
   // 21+ days out contributes ~0 urgency, tomorrow contributes ~1. No date
   // at all (shouldn't happen for a real exam, but stay defensive) lands
   // on a neutral middle rather than 0 or 1.
-  const urgency=daysUntil==null?0.5:Math.max(0,Math.min(1,1-daysUntil/SESSION_PRIORITY_URGENCY_HORIZON_DAYS));
+  const dateUrgency=daysUntil==null?0.5:Math.max(0,Math.min(1,1-daysUntil/SESSION_PRIORITY_URGENCY_HORIZON_DAYS));
+  // 2026-08-19: the exam table's own "Urgency" column (examLike.priority,
+  // the generic 200/500/800 low/med/high bucket every event has) used to
+  // be completely inert here -- editing it changed nothing about how this
+  // exam's sessions actually got scheduled/prioritized, which reads as a
+  // real bug once you notice it (the column exists, looks like it should
+  // matter, and silently doesn't). Same bounded-nudge pattern as
+  // gradeWeightNudge below: 500 (medium, the default) is neutral and
+  // changes nothing, so every exam that predates a student ever touching
+  // this dropdown computes unchanged; Low/High shift the date-derived
+  // urgency by up to the same ±0.15 gradeWeightNudge caps itself at, never
+  // fully overriding the real days-until-exam signal.
+  const urgencyNudge=examLike.priority!=null?Math.max(-0.15,Math.min(0.15,(examLike.priority-500)/2000)):0;
+  const urgency=Math.max(0,Math.min(1,dateUrgency+urgencyNudge));
   // importanceLevel (new, richer signal) is checked first when present;
   // anything without it (every exam that predates this field) computes
   // byte-identically to before via the legacy examWeight table.

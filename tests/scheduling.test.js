@@ -3906,3 +3906,22 @@ describe("2026-08-19: Dashboard checklist stays visible until the day ends, not 
     assert.equal(m.checklistItemVisible({ status: "done" }, "2026-08-19"), false);
   });
 });
+
+describe("2026-08-19: exam table's Urgency field now actually feeds session priority", () => {
+  test("computeSessionPriority: High urgency raises priority vs the same exam at Medium", () => {
+    const m = loadStudlinModule();
+    const base = { date: "2026-09-02", examWeight: "quiz", difficulty: 500 };
+    const medium = m.computeSessionPriority({ ...base, priority: 500 }, "2026-08-19");
+    const high = m.computeSessionPriority({ ...base, priority: 800 }, "2026-08-19");
+    const low = m.computeSessionPriority({ ...base, priority: 200 }, "2026-08-19");
+    assert.ok(high > medium, "High urgency should score higher than Medium");
+    assert.ok(low < medium, "Low urgency should score lower than Medium");
+  });
+  test("computeSessionPriority: a missing priority field computes the same as Medium (backward compatible)", () => {
+    const m = loadStudlinModule();
+    const base = { date: "2026-09-02", examWeight: "quiz", difficulty: 500 };
+    const noField = m.computeSessionPriority(base, "2026-08-19");
+    const medium = m.computeSessionPriority({ ...base, priority: 500 }, "2026-08-19");
+    assert.equal(noField, medium);
+  });
+});

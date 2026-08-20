@@ -4858,6 +4858,14 @@ function StudlinPrep({ setActive = () => {
     return "upcoming";
   };
   const [weekTightNudge, setWeekTightNudge] = useState(false);
+  const [examFieldChangePrompt, setExamFieldChangePrompt] = useState(null);
+  const handleExamFieldChange = (ex, patch, shapeAffecting) => {
+    patchExam(ex.id, patch);
+    restampSessionPriorities(ex.id);
+    if (!shapeAffecting) return;
+    const hasSessions = lsGet("events", []).some((e) => e.dueEventId === ex.id);
+    if (hasSessions) setExamFieldChangePrompt({ id: ex.id, title: ex.title });
+  };
   const [flashcardsOverlay, setFlashcardsOverlay] = useState(false);
   const [peCreateOpen, setPeCreateOpen] = useState(false);
   const [peName, setPeName] = useState("");
@@ -5461,7 +5469,7 @@ function StudlinPrep({ setActive = () => {
           value: ex.examType || "",
           onChange: (v) => {
             const level = EXAM_TYPE_TO_IMPORTANCE[v] || "moderate";
-            patchExam(ex.id, { examType: v, importanceLevel: level, examWeight: examWeightFromImportance(level) });
+            handleExamFieldChange(ex, { examType: v, importanceLevel: level, examWeight: examWeightFromImportance(level) }, true);
           },
           options: [{ value: "", label: "Type" }, { value: "quiz", label: "Quiz" }, { value: "midterm", label: "Midterm" }, { value: "final", label: "Final" }, { value: "project", label: "Project" }, { value: "other", label: "Other" }]
         }
@@ -5472,18 +5480,18 @@ function StudlinPrep({ setActive = () => {
           onChange: (v) => patchExam(ex.id, { sessionsMovable: v === "flexible" }),
           options: [{ value: "flexible", label: "Flex" }, { value: "rigid", label: "Rigid" }]
         }
-      ), /* @__PURE__ */ React.createElement("input", { type: "date", value: ex.date, onChange: (e) => patchExam(ex.id, { date: e.target.value }), style: { ...cellSelStyle } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: daysUntil <= 1 ? T.red : T.muted } }, daysLabel), /* @__PURE__ */ React.createElement(
+      ), /* @__PURE__ */ React.createElement("input", { type: "date", value: ex.date, onChange: (e) => handleExamFieldChange(ex, { date: e.target.value }, true), style: { ...cellSelStyle } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: daysUntil <= 1 ? T.red : T.muted } }, daysLabel), /* @__PURE__ */ React.createElement(
         CustomSelect,
         {
           value: bucketOf(ex.priority),
-          onChange: (v) => patchExam(ex.id, { priority: BUCKET_VALS[v] }),
+          onChange: (v) => handleExamFieldChange(ex, { priority: BUCKET_VALS[v] }),
           options: [{ value: "low", label: "Low" }, { value: "medium", label: "Med" }, { value: "high", label: "High" }]
         }
       ), /* @__PURE__ */ React.createElement(
         CustomSelect,
         {
           value: bucketOf(ex.difficulty),
-          onChange: (v) => patchExam(ex.id, { difficulty: BUCKET_VALS[v] }),
+          onChange: (v) => handleExamFieldChange(ex, { difficulty: BUCKET_VALS[v] }),
           options: [{ value: "low", label: "Easy" }, { value: "medium", label: "Med" }, { value: "high", label: "Hard" }]
         }
       ), /* @__PURE__ */ React.createElement("div", { onClick: () => viewPlan(ex), style: { fontSize: 10.5, color: T.muted, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: "Click to open the study plan" }, sessionsLabel), (() => {
@@ -5608,8 +5616,8 @@ function StudlinPrep({ setActive = () => {
       const log = selectedExam.confidenceLog || [];
       if (log.length < 2) return null;
       const lastTwo = log.slice(-2).map(confidenceZoneOf);
-      if (lastTwo[0] === "solid" && lastTwo[1] === "solid") return "Lower priority now \u2014 you've said solid twice in a row.";
-      if (lastTwo[0] === "shaky" && lastTwo[1] === "shaky") return "Higher priority now \u2014 you've said shaky twice in a row.";
+      if (lastTwo[0] === "solid" && lastTwo[1] === "solid") return "Lower priority now: you've said solid twice in a row.";
+      if (lastTwo[0] === "shaky" && lastTwo[1] === "shaky") return "Higher priority now: you've said shaky twice in a row.";
       return null;
     })();
     const addFocusToExisting = async () => {
@@ -5660,7 +5668,7 @@ function StudlinPrep({ setActive = () => {
       metaParts.push(pendingSessions.length + " session" + (pendingSessions.length !== 1 ? "s" : "") + " left");
       if (deck) metaParts.push(cardsDue + " card" + (cardsDue !== 1 ? "s" : "") + " due");
     }
-    return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("button", { onClick: () => setSelectedExamId(null), style: { background: "none", border: "none", color: T.muted, fontSize: 12, fontFamily: T.font, cursor: "pointer", padding: 0, marginBottom: 14, display: "flex", alignItems: "center", gap: 4 } }, "\u2190 All exams"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 24, fontWeight: 800, color: T.white, letterSpacing: "-0.01em", marginBottom: 4, lineHeight: 1.2 } }, selectedExam.title, " \xB7 ", countdownLabel), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginBottom: 14 } }, metaParts.join(" \xB7 ")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 14 } }, isExamCompleted ? /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: T.lime, background: T.lime + "14", border: `1px solid ${T.lime}44`, borderRadius: 6, padding: "4px 10px" } }, "COMPLETED") : itemLifecycleState(selectedExam, dayKey()) === "past-due" && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: T.amber, background: T.amber + "14", border: `1px solid ${T.amber}44`, borderRadius: 6, padding: "4px 10px" } }, "PAST DUE"), /* @__PURE__ */ React.createElement(BtnSm, { variant: isExamCompleted ? "ghost" : "subtle", onClick: toggleExamCompleted }, isExamCompleted ? "Mark as uncomplete" : "Mark as completed"), examSessions.length > 0 && /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => openBuildPlan(selectedExam) }, "Redo study plan")), examCompleteSessionPrompt && /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.amber}44`, borderRadius: 8, padding: "12px 14px", marginBottom: 20, fontSize: 12.5, color: T.text, lineHeight: 1.5 } }, "You still have ", examPendingSessions.length, " session", examPendingSessions.length !== 1 ? "s" : "", " scheduled for this \u2014 cancel ", examPendingSessions.length !== 1 ? "them" : "it", " too?", /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => finishMarkingComplete(true) }, "Cancel ", examPendingSessions.length !== 1 ? "them" : "it"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => finishMarkingComplete(false) }, "Keep them"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setExamCompleteSessionPrompt(false) }, "Never mind"))), priorityShiftNote && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 14 } }, priorityShiftNote), weekTightNudge && /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: "12px 14px", marginBottom: 20, fontSize: 12.5, color: T.text, lineHeight: 1.5 } }, "Your week's tight \u2014 Studlin found room by moving some lower-priority sessions around.", /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
+    return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("button", { onClick: () => setSelectedExamId(null), style: { background: "none", border: "none", color: T.muted, fontSize: 12, fontFamily: T.font, cursor: "pointer", padding: 0, marginBottom: 14, display: "flex", alignItems: "center", gap: 4 } }, "\u2190 All exams"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 24, fontWeight: 800, color: T.white, letterSpacing: "-0.01em", marginBottom: 4, lineHeight: 1.2 } }, selectedExam.title, " \xB7 ", countdownLabel), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginBottom: 14 } }, metaParts.join(" \xB7 ")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 14 } }, isExamCompleted ? /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: T.lime, background: T.lime + "14", border: `1px solid ${T.lime}44`, borderRadius: 6, padding: "4px 10px" } }, "COMPLETED") : itemLifecycleState(selectedExam, dayKey()) === "past-due" && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: T.amber, background: T.amber + "14", border: `1px solid ${T.amber}44`, borderRadius: 6, padding: "4px 10px" } }, "PAST DUE"), /* @__PURE__ */ React.createElement(BtnSm, { variant: isExamCompleted ? "ghost" : "subtle", onClick: toggleExamCompleted }, isExamCompleted ? "Mark as uncomplete" : "Mark as completed"), examSessions.length > 0 && /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => openBuildPlan(selectedExam) }, "Redo study plan")), examCompleteSessionPrompt && /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.amber}44`, borderRadius: 8, padding: "12px 14px", marginBottom: 20, fontSize: 12.5, color: T.text, lineHeight: 1.5 } }, "You still have ", examPendingSessions.length, " session", examPendingSessions.length !== 1 ? "s" : "", " scheduled for this \u2014 cancel ", examPendingSessions.length !== 1 ? "them" : "it", " too?", /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => finishMarkingComplete(true) }, "Cancel ", examPendingSessions.length !== 1 ? "them" : "it"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => finishMarkingComplete(false) }, "Keep them"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setExamCompleteSessionPrompt(false) }, "Never mind"))), priorityShiftNote && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 14 } }, priorityShiftNote), weekTightNudge && /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: "12px 14px", marginBottom: 20, fontSize: 12.5, color: T.text, lineHeight: 1.5 } }, "Your week's tight. Studlin found room by moving some lower-priority sessions around.", /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
       setWeekTightNudge(false);
       setActive("calendar");
     } }, "See what's using the time"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => {
@@ -6054,6 +6062,20 @@ function StudlinPrep({ setActive = () => {
       footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setDeleteConfirm(null) }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: confirmDelete }, "Delete"))
     },
     deleteConfirm && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, lineHeight: 1.5 } }, deleteConfirm.type === "pe" ? /* @__PURE__ */ React.createElement(React.Fragment, null, "This deletes ", /* @__PURE__ */ React.createElement("strong", null, deleteConfirm.name), " and any scheduled sessions for it. This can't be undone.") : /* @__PURE__ */ React.createElement(React.Fragment, null, "This deletes ", /* @__PURE__ */ React.createElement("strong", null, deleteConfirm.name), " and its scheduled review sessions. This can't be undone."))
+  ), /* @__PURE__ */ React.createElement(
+    Modal,
+    {
+      open: !!examFieldChangePrompt,
+      onClose: () => setExamFieldChangePrompt(null),
+      title: "Update the study plan?",
+      width: 420,
+      footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setExamFieldChangePrompt(null) }, "Not now"), /* @__PURE__ */ React.createElement(Btn, { onClick: () => {
+        const ex = examFieldChangePrompt && lsGet("events", []).find((e) => e.id === examFieldChangePrompt.id);
+        setExamFieldChangePrompt(null);
+        if (ex) openBuildPlan(ex);
+      } }, "Redo study plan"))
+    },
+    examFieldChangePrompt && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, lineHeight: 1.5 } }, /* @__PURE__ */ React.createElement("strong", null, examFieldChangePrompt.title), "'s plan was built around the old settings. Redo it to match what just changed, or leave the existing sessions as they are.")
   ), /* @__PURE__ */ React.createElement(
     Modal,
     {
@@ -8214,7 +8236,9 @@ function computeSessionPriority(examLike, todayKey) {
   const today = todayKey || dayKey();
   const difficultyNorm = normalizeTaskVal(examLike.difficulty, 5);
   const daysUntil = examLike.date ? Math.round((/* @__PURE__ */ new Date(examLike.date + "T12:00:00") - /* @__PURE__ */ new Date(today + "T12:00:00")) / 864e5) : null;
-  const urgency = daysUntil == null ? 0.5 : Math.max(0, Math.min(1, 1 - daysUntil / SESSION_PRIORITY_URGENCY_HORIZON_DAYS));
+  const dateUrgency = daysUntil == null ? 0.5 : Math.max(0, Math.min(1, 1 - daysUntil / SESSION_PRIORITY_URGENCY_HORIZON_DAYS));
+  const urgencyNudge = examLike.priority != null ? Math.max(-0.15, Math.min(0.15, (examLike.priority - 500) / 2e3)) : 0;
+  const urgency = Math.max(0, Math.min(1, dateUrgency + urgencyNudge));
   const baseImpact = examLike.importanceLevel ? IMPORTANCE_TO_IMPACT[examLike.importanceLevel] ?? IMPORTANCE_TO_IMPACT.major : EXAM_WEIGHT_TO_IMPACT[examLike.examWeight] ?? EXAM_WEIGHT_TO_IMPACT.major;
   const gradeWeightNudge = examLike.gradeWeightPercent != null ? Math.max(-0.15, Math.min(0.15, (examLike.gradeWeightPercent - 20) / 200)) : 0;
   const impact = Math.max(0, Math.min(1, baseImpact + gradeWeightNudge));
