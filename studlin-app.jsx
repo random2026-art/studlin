@@ -7519,17 +7519,23 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   // Group By (Shovel-inspired): All/Past Due/Completed, backed by
   // itemLifecycleState -- one filter per tab since a class filter picked on
   // Exams shouldn't leak into Assignments. Default "" (All) everywhere.
-  const [examGroupFilter,setExamGroupFilter]=useState("");
-  const [assignGroupFilter,setAssignGroupFilter]=useState("");
-  const [projectGroupFilter,setProjectGroupFilter]=useState("");
-  const GROUP_BY_OPTIONS=[{value:"",label:"All"},{value:"past-due",label:"Past Due"},{value:"completed",label:"Completed"}];
+  const [examGroupFilter,setExamGroupFilter]=useState("upcoming");
+  const [assignGroupFilter,setAssignGroupFilter]=useState("upcoming");
+  const [projectGroupFilter,setProjectGroupFilter]=useState("upcoming");
+  // "upcoming" was already itemLifecycleState's own default return value
+  // (see below) -- it just never had a way to be explicitly selected, or
+  // shown as the default view, on any of the 5 tabs sharing this same
+  // filter. No filter-logic change needed anywhere, only the option list
+  // and each tab's own initial state (see the 5 useState("")->
+  // useState("upcoming") changes near examGroupFilter etc. below).
+  const GROUP_BY_OPTIONS=[{value:"upcoming",label:"Upcoming"},{value:"",label:"All"},{value:"past-due",label:"Past Due"},{value:"completed",label:"Completed"}];
   const [examCompleteSessionPrompt,setExamCompleteSessionPrompt]=useState(false);
   const [flashcardSearch,setFlashcardSearch]=useState("");
   const [flashcardClassFilter,setFlashcardClassFilter]=useState("");
-  const [flashcardGroupFilter,setFlashcardGroupFilter]=useState("");
+  const [flashcardGroupFilter,setFlashcardGroupFilter]=useState("upcoming");
   const [peSearch,setPeSearch]=useState("");
   const [peClassFilter,setPeClassFilter]=useState("");
-  const [peGroupFilter,setPeGroupFilter]=useState("");
+  const [peGroupFilter,setPeGroupFilter]=useState("upcoming");
   // A deck/practice exam's own lifecycle is borrowed from whatever exam(s)
   // it's linked to -- neither has a date or status of its own, so
   // "completed"/"past due" only ever makes sense in terms of the exam it
@@ -8950,14 +8956,24 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
               </div>
             )}
 
-            {/* ── Materials & study kit -- collapsed below the timeline.
-                Same upload/generate functionality as before, just no
-                longer competing for equal visual weight with "what do I
-                do next." ── */}
+            {/* Real UX gap found live: once a study plan already exists,
+                this whole toggle+Add-study-material Card was still the
+                default view every time you opened an exam -- but the only
+                thing left worth doing here at that point is "Redo study
+                plan" (which reuses this exact same fileTexts material list
+                internally, plus has its own upload step -- see
+                openBuildPlan's confidence step), so the full material-
+                management UI was mostly dead weight competing for
+                attention with the actual sessions above it. Flashcards/
+                Practice Exams cards also used to live INSIDE this same
+                collapsed toggle, meaning they were invisible unless you
+                happened to expand "Materials & study kit" first -- moved
+                below, always visible on their own now. */}
+            {examSessions.length===0&&(<>
             <button type="button" onClick={()=>setPrepMaterialsOpen(o=>!o)} style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"none",color:T.muted,fontSize:12.5,fontWeight:600,fontFamily:T.font,cursor:"pointer",padding:0,marginBottom:prepMaterialsOpen?14:0}}>
               Materials &amp; study kit {prepMaterialsOpen?"︿":"﹀"}
             </button>
-            {prepMaterialsOpen&&(<>
+            {prepMaterialsOpen&&(
             <Card style={{padding:20,marginBottom:16}}>
               <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:10}}>Add study material</div>
               {/* Phase 3 cleanup: this card used to stack five distinct
@@ -9031,20 +9047,23 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                   <button type="button" onClick={()=>setMaterialAddOpen(false)} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,marginBottom:14,textDecoration:"underline"}}>Done adding material</button>
                 )}
               </>)}
-              <div style={{borderTop:`1px solid ${T.border}`,marginTop:14,paddingTop:14}}>
-                <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:10}}>Generate</div>
-                {/* 2026-07-31: one entry point, replacing what used to be
-                    three inconsistent ones (Build my study kit, Flashcards
-                    only/Practice exam only, Redo the plan) -- see
-                    openBuildPlan/commitBuildPlan above. Only rendered
-                    once sessions already exist -- the empty-state card in
-                    the timeline above (examSessions.length===0 branch) is
-                    the one and only "Build study plan" trigger; a second
-                    one here (spotted live) was confusing. */}
-                {examSessions.length>0&&(<>
-                <Btn onClick={()=>openBuildPlan(selectedExam)}>Redo study plan</Btn>
+              {genMsg&&(
+                <div style={{display:"flex",alignItems:"center",gap:10,marginTop:14,borderTop:`1px solid ${T.border}`,paddingTop:14}}>
+                  <span style={{fontSize:11.5,color:genMsg.startsWith("✓")?T.teal:T.red}}>{genMsg}</span>
+                  <button type="button" onClick={()=>setGenMsg("")} style={{background:"none",border:"none",color:T.faint,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>Hide</button>
+                </div>
+              )}
+            </Card>
+            )}
+            </>)}
+            {/* Once a plan exists, "Redo study plan" (which reuses the
+                exact same material + has its own upload step) is the only
+                thing worth surfacing here -- no toggle, no card, no
+                separate add-material UI competing with it. */}
+            {examSessions.length>0&&(
+              <div style={{marginBottom:16}}>
+                <Btn variant="subtle" onClick={()=>openBuildPlan(selectedExam)}>Redo study plan</Btn>
                 <div style={{fontSize:10.5,color:T.muted,marginTop:6}}>Sessions calibrated to your confidence, plus flashcards and a practice exam if you want them.</div>
-                </>)}
                 {genMsg&&(
                   <div style={{display:"flex",alignItems:"center",gap:10,marginTop:8}}>
                     <span style={{fontSize:11.5,color:genMsg.startsWith("✓")?T.teal:T.red}}>{genMsg}</span>
@@ -9052,7 +9071,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                   </div>
                 )}
               </div>
-            </Card>
+            )}
 
             {(deck||examSessions.length>0)&&(
             <Card style={{padding:20,marginBottom:16}}>
@@ -9096,14 +9115,20 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
               )}
             </Card>
             )}
-            </>)}
           </div>
         );
       })()}
 
       {tab==="flashcards"&&(()=>{
         const visibleDecks=allDecks.filter(d=>{
-          if(flashcardGroupFilter&&linkedExamLifecycleState(deckExamIds(d))!==flashcardGroupFilter)return false;
+          // An unlinked deck (linkedExamLifecycleState's own null case,
+          // see its comment) has no exam to be "past due" or "completed"
+          // relative to -- it's always still relevant, same spirit as "no
+          // date" elsewhere in this file. Now that Upcoming is the
+          // default view (not All), null needs to count as a match for
+          // "upcoming" specifically, or every unlinked deck would
+          // silently vanish from the view someone lands on by default.
+          if(flashcardGroupFilter&&(linkedExamLifecycleState(deckExamIds(d))||"upcoming")!==flashcardGroupFilter)return false;
           if(flashcardClassFilter&&deckClassOf(d)!==flashcardClassFilter)return false;
           if(!flashcardSearch.trim())return true;
           return (d.name||"").toLowerCase().includes(flashcardSearch.trim().toLowerCase());
@@ -9152,7 +9177,9 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
 
       {tab==="practiceExams"&&(()=>{
         const visiblePEs=allPracticeExams.filter(pe=>{
-          if(peGroupFilter&&linkedExamLifecycleState(pe.examEventId?[pe.examEventId]:[])!==peGroupFilter)return false;
+          // Same unlinked-null-counts-as-upcoming reasoning as the
+          // flashcards tab just above.
+          if(peGroupFilter&&(linkedExamLifecycleState(pe.examEventId?[pe.examEventId]:[])||"upcoming")!==peGroupFilter)return false;
           if(peClassFilter&&peClassOf(pe)!==peClassFilter)return false;
           if(!peSearch.trim())return true;
           return (pe.name||"").toLowerCase().includes(peSearch.trim().toLowerCase());
@@ -21158,8 +21185,19 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       setSelDay(d);
       if(d.slice(0,7)!==(ym.y+"-"+String(ym.m+1).padStart(2,"0"))){const p=d.split("-");setYm({y:+p[0],m:+p[1]-1});}
     }
+    // Real bug found live: an Attack Block commit is always TWO items
+    // (the due-date marker + the actual session, see
+    // buildAssignmentAttackBlockPair) even though only the session ever
+    // carries a placementReason -- the marker never does. The old
+    // tasksToAdd.length===1 requirement meant that reason never showed
+    // for the single most common "why did it go there" moment in the
+    // app, silently falling through to the generic checkmark toast
+    // instead. withReason.length===1 alone is the real, sufficient
+    // condition: it already guarantees there's exactly one reason to
+    // show, regardless of how many other reason-less items (markers)
+    // rode along in the same batch.
     const withReason=tasksToAdd.filter(function(t){return t.placementReason;});
-    if(tasksToAdd.length===1&&withReason.length===1){
+    if(withReason.length===1){
       setPlacementToast(fmtPlacementReason(withReason[0].placementReason,withReason[0].time));
       setTimeout(()=>setPlacementToast(""),3200);
     }else{
