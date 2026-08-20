@@ -12709,6 +12709,7 @@ function CalendarTab({ setActive = () => {
   };
   const acceptWeekBalanceNudge = () => {
     logSuggestionDecision("weekBalanceNudge", "accepted", {});
+    dismissWeekBalanceNudge();
     setWeekBalanceNudge(false);
     openWeekBalance();
   };

@@ -20185,7 +20185,15 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     if(plan.moves.length>0)setWeekBalanceNudge(true);
   },[events]);
   const declineWeekBalanceNudge=()=>{logSuggestionDecision("weekBalanceNudge","dismissed",{});dismissWeekBalanceNudge();setWeekBalanceNudge(false);};
-  const acceptWeekBalanceNudge=()=>{logSuggestionDecision("weekBalanceNudge","accepted",{});setWeekBalanceNudge(false);openWeekBalance();};
+  // Real bug found live: only "Not now" started the cooldown, so
+  // "Review" left the ambient [events]-watching effect above free to
+  // re-check the instant events changed again -- which included any
+  // edit made from inside the Review flow itself. shouldShowWeekBalanceNudge()
+  // would still pass, computeWeekBalancePlan would still find moves, and
+  // the same nudge popped right back up seconds after being answered,
+  // reading as it flapping back and forth. Either answer means the
+  // student has now seen today's nudge, so either should start the cooldown.
+  const acceptWeekBalanceNudge=()=>{logSuggestionDecision("weekBalanceNudge","accepted",{});dismissWeekBalanceNudge();setWeekBalanceNudge(false);openWeekBalance();};
   const confirmWeekBalance=()=>{
     if(!weekBalancePlan||weekBalancePlan.moves.length===0){setWeekBalanceOpen(false);return;}
     logSuggestionDecision("weekBalancePlan","accepted",{moveCount:weekBalancePlan.moves.length});

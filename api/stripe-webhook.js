@@ -2,14 +2,12 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { db } = require('./_lib/firebase-admin');
 const { Sentry, withSentry } = require('./_lib/sentry');
 
-// 2026-08-10 pricing pass: collapsed Free/Pro/Max down to Free/Pro. The
-// keys below are placeholders -- see api/create-intent.js's PRICES
-// comment for why (can't create real Stripe Price objects here). Paste
-// the real new $6.99/mo and $59.88/yr Price IDs in once they exist in
-// the Stripe dashboard.
+// 2026-08-10 pricing pass: collapsed Free/Pro/Max down to Free/Pro.
+// 2026-08-20: real live-mode Price IDs, same two as api/create-intent.js's
+// PRICES.
 const PLAN_MAP = {
-  REPLACE_WITH_NEW_PRO_MONTHLY_PRICE_ID: 'Pro',
-  REPLACE_WITH_NEW_PRO_ANNUAL_PRICE_ID: 'Pro',
+  price_1TkZlWFJjTMWMaWhqfDLfirV: 'Pro', // $6.99/mo
+  price_1Tkbr1FJjTMWMaWhC4TyEj4F: 'Pro', // $59.88/yr ($4.99/mo)
 };
 
 const PLAN_CREDITS = { Pro: 100000 };
