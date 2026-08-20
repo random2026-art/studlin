@@ -23,6 +23,7 @@ const DELETED_USER_NAME = 'Deleted user';
 // else needs to change. See handleRedeemBeta below for the redemption
 // logic and the GET handler further down for the self-expiring check.
 const BETA_TESTER_EMAILS = [
+  'shenouday7@gmail.com',
 ];
 const BETA_CODE = 'betatesters';
 const BETA_TRIAL_DAYS = 30;
