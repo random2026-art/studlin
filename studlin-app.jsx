@@ -381,7 +381,21 @@ const Card = ({children,style={},onClick}) => (
 // ─── MODAL ────────────────────────────────────────────────────────────────────
 const Modal = ({open, onClose, title, sub, children, footer, width=540}) => {
   if (!open) return null;
-  return (
+  // Portaled straight to <body> -- see flashcardsOverlay's own comment in
+  // StudlinPrep for the fuller explanation of why this is required, not
+  // optional. Short version: [data-page] (the tab-content wrapper every
+  // tab component renders inside) has a CSS animation targeting
+  // `transform`, which per spec makes it a containing block for any
+  // position:fixed descendant left nested inside it -- any component
+  // that returns a single root <div> (StudlinPrep, and likely others)
+  // makes every Modal it renders internally clip to that wrapper's own
+  // box instead of the real viewport, the exact "cream border" bug found
+  // live. Fixing it once here, at the shared component every screen in
+  // the app already uses, instead of hunting down and individually
+  // portaling every call site that happens to be nested -- this is the
+  // one substantially safer place to guarantee it never regresses again,
+  // for call sites that exist today and any added later.
+  return ReactDOM.createPortal((
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
       <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:width,maxHeight:"90vh",background:T.card,borderRadius:8,border:`1px solid ${T.border}`,overflow:"hidden",display:"flex",flexDirection:"column",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)",boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)"}}>
         <div style={{padding:"20px 22px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"flex-start",gap:12}}>
@@ -397,7 +411,7 @@ const Modal = ({open, onClose, title, sub, children, footer, width=540}) => {
         {footer && <div style={{padding:"14px 22px",borderTop:`1px solid ${T.border}`,background:T.bg,display:"flex",gap:10,justifyContent:"flex-end"}}>{footer}</div>}
       </div>
     </div>
-  );
+  ), document.body);
 };
 // ─── GUIDED TAB TOUR ──────────────────────────────────────────────────────────
 // Lightweight first-run coachmark: given targetRef, it draws a spotlight ring
@@ -7091,12 +7105,16 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
   // -- newly Pro-only as of the 2026-08-18 pricing pass.
   const tier={name:"Pro",price:billing==="annual"?"$4.99":"$6.99",perks:["Add Task with AI","AI study plans, flashcards, syllabus scans, brain dump & project breakdowns","Smart Reschedule","Every AI model + 4 study modes"],color:T.lime};
   const choose=()=>{onClose();window.location.href="checkout.html?plan=pro&billing="+billing;};
-  return (
+  return ReactDOM.createPortal((
     // Real bug found live: this modal opens from inside StudlinPrep's own
     // "Build study plan" Modal (the shared Modal component, zIndex:1000)
     // without closing it first -- at the old zIndex:90 the paywall
     // rendered fully behind that still-open modal, invisible. 1010 sits
-    // above every shared Modal instance.
+    // above every shared Modal instance. Also portaled to document.body
+    // now, same reasoning as the shared Modal component's own comment --
+    // without it, this would still clip to StudlinPrep's own box even
+    // though the Modal it layers on top of no longer does, an
+    // inconsistent half-fixed state.
     <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:1010,background:"rgba(8,12,10,0.72)",backdropFilter:"blur(7px)",display:"flex",alignItems:"center",justifyContent:"center"}}>
       <div onClick={e=>e.stopPropagation()} style={{width:400,maxWidth:"92vw",background:T.card,border:"1px solid "+T.border,borderRadius:8,padding:26,boxShadow:"0 40px 90px -30px rgba(0,0,0,0.65)"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
@@ -7127,7 +7145,7 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
         <div onClick={onClose} style={{textAlign:"center",fontSize:12,color:T.muted,cursor:"pointer",padding:6}}>Maybe later</div>
       </div>
     </div>
-  );
+  ), document.body);
 }
 
 // ─── NAV ICONS MAP ────────────────────────────────────────────────────────────
@@ -8178,13 +8196,6 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   // for the same conceptual job. Preview-then-confirm, same discipline as
   // every other scheduling surface in this app -- nothing commits silently. ──
   const [schedulePreview,setSchedulePreview]=useState(null); // {kind:"deck"|"quiz", refId, title, examId, examDate, subject, count, sessions}
-  const openScheduleDeckReviews=(deck)=>{
-    if(!selectedExam)return;
-    const count=4;
-    const sessions=buildSpacedSessionPreviews(selectedExam.date,selectedExam.subject,count);
-    if(sessions.length===0)return;
-    setSchedulePreview({kind:"deck",refId:deck.id,title:deck.name,examId:selectedExam.id,examDate:selectedExam.date,subject:selectedExam.subject,count,sessions});
-  };
   const openSchedulePracticeExam=(pe)=>{
     if(!selectedExam)return;
     // Was a flat 60 minutes regardless of question count -- an 8-question
@@ -9082,7 +9093,14 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                   <div style={{display:"flex",gap:6,flexShrink:0,flexWrap:"wrap"}}>
                     <BtnSm onClick={()=>{lsSet("openDeckId",deck.id);lsSet("openDeckAction","study");setFlashcardsOverlay(true);}}>Study now</BtnSm>
                     <BtnSm variant="ghost" onClick={()=>{lsSet("openDeckId",deck.id);lsSet("openDeckAction","edit");setFlashcardsOverlay(true);}}>{Icon.pen} Edit</BtnSm>
-                    <BtnSm variant="subtle" onClick={()=>openScheduleDeckReviews(deck)}>Schedule Review Sessions</BtnSm>
+                    {/* Real UX gap found live: this deck is always linked
+                        to THIS exam (that's why it's showing here at all),
+                        and "Redo study plan" right above already folds a
+                        flashcard warm-up into every generated session --
+                        this button offered a second, dumber scheduling
+                        path for the exact same deck (fixed 4 sessions,
+                        duration with zero awareness of card count) that
+                        just competed with the smarter one. Cut. */}
                     <BtnSm variant="ghost" onClick={()=>setDeleteConfirm({type:"deck",id:deck.id,examId:selectedExam.id,name:deck.name})}>Delete</BtnSm>
                   </div>
                 </div>
