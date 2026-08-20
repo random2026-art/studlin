@@ -23655,12 +23655,19 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   // wizPostOnboardConnect pick (see ClassSetupWizard's own comment) --
   // same openWeekBalanceOnMount pattern, consumed here since
   // openImportCalModal is only defined at this point in the component.
+  // Real bug found live: ClassSetupWizard renders as an overlay INSIDE
+  // this already-mounted CalendarTab (see the two <ClassSetupWizard>
+  // render sites below), so a mount-only ([] deps) effect had already run
+  // and fired long before the wizard finished and set the flag -- it never
+  // got a second look. Depends on classSetupOpen/quickScanOpen instead so
+  // it re-checks on every open/close transition, including the moment
+  // either wizard actually finishes and closes.
   useEffect(()=>{
     const queued=lsGet("openImportCalOnMount",false);
     if(!queued)return;
     lsSet("openImportCalOnMount",false);
     openImportCalModal(queued===true?null:queued.hint);
-  },[]);
+  },[classSetupOpen,quickScanOpen]);
   // The Canvas Personal Access Token connect flow -- a real account
   // credential, so unlike every other calendar import above it's sent to
   // /api/me (server-side storage, never client-side) instead of

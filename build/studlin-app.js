@@ -12402,8 +12402,8 @@ function CalendarTab({ setActive = () => {
   const [courseDeleteSnapshots, setCourseDeleteSnapshots] = useState(null);
   const [courseDeleteToast, setCourseDeleteToast] = useState("");
   const isFreshAccount = !lsGet("subjects-configured", false) && !lsGet("hasConfiguredRoutine", false) && !lsGet("seenCalendarTour", false);
-  const [classSetupOpen, setClassSetupOpen] = useState(() => !lsGet("subjects-configured", false) && !lsGet("hasConfiguredRoutine", false) && !isFreshAccount);
-  const [quickScanOpen, setQuickScanOpen] = useState(false);
+  const [classSetupOpen2, setClassSetupOpen] = useState(() => !lsGet("subjects-configured", false) && !lsGet("hasConfiguredRoutine", false) && !isFreshAccount);
+  const [quickScanOpen2, setQuickScanOpen] = useState(false);
   const [quickScanTargetCourseId, setQuickScanTargetCourseId] = useState(null);
   const [syllabusNudgeDismissed, setSyllabusNudgeDismissed] = useState(false);
   const [weeklyContentCourseId, setWeeklyContentCourseId] = useState(null);
@@ -12426,8 +12426,8 @@ function CalendarTab({ setActive = () => {
   const [timeOffTime, setTimeOffTime] = useState("18:00");
   const [routineCenterOpen, setRoutineCenterOpen] = useState(false);
   useEffect(() => {
-    if (onWizardOpenChange) onWizardOpenChange(classSetupOpen || routineCenterOpen);
-  }, [classSetupOpen, routineCenterOpen]);
+    if (onWizardOpenChange) onWizardOpenChange(classSetupOpen2 || routineCenterOpen);
+  }, [classSetupOpen2, routineCenterOpen]);
   const addTaskBtnRef = useRef(null);
   const brainDumpLinkRef = useRef(null);
   const rescheduleBtnRef = useRef(null);
@@ -14443,7 +14443,7 @@ Examples:
       onNext: advanceCalTour,
       onSkip: skipCalTour
     }
-  ), /* @__PURE__ */ React.createElement(ClassSetupWizard, { open: classSetupOpen, initialStatus: getProfile().status, onFinish: finishClassSetup, onPartialSync: syncClassSetupState, setPricingOpen }), /* @__PURE__ */ React.createElement(ClassSetupWizard, { open: quickScanOpen, quickScan: true, targetCourseId: quickScanTargetCourseId, initialStatus: getProfile().status, onFinish: finishQuickScan, onSkip: () => {
+  ), /* @__PURE__ */ React.createElement(ClassSetupWizard, { open: classSetupOpen2, initialStatus: getProfile().status, onFinish: finishClassSetup, onPartialSync: syncClassSetupState, setPricingOpen }), /* @__PURE__ */ React.createElement(ClassSetupWizard, { open: quickScanOpen2, quickScan: true, targetCourseId: quickScanTargetCourseId, initialStatus: getProfile().status, onFinish: finishQuickScan, onSkip: () => {
     setQuickScanOpen(false);
     setQuickScanTargetCourseId(null);
     syncClassSetupState();
@@ -14911,7 +14911,7 @@ Examples:
       } }, "Close")
     },
     weekBalancePlan && weekBalancePlan.moves.length > 0 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 5, marginBottom: 16 } }, weekBalancePlan.perDay.filter((d) => d.minutesBefore !== d.minutesAfter).map((d) => /* @__PURE__ */ React.createElement("div", { key: d.date, style: { display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, padding: "6px 10px", background: T.card2, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.text } }, d.date), /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, fontFamily: T.mono } }, d.minutesBefore, "m \u2192 ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, d.minutesAfter, "m"))))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 7, maxHeight: 220, overflowY: "auto" } }, weekBalancePlan.moves.map((m) => /* @__PURE__ */ React.createElement("div", { key: m.id, style: { display: "flex", flexDirection: "column", gap: 4, padding: "9px 12px", background: T.card2, borderRadius: 8, border: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: 13, color: T.text, fontWeight: 500 } }, m.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, flexShrink: 0 } }, m.fromDate, " ", fmtTime(m.fromTime), " \u2192 ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, m.toDate, " ", fmtTime(m.toTime)))), m.reason && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.faint } }, m.reason)))))
-  ), weekBalanceToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.lime, color: T.ink, fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 8 } }, Icon.check, " ", weekBalanceToast), weekBalanceNudge && !classSetupOpen && !routineCenterOpen && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10, lineHeight: 1.5 } }, "Your week's a bit lopsided. Some days are carrying a lot more than others. Want Studlin to spread it out?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: acceptWeekBalanceNudge, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Review"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: declineWeekBalanceNudge, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Not now"))), /* @__PURE__ */ React.createElement(
+  ), weekBalanceToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.lime, color: T.ink, fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 8 } }, Icon.check, " ", weekBalanceToast), weekBalanceNudge && !classSetupOpen2 && !routineCenterOpen && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10, lineHeight: 1.5 } }, "Your week's a bit lopsided. Some days are carrying a lot more than others. Want Studlin to spread it out?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: acceptWeekBalanceNudge, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Review"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: declineWeekBalanceNudge, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Not now"))), /* @__PURE__ */ React.createElement(
     RoutineControlCenterModal,
     {
       open: routineCenterOpen,
@@ -15277,7 +15277,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     if (!queued) return;
     lsSet("openImportCalOnMount", false);
     openImportCalModal(queued === true ? null : queued.hint);
-  }, []);
+  }, [classSetupOpen, quickScanOpen]);
   const connectCanvasToken = async () => {
     const domain = canvasDomainInput.trim();
     const token = canvasTokenInput.trim();
