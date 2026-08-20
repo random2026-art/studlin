@@ -15604,8 +15604,15 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
             if (wkDragOverDay === dk && wkDropTime) {
               const parts = wkDropTime.split(":").map(Number);
               const gh = parts[0]; const gm = parts[1];
+              // Real bug found live: a dragged routine occurrence (gym,
+              // recurring class, etc.) never matches wkDragId at all --
+              // that's only ever set for plain events (see onDragStart
+              // above), routines instead set wkDragRoutineOccurrence. The
+              // lookup below used to silently miss and fall back to a flat
+              // 30min, so the green drop-preview never matched the actual
+              // block being dragged whenever it was a routine.
               const dragEv = events.find(e => e.id === wkDragId);
-              const dur = dragEv ? (dragEv.duration || 30) : 30;
+              const dur = dragEv ? (dragEv.duration || 30) : (wkDragRoutineOccurrence ? (wkDragRoutineOccurrence.duration || 30) : 30);
               ghostEl = <div style={{position:"absolute",top:(gh*60+gm)*(WK_PX_HR/60),left:2,right:2,height:Math.max(22,dur*(WK_PX_HR/60)),borderRadius:5,background:T.lime+"14",border:`1.5px dashed ${T.lime}`,zIndex:4,pointerEvents:"none",boxSizing:"border-box"}} />;
             }
             // Live preview (2026-07-30): a dropped course/activity used to
@@ -15788,7 +15795,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                     )}
                     <div
                       draggable
-                      onDragStart={()=>{ if(!isRoutine){setWkDragId(ev.id); setWkDragDeadline(ev.deadline||null);closePopover();} else {if(onRoutineDragStateChange)onRoutineDragStateChange(true);setWkDragRoutineOccurrence({routineId:ev.routineId,fromDate:ev.date});} }}
+                      onDragStart={()=>{ if(!isRoutine){setWkDragId(ev.id); setWkDragDeadline(ev.deadline||null);closePopover();} else {if(onRoutineDragStateChange)onRoutineDragStateChange(true);setWkDragRoutineOccurrence({routineId:ev.routineId,fromDate:ev.date,duration:dur});} }}
                       onDoubleClick={()=>{ if(!isRoutine)openEdit(ev); else if(onEditRoutine)onEditRoutine(ev.routineId); }}
                       onClick={(e)=>{
                         if(isRoutine){
@@ -16399,7 +16406,7 @@ const WizardStepper=({step})=>{
   );
 };
 
-function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCourseId,onPartialSync,setPricingOpen=()=>{}}){
+function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCourseId,onPartialSync,setPricingOpen=()=>{},setActivePage=()=>{}}){
   const [step,setStep]=useState("status"); // timezone | term | holidays | awake | status | classes | activities | calendarSync | window | finalReview
   const [status,setStatus]=useState(initialStatus||"");
   // Classes fully reviewed this session, staged -- nothing in here touches
@@ -16471,12 +16478,14 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   // Google's single-click popup, that's a real multi-step flow. This
   // wizard has a documented past bug where navigating away mid-flow wiped
   // progress, so rather than embedding that whole flow here (real risk of
-  // repeating it), a pick here just queues which one to open automatically
-  // once the student lands on Calendar right after finishing -- same
-  // pattern as CalendarTab's own openWeekBalanceOnMount signal. Single
-  // pick, not multi-select: this is a "get started on one" nudge, not a
-  // full setup checklist -- the rest are one click away in Settings after.
-  const [wizPostOnboardConnect,setWizPostOnboardConnect]=useState("");
+  // repeating it), a pick here just queues which ones to open automatically
+  // (one at a time) once the student lands on Settings right after
+  // finishing -- same pattern as CalendarTab's own openWeekBalanceOnMount
+  // signal. Multi-select array: a student can genuinely want both their
+  // school's LMS and a work schedule connected (real feedback -- this used
+  // to be single-pick only), each queued modal opens right after the
+  // previous one is closed or confirmed.
+  const [wizPostOnboardConnect,setWizPostOnboardConnect]=useState([]);
   const WIZ_CONNECT_OPTIONS=[
     {value:"canvas",label:"Canvas"},
     {value:"blackboard",label:"Blackboard"},
@@ -17074,16 +17083,22 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     saveWakeSleep({wakeTime,sleepTime});
     lsSet("classSetupPending",[]);
     setPendingClasses([]);
-    // See wizPostOnboardConnect's own comment -- queues CalendarTab's
-    // connect-a-calendar modal to open with this hint the moment the
-    // student lands there, instead of risking this wizard's own
-    // documented navigate-away bug. "workschedule" has no platform-
-    // specific help text (it's not one school's LMS, so there's nothing
-    // school-specific to explain) -- queued as no hint at all, which opens
-    // the modal on its already-existing generic "paste a calendar or
-    // work-schedule link" state.
-    if(wizPostOnboardConnect){
-      lsSet("openImportCalOnMount",wizPostOnboardConnect==="workschedule"?true:{hint:wizPostOnboardConnect});
+    // See wizPostOnboardConnect's own comment -- queues Settings' own
+    // connect-a-calendar modal (that's where openImportCalModal actually
+    // lives, not CalendarTab) to open, one pick at a time, the moment the
+    // student lands there. "workschedule" has no platform-specific help
+    // text (it's not one school's LMS, so there's nothing school-specific
+    // to explain) -- queued as no hint at all, which opens the modal on
+    // its already-existing generic "paste a calendar or work-schedule
+    // link" state.
+    // Real bug found live: finishing this step with a pick selected
+    // queued the flag correctly, but nothing ever navigated the student
+    // to Settings to consume it -- they landed back on Calendar and the
+    // pick silently sat in localStorage, reading as "picking Course Site
+    // did nothing." setActivePage("settings") actually takes them there.
+    if(wizPostOnboardConnect.length>0){
+      lsSet("openImportCalQueue",wizPostOnboardConnect.map(v=>v==="workschedule"?true:{hint:v}));
+      setActivePage("settings");
     }
     onFinish();
   };
@@ -17546,15 +17561,18 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                 wizPostOnboardConnect's own comment for why these are
                 queued for right after Finish instead of connected inline
                 here the way Google is above. */}
-            <div style={{marginTop:16}}>
-              <div style={{fontSize:12,color:T.muted,marginBottom:8}}>Also want to connect your school's calendar or a work schedule? Pick one to set up right after you finish — the rest are always in Settings.</div>
+            <div style={{marginTop:16,marginBottom:8}}>
+              <div style={{fontSize:12,color:T.muted,marginBottom:8}}>Also want to connect your school's calendar or a work schedule? Pick any to set up right after you finish. The rest are always in Settings.</div>
               <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                {WIZ_CONNECT_OPTIONS.map(opt=>(
-                  <button key={opt.value} type="button" onClick={()=>setWizPostOnboardConnect(v=>v===opt.value?"":opt.value)}
-                    style={{padding:"7px 12px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,
-                      background:wizPostOnboardConnect===opt.value?T.lime+"14":T.card2,color:wizPostOnboardConnect===opt.value?T.lime:T.muted,
-                      border:`1px solid ${wizPostOnboardConnect===opt.value?T.lime+"44":T.border}`}}>{opt.label}</button>
-                ))}
+                {WIZ_CONNECT_OPTIONS.map(opt=>{
+                  const picked=wizPostOnboardConnect.includes(opt.value);
+                  return (
+                    <button key={opt.value} type="button" onClick={()=>setWizPostOnboardConnect(v=>picked?v.filter(x=>x!==opt.value):[...v,opt.value])}
+                      style={{padding:"7px 12px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,
+                        background:picked?T.lime+"14":T.card2,color:picked?T.lime:T.muted,
+                        border:`1px solid ${picked?T.lime+"44":T.border}`}}>{opt.label}</button>
+                  );
+                })}
               </div>
             </div>
           </>)}
@@ -22360,8 +22378,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         <TourStep {...CAL_TOUR_STEPS[calTourStep]} step={calTourStep} total={CAL_TOUR_STEPS.length}
           isLast={calTourStep===CAL_TOUR_STEPS.length-1} onNext={advanceCalTour} onSkip={skipCalTour} />
       )}
-      <ClassSetupWizard open={classSetupOpen} initialStatus={getProfile().status} onFinish={finishClassSetup} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} />
-      <ClassSetupWizard open={quickScanOpen} quickScan targetCourseId={quickScanTargetCourseId} initialStatus={getProfile().status} onFinish={finishQuickScan} onSkip={()=>{setQuickScanOpen(false);setQuickScanTargetCourseId(null);syncClassSetupState();}} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} />
+      <ClassSetupWizard open={classSetupOpen} initialStatus={getProfile().status} onFinish={finishClassSetup} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
+      <ClassSetupWizard open={quickScanOpen} quickScan targetCourseId={quickScanTargetCourseId} initialStatus={getProfile().status} onFinish={finishQuickScan} onSkip={()=>{setQuickScanOpen(false);setQuickScanTargetCourseId(null);syncClassSetupState();}} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
       <Modal open={!!weeklyContentCourseId} onClose={()=>setWeeklyContentCourseId(null)} title="Class notes" sub="A short note for each day this class meets -- lecture, lab, homework due, whatever's useful." width={460}
         footer={<><Btn variant="subtle" onClick={()=>setWeeklyContentCourseId(null)}>Cancel</Btn><Btn onClick={saveWeeklyContent}>Save</Btn></>}>
         {(()=>{
@@ -23700,22 +23718,27 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     setImportCalOpen(true);
   };
   // Cross-component "please open this" signal from the onboarding wizard's
-  // wizPostOnboardConnect pick (see ClassSetupWizard's own comment) --
+  // wizPostOnboardConnect picks (see ClassSetupWizard's own comment) --
   // same openWeekBalanceOnMount pattern, consumed here since
   // openImportCalModal is only defined at this point in the component.
-  // Real bug found live: ClassSetupWizard renders as an overlay INSIDE
-  // this already-mounted CalendarTab (see the two <ClassSetupWizard>
-  // render sites below), so a mount-only ([] deps) effect had already run
-  // and fired long before the wizard finished and set the flag -- it never
-  // got a second look. Depends on classSetupOpen/quickScanOpen instead so
-  // it re-checks on every open/close transition, including the moment
-  // either wizard actually finishes and closes.
-  useEffect(()=>{
-    const queued=lsGet("openImportCalOnMount",false);
-    if(!queued)return;
-    lsSet("openImportCalOnMount",false);
-    openImportCalModal(queued===true?null:queued.hint);
-  },[classSetupOpen,quickScanOpen]);
+  // A student can queue more than one platform (real feedback -- this used
+  // to be single-pick), so this is a real queue: openNextQueuedImportCal
+  // pops one entry and opens it, called on mount and again every time the
+  // modal closes (cancelled or confirmed) so the next queued pick opens
+  // right after, instead of silently sitting in localStorage unopened.
+  const openNextQueuedImportCal=()=>{
+    const queue=lsGet("openImportCalQueue",[]);
+    if(!queue||queue.length===0)return;
+    const [next,...rest]=queue;
+    lsSet("openImportCalQueue",rest);
+    openImportCalModal(next===true?null:next.hint);
+  };
+  // SettingsTab is conditionally rendered (active==="settings"?...:) so it
+  // fully unmounts/remounts on every tab switch -- unlike CalendarTab,
+  // there's no wizard-overlay-without-remount timing issue here, so a
+  // mount-only check is correct: it re-runs every time the student
+  // actually navigates into Settings.
+  useEffect(()=>{openNextQueuedImportCal();},[]);
   // The Canvas Personal Access Token connect flow -- a real account
   // credential, so unlike every other calendar import above it's sent to
   // /api/me (server-side storage, never client-side) instead of
@@ -23841,6 +23864,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     setImportedCals(nextSubs);saveImportedCalendars(nextSubs);
     setImportCalOpen(false);setImportCalReview(null);
     showToast(fetched.length+" event"+(fetched.length!==1?"s":"")+" synced from "+label+reconcileToastSuffix(result));
+    openNextQueuedImportCal();
   };
   // Shared by the manual "Sync now" action and the once-a-day silent
   // auto-resync below -- no review gate here, since re-confirming a
@@ -24660,9 +24684,9 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Coming soon</div>
               <div style={{fontSize:12,color:T.muted,lineHeight:1.6}}>Notion integration is in development. It'll appear here when ready.</div>
             </Card>
-            <Modal open={importCalOpen} onClose={()=>setImportCalOpen(false)}
+            <Modal open={importCalOpen} onClose={()=>{setImportCalOpen(false);openNextQueuedImportCal();}}
               title={importCalReview?"Review "+importCalReview.label:importCalPlatformHint?"Connect "+PLATFORM_HELP[importCalPlatformHint].label:"Connect a calendar or work schedule"}
-              sub={importCalReview?(importCalReview.classified?"Studlin sorted these into assignments, exams, and projects. Check anything that looks off before adding.":"These will be added as fixed, occupied time — Studlin will plan around them."):(
+              sub={importCalReview?(importCalReview.classified?"Studlin sorted these into assignments, exams, and projects. Check anything that looks off before adding.":"These will be added as fixed, occupied time. Studlin will plan around them."):(
                 importCalPlatformHint==="canvas"&&importCalMethod==="token"?"Connect with an access token to pull real assignment details and grade weights straight from Canvas.":
                 importCalPlatformHint?"Paste your personal "+PLATFORM_HELP[importCalPlatformHint].label+" calendar feed link. See how below.":
                 "Paste a calendar or work-schedule link (Google, Outlook, iCloud, or your shift-scheduling app's calendar feed)."
@@ -24677,7 +24701,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                 </>
               ):(
                 <>
-                  <Btn variant="subtle" onClick={()=>setImportCalOpen(false)}>Cancel</Btn>
+                  <Btn variant="subtle" onClick={()=>{setImportCalOpen(false);openNextQueuedImportCal();}}>Cancel</Btn>
                   <Btn onClick={importCalPlatformHint==="canvas"&&importCalMethod==="token"?connectCanvasToken:fetchCalendarPreview} disabled={importCalLoading||importCalClassifying} style={{opacity:(importCalLoading||importCalClassifying)?0.6:1}}>
                     {importCalClassifying?"Sorting into assignments/exams…":importCalLoading?(importCalPlatformHint==="canvas"&&importCalMethod==="token"?"Connecting…":"Checking…"):"Continue"}
                   </Btn>
@@ -26876,6 +26900,12 @@ function App() {
   };
   const [creditsOpen,setCreditsOpen]=useState(false);
   const [pricingOpen,setPricingOpenRaw]=useState(false);
+  // checkout.html already has a working Monthly/Annual toggle with a
+  // "Save 29%" badge -- this modal (PlanCards' billing prop was already
+  // wired for it) never had the actual toggle control, always hardcoded
+  // to "monthly", so a student never saw the annual price in-app at all,
+  // only after already clicking through to checkout.
+  const [pricingBilling,setPricingBilling]=useState("monthly");
   // 2026-08-19: every canX() gate across the app used to open this exact
   // same generic "Studlin plans" modal with zero connection to whatever
   // the student just tried to do -- found during a fresh-user paywall
@@ -27737,9 +27767,19 @@ function App() {
       )}
       {/* PRICING MODAL */}
       <Modal open={pricingOpen} onClose={()=>setPricingOpen(false)} title="Studlin plans" sub={(PRICING_REASON_COPY[pricingReason]?PRICING_REASON_COPY[pricingReason]+" ":"")+"Start free. Upgrade when you're ready. Cancel anytime."} width={820}>
-        <PlanCards billing="monthly" onSelect={(key)=>{
+        <div style={{display:"flex",justifyContent:"center",marginBottom:18}}>
+          <div style={{display:"flex",gap:0,background:T.card2,border:`1px solid ${T.border}`,padding:4,borderRadius:99}}>
+            {["monthly","annual"].map(b=>(
+              <button key={b} type="button" onClick={()=>setPricingBilling(b)} style={{padding:"9px 16px",border:"none",borderRadius:99,background:pricingBilling===b?T.ink:"transparent",color:pricingBilling===b?T.cream:T.muted,fontFamily:T.font,fontSize:13.5,fontWeight:500,cursor:"pointer",display:"flex",alignItems:"center",gap:7}}>
+                {b==="monthly"?"Monthly":"Annual"}
+                {b==="annual"&&<span style={{fontFamily:T.mono,fontSize:9.5,fontWeight:700,background:T.lime,color:T.ink,padding:"2px 7px",borderRadius:99}}>Save 29%</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+        <PlanCards billing={pricingBilling} onSelect={(key)=>{
           setPricingOpen(false);
-          if(key!=="free")window.location.href="checkout.html?plan="+key+"&billing=monthly";
+          if(key!=="free")window.location.href="checkout.html?plan="+key+"&billing="+pricingBilling;
         }} />
         <div style={{marginTop:20,padding:"16px 18px",background:T.card2,borderRadius:12,border:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
           <div style={{fontSize:13,color:T.text,fontWeight:500}}>
@@ -28416,7 +28456,7 @@ class ErrorBoundary extends React.Component{
       return (
         <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14,background:"#0D120F",color:"#E8EFE7",fontFamily:"Geist,-apple-system,BlinkMacSystemFont,sans-serif",textAlign:"center",padding:24}}>
           <div style={{fontSize:18,fontWeight:700}}>Something went wrong.</div>
-          <div style={{fontSize:13,color:"rgba(232,239,231,0.6)",maxWidth:320,lineHeight:1.5}}>Studlin hit an error it couldn't recover from. Your data's safe — refreshing usually fixes this.</div>
+          <div style={{fontSize:13,color:"rgba(232,239,231,0.6)",maxWidth:320,lineHeight:1.5}}>Studlin hit an error it couldn't recover from. Your data's safe, refreshing usually fixes this.</div>
           <button onClick={()=>window.location.reload()} style={{padding:"10px 24px",borderRadius:10,background:"#AECE5E",color:"#0D120F",fontSize:14,fontWeight:700,border:"none",cursor:"pointer",fontFamily:"inherit"}}>Refresh</button>
         </div>
       );
