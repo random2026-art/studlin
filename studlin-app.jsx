@@ -4172,7 +4172,12 @@ function startPhaseAwareAttackChain(fields,phases,events,routines,prefs,desiredD
 // slot exists for the chain at all -- the caller decides how to surface
 // that, same "no open slot" toast every other Attack Block entry point
 // already shows.
-function buildAssignmentAttackBlockPair(markerId,fields,phases,events,routines,prefs,desiredDate,desiredTime){
+// skipTask (2026-08-20): "Place manually instead" -- the student wants to
+// drag/drop their own session(s) on the calendar rather than take the
+// auto-placed one, so there's genuinely no task to compute a slot for
+// yet. Returns just the marker, reusing this exact same shape rather
+// than duplicating it in a second construction path that could drift.
+function buildAssignmentAttackBlockPair(markerId,fields,phases,events,routines,prefs,desiredDate,desiredTime,skipTask){
   const marker={
     id:markerId,title:fields.title,date:fields.deadline||desiredDate,time:"23:59",
     subject:fields.subject||"",courseId:fields.courseId||null,notes:fields.notes||"",kind:"deadline",
@@ -4188,6 +4193,7 @@ function buildAssignmentAttackBlockPair(markerId,fields,phases,events,routines,p
     // shape, ready to store as-is.
     ...(fields.outline&&fields.outline.length>0?{outline:fields.outline}:{}),
   };
+  if(skipTask)return {marker,task:null};
   const task=startPhaseAwareAttackChain({...fields,dueEventId:marker.id},phases,events.concat([marker]),routines,prefs,desiredDate,desiredTime);
   if(!task)return null;
   return {marker,task};
@@ -9097,10 +9103,15 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                         to THIS exam (that's why it's showing here at all),
                         and "Redo study plan" right above already folds a
                         flashcard warm-up into every generated session --
-                        this button offered a second, dumber scheduling
-                        path for the exact same deck (fixed 4 sessions,
-                        duration with zero awareness of card count) that
-                        just competed with the smarter one. Cut. */}
+                        the old button here offered a second, dumber AUTO
+                        scheduling path for the exact same deck (fixed 4
+                        sessions, zero awareness of card count) that just
+                        competed with the smarter one. Cut that, but kept
+                        (and this replaces it with) a genuinely different
+                        option: full manual placement, for anyone who'd
+                        rather place review sessions themselves than take
+                        Redo study plan's automatic ones. */}
+                    <BtnSm variant="subtle" onClick={()=>{lsSet("openManualPlacement",{kind:"deck",refId:deck.id,title:deck.name,subject:selectedExam.subject,deadline:selectedExam.date,dueEventId:selectedExam.id});setActive("calendar");}}>Schedule manually</BtnSm>
                     <BtnSm variant="ghost" onClick={()=>setDeleteConfirm({type:"deck",id:deck.id,examId:selectedExam.id,name:deck.name})}>Delete</BtnSm>
                   </div>
                 </div>
@@ -9121,8 +9132,15 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                           <div style={{fontSize:12.5,color:T.text,fontWeight:600}}>{pe.name}</div>
                           <div style={{fontSize:11,color:T.muted,marginTop:2}}>{pe.questions.length} questions{lastAttempt?" · last score "+lastAttempt.score+"/"+lastAttempt.total:" · not taken yet"}</div>
                         </div>
-                        <div style={{display:"flex",gap:6,flexShrink:0}}>
+                        <div style={{display:"flex",gap:6,flexShrink:0,flexWrap:"wrap"}}>
                           <BtnSm variant="subtle" onClick={()=>openSchedulePracticeExam(pe)}>Schedule</BtnSm>
+                          {/* Unlike the flashcard case, this auto-schedule
+                              already scales duration off question count
+                              (see openSchedulePracticeExam's own comment),
+                              so it stays -- this is an added option, not a
+                              replacement, for anyone who'd still rather
+                              place it themselves. */}
+                          <BtnSm variant="ghost" onClick={()=>{lsSet("openManualPlacement",{kind:"pe",refId:pe.id,title:pe.name,subject:selectedExam.subject,deadline:selectedExam.date,dueEventId:selectedExam.id});setActive("calendar");}}>Schedule manually</BtnSm>
                           <BtnSm onClick={()=>startPracticeExam(pe)}>Take</BtnSm>
                           <BtnSm variant="ghost" onClick={()=>setDeleteConfirm({type:"pe",id:pe.id,name:pe.name})}>Delete</BtnSm>
                         </div>
@@ -21597,6 +21615,26 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     if(tasks.length===0){setDeadlineToast("That time conflicts and there's no open slot before the deadline.");setTimeout(()=>setDeadlineToast(""),2800);return;}
     commitTasks(tasks,{userPinned:true});
   };
+  // "Place manually instead" (2026-08-20) -- for an Attack Block
+  // assignment/project, skips auto-placement entirely: creates just the
+  // due-date marker (buildAssignmentAttackBlockPair's skipTask path, same
+  // marker shape the real Attack Block flow uses, not a second copy of
+  // it), then hands off to CalendarTab's manual placement mode (see its
+  // own addManualPlacementSession/finishManualPlacement) so the student
+  // drags/drops their own session(s) instead of taking whatever slot the
+  // algorithm would have picked.
+  const placeAssignmentManually=()=>{
+    if(!evTitle.trim())return;
+    const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
+    const phases=evKind==="project"?(evProjectPlan.phases||[]).map(p=>p.trim()).filter(Boolean):[];
+    const outline=evKind==="project"?normalizeOutlineDraft(evProjectPlan.outline):[];
+    const markerId=String(Date.now()+Math.random()*1000);
+    const pair=buildAssignmentAttackBlockPair(markerId,{title:evTitle.trim(),subject:subj,courseId:courseIdForLabel(subj),notes:evNotes,deadline:evDeadline||null,priority:evPriority,difficulty:evDifficulty,outline},phases,events,getWeeklyRoutine(),getSchedulePreferences(),dayKey(),"09:00",true);
+    if(isProject)recordProjectBreakdown();
+    commitTasks([pair.marker]);
+    lsSet("openManualPlacement",{kind:"attack",refId:pair.marker.id,title:evTitle.trim(),subject:subj,deadline:evDeadline||null,dueEventId:pair.marker.id});
+    setActive("calendar");
+  };
   const aiArrange=async()=>{
     if(!evTitle.trim())return;
     // Real AI cost (directly, and via proposeProjectPhases/proposeOutline
@@ -22892,7 +22930,15 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
               ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveManual} disabled={!(evTitle.trim()&&evDate.trim()&&evTime.trim())} style={{opacity:evTitle.trim()&&evDate.trim()&&evTime.trim()?1:0.45}}>{isReminderKind?"Save reminder":"Save"}</Btn></>
               : taskMode==="manual"
                 ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveManual} disabled={!evTitle.trim()||!evDate.trim()||!evTime.trim()} style={{flex:1,justifyContent:"center",opacity:evTitle.trim()&&evDate.trim()&&evTime.trim()?1:0.45}}>Save to Calendar</Btn></>
-                : <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={aiArrange} disabled={aiLoading||!evTitle.trim()} style={{flex:1,justifyContent:"center",opacity:aiLoading?1:(!evTitle.trim()?0.45:1)}}>{aiLoading?"Scheduling...":"Add Task with AI"}</Btn></>
+                : <>
+                    <Btn variant="subtle" onClick={resetForm}>Cancel</Btn>
+                    {/* Attack Block only -- "let me place it myself" is a
+                        genuinely different action from AI placement, not
+                        a variant of it, so it's its own button rather
+                        than a mode toggle inside Add Task with AI. */}
+                    {evAttackBlock&&<Btn variant="subtle" onClick={placeAssignmentManually} disabled={!evTitle.trim()}>Place manually</Btn>}
+                    <Btn onClick={aiArrange} disabled={aiLoading||!evTitle.trim()} style={{flex:1,justifyContent:"center",opacity:aiLoading?1:(!evTitle.trim()?0.45:1)}}>{aiLoading?"Scheduling...":"Add Task with AI"}</Btn>
+                  </>
         }>
         <Field label="Title"><Input placeholder="e.g. Study Bio chapter 4-6" value={evTitle} onChange={ev=>setEvTitle(ev.target.value)} autoFocus /></Field>
 

@@ -2584,7 +2584,7 @@ function startPhaseAwareAttackChain(fields, phases, events, routines, prefs, des
   if (!task) return null;
   return hasPhases ? { ...task, projectPhaseIndex: 0, phaseName: phases[0], projectTitle: fields.title } : task;
 }
-function buildAssignmentAttackBlockPair(markerId, fields, phases, events, routines, prefs, desiredDate, desiredTime) {
+function buildAssignmentAttackBlockPair(markerId, fields, phases, events, routines, prefs, desiredDate, desiredTime, skipTask) {
   const marker = {
     id: markerId,
     title: fields.title,
@@ -2611,6 +2611,7 @@ function buildAssignmentAttackBlockPair(markerId, fields, phases, events, routin
     // shape, ready to store as-is.
     ...fields.outline && fields.outline.length > 0 ? { outline: fields.outline } : {}
   };
+  if (skipTask) return { marker, task: null };
   const task = startPhaseAwareAttackChain({ ...fields, dueEventId: marker.id }, phases, events.concat([marker]), routines, prefs, desiredDate, desiredTime);
   if (!task) return null;
   return { marker, task };
@@ -5812,9 +5813,15 @@ function StudlinPrep({ setActive = () => {
       lsSet("openDeckId", deck.id);
       lsSet("openDeckAction", "edit");
       setFlashcardsOverlay(true);
-    } }, Icon.pen, " Edit"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setDeleteConfirm({ type: "deck", id: deck.id, examId: selectedExam.id, name: deck.name }) }, "Delete")))), (pes.length > 0 || examSessions.length > 0) && /* @__PURE__ */ React.createElement(Card, { style: { padding: 20 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: T.white, marginBottom: 10 } }, "Practice Exams"), pes.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "No practice exams yet. Generate one from material above.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, pes.map((pe) => {
+    } }, Icon.pen, " Edit"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => {
+      lsSet("openManualPlacement", { kind: "deck", refId: deck.id, title: deck.name, subject: selectedExam.subject, deadline: selectedExam.date, dueEventId: selectedExam.id });
+      setActive("calendar");
+    } }, "Schedule manually"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setDeleteConfirm({ type: "deck", id: deck.id, examId: selectedExam.id, name: deck.name }) }, "Delete")))), (pes.length > 0 || examSessions.length > 0) && /* @__PURE__ */ React.createElement(Card, { style: { padding: 20 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: T.white, marginBottom: 10 } }, "Practice Exams"), pes.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "No practice exams yet. Generate one from material above.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, pes.map((pe) => {
       const lastAttempt = pe.attempts && pe.attempts.length > 0 ? pe.attempts[pe.attempts.length - 1] : null;
-      return /* @__PURE__ */ React.createElement("div", { key: pe.id, style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "9px 12px", background: T.card2, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, fontWeight: 600 } }, pe.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, pe.questions.length, " questions", lastAttempt ? " \xB7 last score " + lastAttempt.score + "/" + lastAttempt.total : " \xB7 not taken yet")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexShrink: 0 } }, /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => openSchedulePracticeExam(pe) }, "Schedule"), /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => startPracticeExam(pe) }, "Take"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setDeleteConfirm({ type: "pe", id: pe.id, name: pe.name }) }, "Delete")));
+      return /* @__PURE__ */ React.createElement("div", { key: pe.id, style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "9px 12px", background: T.card2, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, fontWeight: 600 } }, pe.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, pe.questions.length, " questions", lastAttempt ? " \xB7 last score " + lastAttempt.score + "/" + lastAttempt.total : " \xB7 not taken yet")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexShrink: 0, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => openSchedulePracticeExam(pe) }, "Schedule"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => {
+        lsSet("openManualPlacement", { kind: "pe", refId: pe.id, title: pe.name, subject: selectedExam.subject, deadline: selectedExam.date, dueEventId: selectedExam.id });
+        setActive("calendar");
+      } }, "Schedule manually"), /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => startPracticeExam(pe) }, "Take"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setDeleteConfirm({ type: "pe", id: pe.id, name: pe.name }) }, "Delete")));
     }))));
   })(), tab === "flashcards" && (() => {
     const visibleDecks = allDecks.filter((d) => {
@@ -12773,6 +12780,51 @@ function CalendarTab({ setActive = () => {
     lsSet("openWeekBalanceOnMount", false);
     openWeekBalance();
   }, []);
+  const [manualPlacement, setManualPlacement] = useState(null);
+  const [manualPlacementCount, setManualPlacementCount] = useState(0);
+  useEffect(() => {
+    const queued = lsGet("openManualPlacement", null);
+    if (!queued) return;
+    lsSet("openManualPlacement", null);
+    setManualPlacement(queued);
+    setManualPlacementCount(0);
+  }, []);
+  const addManualPlacementSession = () => {
+    if (!manualPlacement) return;
+    const prefs = getSchedulePreferences();
+    const routines2 = getWeeklyRoutine();
+    const duration = ATTACK_BLOCK_DEFAULT_PROBE_MINS;
+    const slot = findOpenSlotFor(events, routines2, prefs, dayKey(), prefs.workStartTime, duration, manualPlacement.deadline || null);
+    const kindTitle = manualPlacement.kind === "attack" ? manualPlacement.title : manualPlacement.kind === "deck" ? "Review: " + manualPlacement.title : "Practice Exam: " + manualPlacement.title;
+    const task = {
+      id: String(Date.now() + Math.random() * 1e3),
+      title: kindTitle,
+      date: slot.date,
+      time: slot.time,
+      subject: manualPlacement.subject || "",
+      notes: "",
+      kind: "study block",
+      duration,
+      priority: 500,
+      difficulty: 500,
+      deadline: manualPlacement.deadline || null,
+      status: "pending",
+      timeSpent: 0,
+      completedAt: null,
+      userPinned: true,
+      ...manualPlacement.kind === "attack" ? {} : manualPlacement.kind === "deck" ? { deckId: manualPlacement.refId } : { practiceExamId: manualPlacement.refId },
+      ...manualPlacement.dueEventId ? { dueEventId: manualPlacement.dueEventId, isExamPrepSession: manualPlacement.kind !== "attack" } : {}
+    };
+    const next = events.concat([task]);
+    setEvents2(next);
+    lsSet("events", next);
+    setManualPlacementCount((c) => c + 1);
+    setSelDay(task.date);
+  };
+  const finishManualPlacement = () => {
+    setManualPlacement(null);
+    setManualPlacementCount(0);
+  };
   const [weekBalanceNudge, setWeekBalanceNudge] = useState(false);
   useEffect(() => {
     if (!shouldShowWeekBalanceNudge()) return;
@@ -13709,6 +13761,18 @@ function CalendarTab({ setActive = () => {
     }
     commitTasks(tasks, { userPinned: true });
   };
+  const placeAssignmentManually = () => {
+    if (!evTitle.trim()) return;
+    const subj = evSubject === "None" ? "" : evSubject === "Other" && evCustom.trim() ? evCustom.trim() : evSubject;
+    const phases = evKind === "project" ? (evProjectPlan.phases || []).map((p) => p.trim()).filter(Boolean) : [];
+    const outline = evKind === "project" ? normalizeOutlineDraft(evProjectPlan.outline) : [];
+    const markerId = String(Date.now() + Math.random() * 1e3);
+    const pair = buildAssignmentAttackBlockPair(markerId, { title: evTitle.trim(), subject: subj, courseId: courseIdForLabel(subj), notes: evNotes, deadline: evDeadline || null, priority: evPriority, difficulty: evDifficulty, outline }, phases, events, getWeeklyRoutine(), getSchedulePreferences(), dayKey(), "09:00", true);
+    if (isProject) recordProjectBreakdown();
+    commitTasks([pair.marker]);
+    lsSet("openManualPlacement", { kind: "attack", refId: pair.marker.id, title: evTitle.trim(), subject: subj, deadline: evDeadline || null, dueEventId: pair.marker.id });
+    setActive("calendar");
+  };
   const aiArrange = async () => {
     if (!evTitle.trim()) return;
     if (!canUseAiArrange()) {
@@ -14407,7 +14471,7 @@ Examples:
   ].map((item) => /* @__PURE__ */ React.createElement("div", { key: item.label, onClick: item.onClick, style: { display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 14px", cursor: "pointer" }, onMouseEnter: (e) => e.currentTarget.style.background = T.card2, onMouseLeave: (e) => e.currentTarget.style.background = "transparent" }, /* @__PURE__ */ React.createElement("span", { style: { width: 16, color: item.danger ? T.red : T.muted, display: "flex", marginTop: 2 } }, item.icon), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: item.danger ? T.red : T.text } }, item.label), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 1 } }, item.sub))))))), /* @__PURE__ */ React.createElement("div", { style: { position: "relative" }, ref: addTaskBtnRef }, /* @__PURE__ */ React.createElement("button", { onClick: () => openNewAI(selDay), title: "Add", style: { width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", background: T.lime, border: "none", borderRadius: 4, color: T.ink, cursor: "pointer" } }, Icon.plus)))), editRoutineMode && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "9px 14px", background: T.lime + "10", border: `1px solid ${T.lime}33`, borderRadius: 6, marginBottom: 14, fontSize: 12.5, color: T.text } }, /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, "Editing your Weekly Routine. One-off tasks are dimmed. Click a routine block to edit it, or hover and tap \xD7 to delete it everywhere it repeats."), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => {
     setEditRoutineMode(false);
     setHoveredRoutineId(null);
-  } }, "Done")), calView === "monthly" && /* @__PURE__ */ React.createElement(Card, { style: { padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 3 } }, ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { fontSize: 10, fontWeight: 600, color: T.muted, textAlign: "center", padding: "6px 0", letterSpacing: "0.05em" } }, d)), (() => {
+  } }, "Done")), manualPlacement && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "9px 14px", background: T.lime + "10", border: `1px solid ${T.lime}33`, borderRadius: 6, marginBottom: 14, fontSize: 12.5, color: T.text } }, /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, "Placing sessions for ", /* @__PURE__ */ React.createElement("strong", null, manualPlacement.title), ". Drag each one to where you want it, resize to change duration.", manualPlacementCount > 0 ? " " + manualPlacementCount + " placed so far." : ""), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: addManualPlacementSession }, "+ Add a session"), /* @__PURE__ */ React.createElement(BtnSm, { onClick: finishManualPlacement }, "Done")), calView === "monthly" && /* @__PURE__ */ React.createElement(Card, { style: { padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 3 } }, ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { fontSize: 10, fontWeight: 600, color: T.muted, textAlign: "center", padding: "6px 0", letterSpacing: "0.05em" } }, d)), (() => {
     const monthHeavyDays = computeMonthHeavyDays(cells.filter((c) => !c.out).map((c) => ({ key: c.key, minutes: dayWorkloadMinutes((byDay[c.key] || []).filter((ev) => ev.kind !== "free period")) })));
     return cells.map((c, i) => {
       const evs = (byDay[c.key] || []).filter((ev) => ev.kind !== "free period");
@@ -14656,7 +14720,7 @@ Examples:
       title: "New task",
       sub: taskMode === "manual" ? "Add details and pick exactly when." : "Add details and Studlin finds the time.",
       width: 580,
-      footer: isChecklistMode ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: resetForm }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: saveChecklistItem, disabled: !evTitle.trim(), style: { flex: 1, justifyContent: "center", opacity: evTitle.trim() ? 1 : 0.45 } }, "Add to Checklist")) : isReminderKind || isFixedKind ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: resetForm }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: saveManual, disabled: !(evTitle.trim() && evDate.trim() && evTime.trim()), style: { opacity: evTitle.trim() && evDate.trim() && evTime.trim() ? 1 : 0.45 } }, isReminderKind ? "Save reminder" : "Save")) : taskMode === "manual" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: resetForm }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: saveManual, disabled: !evTitle.trim() || !evDate.trim() || !evTime.trim(), style: { flex: 1, justifyContent: "center", opacity: evTitle.trim() && evDate.trim() && evTime.trim() ? 1 : 0.45 } }, "Save to Calendar")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: resetForm }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: aiArrange, disabled: aiLoading || !evTitle.trim(), style: { flex: 1, justifyContent: "center", opacity: aiLoading ? 1 : !evTitle.trim() ? 0.45 : 1 } }, aiLoading ? "Scheduling..." : "Add Task with AI"))
+      footer: isChecklistMode ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: resetForm }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: saveChecklistItem, disabled: !evTitle.trim(), style: { flex: 1, justifyContent: "center", opacity: evTitle.trim() ? 1 : 0.45 } }, "Add to Checklist")) : isReminderKind || isFixedKind ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: resetForm }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: saveManual, disabled: !(evTitle.trim() && evDate.trim() && evTime.trim()), style: { opacity: evTitle.trim() && evDate.trim() && evTime.trim() ? 1 : 0.45 } }, isReminderKind ? "Save reminder" : "Save")) : taskMode === "manual" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: resetForm }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: saveManual, disabled: !evTitle.trim() || !evDate.trim() || !evTime.trim(), style: { flex: 1, justifyContent: "center", opacity: evTitle.trim() && evDate.trim() && evTime.trim() ? 1 : 0.45 } }, "Save to Calendar")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: resetForm }, "Cancel"), evAttackBlock && /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: placeAssignmentManually, disabled: !evTitle.trim() }, "Place manually"), /* @__PURE__ */ React.createElement(Btn, { onClick: aiArrange, disabled: aiLoading || !evTitle.trim(), style: { flex: 1, justifyContent: "center", opacity: aiLoading ? 1 : !evTitle.trim() ? 0.45 : 1 } }, aiLoading ? "Scheduling..." : "Add Task with AI"))
     },
     /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement(Input, { placeholder: "e.g. Study Bio chapter 4-6", value: evTitle, onChange: (ev) => setEvTitle(ev.target.value), autoFocus: true })),
     isTaskKind && !isChecklistMode && /* @__PURE__ */ React.createElement(Field, { label: "Scheduling" }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 2, background: T.card2, padding: 2, borderRadius: 4, width: "fit-content" } }, [{ id: "manual", label: "I'll pick the time" }, { id: "ai", label: "Studlin finds the time" }].map((v) => /* @__PURE__ */ React.createElement(
