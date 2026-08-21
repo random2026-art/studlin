@@ -3456,6 +3456,22 @@ function computeReviewDates(examDateKey, todayKey, desiredCount) {
     return dayKey(d);
   }).sort();
 }
+function gradeWeightNudgeFor(gradeWeightPercent) {
+  return gradeWeightPercent != null ? Math.max(-0.15, Math.min(0.15, (gradeWeightPercent - 20) / 200)) : 0;
+}
+function scoreTierFromPercent(pct) {
+  if (pct >= 85) return "above";
+  if (pct >= 70) return "expected";
+  return "below";
+}
+const SCORE_TIER_LABEL = { below: "Worse than expected", expected: "About what I expected", above: "Better than expected" };
+function subjectOutcomeNudge(subject) {
+  const scored = lsGet("events", []).filter((e) => e.kind === "exam" && e.subject === subject && e.scoreTier);
+  if (scored.length < 3) return 0;
+  const credit = { below: -1, expected: 0, above: 1 };
+  const avg = scored.reduce((s, e) => s + (credit[e.scoreTier] || 0), 0) / scored.length;
+  return Math.max(-0.15, Math.min(0.15, -avg * 0.15));
+}
 const defaultSessionCountFor = (examWeight, importanceLevel, daysUntil) => {
   if (daysUntil == null || !isFinite(daysUntil)) return examWeight === "quiz" ? 2 : 4;
   const ceiling = examWeight === "quiz" ? 2 : importanceLevel === "critical" ? 6 : 4;
@@ -3474,12 +3490,16 @@ function materialVolumeBonus(materialCharCount) {
   return 0;
 }
 const IMPORTANCE_TO_DURATION_MULTIPLIER = { minor: 0.85, moderate: 1, major: 1.15, critical: 1.3 };
-function computeStudyPlanParams(examWeight, baseDuration, confidenceLevel, materialCharCount, importanceLevel, daysUntil) {
+function computeStudyPlanParams(examWeight, baseDuration, confidenceLevel, materialCharCount, importanceLevel, daysUntil, gradeWeightPercent, confidenceLog) {
   const level = STUDY_PLAN_CONFIDENCE_LEVELS[confidenceLevel] || STUDY_PLAN_CONFIDENCE_LEVELS.okay;
+  const shakyStreak = confidenceLevel === "shaky" && isConfidenceStreak(confidenceLog, "shaky", 2);
+  const sessionMultiplier = level.sessionMultiplier + (shakyStreak ? 0.15 : 0);
+  const durationMultiplier = level.durationMultiplier + (shakyStreak ? 0.1 : 0);
   const base = defaultSessionCountFor(examWeight, importanceLevel, daysUntil) + materialVolumeBonus(materialCharCount);
-  const sessionCount = Math.max(1, Math.min(6, Math.round(base * level.sessionMultiplier)));
+  const sessionCount = Math.max(1, Math.min(6, Math.round(base * sessionMultiplier)));
   const importanceMultiplier = importanceLevel ? IMPORTANCE_TO_DURATION_MULTIPLIER[importanceLevel] ?? 1 : 1;
-  const sessionDuration = Math.max(15, Math.round((baseDuration || 25) * level.durationMultiplier * importanceMultiplier / 5) * 5);
+  const gradeWeightMultiplier = 1 + gradeWeightNudgeFor(gradeWeightPercent);
+  const sessionDuration = Math.max(15, Math.round((baseDuration || 25) * durationMultiplier * importanceMultiplier * gradeWeightMultiplier / 5) * 5);
   return { sessionCount, sessionDuration, difficultyValue: level.difficultyValue };
 }
 function scaledFlashcardCount(materialCharCount) {
@@ -3496,7 +3516,7 @@ function applyHoursTarget(sessionCount, sessionDuration, hoursTarget) {
   const perSession = Math.max(10, Math.round(targetMins / sessionCount / 5) * 5);
   return { sessionCount, sessionDuration: perSession };
 }
-function studyPlanReasoning(confidenceLevel, importanceLevel, materialCharCount, hadHistoricalDuration, hoursTargetAdjusted, sessionCount, sessionDuration, hasTaperedLastSession, daysUntil) {
+function studyPlanReasoning(confidenceLevel, importanceLevel, materialCharCount, hadHistoricalDuration, hoursTargetAdjusted, sessionCount, sessionDuration, hasTaperedLastSession, daysUntil, weekPressured) {
   const confPhrase = confidenceLevel === "shaky" ? "you said you're shaky on this material" : confidenceLevel === "solid" ? "you're already feeling solid on this material" : "you're feeling okay but not solid on this material";
   const importancePhrase = importanceLevel && importanceLevel !== "moderate" ? ", and it's a " + importanceLevel + " exam" : "";
   const countLine = sessionCount + " session" + (sessionCount !== 1 ? "s" : "") + " -- " + confPhrase + importancePhrase + ".";
@@ -3507,6 +3527,7 @@ function studyPlanReasoning(confidenceLevel, importanceLevel, materialCharCount,
   const durationLine = sessionDuration + " minutes each -- " + durBits.join(", and ") + ".";
   const lines = [countLine, durationLine];
   if (daysUntil != null && daysUntil <= 6) lines.push("There isn't much time before the exam, so sessions are more concentrated -- more runway would spread this out further.");
+  if (weekPressured) lines.push("Your week already has other exam prep in it, so this is a bit more concentrated than usual. Redo this plan anytime if your week frees up.");
   if (hasTaperedLastSession) lines.push("Your last session is lighter -- a final review instead of new material, right before the exam.");
   if (hoursTargetAdjusted) lines.push("Adjusted to match the study time you asked for.");
   return lines;
@@ -3515,10 +3536,21 @@ function suggestDurationFor(subject, kind, difficulty, minSamples) {
   const minN = minSamples || TIER0_MIN_BUCKET_SAMPLE;
   const events = lsGet("events", []).filter((e) => e.status === "done" && e.timeSpent && e.subject === subject && e.kind === kind);
   if (events.length < minN) return null;
+  const completionLog = lsGet("completionLog", []);
+  const creditByTaskId = /* @__PURE__ */ new Map();
+  for (const row of completionLog) {
+    if (row.taskId) creditByTaskId.set(row.taskId, completionCredit(row));
+  }
   const medianOf = (pool) => {
-    const sorted = pool.map((e) => e.timeSpent).sort((a, b) => a - b);
-    const mid = Math.floor(sorted.length / 2);
-    return sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+    const shares = [];
+    for (const e of pool) {
+      const credit = creditByTaskId.has(e.id) ? creditByTaskId.get(e.id) : 1;
+      const n = Math.max(1, Math.round(credit * 4));
+      for (let i = 0; i < n; i++) shares.push(e.timeSpent);
+    }
+    shares.sort((a, b) => a - b);
+    const mid = Math.floor(shares.length / 2);
+    return shares.length % 2 ? shares[mid] : Math.round((shares[mid - 1] + shares[mid]) / 2);
   };
   if (difficulty != null) {
     const tier = difficultyTierOf({ difficulty });
@@ -4850,6 +4882,8 @@ function StudlinPrep({ setActive = () => {
   const [projectGroupFilter, setProjectGroupFilter] = useState("upcoming");
   const GROUP_BY_OPTIONS = [{ value: "upcoming", label: "Upcoming" }, { value: "", label: "All" }, { value: "past-due", label: "Past Due" }, { value: "completed", label: "Completed" }];
   const [examCompleteSessionPrompt, setExamCompleteSessionPrompt] = useState(false);
+  const [examScoreDraftOpen, setExamScoreDraftOpen] = useState(false);
+  const [examScoreDraft, setExamScoreDraft] = useState("");
   const [flashcardSearch, setFlashcardSearch] = useState("");
   const [flashcardClassFilter, setFlashcardClassFilter] = useState("");
   const [flashcardGroupFilter, setFlashcardGroupFilter] = useState("upcoming");
@@ -5004,10 +5038,14 @@ function StudlinPrep({ setActive = () => {
     if (hasMaterial) persistBuildPlanMaterial();
     const highStakes = buildPlanExam.importanceLevel === "critical" || buildPlanExam.importanceLevel === "major";
     const historicalDuration = suggestDurationFor(buildPlanExam.subject, "study block", void 0, highStakes ? TIER0_MIN_BUCKET_SAMPLE * 2 : void 0);
-    const baseDuration = historicalDuration || 25;
+    const baseDuration = (historicalDuration || 25) * (1 + subjectOutcomeNudge(buildPlanExam.subject));
     const daysUntilExam = Math.round((/* @__PURE__ */ new Date(buildPlanExam.date + "T12:00:00") - /* @__PURE__ */ new Date(dayKey() + "T12:00:00")) / 864e5);
-    const params = computeStudyPlanParams(buildPlanExam.examWeight, baseDuration, buildPlanConfidence, buildPlanMaterialText.length, buildPlanExam.importanceLevel, daysUntilExam);
-    const { sessionCount, sessionDuration } = applyHoursTarget(params.sessionCount, params.sessionDuration, parseFloat(buildPlanHoursTarget));
+    const params = computeStudyPlanParams(buildPlanExam.examWeight, baseDuration, buildPlanConfidence, buildPlanMaterialText.length, buildPlanExam.importanceLevel, daysUntilExam, buildPlanExam.gradeWeightPercent, buildPlanExam.confidenceLog);
+    const prefs = getSchedulePreferences();
+    const probeDates = computeReviewDates(buildPlanExam.date, dayKey(), params.sessionCount);
+    const weekPressured = probeDates.length > 0 && weekPrepLoad(probeDates[0], buildPlanExam, lsGet("events", []), prefs).isPressured;
+    const pressureAdjusted = weekPressured && params.sessionCount > 1 ? applyHoursTarget(params.sessionCount - 1, params.sessionDuration, params.sessionCount * params.sessionDuration / 60) : params;
+    const { sessionCount, sessionDuration } = applyHoursTarget(pressureAdjusted.sessionCount, pressureAdjusted.sessionDuration, parseFloat(buildPlanHoursTarget));
     const dates = computeReviewDates(buildPlanExam.date, dayKey(), sessionCount);
     const hasTaperedLastSession = dates.length >= 3;
     const taperedLastDuration = hasTaperedLastSession ? Math.max(15, Math.round(sessionDuration * 0.6 / 5) * 5) : null;
@@ -5024,7 +5062,12 @@ function StudlinPrep({ setActive = () => {
         importanceLevel: buildPlanExam.importanceLevel,
         materialCharCount: buildPlanMaterialText.length,
         hadHistoricalDuration: historicalDuration != null,
-        hoursTargetAdjusted: sessionCount !== params.sessionCount || sessionDuration !== params.sessionDuration,
+        // Compared against pressureAdjusted, not the raw params -- this
+        // should only reflect the student's OWN typed-in hours target,
+        // not the automatic week-pressure shaping above (that gets its
+        // own separate, honest weekPressured line instead).
+        hoursTargetAdjusted: sessionCount !== pressureAdjusted.sessionCount || sessionDuration !== pressureAdjusted.sessionDuration,
+        weekPressured,
         daysUntil: daysUntilExam
       }
     });
@@ -5637,6 +5680,30 @@ function StudlinPrep({ setActive = () => {
       setExamCompleteSessionPrompt(false);
       refresh();
     };
+    const saveExamScore = (scoreTier, scorePercent) => {
+      patchExam(selectedExam.id, { scoreTier, scorePercent: scorePercent ?? null });
+      setExamScoreDraftOpen(false);
+      setExamScoreDraft("");
+      refresh();
+    };
+    const clearExamScore = () => {
+      patchExam(selectedExam.id, { scoreTier: null, scorePercent: null });
+      refresh();
+    };
+    const confidenceOutcomeInsight = (() => {
+      const scored = allExamsForPrep().filter((ex) => ex.scoreTier && ex.confidenceLog && ex.confidenceLog.length > 0);
+      if (scored.length < 3) return null;
+      const zoneOf = (ex) => confidenceZoneOf(ex.confidenceLog[ex.confidenceLog.length - 1]);
+      const solidButBelow = scored.filter((ex) => zoneOf(ex) === "solid" && ex.scoreTier === "below");
+      const shakyButAbove = scored.filter((ex) => zoneOf(ex) === "shaky" && ex.scoreTier === "above");
+      if (solidButBelow.length >= Math.ceil(scored.length / 2) && solidButBelow.length >= shakyButAbove.length) {
+        return 'Your "solid" confidence calls have run worse than expected on ' + solidButBelow.length + " of your last " + scored.length + " scored exams. Worth trusting that answer a little more cautiously.";
+      }
+      if (shakyButAbove.length >= Math.ceil(scored.length / 2)) {
+        return "You've scored better than expected on " + shakyButAbove.length + " of your last " + scored.length + ' "shaky" exams. You might be tougher on yourself than the results show.';
+      }
+      return null;
+    })();
     const priorityShiftNote = (() => {
       const log = selectedExam.confidenceLog || [];
       if (log.length < 2) return null;
@@ -5693,7 +5760,13 @@ function StudlinPrep({ setActive = () => {
       metaParts.push(pendingSessions.length + " session" + (pendingSessions.length !== 1 ? "s" : "") + " left");
       if (deck) metaParts.push(cardsDue + " card" + (cardsDue !== 1 ? "s" : "") + " due");
     }
-    return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("button", { onClick: () => setSelectedExamId(null), style: { background: "none", border: "none", color: T.muted, fontSize: 12, fontFamily: T.font, cursor: "pointer", padding: 0, marginBottom: 14, display: "flex", alignItems: "center", gap: 4 } }, "\u2190 All exams"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 24, fontWeight: 800, color: T.white, letterSpacing: "-0.01em", marginBottom: 4, lineHeight: 1.2 } }, selectedExam.title, " \xB7 ", countdownLabel), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginBottom: 14 } }, metaParts.join(" \xB7 ")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 14 } }, isExamCompleted ? /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: T.lime, background: T.lime + "14", border: `1px solid ${T.lime}44`, borderRadius: 6, padding: "4px 10px" } }, "COMPLETED") : itemLifecycleState(selectedExam, dayKey()) === "past-due" && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: T.amber, background: T.amber + "14", border: `1px solid ${T.amber}44`, borderRadius: 6, padding: "4px 10px" } }, "PAST DUE"), /* @__PURE__ */ React.createElement(BtnSm, { variant: isExamCompleted ? "ghost" : "subtle", onClick: toggleExamCompleted }, isExamCompleted ? "Mark as uncomplete" : "Mark as completed"), examSessions.length > 0 && /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => openBuildPlan(selectedExam) }, "Redo study plan")), examCompleteSessionPrompt && /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.amber}44`, borderRadius: 8, padding: "12px 14px", marginBottom: 20, fontSize: 12.5, color: T.text, lineHeight: 1.5 } }, "You still have ", examPendingSessions.length, " session", examPendingSessions.length !== 1 ? "s" : "", " scheduled for this \u2014 cancel ", examPendingSessions.length !== 1 ? "them" : "it", " too?", /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => finishMarkingComplete(true) }, "Cancel ", examPendingSessions.length !== 1 ? "them" : "it"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => finishMarkingComplete(false) }, "Keep them"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setExamCompleteSessionPrompt(false) }, "Never mind"))), priorityShiftNote && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 14 } }, priorityShiftNote), weekTightNudge && /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: "12px 14px", marginBottom: 20, fontSize: 12.5, color: T.text, lineHeight: 1.5 } }, "Your week's tight. Studlin found room by moving some lower-priority sessions around.", /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
+    return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("button", { onClick: () => setSelectedExamId(null), style: { background: "none", border: "none", color: T.muted, fontSize: 12, fontFamily: T.font, cursor: "pointer", padding: 0, marginBottom: 14, display: "flex", alignItems: "center", gap: 4 } }, "\u2190 All exams"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 24, fontWeight: 800, color: T.white, letterSpacing: "-0.01em", marginBottom: 4, lineHeight: 1.2 } }, selectedExam.title, " \xB7 ", countdownLabel), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginBottom: 14 } }, metaParts.join(" \xB7 ")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 14 } }, isExamCompleted ? /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: T.lime, background: T.lime + "14", border: `1px solid ${T.lime}44`, borderRadius: 6, padding: "4px 10px" } }, "COMPLETED") : itemLifecycleState(selectedExam, dayKey()) === "past-due" && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: T.amber, background: T.amber + "14", border: `1px solid ${T.amber}44`, borderRadius: 6, padding: "4px 10px" } }, "PAST DUE"), /* @__PURE__ */ React.createElement(BtnSm, { variant: isExamCompleted ? "ghost" : "subtle", onClick: toggleExamCompleted }, isExamCompleted ? "Mark as uncomplete" : "Mark as completed"), examSessions.length > 0 && /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => openBuildPlan(selectedExam) }, "Redo study plan"), (isExamCompleted || itemLifecycleState(selectedExam, dayKey()) === "past-due") && /* @__PURE__ */ React.createElement(React.Fragment, null, selectedExam.scoreTier && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: T.teal, background: T.teal + "14", border: `1px solid ${T.teal}44`, borderRadius: 6, padding: "4px 10px" } }, selectedExam.scorePercent != null ? selectedExam.scorePercent + "%" : SCORE_TIER_LABEL[selectedExam.scoreTier]), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => {
+      setExamScoreDraft(selectedExam.scorePercent != null ? String(selectedExam.scorePercent) : "");
+      setExamScoreDraftOpen((o) => !o);
+    } }, selectedExam.scoreTier ? "Edit score" : "Add your score"))), examScoreDraftOpen && /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: "12px 14px", marginBottom: 20, fontSize: 12.5, color: T.text } }, /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 8, color: T.muted } }, "How'd it go? Optional -- only used to make your future plans for this subject smarter."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap", alignItems: "center" } }, /* @__PURE__ */ React.createElement(Input, { type: "number", min: 0, max: 100, placeholder: "Score % (optional)", value: examScoreDraft, onChange: (e) => setExamScoreDraft(e.target.value), style: { width: 150 } }), /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
+      const pct = Math.max(0, Math.min(100, parseFloat(examScoreDraft)));
+      saveExamScore(scoreTierFromPercent(pct), pct);
+    }, disabled: examScoreDraft === "" || isNaN(parseFloat(examScoreDraft)) }, "Save %")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } }, Object.entries(SCORE_TIER_LABEL).map(([tier, label]) => /* @__PURE__ */ React.createElement(BtnSm, { key: tier, variant: "ghost", onClick: () => saveExamScore(tier, null) }, label))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, selectedExam.scoreTier && /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: clearExamScore, style: { color: T.red } }, "Clear score"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setExamScoreDraftOpen(false) }, "Cancel"))), examCompleteSessionPrompt && /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.amber}44`, borderRadius: 8, padding: "12px 14px", marginBottom: 20, fontSize: 12.5, color: T.text, lineHeight: 1.5 } }, "You still have ", examPendingSessions.length, " session", examPendingSessions.length !== 1 ? "s" : "", " scheduled for this \u2014 cancel ", examPendingSessions.length !== 1 ? "them" : "it", " too?", /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => finishMarkingComplete(true) }, "Cancel ", examPendingSessions.length !== 1 ? "them" : "it"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => finishMarkingComplete(false) }, "Keep them"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setExamCompleteSessionPrompt(false) }, "Never mind"))), confidenceOutcomeInsight && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.teal, background: T.teal + "0c", border: `1px solid ${T.teal}33`, borderRadius: 8, padding: "10px 12px", marginBottom: 14, lineHeight: 1.5 } }, confidenceOutcomeInsight), priorityShiftNote && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 14 } }, priorityShiftNote), weekTightNudge && /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: "12px 14px", marginBottom: 20, fontSize: 12.5, color: T.text, lineHeight: 1.5 } }, "Your week's tight. Studlin found room by moving some lower-priority sessions around.", /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
       setWeekTightNudge(false);
       setActive("calendar");
     } }, "See what's using the time"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => {
@@ -5975,7 +6048,7 @@ function StudlinPrep({ setActive = () => {
     ) : /* @__PURE__ */ React.createElement(React.Fragment, null, buildPlanPreview.reasoningInputs && (() => {
       const lastOv = buildPlanOverrides[buildPlanOverrides.length - 1];
       const lastIsLighter = buildPlanPreview.dates.length >= 3 && lastOv && lastOv.duration && lastOv.duration < buildPlanPreview.sessionDuration;
-      return /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.text, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", marginBottom: 14, lineHeight: 1.6 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "Why this plan"), studyPlanReasoning(buildPlanPreview.reasoningInputs.confidenceLevel, buildPlanPreview.reasoningInputs.importanceLevel, buildPlanPreview.reasoningInputs.materialCharCount, buildPlanPreview.reasoningInputs.hadHistoricalDuration, buildPlanPreview.reasoningInputs.hoursTargetAdjusted, buildPlanPreview.sessionCount, buildPlanPreview.sessionDuration, lastIsLighter, buildPlanPreview.reasoningInputs.daysUntil).map((line, i) => /* @__PURE__ */ React.createElement("div", { key: i }, line)));
+      return /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.text, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", marginBottom: 14, lineHeight: 1.6 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "Why this plan"), studyPlanReasoning(buildPlanPreview.reasoningInputs.confidenceLevel, buildPlanPreview.reasoningInputs.importanceLevel, buildPlanPreview.reasoningInputs.materialCharCount, buildPlanPreview.reasoningInputs.hadHistoricalDuration, buildPlanPreview.reasoningInputs.hoursTargetAdjusted, buildPlanPreview.sessionCount, buildPlanPreview.sessionDuration, lastIsLighter, buildPlanPreview.reasoningInputs.daysUntil, buildPlanPreview.reasoningInputs.weekPressured).map((line, i) => /* @__PURE__ */ React.createElement("div", { key: i }, line)));
     })(), (buildPlanGenFlashcards || buildPlanGenPE) && materialText.trim() && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.text, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", marginBottom: 14, lineHeight: 1.6 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "Also included"), buildPlanGenFlashcards && /* @__PURE__ */ React.createElement("div", null, "~", scaledFlashcardCount(materialText.length), " flashcards", buildPlanWeaveCards ? ", woven into every session below as a quick review before you start." : " -- created on their own, not part of these sessions. Schedule review time separately from Flashcards."), buildPlanGenPE && /* @__PURE__ */ React.createElement("div", null, "A ", scaledQuizCount(materialText.length), "-question practice exam", buildPlanWeavePE ? " -- your last session becomes a sit-down for it instead of new material." : " -- created on its own, not part of these sessions. Schedule it separately from Practice Exams.")), buildPlanPreview.dates.length > 0 && (() => {
       const pressure = weekPrepLoad(buildPlanPreview.dates[0], buildPlanExam, lsGet("events", []), getSchedulePreferences());
       if (!pressure.isPressured) return null;
@@ -8068,8 +8141,7 @@ function evaluateExamPrepAdjustment(examEvent, events, prefs) {
   const rating = confidenceZoneOf(rawRating);
   const remaining = events.filter((e) => e.dueEventId === examEvent.id && e.status === "pending").sort((a, b) => a.date < b.date ? -1 : 1);
   if (rating === "okay") {
-    const lastThree = log.slice(-3);
-    const isPlateau = lastThree.length === 3 && lastThree.every((r) => confidenceZoneOf(r) === "okay");
+    const isPlateau = isConfidenceStreak(log, "okay", 3);
     if (!isPlateau || remaining.length === 0) return null;
     const next2 = remaining[0];
     const newDuration = Math.max(15, Math.round(next2.duration * 1.15 / 5) * 5);
@@ -8084,7 +8156,7 @@ function evaluateExamPrepAdjustment(examEvent, events, prefs) {
     };
   }
   if (rating === "solid") {
-    const lastTwoSolid = log.length >= 2 && confidenceZoneOf(log[log.length - 1]) === "solid" && confidenceZoneOf(log[log.length - 2]) === "solid";
+    const lastTwoSolid = isConfidenceStreak(log, "solid", 2);
     if (!lastTwoSolid || remaining.length === 0) return null;
     const next2 = remaining[0];
     if (examEvent.examWeight === "major") {
@@ -8122,6 +8194,19 @@ function evaluateExamPrepAdjustment(examEvent, events, prefs) {
     };
   }
   const next = remaining[0];
+  if (isConfidenceStreak(log, "shaky", 2)) {
+    const newDuration = Math.max(15, Math.round(next.duration * STUDY_PLAN_CONFIDENCE_LEVELS.shaky.durationMultiplier / 5) * 5);
+    if (newDuration > next.duration) {
+      return {
+        type: "extend",
+        examId: examEvent.id,
+        sessionId: next.id,
+        oldDuration: next.duration,
+        newDuration,
+        reason: "You've said this material isn't clicking twice in a row on " + examEvent.title + ". The next session could run longer, " + next.duration + "m to " + newDuration + "m, to give it real room."
+      };
+    }
+  }
   const pressure = weekPrepLoad(next.date, examEvent, events, prefs);
   if (pressure.isPressured) {
     return {
@@ -8214,6 +8299,10 @@ function confidenceZoneOf(rating) {
   if (typeof rating === "number") return rating <= 2 ? "shaky" : rating === 3 ? "okay" : "solid";
   return rating;
 }
+function isConfidenceStreak(log, zone, n) {
+  const last = (log || []).slice(-n);
+  return last.length === n && last.every((r) => confidenceZoneOf(r) === zone);
+}
 const EXAM_CHECKIN_SCALE = [
   { value: 1, label: "Still lost" },
   { value: 2, label: "Shaky" },
@@ -8240,7 +8329,7 @@ function computeSessionPriority(examLike, todayKey) {
   const urgencyNudge = examLike.priority != null ? Math.max(-0.15, Math.min(0.15, (examLike.priority - 500) / 2e3)) : 0;
   const urgency = Math.max(0, Math.min(1, dateUrgency + urgencyNudge));
   const baseImpact = examLike.importanceLevel ? IMPORTANCE_TO_IMPACT[examLike.importanceLevel] ?? IMPORTANCE_TO_IMPACT.major : EXAM_WEIGHT_TO_IMPACT[examLike.examWeight] ?? EXAM_WEIGHT_TO_IMPACT.major;
-  const gradeWeightNudge = examLike.gradeWeightPercent != null ? Math.max(-0.15, Math.min(0.15, (examLike.gradeWeightPercent - 20) / 200)) : 0;
+  const gradeWeightNudge = gradeWeightNudgeFor(examLike.gradeWeightPercent);
   const impact = Math.max(0, Math.min(1, baseImpact + gradeWeightNudge));
   const log = examLike.confidenceLog || [];
   const lastRating = log[log.length - 1];
@@ -11922,7 +12011,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
     if (!ev || kind !== "exam" || !examPlan.proposeSessions || examSessionCountTouched) return;
     const materialCharCount = examPlan.materialFiles.map((f) => f.text || "").join("\n\n").length;
     const daysUntilExam = ev.date ? Math.round((/* @__PURE__ */ new Date(ev.date + "T12:00:00") - /* @__PURE__ */ new Date(dayKey() + "T12:00:00")) / 864e5) : void 0;
-    const params = computeStudyPlanParams(ev.examWeight, 25, examConfidence, materialCharCount, ev.importanceLevel, daysUntilExam);
+    const params = computeStudyPlanParams(ev.examWeight, 25, examConfidence, materialCharCount, ev.importanceLevel, daysUntilExam, ev.gradeWeightPercent, ev.confidenceLog);
     if (params.sessionCount !== examPlan.sessionCount) setExamPlan((m) => ({ ...m, sessionCount: params.sessionCount }));
   }, [ev, kind, examPlan.proposeSessions, examPlan.materialFiles, examConfidence, examSessionCountTouched]);
   if (!eventId || !ev) return null;
@@ -12105,7 +12194,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
       const baseDuration = suggestDurationFor(subject, "study block") || 25;
       const materialCharCount = examPlan.materialFiles.map((f) => f.text || "").join("\n\n").length;
       const daysUntilExam = date ? Math.round((/* @__PURE__ */ new Date(date + "T12:00:00") - /* @__PURE__ */ new Date(dayKey() + "T12:00:00")) / 864e5) : void 0;
-      const planParams = computeStudyPlanParams(ev.examWeight, baseDuration, examConfidence, materialCharCount, ev.importanceLevel, daysUntilExam);
+      const planParams = computeStudyPlanParams(ev.examWeight, baseDuration, examConfidence, materialCharCount, ev.importanceLevel, daysUntilExam, ev.gradeWeightPercent, ev.confidenceLog);
       const sessions = buildExamSessionEvents(title.trim(), date, subject, examPlan.sessionCount || planParams.sessionCount, "edittask-exam-" + ev.id, next, routines, prefs, { dueEventId: ev.id }, planParams.difficultyValue, planParams.sessionDuration, ev.examWeight, ev.confidenceLog);
       next = next.concat(sessions);
     }
@@ -13691,7 +13780,7 @@ function CalendarTab({ setActive = () => {
         const baseDuration = suggestDurationFor(subj, "study block") || 25;
         const materialCharCount = evExamPlan.materialFiles.map((f) => f.text || "").join("\n\n").length;
         const daysUntilExam = examTask.date ? Math.round((/* @__PURE__ */ new Date(examTask.date + "T12:00:00") - /* @__PURE__ */ new Date(dayKey() + "T12:00:00")) / 864e5) : void 0;
-        const planParams = computeStudyPlanParams(examTask.examWeight, baseDuration, evConfidence, materialCharCount, examTask.importanceLevel, daysUntilExam);
+        const planParams = computeStudyPlanParams(examTask.examWeight, baseDuration, evConfidence, materialCharCount, examTask.importanceLevel, daysUntilExam, examTask.gradeWeightPercent, examTask.confidenceLog);
         const sessions = buildExamSessionEvents(evTitle.trim(), slot.date, subj, evExamPlan.sessionCount || planParams.sessionCount, "addtask-exam-" + examTask.id, events.concat([examTask]), routines, getSchedulePreferences(), { dueEventId: examTask.id }, planParams.difficultyValue, planParams.sessionDuration, examTask.examWeight, examTask.confidenceLog);
         tasks2 = tasks2.concat(sessions);
       }

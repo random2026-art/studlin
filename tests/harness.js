@@ -132,6 +132,7 @@ function loadStudlinModule(options) {
     "compressExamPrepForRoom","dayOfWeekLabel","ordinalDay","CATCHUP_EXAM_URGENT_DAYS",
     "logCatchUpEvent","computeStudyPlanParams","materialVolumeBonus","STUDY_PLAN_CONFIDENCE_LEVELS","defaultSessionCountFor",
     "suggestDurationFor","difficultyTierOf","TIER0_MIN_BUCKET_SAMPLE","IMPORTANCE_TO_DURATION_MULTIPLIER",
+    "gradeWeightNudgeFor","isConfidenceStreak","scoreTierFromPercent","SCORE_TIER_LABEL","subjectOutcomeNudge","completionCredit",
     "getSubjects","saveSubjects","courseIdForLabel","backfillCourseIds",
     "deleteCourseWithCascade","undoCourseDelete",
     "deriveFreePeriodsFromPeriods","getHsSchoolHours","saveHsSchoolHours",

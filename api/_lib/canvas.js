@@ -90,7 +90,7 @@ function stripHtml(html) {
 // (classifyImportedCalendarEvents) already reads title+description and has
 // no other channel for a structured hint, and this way a quiz genuinely
 // reads as one without a second code path.
-function canvasAssignmentToEvent(assignment, courseName, groupWeight) {
+function canvasAssignmentToEvent(assignment, courseName, weightPercent) {
   const due = new Date(assignment.due_at);
   const isQuiz = !!assignment.quiz_id || (assignment.submission_types || []).includes('online_quiz');
   const points = assignment.points_possible ? (Math.round(assignment.points_possible * 10) / 10) + ' points. ' : '';
@@ -105,13 +105,48 @@ function canvasAssignmentToEvent(assignment, courseName, groupWeight) {
     description: (isQuiz ? 'This is a quiz/test. ' : '') + 'Course: ' + courseName + '. ' + points + desc,
     subject: courseName,
     kind: 'busy block',
-    // Real, professor-configured grade weighting for this assignment's
-    // category, not an AI guess from prose. Only meaningful once
-    // mergeImportedEvents classifies this item as an exam (see its
-    // gradeWeightPercent handling in studlin-app.jsx); harmless extra
-    // data otherwise.
-    gradeWeightPercent: groupWeight != null ? Math.round(groupWeight * 10) / 10 : null,
+    // Real, professor-configured grade weighting for this SPECIFIC
+    // assignment (already split out of its group's total by
+    // fetchAllCanvasData's weightPercentFor), not an AI guess from prose
+    // and not the whole group's weight repeated on every item in it. Only
+    // meaningful once mergeImportedEvents classifies this item as an exam
+    // (see its gradeWeightPercent handling in studlin-app.jsx); harmless
+    // extra data otherwise.
+    gradeWeightPercent: weightPercent != null ? Math.round(weightPercent * 10) / 10 : null,
   };
+}
+
+// Pure, network-free: given one course's assignments + its groupId->weight
+// map (assignment_groups.group_weight), returns an assignmentId->weightPercent
+// Map with each item's real proportional share of its group's weight.
+// group_weight is the WHOLE group's share of the grade, not this one item's
+// -- a group can (and often does) hold several exams, or a mix of exams and
+// homework. Passing the raw group weight straight through used to give
+// every item in a 3-exam "Exams" group the full group weight 3x over.
+// Splits proportionally by points_possible (the same basis Canvas itself
+// weights by) across every item in the group, counted over the FULL group
+// regardless of due date -- a past graded homework still occupies its real
+// share of the group's points, so excluding it would inflate everyone
+// else's share. Falls back to an even split when points aren't set.
+function computeGroupWeightPercents(assignments, weightById) {
+  const groupPoints = new Map();
+  const groupCounts = new Map();
+  for (const a of assignments) {
+    const gid = a.assignment_group_id;
+    groupPoints.set(gid, (groupPoints.get(gid) || 0) + (a.points_possible || 0));
+    groupCounts.set(gid, (groupCounts.get(gid) || 0) + 1);
+  }
+  const result = new Map();
+  for (const a of assignments) {
+    const gw = weightById.get(a.assignment_group_id);
+    if (gw == null) { result.set(a.id, null); continue; }
+    const totalPoints = groupPoints.get(a.assignment_group_id) || 0;
+    const weightPercent = (totalPoints > 0 && a.points_possible > 0)
+      ? gw * (a.points_possible / totalPoints)
+      : gw / (groupCounts.get(a.assignment_group_id) || 1);
+    result.set(a.id, weightPercent);
+  }
+  return result;
 }
 
 // Orchestrates the full pull: every active course, every course's
@@ -132,11 +167,12 @@ async function fetchAllCanvasData(domain, token) {
     let assignments = [];
     try { assignments = await fetchCanvasAssignments(domain, token, course.id); } catch (e) { continue; }
     if (!Array.isArray(assignments)) continue;
+    const weightPercents = computeGroupWeightPercents(assignments, weightById);
     for (const a of assignments) {
       if (!a.due_at) continue;
       const due = new Date(a.due_at);
       if (isNaN(due.getTime()) || due < now) continue;
-      events.push(canvasAssignmentToEvent(a, courseName, weightById.get(a.assignment_group_id)));
+      events.push(canvasAssignmentToEvent(a, courseName, weightPercents.get(a.id)));
     }
   }
   return events;
@@ -150,6 +186,7 @@ module.exports = {
   fetchCanvasAssignments,
   fetchCanvasAssignmentGroups,
   canvasAssignmentToEvent,
+  computeGroupWeightPercents,
   fetchAllCanvasData,
   stripHtml,
 };

@@ -7,7 +7,7 @@
 // not duplicated here. Run with `npm test`.
 const { test, describe } = require("node:test");
 const assert = require("node:assert/strict");
-const { isAllowedCanvasDomain, extractHostname, resolveCanvasDomain, canvasAssignmentToEvent, stripHtml } = require("../api/_lib/canvas.js");
+const { isAllowedCanvasDomain, extractHostname, resolveCanvasDomain, canvasAssignmentToEvent, computeGroupWeightPercents, stripHtml } = require("../api/_lib/canvas.js");
 
 describe("isAllowedCanvasDomain (fast path -- vendor-controlled DNS, trusted with no network round trip)", () => {
   test("allows instructure.com and any school's *.instructure.com subdomain", () => {
@@ -116,5 +116,66 @@ describe("canvasAssignmentToEvent (normalizer -- must match parseICS's own event
   test("gradeWeightPercent stays 0 (not null) when the group weight really is 0 -- a real, meaningful value, not treated as unset", () => {
     const ev = canvasAssignmentToEvent({ id: 508, name: "Extra Credit", due_at: "2026-09-05T09:00:00Z" }, "AP Chemistry", 0);
     assert.equal(ev.gradeWeightPercent, 0);
+  });
+});
+
+describe("computeGroupWeightPercents (2026-08-20: split a group's weight across its real items instead of repeating it on every one)", () => {
+  test("a single item alone in its group gets the full group weight", () => {
+    const weightById = new Map([[1, 40]]);
+    const result = computeGroupWeightPercents([{ id: 501, assignment_group_id: 1, points_possible: 100 }], weightById);
+    assert.equal(result.get(501), 40);
+  });
+
+  test("3 exams sharing one 40%-weighted group split proportionally by points, not 40% each", () => {
+    const weightById = new Map([[1, 40]]);
+    const assignments = [
+      { id: 501, assignment_group_id: 1, points_possible: 100 },
+      { id: 502, assignment_group_id: 1, points_possible: 100 },
+      { id: 503, assignment_group_id: 1, points_possible: 100 },
+    ];
+    const result = computeGroupWeightPercents(assignments, weightById);
+    assert.ok(Math.abs(result.get(501) - 40 / 3) < 0.01);
+    assert.ok(Math.abs(result.get(502) - 40 / 3) < 0.01);
+    assert.ok(Math.abs(result.get(503) - 40 / 3) < 0.01);
+  });
+
+  test("splits by real point value, not an even count-based split, when points differ", () => {
+    const weightById = new Map([[1, 30]]);
+    // A 150-point final and a 50-point midterm sharing a 30%-weighted group
+    // -- the final should get 3x the midterm's share (75/25), not 15/15.
+    const assignments = [
+      { id: 501, assignment_group_id: 1, points_possible: 150 },
+      { id: 502, assignment_group_id: 1, points_possible: 50 },
+    ];
+    const result = computeGroupWeightPercents(assignments, weightById);
+    assert.ok(Math.abs(result.get(501) - 22.5) < 0.01, "final (150pt of 200) should get 75% of 30 = 22.5, got " + result.get(501));
+    assert.ok(Math.abs(result.get(502) - 7.5) < 0.01, "midterm (50pt of 200) should get 25% of 30 = 7.5, got " + result.get(502));
+  });
+
+  test("falls back to an even split when points_possible is missing", () => {
+    const weightById = new Map([[1, 20]]);
+    const assignments = [
+      { id: 501, assignment_group_id: 1 },
+      { id: 502, assignment_group_id: 1 },
+    ];
+    const result = computeGroupWeightPercents(assignments, weightById);
+    assert.equal(result.get(501), 10);
+    assert.equal(result.get(502), 10);
+  });
+
+  test("a past, already-graded homework in the group still counts toward the point total, so it doesn't inflate everyone else's share", () => {
+    const weightById = new Map([[1, 40]]);
+    const assignments = [
+      { id: 501, assignment_group_id: 1, points_possible: 100 }, // the final
+      { id: 502, assignment_group_id: 1, points_possible: 100 }, // an already-past, already-graded homework in the same group
+    ];
+    const result = computeGroupWeightPercents(assignments, weightById);
+    assert.ok(Math.abs(result.get(501) - 20) < 0.01, "final should only get its real half-share (20), not the full 40, got " + result.get(501));
+  });
+
+  test("an item in a group with no configured weight gets null, not 0 or NaN", () => {
+    const weightById = new Map(); // no groups configured
+    const result = computeGroupWeightPercents([{ id: 501, assignment_group_id: 1, points_possible: 100 }], weightById);
+    assert.equal(result.get(501), null);
   });
 });

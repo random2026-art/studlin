@@ -219,4 +219,168 @@ describe("suggestDurationFor (historical duration learning)", () => {
     assert.equal(m.suggestDurationFor("Chemistry", "study block", 900), 60, "well-sampled hard bucket should win over the mixed coarse median");
     assert.equal(m.suggestDurationFor("Chemistry", "study block", 100), 15, "well-sampled easy bucket should win too");
   });
+
+  describe("2026-08-20: quality-weighted by whether the check-in afterward said the time actually worked", () => {
+    test("with no completionLog data at all, behaves exactly as before (every sample full weight)", () => {
+      const m = loadStudlinModule();
+      m.lsSet("events", [doneSession({ id: "s1", timeSpent: 20 }), doneSession({ id: "s2", timeSpent: 20 }), doneSession({ id: "s3", timeSpent: 20 }), doneSession({ id: "s4", timeSpent: 20 }), doneSession({ id: "s5", timeSpent: 40 }), doneSession({ id: "s6", timeSpent: 40 }), doneSession({ id: "s7", timeSpent: 40 }), doneSession({ id: "s8", timeSpent: 40 })]);
+      m.lsSet("completionLog", []);
+      assert.equal(m.suggestDurationFor("Chemistry", "study block"), 30);
+    });
+
+    test("a session rated shaky (weak evidence the duration was enough) counts as partial evidence, pulling the median toward the sessions that actually worked", () => {
+      const m = loadStudlinModule();
+      // 4 short (20min) sessions that all went "shaky" (weak evidence 20min
+      // is enough) vs 4 long (40min) sessions that were never rated
+      // (full weight, unrated = 1.0). An unweighted median of all 8 would
+      // land at 30; quality-weighting should pull it toward 40.
+      const shortShaky = Array.from({ length: 4 }, (_, i) => doneSession({ id: "short-" + i, timeSpent: 20 }));
+      const longUnrated = Array.from({ length: 4 }, (_, i) => doneSession({ id: "long-" + i, timeSpent: 40 }));
+      m.lsSet("events", [...shortShaky, ...longUnrated]);
+      m.lsSet("completionLog", shortShaky.map(e => ({ taskId: e.id, outcome: "done", rating: "shaky" })));
+      const unweighted = 30; // sanity check against the plain median of [20,20,20,20,40,40,40,40]
+      const weighted = m.suggestDurationFor("Chemistry", "study block");
+      assert.ok(weighted > unweighted, "quality-weighted median (" + weighted + ") should exceed the plain median (" + unweighted + ")");
+    });
+
+    test("a session rated solid counts full weight, same as unrated -- no different from today's behavior", () => {
+      const m = loadStudlinModule();
+      const events = [doneSession({ id: "s1", timeSpent: 20 }), doneSession({ id: "s2", timeSpent: 20 }), doneSession({ id: "s3", timeSpent: 20 }), doneSession({ id: "s4", timeSpent: 20 }), doneSession({ id: "s5", timeSpent: 40 }), doneSession({ id: "s6", timeSpent: 40 }), doneSession({ id: "s7", timeSpent: 40 }), doneSession({ id: "s8", timeSpent: 40 })];
+      m.lsSet("events", events);
+      m.lsSet("completionLog", events.map(e => ({ taskId: e.id, outcome: "done", rating: "solid" })));
+      assert.equal(m.suggestDurationFor("Chemistry", "study block"), 30);
+    });
+
+    test("only the most recent completionLog row per taskId is used, matching applyCheckInRating's own convention", () => {
+      const m = loadStudlinModule();
+      // s0..s3 at 10min, s4..s7 at 50min. s0 has two completionLog rows --
+      // an earlier "solid" (full weight) followed by a later "shaky" (weak
+      // weight). If the join correctly uses the LATEST row (shaky), the
+      // 10-minute group's total weight shrinks and the weighted median
+      // should land on the 50-minute side; if it wrongly used the first
+      // (stale) row instead, the two groups balance evenly and the median
+      // would land between them instead. The two outcomes are far enough
+      // apart (50 vs 30) that this only passes if the join is really
+      // picking the most recent row.
+      const low = Array.from({ length: 4 }, (_, i) => doneSession({ id: "low" + i, timeSpent: 10 }));
+      const high = Array.from({ length: 4 }, (_, i) => doneSession({ id: "high" + i, timeSpent: 50 }));
+      m.lsSet("events", [...low, ...high]);
+      m.lsSet("completionLog", [
+        { taskId: "low0", outcome: "done", rating: "solid" },
+        { taskId: "low0", outcome: "done", rating: "shaky" },
+      ]);
+      assert.equal(m.suggestDurationFor("Chemistry", "study block"), 50);
+    });
+  });
+});
+
+describe("gradeWeightNudgeFor (shared by computeSessionPriority and computeStudyPlanParams)", () => {
+  test("missing gradeWeightPercent is a pure 0 no-op", () => {
+    const { gradeWeightNudgeFor } = loadStudlinModule();
+    assert.equal(gradeWeightNudgeFor(null), 0);
+    assert.equal(gradeWeightNudgeFor(undefined), 0);
+  });
+  test("centered at 20 -- a percentage right around there is essentially a no-op", () => {
+    const { gradeWeightNudgeFor } = loadStudlinModule();
+    assert.equal(gradeWeightNudgeFor(20), 0);
+  });
+  test("a heavier exam nudges positive, a lighter one nudges negative", () => {
+    const { gradeWeightNudgeFor } = loadStudlinModule();
+    assert.ok(gradeWeightNudgeFor(50) > 0);
+    assert.ok(gradeWeightNudgeFor(5) < 0);
+  });
+  test("clamped to +-0.15 no matter how extreme the percentage", () => {
+    const { gradeWeightNudgeFor } = loadStudlinModule();
+    assert.equal(gradeWeightNudgeFor(100), 0.15);
+    assert.equal(gradeWeightNudgeFor(0), -0.1);
+    assert.ok(gradeWeightNudgeFor(1000) <= 0.15);
+  });
+});
+
+describe("scoreTierFromPercent / SCORE_TIER_LABEL", () => {
+  test("buckets a percent into the 3-tier outcome rubric", () => {
+    const { scoreTierFromPercent } = loadStudlinModule();
+    assert.equal(scoreTierFromPercent(95), "above");
+    assert.equal(scoreTierFromPercent(85), "above");
+    assert.equal(scoreTierFromPercent(77), "expected");
+    assert.equal(scoreTierFromPercent(70), "expected");
+    assert.equal(scoreTierFromPercent(55), "below");
+  });
+  test("every tier has a human label", () => {
+    const { SCORE_TIER_LABEL } = loadStudlinModule();
+    assert.ok(SCORE_TIER_LABEL.below);
+    assert.ok(SCORE_TIER_LABEL.expected);
+    assert.ok(SCORE_TIER_LABEL.above);
+  });
+});
+
+describe("subjectOutcomeNudge (2026-08-20: past exam outcomes for a subject nudge its future duration)", () => {
+  test("fewer than 3 scored exams in the subject -- pure 0 no-op", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", [
+      { id: "e1", kind: "exam", subject: "Chemistry", scoreTier: "below" },
+      { id: "e2", kind: "exam", subject: "Chemistry", scoreTier: "below" },
+    ]);
+    assert.equal(m.subjectOutcomeNudge("Chemistry"), 0);
+  });
+  test("consistently scoring below expected nudges duration UP (positive)", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", [
+      { id: "e1", kind: "exam", subject: "Chemistry", scoreTier: "below" },
+      { id: "e2", kind: "exam", subject: "Chemistry", scoreTier: "below" },
+      { id: "e3", kind: "exam", subject: "Chemistry", scoreTier: "below" },
+    ]);
+    assert.ok(m.subjectOutcomeNudge("Chemistry") > 0);
+  });
+  test("consistently scoring above expected nudges duration DOWN (negative)", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", [
+      { id: "e1", kind: "exam", subject: "Chemistry", scoreTier: "above" },
+      { id: "e2", kind: "exam", subject: "Chemistry", scoreTier: "above" },
+      { id: "e3", kind: "exam", subject: "Chemistry", scoreTier: "above" },
+    ]);
+    assert.ok(m.subjectOutcomeNudge("Chemistry") < 0);
+  });
+  test("a different subject's scores never bleed into this one", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", [
+      { id: "e1", kind: "exam", subject: "Biology", scoreTier: "below" },
+      { id: "e2", kind: "exam", subject: "Biology", scoreTier: "below" },
+      { id: "e3", kind: "exam", subject: "Biology", scoreTier: "below" },
+    ]);
+    assert.equal(m.subjectOutcomeNudge("Chemistry"), 0);
+  });
+  test("clamped to +-0.15, same cap as every other nudge", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", Array.from({ length: 10 }, (_, i) => ({ id: "e" + i, kind: "exam", subject: "Chemistry", scoreTier: "below" })));
+    assert.equal(m.subjectOutcomeNudge("Chemistry"), 0.15);
+  });
+});
+
+describe("computeStudyPlanParams: gradeWeightPercent and shaky-streak (2026-08-20 additions)", () => {
+  test("omitting gradeWeightPercent/confidenceLog is byte-identical to before -- pure additive params", () => {
+    const { computeStudyPlanParams } = loadStudlinModule();
+    const withoutNew = computeStudyPlanParams("exam", 25, "okay", 0, "major", 20);
+    const withExplicitUndefined = computeStudyPlanParams("exam", 25, "okay", 0, "major", 20, undefined, undefined);
+    assert.deepEqual(withoutNew, withExplicitUndefined);
+  });
+  test("a heavier gradeWeightPercent increases duration at identical confidence/importance", () => {
+    const { computeStudyPlanParams } = loadStudlinModule();
+    const light = computeStudyPlanParams("exam", 25, "okay", 0, "major", 20, 5);
+    const heavy = computeStudyPlanParams("exam", 25, "okay", 0, "major", 20, 50);
+    assert.ok(heavy.sessionDuration > light.sessionDuration, "heavy-weighted exam (" + heavy.sessionDuration + ") should exceed light-weighted (" + light.sessionDuration + ")");
+  });
+  test("a shaky streak (2+ in a row) increases both session count and duration beyond a single shaky answer", () => {
+    const { computeStudyPlanParams } = loadStudlinModule();
+    const singleShaky = computeStudyPlanParams("exam", 25, "shaky", 0, "major", 20, undefined, ["okay", "shaky"]);
+    const shakyStreak = computeStudyPlanParams("exam", 25, "shaky", 0, "major", 20, undefined, ["shaky", "shaky"]);
+    assert.ok(shakyStreak.sessionDuration > singleShaky.sessionDuration, "streak duration (" + shakyStreak.sessionDuration + ") should exceed single-shaky duration (" + singleShaky.sessionDuration + ")");
+    assert.ok(shakyStreak.sessionCount >= singleShaky.sessionCount);
+  });
+  test("a shaky streak only matters when confidenceLevel is currently shaky -- irrelevant to an okay/solid answer", () => {
+    const { computeStudyPlanParams } = loadStudlinModule();
+    const withStreak = computeStudyPlanParams("exam", 25, "okay", 0, "major", 20, undefined, ["shaky", "shaky"]);
+    const withoutStreak = computeStudyPlanParams("exam", 25, "okay", 0, "major", 20, undefined, []);
+    assert.deepEqual(withStreak, withoutStreak);
+  });
 });

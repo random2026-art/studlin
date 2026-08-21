@@ -5296,6 +5296,49 @@ function computeReviewDates(examDateKey,todayKey,desiredCount){
     const d=new Date(exam);d.setDate(d.getDate()-o);return dayKey(d);
   }).sort();
 }
+// Shared by computeSessionPriority (cross-exam scheduling weight) and
+// computeStudyPlanParams (this exam's own plan sizing) -- same bounded
+// nudge, one formula, so a stated grade percentage means the same thing
+// everywhere it's read. Centered at 20 (a roughly "typical" exam weight)
+// so a percentage right around there is a no-op; clamped to +-0.15 so one
+// number can never overwhelm the tuned confidence/importance signal it's
+// nudging. Missing (the common case for a manually-entered exam) is a
+// pure 0 no-op.
+function gradeWeightNudgeFor(gradeWeightPercent){
+  return gradeWeightPercent!=null?Math.max(-0.15,Math.min(0.15,(gradeWeightPercent-20)/200)):0;
+}
+// A student's self-entered (or Canvas-derived) result on a past exam,
+// deliberately reduced to a coarse 3-tier outcome rather than compared as
+// a raw percentage -- a 78% on a brutal curve and a 78% on an easy quiz
+// don't mean the same thing, so raw scores are never compared against
+// each other. This rubric is an honest, average-student baseline (not a
+// personalized normalization -- that would need a much harder-to-trust
+// per-exam difficulty model), same "look at it from the eye of an
+// average student" principle as everywhere else this session. Only used
+// when a percent is given without the student picking a tier directly.
+function scoreTierFromPercent(pct){
+  if(pct>=85)return "above";
+  if(pct>=70)return "expected";
+  return "below";
+}
+const SCORE_TIER_LABEL={below:"Worse than expected",expected:"About what I expected",above:"Better than expected"};
+// Blends a subject's own past exam outcomes into its confidence-driven
+// duration, once there's enough evidence -- same modest, bounded,
+// never-override nudge philosophy as gradeWeightNudgeFor, just driven by
+// what actually happened instead of a stated percentage. Requires 3+
+// scored exams in this subject (average-student-first, personalize only
+// once well-evidenced -- same discipline as suggestDurationFor's own
+// sample-size gate) before this is anything but a pure 0 no-op. Scores
+// trending "below expected" nudge duration UP a little (more time was
+// probably needed); trending "above" nudges it down a little -- inverted
+// sign vs. the average credit, same +-0.15 cap as every other nudge here.
+function subjectOutcomeNudge(subject){
+  const scored=lsGet("events",[]).filter(e=>e.kind==="exam"&&e.subject===subject&&e.scoreTier);
+  if(scored.length<3)return 0;
+  const credit={below:-1,expected:0,above:1};
+  const avg=scored.reduce((s,e)=>s+(credit[e.scoreTier]||0),0)/scored.length;
+  return Math.max(-0.15,Math.min(0.15,-avg*0.15));
+}
 // 2026-08-20 correction: a first pass at this gave every "critical" exam
 // a flat 5 sessions regardless of anything else -- real feedback caught
 // that a final 3 weeks out and the same final 3 days out don't deserve
@@ -5352,12 +5395,32 @@ function materialVolumeBonus(materialCharCount){
 // the importance work -- an exam with no importanceLevel yet (or this
 // param simply omitted) is a pure 1.0 no-op, byte-identical to before.
 const IMPORTANCE_TO_DURATION_MULTIPLIER={minor:0.85,moderate:1.0,major:1.15,critical:1.3};
-function computeStudyPlanParams(examWeight,baseDuration,confidenceLevel,materialCharCount,importanceLevel,daysUntil){
+// gradeWeightPercent and confidenceLog are both optional/backward-
+// compatible additions -- every pre-existing caller that omits them
+// computes byte-identically to before.
+function computeStudyPlanParams(examWeight,baseDuration,confidenceLevel,materialCharCount,importanceLevel,daysUntil,gradeWeightPercent,confidenceLog){
   const level=STUDY_PLAN_CONFIDENCE_LEVELS[confidenceLevel]||STUDY_PLAN_CONFIDENCE_LEVELS.okay;
+  // A persistent shaky streak (2+ check-ins running) is a stronger signal
+  // than a single shaky answer -- same streak definition/threshold
+  // evaluateExamPrepAdjustment's own mid-plan "extend" escalation uses
+  // (see isConfidenceStreak), reused here rather than inventing a second
+  // trend metric. Modest, bounded bump on top of the base shaky
+  // multipliers, same nudge-not-override philosophy as gradeWeightNudge
+  // below -- only ever applies when confidenceLevel is already "shaky"
+  // (a streak in some OTHER zone has no meaning here).
+  const shakyStreak=confidenceLevel==="shaky"&&isConfidenceStreak(confidenceLog,"shaky",2);
+  const sessionMultiplier=level.sessionMultiplier+(shakyStreak?0.15:0);
+  const durationMultiplier=level.durationMultiplier+(shakyStreak?0.1:0);
   const base=defaultSessionCountFor(examWeight,importanceLevel,daysUntil)+materialVolumeBonus(materialCharCount);
-  const sessionCount=Math.max(1,Math.min(6,Math.round(base*level.sessionMultiplier)));
+  const sessionCount=Math.max(1,Math.min(6,Math.round(base*sessionMultiplier)));
   const importanceMultiplier=importanceLevel?(IMPORTANCE_TO_DURATION_MULTIPLIER[importanceLevel]??1):1;
-  const sessionDuration=Math.max(15,Math.round((baseDuration||25)*level.durationMultiplier*importanceMultiplier/5)*5);
+  // A stated grade weight nudges duration (spend more real minutes on a
+  // heavier exam), the same bounded +-0.15-equivalent nudge
+  // computeSessionPriority already applies to cross-exam urgency -- kept
+  // to duration only, not also stacked onto the session-count ceiling
+  // above, so one signal doesn't get double-counted through two levers.
+  const gradeWeightMultiplier=1+gradeWeightNudgeFor(gradeWeightPercent);
+  const sessionDuration=Math.max(15,Math.round((baseDuration||25)*durationMultiplier*importanceMultiplier*gradeWeightMultiplier/5)*5);
   return {sessionCount,sessionDuration,difficultyValue:level.difficultyValue};
 }
 // Scales flashcard/practice-exam question counts with how much real
@@ -5402,7 +5465,7 @@ function applyHoursTarget(sessionCount,sessionDuration,hoursTarget){
 // final (post-hours-cap) sessionCount/sessionDuration so the copy always
 // matches what's actually on screen, including after a manual
 // adjustBuildPlanCount tweak -- never a stale snapshot from generation time.
-function studyPlanReasoning(confidenceLevel,importanceLevel,materialCharCount,hadHistoricalDuration,hoursTargetAdjusted,sessionCount,sessionDuration,hasTaperedLastSession,daysUntil){
+function studyPlanReasoning(confidenceLevel,importanceLevel,materialCharCount,hadHistoricalDuration,hoursTargetAdjusted,sessionCount,sessionDuration,hasTaperedLastSession,daysUntil,weekPressured){
   const confPhrase=confidenceLevel==="shaky"?"you said you're shaky on this material"
     :confidenceLevel==="solid"?"you're already feeling solid on this material"
     :"you're feeling okay but not solid on this material";
@@ -5420,6 +5483,12 @@ function studyPlanReasoning(confidenceLevel,importanceLevel,materialCharCount,ha
   // bug ("why does a critical shaky exam only get 2 sessions"). Surfacing
   // the actual constraint here instead of leaving it implicit.
   if(daysUntil!=null&&daysUntil<=6)lines.push("There isn't much time before the exam, so sessions are more concentrated -- more runway would spread this out further.");
+  // Trades a little transparency-timing for smoothness (the constraint now
+  // applies before generation instead of after) -- this line is what keeps
+  // that trade honest instead of reading as an unexplained smaller plan,
+  // and names the escape hatch (Redo) so it's never a dead end if the
+  // week frees up later.
+  if(weekPressured)lines.push("Your week already has other exam prep in it, so this is a bit more concentrated than usual. Redo this plan anytime if your week frees up.");
   if(hasTaperedLastSession)lines.push("Your last session is lighter -- a final review instead of new material, right before the exam.");
   if(hoursTargetAdjusted)lines.push("Adjusted to match the study time you asked for.");
   return lines;
@@ -5452,10 +5521,37 @@ function suggestDurationFor(subject,kind,difficulty,minSamples){
   const minN=minSamples||TIER0_MIN_BUCKET_SAMPLE;
   const events=lsGet("events",[]).filter(e=>e.status==="done"&&e.timeSpent&&e.subject===subject&&e.kind===kind);
   if(events.length<minN)return null;
+  // Quality-weight each sample by whether its own post-session check-in
+  // said the time actually worked, using completionCredit -- the exact
+  // same rating->weight table getBucketReliability already trusts
+  // (unrated/solid completions count in full; a rated-shaky completion
+  // counts as partial evidence, since a session someone said didn't click
+  // is weaker proof its duration was the right amount). No new scale
+  // invented here, same credit everywhere a rating matters. completionLog
+  // rows are keyed by taskId (the event's own id), same join
+  // applyCheckInRating already does; last row per taskId wins, matching
+  // its own "search from the end" convention for repeat completions.
+  const completionLog=lsGet("completionLog",[]);
+  const creditByTaskId=new Map();
+  for(const row of completionLog){if(row.taskId)creditByTaskId.set(row.taskId,completionCredit(row));}
+  // A weighted median, not a weighted average -- keeps the same outlier-
+  // resistant character the plain median already had. completionCredit
+  // returns quarters (0.25/1), so replicating each sample by 4x its
+  // credit (1-4 shares) and taking a normal median of the expanded pool
+  // is a weighted median without new statistical machinery. An event with
+  // no completionLog row at all (old data, or the check-in was skipped)
+  // gets full weight, same "unrated counts as 1.0" convention as
+  // completionCredit's own default.
   const medianOf=(pool)=>{
-    const sorted=pool.map(e=>e.timeSpent).sort((a,b)=>a-b);
-    const mid=Math.floor(sorted.length/2);
-    return sorted.length%2?sorted[mid]:Math.round((sorted[mid-1]+sorted[mid])/2);
+    const shares=[];
+    for(const e of pool){
+      const credit=creditByTaskId.has(e.id)?creditByTaskId.get(e.id):1;
+      const n=Math.max(1,Math.round(credit*4));
+      for(let i=0;i<n;i++)shares.push(e.timeSpent);
+    }
+    shares.sort((a,b)=>a-b);
+    const mid=Math.floor(shares.length/2);
+    return shares.length%2?shares[mid]:Math.round((shares[mid-1]+shares[mid])/2);
   };
   if(difficulty!=null){
     const tier=difficultyTierOf({difficulty});
@@ -7587,6 +7683,8 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   // useState("upcoming") changes near examGroupFilter etc. below).
   const GROUP_BY_OPTIONS=[{value:"upcoming",label:"Upcoming"},{value:"",label:"All"},{value:"past-due",label:"Past Due"},{value:"completed",label:"Completed"}];
   const [examCompleteSessionPrompt,setExamCompleteSessionPrompt]=useState(false);
+  const [examScoreDraftOpen,setExamScoreDraftOpen]=useState(false);
+  const [examScoreDraft,setExamScoreDraft]=useState("");
   const [flashcardSearch,setFlashcardSearch]=useState("");
   const [flashcardClassFilter,setFlashcardClassFilter]=useState("");
   const [flashcardGroupFilter,setFlashcardGroupFilter]=useState("upcoming");
@@ -7811,10 +7909,38 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
     // history is worth leaning on.
     const highStakes=buildPlanExam.importanceLevel==="critical"||buildPlanExam.importanceLevel==="major";
     const historicalDuration=suggestDurationFor(buildPlanExam.subject,"study block",undefined,highStakes?TIER0_MIN_BUCKET_SAMPLE*2:undefined);
-    const baseDuration=historicalDuration||25;
+    // Past exam OUTCOMES for this subject (see subjectOutcomeNudge) are a
+    // second, independent signal from historicalDuration -- one's about
+    // how long past sessions actually ran, this is about whether that was
+    // ever actually enough. Applied to whichever base duration is already
+    // in play (real history, or the 25-minute default) rather than
+    // replacing it.
+    const baseDuration=(historicalDuration||25)*(1+subjectOutcomeNudge(buildPlanExam.subject));
     const daysUntilExam=Math.round((new Date(buildPlanExam.date+"T12:00:00")-new Date(dayKey()+"T12:00:00"))/86400000);
-    const params=computeStudyPlanParams(buildPlanExam.examWeight,baseDuration,buildPlanConfidence,buildPlanMaterialText.length,buildPlanExam.importanceLevel,daysUntilExam);
-    const {sessionCount,sessionDuration}=applyHoursTarget(params.sessionCount,params.sessionDuration,parseFloat(buildPlanHoursTarget));
+    const params=computeStudyPlanParams(buildPlanExam.examWeight,baseDuration,buildPlanConfidence,buildPlanMaterialText.length,buildPlanExam.importanceLevel,daysUntilExam,buildPlanExam.gradeWeightPercent,buildPlanExam.confidenceLog);
+    // Week-load-aware shaping: check whether the week this plan would
+    // actually start landing in is already busy with OTHER exam prep,
+    // using the exact same weekPrepLoad signal/threshold the "your week's
+    // tight" nudge elsewhere in this same modal already uses -- not a new
+    // pressure metric, just consulted earlier. A real first-pass set of
+    // dates is needed to know what week session 1 would land in
+    // (computeReviewOffsets' exponential spacing means that's not
+    // knowable from daysUntil alone) -- this whole probe is local/
+    // synchronous, so a second cheap pass costs nothing.
+    const prefs=getSchedulePreferences();
+    const probeDates=computeReviewDates(buildPlanExam.date,dayKey(),params.sessionCount);
+    const weekPressured=probeDates.length>0&&weekPrepLoad(probeDates[0],buildPlanExam,lsGet("events",[]),prefs).isPressured;
+    // Pressured: drop the ceiling by one session and redistribute the
+    // exact same total time across the smaller count (reusing
+    // applyHoursTarget -- same math the hours-target field already does,
+    // just target-derived from this plan's own original total instead of
+    // a typed-in number) rather than silently just cutting total study
+    // time. The student's own explicit hours-target field, applied right
+    // after, still has the final say over whatever comes out of this.
+    const pressureAdjusted=weekPressured&&params.sessionCount>1
+      ?applyHoursTarget(params.sessionCount-1,params.sessionDuration,(params.sessionCount*params.sessionDuration)/60)
+      :params;
+    const {sessionCount,sessionDuration}=applyHoursTarget(pressureAdjusted.sessionCount,pressureAdjusted.sessionDuration,parseFloat(buildPlanHoursTarget));
     const dates=computeReviewDates(buildPlanExam.date,dayKey(),sessionCount);
     // computeReviewDates can return fewer dates than requested (e.g. an
     // exam that's only 2 days out can't fit a 4-session spread) -- show
@@ -7849,7 +7975,12 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
     setBuildPlanPreview({sessionCount:dates.length,sessionDuration,difficultyValue:params.difficultyValue,dates,
       reasoningInputs:{confidenceLevel:buildPlanConfidence,importanceLevel:buildPlanExam.importanceLevel,materialCharCount:buildPlanMaterialText.length,
         hadHistoricalDuration:historicalDuration!=null,
-        hoursTargetAdjusted:sessionCount!==params.sessionCount||sessionDuration!==params.sessionDuration,
+        // Compared against pressureAdjusted, not the raw params -- this
+        // should only reflect the student's OWN typed-in hours target,
+        // not the automatic week-pressure shaping above (that gets its
+        // own separate, honest weekPressured line instead).
+        hoursTargetAdjusted:sessionCount!==pressureAdjusted.sessionCount||sessionDuration!==pressureAdjusted.sessionDuration,
+        weekPressured,
         daysUntil:daysUntilExam}});
     setBuildPlanFocuses(focuses||dates.map(()=>""));
     // One {date,duration}|null per session index -- null means "use the
@@ -8761,6 +8892,43 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
           setExamCompleteSessionPrompt(false);
           refresh();
         };
+        // Self-serve, never asked -- a student rarely knows their own
+        // score right when an exam ends, so this lives on the exam's own
+        // Past Due/Completed page for whenever they happen to look back,
+        // not a prompted "how'd it go" question with no answer yet. Feeds
+        // subjectOutcomeNudge (duration calibration) and
+        // confidenceOutcomeInsight (below) -- both read scoreTier directly,
+        // deriving it from a percent automatically when one is given
+        // rather than storing two disagreeing signals.
+        const saveExamScore=(scoreTier,scorePercent)=>{
+          patchExam(selectedExam.id,{scoreTier,scorePercent:scorePercent??null});
+          setExamScoreDraftOpen(false);setExamScoreDraft("");
+          refresh();
+        };
+        const clearExamScore=()=>{patchExam(selectedExam.id,{scoreTier:null,scorePercent:null});refresh();};
+        // The "amazing" use of stored scores, per direct ask: not just
+        // feeding math silently, but telling the student something real
+        // about themselves. Compares each scored exam's LAST pre-exam
+        // confidence answer against how it actually went. Needs 3+ scored
+        // exams (same average-student-first, evidence-gated principle as
+        // everywhere else) and the mismatch has to be the dominant pattern
+        // (>=half), not a one-off, before this ever says anything --
+        // otherwise a single rough day would misleadingly read as "you're
+        // bad at judging your own confidence."
+        const confidenceOutcomeInsight=(()=>{
+          const scored=allExamsForPrep().filter(ex=>ex.scoreTier&&ex.confidenceLog&&ex.confidenceLog.length>0);
+          if(scored.length<3)return null;
+          const zoneOf=ex=>confidenceZoneOf(ex.confidenceLog[ex.confidenceLog.length-1]);
+          const solidButBelow=scored.filter(ex=>zoneOf(ex)==="solid"&&ex.scoreTier==="below");
+          const shakyButAbove=scored.filter(ex=>zoneOf(ex)==="shaky"&&ex.scoreTier==="above");
+          if(solidButBelow.length>=Math.ceil(scored.length/2)&&solidButBelow.length>=shakyButAbove.length){
+            return "Your \"solid\" confidence calls have run worse than expected on "+solidButBelow.length+" of your last "+scored.length+" scored exams. Worth trusting that answer a little more cautiously.";
+          }
+          if(shakyButAbove.length>=Math.ceil(scored.length/2)){
+            return "You've scored better than expected on "+shakyButAbove.length+" of your last "+scored.length+" \"shaky\" exams. You might be tougher on yourself than the results show.";
+          }
+          return null;
+        })();
         // Silent-reprioritization surfacing (2026-08-19): restampSessionPriorities
         // already re-scores this exam's remaining sessions the moment a
         // check-in comes in (see submitExamCheckIn) -- a "solid" streak
@@ -8854,7 +9022,38 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
               {examSessions.length>0&&(
                 <BtnSm variant="ghost" onClick={()=>openBuildPlan(selectedExam)}>Redo study plan</BtnSm>
               )}
+              {/* Score entry -- only offered once the exam has actually
+                  happened (Completed or Past Due), self-serve rather than
+                  a prompted question the student might not have an answer
+                  to yet. See saveExamScore/subjectOutcomeNudge/
+                  confidenceOutcomeInsight above for how this gets used. */}
+              {(isExamCompleted||itemLifecycleState(selectedExam,dayKey())==="past-due")&&(<>
+                {selectedExam.scoreTier&&(
+                  <span style={{fontSize:11,fontWeight:700,color:T.teal,background:T.teal+"14",border:`1px solid ${T.teal}44`,borderRadius:6,padding:"4px 10px"}}>
+                    {selectedExam.scorePercent!=null?selectedExam.scorePercent+"%":SCORE_TIER_LABEL[selectedExam.scoreTier]}
+                  </span>
+                )}
+                <BtnSm variant="ghost" onClick={()=>{setExamScoreDraft(selectedExam.scorePercent!=null?String(selectedExam.scorePercent):"");setExamScoreDraftOpen(o=>!o);}}>{selectedExam.scoreTier?"Edit score":"Add your score"}</BtnSm>
+              </>)}
             </div>
+            {examScoreDraftOpen&&(
+              <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:20,fontSize:12.5,color:T.text}}>
+                <div style={{marginBottom:8,color:T.muted}}>How'd it go? Optional -- only used to make your future plans for this subject smarter.</div>
+                <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap",alignItems:"center"}}>
+                  <Input type="number" min={0} max={100} placeholder="Score % (optional)" value={examScoreDraft} onChange={e=>setExamScoreDraft(e.target.value)} style={{width:150}} />
+                  <BtnSm onClick={()=>{const pct=Math.max(0,Math.min(100,parseFloat(examScoreDraft)));saveExamScore(scoreTierFromPercent(pct),pct);}} disabled={examScoreDraft===""||isNaN(parseFloat(examScoreDraft))}>Save %</BtnSm>
+                </div>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                  {Object.entries(SCORE_TIER_LABEL).map(([tier,label])=>(
+                    <BtnSm key={tier} variant="ghost" onClick={()=>saveExamScore(tier,null)}>{label}</BtnSm>
+                  ))}
+                </div>
+                <div style={{display:"flex",gap:8,marginTop:10}}>
+                  {selectedExam.scoreTier&&<BtnSm variant="ghost" onClick={clearExamScore} style={{color:T.red}}>Clear score</BtnSm>}
+                  <BtnSm variant="ghost" onClick={()=>setExamScoreDraftOpen(false)}>Cancel</BtnSm>
+                </div>
+              </div>
+            )}
             {examCompleteSessionPrompt&&(
               <div style={{background:T.card,border:`1px solid ${T.amber}44`,borderRadius:8,padding:"12px 14px",marginBottom:20,fontSize:12.5,color:T.text,lineHeight:1.5}}>
                 You still have {examPendingSessions.length} session{examPendingSessions.length!==1?"s":""} scheduled for this — cancel {examPendingSessions.length!==1?"them":"it"} too?
@@ -8864,6 +9063,9 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                   <BtnSm variant="ghost" onClick={()=>setExamCompleteSessionPrompt(false)}>Never mind</BtnSm>
                 </div>
               </div>
+            )}
+            {confidenceOutcomeInsight&&(
+              <div style={{fontSize:11.5,color:T.teal,background:T.teal+"0c",border:`1px solid ${T.teal}33`,borderRadius:8,padding:"10px 12px",marginBottom:14,lineHeight:1.5}}>{confidenceOutcomeInsight}</div>
             )}
             {priorityShiftNote&&(
               <div style={{fontSize:11.5,color:T.muted,marginBottom:14}}>{priorityShiftNote}</div>
@@ -9493,7 +9695,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
               return (
                 <div style={{fontSize:12,color:T.text,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",marginBottom:14,lineHeight:1.6}}>
                   <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Why this plan</div>
-                  {studyPlanReasoning(buildPlanPreview.reasoningInputs.confidenceLevel,buildPlanPreview.reasoningInputs.importanceLevel,buildPlanPreview.reasoningInputs.materialCharCount,buildPlanPreview.reasoningInputs.hadHistoricalDuration,buildPlanPreview.reasoningInputs.hoursTargetAdjusted,buildPlanPreview.sessionCount,buildPlanPreview.sessionDuration,lastIsLighter,buildPlanPreview.reasoningInputs.daysUntil).map((line,i)=>(
+                  {studyPlanReasoning(buildPlanPreview.reasoningInputs.confidenceLevel,buildPlanPreview.reasoningInputs.importanceLevel,buildPlanPreview.reasoningInputs.materialCharCount,buildPlanPreview.reasoningInputs.hadHistoricalDuration,buildPlanPreview.reasoningInputs.hoursTargetAdjusted,buildPlanPreview.sessionCount,buildPlanPreview.sessionDuration,lastIsLighter,buildPlanPreview.reasoningInputs.daysUntil,buildPlanPreview.reasoningInputs.weekPressured).map((line,i)=>(
                     <div key={i}>{line}</div>
                   ))}
                 </div>
@@ -12544,8 +12746,7 @@ function evaluateExamPrepAdjustment(examEvent,events,prefs){
   const rating=confidenceZoneOf(rawRating);
   const remaining=events.filter(e=>e.dueEventId===examEvent.id&&e.status==="pending").sort((a,b)=>a.date<b.date?-1:1);
   if(rating==="okay"){
-    const lastThree=log.slice(-3);
-    const isPlateau=lastThree.length===3&&lastThree.every(r=>confidenceZoneOf(r)==="okay");
+    const isPlateau=isConfidenceStreak(log,"okay",3);
     if(!isPlateau||remaining.length===0)return null;
     const next=remaining[0];
     const newDuration=Math.max(15,Math.round((next.duration*1.15)/5)*5);
@@ -12554,7 +12755,7 @@ function evaluateExamPrepAdjustment(examEvent,events,prefs){
       reason:"You've said \"Getting there\" on "+examEvent.title+" three sessions running -- steady, but not quite clicking yet. The next one could run a bit longer, "+next.duration+"m to "+newDuration+"m, to give it more room."};
   }
   if(rating==="solid"){
-    const lastTwoSolid=log.length>=2&&confidenceZoneOf(log[log.length-1])==="solid"&&confidenceZoneOf(log[log.length-2])==="solid";
+    const lastTwoSolid=isConfidenceStreak(log,"solid",2);
     if(!lastTwoSolid||remaining.length===0)return null;
     const next=remaining[0];
     if(examEvent.examWeight==="major"){
@@ -12577,6 +12778,24 @@ function evaluateExamPrepAdjustment(examEvent,events,prefs){
       reason:"That was your last scheduled session before "+examEvent.title+" on "+examEvent.date+". Worth fitting in extra review yourself, or flagging your weak spots now."};
   }
   const next=remaining[0];
+  // 2026-08-20 gap fix: "okay" gets a plateau escalation at 3-in-a-row and
+  // "solid" gets one at 2-in-a-row, but "shaky" -- the zone that actually
+  // needs it most -- had no streak handling at all. A second, third shaky
+  // in a row used to get the exact same single-instance "pull the next
+  // session closer" response as the very first one, even though repeated
+  // shaky is a materially different (and more urgent) situation. Same
+  // 2-in-a-row bar as solid (not 3, since shaky is the costlier case to
+  // under-react to), and the same "extend" mechanism/shape "okay" already
+  // uses, just triggered here and using shaky's own 1.25x multiplier (see
+  // STUDY_PLAN_CONFIDENCE_LEVELS.shaky) instead of okay's 1.15x -- no new
+  // constant invented, reusing the one this exact zone already has.
+  if(isConfidenceStreak(log,"shaky",2)){
+    const newDuration=Math.max(15,Math.round((next.duration*STUDY_PLAN_CONFIDENCE_LEVELS.shaky.durationMultiplier)/5)*5);
+    if(newDuration>next.duration){
+      return {type:"extend",examId:examEvent.id,sessionId:next.id,oldDuration:next.duration,newDuration,
+        reason:"You've said this material isn't clicking twice in a row on "+examEvent.title+". The next session could run longer, "+next.duration+"m to "+newDuration+"m, to give it real room."};
+    }
+  }
   const pressure=weekPrepLoad(next.date,examEvent,events,prefs);
   if(pressure.isPressured){
     return {type:"shaky-packed",examId:examEvent.id,sessionId:next.id,
@@ -12694,6 +12913,16 @@ function confidenceZoneOf(rating){
   if(typeof rating==="number")return rating<=2?"shaky":rating===3?"okay":"solid";
   return rating;
 }
+// Shared "last N check-ins all landed in this zone" check -- pulled out of
+// evaluateExamPrepAdjustment's own inline lastThree/lastTwoSolid checks
+// (same logic, just reused) so the exact same streak definition can also
+// be asked about "shaky" (see the extend-on-shaky-streak branch below,
+// and computeStudyPlanParams' generation-time reuse of it) without a
+// second, possibly-drifting copy of the same window logic.
+function isConfidenceStreak(log,zone,n){
+  const last=(log||[]).slice(-n);
+  return last.length===n&&last.every(r=>confidenceZoneOf(r)===zone);
+}
 // Post-session check-in options (2026-08-19, was 3 plain buttons). 2/3/4
 // anchor at the exact words the old shaky/okay/solid scale used, so
 // nothing already-tuned changes meaning -- 1 and 5 are the two genuinely
@@ -12788,9 +13017,7 @@ function computeSessionPriority(examLike,todayKey){
   // (the common case, since it's optional) leaves impact completely
   // unchanged -- every exam predating this field, or without a stated
   // percentage, computes byte-identically to before.
-  const gradeWeightNudge=examLike.gradeWeightPercent!=null
-    ?Math.max(-0.15,Math.min(0.15,(examLike.gradeWeightPercent-20)/200))
-    :0;
+  const gradeWeightNudge=gradeWeightNudgeFor(examLike.gradeWeightPercent);
   const impact=Math.max(0,Math.min(1,baseImpact+gradeWeightNudge));
   const log=examLike.confidenceLog||[];
   const lastRating=log[log.length-1];
@@ -18859,7 +19086,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
     if(!ev||kind!=="exam"||!examPlan.proposeSessions||examSessionCountTouched)return;
     const materialCharCount=examPlan.materialFiles.map(f=>f.text||"").join("\n\n").length;
     const daysUntilExam=ev.date?Math.round((new Date(ev.date+"T12:00:00")-new Date(dayKey()+"T12:00:00"))/86400000):undefined;
-    const params=computeStudyPlanParams(ev.examWeight,25,examConfidence,materialCharCount,ev.importanceLevel,daysUntilExam);
+    const params=computeStudyPlanParams(ev.examWeight,25,examConfidence,materialCharCount,ev.importanceLevel,daysUntilExam,ev.gradeWeightPercent,ev.confidenceLog);
     if(params.sessionCount!==examPlan.sessionCount)setExamPlan(m=>({...m,sessionCount:params.sessionCount}));
   },[ev,kind,examPlan.proposeSessions,examPlan.materialFiles,examConfidence,examSessionCountTouched]);
 
@@ -19030,7 +19257,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
       const baseDuration=suggestDurationFor(subject,"study block")||25;
       const materialCharCount=examPlan.materialFiles.map(f=>f.text||"").join("\n\n").length;
       const daysUntilExam=date?Math.round((new Date(date+"T12:00:00")-new Date(dayKey()+"T12:00:00"))/86400000):undefined;
-      const planParams=computeStudyPlanParams(ev.examWeight,baseDuration,examConfidence,materialCharCount,ev.importanceLevel,daysUntilExam);
+      const planParams=computeStudyPlanParams(ev.examWeight,baseDuration,examConfidence,materialCharCount,ev.importanceLevel,daysUntilExam,ev.gradeWeightPercent,ev.confidenceLog);
       const sessions=buildExamSessionEvents(title.trim(),date,subject,examPlan.sessionCount||planParams.sessionCount,"edittask-exam-"+ev.id,next,routines,prefs,{dueEventId:ev.id},planParams.difficultyValue,planParams.sessionDuration,ev.examWeight,ev.confidenceLog);
       next=next.concat(sessions);
     }
@@ -21564,7 +21791,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         const baseDuration=suggestDurationFor(subj,"study block")||25;
         const materialCharCount=evExamPlan.materialFiles.map(f=>f.text||"").join("\n\n").length;
         const daysUntilExam=examTask.date?Math.round((new Date(examTask.date+"T12:00:00")-new Date(dayKey()+"T12:00:00"))/86400000):undefined;
-        const planParams=computeStudyPlanParams(examTask.examWeight,baseDuration,evConfidence,materialCharCount,examTask.importanceLevel,daysUntilExam);
+        const planParams=computeStudyPlanParams(examTask.examWeight,baseDuration,evConfidence,materialCharCount,examTask.importanceLevel,daysUntilExam,examTask.gradeWeightPercent,examTask.confidenceLog);
         const sessions=buildExamSessionEvents(evTitle.trim(),slot.date,subj,evExamPlan.sessionCount||planParams.sessionCount,"addtask-exam-"+examTask.id,events.concat([examTask]),routines,getSchedulePreferences(),{dueEventId:examTask.id},planParams.difficultyValue,planParams.sessionDuration,examTask.examWeight,examTask.confidenceLog);
         tasks=tasks.concat(sessions);
       }
