@@ -130,7 +130,7 @@ function loadStudlinModule(options) {
     "isPhaseDecompositionCandidate","finalizeExtractedText","MATERIAL_TEXT_CAP",
     "computeCatchUpMissedItems","computeCatchUpPlan","catchUpReasonFor",
     "compressExamPrepForRoom","dayOfWeekLabel","ordinalDay","CATCHUP_EXAM_URGENT_DAYS",
-    "logCatchUpEvent","computeStudyPlanParams","materialVolumeBonus","STUDY_PLAN_CONFIDENCE_LEVELS",
+    "logCatchUpEvent","computeStudyPlanParams","materialVolumeBonus","STUDY_PLAN_CONFIDENCE_LEVELS","defaultSessionCountFor",
     "suggestDurationFor","difficultyTierOf","TIER0_MIN_BUCKET_SAMPLE","IMPORTANCE_TO_DURATION_MULTIPLIER",
     "getSubjects","saveSubjects","courseIdForLabel","backfillCourseIds",
     "deleteCourseWithCascade","undoCourseDelete",

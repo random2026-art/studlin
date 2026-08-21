@@ -23,6 +23,31 @@ describe("materialVolumeBonus", () => {
   });
 });
 
+describe("defaultSessionCountFor (2026-08-20: a final now gets more base sessions than a midterm, not just more than a quiz)", () => {
+  test("no importanceLevel -- byte-identical to the original quiz-vs-everything-else split", () => {
+    const { defaultSessionCountFor } = loadStudlinModule();
+    assert.equal(defaultSessionCountFor("quiz"), 2);
+    assert.equal(defaultSessionCountFor("exam"), 4);
+    assert.equal(defaultSessionCountFor("major"), 4);
+  });
+
+  test("a non-critical importanceLevel (minor/moderate/major) is a no-op, same as omitting it", () => {
+    const { defaultSessionCountFor } = loadStudlinModule();
+    assert.equal(defaultSessionCountFor("exam", "minor"), 4);
+    assert.equal(defaultSessionCountFor("exam", "moderate"), 4);
+    assert.equal(defaultSessionCountFor("exam", "major"), 4, "a midterm should not silently change until explicitly tuned");
+  });
+
+  test("a critical exam (a real final) gets more base sessions than a midterm/quiz", () => {
+    const { defaultSessionCountFor } = loadStudlinModule();
+    const final = defaultSessionCountFor("exam", "critical");
+    const midterm = defaultSessionCountFor("exam", "major");
+    const quiz = defaultSessionCountFor("quiz");
+    assert.ok(final > midterm, "final (" + final + ") should exceed midterm (" + midterm + ")");
+    assert.ok(midterm > quiz, "midterm (" + midterm + ") should exceed quiz (" + quiz + ")");
+  });
+});
+
 describe("computeStudyPlanParams", () => {
   test("shaky gets more sessions than okay, which gets more than solid", () => {
     const { computeStudyPlanParams } = loadStudlinModule();

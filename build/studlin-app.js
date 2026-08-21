@@ -3456,7 +3456,7 @@ function computeReviewDates(examDateKey, todayKey, desiredCount) {
     return dayKey(d);
   }).sort();
 }
-const defaultSessionCountFor = (examWeight) => examWeight === "quiz" ? 2 : 4;
+const defaultSessionCountFor = (examWeight, importanceLevel) => importanceLevel === "critical" ? 5 : examWeight === "quiz" ? 2 : 4;
 const STUDY_PLAN_CONFIDENCE_LEVELS = {
   shaky: { sessionMultiplier: 1.5, durationMultiplier: 1.25, difficultyValue: 750 },
   okay: { sessionMultiplier: 1, durationMultiplier: 1, difficultyValue: 500 },
@@ -3471,7 +3471,7 @@ function materialVolumeBonus(materialCharCount) {
 const IMPORTANCE_TO_DURATION_MULTIPLIER = { minor: 0.85, moderate: 1, major: 1.15, critical: 1.3 };
 function computeStudyPlanParams(examWeight, baseDuration, confidenceLevel, materialCharCount, importanceLevel) {
   const level = STUDY_PLAN_CONFIDENCE_LEVELS[confidenceLevel] || STUDY_PLAN_CONFIDENCE_LEVELS.okay;
-  const base = defaultSessionCountFor(examWeight) + materialVolumeBonus(materialCharCount);
+  const base = defaultSessionCountFor(examWeight, importanceLevel) + materialVolumeBonus(materialCharCount);
   const sessionCount = Math.max(1, Math.min(6, Math.round(base * level.sessionMultiplier)));
   const importanceMultiplier = importanceLevel ? IMPORTANCE_TO_DURATION_MULTIPLIER[importanceLevel] ?? 1 : 1;
   const sessionDuration = Math.max(15, Math.round((baseDuration || 25) * level.durationMultiplier * importanceMultiplier / 5) * 5);
@@ -10328,7 +10328,10 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
     return ReactDOM.createPortal(/* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: closePopover, style: { position: "fixed", inset: 0, zIndex: 998 } }), /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top, left, width: 208, background: T.card, border: `1px solid ${T.border}`, borderRadius: 6, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)", zIndex: 999, overflow: "hidden", animation: "studlinPop 0.15s cubic-bezier(.2,.85,.3,1)" } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "9px 14px", borderBottom: `1px solid ${T.border}`, fontSize: 12.5, fontWeight: 600, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.title), ev.status !== "done" && isTimerEligible(ev) && /* @__PURE__ */ React.createElement("button", { onClick: () => {
       closePopover();
       if (window._setTimerTask) window._setTimerTask(ev);
-    }, style: itemStyle, onMouseEnter: (e) => e.currentTarget.style.background = T.card2, onMouseLeave: (e) => e.currentTarget.style.background = "none" }, "Begin"), /* @__PURE__ */ React.createElement("button", { onClick: () => {
+    }, style: itemStyle, onMouseEnter: (e) => e.currentTarget.style.background = T.card2, onMouseLeave: (e) => e.currentTarget.style.background = "none" }, "Begin"), ev.status !== "done" && isTimerEligible(ev) && /* @__PURE__ */ React.createElement("button", { onClick: () => {
+      setEvents2(markEventDone(ev.id));
+      closePopover();
+    }, style: itemStyle, onMouseEnter: (e) => e.currentTarget.style.background = T.card2, onMouseLeave: (e) => e.currentTarget.style.background = "none" }, "Complete"), /* @__PURE__ */ React.createElement("button", { onClick: () => {
       closePopover();
       openEdit(ev);
     }, style: itemStyle, onMouseEnter: (e) => e.currentTarget.style.background = T.card2, onMouseLeave: (e) => e.currentTarget.style.background = "none" }, "Edit"), ev.userPinned && /* @__PURE__ */ React.createElement("button", { onClick: () => {

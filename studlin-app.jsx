@@ -5296,9 +5296,14 @@ function computeReviewDates(examDateKey,todayKey,desiredCount){
     const d=new Date(exam);d.setDate(d.getDate()-o);return dayKey(d);
   }).sort();
 }
-// A pop quiz doesn't deserve the same 4-session buildup as a final — lighter
-// default, still fully student-adjustable via the count stepper either way.
-const defaultSessionCountFor=(examWeight)=>examWeight==="quiz"?2:4;
+// A pop quiz doesn't deserve the same session buildup as a final -- and,
+// once this actually differentiates it, neither does a final deserve the
+// same buildup as a midterm. importanceLevel is optional/backward-
+// compatible: every pre-existing caller that omits it keeps today's exact
+// quiz-vs-everything-else split (2 vs 4). Only a real "critical" exam
+// (EXAM_TYPE_TO_IMPORTANCE maps "final" here) gets bumped past that --
+// still fully student-adjustable via the count stepper either way.
+const defaultSessionCountFor=(examWeight,importanceLevel)=>importanceLevel==="critical"?5:(examWeight==="quiz"?2:4);
 // ── Study plan calibration (Prep redesign Part C) ───────────────────────
 // The one confidence question -- "How confident are you on this material?"
 // -- scales the plan built from the SAME curve/slot-finder every other
@@ -5340,7 +5345,7 @@ function materialVolumeBonus(materialCharCount){
 const IMPORTANCE_TO_DURATION_MULTIPLIER={minor:0.85,moderate:1.0,major:1.15,critical:1.3};
 function computeStudyPlanParams(examWeight,baseDuration,confidenceLevel,materialCharCount,importanceLevel){
   const level=STUDY_PLAN_CONFIDENCE_LEVELS[confidenceLevel]||STUDY_PLAN_CONFIDENCE_LEVELS.okay;
-  const base=defaultSessionCountFor(examWeight)+materialVolumeBonus(materialCharCount);
+  const base=defaultSessionCountFor(examWeight,importanceLevel)+materialVolumeBonus(materialCharCount);
   const sessionCount=Math.max(1,Math.min(6,Math.round(base*level.sessionMultiplier)));
   const importanceMultiplier=importanceLevel?(IMPORTANCE_TO_DURATION_MULTIPLIER[importanceLevel]??1):1;
   const sessionDuration=Math.max(15,Math.round((baseDuration||25)*level.durationMultiplier*importanceMultiplier/5)*5);
@@ -16063,6 +16068,20 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   other place a real event's actions are surfaced. */}
               {ev.status!=="done"&&isTimerEligible(ev)&&(
                 <button onClick={()=>{closePopover();if(window._setTimerTask)window._setTimerTask(ev);}} style={itemStyle} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="none"}>Begin</button>
+              )}
+              {/* A real "I already did this, just mark it done" escape hatch
+                  -- reported gap, Begin was the only way to complete a study
+                  session from this menu. Reuses markEventDone -- the exact
+                  same no-timer completion path the day-detail list's own
+                  checkbox already uses (see markDone there) -- rather than a
+                  second copy: deliberately does NOT write timeSpent, so this
+                  is an honest opt-out of the timer, not a fake time entry,
+                  and can't corrupt suggestDurationFor's median (which only
+                  reads events that actually have a timeSpent). Still logs a
+                  real completion outcome for the reliability signal, same
+                  as any other completion. */}
+              {ev.status!=="done"&&isTimerEligible(ev)&&(
+                <button onClick={()=>{setEvents(markEventDone(ev.id));closePopover();}} style={itemStyle} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="none"}>Complete</button>
               )}
               <button onClick={()=>{closePopover();openEdit(ev);}} style={itemStyle} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="none"}>Edit</button>
               {ev.userPinned&&(
