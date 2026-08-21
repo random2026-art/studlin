@@ -3456,7 +3456,12 @@ function computeReviewDates(examDateKey, todayKey, desiredCount) {
     return dayKey(d);
   }).sort();
 }
-const defaultSessionCountFor = (examWeight, importanceLevel) => importanceLevel === "critical" ? 5 : examWeight === "quiz" ? 2 : 4;
+const defaultSessionCountFor = (examWeight, importanceLevel, daysUntil) => {
+  if (daysUntil == null || !isFinite(daysUntil)) return examWeight === "quiz" ? 2 : 4;
+  const ceiling = examWeight === "quiz" ? 2 : importanceLevel === "critical" ? 6 : 4;
+  const runway = daysUntil <= 3 ? 1 : daysUntil <= 6 ? 2 : daysUntil <= 13 ? 3 : daysUntil <= 27 ? 4 : 5;
+  return Math.max(1, Math.min(runway, ceiling));
+};
 const STUDY_PLAN_CONFIDENCE_LEVELS = {
   shaky: { sessionMultiplier: 1.5, durationMultiplier: 1.25, difficultyValue: 750 },
   okay: { sessionMultiplier: 1, durationMultiplier: 1, difficultyValue: 500 },
@@ -3469,9 +3474,9 @@ function materialVolumeBonus(materialCharCount) {
   return 0;
 }
 const IMPORTANCE_TO_DURATION_MULTIPLIER = { minor: 0.85, moderate: 1, major: 1.15, critical: 1.3 };
-function computeStudyPlanParams(examWeight, baseDuration, confidenceLevel, materialCharCount, importanceLevel) {
+function computeStudyPlanParams(examWeight, baseDuration, confidenceLevel, materialCharCount, importanceLevel, daysUntil) {
   const level = STUDY_PLAN_CONFIDENCE_LEVELS[confidenceLevel] || STUDY_PLAN_CONFIDENCE_LEVELS.okay;
-  const base = defaultSessionCountFor(examWeight, importanceLevel) + materialVolumeBonus(materialCharCount);
+  const base = defaultSessionCountFor(examWeight, importanceLevel, daysUntil) + materialVolumeBonus(materialCharCount);
   const sessionCount = Math.max(1, Math.min(6, Math.round(base * level.sessionMultiplier)));
   const importanceMultiplier = importanceLevel ? IMPORTANCE_TO_DURATION_MULTIPLIER[importanceLevel] ?? 1 : 1;
   const sessionDuration = Math.max(15, Math.round((baseDuration || 25) * level.durationMultiplier * importanceMultiplier / 5) * 5);
@@ -3491,7 +3496,7 @@ function applyHoursTarget(sessionCount, sessionDuration, hoursTarget) {
   const perSession = Math.max(10, Math.round(targetMins / sessionCount / 5) * 5);
   return { sessionCount, sessionDuration: perSession };
 }
-function studyPlanReasoning(confidenceLevel, importanceLevel, materialCharCount, hadHistoricalDuration, hoursTargetAdjusted, sessionCount, sessionDuration, hasTaperedLastSession) {
+function studyPlanReasoning(confidenceLevel, importanceLevel, materialCharCount, hadHistoricalDuration, hoursTargetAdjusted, sessionCount, sessionDuration, hasTaperedLastSession, daysUntil) {
   const confPhrase = confidenceLevel === "shaky" ? "you said you're shaky on this material" : confidenceLevel === "solid" ? "you're already feeling solid on this material" : "you're feeling okay but not solid on this material";
   const importancePhrase = importanceLevel && importanceLevel !== "moderate" ? ", and it's a " + importanceLevel + " exam" : "";
   const countLine = sessionCount + " session" + (sessionCount !== 1 ? "s" : "") + " -- " + confPhrase + importancePhrase + ".";
@@ -3501,6 +3506,7 @@ function studyPlanReasoning(confidenceLevel, importanceLevel, materialCharCount,
   if (materialVolumeBonus(materialCharCount) > 0) durBits.push("there's a lot of material to get through");
   const durationLine = sessionDuration + " minutes each -- " + durBits.join(", and ") + ".";
   const lines = [countLine, durationLine];
+  if (daysUntil != null && daysUntil <= 6) lines.push("There isn't much time before the exam, so sessions are more concentrated -- more runway would spread this out further.");
   if (hasTaperedLastSession) lines.push("Your last session is lighter -- a final review instead of new material, right before the exam.");
   if (hoursTargetAdjusted) lines.push("Adjusted to match the study time you asked for.");
   return lines;
@@ -4999,7 +5005,8 @@ function StudlinPrep({ setActive = () => {
     const highStakes = buildPlanExam.importanceLevel === "critical" || buildPlanExam.importanceLevel === "major";
     const historicalDuration = suggestDurationFor(buildPlanExam.subject, "study block", void 0, highStakes ? TIER0_MIN_BUCKET_SAMPLE * 2 : void 0);
     const baseDuration = historicalDuration || 25;
-    const params = computeStudyPlanParams(buildPlanExam.examWeight, baseDuration, buildPlanConfidence, buildPlanMaterialText.length, buildPlanExam.importanceLevel);
+    const daysUntilExam = Math.round((/* @__PURE__ */ new Date(buildPlanExam.date + "T12:00:00") - /* @__PURE__ */ new Date(dayKey() + "T12:00:00")) / 864e5);
+    const params = computeStudyPlanParams(buildPlanExam.examWeight, baseDuration, buildPlanConfidence, buildPlanMaterialText.length, buildPlanExam.importanceLevel, daysUntilExam);
     const { sessionCount, sessionDuration } = applyHoursTarget(params.sessionCount, params.sessionDuration, parseFloat(buildPlanHoursTarget));
     const dates = computeReviewDates(buildPlanExam.date, dayKey(), sessionCount);
     const hasTaperedLastSession = dates.length >= 3;
@@ -5017,7 +5024,8 @@ function StudlinPrep({ setActive = () => {
         importanceLevel: buildPlanExam.importanceLevel,
         materialCharCount: buildPlanMaterialText.length,
         hadHistoricalDuration: historicalDuration != null,
-        hoursTargetAdjusted: sessionCount !== params.sessionCount || sessionDuration !== params.sessionDuration
+        hoursTargetAdjusted: sessionCount !== params.sessionCount || sessionDuration !== params.sessionDuration,
+        daysUntil: daysUntilExam
       }
     });
     setBuildPlanFocuses(focuses || dates.map(() => ""));
@@ -5967,7 +5975,7 @@ function StudlinPrep({ setActive = () => {
     ) : /* @__PURE__ */ React.createElement(React.Fragment, null, buildPlanPreview.reasoningInputs && (() => {
       const lastOv = buildPlanOverrides[buildPlanOverrides.length - 1];
       const lastIsLighter = buildPlanPreview.dates.length >= 3 && lastOv && lastOv.duration && lastOv.duration < buildPlanPreview.sessionDuration;
-      return /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.text, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", marginBottom: 14, lineHeight: 1.6 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "Why this plan"), studyPlanReasoning(buildPlanPreview.reasoningInputs.confidenceLevel, buildPlanPreview.reasoningInputs.importanceLevel, buildPlanPreview.reasoningInputs.materialCharCount, buildPlanPreview.reasoningInputs.hadHistoricalDuration, buildPlanPreview.reasoningInputs.hoursTargetAdjusted, buildPlanPreview.sessionCount, buildPlanPreview.sessionDuration, lastIsLighter).map((line, i) => /* @__PURE__ */ React.createElement("div", { key: i }, line)));
+      return /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.text, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", marginBottom: 14, lineHeight: 1.6 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "Why this plan"), studyPlanReasoning(buildPlanPreview.reasoningInputs.confidenceLevel, buildPlanPreview.reasoningInputs.importanceLevel, buildPlanPreview.reasoningInputs.materialCharCount, buildPlanPreview.reasoningInputs.hadHistoricalDuration, buildPlanPreview.reasoningInputs.hoursTargetAdjusted, buildPlanPreview.sessionCount, buildPlanPreview.sessionDuration, lastIsLighter, buildPlanPreview.reasoningInputs.daysUntil).map((line, i) => /* @__PURE__ */ React.createElement("div", { key: i }, line)));
     })(), (buildPlanGenFlashcards || buildPlanGenPE) && materialText.trim() && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.text, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", marginBottom: 14, lineHeight: 1.6 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "Also included"), buildPlanGenFlashcards && /* @__PURE__ */ React.createElement("div", null, "~", scaledFlashcardCount(materialText.length), " flashcards", buildPlanWeaveCards ? ", woven into every session below as a quick review before you start." : " -- created on their own, not part of these sessions. Schedule review time separately from Flashcards."), buildPlanGenPE && /* @__PURE__ */ React.createElement("div", null, "A ", scaledQuizCount(materialText.length), "-question practice exam", buildPlanWeavePE ? " -- your last session becomes a sit-down for it instead of new material." : " -- created on its own, not part of these sessions. Schedule it separately from Practice Exams.")), buildPlanPreview.dates.length > 0 && (() => {
       const pressure = weekPrepLoad(buildPlanPreview.dates[0], buildPlanExam, lsGet("events", []), getSchedulePreferences());
       if (!pressure.isPressured) return null;
@@ -11913,7 +11921,8 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
   useEffect(() => {
     if (!ev || kind !== "exam" || !examPlan.proposeSessions || examSessionCountTouched) return;
     const materialCharCount = examPlan.materialFiles.map((f) => f.text || "").join("\n\n").length;
-    const params = computeStudyPlanParams(ev.examWeight, 25, examConfidence, materialCharCount, ev.importanceLevel);
+    const daysUntilExam = ev.date ? Math.round((/* @__PURE__ */ new Date(ev.date + "T12:00:00") - /* @__PURE__ */ new Date(dayKey() + "T12:00:00")) / 864e5) : void 0;
+    const params = computeStudyPlanParams(ev.examWeight, 25, examConfidence, materialCharCount, ev.importanceLevel, daysUntilExam);
     if (params.sessionCount !== examPlan.sessionCount) setExamPlan((m) => ({ ...m, sessionCount: params.sessionCount }));
   }, [ev, kind, examPlan.proposeSessions, examPlan.materialFiles, examConfidence, examSessionCountTouched]);
   if (!eventId || !ev) return null;
@@ -12095,7 +12104,8 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
     if (kind === "exam" && examPlan.proposeSessions && linkedSessions.length === 0) {
       const baseDuration = suggestDurationFor(subject, "study block") || 25;
       const materialCharCount = examPlan.materialFiles.map((f) => f.text || "").join("\n\n").length;
-      const planParams = computeStudyPlanParams(ev.examWeight, baseDuration, examConfidence, materialCharCount, ev.importanceLevel);
+      const daysUntilExam = date ? Math.round((/* @__PURE__ */ new Date(date + "T12:00:00") - /* @__PURE__ */ new Date(dayKey() + "T12:00:00")) / 864e5) : void 0;
+      const planParams = computeStudyPlanParams(ev.examWeight, baseDuration, examConfidence, materialCharCount, ev.importanceLevel, daysUntilExam);
       const sessions = buildExamSessionEvents(title.trim(), date, subject, examPlan.sessionCount || planParams.sessionCount, "edittask-exam-" + ev.id, next, routines, prefs, { dueEventId: ev.id }, planParams.difficultyValue, planParams.sessionDuration, ev.examWeight, ev.confidenceLog);
       next = next.concat(sessions);
     }
@@ -13351,7 +13361,8 @@ function CalendarTab({ setActive = () => {
   useEffect(() => {
     if (!newOpen || evKind !== "exam" || !evExamPlan.proposeSessions || evSessionCountTouched) return;
     const materialCharCount = evExamPlan.materialFiles.map((f) => f.text || "").join("\n\n").length;
-    const params = computeStudyPlanParams(void 0, 25, evConfidence, materialCharCount, void 0);
+    const daysUntilExam = evDate ? Math.round((/* @__PURE__ */ new Date(evDate + "T12:00:00") - /* @__PURE__ */ new Date(dayKey() + "T12:00:00")) / 864e5) : void 0;
+    const params = computeStudyPlanParams(void 0, 25, evConfidence, materialCharCount, void 0, daysUntilExam);
     if (params.sessionCount !== evExamPlan.sessionCount) setEvExamPlan((m) => ({ ...m, sessionCount: params.sessionCount }));
   }, [newOpen, evKind, evExamPlan.proposeSessions, evExamPlan.materialFiles, evConfidence, evSessionCountTouched]);
   const resetForm = () => {
@@ -13679,7 +13690,8 @@ function CalendarTab({ setActive = () => {
       if (evExamPlan.proposeSessions) {
         const baseDuration = suggestDurationFor(subj, "study block") || 25;
         const materialCharCount = evExamPlan.materialFiles.map((f) => f.text || "").join("\n\n").length;
-        const planParams = computeStudyPlanParams(examTask.examWeight, baseDuration, evConfidence, materialCharCount, examTask.importanceLevel);
+        const daysUntilExam = examTask.date ? Math.round((/* @__PURE__ */ new Date(examTask.date + "T12:00:00") - /* @__PURE__ */ new Date(dayKey() + "T12:00:00")) / 864e5) : void 0;
+        const planParams = computeStudyPlanParams(examTask.examWeight, baseDuration, evConfidence, materialCharCount, examTask.importanceLevel, daysUntilExam);
         const sessions = buildExamSessionEvents(evTitle.trim(), slot.date, subj, evExamPlan.sessionCount || planParams.sessionCount, "addtask-exam-" + examTask.id, events.concat([examTask]), routines, getSchedulePreferences(), { dueEventId: examTask.id }, planParams.difficultyValue, planParams.sessionDuration, examTask.examWeight, examTask.confidenceLog);
         tasks2 = tasks2.concat(sessions);
       }

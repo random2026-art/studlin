@@ -23,28 +23,45 @@ describe("materialVolumeBonus", () => {
   });
 });
 
-describe("defaultSessionCountFor (2026-08-20: a final now gets more base sessions than a midterm, not just more than a quiz)", () => {
-  test("no importanceLevel -- byte-identical to the original quiz-vs-everything-else split", () => {
+describe("defaultSessionCountFor (2026-08-20, corrected: runway drives count, type/importance only sets a ceiling)", () => {
+  // First pass at this gave every critical exam a flat 5 sessions no
+  // matter what -- real feedback: "dont think finals get 5 sessions
+  // whatever its also depends on when the due date is." Runway (days
+  // until the exam) is now the actual driver.
+  test("no daysUntil -- byte-identical to the original quiz-vs-everything-else split, regardless of importanceLevel", () => {
     const { defaultSessionCountFor } = loadStudlinModule();
     assert.equal(defaultSessionCountFor("quiz"), 2);
     assert.equal(defaultSessionCountFor("exam"), 4);
-    assert.equal(defaultSessionCountFor("major"), 4);
+    assert.equal(defaultSessionCountFor("exam", "critical"), 4, "no date context -- must not silently assume a flat bump");
   });
 
-  test("a non-critical importanceLevel (minor/moderate/major) is a no-op, same as omitting it", () => {
+  test("a final that's only days away gets FEWER sessions than a final with plenty of runway", () => {
     const { defaultSessionCountFor } = loadStudlinModule();
-    assert.equal(defaultSessionCountFor("exam", "minor"), 4);
-    assert.equal(defaultSessionCountFor("exam", "moderate"), 4);
-    assert.equal(defaultSessionCountFor("exam", "major"), 4, "a midterm should not silently change until explicitly tuned");
+    const soon = defaultSessionCountFor("exam", "critical", 3);
+    const farOut = defaultSessionCountFor("exam", "critical", 30);
+    assert.ok(farOut > soon, "far-out final (" + farOut + ") should exceed a final only 3 days away (" + soon + ")");
   });
 
-  test("a critical exam (a real final) gets more base sessions than a midterm/quiz", () => {
+  test("a quiz stays capped low even with a ton of runway -- more time doesn't mean a quiz needs 6 sessions", () => {
     const { defaultSessionCountFor } = loadStudlinModule();
-    const final = defaultSessionCountFor("exam", "critical");
-    const midterm = defaultSessionCountFor("exam", "major");
-    const quiz = defaultSessionCountFor("quiz");
-    assert.ok(final > midterm, "final (" + final + ") should exceed midterm (" + midterm + ")");
-    assert.ok(midterm > quiz, "midterm (" + midterm + ") should exceed quiz (" + quiz + ")");
+    const quizFarOut = defaultSessionCountFor("quiz", undefined, 60);
+    assert.ok(quizFarOut <= 2, "a quiz should never exceed its own low ceiling, got " + quizFarOut);
+  });
+
+  test("a critical final CAN exceed a midterm's ceiling, but only when there's enough runway to earn it", () => {
+    const { defaultSessionCountFor } = loadStudlinModule();
+    const finalFarOut = defaultSessionCountFor("exam", "critical", 30);
+    const midtermFarOut = defaultSessionCountFor("exam", "major", 30);
+    const finalSoon = defaultSessionCountFor("exam", "critical", 3);
+    const midtermSoon = defaultSessionCountFor("exam", "major", 3);
+    assert.ok(finalFarOut > midtermFarOut, "with lots of runway, final (" + finalFarOut + ") should exceed midterm (" + midtermFarOut + ")");
+    assert.equal(finalSoon, midtermSoon, "with almost no runway, type shouldn't matter -- both are limited by the same lack of time");
+  });
+
+  test("session count is never less than 1 even with almost no runway", () => {
+    const { defaultSessionCountFor } = loadStudlinModule();
+    assert.ok(defaultSessionCountFor("exam", "critical", 0) >= 1);
+    assert.ok(defaultSessionCountFor("exam", "critical", -2) >= 1);
   });
 });
 

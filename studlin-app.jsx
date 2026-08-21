@@ -5296,14 +5296,23 @@ function computeReviewDates(examDateKey,todayKey,desiredCount){
     const d=new Date(exam);d.setDate(d.getDate()-o);return dayKey(d);
   }).sort();
 }
-// A pop quiz doesn't deserve the same session buildup as a final -- and,
-// once this actually differentiates it, neither does a final deserve the
-// same buildup as a midterm. importanceLevel is optional/backward-
-// compatible: every pre-existing caller that omits it keeps today's exact
-// quiz-vs-everything-else split (2 vs 4). Only a real "critical" exam
-// (EXAM_TYPE_TO_IMPORTANCE maps "final" here) gets bumped past that --
-// still fully student-adjustable via the count stepper either way.
-const defaultSessionCountFor=(examWeight,importanceLevel)=>importanceLevel==="critical"?5:(examWeight==="quiz"?2:4);
+// 2026-08-20 correction: a first pass at this gave every "critical" exam
+// a flat 5 sessions regardless of anything else -- real feedback caught
+// that a final 3 weeks out and the same final 3 days out don't deserve
+// the same count just because they're both finals. Runway (days until
+// the exam) is now the actual driver; examWeight/importanceLevel only
+// set a CEILING on how many sessions are worth using even with plenty of
+// runway (a quiz doesn't need 6 sessions no matter how far off it is --
+// there's just not that much to review). daysUntil is optional and
+// backward-compatible: every pre-existing caller that omits it keeps
+// today's exact original quiz-vs-everything-else split (2 vs 4), since
+// without a real date there's nothing to drive runway off of.
+const defaultSessionCountFor=(examWeight,importanceLevel,daysUntil)=>{
+  if(daysUntil==null||!isFinite(daysUntil))return examWeight==="quiz"?2:4;
+  const ceiling=examWeight==="quiz"?2:(importanceLevel==="critical"?6:4);
+  const runway=daysUntil<=3?1:daysUntil<=6?2:daysUntil<=13?3:daysUntil<=27?4:5;
+  return Math.max(1,Math.min(runway,ceiling));
+};
 // ── Study plan calibration (Prep redesign Part C) ───────────────────────
 // The one confidence question -- "How confident are you on this material?"
 // -- scales the plan built from the SAME curve/slot-finder every other
@@ -5343,9 +5352,9 @@ function materialVolumeBonus(materialCharCount){
 // the importance work -- an exam with no importanceLevel yet (or this
 // param simply omitted) is a pure 1.0 no-op, byte-identical to before.
 const IMPORTANCE_TO_DURATION_MULTIPLIER={minor:0.85,moderate:1.0,major:1.15,critical:1.3};
-function computeStudyPlanParams(examWeight,baseDuration,confidenceLevel,materialCharCount,importanceLevel){
+function computeStudyPlanParams(examWeight,baseDuration,confidenceLevel,materialCharCount,importanceLevel,daysUntil){
   const level=STUDY_PLAN_CONFIDENCE_LEVELS[confidenceLevel]||STUDY_PLAN_CONFIDENCE_LEVELS.okay;
-  const base=defaultSessionCountFor(examWeight,importanceLevel)+materialVolumeBonus(materialCharCount);
+  const base=defaultSessionCountFor(examWeight,importanceLevel,daysUntil)+materialVolumeBonus(materialCharCount);
   const sessionCount=Math.max(1,Math.min(6,Math.round(base*level.sessionMultiplier)));
   const importanceMultiplier=importanceLevel?(IMPORTANCE_TO_DURATION_MULTIPLIER[importanceLevel]??1):1;
   const sessionDuration=Math.max(15,Math.round((baseDuration||25)*level.durationMultiplier*importanceMultiplier/5)*5);
@@ -5393,7 +5402,7 @@ function applyHoursTarget(sessionCount,sessionDuration,hoursTarget){
 // final (post-hours-cap) sessionCount/sessionDuration so the copy always
 // matches what's actually on screen, including after a manual
 // adjustBuildPlanCount tweak -- never a stale snapshot from generation time.
-function studyPlanReasoning(confidenceLevel,importanceLevel,materialCharCount,hadHistoricalDuration,hoursTargetAdjusted,sessionCount,sessionDuration,hasTaperedLastSession){
+function studyPlanReasoning(confidenceLevel,importanceLevel,materialCharCount,hadHistoricalDuration,hoursTargetAdjusted,sessionCount,sessionDuration,hasTaperedLastSession,daysUntil){
   const confPhrase=confidenceLevel==="shaky"?"you said you're shaky on this material"
     :confidenceLevel==="solid"?"you're already feeling solid on this material"
     :"you're feeling okay but not solid on this material";
@@ -5405,6 +5414,12 @@ function studyPlanReasoning(confidenceLevel,importanceLevel,materialCharCount,ha
   if(materialVolumeBonus(materialCharCount)>0)durBits.push("there's a lot of material to get through");
   const durationLine=sessionDuration+" minutes each -- "+durBits.join(", and ")+".";
   const lines=[countLine,durationLine];
+  // Session count is runway-driven now (see defaultSessionCountFor) -- a
+  // shaky/critical exam that's only days away will still show a low count,
+  // and without this line that reads exactly like the original reported
+  // bug ("why does a critical shaky exam only get 2 sessions"). Surfacing
+  // the actual constraint here instead of leaving it implicit.
+  if(daysUntil!=null&&daysUntil<=6)lines.push("There isn't much time before the exam, so sessions are more concentrated -- more runway would spread this out further.");
   if(hasTaperedLastSession)lines.push("Your last session is lighter -- a final review instead of new material, right before the exam.");
   if(hoursTargetAdjusted)lines.push("Adjusted to match the study time you asked for.");
   return lines;
@@ -7797,7 +7812,8 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
     const highStakes=buildPlanExam.importanceLevel==="critical"||buildPlanExam.importanceLevel==="major";
     const historicalDuration=suggestDurationFor(buildPlanExam.subject,"study block",undefined,highStakes?TIER0_MIN_BUCKET_SAMPLE*2:undefined);
     const baseDuration=historicalDuration||25;
-    const params=computeStudyPlanParams(buildPlanExam.examWeight,baseDuration,buildPlanConfidence,buildPlanMaterialText.length,buildPlanExam.importanceLevel);
+    const daysUntilExam=Math.round((new Date(buildPlanExam.date+"T12:00:00")-new Date(dayKey()+"T12:00:00"))/86400000);
+    const params=computeStudyPlanParams(buildPlanExam.examWeight,baseDuration,buildPlanConfidence,buildPlanMaterialText.length,buildPlanExam.importanceLevel,daysUntilExam);
     const {sessionCount,sessionDuration}=applyHoursTarget(params.sessionCount,params.sessionDuration,parseFloat(buildPlanHoursTarget));
     const dates=computeReviewDates(buildPlanExam.date,dayKey(),sessionCount);
     // computeReviewDates can return fewer dates than requested (e.g. an
@@ -7833,7 +7849,8 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
     setBuildPlanPreview({sessionCount:dates.length,sessionDuration,difficultyValue:params.difficultyValue,dates,
       reasoningInputs:{confidenceLevel:buildPlanConfidence,importanceLevel:buildPlanExam.importanceLevel,materialCharCount:buildPlanMaterialText.length,
         hadHistoricalDuration:historicalDuration!=null,
-        hoursTargetAdjusted:sessionCount!==params.sessionCount||sessionDuration!==params.sessionDuration}});
+        hoursTargetAdjusted:sessionCount!==params.sessionCount||sessionDuration!==params.sessionDuration,
+        daysUntil:daysUntilExam}});
     setBuildPlanFocuses(focuses||dates.map(()=>""));
     // One {date,duration}|null per session index -- null means "use the
     // auto-computed value," matching how buildPlanFocuses' blank string
@@ -9476,7 +9493,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
               return (
                 <div style={{fontSize:12,color:T.text,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",marginBottom:14,lineHeight:1.6}}>
                   <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Why this plan</div>
-                  {studyPlanReasoning(buildPlanPreview.reasoningInputs.confidenceLevel,buildPlanPreview.reasoningInputs.importanceLevel,buildPlanPreview.reasoningInputs.materialCharCount,buildPlanPreview.reasoningInputs.hadHistoricalDuration,buildPlanPreview.reasoningInputs.hoursTargetAdjusted,buildPlanPreview.sessionCount,buildPlanPreview.sessionDuration,lastIsLighter).map((line,i)=>(
+                  {studyPlanReasoning(buildPlanPreview.reasoningInputs.confidenceLevel,buildPlanPreview.reasoningInputs.importanceLevel,buildPlanPreview.reasoningInputs.materialCharCount,buildPlanPreview.reasoningInputs.hadHistoricalDuration,buildPlanPreview.reasoningInputs.hoursTargetAdjusted,buildPlanPreview.sessionCount,buildPlanPreview.sessionDuration,lastIsLighter,buildPlanPreview.reasoningInputs.daysUntil).map((line,i)=>(
                     <div key={i}>{line}</div>
                   ))}
                 </div>
@@ -18841,7 +18858,8 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   useEffect(()=>{
     if(!ev||kind!=="exam"||!examPlan.proposeSessions||examSessionCountTouched)return;
     const materialCharCount=examPlan.materialFiles.map(f=>f.text||"").join("\n\n").length;
-    const params=computeStudyPlanParams(ev.examWeight,25,examConfidence,materialCharCount,ev.importanceLevel);
+    const daysUntilExam=ev.date?Math.round((new Date(ev.date+"T12:00:00")-new Date(dayKey()+"T12:00:00"))/86400000):undefined;
+    const params=computeStudyPlanParams(ev.examWeight,25,examConfidence,materialCharCount,ev.importanceLevel,daysUntilExam);
     if(params.sessionCount!==examPlan.sessionCount)setExamPlan(m=>({...m,sessionCount:params.sessionCount}));
   },[ev,kind,examPlan.proposeSessions,examPlan.materialFiles,examConfidence,examSessionCountTouched]);
 
@@ -19011,7 +19029,8 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
     if(kind==="exam"&&examPlan.proposeSessions&&linkedSessions.length===0){
       const baseDuration=suggestDurationFor(subject,"study block")||25;
       const materialCharCount=examPlan.materialFiles.map(f=>f.text||"").join("\n\n").length;
-      const planParams=computeStudyPlanParams(ev.examWeight,baseDuration,examConfidence,materialCharCount,ev.importanceLevel);
+      const daysUntilExam=date?Math.round((new Date(date+"T12:00:00")-new Date(dayKey()+"T12:00:00"))/86400000):undefined;
+      const planParams=computeStudyPlanParams(ev.examWeight,baseDuration,examConfidence,materialCharCount,ev.importanceLevel,daysUntilExam);
       const sessions=buildExamSessionEvents(title.trim(),date,subject,examPlan.sessionCount||planParams.sessionCount,"edittask-exam-"+ev.id,next,routines,prefs,{dueEventId:ev.id},planParams.difficultyValue,planParams.sessionDuration,ev.examWeight,ev.confidenceLog);
       next=next.concat(sessions);
     }
@@ -21146,7 +21165,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   useEffect(()=>{
     if(!newOpen||evKind!=="exam"||!evExamPlan.proposeSessions||evSessionCountTouched)return;
     const materialCharCount=evExamPlan.materialFiles.map(f=>f.text||"").join("\n\n").length;
-    const params=computeStudyPlanParams(undefined,25,evConfidence,materialCharCount,undefined);
+    const daysUntilExam=evDate?Math.round((new Date(evDate+"T12:00:00")-new Date(dayKey()+"T12:00:00"))/86400000):undefined;
+    const params=computeStudyPlanParams(undefined,25,evConfidence,materialCharCount,undefined,daysUntilExam);
     if(params.sessionCount!==evExamPlan.sessionCount)setEvExamPlan(m=>({...m,sessionCount:params.sessionCount}));
   },[newOpen,evKind,evExamPlan.proposeSessions,evExamPlan.materialFiles,evConfidence,evSessionCountTouched]);
   const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvCustomColor(T.lime);setEvDate("");setEvTime("09:00");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setEvCommuteBefore("");setEvCommuteAfter("");setAiLoading(false);setAsChecklist(false);resetTypeExtras();};
@@ -21543,7 +21563,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         // count next to it.
         const baseDuration=suggestDurationFor(subj,"study block")||25;
         const materialCharCount=evExamPlan.materialFiles.map(f=>f.text||"").join("\n\n").length;
-        const planParams=computeStudyPlanParams(examTask.examWeight,baseDuration,evConfidence,materialCharCount,examTask.importanceLevel);
+        const daysUntilExam=examTask.date?Math.round((new Date(examTask.date+"T12:00:00")-new Date(dayKey()+"T12:00:00"))/86400000):undefined;
+        const planParams=computeStudyPlanParams(examTask.examWeight,baseDuration,evConfidence,materialCharCount,examTask.importanceLevel,daysUntilExam);
         const sessions=buildExamSessionEvents(evTitle.trim(),slot.date,subj,evExamPlan.sessionCount||planParams.sessionCount,"addtask-exam-"+examTask.id,events.concat([examTask]),routines,getSchedulePreferences(),{dueEventId:examTask.id},planParams.difficultyValue,planParams.sessionDuration,examTask.examWeight,examTask.confidenceLog);
         tasks=tasks.concat(sessions);
       }
