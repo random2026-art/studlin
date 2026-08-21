@@ -2911,6 +2911,37 @@ describe("Attack Block self-report grants zero XP (by construction, not by conve
     assert.equal(m.getTotalMinutesFocused(), 0);
   });
 
+  describe("scheduleAttackBlockFollowUp's return value (2026-08-20: was write-only, now reports where it landed)", () => {
+    test("returns the real placed sessions, sorted soonest-first", () => {
+      const m = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+      const result = m.scheduleAttackBlockFollowUp(followUpTask(), 200);
+      assert.ok(Array.isArray(result.sessions));
+      assert.ok(result.sessions.length > 0);
+      const events = JSON.parse(m.localStorage.getItem("studlin-events"));
+      assert.equal(result.sessions.length, events.length, "the returned sessions should be exactly what got written to storage");
+      for (let i = 1; i < result.sessions.length; i++) {
+        assert.ok(result.sessions[i - 1].date + result.sessions[i - 1].time <= result.sessions[i].date + result.sessions[i].time, "sessions[0] must be the actual soonest one");
+      }
+    });
+
+    test("allPlaced is true when every requested chunk found a slot", () => {
+      const m = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+      // A small ask with a distant deadline and an otherwise-empty calendar
+      // -- every chunk should place cleanly.
+      const result = m.scheduleAttackBlockFollowUp(followUpTask({ deadline: "2026-12-01" }), 60);
+      assert.equal(result.allPlaced, true);
+    });
+
+    test("each returned session carries the real fields a caller would need to describe it (date, time, title)", () => {
+      const m = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+      const result = m.scheduleAttackBlockFollowUp(followUpTask(), 90);
+      const s = result.sessions[0];
+      assert.ok(s.date);
+      assert.ok(s.time);
+      assert.equal(s.title, "Term Paper");
+    });
+  });
+
   test("logSession's own signature has no percentage/self-report parameter -- only ever a plain minutes number", () => {
     const m = loadStudlinModule();
     // logSession fires an unawaited upsertProfile() call that reaches

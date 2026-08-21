@@ -1381,6 +1381,68 @@ const DEMO_CLASSES_BY_SCHOOL={[DEMO_SCHOOL_COLLEGE]:DEMO_CLASSES_COLLEGE,[DEMO_S
 // any bulk-update pass.
 const getWeeklyRoutine=()=>lsGet("weeklyRoutine",[]);
 const saveWeeklyRoutine=(r)=>lsSet("weeklyRoutine",r);
+// 2026-08-20: detects routines that are almost certainly leftover
+// fragments of ONE activity from before the groupId-preservation fix
+// (see saveRoutineEditFromModal's own comment) shipped -- same
+// title+kind+subject+time, but sitting under different groupIds so they
+// show as separate sidebar rows ("5 Morning Routine" instead of one).
+// The fix stops NEW fragmentation; this is the one-time repair for
+// routines that were already split apart before it landed. Consolidates
+// each cluster into a single object with a combined `days` array (the
+// exact shape a fresh multi-day create/edit already produces), rather
+// than just relabeling groupId -- that would leave them as "multiple
+// placements," a real, distinct feature for genuinely different day
+// patterns, which isn't what an accidental fragment split is.
+// Deliberately excludes "class" (legitimately distinct per-period
+// meetings) and "habit" (real per-day completion history may already
+// reference a specific fragment's id -- safer left untouched than risk
+// orphaning that).
+function findFragmentedRoutineGroups(routines){
+  const sig=(r)=>[(r.title||"").trim().toLowerCase(),r.kind,r.subject||"",r.startTime||"",r.duration||0].join("|");
+  const bySig=new Map();
+  routines.forEach(r=>{
+    if(r.kind==="class"||r.kind==="habit")return;
+    if(!r.days||r.days.length===0)return;
+    const key=sig(r);
+    if(!bySig.has(key))bySig.set(key,[]);
+    bySig.get(key).push(r);
+  });
+  const groups=[];
+  bySig.forEach(list=>{
+    if(list.length<2)return;
+    const groupIds=new Set(list.map(r=>r.groupId||r.id));
+    if(groupIds.size<2)return; // already one real group -- a legitimate multi-placement case
+    // Only safe to merge if no two fragments in the cluster claim the same
+    // day -- overlapping days would mean genuinely conflicting data, not a
+    // clean split, and this should never guess which one wins.
+    const allDays=list.flatMap(r=>r.days);
+    if(new Set(allDays).size!==allDays.length)return;
+    groups.push(list);
+  });
+  return groups;
+}
+function mergeFragmentedRoutineGroup(list){
+  // Oldest id wins and survives -- ids in this codebase are Date.now()-
+  // based strings, so lexicographically smallest is also chronologically
+  // first, i.e. the original object, the one any real history is more
+  // likely to already reference.
+  const primary=list.reduce((a,b)=>a.id<b.id?a:b);
+  const days=[...new Set(list.flatMap(r=>r.days))];
+  return {...primary,groupId:primary.groupId||primary.id,days};
+}
+// Returns {routines, mergedCount} -- mergedCount is how many separate
+// clusters got collapsed into one (not how many individual rows were
+// removed), matching what a confirmation/toast should actually say.
+function mergeDuplicateRoutines(routines){
+  const groups=findFragmentedRoutineGroups(routines);
+  if(groups.length===0)return {routines,mergedCount:0};
+  const idsToRemove=new Set();
+  const merged=groups.map(list=>{
+    list.forEach(r=>idsToRemove.add(r.id));
+    return mergeFragmentedRoutineGroup(list);
+  });
+  return {routines:routines.filter(r=>!idsToRemove.has(r.id)).concat(merged),mergedCount:groups.length};
+}
 // One-time backfill for classes added via ClassSetupWizard before its two
 // commit paths (commitReviewedClass/commitHsSchedule) started tagging the
 // recurring class meeting-time routine item with the class's own subject
@@ -4346,6 +4408,11 @@ function scheduleAttackBlockFollowUp(task,nextMins){
     cursorDate=dayKey(d);
   }
   lsSet("events",events.concat(newEvents));
+  // Was write-only -- callers had no way to know where (or whether) this
+  // actually landed. sessions sorted by date/time so a caller can safely
+  // read sessions[0] as "the next one," regardless of the ramp-offset
+  // loop's own placement order.
+  return {sessions:[...newEvents].sort((a,b)=>(a.date+a.time)<(b.date+b.time)?-1:1),allPlaced:newEvents.length===chunks.length};
 }
 // "Re-optimize" (Dashboard's Assignments master list) -- a chain's
 // remaining pending minutes get pulled off the calendar and rescheduled
@@ -14599,6 +14666,12 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
   const [alarmActive,setAlarmActive]=useState(false);
   const [completion,setCompletion]=useState(null);
   const [barFilled,setBarFilled]=useState(false);
+  // Where the Attack Block follow-up actually landed -- reported gap,
+  // scheduling this used to happen silently with zero feedback (unlike
+  // onStudyBlockExtend's sibling flow, which already toasts where it
+  // landed). Set right before completeSession runs (see the
+  // "attackScheduling" phase below) so the "done" screen can show it.
+  const [attackPlacement,setAttackPlacement]=useState(null);
   // Collapsible floating widget — tucks itself away during a focus block so
   // it doesn't block the dashboard/calendar, and auto-expands the moment a
   // break starts so the student notices they can step away.
@@ -15198,13 +15271,32 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
       if(onAttackBlockFinish)onAttackBlockFinish();
       completeSession(pendingMinsRef.current);
     };
+    // Runs the actual placement through a real "thinking" step instead of
+    // scheduling silently and closing -- reported gap: onAttackBlockExtend
+    // used to fire with zero feedback (unlike onStudyBlockExtend's sibling
+    // flow, which already toasts where it landed). The scheduling itself
+    // is fast/local (no AI call), so minDelay is what makes this actually
+    // read as "Studlin looked for the best time" rather than an instant,
+    // unexplained calendar change -- same reasoning as Build Study Plan's
+    // own generating step. onAttackBlockExtend now returns the real
+    // placement (see scheduleAttackBlockFollowUp), captured into
+    // attackPlacement for the "done" screen to show.
+    const runFollowUpSchedule=async(pct,recMins)=>{
+      setPhase("attackScheduling");
+      const minDelay=new Promise(r=>setTimeout(r,900));
+      const [result]=await Promise.all([
+        Promise.resolve(onAttackBlockExtend?onAttackBlockExtend(abTotalMins,pct,recMins):null),
+        minDelay,
+      ]);
+      setAttackPlacement(result||null);
+      completeSession(pendingMinsRef.current);
+    };
     const onScheduleFollowUp=()=>{
       // abOutline?null:abPct -- the whole-task percent is meaningless once
       // an outline exists (checked items are the real signal instead), so
       // callers logging this decision shouldn't see a stale percent that
       // was never actually asked about.
-      if(onAttackBlockExtend)onAttackBlockExtend(abTotalMins,abOutline?null:abPct,abEffectiveRecMins);
-      completeSession(pendingMinsRef.current);
+      runFollowUpSchedule(abOutline?null:abPct,abEffectiveRecMins);
     };
     // One-tap skip (Friction & Control Pass rule 5) -- assumes conservative
     // default progress (nothing newly checked, current item half-done)
@@ -15214,8 +15306,7 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
       const conservativeMins=abOutline
         ?computeOutlineRemainingMins(abOutline,abTotalMins,ATTACK_BLOCK_SKIP_ASSUMED_PCT)
         :Math.max(10,Math.min(90,Math.round((abTotalMins*(100-ATTACK_BLOCK_SKIP_ASSUMED_PCT)/ATTACK_BLOCK_SKIP_ASSUMED_PCT*ATTACK_BLOCK_PADDING)/5)*5));
-      if(onAttackBlockExtend)onAttackBlockExtend(abTotalMins,null,conservativeMins||abEffectiveRecMins);
-      completeSession(pendingMinsRef.current);
+      runFollowUpSchedule(null,conservativeMins||abEffectiveRecMins);
     };
     return(
       <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(10px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
@@ -15272,12 +15363,27 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
     );
   }
 
+  if(phase==="attackScheduling"){
+    return(
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(10px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+        <div style={{width:"100%",maxWidth:420,background:T.card,borderRadius:10,border:`1px solid ${T.border}`,padding:"28px 24px"}}>
+          <ExtractionProgress fileName={task.title} stage="analyze" analyzeLabel="Finding the best time for the rest of this…" />
+        </div>
+      </div>
+    );
+  }
+
   // ── XP REWARD SCREEN ───────────────────────────────────────────────────
   if(phase==="done"){
     if(!completion)return null;
     const {mins,gain,minutesAfter,tierBefore,tierAfter}=completion;
     const tieredUp=tierBefore!==tierAfter;
     const prog=tierProgressFor(minutesAfter);
+    // Local, not module-shared -- this component has no existing date/time
+    // formatter of its own (CalendarTab/WeeklyPlanner each already keep
+    // their own local copies rather than a shared one, same pattern here).
+    const fmtPlacementDate=(k)=>{const p=k.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"});};
+    const fmtPlacementTime=(t)=>{if(!t)return "";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+" "+ap;};
     return(
       <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(10px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
         <div style={{width:"100%",maxWidth:440,background:T.card,borderRadius:10,border:`1px solid ${T.border}`,padding:"32px 28px",textAlign:"center",position:"relative",overflow:"hidden",animation:"studlinPop 0.25s cubic-bezier(.2,.85,.3,1)"}}>
@@ -15316,6 +15422,22 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
             {tieredUp&&(
               <div style={{fontSize:13,fontWeight:700,color:T.lime,marginBottom:22,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
                 {Icon.star}Ranked up to {tierAfter}
+              </div>
+            )}
+
+            {/* "Where's it going" -- reported gap, scheduling the follow-up
+                used to happen silently. sessions.length===0 is a real,
+                honest outcome (no legal slot before the deadline), not an
+                error -- shown the same way findReliableSlotFor's other
+                callers already report a failed placement elsewhere. */}
+            {attackPlacement&&(
+              <div style={{fontSize:12.5,color:attackPlacement.sessions.length>0?T.muted:T.amber,background:T.card2,borderRadius:8,padding:"10px 12px",marginBottom:16,textAlign:"left"}}>
+                {attackPlacement.sessions.length===0
+                  ?"Couldn't find room before the deadline -- add it manually in your calendar."
+                  :attackPlacement.sessions.length===1
+                  ?"Next session: "+fmtPlacementDate(attackPlacement.sessions[0].date)+" · "+fmtPlacementTime(attackPlacement.sessions[0].time)
+                  :"Scheduled across "+attackPlacement.sessions.length+" sessions, starting "+fmtPlacementDate(attackPlacement.sessions[0].date)+" · "+fmtPlacementTime(attackPlacement.sessions[0].time)}
+                {attackPlacement.sessions.length>0&&!attackPlacement.allPlaced&&" -- couldn't fit all of it before the deadline."}
               </div>
             )}
 
@@ -22555,6 +22677,27 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             <span style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Activities</span>
             <button type="button" onClick={()=>setRoutineCenterOpen(true)} style={{background:"none",border:"none",color:T.lime,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:0}}>+ Add new</button>
           </div>
+          {/* Self-serve repair for routines fragmented before the
+              groupId-preservation fix shipped -- see
+              findFragmentedRoutineGroups' own comment. Only ever shows up
+              when there's something real to merge; a clean account never
+              sees this. */}
+          {(()=>{
+            const fragmentGroups=findFragmentedRoutineGroups(routines);
+            if(fragmentGroups.length===0)return null;
+            const rowCount=fragmentGroups.reduce((s,g)=>s+g.length,0);
+            return (
+              <div style={{fontSize:11.5,color:T.text,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 10px",marginBottom:10,lineHeight:1.5}}>
+                {rowCount} activities look like duplicates of {fragmentGroups.length===1?"each other":"themselves"}.
+                <button type="button" onClick={()=>{
+                  const {routines:next,mergedCount}=mergeDuplicateRoutines(routines);
+                  persistRoutines(next);
+                  setReconcileToast(mergedCount+" duplicate activit"+(mergedCount===1?"y":"ies")+" merged.");
+                  setTimeout(()=>setReconcileToast(""),3400);
+                }} style={{background:"none",border:"none",color:T.lime,fontSize:11.5,fontWeight:600,fontFamily:T.font,cursor:"pointer",padding:0,marginLeft:6,textDecoration:"underline"}}>Merge duplicates</button>
+              </div>
+            );
+          })()}
           <div style={{display:"flex",flexDirection:"column",gap:6}}>
             {(()=>{
               const activityRoutines=routines.filter(r=>r.kind!=="class");
@@ -28593,7 +28736,7 @@ function App() {
           scheduleAssignmentExtension(timerTask,timerTask.deadline,extensionMins);
         }}
         onAttackBlockExtend={(totalMinsSoFar,pct,nextMins)=>{
-          scheduleAttackBlockFollowUp(timerTask,nextMins);
+          return scheduleAttackBlockFollowUp(timerTask,nextMins);
         }}
         onStudyBlockExtend={(task,verifiedMinsSoFar,nextMins)=>{
           const result=scheduleStudyBlockExtension(task,nextMins);

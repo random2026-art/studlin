@@ -987,6 +987,42 @@ const DEMO_CLASSES_HS = [
 const DEMO_CLASSES_BY_SCHOOL = { [DEMO_SCHOOL_COLLEGE]: DEMO_CLASSES_COLLEGE, [DEMO_SCHOOL_HS]: DEMO_CLASSES_HS };
 const getWeeklyRoutine = () => lsGet("weeklyRoutine", []);
 const saveWeeklyRoutine = (r) => lsSet("weeklyRoutine", r);
+function findFragmentedRoutineGroups(routines) {
+  const sig = (r) => [(r.title || "").trim().toLowerCase(), r.kind, r.subject || "", r.startTime || "", r.duration || 0].join("|");
+  const bySig = /* @__PURE__ */ new Map();
+  routines.forEach((r) => {
+    if (r.kind === "class" || r.kind === "habit") return;
+    if (!r.days || r.days.length === 0) return;
+    const key = sig(r);
+    if (!bySig.has(key)) bySig.set(key, []);
+    bySig.get(key).push(r);
+  });
+  const groups = [];
+  bySig.forEach((list) => {
+    if (list.length < 2) return;
+    const groupIds = new Set(list.map((r) => r.groupId || r.id));
+    if (groupIds.size < 2) return;
+    const allDays = list.flatMap((r) => r.days);
+    if (new Set(allDays).size !== allDays.length) return;
+    groups.push(list);
+  });
+  return groups;
+}
+function mergeFragmentedRoutineGroup(list) {
+  const primary = list.reduce((a, b) => a.id < b.id ? a : b);
+  const days = [...new Set(list.flatMap((r) => r.days))];
+  return { ...primary, groupId: primary.groupId || primary.id, days };
+}
+function mergeDuplicateRoutines(routines) {
+  const groups = findFragmentedRoutineGroups(routines);
+  if (groups.length === 0) return { routines, mergedCount: 0 };
+  const idsToRemove = /* @__PURE__ */ new Set();
+  const merged = groups.map((list) => {
+    list.forEach((r) => idsToRemove.add(r.id));
+    return mergeFragmentedRoutineGroup(list);
+  });
+  return { routines: routines.filter((r) => !idsToRemove.has(r.id)).concat(merged), mergedCount: groups.length };
+}
 function backfillClassRoutineSubjects() {
   if (lsGet("classRoutineSubjectsBackfilled", false)) return;
   const subjects = getSubjects();
@@ -2734,6 +2770,7 @@ function scheduleAttackBlockFollowUp(task, nextMins) {
     cursorDate = dayKey(d);
   }
   lsSet("events", events.concat(newEvents));
+  return { sessions: [...newEvents].sort((a, b) => a.date + a.time < b.date + b.time ? -1 : 1), allPlaced: newEvents.length === chunks.length };
 }
 function reoptimizeAttackChain(chainId) {
   const events = lsGet("events", []);
@@ -9301,6 +9338,7 @@ function TaskTimerModal({ task, onClose, onComplete, onAssignmentComplete, onAss
   const [alarmActive, setAlarmActive] = useState(false);
   const [completion, setCompletion] = useState(null);
   const [barFilled, setBarFilled] = useState(false);
+  const [attackPlacement, setAttackPlacement] = useState(null);
   const [collapsed, setCollapsed] = useState(false);
   useEffect(() => {
     if (phase === "break" || phase === "breakDone") setCollapsed(false);
@@ -9714,14 +9752,22 @@ function TaskTimerModal({ task, onClose, onComplete, onAssignmentComplete, onAss
       if (onAttackBlockFinish) onAttackBlockFinish();
       completeSession(pendingMinsRef.current);
     };
-    const onScheduleFollowUp = () => {
-      if (onAttackBlockExtend) onAttackBlockExtend(abTotalMins, abOutline ? null : abPct, abEffectiveRecMins);
+    const runFollowUpSchedule = async (pct, recMins) => {
+      setPhase("attackScheduling");
+      const minDelay = new Promise((r) => setTimeout(r, 900));
+      const [result] = await Promise.all([
+        Promise.resolve(onAttackBlockExtend ? onAttackBlockExtend(abTotalMins, pct, recMins) : null),
+        minDelay
+      ]);
+      setAttackPlacement(result || null);
       completeSession(pendingMinsRef.current);
+    };
+    const onScheduleFollowUp = () => {
+      runFollowUpSchedule(abOutline ? null : abPct, abEffectiveRecMins);
     };
     const onSkipCheckIn = () => {
       const conservativeMins = abOutline ? computeOutlineRemainingMins(abOutline, abTotalMins, ATTACK_BLOCK_SKIP_ASSUMED_PCT) : Math.max(10, Math.min(90, Math.round(abTotalMins * (100 - ATTACK_BLOCK_SKIP_ASSUMED_PCT) / ATTACK_BLOCK_SKIP_ASSUMED_PCT * ATTACK_BLOCK_PADDING / 5) * 5));
-      if (onAttackBlockExtend) onAttackBlockExtend(abTotalMins, null, conservativeMins || abEffectiveRecMins);
-      completeSession(pendingMinsRef.current);
+      runFollowUpSchedule(null, conservativeMins || abEffectiveRecMins);
     };
     return /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", backdropFilter: "blur(10px)", zIndex: 1e3, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 } }, /* @__PURE__ */ React.createElement("div", { style: { width: "100%", maxWidth: 480, background: T.card, borderRadius: 10, border: `1px solid ${T.border}`, padding: "32px 28px", textAlign: "center" } }, abStep === "choice" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 17, fontWeight: 700, color: T.white, marginBottom: 8 } }, `Time's up on "`, task.title, '"'), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, marginBottom: 28, lineHeight: 1.6 } }, "Did you finish it?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: onFinishAttackBlock, style: { width: "100%", justifyContent: "center" } }, "Yes, I'm finished"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setAbStep("slider"), style: { width: "100%", justifyContent: "center" } }, "Not yet")), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onSkipCheckIn, style: { background: "none", border: "none", color: T.muted, fontSize: 12, fontFamily: T.font, cursor: "pointer", marginTop: 16, textDecoration: "underline" } }, "Skip for now")), abStep === "slider" && abOutline && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 17, fontWeight: 700, color: T.white, marginBottom: 8 } }, abCurrentItem ? 'How far into "' + abCurrentItem.text + '"?' : "Almost there"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, marginBottom: 24, lineHeight: 1.6 } }, abCurrentItem ? "Drag to estimate progress on just this step." : "Every step is checked off. Anything left to wrap up?"), abCurrentItem && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(
       "input",
@@ -9747,12 +9793,27 @@ function TaskTimerModal({ task, onClose, onComplete, onAssignmentComplete, onAss
       }
     ), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.lime, marginBottom: 20 } }, abPct, "% complete"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, marginBottom: 24 } }, "Studlin will schedule ", /* @__PURE__ */ React.createElement("strong", null, "+", abRecMins, "m"), " to finish it up."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setAbStep("choice"), style: { flex: 1, justifyContent: "center" } }, "Back"), /* @__PURE__ */ React.createElement(Btn, { onClick: onScheduleFollowUp, style: { flex: 1, justifyContent: "center" } }, "Schedule +", abRecMins, "m")))));
   }
+  if (phase === "attackScheduling") {
+    return /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", backdropFilter: "blur(10px)", zIndex: 1e3, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 } }, /* @__PURE__ */ React.createElement("div", { style: { width: "100%", maxWidth: 420, background: T.card, borderRadius: 10, border: `1px solid ${T.border}`, padding: "28px 24px" } }, /* @__PURE__ */ React.createElement(ExtractionProgress, { fileName: task.title, stage: "analyze", analyzeLabel: "Finding the best time for the rest of this\u2026" })));
+  }
   if (phase === "done") {
     if (!completion) return null;
     const { mins, gain, minutesAfter, tierBefore, tierAfter } = completion;
     const tieredUp = tierBefore !== tierAfter;
     const prog = tierProgressFor(minutesAfter);
-    return /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", backdropFilter: "blur(10px)", zIndex: 1e3, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 } }, /* @__PURE__ */ React.createElement("div", { style: { width: "100%", maxWidth: 440, background: T.card, borderRadius: 10, border: `1px solid ${T.border}`, padding: "32px 28px", textAlign: "center", position: "relative", overflow: "hidden", animation: "studlinPop 0.25s cubic-bezier(.2,.85,.3,1)" } }, tieredUp && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", inset: 0, background: `radial-gradient(circle at 50% 15%, ${T.lime}40, transparent 62%)`, pointerEvents: "none" } }), /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: T.lime, marginBottom: 10 } }, "Session complete"), /* @__PURE__ */ React.createElement("h2", { style: { fontSize: 23, fontWeight: 700, color: T.white, margin: "0 0 4px" } }, mins, " min focused"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, marginBottom: 22 } }, task.title), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: `repeat(${Math.min(coop.length + 1, 3)},1fr)`, gap: 10, marginBottom: tieredUp ? 16 : 22 } }, /* @__PURE__ */ React.createElement("div", { style: { background: T.card2, borderRadius: 8, padding: "16px 18px", textAlign: "left" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 9 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted, fontWeight: 600 } }, coop.length ? "You" : tierAfter), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.mono, fontSize: 16, fontWeight: 700, color: T.lime } }, "+", gain, "m")), /* @__PURE__ */ React.createElement("div", { style: { height: 6, background: T.border, borderRadius: 99, overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { height: "100%", width: (barFilled ? prog.pct : 0) + "%", background: T.lime, borderRadius: 99, transition: "width 1.1s cubic-bezier(.2,.8,.2,1)" } })), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, marginTop: 7 } }, coop.length ? tierAfter : prog.next ? `${(prog.next.minMinutes - minutesAfter).toLocaleString()}m to ${prog.next.title}` : "Maximum rank achieved")), coop.slice(0, 2).map((p, i) => /* @__PURE__ */ React.createElement("div", { key: p.uid || i, style: { background: T.card2, borderRadius: 8, padding: "16px 18px", textAlign: "left" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 9 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted, fontWeight: 600 } }, p.name), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.mono, fontSize: 16, fontWeight: 700, color: T.teal } }, "+", gain, "m")), /* @__PURE__ */ React.createElement("div", { style: { height: 6, background: T.border, borderRadius: 99, overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { height: "100%", width: (barFilled ? prog.pct : 0) + "%", background: T.teal, borderRadius: 99, transition: "width 1.1s cubic-bezier(.2,.8,.2,1)" } })), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, marginTop: 7 } }, "Locked in together")))), coop.length > 2 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginTop: -6, marginBottom: 16 } }, "+", coop.length - 2, " more locked in together"), tieredUp && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: T.lime, marginBottom: 22, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 } }, Icon.star, "Ranked up to ", tierAfter), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: onClose, style: { flex: 1, justifyContent: "center" } }, "Skip"), /* @__PURE__ */ React.createElement(Btn, { onClick: onClose, style: { flex: 1, justifyContent: "center" } }, "Done")))));
+    const fmtPlacementDate = (k) => {
+      const p = k.split("-");
+      return new Date(+p[0], +p[1] - 1, +p[2]).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+    };
+    const fmtPlacementTime = (t) => {
+      if (!t) return "";
+      const p = t.split(":");
+      let h = +p[0];
+      const ap = h >= 12 ? "PM" : "AM";
+      h = h % 12 || 12;
+      return h + ":" + p[1] + " " + ap;
+    };
+    return /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", backdropFilter: "blur(10px)", zIndex: 1e3, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 } }, /* @__PURE__ */ React.createElement("div", { style: { width: "100%", maxWidth: 440, background: T.card, borderRadius: 10, border: `1px solid ${T.border}`, padding: "32px 28px", textAlign: "center", position: "relative", overflow: "hidden", animation: "studlinPop 0.25s cubic-bezier(.2,.85,.3,1)" } }, tieredUp && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", inset: 0, background: `radial-gradient(circle at 50% 15%, ${T.lime}40, transparent 62%)`, pointerEvents: "none" } }), /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: T.lime, marginBottom: 10 } }, "Session complete"), /* @__PURE__ */ React.createElement("h2", { style: { fontSize: 23, fontWeight: 700, color: T.white, margin: "0 0 4px" } }, mins, " min focused"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, marginBottom: 22 } }, task.title), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: `repeat(${Math.min(coop.length + 1, 3)},1fr)`, gap: 10, marginBottom: tieredUp ? 16 : 22 } }, /* @__PURE__ */ React.createElement("div", { style: { background: T.card2, borderRadius: 8, padding: "16px 18px", textAlign: "left" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 9 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted, fontWeight: 600 } }, coop.length ? "You" : tierAfter), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.mono, fontSize: 16, fontWeight: 700, color: T.lime } }, "+", gain, "m")), /* @__PURE__ */ React.createElement("div", { style: { height: 6, background: T.border, borderRadius: 99, overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { height: "100%", width: (barFilled ? prog.pct : 0) + "%", background: T.lime, borderRadius: 99, transition: "width 1.1s cubic-bezier(.2,.8,.2,1)" } })), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, marginTop: 7 } }, coop.length ? tierAfter : prog.next ? `${(prog.next.minMinutes - minutesAfter).toLocaleString()}m to ${prog.next.title}` : "Maximum rank achieved")), coop.slice(0, 2).map((p, i) => /* @__PURE__ */ React.createElement("div", { key: p.uid || i, style: { background: T.card2, borderRadius: 8, padding: "16px 18px", textAlign: "left" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 9 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted, fontWeight: 600 } }, p.name), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.mono, fontSize: 16, fontWeight: 700, color: T.teal } }, "+", gain, "m")), /* @__PURE__ */ React.createElement("div", { style: { height: 6, background: T.border, borderRadius: 99, overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { height: "100%", width: (barFilled ? prog.pct : 0) + "%", background: T.teal, borderRadius: 99, transition: "width 1.1s cubic-bezier(.2,.8,.2,1)" } })), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, marginTop: 7 } }, "Locked in together")))), coop.length > 2 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginTop: -6, marginBottom: 16 } }, "+", coop.length - 2, " more locked in together"), tieredUp && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: T.lime, marginBottom: 22, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 } }, Icon.star, "Ranked up to ", tierAfter), attackPlacement && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: attackPlacement.sessions.length > 0 ? T.muted : T.amber, background: T.card2, borderRadius: 8, padding: "10px 12px", marginBottom: 16, textAlign: "left" } }, attackPlacement.sessions.length === 0 ? "Couldn't find room before the deadline -- add it manually in your calendar." : attackPlacement.sessions.length === 1 ? "Next session: " + fmtPlacementDate(attackPlacement.sessions[0].date) + " \xB7 " + fmtPlacementTime(attackPlacement.sessions[0].time) : "Scheduled across " + attackPlacement.sessions.length + " sessions, starting " + fmtPlacementDate(attackPlacement.sessions[0].date) + " \xB7 " + fmtPlacementTime(attackPlacement.sessions[0].time), attackPlacement.sessions.length > 0 && !attackPlacement.allPlaced && " -- couldn't fit all of it before the deadline."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: onClose, style: { flex: 1, justifyContent: "center" } }, "Skip"), /* @__PURE__ */ React.createElement(Btn, { onClick: onClose, style: { flex: 1, justifyContent: "center" } }, "Done")))));
   }
   const isBreak = phase === "break" || phase === "breakDone";
   const timerColor = isBreak ? T.amber : T.lime;
@@ -14388,7 +14449,17 @@ Examples:
       },
       s.label
     ))));
-  })(), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 18 } }, currentTermSubjects.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, padding: "4px 0 8px" } }, "No courses yet."), currentTermSubjects.map(renderCourseRow)), pastTermSubjects.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 18 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setPastCoursesOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, marginBottom: 6, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.faint, transform: pastCoursesOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Past terms (", pastTermSubjects.length, ")")), pastCoursesOpen && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, opacity: 0.6 } }, pastTermSubjects.map(renderCourseRow))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Activities"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setRoutineCenterOpen(true), style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontFamily: T.font, cursor: "pointer", padding: 0 } }, "+ Add new")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, (() => {
+  })(), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 18 } }, currentTermSubjects.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, padding: "4px 0 8px" } }, "No courses yet."), currentTermSubjects.map(renderCourseRow)), pastTermSubjects.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 18 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setPastCoursesOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, marginBottom: 6, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.faint, transform: pastCoursesOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Past terms (", pastTermSubjects.length, ")")), pastCoursesOpen && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, opacity: 0.6 } }, pastTermSubjects.map(renderCourseRow))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Activities"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setRoutineCenterOpen(true), style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontFamily: T.font, cursor: "pointer", padding: 0 } }, "+ Add new")), (() => {
+    const fragmentGroups = findFragmentedRoutineGroups(routines);
+    if (fragmentGroups.length === 0) return null;
+    const rowCount = fragmentGroups.reduce((s, g) => s + g.length, 0);
+    return /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.text, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "8px 10px", marginBottom: 10, lineHeight: 1.5 } }, rowCount, " activities look like duplicates of ", fragmentGroups.length === 1 ? "each other" : "themselves", ".", /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+      const { routines: next, mergedCount } = mergeDuplicateRoutines(routines);
+      persistRoutines(next);
+      setReconcileToast(mergedCount + " duplicate activit" + (mergedCount === 1 ? "y" : "ies") + " merged.");
+      setTimeout(() => setReconcileToast(""), 3400);
+    }, style: { background: "none", border: "none", color: T.lime, fontSize: 11.5, fontWeight: 600, fontFamily: T.font, cursor: "pointer", padding: 0, marginLeft: 6, textDecoration: "underline" } }, "Merge duplicates"));
+  })(), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, (() => {
     const activityRoutines = routines.filter((r) => r.kind !== "class");
     if (activityRoutines.length === 0) return /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, padding: "4px 0" } }, "No activities yet.");
     const groupsMap = /* @__PURE__ */ new Map();
@@ -17838,7 +17909,7 @@ function App() {
         scheduleAssignmentExtension(timerTask, timerTask.deadline, extensionMins);
       },
       onAttackBlockExtend: (totalMinsSoFar, pct, nextMins) => {
-        scheduleAttackBlockFollowUp(timerTask, nextMins);
+        return scheduleAttackBlockFollowUp(timerTask, nextMins);
       },
       onStudyBlockExtend: (task, verifiedMinsSoFar, nextMins) => {
         const result = scheduleStudyBlockExtension(task, nextMins);
