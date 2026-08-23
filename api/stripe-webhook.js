@@ -84,10 +84,13 @@ async function handleInvoicePaid(invoice) {
   await db.runTransaction(async (tx) => {
     const doc = await tx.get(userRef);
     const current = doc.exists ? (doc.data().credits || 0) : 0;
+    // Each invoice.paid marks the start of a new billing cycle -- reset the
+    // real-dollar Anthropic spend counter here too (see api/chat.js's
+    // PRO_MONTHLY_AI_COST_CAP_CENTS), same reset point as the credit top-up.
     if (doc.exists) {
-      tx.update(userRef, { credits: current + monthlyCredits });
+      tx.update(userRef, { credits: current + monthlyCredits, aiSpendCentsCycle: 0 });
     } else {
-      tx.set(userRef, { credits: monthlyCredits, plan: plan, createdAt: new Date().toISOString() });
+      tx.set(userRef, { credits: monthlyCredits, plan: plan, aiSpendCentsCycle: 0, createdAt: new Date().toISOString() });
     }
   });
 }

@@ -1,4 +1,4 @@
-const { db } = require('./_lib/firebase-admin');
+const { db, admin } = require('./_lib/firebase-admin');
 const { setCors, verifyAuth } = require('./_lib/auth');
 const { withSentry } = require('./_lib/sentry');
 
@@ -203,6 +203,28 @@ const IMAGE_CREDIT_COST = 4;
 const DEFAULT_CREDITS = 120; // Free plan limit — must match api/me.js, the actual account-creation default
 const RATE_LIMIT_PER_MIN = 20;
 
+// Real dollar cost of Anthropic usage, separate from the arbitrary
+// CREDIT_COST unit above. Credits cap how many *messages* a plan gets;
+// this caps how much a Pro subscriber can actually cost us in raw
+// Anthropic API spend against the $6.99/mo they pay, since a flat
+// 100,000-credit allowance has no relationship to real token cost.
+// Rates are $/million tokens -- verify these against the Anthropic
+// console for the exact model strings in MODEL_MAP before relying on
+// this for real budgeting, pricing can change and isn't fetchable at
+// runtime.
+const PRICE_PER_MILLION_TOKENS = {
+  standard: { input: 3, output: 15 },
+  flash: { input: 0.8, output: 4 },
+};
+const PRO_MONTHLY_AI_COST_CAP_CENTS = 300; // $3 -- see PRICE_PER_MILLION_TOKENS caveat above
+
+function usageCostCents(modelKey, usage) {
+  const rates = PRICE_PER_MILLION_TOKENS[modelKey] || PRICE_PER_MILLION_TOKENS.standard;
+  const inputCost = ((usage?.input_tokens || 0) / 1e6) * rates.input;
+  const outputCost = ((usage?.output_tokens || 0) / 1e6) * rates.output;
+  return (inputCost + outputCost) * 100;
+}
+
 module.exports = withSentry(async (req, res) => {
   setCors(req, res);
   if (req.method === 'OPTIONS') return res.status(200).end();
@@ -254,13 +276,19 @@ module.exports = withSentry(async (req, res) => {
     // chat itself — just skip the credit deduction for this request.
     let creditsAfter = null;
     let creditTrackingSkipped = false;
+    // Set inside the transaction below when this account is Pro and has
+    // already hit PRO_MONTHLY_AI_COST_CAP_CENTS of real Anthropic spend
+    // this billing cycle — forces this call onto the cheap model instead
+    // of blocking a paying subscriber outright. Reset to 0 by
+    // handleInvoicePaid in api/stripe-webhook.js each renewal.
+    let downgradedForCostCap = false;
     const userRef = db ? db.collection('users').doc(user.uid) : null;
 
     if (!userRef) {
       creditTrackingSkipped = true;
     } else {
       try {
-        creditsAfter = await db.runTransaction(async (tx) => {
+        const txResult = await db.runTransaction(async (tx) => {
           const doc = await tx.get(userRef);
           const now = Date.now();
           const data = doc.exists ? doc.data() : { credits: DEFAULT_CREDITS, plan: 'Free' };
@@ -275,6 +303,17 @@ module.exports = withSentry(async (req, res) => {
             throw new Error('NO_CREDITS');
           }
 
+          // format:"json" (syllabus/schedule extraction, Brain Dump) is
+          // excluded from the downgrade even over cap -- flash's smaller
+          // MAX_TOKENS truncates a real extraction into invalid JSON,
+          // silently degrading to an empty result (see MAX_TOKENS_JSON_STANDARD's
+          // own comment). Those calls are rare/bursty, not the sustained-chat
+          // cost driver this cap targets, so it's not worth risking that
+          // regression to save a few cents here.
+          const plan = data.plan || 'Free';
+          const aiSpendCents = data.aiSpendCentsCycle || 0;
+          const overCostCap = plan === 'Pro' && model === 'standard' && format !== 'json' && aiSpendCents >= PRO_MONTHLY_AI_COST_CAP_CENTS;
+
           const next = credits - cost;
           const update = {
             credits: next,
@@ -286,8 +325,10 @@ module.exports = withSentry(async (req, res) => {
           } else {
             tx.set(userRef, Object.assign({ createdAt: new Date().toISOString(), plan: 'Free' }, update));
           }
-          return next;
+          return { next, overCostCap };
         });
+        creditsAfter = txResult.next;
+        downgradedForCostCap = txResult.overCostCap;
       } catch (txErr) {
         if (txErr.message === 'RATE_LIMIT') {
           return res.status(429).json({ error: 'Too many requests. Slow down a bit.' });
@@ -303,9 +344,10 @@ module.exports = withSentry(async (req, res) => {
       }
     }
 
-    const claudeModel = MODEL_MAP[model] || MODEL_MAP.standard;
-    let systemPrompt = format === 'json' ? EXTRACTION_PROMPT : (model === 'flash' ? FLASH_PROMPT : SYSTEM_PROMPT);
-    const maxTokens = (format === 'json' && model !== 'flash') ? MAX_TOKENS_JSON_STANDARD : (MAX_TOKENS[model] || 2048);
+    const effectiveModel = downgradedForCostCap ? 'flash' : model;
+    const claudeModel = MODEL_MAP[effectiveModel] || MODEL_MAP.standard;
+    let systemPrompt = format === 'json' ? EXTRACTION_PROMPT : (effectiveModel === 'flash' ? FLASH_PROMPT : SYSTEM_PROMPT);
+    const maxTokens = (format === 'json' && effectiveModel !== 'flash') ? MAX_TOKENS_JSON_STANDARD : (MAX_TOKENS[effectiveModel] || 2048);
 
     // Only genuine chat/tutoring surfaces send verbosity/tutorStyle — every
     // other call site (citations, grammar, essay feedback, flashcard/quiz
@@ -404,6 +446,11 @@ module.exports = withSentry(async (req, res) => {
 
     const data = await response.json();
     let reply = data.content?.find(b => b.type === 'text')?.text || 'No response.';
+    // Real Anthropic spend for this call (plus the retry's own usage below,
+    // if one happens) -- accumulated against the account's per-cycle total
+    // so the cost cap above has real data to check next time. Best-effort,
+    // same as credit tracking: never blocks the reply on a Firestore error.
+    let totalUsageCents = usageCostCents(effectiveModel, data.usage);
 
     // format:"json" self-correction: every extractor strips code fences
     // and JSON.parses client-side, then silently falls back to an
@@ -452,6 +499,7 @@ module.exports = withSentry(async (req, res) => {
             const retryReply = retryData.content?.find(b => b.type === 'text')?.text || '';
             JSON.parse(stripFences(retryReply)); // only accept it if this parses clean
             reply = retryReply;
+            totalUsageCents += usageCostCents(effectiveModel, retryData.usage);
           }
         } catch (retryErr) {
           // Retry failed or was itself invalid -- fall through with the
@@ -460,7 +508,11 @@ module.exports = withSentry(async (req, res) => {
       }
     }
 
-    return res.status(200).json({ reply, credits: creditsAfter });
+    if (!creditTrackingSkipped && userRef && totalUsageCents > 0) {
+      await userRef.update({ aiSpendCentsCycle: admin.firestore.FieldValue.increment(totalUsageCents) }).catch(() => {});
+    }
+
+    return res.status(200).json({ reply, credits: creditsAfter, downgradedForCostCap });
   } catch (err) {
     return res.status(500).json({ error: err.message || 'Server error.' });
   }
