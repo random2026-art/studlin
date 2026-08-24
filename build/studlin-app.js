@@ -9939,7 +9939,7 @@ function computeEventBlockHeightPx(durationMins, gapToNextMins, pxPerHr) {
   if (gapToNextMins == null) return floored;
   return Math.min(floored, Math.max(4, gapToNextMins * (pxPerHr / 60)));
 }
-function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent, selectedRoutineKey, onSelectRoutineOccurrence, blockRefs, flipOldRectsRef, flipSeq }) {
+function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent, selectedRoutineKey, onSelectRoutineOccurrence, blockRefs, flipOldRectsRef, flipSeq, newItemHighlightIds }) {
   const [exitGhosts, setExitGhosts] = useState([]);
   useLayoutEffect(() => {
     if (!flipSeq || !flipOldRectsRef) return;
@@ -10378,6 +10378,8 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
           const highlightedByRoutineMode = editRoutineMode && isRoutine;
           const isSelected = !isRoutine && selectedEventId === ev.id;
           const isRoutineSelected = isRoutine && selectedRoutineKey === ev.routineId + "|" + ev.date;
+          const isNewlyAdded = !!newItemHighlightIds && (newItemHighlightIds.has(ev.id) || ev.routineId && newItemHighlightIds.has(ev.routineId));
+          const newItemBoxShadow = isNewlyAdded ? `inset 3px 0 0 0 ${T.lime}` + (kindStyle.boxShadow ? `, ${kindStyle.boxShadow}` : "") : null;
           const leftPct = displayCol / displayTotalCols * 100;
           const widthPct = 100 / displayTotalCols;
           const commuteStripStyle = (mins, edge) => ({ position: "absolute", top: edge === "before" ? topPx - mins * (WK_PX_HR / 60) : topPx + heightPx, left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`, height: mins * (WK_PX_HR / 60), borderRadius: edge === "before" ? "5px 5px 0 0" : "0 0 5px 5px", background: `repeating-linear-gradient(135deg, ${subjectColor}26, ${subjectColor}26 4px, transparent 4px, transparent 8px)`, border: `1px dashed ${subjectColor}55`, [edge === "before" ? "borderBottom" : "borderTop"]: "none", zIndex: 2, pointerEvents: "none", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" });
@@ -10426,12 +10428,12 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
               onMouseLeave: () => {
                 if (isRoutine && setHoveredRoutineId) setHoveredRoutineId(null);
               },
-              title: isRoutine ? "Click to select (Ctrl+C to copy) \xB7 Double-click to edit \xB7 Drag to reschedule" : "Click for actions (Backspace to delete) \xB7 Double-click to edit \xB7 Drag to reschedule",
+              title: (isNewlyAdded ? "Just added \xB7 " : "") + (isRoutine ? "Click to select (Ctrl+C to copy) \xB7 Double-click to edit \xB7 Drag to reschedule" : "Click for actions (Backspace to delete) \xB7 Double-click to edit \xB7 Drag to reschedule"),
               ref: (el) => {
                 if (el) blockRefs.current.set(ev.id, el);
                 else blockRefs.current.delete(ev.id);
               },
-              style: { position: "absolute", top: topPx, left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`, height: heightPx, borderRadius: 5, padding: "2px 5px 2px 8px", cursor: "grab", overflow: "hidden", zIndex: 3, opacity: dimmedByRoutineMode ? 0.3 : isDone ? 0.6 : 1, boxSizing: "border-box", userSelect: "none", ...kindStyle, ...highlightedByRoutineMode ? { outline: `2px solid ${T.lime}`, outlineOffset: 1 } : {}, ...isSelected || isRoutineSelected ? { outline: `2px solid ${T.lime}`, outlineOffset: 1, boxShadow: `0 0 0 4px ${T.lime}22` } : {}, ...!isRoutine && highlightedSessionId === ev.id ? { outline: `2px solid ${T.amber}`, outlineOffset: 1, boxShadow: `0 0 0 4px ${T.amber}33` } : {} }
+              style: { position: "absolute", top: topPx, left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`, height: heightPx, borderRadius: 5, padding: "2px 5px 2px 8px", cursor: "grab", overflow: "hidden", zIndex: 3, opacity: dimmedByRoutineMode ? 0.3 : isDone ? 0.6 : 1, boxSizing: "border-box", userSelect: "none", ...kindStyle, ...highlightedByRoutineMode ? { outline: `2px solid ${T.lime}`, outlineOffset: 1 } : {}, ...newItemBoxShadow ? { boxShadow: newItemBoxShadow } : {}, ...isSelected || isRoutineSelected ? { outline: `2px solid ${T.lime}`, outlineOffset: 1, boxShadow: `0 0 0 4px ${T.lime}22` } : {}, ...!isRoutine && highlightedSessionId === ev.id ? { outline: `2px solid ${T.amber}`, outlineOffset: 1, boxShadow: `0 0 0 4px ${T.amber}33` } : {} }
             },
             /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: subjectColor, borderRadius: "5px 0 0 5px" } }),
             !catchUpPending && over > 0 && /* @__PURE__ */ React.createElement("span", { title: over + "d overdue", style: { position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: "50%", background: T.red, boxShadow: "0 0 0 1.5px rgba(255,255,255,0.9)", zIndex: 1 } }),
@@ -10829,6 +10831,10 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     setPeakBuckets(prefs.peakHourBuckets || []);
   }, [open]);
   const finalPreview = useMemo(() => buildPendingSchedulePreview(pendingClasses, getWeeklyRoutine(), getSchedulePreferences()), [pendingClasses]);
+  const newlyCommittedIdsRef = useRef([]);
+  useEffect(() => {
+    if (open) newlyCommittedIdsRef.current = [];
+  }, [open]);
   if (!open) return null;
   const nextColor = () => SUBJECT_COLORS[pendingClasses.length % SUBJECT_COLORS.length];
   const startManual = () => {
@@ -11267,6 +11273,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     });
     const freeItems = hsFreeReview.map((f) => ({ id: f.id, title: f.title, kind: "free", days: f.days, startTime: f.startTime, duration: f.duration })).concat(freeFromClasses.map((p, i) => ({ id: "free-manual-" + Date.now() + "-" + i, title: p.subjectName.trim(), kind: "free", days: p.days, startTime: p.startTime, duration: Math.max(15, timeToMinutes(p.endTime) - timeToMinutes(p.startTime)) })));
     saveWeeklyRoutine([...getWeeklyRoutine(), ...routineItems, ...freeItems]);
+    newlyCommittedIdsRef.current.push(...routineItems.map((r) => r.id));
     if (schoolStart && schoolEnd) saveHsSchoolHours({ start: schoolStart, end: schoolEnd });
     if (termStart && termEnd) saveSchoolTerm({ start: termStart, end: termEnd });
     if (holidays.length > 0) saveHolidays(holidays);
@@ -11293,6 +11300,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
       }
       subjects = [...subjects, { id: cls.subjId, label: cls.name, color: cls.color, termEnd: termEnd || null, needsSyllabus: classNeedsSyllabus(cls.items) }];
       const routineItems = (cls.meetingTimes || []).filter((mt) => mt.days.length > 0).map((mt) => ({ id: "rt-" + Date.now() + "-" + Math.round(Math.random() * 1e3), title: cls.name, kind: "class", subject: cls.name, courseId: cls.subjId, days: mt.days, startTime: mt.startTime, duration: mt.duration }));
+      newlyCommittedIdsRef.current.push(...routineItems.map((r) => r.id));
       routine = [...routine, ...routineItems];
     });
     saveSubjects(subjects);
@@ -11300,7 +11308,8 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     withIds.forEach((cls) => {
       const included = (cls.items || []).filter((it) => it.include && it.title.trim());
       if (included.length > 0) {
-        commitSyllabusEvents("wiz-" + cls.subjId, cls.name, included, cls.sourceText, cls.subjId);
+        const committed = commitSyllabusEvents("wiz-" + cls.subjId, cls.name, included, cls.sourceText, cls.subjId);
+        newlyCommittedIdsRef.current.push(...committed.map((e) => e.id));
         attachSessionFocusesToSyllabusExams("wiz-" + cls.subjId, cls.name, included);
       }
     });
@@ -11316,7 +11325,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
       lsSet("openImportCalQueue", wizPostOnboardConnect.map((v) => v === "workschedule" ? true : { hint: v }));
       setActivePage("settings");
     }
-    onFinish();
+    onFinish(newlyCommittedIdsRef.current);
   };
   const TitleSub = ({ title, sub }) => /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 22 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 19, fontWeight: 700, color: T.white, letterSpacing: "-0.01em", marginBottom: 5 } }, title), sub && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, lineHeight: 1.5 } }, sub));
   return /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", inset: 0, zIndex: 300, background: "rgba(8,12,10,0.97)", backdropFilter: "blur(10px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px 16px", overflowY: "auto" } }, /* @__PURE__ */ React.createElement("div", { style: { width: "100%", maxWidth: 620, maxHeight: "88vh", display: "flex", flexDirection: "column", background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: "0 48px 100px -30px rgba(0,0,0,0.7)", animation: "studlinPop 0.25s ease" } }, /* @__PURE__ */ React.createElement(WizardStepper, { step }), /* @__PURE__ */ React.createElement("div", { style: { padding: "28px 32px 0", overflowY: "auto", flex: 1, minHeight: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { minHeight: 210 } }, step === "term" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: "When does this term run?", sub: "Studlin stops expecting your classes outside these dates -- summer, before the term starts. You can always change this later in Settings." }), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } }, /* @__PURE__ */ React.createElement(DateField, { label: "Term starts", value: termStart, onChange: setTermStart }), /* @__PURE__ */ React.createElement(DateField, { label: "Term ends", value: termEnd, onChange: setTermEnd }))), step === "holidays" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: "Any breaks this term?", sub: "Spring break, a long weekend -- Studlin won't plan study sessions during these. Optional." }), holidays.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 } }, holidays.map((h) => /* @__PURE__ */ React.createElement("div", { key: h.id, style: { ...subjectRowStyle(T.muted), justifyContent: "space-between" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text, fontWeight: 600 } }, h.label || "Break"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.muted } }, h.start, " \u2013 ", h.end), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setHolidays((hs) => hs.filter((x) => x.id !== h.id)), title: "Remove", style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 15, padding: "0 2px" } }, "\xD7")))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10, marginBottom: 10 } }, /* @__PURE__ */ React.createElement(Input, { value: holidayDraft.label, onChange: (e) => setHolidayDraft((d) => ({ ...d, label: e.target.value })), placeholder: "e.g. Spring Break" }), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } }, /* @__PURE__ */ React.createElement(DateField, { label: "Starts", value: holidayDraft.start, onChange: (v) => setHolidayDraft((d) => ({ ...d, start: v })) }), /* @__PURE__ */ React.createElement(DateField, { label: "Ends", value: holidayDraft.end, onChange: (v) => setHolidayDraft((d) => ({ ...d, end: v })) }))), /* @__PURE__ */ React.createElement(
@@ -11530,7 +11539,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
   // windowInvalid guard is the only real precondition left.
   /* @__PURE__ */ React.createElement(Btn, { onClick: commitAllToCalendar }, pendingClasses.length > 0 ? "Add to Calendar" : "Finish")))));
 }
-function DayPlanner({ dayEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending, openNew }) {
+function DayPlanner({ dayEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending, openNew, newItemHighlightIds }) {
   const scrollRef = useRef(null);
   const [dayPreviewOpen, setDayPreviewOpen] = useState(false);
   const stepDay = (n) => {
@@ -11625,6 +11634,8 @@ function DayPlanner({ dayEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange,
     const kindStyle = isStudy ? { background: color, borderLeft: "none", color: T.ink } : isExam ? { background: T.ink, border: `2px solid ${color}`, borderLeft: `2px solid ${color}`, boxShadow: `0 0 10px -1px ${color}, inset 0 0 10px ${color}22`, color: T.cream } : { background: color + "1E", borderLeft: `3px solid ${color}`, color };
     const leftPct = displayCol / displayTotalCols * 100;
     const widthPct = 100 / displayTotalCols;
+    const isNewlyAdded = !!newItemHighlightIds && (newItemHighlightIds.has(ev.id) || ev.routineId && newItemHighlightIds.has(ev.routineId));
+    const newItemBoxShadow = isNewlyAdded ? `inset 3px 0 0 0 ${T.lime}` + (kindStyle.boxShadow ? `, ${kindStyle.boxShadow}` : "") : null;
     const commuteStripStyle = (mins, edge) => ({ position: "absolute", top: edge === "before" ? topPx - mins * (pxPerHr / 60) : topPx + heightPx, left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`, height: mins * (pxPerHr / 60), borderRadius: edge === "before" ? "6px 6px 0 0" : "0 0 6px 6px", background: `repeating-linear-gradient(135deg, ${color}26, ${color}26 4px, transparent 4px, transparent 8px)`, border: `1px dashed ${color}55`, [edge === "before" ? "borderBottom" : "borderTop"]: "none", zIndex: 2, pointerEvents: "none", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" });
     return /* @__PURE__ */ React.createElement(React.Fragment, { key: ev.id }, ev.commuteBefore > 0 && /* @__PURE__ */ React.createElement("div", { title: ev.commuteBefore + " min commute", style: commuteStripStyle(ev.commuteBefore, "before") }, ev.commuteBefore * (pxPerHr / 60) > 13 && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color, fontWeight: 600, whiteSpace: "nowrap" } }, ev.commuteBefore, "m commute")), /* @__PURE__ */ React.createElement(
       "div",
@@ -11634,8 +11645,8 @@ function DayPlanner({ dayEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange,
           if (ev.isRoutine) return;
           isDone ? uncrossDone(ev.id) : markDone(ev.id);
         },
-        title: ev.isRoutine ? "Double-click to edit" : "Click to toggle done, double-click to edit",
-        style: { position: "absolute", top: topPx, left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`, height: heightPx, borderRadius: 6, padding: "4px 8px", cursor: "pointer", overflow: "hidden", zIndex: 3, opacity: isDone ? 0.6 : 1, boxSizing: "border-box", ...kindStyle }
+        title: (isNewlyAdded ? "Just added \xB7 " : "") + (ev.isRoutine ? "Double-click to edit" : "Click to toggle done, double-click to edit"),
+        style: { position: "absolute", top: topPx, left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`, height: heightPx, borderRadius: 6, padding: "4px 8px", cursor: "pointer", overflow: "hidden", zIndex: 3, opacity: isDone ? 0.6 : 1, boxSizing: "border-box", ...kindStyle, ...newItemBoxShadow ? { boxShadow: newItemBoxShadow } : {} }
       },
       !catchUpPending && over > 0 && /* @__PURE__ */ React.createElement("span", { title: over + "d overdue", style: { position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: "50%", background: T.red, boxShadow: `0 0 0 1.5px ${isExam ? T.ink : "#fff"}`, zIndex: 1 } }),
       overflowCount > 0 && /* @__PURE__ */ React.createElement("span", { title: overflowCount + " more at this time", style: { position: "absolute", bottom: 2, right: 2, fontSize: 8, fontWeight: 800, color: kindStyle.color, background: "rgba(0,0,0,0.18)", borderRadius: 8, padding: "1px 4px", lineHeight: 1.3, zIndex: 1 } }, "+", overflowCount),
@@ -12582,6 +12593,12 @@ function NewEventModal({ open, initialTitle, initialDate, initialStartTime, init
     }
   ), " min")), /* @__PURE__ */ React.createElement(Input, { value: location2, onChange: (e) => setLocation(e.target.value), placeholder: "Location (optional)", style: { padding: "7px 10px", fontSize: 12 } }), /* @__PURE__ */ React.createElement("div", { onClick: () => setMovable((m) => !m), style: { display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", padding: "7px 10px", borderRadius: 6, border: `1px solid ${T.border}`, background: T.card2 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 600, color: T.text } }, movable ? "Free" : "Fixed"), /* @__PURE__ */ React.createElement("div", { style: { width: 32, height: 18, borderRadius: 9, background: movable ? T.lime : T.faint, position: "relative", transition: "background 0.2s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 14, borderRadius: "50%", background: "#fff", position: "absolute", top: 2, left: movable ? 16 : 2, transition: "left 0.2s" } })))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, justifyContent: editRoutine ? "space-between" : "flex-end", alignItems: "center", padding: "9px 12px", borderTop: `1px solid ${T.border}` } }, editRoutine && /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: onDelete, style: { padding: "6px 13px", fontSize: 12 } }, "Delete"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: onClose, style: { padding: "6px 13px", fontSize: 12 } }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: submit, disabled: invalid, style: { padding: "6px 13px", fontSize: 12 } }, editRoutine ? "Save changes" : "Create"))))), document.body);
 }
+const CALENDAR_HIGHLIGHT_MAX_AGE_MS = 5 * 60 * 1e3;
+function resolveCalendarHighlightFlag(flag, nowMs) {
+  if (!flag || !Array.isArray(flag.ids) || flag.ids.length === 0) return null;
+  if (!flag.setAt || nowMs - flag.setAt > CALENDAR_HIGHLIGHT_MAX_AGE_MS) return null;
+  return flag.ids;
+}
 function CalendarTab({ setActive = () => {
 }, onTaskSaved, openRoutineCenterOnMount, onRoutineCenterOpenedFromSettings, setDetailEventId, registerSetEvents, onTaskCompleted, catchUpPending, onWizardOpenChange, jumpToSessionOnMount, onJumpSessionConsumed, setPricingOpen = () => {
 } } = {}) {
@@ -12704,17 +12721,27 @@ function CalendarTab({ setActive = () => {
     persistRoutines(getWeeklyRoutine());
     setEvents2(lsGet("events", []).filter((e) => !e.id.startsWith("seed-")));
   };
-  const finishClassSetup = () => {
+  const [newItemHighlightIds, setNewItemHighlightIds] = useState([]);
+  const finishClassSetup = (newIds) => {
     lsSet("subjects-configured", true);
     lsSet("hasConfiguredRoutine", true);
     setClassSetupOpen(false);
     syncClassSetupState();
+    if (newIds && newIds.length > 0) setNewItemHighlightIds(newIds);
   };
-  const finishQuickScan = () => {
+  const finishQuickScan = (newIds) => {
     setQuickScanOpen(false);
     setQuickScanTargetCourseId(null);
     syncClassSetupState();
+    if (newIds && newIds.length > 0) setNewItemHighlightIds(newIds);
   };
+  useEffect(() => {
+    const flag = lsGet("calendarHighlightIds", null);
+    lsSet("calendarHighlightIds", null);
+    const ids = resolveCalendarHighlightFlag(flag, Date.now());
+    if (ids) setNewItemHighlightIds(ids);
+  }, []);
+  const newItemHighlightSet = useMemo(() => new Set(newItemHighlightIds), [newItemHighlightIds]);
   const mk = (off, time, title, subject, kind) => {
     const d = /* @__PURE__ */ new Date();
     d.setDate(d.getDate() + off);
@@ -14637,6 +14664,7 @@ Examples:
       const isToday = c.key === todayK;
       const isSel = c.key === selDay;
       const isHeavyThisMonth = monthHeavyDays.has(c.key);
+      const hasNewItem = evs.some((ev) => newItemHighlightSet.has(ev.id));
       return /* @__PURE__ */ React.createElement(
         "div",
         {
@@ -14656,8 +14684,8 @@ Examples:
               setDragId(null);
             }
           },
-          title: isHeavyThisMonth ? dayWorkloadMinutes(evs) + " minutes scheduled -- heavier than your average day this month" : void 0,
-          style: { position: "relative", minHeight: 64, minWidth: 0, borderRadius: 9, padding: "6px 7px", cursor: "pointer", background: isSel ? T.card2 : "transparent", border: "1px solid " + (isSel ? T.lime + "55" : "transparent"), transition: "all 0.12s", opacity: c.out ? 0.35 : 1 }
+          title: hasNewItem ? "Has something just added" : isHeavyThisMonth ? dayWorkloadMinutes(evs) + " minutes scheduled -- heavier than your average day this month" : void 0,
+          style: { position: "relative", minHeight: 64, minWidth: 0, borderRadius: 9, padding: "6px 7px", cursor: "pointer", background: isSel ? T.card2 : "transparent", border: "1px solid " + (hasNewItem ? T.lime : isSel ? T.lime + "55" : "transparent"), transition: "all 0.12s", opacity: c.out ? 0.35 : 1 }
         },
         /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "flex-start" } }, /* @__PURE__ */ React.createElement("span", { style: { width: 22, height: 22, borderRadius: "50%", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: isToday ? 700 : 500, background: isToday ? T.lime : "transparent", color: isToday ? T.ink : c.out ? T.faint : T.text } }, c.d)),
         isSel && /* @__PURE__ */ React.createElement(
@@ -14738,9 +14766,10 @@ Examples:
       onPreviewDraggingChange: setPreviewDragActive,
       onSelectEvent: setSelectedCalEventId,
       selectedRoutineKey: selectedRoutineOccurrence ? selectedRoutineOccurrence.routineId + "|" + selectedRoutineOccurrence.date : null,
-      onSelectRoutineOccurrence: setSelectedRoutineOccurrence
+      onSelectRoutineOccurrence: setSelectedRoutineOccurrence,
+      newItemHighlightIds: newItemHighlightSet
     }
-  ), calView === "daily" && /* @__PURE__ */ React.createElement(DayPlanner, { dayEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, openEdit, markDone, uncrossDone, prefs: getSchedulePreferences(), setSelDay, catchUpPending, openNew })), /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, display: "flex", position: "relative", height: "calc(100vh - 150px)" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 0, bottom: 0, left: calRightColCollapsed ? 0 : 14, width: 1, background: T.border, boxShadow: `-1px 0 3px rgba(0,0,0,0.12)` } }), !calRightColCollapsed && /* @__PURE__ */ React.createElement("div", { style: { width: 220, marginLeft: 34, maxHeight: "100%", overflowY: "auto" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontWeight: 700, color: T.white } }, selectedCourse ? selectedCourse.label : "Upcoming"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: toggleCalRightColCollapsed, style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontWeight: 600, fontFamily: T.font, cursor: "pointer", padding: 0 } }, "Close \u203A")), sidebarRecentItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 10, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setRecentlyCreatedOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.faint, transform: recentlyCreatedOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.text } }, "Recently created")), recentlyCreatedOpen && sidebarRecentItems.map(renderSidebarItem)), sidebarOverdueItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setOverdueSectionOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.red, transform: overdueSectionOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.red } }, "Overdue (", sidebarOverdueItems.length, ")")), overdueSectionOpen && sidebarOverdueItems.map(renderSidebarItem)), sidebarUpcomingItems.length === 0 && sidebarRecentItems.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.faint } }, "Nothing upcoming."), sidebarUpcomingGroups.map((group) => /* @__PURE__ */ React.createElement("div", { key: group.label, style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, color: group.label === "Overdue" ? T.red : T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 } }, "Due: ", group.label), group.items.map(renderSidebarItem)))), calRightColCollapsed && /* @__PURE__ */ React.createElement(
+  ), calView === "daily" && /* @__PURE__ */ React.createElement(DayPlanner, { dayEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, openEdit, markDone, uncrossDone, prefs: getSchedulePreferences(), setSelDay, catchUpPending, openNew, newItemHighlightIds: newItemHighlightSet })), /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, display: "flex", position: "relative", height: "calc(100vh - 150px)" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 0, bottom: 0, left: calRightColCollapsed ? 0 : 14, width: 1, background: T.border, boxShadow: `-1px 0 3px rgba(0,0,0,0.12)` } }), !calRightColCollapsed && /* @__PURE__ */ React.createElement("div", { style: { width: 220, marginLeft: 34, maxHeight: "100%", overflowY: "auto" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontWeight: 700, color: T.white } }, selectedCourse ? selectedCourse.label : "Upcoming"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: toggleCalRightColCollapsed, style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontWeight: 600, fontFamily: T.font, cursor: "pointer", padding: 0 } }, "Close \u203A")), sidebarRecentItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 10, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setRecentlyCreatedOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.faint, transform: recentlyCreatedOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.text } }, "Recently created")), recentlyCreatedOpen && sidebarRecentItems.map(renderSidebarItem)), sidebarOverdueItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setOverdueSectionOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.red, transform: overdueSectionOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.red } }, "Overdue (", sidebarOverdueItems.length, ")")), overdueSectionOpen && sidebarOverdueItems.map(renderSidebarItem)), sidebarUpcomingItems.length === 0 && sidebarRecentItems.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.faint } }, "Nothing upcoming."), sidebarUpcomingGroups.map((group) => /* @__PURE__ */ React.createElement("div", { key: group.label, style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, color: group.label === "Overdue" ? T.red : T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 } }, "Due: ", group.label), group.items.map(renderSidebarItem)))), calRightColCollapsed && /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -15731,6 +15760,11 @@ function SettingsTab({ theme = "dark", setTheme = () => {
       setImportCalClassifying(false);
     }
   };
+  const highlightAndJumpToCalendar = (ids) => {
+    if (!ids || ids.length === 0) return;
+    lsSet("calendarHighlightIds", { ids, setAt: Date.now() });
+    setActivePage("calendar");
+  };
   const confirmImportCalendar = () => {
     if (!importCalReview) return;
     const { subId, url, label, sourceType, events: reviewEvents, classified, viaToken } = importCalReview;
@@ -15738,7 +15772,9 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     const classifications = classified ? Object.fromEntries(
       fetched.filter((e) => e.uid).map((e) => [e.uid, { kind: e.kind, subject: e.subjectGuess, examWeight: e.examWeight }])
     ) : void 0;
+    const existingUidsForSub = new Set(lsGet("events", []).filter((e) => e.importSubId === subId).map((e) => e.externalUid));
     const merged = mergeImportedEvents(lsGet("events", []), subId, fetched, classifications);
+    const newIds = merged.filter((e) => e.importSubId === subId && !existingUidsForSub.has(e.externalUid)).map((e) => e.id);
     const result = reconcileFixedEventConflicts(merged.filter((e) => e.importSubId === subId));
     surfaceReconcileResult(result);
     const sub = { id: subId, url, label, sourceType, lastSyncedAt: Date.now(), ...viaToken ? { viaToken: true } : {} };
@@ -15748,9 +15784,11 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     setImportCalOpen(false);
     setImportCalReview(null);
     showToast(fetched.length + " event" + (fetched.length !== 1 ? "s" : "") + " synced from " + label + reconcileToastSuffix(result));
+    const hadMoreQueued = lsGet("openImportCalQueue", []).length > 0;
     openNextQueuedImportCal();
+    if (!hadMoreQueued) highlightAndJumpToCalendar(newIds);
   };
-  const resyncCalendar = async (sub) => {
+  const resyncCalendar = async (sub, { manual } = {}) => {
     try {
       let data;
       if (sub.viaToken) {
@@ -15783,8 +15821,9 @@ function SettingsTab({ theme = "dark", setTheme = () => {
       const nextSubs = importedCals.map((s) => s.id === sub.id ? { ...s, lastSyncedAt: Date.now(), lastSyncError: null } : s);
       setImportedCals(nextSubs);
       saveImportedCalendars(nextSubs);
-      const newCount = merged.filter((e) => e.importSubId === sub.id && !existingUids.has(e.externalUid)).length;
-      showToast(sub.label + (newCount > 0 ? ": " + newCount + " new item" + (newCount !== 1 ? "s" : "") + " found." : " synced.") + reconcileToastSuffix(result));
+      const newItems = merged.filter((e) => e.importSubId === sub.id && !existingUids.has(e.externalUid));
+      showToast(sub.label + (newItems.length > 0 ? ": " + newItems.length + " new item" + (newItems.length !== 1 ? "s" : "") + " found." : " synced.") + reconcileToastSuffix(result));
+      if (manual) highlightAndJumpToCalendar(newItems.map((e) => e.id));
     } catch (e) {
     }
   };
@@ -15877,6 +15916,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     setWorkScanOpen(false);
     setWorkScanReview(null);
     showToast(newEvents.length + " shift" + (newEvents.length !== 1 ? "s" : "") + " added to your calendar." + reconcileToastSuffix(result));
+    highlightAndJumpToCalendar(newEvents.map((e) => e.id));
   };
   const toggleApple = () => {
     const n = !calAppleLinked;
@@ -16071,7 +16111,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
       setImportCalMethod("token");
       setImportCalError("");
       setCanvasDomainError("");
-    }, style: { background: "none", border: "none", padding: 0, marginTop: 2, fontSize: 11.5, color: T.muted, textDecoration: "underline", cursor: "pointer", fontFamily: T.font } }, "\u2190 Use an access token instead (gets full descriptions and real grade weights)")), importedCals.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 18, paddingTop: 16, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, marginBottom: 10 } }, "Connected calendars"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, importedCals.map((sub) => /* @__PURE__ */ React.createElement("div", { key: sub.id, style: { display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: T.card2, borderRadius: 9, border: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, sub.label), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 1 } }, "synced ", timeAgoLabel(sub.lastSyncedAt))), /* @__PURE__ */ React.createElement("button", { onClick: () => resyncCalendar(sub), title: "Sync now", style: { width: 26, height: 26, borderRadius: 6, border: `1px solid ${T.border}`, background: "transparent", color: T.muted, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0 } }, Icon.refresh), /* @__PURE__ */ React.createElement("button", { onClick: () => setRemoveCalConfirm(sub), title: "Remove", style: { padding: "5px 10px", borderRadius: 6, border: `1px solid ${T.border}`, background: "transparent", color: T.muted, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, flexShrink: 0 } }, "Remove")))))) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, importCalReview.events.length, " event", importCalReview.events.length !== 1 ? "s" : "", " found", importCalReview.skippedAllDay > 0 && " \xB7 " + importCalReview.skippedAllDay + " all-day entr" + (importCalReview.skippedAllDay !== 1 ? "ies" : "y") + " skipped for now"), importCalReview.events.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { padding: "24px 16px", textAlign: "center", color: T.muted, fontSize: 12.5 } }, "Nothing to import from this link right now.") : importCalReview.classified ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, maxHeight: 400, overflowY: "auto" } }, importCalReview.events.map((ev, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { padding: "10px 12px", borderRadius: 9, background: T.card2, border: `1px solid ${T.border}`, opacity: ev.include === false ? 0.5 : 1 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "flex-start", gap: 9 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: ev.include !== false, onChange: () => setImportCalReview((r) => ({ ...r, events: r.events.map((x, xi) => xi === i ? { ...x, include: !x.include } : x) })), style: { marginTop: 11, cursor: "pointer", flexShrink: 0 } }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", gap: 10, marginBottom: 6 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.title), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.muted, flexShrink: 0 } }, (/* @__PURE__ */ new Date(ev.date + "T12:00:00")).toLocaleDateString("en-US", { month: "short", day: "numeric" }), !ev.allDay && " \xB7 " + fmtClock12(ev.time))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(
+    }, style: { background: "none", border: "none", padding: 0, marginTop: 2, fontSize: 11.5, color: T.muted, textDecoration: "underline", cursor: "pointer", fontFamily: T.font } }, "\u2190 Use an access token instead (gets full descriptions and real grade weights)")), importedCals.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 18, paddingTop: 16, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, marginBottom: 10 } }, "Connected calendars"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, importedCals.map((sub) => /* @__PURE__ */ React.createElement("div", { key: sub.id, style: { display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: T.card2, borderRadius: 9, border: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, sub.label), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 1 } }, "synced ", timeAgoLabel(sub.lastSyncedAt))), /* @__PURE__ */ React.createElement("button", { onClick: () => resyncCalendar(sub, { manual: true }), title: "Sync now", style: { width: 26, height: 26, borderRadius: 6, border: `1px solid ${T.border}`, background: "transparent", color: T.muted, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0 } }, Icon.refresh), /* @__PURE__ */ React.createElement("button", { onClick: () => setRemoveCalConfirm(sub), title: "Remove", style: { padding: "5px 10px", borderRadius: 6, border: `1px solid ${T.border}`, background: "transparent", color: T.muted, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, flexShrink: 0 } }, "Remove")))))) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, importCalReview.events.length, " event", importCalReview.events.length !== 1 ? "s" : "", " found", importCalReview.skippedAllDay > 0 && " \xB7 " + importCalReview.skippedAllDay + " all-day entr" + (importCalReview.skippedAllDay !== 1 ? "ies" : "y") + " skipped for now"), importCalReview.events.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { padding: "24px 16px", textAlign: "center", color: T.muted, fontSize: 12.5 } }, "Nothing to import from this link right now.") : importCalReview.classified ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, maxHeight: 400, overflowY: "auto" } }, importCalReview.events.map((ev, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { padding: "10px 12px", borderRadius: 9, background: T.card2, border: `1px solid ${T.border}`, opacity: ev.include === false ? 0.5 : 1 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "flex-start", gap: 9 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: ev.include !== false, onChange: () => setImportCalReview((r) => ({ ...r, events: r.events.map((x, xi) => xi === i ? { ...x, include: !x.include } : x) })), style: { marginTop: 11, cursor: "pointer", flexShrink: 0 } }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", gap: 10, marginBottom: 6 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.title), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.muted, flexShrink: 0 } }, (/* @__PURE__ */ new Date(ev.date + "T12:00:00")).toLocaleDateString("en-US", { month: "short", day: "numeric" }), !ev.allDay && " \xB7 " + fmtClock12(ev.time))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(
       SelectChip,
       {
         options: [{ value: "assignment", label: "Assignment" }, { value: "exam", label: "Exam" }, { value: "project", label: "Project" }, { value: "class", label: "Class" }],
