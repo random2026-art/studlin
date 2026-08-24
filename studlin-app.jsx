@@ -20778,7 +20778,25 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     const prefs=getSchedulePreferences();
     const routines=getWeeklyRoutine();
     const duration=ATTACK_BLOCK_DEFAULT_PROBE_MINS;
-    const slot=findOpenSlotFor(events,routines,prefs,dayKey(),prefs.workStartTime,duration,manualPlacement.deadline||null);
+    // Was findOpenSlotFor -- the plain nearest-gap finder with no reasoning
+    // attached, unlike every other session-creation path in this file
+    // (startAttackBlockChain, buildSpacedSessionPreviews, buildExamSessionEvents,
+    // Brain Dump). findReliableSlotFor runs the exact same reliability-bucket
+    // scoring those already trust and returns a `.reason`, so this initial
+    // drop-in landing spot gets the same honest "why here" line shown
+    // everywhere else via placementReason/fmtPlacementReason -- the student
+    // can still drag it anywhere else immediately after (see the banner
+    // above), this only fixes the silent-with-no-explanation first landing.
+    // Unlike findOpenSlotFor (which always hands back *something*),
+    // findReliableSlotFor can come back null when there's genuinely no
+    // legal slot before the deadline -- handled below instead of building a
+    // task at an undefined date/time.
+    const slot=findReliableSlotFor(events,routines,prefs,dayKey(),prefs.workStartTime,duration,manualPlacement.deadline||null,500);
+    if(!slot){
+      setDeadlineToast("Couldn't find any open time for this before the deadline.");
+      setTimeout(()=>setDeadlineToast(""),2800);
+      return;
+    }
     const kindTitle=manualPlacement.kind==="attack"?manualPlacement.title:(manualPlacement.kind==="deck"?"Review: "+manualPlacement.title:"Practice Exam: "+manualPlacement.title);
     const task={
       id:String(Date.now()+Math.random()*1000),
@@ -20786,6 +20804,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       subject:manualPlacement.subject||"",notes:"",kind:"study block",duration,
       priority:500,difficulty:500,deadline:manualPlacement.deadline||null,
       status:"pending",timeSpent:0,completedAt:null,userPinned:true,
+      placementReason:slot.reason||null,
       ...(manualPlacement.kind==="attack"?{}:manualPlacement.kind==="deck"?{deckId:manualPlacement.refId}:{practiceExamId:manualPlacement.refId}),
       ...(manualPlacement.dueEventId?{dueEventId:manualPlacement.dueEventId,isExamPrepSession:manualPlacement.kind!=="attack"}:{}),
     };

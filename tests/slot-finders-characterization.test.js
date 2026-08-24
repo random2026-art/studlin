@@ -137,6 +137,24 @@ describe("findReliableSlotFor", () => {
     assert.equal(slot.date, "2026-07-20");
     assert.notEqual(slot.time, "10:00");
   });
+
+  // Unlike findOpenSlotFor (which always hands back *something*, even a
+  // stale/illegal fallback), findReliableSlotFor can genuinely return null:
+  // when its own reliability-anchor scan finds zero legal candidates (the
+  // target day is fully booked), it re-validates through
+  // findLegalSlotOrNull, which returns null once the only thing left to
+  // offer sits past the deadline. This is exactly the path
+  // CalendarTab's addManualPlacementSession ("+ Add a session" in the
+  // manual-placement flow, studlin-app.jsx) now has to handle since it
+  // switched from findOpenSlotFor to findReliableSlotFor -- a caller that
+  // assumed a slot object back unconditionally would build a task at an
+  // undefined date/time here instead.
+  test("day fully booked AND already past its deadline -- returns null, not a stale fallback slot", () => {
+    const { findReliableSlotFor } = loadStudlinModule({ now: "2026-07-10T08:00:00" });
+    const fullDay = studyBlock({ id: "allday", date: "2026-07-20", time: "09:00", duration: 540 }); // 9am-6pm, the whole work window
+    const slot = findReliableSlotFor([fullDay], [], DEFAULT_PREFS, "2026-07-20", "09:00", 30, "2026-07-15", 500);
+    assert.equal(slot, null);
+  });
 });
 
 describe("findTier0Slot", () => {

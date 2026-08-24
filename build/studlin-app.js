@@ -12935,7 +12935,12 @@ function CalendarTab({ setActive = () => {
     const prefs = getSchedulePreferences();
     const routines2 = getWeeklyRoutine();
     const duration = ATTACK_BLOCK_DEFAULT_PROBE_MINS;
-    const slot = findOpenSlotFor(events, routines2, prefs, dayKey(), prefs.workStartTime, duration, manualPlacement.deadline || null);
+    const slot = findReliableSlotFor(events, routines2, prefs, dayKey(), prefs.workStartTime, duration, manualPlacement.deadline || null, 500);
+    if (!slot) {
+      setDeadlineToast("Couldn't find any open time for this before the deadline.");
+      setTimeout(() => setDeadlineToast(""), 2800);
+      return;
+    }
     const kindTitle = manualPlacement.kind === "attack" ? manualPlacement.title : manualPlacement.kind === "deck" ? "Review: " + manualPlacement.title : "Practice Exam: " + manualPlacement.title;
     const task = {
       id: String(Date.now() + Math.random() * 1e3),
@@ -12953,6 +12958,7 @@ function CalendarTab({ setActive = () => {
       timeSpent: 0,
       completedAt: null,
       userPinned: true,
+      placementReason: slot.reason || null,
       ...manualPlacement.kind === "attack" ? {} : manualPlacement.kind === "deck" ? { deckId: manualPlacement.refId } : { practiceExamId: manualPlacement.refId },
       ...manualPlacement.dueEventId ? { dueEventId: manualPlacement.dueEventId, isExamPrepSession: manualPlacement.kind !== "attack" } : {}
     };
