@@ -15660,7 +15660,7 @@ function computeEventBlockHeightPx(durationMins, gapToNextMins, pxPerHr) {
   return Math.min(floored, Math.max(4, gapToNextMins * (pxPerHr / 60)));
 }
 
-function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent, selectedRoutineKey, onSelectRoutineOccurrence, blockRefs, flipOldRectsRef, flipSeq}) {
+function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent, selectedRoutineKey, onSelectRoutineOccurrence, blockRefs, flipOldRectsRef, flipSeq, newItemHighlightIds}) {
   // "Watch it happen" FLIP playback (see CalendarTab's captureFlip) --
   // flipSeq changing means flipOldRectsRef.current now holds a snapshot
   // of every block's on-screen position from right before events just
@@ -16303,6 +16303,19 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   const highlightedByRoutineMode = editRoutineMode && isRoutine;
                   const isSelected = !isRoutine && selectedEventId === ev.id;
                   const isRoutineSelected = isRoutine && selectedRoutineKey === (ev.routineId+"|"+ev.date);
+                  // "Just added/imported" marker (see CalendarTab's own
+                  // newItemHighlightIds comment) -- checks both ev.id (a
+                  // real dated event, e.g. a syllabus deadline/exam or an
+                  // imported item) and ev.routineId (a class/activity block:
+                  // its rendered occurrence gets a fresh per-date id every
+                  // week, so the routine's own stable id is what a newly
+                  // added class actually gets flagged under).
+                  const isNewlyAdded = !!newItemHighlightIds && (newItemHighlightIds.has(ev.id) || (ev.routineId && newItemHighlightIds.has(ev.routineId)));
+                  // Appended to (not replacing) kindStyle's own boxShadow --
+                  // an exam block already draws its glow that way (see
+                  // kindStyle above), and a plain overwrite would silently
+                  // erase it for a newly-imported exam.
+                  const newItemBoxShadow = isNewlyAdded ? `inset 3px 0 0 0 ${T.lime}`+(kindStyle.boxShadow?`, ${kindStyle.boxShadow}`:"") : null;
                   const leftPct = (displayCol / displayTotalCols) * 100;
                   const widthPct = 100 / displayTotalCols;
                   // Commute buffer strips (2026-07-30) -- effectiveLeadIn/
@@ -16345,7 +16358,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                       }}
                       onMouseEnter={()=>{ if(isRoutine&&setHoveredRoutineId)setHoveredRoutineId(ev.routineId); }}
                       onMouseLeave={()=>{ if(isRoutine&&setHoveredRoutineId)setHoveredRoutineId(null); }}
-                      title={isRoutine?"Click to select (Ctrl+C to copy) · Double-click to edit · Drag to reschedule":"Click for actions (Backspace to delete) · Double-click to edit · Drag to reschedule"}
+                      title={(isNewlyAdded?"Just added · ":"")+(isRoutine?"Click to select (Ctrl+C to copy) · Double-click to edit · Drag to reschedule":"Click for actions (Backspace to delete) · Double-click to edit · Drag to reschedule")}
                       // "Watch it happen" (see CalendarTab's captureFlip) --
                       // registers this exact DOM node under the event's id
                       // so the FLIP effect above can read its position both
@@ -16355,7 +16368,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                       // that's no longer rendered here doesn't leave a
                       // stale/detached node in the map.
                       ref={el=>{ if(el)blockRefs.current.set(ev.id,el); else blockRefs.current.delete(ev.id); }}
-                      style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:5,padding:"2px 5px 2px 8px",cursor:"grab",overflow:"hidden",zIndex:3,opacity:dimmedByRoutineMode?0.3:(isDone?0.6:1),boxSizing:"border-box",userSelect:"none",...kindStyle,...(highlightedByRoutineMode?{outline:`2px solid ${T.lime}`,outlineOffset:1}:{}),...((isSelected||isRoutineSelected)?{outline:`2px solid ${T.lime}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.lime}22`}:{}),...(!isRoutine&&highlightedSessionId===ev.id?{outline:`2px solid ${T.amber}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.amber}33`}:{})}}>
+                      style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:5,padding:"2px 5px 2px 8px",cursor:"grab",overflow:"hidden",zIndex:3,opacity:dimmedByRoutineMode?0.3:(isDone?0.6:1),boxSizing:"border-box",userSelect:"none",...kindStyle,...(highlightedByRoutineMode?{outline:`2px solid ${T.lime}`,outlineOffset:1}:{}),...(newItemBoxShadow?{boxShadow:newItemBoxShadow}:{}),...((isSelected||isRoutineSelected)?{outline:`2px solid ${T.lime}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.lime}22`}:{}),...(!isRoutine&&highlightedSessionId===ev.id?{outline:`2px solid ${T.amber}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.amber}33`}:{})}}>
                       {/* Subject marker -- see comment above kindStyle */}
                       <div style={{position:"absolute",left:0,top:0,bottom:0,width:3,background:subjectColor,borderRadius:"5px 0 0 5px"}} />
                       {/* Suppressed while a Catch Me Up rebuild is pending -- the
@@ -17164,6 +17177,19 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   // other hook in this component).
   const finalPreview=useMemo(()=>buildPendingSchedulePreview(pendingClasses,getWeeklyRoutine(),getSchedulePreferences()),[pendingClasses]);
 
+  // Accumulates every routine/event id actually written to real storage by
+  // this open of the wizard (commitHsSchedule's classes, commitAllToCalendar's
+  // classes + their syllabus items) -- handed to onFinish so CalendarTab
+  // (both instances of this wizard render from inside it, see its own
+  // comment) can briefly highlight exactly what's new instead of leaving
+  // the student to go hunt for it. Reset every time the wizard actually
+  // opens, not just once -- this component instance stays mounted
+  // (rendering null below) between separate opens rather than remounting,
+  // so without the reset a later "Scan syllabus" session would re-highlight
+  // leftover ids from an earlier one too.
+  const newlyCommittedIdsRef=useRef([]);
+  useEffect(()=>{if(open)newlyCommittedIdsRef.current=[];},[open]);
+
   if(!open)return null;
 
   const nextColor=()=>SUBJECT_COLORS[pendingClasses.length%SUBJECT_COLORS.length];
@@ -17524,6 +17550,10 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     const freeItems=hsFreeReview.map(f=>({id:f.id,title:f.title,kind:"free",days:f.days,startTime:f.startTime,duration:f.duration}))
       .concat(freeFromClasses.map((p,i)=>({id:"free-manual-"+Date.now()+"-"+i,title:p.subjectName.trim(),kind:"free",days:p.days,startTime:p.startTime,duration:Math.max(15,timeToMinutes(p.endTime)-timeToMinutes(p.startTime))})));
     saveWeeklyRoutine([...getWeeklyRoutine(),...routineItems,...freeItems]);
+    // Real classes only (see newlyCommittedIdsRef's own comment) -- a free
+    // period isn't something worth drawing the student's eye to the way a
+    // newly added class block is.
+    newlyCommittedIdsRef.current.push(...routineItems.map(r=>r.id));
     if(schoolStart&&schoolEnd)saveHsSchoolHours({start:schoolStart,end:schoolEnd});
     // Gap fix found while adding term-tagging: the "term" step (End of
     // Term) already collects termStart/termEnd for every account, HS or
@@ -17608,6 +17638,11 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
       // it hasn't had any deadlines added yet either.
       subjects=[...subjects,{id:cls.subjId,label:cls.name,color:cls.color,termEnd:termEnd||null,needsSyllabus:classNeedsSyllabus(cls.items)}];
       const routineItems=(cls.meetingTimes||[]).filter(mt=>mt.days.length>0).map(mt=>({id:"rt-"+Date.now()+"-"+Math.round(Math.random()*1000),title:cls.name,kind:"class",subject:cls.name,courseId:cls.subjId,days:mt.days,startTime:mt.startTime,duration:mt.duration}));
+      // See newlyCommittedIdsRef's own comment -- the class's own
+      // meeting-time block(s), matched on the WeeklyPlanner side via
+      // ev.routineId (a routine's occurrences are re-keyed per date, so
+      // the routine's own stable id is what's actually highlightable).
+      newlyCommittedIdsRef.current.push(...routineItems.map(r=>r.id));
       routine=[...routine,...routineItems];
     });
     saveSubjects(subjects);
@@ -17615,7 +17650,8 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     withIds.forEach(cls=>{
       const included=(cls.items||[]).filter(it=>it.include&&it.title.trim());
       if(included.length>0){
-        commitSyllabusEvents("wiz-"+cls.subjId,cls.name,included,cls.sourceText,cls.subjId);
+        const committed=commitSyllabusEvents("wiz-"+cls.subjId,cls.name,included,cls.sourceText,cls.subjId);
+        newlyCommittedIdsRef.current.push(...committed.map(e=>e.id));
         attachSessionFocusesToSyllabusExams("wiz-"+cls.subjId,cls.name,included);
       }
     });
@@ -17661,7 +17697,11 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
       lsSet("openImportCalQueue",wizPostOnboardConnect.map(v=>v==="workschedule"?true:{hint:v}));
       setActivePage("settings");
     }
-    onFinish();
+    // Hands back every id actually committed this session (see
+    // newlyCommittedIdsRef's own comment) so the Calendar view can briefly
+    // highlight exactly what's new -- a no-op array when nothing was ever
+    // staged (e.g. "Skip, I'll add classes later" all the way through).
+    onFinish(newlyCommittedIdsRef.current);
   };
 
   const TitleSub=({title,sub})=>(
@@ -18312,7 +18352,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
 // illegibility on a packed day and clamp to a narrow window on a light
 // one). The container just scrolls, same as any normal calendar, landing
 // near the current time or the first real event on open.
-function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending, openNew}) {
+function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending, openNew, newItemHighlightIds}) {
   const scrollRef=useRef(null);
   const [dayPreviewOpen,setDayPreviewOpen]=useState(false);
   const stepDay=(n)=>{const d=new Date(selDay+"T12:00:00");d.setDate(d.getDate()+n);setSelDay(dayKey(d));};
@@ -18431,6 +18471,15 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, 
                   :{background:color+"1E",borderLeft:`3px solid ${color}`,color};
               const leftPct=(displayCol/displayTotalCols)*100;
               const widthPct=100/displayTotalCols;
+              // Same "just added/imported" marker as WeeklyPlanner's own
+              // (see its comment) -- checks both the event's own id and,
+              // for a routine occurrence, its stable routineId.
+              const isNewlyAdded=!!newItemHighlightIds&&(newItemHighlightIds.has(ev.id)||(ev.routineId&&newItemHighlightIds.has(ev.routineId)));
+              // Appended to (not replacing) kindStyle's own boxShadow -- an
+              // exam block already draws its glow that way (see kindStyle
+              // above), and a plain overwrite would silently erase it for a
+              // newly-imported exam.
+              const newItemBoxShadow=isNewlyAdded?`inset 3px 0 0 0 ${T.lime}`+(kindStyle.boxShadow?`, ${kindStyle.boxShadow}`:""):null;
               // Commute buffer strips -- same treatment as WeeklyPlanner's
               // (see its own comment), so a real commute stays visible
               // whichever view a student happens to be looking at.
@@ -18444,8 +18493,8 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, 
                 )}
                 <div onDoubleClick={()=>openEdit(ev)}
                   onClick={()=>{if(ev.isRoutine)return;isDone?uncrossDone(ev.id):markDone(ev.id);}}
-                  title={ev.isRoutine?"Double-click to edit":"Click to toggle done, double-click to edit"}
-                  style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:6,padding:"4px 8px",cursor:"pointer",overflow:"hidden",zIndex:3,opacity:isDone?0.6:1,boxSizing:"border-box",...kindStyle}}>
+                  title={(isNewlyAdded?"Just added · ":"")+(ev.isRoutine?"Double-click to edit":"Click to toggle done, double-click to edit")}
+                  style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:6,padding:"4px 8px",cursor:"pointer",overflow:"hidden",zIndex:3,opacity:isDone?0.6:1,boxSizing:"border-box",...kindStyle,...(newItemBoxShadow?{boxShadow:newItemBoxShadow}:{})}}>
                   {!catchUpPending&&over>0&&<span title={over+"d overdue"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:`0 0 0 1.5px ${isExam?T.ink:"#fff"}`,zIndex:1}} />}
                   {overflowCount>0&&<span title={overflowCount+" more at this time"} style={{position:"absolute",bottom:2,right:2,fontSize:8,fontWeight:800,color:kindStyle.color,background:"rgba(0,0,0,0.18)",borderRadius:8,padding:"1px 4px",lineHeight:1.3,zIndex:1}}>+{overflowCount}</span>}
                   {conflictTitles.length>0&&<span title={"Overlaps with "+conflictTitles.join(", ")} style={{position:"absolute",top:2,left:2,fontSize:9,lineHeight:1,zIndex:1,filter:"drop-shadow(0 1px 1px rgba(0,0,0,0.35))"}}>⚠️</span>}
@@ -20163,6 +20212,21 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
   ), document.body);
 }
 
+// One-shot "here's what was just added/imported, go highlight it" flag
+// protocol -- CalendarTab's own newItemHighlightIds effect writes this
+// (via lsSet("calendarHighlightIds",null)) the instant it reads it, and
+// this pure decision function is what actually decides whether the flag
+// it just read is still usable. Split out from that effect specifically
+// so it's directly testable (see tests/calendar-highlight.test.js)
+// without needing a live React tree -- CalendarTab itself can't be
+// exercised through the plain-function test harness (it's a stateful
+// component, not a pure function).
+const CALENDAR_HIGHLIGHT_MAX_AGE_MS = 5*60*1000;
+function resolveCalendarHighlightFlag(flag, nowMs){
+  if(!flag||!Array.isArray(flag.ids)||flag.ids.length===0)return null;
+  if(!flag.setAt||nowMs-flag.setAt>CALENDAR_HIGHLIGHT_MAX_AGE_MS)return null;
+  return flag.ids;
+}
 // Merge note: openRoutineCenterOnMount/onRoutineCenterOpenedFromSettings is
 // main's current naming for what the landing-page branch still called
 // openWizardOnMount/onWizardOpenedFromSettings -- same feature, renamed by
@@ -20463,19 +20527,53 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     persistRoutines(getWeeklyRoutine());
     setEvents(lsGet("events",[]).filter(e=>!e.id.startsWith("seed-")));
   };
-  const finishClassSetup=()=>{
+  // ClassSetupWizard hands back every id it actually committed this session
+  // (see its own newlyCommittedIdsRef comment) -- both instances render
+  // from inside CalendarTab itself (see the <ClassSetupWizard> JSX further
+  // down), so this can just be plain component state instead of the
+  // localStorage-flag relay the calendar-import path below needs (that one
+  // commits from SettingsTab, a completely separate tab component).
+  // WeeklyPlanner/DayPlanner/the monthly grid all read this set to decide
+  // whether to draw the "just added" highlight on a given block -- CalendarTab
+  // fully remounts on every tab switch (key={active} at the App level,
+  // verified against the actual render switch), so this naturally clears
+  // itself the moment the student leaves Calendar; nothing here has to
+  // explicitly time it out.
+  const [newItemHighlightIds,setNewItemHighlightIds]=useState([]);
+  const finishClassSetup=(newIds)=>{
     lsSet("subjects-configured",true);
     lsSet("hasConfiguredRoutine",true);
     setClassSetupOpen(false);
     syncClassSetupState();
+    if(newIds&&newIds.length>0)setNewItemHighlightIds(newIds);
   };
   // Same re-sync finishClassSetup does, minus the onboarding flags (already
   // true by the time an existing user reaches this from the Tools menu).
-  const finishQuickScan=()=>{
+  const finishQuickScan=(newIds)=>{
     setQuickScanOpen(false);
     setQuickScanTargetCourseId(null);
     syncClassSetupState();
+    if(newIds&&newIds.length>0)setNewItemHighlightIds(newIds);
   };
+  // One-shot "here's what was just imported" signal for the calendar-import
+  // flow (Moodle/Canvas/Schoology/Blackboard/generic .ics/work schedule,
+  // all committed from SettingsTab -- see confirmImportCalendar/
+  // confirmWorkScan/resyncCalendar's manual branch there). Same
+  // pendingBrainDump/openManualPlacement one-shot-flag pattern used
+  // elsewhere in this file for a cross-tab "please do this once you
+  // mount" signal, consumed and immediately cleared here so it never
+  // re-fires on a later Calendar visit. Stale-guarded: if this tab sat
+  // open in the background for a while before the student ever got here,
+  // the ids are probably not "new" to look at anymore, so an old flag is
+  // just dropped instead of surprising them with a highlight from
+  // several minutes ago.
+  useEffect(()=>{
+    const flag=lsGet("calendarHighlightIds",null);
+    lsSet("calendarHighlightIds",null);
+    const ids=resolveCalendarHighlightFlag(flag,Date.now());
+    if(ids)setNewItemHighlightIds(ids);
+  },[]);
+  const newItemHighlightSet=useMemo(()=>new Set(newItemHighlightIds),[newItemHighlightIds]);
   const mk=(off,time,title,subject,kind)=>{const d=new Date();d.setDate(d.getDate()+off);return {id:"seed-"+off+"-"+time,date:dayKey(d),time,title,subject,kind};};
   const seed=[
     mk(0,"14:30","Chem quiz · Periodic trends","Chemistry","exam"),
@@ -22965,11 +23063,18 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
               const isToday=c.key===todayK;
               const isSel=c.key===selDay;
               const isHeavyThisMonth=monthHeavyDays.has(c.key);
+              // Same "just added/imported" marker as Week/Day (see
+              // CalendarTab's own newItemHighlightIds comment) -- the
+              // monthly grid never renders individual routine/class blocks
+              // (byDay here is real dated events only, see its own
+              // comment), so this only ever matches a real event id, not a
+              // routineId.
+              const hasNewItem=evs.some(ev=>newItemHighlightSet.has(ev.id));
               return (
                 <div key={i} onClick={()=>{setSelDay(c.key);}} onDoubleClick={()=>setDayDetailKey(c.key)}
                   onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(sidebarDragChip){openNewEventForDrop(sidebarDragChip,c.key,"09:00",{x:e.clientX,y:e.clientY});setSidebarDragChip(null);}else if(dragId){moveEvent(dragId,c.key);setDragId(null);}}}
-                  title={isHeavyThisMonth?dayWorkloadMinutes(evs)+" minutes scheduled -- heavier than your average day this month":undefined}
-                  style={{position:"relative",minHeight:64,minWidth:0,borderRadius:9,padding:"6px 7px",cursor:"pointer",background:isSel?T.card2:"transparent",border:"1px solid "+(isSel?T.lime+"55":"transparent"),transition:"all 0.12s",opacity:c.out?0.35:1}}>
+                  title={hasNewItem?"Has something just added":isHeavyThisMonth?dayWorkloadMinutes(evs)+" minutes scheduled -- heavier than your average day this month":undefined}
+                  style={{position:"relative",minHeight:64,minWidth:0,borderRadius:9,padding:"6px 7px",cursor:"pointer",background:isSel?T.card2:"transparent",border:"1px solid "+(hasNewItem?T.lime:isSel?T.lime+"55":"transparent"),transition:"all 0.12s",opacity:c.out?0.35:1}}>
                   <div style={{display:"flex",justifyContent:"flex-start"}}>
                     <span style={{width:22,height:22,borderRadius:"50%",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:isToday?700:500,background:isToday?T.lime:"transparent",color:isToday?T.ink:c.out?T.faint:T.text}}>{c.d}</span>
                   </div>
@@ -23027,10 +23132,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           onPreviewResize={(endTime)=>setPreviewOverride(o=>({date:(o&&o.date)||previewEvent.date,startTime:(o&&o.startTime)||previewEvent.startTime,endTime}))}
           onPreviewDraggingChange={setPreviewDragActive} onSelectEvent={setSelectedCalEventId}
           selectedRoutineKey={selectedRoutineOccurrence?selectedRoutineOccurrence.routineId+"|"+selectedRoutineOccurrence.date:null}
-          onSelectRoutineOccurrence={setSelectedRoutineOccurrence} />
+          onSelectRoutineOccurrence={setSelectedRoutineOccurrence} newItemHighlightIds={newItemHighlightSet} />
       )}
       {calView==="daily"&&(
-        <DayPlanner dayEvents={dayEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} fmtTimeRange={fmtTimeRange} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} catchUpPending={catchUpPending} openNew={openNew} />
+        <DayPlanner dayEvents={dayEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} fmtTimeRange={fmtTimeRange} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} catchUpPending={catchUpPending} openNew={openNew} newItemHighlightIds={newItemHighlightSet} />
       )}
     </div>
       {/* Right-hand column (Phase 5e) -- upcoming across everything by
@@ -24612,6 +24717,23 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
       setImportCalLoading(false);setImportCalClassifying(false);
     }
   };
+  // Shared by every USER-INITIATED calendar-import commit below
+  // (confirmImportCalendar, confirmWorkScan, resyncCalendar's manual "Sync
+  // now" branch) -- writes the one-shot flag CalendarTab's own mount
+  // effect consumes (see its comment there) and jumps the student straight
+  // to Calendar so whatever just landed is immediately visible and
+  // highlighted, however far forward (today, later this week, or a future
+  // week) they need to navigate to actually see it. A no-op when there's
+  // nothing new (e.g. a "Sync now" that found no new items) -- no reason
+  // to yank the student anywhere in that case. Deliberately never called
+  // from the silent once-a-day auto-resync: pulling a student into a
+  // different tab while they're doing something else in the app would be
+  // a disruptive surprise, not a helpful one.
+  const highlightAndJumpToCalendar=(ids)=>{
+    if(!ids||ids.length===0)return;
+    lsSet("calendarHighlightIds",{ids,setAt:Date.now()});
+    setActivePage("calendar");
+  };
   const confirmImportCalendar=()=>{
     if(!importCalReview)return;
     const {subId,url,label,sourceType,events:reviewEvents,classified,viaToken}=importCalReview;
@@ -24621,7 +24743,15 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     const classifications=classified?Object.fromEntries(
       fetched.filter(e=>e.uid).map(e=>[e.uid,{kind:e.kind,subject:e.subjectGuess,examWeight:e.examWeight}])
     ):undefined;
+    // Captured before merging -- subId is a brand-new id for a first
+    // connect (so this is empty and everything with this subId counts as
+    // new), but a Canvas-token reconnect reuses the fixed "canvas-token"
+    // id, which already has real prior events under it. Same
+    // already-synced-externalUid check confirmImportCalendar's cousin
+    // resyncCalendar uses for its own newCount below.
+    const existingUidsForSub=new Set(lsGet("events",[]).filter(e=>e.importSubId===subId).map(e=>e.externalUid));
     const merged=mergeImportedEvents(lsGet("events",[]),subId,fetched,classifications);
+    const newIds=merged.filter(e=>e.importSubId===subId&&!existingUidsForSub.has(e.externalUid)).map(e=>e.id);
     const result=reconcileFixedEventConflicts(merged.filter(e=>e.importSubId===subId));
     surfaceReconcileResult(result);
     // url stays null for a token-based subscription -- there's no calendar
@@ -24636,7 +24766,14 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     setImportedCals(nextSubs);saveImportedCalendars(nextSubs);
     setImportCalOpen(false);setImportCalReview(null);
     showToast(fetched.length+" event"+(fetched.length!==1?"s":"")+" synced from "+label+reconcileToastSuffix(result));
+    // Only jumps to Calendar when nothing else is queued to connect next --
+    // the onboarding wizard's "connect these platforms" step can queue more
+    // than one pick in a row (see wizPostOnboardConnect), and interrupting
+    // that chain to jump away after the first one would leave the rest
+    // unconnected until the student found their way back here themselves.
+    const hadMoreQueued=lsGet("openImportCalQueue",[]).length>0;
     openNextQueuedImportCal();
+    if(!hadMoreQueued)highlightAndJumpToCalendar(newIds);
   };
   // Shared by the manual "Sync now" action and the once-a-day silent
   // auto-resync below -- no review gate here, since re-confirming a
@@ -24647,7 +24784,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   // classified and everything discovered afterward would quietly fall
   // back to a generic "busy block" again. Scoped to only the new uids so
   // a day with nothing new triggers no AI call at all.
-  const resyncCalendar=async(sub)=>{
+  const resyncCalendar=async(sub,{manual}={})=>{
     try{
       let data;
       if(sub.viaToken){
@@ -24699,8 +24836,13 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
       surfaceReconcileResult(result);
       const nextSubs=importedCals.map(s=>s.id===sub.id?{...s,lastSyncedAt:Date.now(),lastSyncError:null}:s);
       setImportedCals(nextSubs);saveImportedCalendars(nextSubs);
-      const newCount=merged.filter(e=>e.importSubId===sub.id&&!existingUids.has(e.externalUid)).length;
-      showToast(sub.label+(newCount>0?": "+newCount+" new item"+(newCount!==1?"s":"")+" found.":" synced.")+reconcileToastSuffix(result));
+      const newItems=merged.filter(e=>e.importSubId===sub.id&&!existingUids.has(e.externalUid));
+      showToast(sub.label+(newItems.length>0?": "+newItems.length+" new item"+(newItems.length!==1?"s":"")+" found.":" synced.")+reconcileToastSuffix(result));
+      // manual is only ever true for the "Sync now" button click below --
+      // see highlightAndJumpToCalendar's own comment for why the silent
+      // once-a-day auto-resync (which calls this exact same function with
+      // no options) never does this.
+      if(manual)highlightAndJumpToCalendar(newItems.map(e=>e.id));
     }catch(e){}
   };
   const removeImportedCalendar=(sub)=>{
@@ -24786,6 +24928,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     surfaceReconcileResult(result);
     setWorkScanOpen(false);setWorkScanReview(null);
     showToast(newEvents.length+" shift"+(newEvents.length!==1?"s":"")+" added to your calendar."+reconcileToastSuffix(result));
+    highlightAndJumpToCalendar(newEvents.map(e=>e.id));
   };
 
   const toggleApple=()=>{
@@ -25539,7 +25682,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                               <div style={{fontSize:12.5,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sub.label}</div>
                               <div style={{fontSize:11,color:T.muted,marginTop:1}}>synced {timeAgoLabel(sub.lastSyncedAt)}</div>
                             </div>
-                            <button onClick={()=>resyncCalendar(sub)} title="Sync now" style={{width:26,height:26,borderRadius:6,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.refresh}</button>
+                            <button onClick={()=>resyncCalendar(sub,{manual:true})} title="Sync now" style={{width:26,height:26,borderRadius:6,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.refresh}</button>
                             <button onClick={()=>setRemoveCalConfirm(sub)} title="Remove" style={{padding:"5px 10px",borderRadius:6,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font,flexShrink:0}}>Remove</button>
                           </div>
                         ))}
