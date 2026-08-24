@@ -20,6 +20,21 @@ function icsDateOnly(daysFromNow) {
   d.setDate(d.getDate() + daysFromNow);
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
 }
+// "YYYY-MM-DD" form of icsDateOnly, for comparing against parseICS's output
+// event.date field directly instead of re-deriving it inline in every test.
+function dateOnly(daysFromNow) {
+  const d = new Date();
+  d.setDate(d.getDate() + daysFromNow);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+// RRULE's BYDAY only takes 2-letter weekday codes -- this derives the real
+// one for "N days from now" so fixtures never hardcode a day of the week
+// that drifts out of sync with icsTimestamp's own "N days from now" math.
+function weekdayCode(daysFromNow) {
+  const d = new Date();
+  d.setDate(d.getDate() + daysFromNow);
+  return ["SU", "MO", "TU", "WE", "TH", "FR", "SA"][d.getDay()];
+}
 
 describe("parseICS (api/cal-proxy.js)", () => {
   test("parses UID and computes duration from DTSTART/DTEND", () => {
@@ -118,6 +133,221 @@ describe("parseICS (api/cal-proxy.js)", () => {
     ].join("\r\n");
     const { events } = parseICS(ics);
     assert.equal(events.length, 0);
+  });
+});
+
+describe("parseICS RRULE expansion (fix: a recurring class -- one VEVENT with a single DTSTART plus RRULE -- was being treated as a single one-time event, silently vanishing once its first occurrence fell in the past)", () => {
+  test("FREQ=WEEKLY with BYDAY and UNTIL expands into every real occurrence, each keeping the master's time and duration", () => {
+    const start = 1; // tomorrow -- DTSTART itself must never be in the past for this fixture
+    const weeks = 4;
+    const dayCode = weekdayCode(start);
+    const ics = [
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT",
+      "UID:bio101@school.edu",
+      "SUMMARY:Bio 101",
+      `DTSTART:${icsTimestamp(start, 10, 0)}`,
+      `DTEND:${icsTimestamp(start, 10, 50)}`,
+      `RRULE:FREQ=WEEKLY;BYDAY=${dayCode};UNTIL=${icsTimestamp(start + 7 * weeks, 23, 59)}`,
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+    const { events } = parseICS(ics);
+    assert.equal(events.length, weeks + 1, "the first occurrence plus 4 more weekly occurrences");
+    const dates = events.map((e) => e.date).sort();
+    for (let i = 0; i <= weeks; i++) {
+      assert.ok(dates.includes(dateOnly(start + i * 7)), `missing the week-${i} occurrence`);
+    }
+    for (const e of events) {
+      assert.equal(e.time, "10:00", "every occurrence keeps the master's start time");
+      assert.equal(e.duration, 50, "every occurrence keeps the master's duration (DTEND-DTSTART), not a reused absolute DTEND");
+    }
+  });
+
+  test("FREQ=DAILY expands into consecutive days, bounded by COUNT", () => {
+    const ics = [
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT",
+      "UID:daily-standup@school.edu",
+      "SUMMARY:Lab check-in",
+      `DTSTART:${icsTimestamp(1, 9, 0)}`,
+      `DTEND:${icsTimestamp(1, 9, 15)}`,
+      "RRULE:FREQ=DAILY;COUNT=5",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+    const { events } = parseICS(ics);
+    assert.equal(events.length, 5);
+    const dates = events.map((e) => e.date).sort();
+    for (let i = 0; i < 5; i++) assert.ok(dates.includes(dateOnly(1 + i)));
+  });
+
+  test("EXDATE excludes one cancelled occurrence (e.g. a holiday) from the expanded set", () => {
+    const start = 1;
+    const dayCode = weekdayCode(start);
+    const cancelled = start + 7; // the 2nd occurrence
+    const ics = [
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT",
+      "UID:office-hours@school.edu",
+      "SUMMARY:Office Hours",
+      `DTSTART:${icsTimestamp(start, 14, 0)}`,
+      `DTEND:${icsTimestamp(start, 15, 0)}`,
+      `RRULE:FREQ=WEEKLY;BYDAY=${dayCode};COUNT=4`,
+      `EXDATE:${icsTimestamp(cancelled, 14, 0)}`,
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+    const { events } = parseICS(ics);
+    assert.equal(events.length, 3, "4 occurrences minus the 1 cancelled one");
+    assert.ok(!events.some((e) => e.date === dateOnly(cancelled)), "the cancelled date must not appear");
+  });
+
+  test("EXDATE handles multiple comma-separated dates on one line, and multiple separate EXDATE lines, together (both are valid per RFC 5545)", () => {
+    const start = 1;
+    const dayCode = weekdayCode(start);
+    const ics = [
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT",
+      "UID:quiz-slot@school.edu",
+      "SUMMARY:Weekly quiz",
+      `DTSTART:${icsTimestamp(start, 9, 0)}`,
+      `DTEND:${icsTimestamp(start, 9, 30)}`,
+      `RRULE:FREQ=WEEKLY;BYDAY=${dayCode};COUNT=6`,
+      // two dates on one EXDATE line...
+      `EXDATE:${icsTimestamp(start + 7, 9, 0)},${icsTimestamp(start + 14, 9, 0)}`,
+      // ...plus a second, separate EXDATE line.
+      `EXDATE:${icsTimestamp(start + 28, 9, 0)}`,
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+    const { events } = parseICS(ics);
+    assert.equal(events.length, 3, "6 occurrences minus 3 cancelled (2 from one EXDATE line, 1 from a second)");
+    assert.ok(!events.some((e) => e.date === dateOnly(start + 7)));
+    assert.ok(!events.some((e) => e.date === dateOnly(start + 14)));
+    assert.ok(!events.some((e) => e.date === dateOnly(start + 28)));
+  });
+
+  test("regression: a recurring class whose first DTSTART is already in the past still surfaces its future occurrences -- this is the exact founder-reported bug (Moodle exports one VEVENT per class with DTSTART at the semester's first meeting, which is usually already past by the time a student connects their calendar)", () => {
+    const dayCode = weekdayCode(-30);
+    const ics = [
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT",
+      "UID:bio101-recurring@school.edu",
+      "SUMMARY:Bio 101",
+      `DTSTART:${icsTimestamp(-30, 10, 0)}`, // semester started a month ago
+      `DTEND:${icsTimestamp(-30, 10, 50)}`,
+      `RRULE:FREQ=WEEKLY;BYDAY=${dayCode};COUNT=20`,
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+    const { events } = parseICS(ics);
+    assert.ok(events.length > 0, "the class must not vanish just because its first occurrence already happened -- this is exactly the bug that was reported");
+    for (const e of events) {
+      assert.ok(new Date(`${e.date}T${e.time}`) >= new Date(), "every surfaced occurrence must actually be upcoming, not a past one that slipped through");
+    }
+  });
+
+  test("an unsupported RRULE form (FREQ=MONTHLY) falls back to keeping just the single DTSTART occurrence -- not dropped, not thrown, and its UID is left unchanged", () => {
+    const ics = [
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT",
+      "UID:monthly-review@school.edu",
+      "SUMMARY:Monthly advisor check-in",
+      `DTSTART:${icsTimestamp(3, 15, 0)}`,
+      `DTEND:${icsTimestamp(3, 15, 30)}`,
+      "RRULE:FREQ=MONTHLY;BYMONTHDAY=15",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+    const { events } = parseICS(ics);
+    assert.equal(events.length, 1, "kept, not dropped, even though this RRULE shape isn't expanded");
+    assert.equal(events[0].date, dateOnly(3));
+    assert.equal(events[0].uid, "monthly-review@school.edu", "an unsupported RRULE keeps the original UID unchanged, exactly like before RRULE support existed");
+  });
+
+  test("FREQ=WEEKLY with no BYDAY also falls back to the single occurrence -- an unusual pattern outside the class-schedule shape this deliberately supports", () => {
+    const ics = [
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT",
+      "UID:no-byday@school.edu",
+      "SUMMARY:Ambiguous weekly thing",
+      `DTSTART:${icsTimestamp(2, 11, 0)}`,
+      `DTEND:${icsTimestamp(2, 12, 0)}`,
+      "RRULE:FREQ=WEEKLY",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+    const { events } = parseICS(ics);
+    assert.equal(events.length, 1);
+  });
+
+  test("a VALARM's own DESCRIPTION does not clobber the event's real DESCRIPTION (the parser doesn't otherwise track BEGIN/END nesting, so a key:value line inside a nested sub-component would previously be read as if it belonged to the VEVENT itself)", () => {
+    const ics = [
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT",
+      "UID:reminder-test@school.edu",
+      "SUMMARY:Chem Lab",
+      `DTSTART:${icsTimestamp(2, 13, 0)}`,
+      `DTEND:${icsTimestamp(2, 15, 0)}`,
+      "DESCRIPTION:Bring your lab notebook",
+      "BEGIN:VALARM",
+      "ACTION:DISPLAY",
+      "DESCRIPTION:Reminder: Chem Lab starts in 15 minutes",
+      "TRIGGER:-PT15M",
+      "END:VALARM",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+    const { events } = parseICS(ics);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].description, "Bring your lab notebook", "the VALARM's own DESCRIPTION must never win over the event's real one");
+  });
+});
+
+describe("mergeImportedEvents + parseICS integration (regression: every expanded occurrence of a recurring event needs its own identity, or a resync collapses them all onto one date)", () => {
+  test("parseICS gives each expanded occurrence a distinct UID, not the shared master UID", () => {
+    const start = 1;
+    const dayCode = weekdayCode(start);
+    const ics = [
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT",
+      "UID:bio101@school.edu",
+      "SUMMARY:Bio 101",
+      `DTSTART:${icsTimestamp(start, 10, 0)}`,
+      `DTEND:${icsTimestamp(start, 10, 50)}`,
+      `RRULE:FREQ=WEEKLY;BYDAY=${dayCode};COUNT=3`,
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+    const { events } = parseICS(ics);
+    assert.equal(events.length, 3);
+    assert.equal(new Set(events.map((e) => e.uid)).size, 3, "each occurrence must carry its own UID");
+    for (const e of events) assert.ok(e.uid.startsWith("bio101@school.edu-"), "still traceable back to the master UID");
+  });
+
+  test("resyncing an unchanged recurring series keeps all 3 occurrences as separate events, not collapsed onto one -- without distinct per-occurrence UIDs, mergeImportedEvents' internal Map (keyed by UID) would keep only the last-processed occurrence and every kept event's date/time would get overwritten onto that one on resync", () => {
+    const { mergeImportedEvents } = loadStudlinModule();
+    const start = 1;
+    const dayCode = weekdayCode(start);
+    const ics = [
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT",
+      "UID:bio101@school.edu",
+      "SUMMARY:Bio 101",
+      `DTSTART:${icsTimestamp(start, 10, 0)}`,
+      `DTEND:${icsTimestamp(start, 10, 50)}`,
+      `RRULE:FREQ=WEEKLY;BYDAY=${dayCode};COUNT=3`,
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+    const { events: fetched } = parseICS(ics);
+
+    const first = mergeImportedEvents([], "sub-1", fetched);
+    assert.equal(first.length, 3);
+    const second = mergeImportedEvents(first, "sub-1", fetched); // unchanged resync
+    assert.equal(second.length, 3, "resync must not collapse the 3 occurrences onto one, or drop any");
+    assert.equal(new Set(second.map((e) => e.date)).size, 3, "each occurrence keeps its own distinct date after resync");
   });
 });
 

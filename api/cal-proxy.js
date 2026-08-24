@@ -167,6 +167,124 @@ function parseDt(s) {
   return yr + '-' + mo + '-' + dy;
 }
 
+function pad2(n) { return String(n).padStart(2, '0'); }
+
+// Real-world hard ceiling on RRULE expansion -- a malformed or absurdly long
+// recurrence (e.g. a feed bug that emits FREQ=WEEKLY with no UNTIL/COUNT at
+// all) must never be able to hang this function or hand the client a
+// multi-thousand-row payload. Whichever bound (the RRULE's own UNTIL/COUNT,
+// or this ceiling) is hit first wins.
+const RRULE_MAX_OCCURRENCES = 500;
+const RRULE_MAX_SPAN_YEARS = 2;
+
+const BYDAY_CODES = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 };
+
+// Expands one recurring VEVENT into its actual individual occurrences.
+// Deliberately scoped to the two shapes that cover the overwhelming
+// real-world case for a class schedule -- FREQ=WEEKLY with BYDAY (e.g.
+// "every Mon/Wed/Fri") and the simpler FREQ=DAILY -- both bounded by UNTIL
+// or COUNT (or the hard ceiling above if neither is given). This is NOT a
+// general RFC 5545 RRULE implementation (no MONTHLY/YEARLY, no BYMONTHDAY,
+// no BYSETPOS, no INTERVAL > 1) -- see CLAUDE.md: avoid overengineering,
+// choose the simpler solution. Anything outside this scope -- including a
+// WEEKLY rule with no BYDAY -- falls back to returning just the master's own
+// DTSTART/DTEND unchanged, exactly what this parser did before RRULE
+// support existed. No regression for the cases left unhandled, just no fix
+// for them either.
+function expandRecurringEvent(ev) {
+  const fallback = [{ dtstart: ev.dtstart, dtend: ev.dtend }];
+  if (!ev.rrule || !ev.dtstart) return fallback;
+
+  const parts = {};
+  ev.rrule.split(';').forEach(p => {
+    const eq = p.indexOf('=');
+    if (eq < 0) return;
+    parts[p.slice(0, eq).toUpperCase()] = p.slice(eq + 1).trim();
+  });
+
+  const freq = parts.FREQ;
+  if (freq !== 'WEEKLY' && freq !== 'DAILY') return fallback;
+  if (parts.INTERVAL && parts.INTERVAL !== '1') return fallback;
+  if (freq === 'WEEKLY' && !parts.BYDAY) return fallback;
+
+  const isDateOnly = ev.dtstart.length <= 10;
+  const timePart = isDateOnly ? '' : ev.dtstart.slice(10); // "THH:MM"
+  const startDate = new Date(isDateOnly ? ev.dtstart + 'T00:00' : ev.dtstart);
+  if (isNaN(startDate.getTime())) return fallback;
+  const startDay = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+
+  // DAILY has no BYDAY restriction -- every day matches. WEEKLY matches only
+  // the specific weekdays named in BYDAY (already required non-empty above).
+  const byDays = freq === 'WEEKLY'
+    ? parts.BYDAY.split(',').map(d => BYDAY_CODES[d.trim().slice(-2).toUpperCase()]).filter(d => d !== undefined)
+    : null;
+  if (freq === 'WEEKLY' && !byDays.length) return fallback;
+  const matchesDay = day => freq === 'DAILY' || byDays.includes(day);
+
+  // UNTIL is compared by calendar day only (not exact time) -- real feeds
+  // are inconsistent about whether UNTIL lands at midnight of the last
+  // occurrence or midnight of the day after, and this app doesn't need
+  // sub-day precision for "does this class still meet on this date."
+  let untilDay = null;
+  if (parts.UNTIL) {
+    const u = parseDt(parts.UNTIL);
+    const ud = new Date(u.length <= 10 ? u + 'T00:00' : u);
+    if (!isNaN(ud.getTime())) untilDay = new Date(ud.getFullYear(), ud.getMonth(), ud.getDate());
+  }
+  const count = parts.COUNT ? parseInt(parts.COUNT, 10) : null;
+
+  const ceilingDay = new Date(startDay.getFullYear() + RRULE_MAX_SPAN_YEARS, startDay.getMonth(), startDay.getDate());
+
+  // Original duration (DTEND - DTSTART) from the master event, reapplied to
+  // each occurrence's own start -- never just reused as an absolute DTEND.
+  let durationMs = null;
+  if (ev.dtend && ev.dtend.length > 10 && !isDateOnly) {
+    const dMs = new Date(ev.dtend).getTime() - new Date(ev.dtstart).getTime();
+    if (!isNaN(dMs) && dMs > 0) durationMs = dMs;
+  }
+
+  const exdateSet = new Set((ev.exdates || []).map(d => d.slice(0, 10)));
+
+  const occurrences = [];
+  const cursor = new Date(startDay.getTime());
+  // Per RFC 5545, COUNT bounds the number of raw occurrences the rule
+  // generates BEFORE EXDATE removes any of them -- so a cancelled date still
+  // "uses up" one of the COUNT slots instead of being backfilled by an extra
+  // occurrence past the end of the rule. Tracked separately from
+  // occurrences.length (which is the actual kept/output count) for exactly
+  // that reason.
+  let rawCount = 0;
+  // Belt-and-suspenders iteration cap independent of the ceiling/UNTIL/COUNT
+  // checks below, so a bug in any one of those bounds still can't spin
+  // forever -- generous enough to comfortably cover the 2-year ceiling.
+  const maxIterations = RRULE_MAX_SPAN_YEARS * 366 + 30;
+  for (let i = 0; i < maxIterations; i++) {
+    if (cursor.getTime() > ceilingDay.getTime()) break;
+    if (untilDay && cursor.getTime() > untilDay.getTime()) break;
+    if (occurrences.length >= RRULE_MAX_OCCURRENCES) break;
+    if (count !== null && rawCount >= count) break;
+    if (matchesDay(cursor.getDay())) {
+      rawCount++;
+      const dateStr = cursor.getFullYear() + '-' + pad2(cursor.getMonth() + 1) + '-' + pad2(cursor.getDate());
+      if (!exdateSet.has(dateStr)) {
+        const occStart = dateStr + timePart;
+        let occEnd = null;
+        if (durationMs !== null) {
+          const endMs = new Date(occStart).getTime() + durationMs;
+          const ed = new Date(endMs);
+          occEnd = ed.getFullYear() + '-' + pad2(ed.getMonth() + 1) + '-' + pad2(ed.getDate()) + 'T' + pad2(ed.getHours()) + ':' + pad2(ed.getMinutes());
+        } else if (ev.dtend) {
+          occEnd = ev.dtend; // no usable duration (e.g. date-only) -- keep pre-existing behavior of passing DTEND through as-is
+        }
+        occurrences.push({ dtstart: occStart, dtend: occEnd });
+      }
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return occurrences.length ? occurrences : fallback;
+}
+
 function parseICS(text, opts) {
   const includeAllDay = !!(opts && opts.includeAllDay);
   const lines = text
@@ -177,15 +295,28 @@ function parseICS(text, opts) {
 
   const events = [];
   let ev = null;
+  // Tracks nesting depth for sub-components inside a VEVENT (VALARM is the
+  // real-world case -- a reminder alert can carry its own DESCRIPTION line).
+  // The parser otherwise never tracks BEGIN/END nesting at all, it just
+  // matches key:value lines anywhere between BEGIN:VEVENT and END:VEVENT --
+  // so without this, a VALARM's own DESCRIPTION appearing after the event's
+  // real one would silently overwrite it. A depth counter is enough here;
+  // this parser only ever needs "are we inside some nested block right
+  // now," never which one.
+  let nestedDepth = 0;
 
   for (const line of lines) {
-    if (line === 'BEGIN:VEVENT') { ev = {}; continue; }
+    if (line === 'BEGIN:VEVENT') { ev = {}; nestedDepth = 0; continue; }
     if (line === 'END:VEVENT') {
       if (ev && ev.dtstart) events.push(ev);
       ev = null;
       continue;
     }
     if (!ev) continue;
+
+    if (line.startsWith('BEGIN:')) { nestedDepth++; continue; }
+    if (line.startsWith('END:')) { if (nestedDepth > 0) nestedDepth--; continue; }
+    if (nestedDepth > 0) continue; // ignore keys inside a nested VALARM/etc.
 
     const ci = line.indexOf(':');
     if (ci < 0) continue;
@@ -199,10 +330,56 @@ function parseICS(text, opts) {
     else if (key === 'LOCATION') ev.location = val;
     else if (key === 'STATUS') ev.status = val;
     else if (key === 'UID') ev.uid = val;
+    else if (key === 'RRULE') ev.rrule = val;
+    else if (key === 'EXDATE') {
+      // RFC 5545 allows either several comma-separated dates on one EXDATE
+      // line, or several separate EXDATE lines for the same event -- both
+      // show up in real feeds, so this appends instead of overwriting.
+      const dates = val.split(',').map(d => parseDt(d.trim())).filter(Boolean);
+      ev.exdates = (ev.exdates || []).concat(dates);
+    }
+  }
+
+  // Expand every recurring VEVENT (one master + RRULE) into its real
+  // individual occurrences before the upcoming-events filter below ever
+  // runs. This matters specifically because that filter drops anything
+  // with DTSTART in the past -- and a recurring class's DTSTART is its
+  // FIRST occurrence, typically the start of the semester, which is
+  // usually already in the past by the time a student connects their
+  // calendar. Without expansion the whole class silently vanished; this is
+  // the actual fix for that.
+  const expanded = [];
+  for (const e of events) {
+    if (!e.rrule) { expanded.push(e); continue; }
+    const occs = expandRecurringEvent(e);
+    if (occs.length <= 1) {
+      // Not actually recurring (unsupported RRULE form, or the rule
+      // legitimately resolves to a single occurrence) -- keep the event
+      // exactly as before, including its original UID, so nothing about
+      // today's non-recurring-event behavior changes.
+      expanded.push({ ...e, dtstart: occs[0].dtstart, dtend: occs[0].dtend });
+      continue;
+    }
+    occs.forEach(occ => {
+      expanded.push({
+        ...e,
+        dtstart: occ.dtstart,
+        dtend: occ.dtend,
+        // Each expanded occurrence needs its own identity. mergeImportedEvents
+        // (studlin-app.jsx) dedupes/resyncs by matching on externalUid via a
+        // Map keyed on UID -- if every occurrence of this recurring event
+        // shared the master's UID, that Map would keep only the
+        // last-processed occurrence, and a resync would collapse every
+        // occurrence's date/time onto that one. Suffixing with the
+        // occurrence's own date keeps it stable across resyncs (same date
+        // in, same UID out) while making every occurrence distinct.
+        uid: e.uid ? e.uid + '-' + occ.dtstart.slice(0, 10) : e.uid,
+      });
+    });
   }
 
   const now = new Date();
-  const upcoming = events.filter(e => {
+  const upcoming = expanded.filter(e => {
     if (!e.dtstart) return false;
     const d = new Date(e.dtstart);
     return !isNaN(d.getTime()) && d >= now;
