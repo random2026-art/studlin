@@ -4174,10 +4174,16 @@ async function extractWorkScheduleFromImage(base64Data,mediaType){
 // No separate "parent" record — this session IS the task, linked to its
 // eventual follow-ups only by attackChainId, same idiom as split-session
 // tasks link via splitGroup/splitIndex/splitTotal.
-function startAttackBlockChain(fields,events,routines,prefs,desiredDate,desiredTime){
+// forcedSlot (optional, added for the multi-option picker -- see
+// NewSlotPickerModal/computeNewSlotCandidates) lets a caller that already
+// asked the student to choose among 2-3 real candidates skip this
+// function's own internal findReliableSlotFor call and use exactly the
+// {date,time,reason} they picked instead. Every existing caller omits it
+// and keeps today's single-shot behavior unchanged.
+function startAttackBlockChain(fields,events,routines,prefs,desiredDate,desiredTime,forcedSlot){
   const chainId="attack-"+Date.now()+"-"+Math.random().toString(36).slice(2,7);
   const probeMins=fields.probeMins||ATTACK_BLOCK_DEFAULT_PROBE_MINS;
-  const slot=findReliableSlotFor(events,routines,prefs,desiredDate,desiredTime,probeMins,fields.deadline||null,fields.difficulty);
+  const slot=forcedSlot||findReliableSlotFor(events,routines,prefs,desiredDate,desiredTime,probeMins,fields.deadline||null,fields.difficulty);
   if(!slot)return null; // no legal slot before the deadline -- nothing to start a chain with
   return {
     id:String(Date.now()+Math.random()*1000),
@@ -4205,9 +4211,9 @@ function startAttackBlockChain(fields,events,routines,prefs,desiredDate,desiredT
 // project this session actually is, and projectPhaseIndex/phaseName/
 // projectTitle ride along on the returned task for the phase-advance logic
 // (see advanceProjectPhase) to find once this session is marked truly done.
-function startPhaseAwareAttackChain(fields,phases,events,routines,prefs,desiredDate,desiredTime){
+function startPhaseAwareAttackChain(fields,phases,events,routines,prefs,desiredDate,desiredTime,forcedSlot){
   const hasPhases=Array.isArray(phases)&&phases.length>0;
-  const task=startAttackBlockChain(hasPhases?{...fields,title:fields.title+": "+phases[0]}:fields,events,routines,prefs,desiredDate,desiredTime);
+  const task=startAttackBlockChain(hasPhases?{...fields,title:fields.title+": "+phases[0]}:fields,events,routines,prefs,desiredDate,desiredTime,forcedSlot);
   if(!task)return null;
   return hasPhases?{...task,projectPhaseIndex:0,phaseName:phases[0],projectTitle:fields.title}:task;
 }
@@ -4239,7 +4245,7 @@ function startPhaseAwareAttackChain(fields,phases,events,routines,prefs,desiredD
 // auto-placed one, so there's genuinely no task to compute a slot for
 // yet. Returns just the marker, reusing this exact same shape rather
 // than duplicating it in a second construction path that could drift.
-function buildAssignmentAttackBlockPair(markerId,fields,phases,events,routines,prefs,desiredDate,desiredTime,skipTask){
+function buildAssignmentAttackBlockPair(markerId,fields,phases,events,routines,prefs,desiredDate,desiredTime,skipTask,forcedSlot){
   const marker={
     id:markerId,title:fields.title,date:fields.deadline||desiredDate,time:"23:59",
     subject:fields.subject||"",courseId:fields.courseId||null,notes:fields.notes||"",kind:"deadline",
@@ -4256,7 +4262,7 @@ function buildAssignmentAttackBlockPair(markerId,fields,phases,events,routines,p
     ...(fields.outline&&fields.outline.length>0?{outline:fields.outline}:{}),
   };
   if(skipTask)return {marker,task:null};
-  const task=startPhaseAwareAttackChain({...fields,dueEventId:marker.id},phases,events.concat([marker]),routines,prefs,desiredDate,desiredTime);
+  const task=startPhaseAwareAttackChain({...fields,dueEventId:marker.id},phases,events.concat([marker]),routines,prefs,desiredDate,desiredTime,forcedSlot);
   if(!task)return null;
   return {marker,task};
 }
@@ -8218,6 +8224,15 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
     // captured earlier in this function -- a later separate write would
     // get clobbered by this one.
     lsSet("events",events.concat(finalSessions).map(e=>e.id===buildPlanExam.id?{...e,difficulty:buildPlanPreview.difficultyValue}:e));
+    // Jump-and-highlight, same one-shot relay the calendar-import flows in
+    // SettingsTab already use -- confirming a Build Study Plan is exactly
+    // the deliberate "I am scheduling this exam now" moment the founder's
+    // brief calls out, unlike the daily sweep's own silent auto-scheduling
+    // elsewhere in this file.
+    if(finalSessions.length>0){
+      lsSet("calendarHighlightIds",{ids:finalSessions.map(s=>s.id),setAt:Date.now()});
+      setActive("calendar");
+    }
     // Counts against the free-tier monthly cap (see canBuildExamPlan's
     // gate at the top of this function) -- merged in from the landing-page
     // branch's pricing-limits pass. The old flashcard/practice-exam
@@ -8477,6 +8492,14 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   // for the same conceptual job. Preview-then-confirm, same discipline as
   // every other scheduling surface in this app -- nothing commits silently. ──
   const [schedulePreview,setSchedulePreview]=useState(null); // {kind:"deck"|"quiz", refId, title, examId, examDate, subject, count, sessions}
+  // Multi-option placement for a single practice-exam session (see
+  // NewSlotPickerModal/computeNewSlotCandidates) -- {candidates,pe,duration}
+  // while open, null otherwise.
+  const [practiceExamSlotPicker,setPracticeExamSlotPicker]=useState(null);
+  // Same multi-option picker for addOneSession below (a single extra
+  // exam-prep session, added with one click and previously committed
+  // straight to storage with zero confirmation at all).
+  const [addSessionSlotPicker,setAddSessionSlotPicker]=useState(null); // {candidates,duration}
   const openSchedulePracticeExam=(pe)=>{
     if(!selectedExam)return;
     // Was a flat 60 minutes regardless of question count -- an 8-question
@@ -8485,10 +8508,70 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
     // buildSpacedSessionPreviews' own suggestDurationFor(...)||25 default
     // (same as openScheduleDeckReviews) if there's somehow no question
     // count yet, rather than forcing a number.
-    const duration=pe.questions&&pe.questions.length?Math.max(10,Math.min(90,Math.round(pe.questions.length*2/5)*5)):undefined;
-    const sessions=buildSpacedSessionPreviews(selectedExam.date,selectedExam.subject,1,duration);
-    if(sessions.length===0)return;
-    setSchedulePreview({kind:"quiz",refId:pe.id,title:pe.name,examId:selectedExam.id,examDate:selectedExam.date,subject:selectedExam.subject,count:1,sessions});
+    const duration=pe.questions&&pe.questions.length?Math.max(10,Math.min(90,Math.round(pe.questions.length*2/5)*5)):(suggestDurationFor(selectedExam.subject,"study block")||25);
+    // A practice exam is always exactly one session (count:1) -- unlike a
+    // multi-session spaced plan, there's no real "which day out of several"
+    // choice to make against computeReviewDates' own spacing curve, so this
+    // scans forward from the SAME single anchor day that curve already
+    // picks (see computeReviewOffsets' own comment on why count:1 is a
+    // fixed offset), bounded by the exam date -- real alternatives close to
+    // that same target, not a totally different week.
+    const routines=getWeeklyRoutine();
+    const prefs=getSchedulePreferences();
+    const anchorDates=computeReviewDates(selectedExam.date,dayKey(),1);
+    const desiredDate=anchorDates[0]||dayKey();
+    const candidates=computeNewSlotCandidates(lsGet("events",[]),routines,prefs,desiredDate,prefs.workStartTime,duration,selectedExam.date,5);
+    if(candidates.length===0){
+      // Nothing distinct to choose between within that window -- fall back
+      // to the old single-shot preview rather than a dead end (same "show
+      // what's available, don't fabricate alternatives" rule).
+      const sessions=buildSpacedSessionPreviews(selectedExam.date,selectedExam.subject,1,duration);
+      if(sessions.length===0)return;
+      setSchedulePreview({kind:"quiz",refId:pe.id,title:pe.name,examId:selectedExam.id,examDate:selectedExam.date,subject:selectedExam.subject,count:1,sessions});
+      return;
+    }
+    setPracticeExamSlotPicker({candidates,pe,duration});
+  };
+  const confirmPracticeExamSlot=(slot)=>{
+    if(!practiceExamSlotPicker||!selectedExam)return;
+    const {pe,duration}=practiceExamSlotPicker;
+    const events=removeGenericExamPrepSessions(lsGet("events",[]),selectedExam.id);
+    const session={
+      id:"practiceexam-"+pe.id+"-"+Date.now(),
+      title:"Practice Exam: "+pe.name,
+      date:slot.date,time:slot.time,subject:"",kind:"study block",notes:"",
+      priority:computeSessionPriority(selectedExam,dayKey()),difficulty:5,deadline:selectedExam.date,duration,
+      status:"pending",timeSpent:0,completedAt:null,
+      practiceExamId:pe.id,
+      placementReason:slot.reason||null,
+      dueEventId:selectedExam.id,
+      isExamPrepSession:true,
+    };
+    lsSet("events",events.concat([session]));
+    setPracticeExamSlotPicker(null);
+    refresh();
+    // Jump-and-highlight, same relay the calendar-import flows already use
+    // -- scheduling a practice exam is exactly the deliberate "I am
+    // scheduling this now" moment the founder's brief calls out.
+    lsSet("calendarHighlightIds",{ids:[session.id],setAt:Date.now()});
+    setActive("calendar");
+  };
+  // Commit for addOneSession's picker below (a single extra generic
+  // exam-prep session) -- top-level, not nested inside the exam detail
+  // view's own render, since the picker rendered for it (addSessionSlotPicker)
+  // is always mounted, not just while that view happens to be open.
+  const confirmAddSessionSlot=(slot,durationOverride)=>{
+    if(!selectedExam)return;
+    const duration=durationOverride??(addSessionSlotPicker&&addSessionSlotPicker.duration)??(suggestDurationFor(selectedExam.subject,"study block")||25);
+    const session={id:"prep-"+selectedExam.id+"-"+Date.now(),title:"Study: "+selectedExam.title,date:slot.date,time:slot.time,subject:selectedExam.subject,notes:"",kind:"study block",duration,priority:computeSessionPriority(selectedExam,dayKey()),difficulty:selectedExam.difficulty??500,deadline:selectedExam.date,status:"pending",timeSpent:0,completedAt:null,placementReason:slot.placementReason||slot.reason||null,isExamPrepSession:true,dueEventId:selectedExam.id};
+    lsSet("events",lsGet("events",[]).concat([session]));
+    setAddSessionSlotPicker(null);
+    refresh();
+    // Jump-and-highlight -- this single click is the whole scheduling
+    // action (no separate preview/confirm step existed before this either),
+    // exactly the deliberate moment the founder's brief calls out.
+    lsSet("calendarHighlightIds",{ids:[session.id],setAt:Date.now()});
+    setActive("calendar");
   };
   const commitSchedulePreview=()=>{
     if(!schedulePreview)return;
@@ -9032,14 +9115,27 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
           refresh();
         };
         const hasUnfocusedGenericSessions=materialText.trim()&&examSessions.some(s=>!s.deckId&&!s.practiceExamId&&s.status!=="done"&&!s.notes);
+        // Same single-anchor-day reasoning as openSchedulePracticeExam's own
+        // comment -- one extra session has one natural target day, not a
+        // free choice across the whole calendar. Commit itself
+        // (confirmAddSessionSlot) lives at the component's top level, not
+        // nested in here, since the picker rendered for it is also
+        // top-level (always mounted, not just while this exam's detail view
+        // happens to be open).
         const addOneSession=()=>{
           const d=suggestDurationFor(selectedExam.subject,"study block")||25;
-          const previews=buildSpacedSessionPreviews(selectedExam.date,selectedExam.subject,1,d);
-          if(previews.length===0)return;
-          const s=previews[0];
-          const session={id:"prep-"+selectedExam.id+"-"+Date.now(),title:"Study: "+selectedExam.title,date:s.date,time:s.time,subject:selectedExam.subject,notes:"",kind:"study block",duration:s.duration,priority:computeSessionPriority(selectedExam,dayKey()),difficulty:selectedExam.difficulty??500,deadline:selectedExam.date,status:"pending",timeSpent:0,completedAt:null,placementReason:s.placementReason||null,isExamPrepSession:true,dueEventId:selectedExam.id};
-          lsSet("events",lsGet("events",[]).concat([session]));
-          refresh();
+          const routines=getWeeklyRoutine();
+          const prefs=getSchedulePreferences();
+          const anchorDates=computeReviewDates(selectedExam.date,dayKey(),1);
+          const desiredDate=anchorDates[0]||dayKey();
+          const candidates=computeNewSlotCandidates(lsGet("events",[]),routines,prefs,desiredDate,prefs.workStartTime,d,selectedExam.date,selectedExam.difficulty??500);
+          if(candidates.length===0){
+            const previews=buildSpacedSessionPreviews(selectedExam.date,selectedExam.subject,1,d);
+            if(previews.length===0)return;
+            confirmAddSessionSlot(previews[0],d);
+            return;
+          }
+          setAddSessionSlotPicker({candidates,duration:d});
         };
         const patchSession=(id,patch)=>{lsSet("events",lsGet("events",[]).map(e=>e.id===id?{...e,...patch}:e));refresh();};
         const deleteSession=(id)=>{lsSet("events",lsGet("events",[]).filter(e=>e.id!==id));refresh();};
@@ -9991,6 +10087,21 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
           </div>
         )}
       </Modal>
+
+      {/* ── Multi-option pickers for a single exam-prep/practice-exam
+          session (see NewSlotPickerModal/computeNewSlotCandidates) --
+          same RescheduleModal-style pattern, reused here so exam/flashcard
+          scheduling gives a real choice instead of one silent pick. ── */}
+      {practiceExamSlotPicker&&(
+        <NewSlotPickerModal title="Choose a practice exam time" sub="Studlin found a few real options counting down to your exam:"
+          candidates={practiceExamSlotPicker.candidates} confirmLabel="Schedule"
+          onConfirm={confirmPracticeExamSlot} onClose={()=>setPracticeExamSlotPicker(null)} />
+      )}
+      {addSessionSlotPicker&&(
+        <NewSlotPickerModal title="Choose a study session time" sub="Studlin found a few real options counting down to your exam:"
+          candidates={addSessionSlotPicker.candidates} confirmLabel="Add session"
+          onConfirm={confirmAddSessionSlot} onClose={()=>setAddSessionSlotPicker(null)} />
+      )}
 
       {/* ── Delete confirm -- direct student-initiated delete of a deck or
           practice exam from Prep. This is CLAUDE.md's
@@ -18958,6 +19069,53 @@ function computeRescheduleCandidates(task,events,routines,prefs){
   return {candidates:candidates.slice(0,RESCHEDULE_MAX_CANDIDATES),freeDaysTotal};
 }
 
+// Same "scan forward, rank the real distinct options, keep the top few"
+// shape as computeRescheduleCandidates just above -- lightly adapted for a
+// brand-new placement instead of moving an existing one off today. Two real
+// differences from reschedule: (1) today itself is a legal candidate (the
+// whole point of Reschedule is freeing up today, but starting an Attack
+// Block chain or a new exam-prep session right now is exactly what a
+// student clicking "schedule this" usually wants), and (2) there's no
+// eviction -- this never bumps something else to make room, it only reports
+// slots findReliableSlotFor already considers genuinely open. Used by the
+// new multi-option picker (see NewSlotPickerModal) for exam session
+// generation and Attack Block/flashcard scheduling -- the same reliability
+// engine every single-slot call site already trusts, just asked more than
+// once so the student sees real alternatives instead of one silent pick.
+const NEW_PLACEMENT_SCAN_DAYS=14;
+const NEW_PLACEMENT_MAX_CANDIDATES=3;
+function computeNewSlotCandidates(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey,difficulty){
+  const candidates=[];
+  const seenDates=new Set();
+  for(let i=0;i<NEW_PLACEMENT_SCAN_DAYS;i++){
+    const d=(()=>{const x=new Date(desiredDate+"T12:00:00");x.setDate(x.getDate()+i);return dayKey(x);})();
+    if(deadlineKey&&d>deadlineKey)break;
+    const reliable=findReliableSlotFor(events,routines,prefs,d,desiredTime,duration,deadlineKey,difficulty);
+    if(!reliable)continue;
+    // Only accept a result that actually lands ON this scanned day -- a day
+    // that's genuinely full rolls findReliableSlotFor's own internal fallback
+    // forward to a later date, which gets its own turn in a later iteration
+    // of this same loop. Accepting the rolled-forward result here too would
+    // just show the same later date twice.
+    if(reliable.date!==d||seenDates.has(reliable.date))continue;
+    seenDates.add(reliable.date);
+    const dayEvents=events.filter(e=>e.date===d&&e.status!=="done");
+    const rawBaseMins=dayEvents.reduce((a,e)=>a+(e.duration||0),0);
+    let baseMins=rawBaseMins;
+    if(baseMins<=0){
+      const today=dayKey();
+      const start=(()=>{const x=new Date();x.setDate(x.getDate()-7);return dayKey(x);})();
+      const recent=events.filter(e=>e.date>=start&&e.date<today&&e.status!=="done");
+      baseMins=Math.round(recent.reduce((a,e)=>a+(e.duration||0),0)/7);
+    }
+    const pct=baseMins>0?Math.round((duration/baseMins)*100):100;
+    const weekPressure=weekPrepLoad(d,{id:"__new_placement_preview__"},events,prefs);
+    candidates.push({date:d,dayOffset:i,time:reliable.time,reason:reliable.reason,rawBaseMins,pct,isHigh:pct>=15,isEmpty:rawBaseMins<=0,weekPressure});
+  }
+  candidates.sort((a,b)=>a.rawBaseMins-b.rawBaseMins||a.dayOffset-b.dayOffset);
+  return candidates.slice(0,NEW_PLACEMENT_MAX_CANDIDATES);
+}
+
 // Completing an Attack-Block/project-linked task via a plain checkbox click
 // (Dashboard's Today's Plan, Calendar's day/agenda views) used to get none
 // of the "how far along are you, want the rest re-estimated" follow-up that
@@ -19141,6 +19299,75 @@ function RescheduleModal({task,events,commit,onClose,onManual}){
   );
 }
 
+// Reuses RescheduleModal's exact visual pattern (candidate cards, the same
+// "why here" reason line, the same manual-fallback link) for the opposite
+// moment: placing something brand new instead of moving something that
+// already exists. Every call site hands this the output of
+// computeNewSlotCandidates directly, so "2-3 real options with their
+// reasons" looks and behaves identically whether the student is starting an
+// Attack Block chain or scheduling an exam-prep/practice-exam session --
+// one picker pattern, not a second bolted-on UI for each. onConfirm gets
+// the exact candidate object the student picked ({date,time,reason,...});
+// the caller decides what building a real event out of that means for its
+// own case. onManual (optional) is the same "let me choose myself" escape
+// hatch RescheduleModal offers -- omitted where a call site has no manual
+// fallback of its own to hand off to.
+function NewSlotPickerModal({title,sub,candidates,onConfirm,onClose,onManual,confirmLabel="Confirm"}){
+  const [selectedIdx,setSelectedIdx]=useState(0);
+  const selected=candidates[selectedIdx];
+  const confirm=()=>{ if(!selected)return; onConfirm(selected); };
+  return (
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(6px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:420,background:T.card,border:`1px solid ${T.border}`,borderRadius:10,padding:22,animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
+        <div style={{fontSize:15,fontWeight:700,color:T.white,marginBottom:sub?4:10}}>{title}</div>
+        {sub&&<div style={{fontSize:12.5,color:T.muted,lineHeight:1.5,marginBottom:14}}>{sub}</div>}
+        {candidates.length===0
+          ? <div style={{fontSize:12.5,color:T.red,marginBottom:14,padding:"10px 12px",background:T.red+"14",borderRadius:9}}>No open slot before the deadline. Try a manual time instead.</div>
+          : <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:18}}>
+              {candidates.map((c,i)=>(
+                <div key={c.date} onClick={()=>setSelectedIdx(i)} style={{cursor:"pointer",padding:"12px 14px",borderRadius:12,border:`1px solid ${selectedIdx===i?T.lime+"66":T.border}`,background:selectedIdx===i?T.lime+"14":T.card2}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <span style={{fontSize:13,fontWeight:600,color:selectedIdx===i?T.lime:T.white}}>
+                      {c.date===dayKey()?"Today, ":""}{new Date(c.date+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}
+                    </span>
+                    {selectedIdx===i&&<span style={{color:T.lime,fontSize:12}}>✓</span>}
+                  </div>
+                  <div style={{fontSize:12,color:T.muted,marginTop:3}}>
+                    {fmtClock12(c.time)}{" · "}
+                    {c.isEmpty
+                      ?<strong style={{color:T.teal}}>Currently free</strong>
+                      :<>Adds <strong style={{color:c.isHigh?T.amber:T.muted}}>{c.pct}%</strong> to that day's workload</>}
+                  </div>
+                  {/* Same two "why here" signals RescheduleModal's own cards
+                      already show -- see its comment for why these are only
+                      ever shown when there's a real signal behind them, never
+                      fabricated for a plain open slot. */}
+                  {c.reason&&(
+                    <div style={{fontSize:11,color:T.muted,marginTop:3}}>🕒 {fmtPlacementReason(c.reason,c.time)}</div>
+                  )}
+                  {c.weekPressure&&c.weekPressure.isPressured&&(
+                    <div style={{fontSize:11,color:T.amber,marginTop:3}}>
+                      {c.weekPressure.competingTitle?`That week's already busy with ${c.weekPressure.competingTitle}.`:"That week's already busy."}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+        }
+        <div style={{display:"flex",gap:8}}>
+          <Btn onClick={confirm} disabled={candidates.length===0} style={{flex:1,justifyContent:"center",opacity:candidates.length===0?0.45:1}}>{confirmLabel}</Btn>
+          <Btn variant="subtle" onClick={onClose} style={{flex:1,justifyContent:"center"}}>Cancel</Btn>
+        </div>
+        {onManual&&(
+          <button type="button" onClick={()=>{onManual();onClose();}} style={{display:"block",width:"100%",textAlign:"center",background:"none",border:"none",padding:0,marginTop:12,fontSize:11.5,color:T.muted,textDecoration:"underline",cursor:"pointer",fontFamily:T.font}}>
+            I'll pick the day and time myself →
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // Shared "full detail + edit" surface for a single event -- one modal
 // instead of Calendar owning a private one Dashboard can't reach. Takes
 // only an eventId, never an events array: every read below is a fresh
@@ -19203,6 +19430,9 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   // first prep session already gets.
   const [addAttackBlock,setAddAttackBlock]=useState(false);
   const [attackProbeMins,setAttackProbeMins]=useState(ATTACK_BLOCK_DEFAULT_PROBE_MINS);
+  // Multi-option picker for the retroactive Attack Block above -- see
+  // save()/finishSave's own comments for how this gets populated.
+  const [attackSlotPicker,setAttackSlotPicker]=useState(null);
   // Exam study material + spaced-session generation, retrofitted onto an
   // existing exam the same way Add Task now offers it for a new one --
   // same MaterialEditor/buildExamSessionEvents shape used there.
@@ -19371,11 +19601,14 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
     onToast&&onToast("Invite sent — it'll appear on their calendar once they accept.");
   };
 
-  const save=()=>{
-    if(!title.trim())return;
-    if(deadline&&date>deadline){setDeadlineErr("Can't schedule past the deadline ("+deadline+").");return;}
-    if((showsPhaseDetail||requiresProjectDetail)&&!notes.trim()){setDetailErr("Add a bit of detail so Studlin can suggest real phases, not a generic template.");return;}
-    setDetailErr("");
+  // Split out of save() so the retroactive Attack Block branch can pause for
+  // the multi-option picker (see save() itself below) before actually
+  // committing anything -- every other edit (title/date/time changes, exam
+  // material, everything else this modal handles) still goes straight
+  // through with no picker, unaffected. forcedAttackSlot is the candidate
+  // the student chose (or null when there was nothing to choose between, or
+  // no new Attack Block is being added this save at all).
+  const finishSave=(forcedAttackSlot)=>{
     const timeChanged=time!==ev.time||date!==ev.date;
     const prefs=getSchedulePreferences();
     // Project/To-do are UI-level Type choices, not real kind values (see
@@ -19403,7 +19636,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
       const phases=isPhaseCandidate?(projectPlan.phases||[]).map(p=>p.trim()).filter(Boolean):[];
       const outline=isPhaseCandidate?normalizeOutlineDraft(projectPlan.outline):[];
       const desiredDate=date&&date>=dayKey()?date:dayKey();
-      attackPair=buildAssignmentAttackBlockPair(ev.id,{title:title.trim(),subject,courseId:courseIdForLabel(subject),notes,deadline:deadline||null,priority,difficulty,probeMins:attackProbeMins,outline},phases,allEvents,routines,prefs,desiredDate,prefs.workStartTime);
+      attackPair=buildAssignmentAttackBlockPair(ev.id,{title:title.trim(),subject,courseId:courseIdForLabel(subject),notes,deadline:deadline||null,priority,difficulty,probeMins:attackProbeMins,outline},phases,allEvents,routines,prefs,desiredDate,prefs.workStartTime,false,forcedAttackSlot);
     }
     const updated=allEvents.map(e=>{
       if(e.id!==ev.id)return e;
@@ -19424,15 +19657,54 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
     });
     let next=date?rebalanceDay(date,updated,routines,prefs):updated;
     if(attackPair)next=next.concat([attackPair.task]);
+    let newExamSessions=[];
     if(kind==="exam"&&examPlan.proposeSessions&&linkedSessions.length===0){
       const baseDuration=suggestDurationFor(subject,"study block")||25;
       const materialCharCount=examPlan.materialFiles.map(f=>f.text||"").join("\n\n").length;
       const daysUntilExam=date?Math.round((new Date(date+"T12:00:00")-new Date(dayKey()+"T12:00:00"))/86400000):undefined;
       const planParams=computeStudyPlanParams(ev.examWeight,baseDuration,examConfidence,materialCharCount,ev.importanceLevel,daysUntilExam,ev.gradeWeightPercent,ev.confidenceLog);
-      const sessions=buildExamSessionEvents(title.trim(),date,subject,examPlan.sessionCount||planParams.sessionCount,"edittask-exam-"+ev.id,next,routines,prefs,{dueEventId:ev.id},planParams.difficultyValue,planParams.sessionDuration,ev.examWeight,ev.confidenceLog);
-      next=next.concat(sessions);
+      newExamSessions=buildExamSessionEvents(title.trim(),date,subject,examPlan.sessionCount||planParams.sessionCount,"edittask-exam-"+ev.id,next,routines,prefs,{dueEventId:ev.id},planParams.difficultyValue,planParams.sessionDuration,ev.examWeight,ev.confidenceLog);
+      next=next.concat(newExamSessions);
     }
-    commit(next);onClose();
+    commit(next);
+    // Jump-and-highlight, same one-shot calendarHighlightIds relay the
+    // calendar-import flows in SettingsTab already use (this modal is a
+    // true sibling of [data-page], not always rendered inside CalendarTab,
+    // so it can't reach into CalendarTab's own local highlight state --
+    // see CalendarTab's own newItemHighlightIds comment). Only fires when
+    // this save genuinely just created something new to look at -- a plain
+    // title/date edit with neither toggle on stays exactly as quiet as
+    // before.
+    if(attackPair||newExamSessions.length>0){
+      const newIds=[...(attackPair?[attackPair.marker.id,attackPair.task.id]:[]),...newExamSessions.map(s=>s.id)];
+      lsSet("calendarHighlightIds",{ids:newIds,setAt:Date.now()});
+      if(setActive)setActive("calendar");
+    }
+    onClose();
+  };
+  const save=()=>{
+    if(!title.trim())return;
+    if(deadline&&date>deadline){setDeadlineErr("Can't schedule past the deadline ("+deadline+").");return;}
+    if((showsPhaseDetail||requiresProjectDetail)&&!notes.trim()){setDetailErr("Add a bit of detail so Studlin can suggest real phases, not a generic template.");return;}
+    setDetailErr("");
+    // Multi-option Attack Block placement (see NewSlotPickerModal/
+    // computeNewSlotCandidates) -- only pauses for a choice when this save
+    // is genuinely about to start a brand-new chain; every other edit path
+    // goes straight to finishSave with no picker. Falls through to the old
+    // single-shot behavior when computeNewSlotCandidates finds nothing
+    // within its bounded scan window, same reasoning as Add Task's own
+    // identical fallback.
+    if(canAddAttackBlock&&addAttackBlock){
+      const prefs=getSchedulePreferences();
+      const desiredDate=date&&date>=dayKey()?date:dayKey();
+      const probeMins=attackProbeMins||ATTACK_BLOCK_DEFAULT_PROBE_MINS;
+      const candidates=computeNewSlotCandidates(allEvents,routines,prefs,desiredDate,prefs.workStartTime,probeMins,deadline||null,difficulty);
+      if(candidates.length>0){
+        setAttackSlotPicker({candidates,confirm:(slot)=>{finishSave(slot);setAttackSlotPicker(null);}});
+        return;
+      }
+    }
+    finishSave(null);
   };
   const writePhases=(nextPhases)=>commit(allEvents.map(x=>x.id===ev.id?{...x,phases:nextPhases}:x));
   const writeOutline=(nextOutline)=>commit(allEvents.map(x=>x.id===ev.id?{...x,outline:nextOutline}:x));
@@ -19835,6 +20107,11 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
         </div>
       )}
     </Modal>
+    {attackSlotPicker&&(
+      <NewSlotPickerModal title="Choose when to start" sub="Studlin found a few real options for your first session:"
+        candidates={attackSlotPicker.candidates} confirmLabel="Start here"
+        onConfirm={attackSlotPicker.confirm} onClose={()=>setAttackSlotPicker(null)} />
+    )}
   </>);
 }
 
@@ -20540,6 +20817,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // itself the moment the student leaves Calendar; nothing here has to
   // explicitly time it out.
   const [newItemHighlightIds,setNewItemHighlightIds]=useState([]);
+  // Multi-option Attack Block placement (see NewSlotPickerModal/
+  // computeNewSlotCandidates) -- holds {candidates,confirm} while the
+  // picker is open, null otherwise. `confirm` is a closure built fresh by
+  // whichever entry point (saveManual's plain Save, aiArrange's "Add Task
+  // with AI") opened it, so this one piece of state serves both without
+  // either needing to know about the other.
+  const [attackSlotPicker,setAttackSlotPicker]=useState(null);
   const finishClassSetup=(newIds)=>{
     lsSet("subjects-configured",true);
     lsSet("hasConfiguredRoutine",true);
@@ -21757,6 +22041,36 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     }
     if(onTaskSaved)onTaskSaved();
   };
+  // Multi-option Attack Block placement -- shared by both Add Task submit
+  // paths that can start a brand-new chain (saveManual's plain Save,
+  // aiArrange's "Add Task with AI", which places its own Attack Block
+  // branch exactly the same deterministic way, never through the actual AI
+  // call -- see aiArrange's own comment). Computes 2-3 real candidates via
+  // computeNewSlotCandidates and lets the student choose, the same pattern
+  // RescheduleModal already established for moving an existing task.
+  // Falls back to the old single-shot behavior (no picker) when
+  // computeNewSlotCandidates finds nothing within its bounded scan window --
+  // buildAssignmentAttackBlockPair's own internal findReliableSlotFor call
+  // still has its own unbounded last-resort fallback, so this never turns a
+  // placement that would have succeeded before into a dead end just because
+  // there was nothing to let the student choose between.
+  const startAttackBlockWithChoice=(markerId,fields,phases,isProject,desiredDate,desiredTime)=>{
+    const prefs=getSchedulePreferences();
+    const probeMins=fields.probeMins||ATTACK_BLOCK_DEFAULT_PROBE_MINS;
+    const finish=(forcedSlot)=>{
+      const pair=buildAssignmentAttackBlockPair(markerId,fields,phases,events,routines,prefs,desiredDate,desiredTime,false,forcedSlot);
+      if(!pair){setDeadlineToast("That time conflicts and there's no open slot before the deadline.");setTimeout(()=>setDeadlineToast(""),2800);return;}
+      if(isProject)recordProjectBreakdown();
+      commitTasks([pair.marker,pair.task]);
+      // Same "just added" lime highlight the class-setup wizard already
+      // gives a newly added class -- both the due-date marker and the real
+      // scheduled probe session are new, so both get flagged.
+      setNewItemHighlightIds([pair.marker.id,pair.task.id]);
+    };
+    const candidates=computeNewSlotCandidates(events,routines,prefs,desiredDate,desiredTime,probeMins,fields.deadline||null,fields.difficulty);
+    if(candidates.length===0){finish(null);return;}
+    setAttackSlotPicker({candidates,confirm:(slot)=>{finish(slot);setAttackSlotPicker(null);}});
+  };
   // A checklist item is deliberately minimal — title and an optional due
   // date, nothing else. It's flagged checklist:true and carries no `time`,
   // so it's excluded from the calendar grid, agenda, and AI day-planning
@@ -21976,14 +22290,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       // paywall now, same as every other Pro-only gate in this component.
       if(isProject&&!canBreakDownProject()){setPricingOpen("projectBreakdown");return;}
       const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
-      const prefs=getSchedulePreferences();
       const phases=evKind==="project"?(evProjectPlan.phases||[]).map(p=>p.trim()).filter(Boolean):[];
       const outline=evKind==="project"?normalizeOutlineDraft(evProjectPlan.outline):[];
       const markerId=String(Date.now()+Math.random()*1000);
-      const pair=buildAssignmentAttackBlockPair(markerId,{title:evTitle.trim(),subject:subj,courseId:courseIdForLabel(subj),notes:evNotes,deadline:evDeadline||null,priority:evPriority,difficulty:evDifficulty,probeMins:evAttackProbeMins,outline},phases,events,routines,prefs,evDate,evTime);
-      if(!pair){setDeadlineToast("That time conflicts and there's no open slot before the deadline.");setTimeout(()=>setDeadlineToast(""),2800);return;}
-      if(isProject)recordProjectBreakdown();
-      commitTasks([pair.marker,pair.task]);
+      startAttackBlockWithChoice(markerId,{title:evTitle.trim(),subject:subj,courseId:courseIdForLabel(subj),notes:evNotes,deadline:evDeadline||null,priority:evPriority,difficulty:evDifficulty,probeMins:evAttackProbeMins,outline},phases,isProject,evDate,evTime);
       return;
     }
     // Exam material/sessions -- exams never split, so this replaces the
@@ -22016,6 +22326,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         tasks=tasks.concat(sessions);
       }
       commitTasks(tasks,{userPinned:true});
+      // Same "just added" lime highlight the class-setup wizard already
+      // gives a newly added class -- this modal already renders inside
+      // CalendarTab (see its own newItemHighlightIds comment), so no
+      // cross-tab navigation is needed, just the highlight itself.
+      setNewItemHighlightIds(tasks.map(t=>t.id));
       // resolveManualSlot (above) deliberately never conflict-checks a fixed
       // kind like exam -- the student typed this exact time on purpose, so
       // Studlin shouldn't second-guess it. But that meant nothing ever
@@ -22152,15 +22467,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       // top of this function already turned back any Free user before
       // reaching this far, and canBreakDownProject is the exact same
       // getPlan()!=="Free" check, so it could never fire here anyway.
+      const isProject=evKind==="project";
       const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
       const phases=evKind==="project"?(evProjectPlan.phases||[]).map(p=>p.trim()).filter(Boolean):[];
       const outline=evKind==="project"?normalizeOutlineDraft(evProjectPlan.outline):[];
       const markerId=String(Date.now()+Math.random()*1000);
-      const pair=buildAssignmentAttackBlockPair(markerId,{title:evTitle.trim(),subject:subj,courseId:courseIdForLabel(subj),notes:evNotes,deadline:evDeadline||null,priority:evPriority,difficulty:evDifficulty,probeMins:evAttackProbeMins,outline},phases,events,routines,prefs,desiredStartDate,windowStartTime);
       setAiLoading(false);
-      if(!pair){setDeadlineToast("That time conflicts and there's no open slot before the deadline.");setTimeout(()=>setDeadlineToast(""),2800);return;}
-      if(isProject)recordProjectBreakdown();
-      commitTasks([pair.marker,pair.task]);
+      startAttackBlockWithChoice(markerId,{title:evTitle.trim(),subject:subj,courseId:courseIdForLabel(subj),notes:evNotes,deadline:evDeadline||null,priority:evPriority,difficulty:evDifficulty,probeMins:evAttackProbeMins,outline},phases,isProject,desiredStartDate,windowStartTime);
       return;
     }
     const windowMins=Math.max(0,desiredEndMins-windowStart);
@@ -23424,6 +23737,16 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           setRescheduleToast(evictedCount>0?`Task rescheduled — ${evictedCount} other${evictedCount!==1?"s":""} shifted to make room.`:"Task rescheduled.");
           setTimeout(()=>setRescheduleToast(""),2800);
         }} />
+      )}
+      {/* Attack Block's own multi-option picker -- same RescheduleModal
+          pattern, see startAttackBlockWithChoice's own comment. A sibling
+          of the "New task" Modal below (not nested inside it) for the same
+          reason every other calendar modal in this file already is -- see
+          the data-page centering gotcha noted elsewhere in this file. */}
+      {attackSlotPicker&&(
+        <NewSlotPickerModal title="Choose when to start" sub="Studlin found a few real options for your first session:"
+          candidates={attackSlotPicker.candidates} confirmLabel="Start here"
+          onConfirm={attackSlotPicker.confirm} onClose={()=>setAttackSlotPicker(null)} />
       )}
       <Modal open={newOpen} onClose={resetForm} title="New task" sub={taskMode==="manual"?"Add details and pick exactly when.":"Add details and Studlin finds the time."} width={580}
         footer={
@@ -27387,6 +27710,11 @@ function App() {
   // prepAutoToast instead; "off" never populates either.
   const [prepPromptBatch,setPrepPromptBatch]=useState([]);
   const [prepAutoToast,setPrepAutoToast]=useState("");
+  // Multi-option Attack Block placement for the "ask" mode accept below
+  // (see NewSlotPickerModal/computeNewSlotCandidates) -- the deliberate,
+  // explicit accept click this banner asks for, unlike "auto" mode right
+  // below it, which schedules silently and never shows this.
+  const [prepAttackSlotPicker,setPrepAttackSlotPicker]=useState(null);
   // Surfaces startLockIn's group-sync failure (see TaskTimerModal) — a
   // toast here rather than a banner inside the modal itself, since the
   // modal moves through several phase-specific screens right after the
@@ -27406,11 +27734,29 @@ function App() {
     const events=lsGet("events",[]);
     const routines=getWeeklyRoutine();
     const prefs=getSchedulePreferences();
-    const task=startPhaseAwareAttackChain({title:item.title,deadline:item.date,priority:item.priority,difficulty:item.difficulty,noteId:item.noteId,dueEventId:item.id},item.phases,events,routines,prefs,dayKey(),prefs.workStartTime);
-    const next=events.map(e=>e.id===item.id?{...e,prepPending:false}:e).concat([task]);
-    lsSet("events",next);
-    if(isProject)recordProjectBreakdown();
-    setPrepPromptBatch(b=>b.filter(x=>x.id!==item.id));
+    const finish=(forcedSlot)=>{
+      const task=startPhaseAwareAttackChain({title:item.title,deadline:item.date,priority:item.priority,difficulty:item.difficulty,noteId:item.noteId,dueEventId:item.id},item.phases,events,routines,prefs,dayKey(),prefs.workStartTime,forcedSlot);
+      const next=events.map(e=>e.id===item.id?{...e,prepPending:false}:e).concat([task]);
+      lsSet("events",next);
+      if(isProject)recordProjectBreakdown();
+      setPrepPromptBatch(b=>b.filter(x=>x.id!==item.id));
+      // Jump-and-highlight, same relay the calendar-import flows in
+      // SettingsTab already use -- accepting this banner is exactly the
+      // deliberate "yes, schedule this now" click the founder's brief calls
+      // out, unlike "auto" mode just below (see its own comment), which
+      // never navigates anywhere. Guarded on a real task existing -- see
+      // startPhaseAwareAttackChain's own null return for "no legal slot" --
+      // so a failed placement never yanks the student to Calendar to look
+      // at nothing.
+      if(task){
+        lsSet("calendarHighlightIds",{ids:[task.id],setAt:Date.now()});
+        setActive("calendar");
+      }
+    };
+    const probeMins=ATTACK_BLOCK_DEFAULT_PROBE_MINS;
+    const candidates=computeNewSlotCandidates(events,routines,prefs,dayKey(),prefs.workStartTime,probeMins,item.date||null,item.difficulty);
+    if(candidates.length===0){finish(null);return;}
+    setPrepAttackSlotPicker({candidates,confirm:(slot)=>{finish(slot);setPrepAttackSlotPicker(null);}});
   };
   const declinePrepPrompt=(item)=>{
     const events=lsGet("events",[]);
@@ -28701,6 +29047,14 @@ function App() {
           commit={(next)=>{lsSet("events",next);if(calendarSetEventsRef.current)calendarSetEventsRef.current(next);}}
           onToast={(msg)=>{setDashToast(msg);setTimeout(()=>setDashToast(""),2800);}}
           setActive={setActive} setPricingOpen={setPricingOpen} />
+      )}
+      {/* Actionable-window prep prompt's own multi-option picker -- see
+          acceptPrepPrompt's own comment. True sibling of [data-page], same
+          reasoning as every other App-level modal here. */}
+      {prepAttackSlotPicker&&(
+        <NewSlotPickerModal title="Choose when to start" sub="Studlin found a few real options for your first session:"
+          candidates={prepAttackSlotPicker.candidates} confirmLabel="Start here"
+          onConfirm={prepAttackSlotPicker.confirm} onClose={()=>setPrepAttackSlotPicker(null)} />
       )}
       {/* PRICING MODAL */}
       <Modal open={pricingOpen} onClose={()=>setPricingOpen(false)} title="Studlin plans" sub={(PRICING_REASON_COPY[pricingReason]?PRICING_REASON_COPY[pricingReason]+" ":"")+"Start free. Upgrade when you're ready. Cancel anytime."} width={820}>

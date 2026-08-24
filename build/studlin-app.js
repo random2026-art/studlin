@@ -2582,10 +2582,10 @@ async function extractWorkScheduleFromImage(base64Data, mediaType) {
     return { shifts: [], error: "Couldn't read that image. Try again." };
   }
 }
-function startAttackBlockChain(fields, events, routines, prefs, desiredDate, desiredTime) {
+function startAttackBlockChain(fields, events, routines, prefs, desiredDate, desiredTime, forcedSlot) {
   const chainId = "attack-" + Date.now() + "-" + Math.random().toString(36).slice(2, 7);
   const probeMins = fields.probeMins || ATTACK_BLOCK_DEFAULT_PROBE_MINS;
-  const slot = findReliableSlotFor(events, routines, prefs, desiredDate, desiredTime, probeMins, fields.deadline || null, fields.difficulty);
+  const slot = forcedSlot || findReliableSlotFor(events, routines, prefs, desiredDate, desiredTime, probeMins, fields.deadline || null, fields.difficulty);
   if (!slot) return null;
   return {
     id: String(Date.now() + Math.random() * 1e3),
@@ -2614,13 +2614,13 @@ function startAttackBlockChain(fields, events, routines, prefs, desiredDate, des
     ...fields.dueEventId ? { dueEventId: fields.dueEventId } : {}
   };
 }
-function startPhaseAwareAttackChain(fields, phases, events, routines, prefs, desiredDate, desiredTime) {
+function startPhaseAwareAttackChain(fields, phases, events, routines, prefs, desiredDate, desiredTime, forcedSlot) {
   const hasPhases = Array.isArray(phases) && phases.length > 0;
-  const task = startAttackBlockChain(hasPhases ? { ...fields, title: fields.title + ": " + phases[0] } : fields, events, routines, prefs, desiredDate, desiredTime);
+  const task = startAttackBlockChain(hasPhases ? { ...fields, title: fields.title + ": " + phases[0] } : fields, events, routines, prefs, desiredDate, desiredTime, forcedSlot);
   if (!task) return null;
   return hasPhases ? { ...task, projectPhaseIndex: 0, phaseName: phases[0], projectTitle: fields.title } : task;
 }
-function buildAssignmentAttackBlockPair(markerId, fields, phases, events, routines, prefs, desiredDate, desiredTime, skipTask) {
+function buildAssignmentAttackBlockPair(markerId, fields, phases, events, routines, prefs, desiredDate, desiredTime, skipTask, forcedSlot) {
   const marker = {
     id: markerId,
     title: fields.title,
@@ -2648,7 +2648,7 @@ function buildAssignmentAttackBlockPair(markerId, fields, phases, events, routin
     ...fields.outline && fields.outline.length > 0 ? { outline: fields.outline } : {}
   };
   if (skipTask) return { marker, task: null };
-  const task = startPhaseAwareAttackChain({ ...fields, dueEventId: marker.id }, phases, events.concat([marker]), routines, prefs, desiredDate, desiredTime);
+  const task = startPhaseAwareAttackChain({ ...fields, dueEventId: marker.id }, phases, events.concat([marker]), routines, prefs, desiredDate, desiredTime, forcedSlot);
   if (!task) return null;
   return { marker, task };
 }
@@ -5196,6 +5196,10 @@ function StudlinPrep({ setActive = () => {
       });
     }
     lsSet("events", events.concat(finalSessions).map((e) => e.id === buildPlanExam.id ? { ...e, difficulty: buildPlanPreview.difficultyValue } : e));
+    if (finalSessions.length > 0) {
+      lsSet("calendarHighlightIds", { ids: finalSessions.map((s) => s.id), setAt: Date.now() });
+      setActive("calendar");
+    }
     recordExamPlanBuild();
     if (placedSessions.length < requestedCount) {
       setSyllabusToast("Fit " + placedSessions.length + " of " + requestedCount + " sessions before this exam. Your calendar didn't have room for the rest.");
@@ -5339,12 +5343,63 @@ function StudlinPrep({ setActive = () => {
     refresh();
   };
   const [schedulePreview, setSchedulePreview] = useState(null);
+  const [practiceExamSlotPicker, setPracticeExamSlotPicker] = useState(null);
+  const [addSessionSlotPicker, setAddSessionSlotPicker] = useState(null);
   const openSchedulePracticeExam = (pe) => {
     if (!selectedExam) return;
-    const duration = pe.questions && pe.questions.length ? Math.max(10, Math.min(90, Math.round(pe.questions.length * 2 / 5) * 5)) : void 0;
-    const sessions = buildSpacedSessionPreviews(selectedExam.date, selectedExam.subject, 1, duration);
-    if (sessions.length === 0) return;
-    setSchedulePreview({ kind: "quiz", refId: pe.id, title: pe.name, examId: selectedExam.id, examDate: selectedExam.date, subject: selectedExam.subject, count: 1, sessions });
+    const duration = pe.questions && pe.questions.length ? Math.max(10, Math.min(90, Math.round(pe.questions.length * 2 / 5) * 5)) : suggestDurationFor(selectedExam.subject, "study block") || 25;
+    const routines = getWeeklyRoutine();
+    const prefs = getSchedulePreferences();
+    const anchorDates = computeReviewDates(selectedExam.date, dayKey(), 1);
+    const desiredDate = anchorDates[0] || dayKey();
+    const candidates = computeNewSlotCandidates(lsGet("events", []), routines, prefs, desiredDate, prefs.workStartTime, duration, selectedExam.date, 5);
+    if (candidates.length === 0) {
+      const sessions = buildSpacedSessionPreviews(selectedExam.date, selectedExam.subject, 1, duration);
+      if (sessions.length === 0) return;
+      setSchedulePreview({ kind: "quiz", refId: pe.id, title: pe.name, examId: selectedExam.id, examDate: selectedExam.date, subject: selectedExam.subject, count: 1, sessions });
+      return;
+    }
+    setPracticeExamSlotPicker({ candidates, pe, duration });
+  };
+  const confirmPracticeExamSlot = (slot) => {
+    if (!practiceExamSlotPicker || !selectedExam) return;
+    const { pe, duration } = practiceExamSlotPicker;
+    const events = removeGenericExamPrepSessions(lsGet("events", []), selectedExam.id);
+    const session = {
+      id: "practiceexam-" + pe.id + "-" + Date.now(),
+      title: "Practice Exam: " + pe.name,
+      date: slot.date,
+      time: slot.time,
+      subject: "",
+      kind: "study block",
+      notes: "",
+      priority: computeSessionPriority(selectedExam, dayKey()),
+      difficulty: 5,
+      deadline: selectedExam.date,
+      duration,
+      status: "pending",
+      timeSpent: 0,
+      completedAt: null,
+      practiceExamId: pe.id,
+      placementReason: slot.reason || null,
+      dueEventId: selectedExam.id,
+      isExamPrepSession: true
+    };
+    lsSet("events", events.concat([session]));
+    setPracticeExamSlotPicker(null);
+    refresh();
+    lsSet("calendarHighlightIds", { ids: [session.id], setAt: Date.now() });
+    setActive("calendar");
+  };
+  const confirmAddSessionSlot = (slot, durationOverride) => {
+    if (!selectedExam) return;
+    const duration = durationOverride ?? (addSessionSlotPicker && addSessionSlotPicker.duration) ?? (suggestDurationFor(selectedExam.subject, "study block") || 25);
+    const session = { id: "prep-" + selectedExam.id + "-" + Date.now(), title: "Study: " + selectedExam.title, date: slot.date, time: slot.time, subject: selectedExam.subject, notes: "", kind: "study block", duration, priority: computeSessionPriority(selectedExam, dayKey()), difficulty: selectedExam.difficulty ?? 500, deadline: selectedExam.date, status: "pending", timeSpent: 0, completedAt: null, placementReason: slot.placementReason || slot.reason || null, isExamPrepSession: true, dueEventId: selectedExam.id };
+    lsSet("events", lsGet("events", []).concat([session]));
+    setAddSessionSlotPicker(null);
+    refresh();
+    lsSet("calendarHighlightIds", { ids: [session.id], setAt: Date.now() });
+    setActive("calendar");
   };
   const commitSchedulePreview = () => {
     if (!schedulePreview) return;
@@ -5770,12 +5825,18 @@ function StudlinPrep({ setActive = () => {
     const hasUnfocusedGenericSessions = materialText.trim() && examSessions.some((s) => !s.deckId && !s.practiceExamId && s.status !== "done" && !s.notes);
     const addOneSession = () => {
       const d = suggestDurationFor(selectedExam.subject, "study block") || 25;
-      const previews = buildSpacedSessionPreviews(selectedExam.date, selectedExam.subject, 1, d);
-      if (previews.length === 0) return;
-      const s = previews[0];
-      const session = { id: "prep-" + selectedExam.id + "-" + Date.now(), title: "Study: " + selectedExam.title, date: s.date, time: s.time, subject: selectedExam.subject, notes: "", kind: "study block", duration: s.duration, priority: computeSessionPriority(selectedExam, dayKey()), difficulty: selectedExam.difficulty ?? 500, deadline: selectedExam.date, status: "pending", timeSpent: 0, completedAt: null, placementReason: s.placementReason || null, isExamPrepSession: true, dueEventId: selectedExam.id };
-      lsSet("events", lsGet("events", []).concat([session]));
-      refresh();
+      const routines = getWeeklyRoutine();
+      const prefs = getSchedulePreferences();
+      const anchorDates = computeReviewDates(selectedExam.date, dayKey(), 1);
+      const desiredDate = anchorDates[0] || dayKey();
+      const candidates = computeNewSlotCandidates(lsGet("events", []), routines, prefs, desiredDate, prefs.workStartTime, d, selectedExam.date, selectedExam.difficulty ?? 500);
+      if (candidates.length === 0) {
+        const previews = buildSpacedSessionPreviews(selectedExam.date, selectedExam.subject, 1, d);
+        if (previews.length === 0) return;
+        confirmAddSessionSlot(previews[0], d);
+        return;
+      }
+      setAddSessionSlotPicker({ candidates, duration: d });
     };
     const patchSession = (id, patch) => {
       lsSet("events", lsGet("events", []).map((e) => e.id === id ? { ...e, ...patch } : e));
@@ -6162,6 +6223,26 @@ function StudlinPrep({ setActive = () => {
       footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setSchedulePreview(null) }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: commitSchedulePreview }, "Schedule"))
     },
     schedulePreview && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 7 } }, schedulePreview.sessions.map((s, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", justifyContent: "space-between", fontSize: 12, padding: "7px 10px", background: T.card2, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.text } }, s.date), /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, fontFamily: T.mono } }, s.time, " \xB7 ", s.duration, "m"))))
+  ), practiceExamSlotPicker && /* @__PURE__ */ React.createElement(
+    NewSlotPickerModal,
+    {
+      title: "Choose a practice exam time",
+      sub: "Studlin found a few real options counting down to your exam:",
+      candidates: practiceExamSlotPicker.candidates,
+      confirmLabel: "Schedule",
+      onConfirm: confirmPracticeExamSlot,
+      onClose: () => setPracticeExamSlotPicker(null)
+    }
+  ), addSessionSlotPicker && /* @__PURE__ */ React.createElement(
+    NewSlotPickerModal,
+    {
+      title: "Choose a study session time",
+      sub: "Studlin found a few real options counting down to your exam:",
+      candidates: addSessionSlotPicker.candidates,
+      confirmLabel: "Add session",
+      onConfirm: confirmAddSessionSlot,
+      onClose: () => setAddSessionSlotPicker(null)
+    }
   ), /* @__PURE__ */ React.createElement(
     Modal,
     {
@@ -11930,6 +12011,42 @@ function computeRescheduleCandidates(task, events, routines, prefs) {
   const freeDaysTotal = candidates.filter((c) => c.isEmpty).length;
   return { candidates: candidates.slice(0, RESCHEDULE_MAX_CANDIDATES), freeDaysTotal };
 }
+const NEW_PLACEMENT_SCAN_DAYS = 14;
+const NEW_PLACEMENT_MAX_CANDIDATES = 3;
+function computeNewSlotCandidates(events, routines, prefs, desiredDate, desiredTime, duration, deadlineKey, difficulty) {
+  const candidates = [];
+  const seenDates = /* @__PURE__ */ new Set();
+  for (let i = 0; i < NEW_PLACEMENT_SCAN_DAYS; i++) {
+    const d = (() => {
+      const x = /* @__PURE__ */ new Date(desiredDate + "T12:00:00");
+      x.setDate(x.getDate() + i);
+      return dayKey(x);
+    })();
+    if (deadlineKey && d > deadlineKey) break;
+    const reliable = findReliableSlotFor(events, routines, prefs, d, desiredTime, duration, deadlineKey, difficulty);
+    if (!reliable) continue;
+    if (reliable.date !== d || seenDates.has(reliable.date)) continue;
+    seenDates.add(reliable.date);
+    const dayEvents = events.filter((e) => e.date === d && e.status !== "done");
+    const rawBaseMins = dayEvents.reduce((a, e) => a + (e.duration || 0), 0);
+    let baseMins = rawBaseMins;
+    if (baseMins <= 0) {
+      const today = dayKey();
+      const start = (() => {
+        const x = /* @__PURE__ */ new Date();
+        x.setDate(x.getDate() - 7);
+        return dayKey(x);
+      })();
+      const recent = events.filter((e) => e.date >= start && e.date < today && e.status !== "done");
+      baseMins = Math.round(recent.reduce((a, e) => a + (e.duration || 0), 0) / 7);
+    }
+    const pct = baseMins > 0 ? Math.round(duration / baseMins * 100) : 100;
+    const weekPressure = weekPrepLoad(d, { id: "__new_placement_preview__" }, events, prefs);
+    candidates.push({ date: d, dayOffset: i, time: reliable.time, reason: reliable.reason, rawBaseMins, pct, isHigh: pct >= 15, isEmpty: rawBaseMins <= 0, weekPressure });
+  }
+  candidates.sort((a, b) => a.rawBaseMins - b.rawBaseMins || a.dayOffset - b.dayOffset);
+  return candidates.slice(0, NEW_PLACEMENT_MAX_CANDIDATES);
+}
 function shouldOfferProjectCheckIn(task, events) {
   if (!task || !task.attackChainId || !task.dueEventId) return false;
   const marker = events.find((e) => e.id === task.dueEventId);
@@ -12004,6 +12121,18 @@ function RescheduleModal({ task, events, commit, onClose, onManual }) {
     onClose();
   }, style: { display: "block", width: "100%", textAlign: "center", background: "none", border: "none", padding: 0, marginTop: 12, fontSize: 11.5, color: T.muted, textDecoration: "underline", cursor: "pointer", fontFamily: T.font } }, "I'll pick the day, time, and duration myself \u2192")));
 }
+function NewSlotPickerModal({ title, sub, candidates, onConfirm, onClose, onManual, confirmLabel = "Confirm" }) {
+  const [selectedIdx, setSelectedIdx] = useState(0);
+  const selected = candidates[selectedIdx];
+  const confirm = () => {
+    if (!selected) return;
+    onConfirm(selected);
+  };
+  return /* @__PURE__ */ React.createElement("div", { onClick: onClose, style: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(6px)", zIndex: 1e3, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, animation: "studlinFade 0.18s ease-out" } }, /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { width: "100%", maxWidth: 420, background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, padding: 22, animation: "studlinPop 0.22s cubic-bezier(.2,.85,.3,1)" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 15, fontWeight: 700, color: T.white, marginBottom: sub ? 4 : 10 } }, title), sub && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, lineHeight: 1.5, marginBottom: 14 } }, sub), candidates.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.red, marginBottom: 14, padding: "10px 12px", background: T.red + "14", borderRadius: 9 } }, "No open slot before the deadline. Try a manual time instead.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 18 } }, candidates.map((c, i) => /* @__PURE__ */ React.createElement("div", { key: c.date, onClick: () => setSelectedIdx(i), style: { cursor: "pointer", padding: "12px 14px", borderRadius: 12, border: `1px solid ${selectedIdx === i ? T.lime + "66" : T.border}`, background: selectedIdx === i ? T.lime + "14" : T.card2 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13, fontWeight: 600, color: selectedIdx === i ? T.lime : T.white } }, c.date === dayKey() ? "Today, " : "", (/* @__PURE__ */ new Date(c.date + "T12:00:00")).toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })), selectedIdx === i && /* @__PURE__ */ React.createElement("span", { style: { color: T.lime, fontSize: 12 } }, "\u2713")), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginTop: 3 } }, fmtClock12(c.time), " \xB7 ", c.isEmpty ? /* @__PURE__ */ React.createElement("strong", { style: { color: T.teal } }, "Currently free") : /* @__PURE__ */ React.createElement(React.Fragment, null, "Adds ", /* @__PURE__ */ React.createElement("strong", { style: { color: c.isHigh ? T.amber : T.muted } }, c.pct, "%"), " to that day's workload")), c.reason && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 3 } }, "\u{1F552} ", fmtPlacementReason(c.reason, c.time)), c.weekPressure && c.weekPressure.isPressured && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.amber, marginTop: 3 } }, c.weekPressure.competingTitle ? `That week's already busy with ${c.weekPressure.competingTitle}.` : "That week's already busy.")))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: confirm, disabled: candidates.length === 0, style: { flex: 1, justifyContent: "center", opacity: candidates.length === 0 ? 0.45 : 1 } }, confirmLabel), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: onClose, style: { flex: 1, justifyContent: "center" } }, "Cancel")), onManual && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+    onManual();
+    onClose();
+  }, style: { display: "block", width: "100%", textAlign: "center", background: "none", border: "none", padding: 0, marginTop: 12, fontSize: 11.5, color: T.muted, textDecoration: "underline", cursor: "pointer", fontFamily: T.font } }, "I'll pick the day and time myself \u2192")));
+}
 function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPricingOpen = () => {
 } }) {
   const allEvents = lsGet("events", []);
@@ -12038,6 +12167,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
   const [collabLoading, setCollabLoading] = useState(false);
   const [addAttackBlock, setAddAttackBlock] = useState(false);
   const [attackProbeMins, setAttackProbeMins] = useState(ATTACK_BLOCK_DEFAULT_PROBE_MINS);
+  const [attackSlotPicker, setAttackSlotPicker] = useState(null);
   const [examPlan, setExamPlan] = useState({ materialFiles: [], materialLinks: [], materialOpen: false, pasteMaterialMode: false, pasteMaterialText: "", linkDraft: "", linkLabelDraft: "", proposeSessions: false, sessionCount: 4 });
   const [examConfidence, setExamConfidence] = useState("okay");
   const [examSessionCountTouched, setExamSessionCountTouched] = useState(false);
@@ -12202,17 +12332,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
     setCollabPickerOpen(false);
     onToast && onToast("Invite sent \u2014 it'll appear on their calendar once they accept.");
   };
-  const save = () => {
-    if (!title.trim()) return;
-    if (deadline && date > deadline) {
-      setDeadlineErr("Can't schedule past the deadline (" + deadline + ").");
-      return;
-    }
-    if ((showsPhaseDetail || requiresProjectDetail) && !notes.trim()) {
-      setDetailErr("Add a bit of detail so Studlin can suggest real phases, not a generic template.");
-      return;
-    }
-    setDetailErr("");
+  const finishSave = (forcedAttackSlot) => {
     const timeChanged = time !== ev.time || date !== ev.date;
     const prefs = getSchedulePreferences();
     const droppedProject = isProject2 && !asProject;
@@ -12223,7 +12343,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
       const phases = isPhaseCandidate ? (projectPlan.phases || []).map((p) => p.trim()).filter(Boolean) : [];
       const outline = isPhaseCandidate ? normalizeOutlineDraft(projectPlan.outline) : [];
       const desiredDate = date && date >= dayKey() ? date : dayKey();
-      attackPair = buildAssignmentAttackBlockPair(ev.id, { title: title.trim(), subject, courseId: courseIdForLabel(subject), notes, deadline: deadline || null, priority, difficulty, probeMins: attackProbeMins, outline }, phases, allEvents, routines, prefs, desiredDate, prefs.workStartTime);
+      attackPair = buildAssignmentAttackBlockPair(ev.id, { title: title.trim(), subject, courseId: courseIdForLabel(subject), notes, deadline: deadline || null, priority, difficulty, probeMins: attackProbeMins, outline }, phases, allEvents, routines, prefs, desiredDate, prefs.workStartTime, false, forcedAttackSlot);
     }
     const updated = allEvents.map((e) => {
       if (e.id !== ev.id) return e;
@@ -12262,16 +12382,48 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
     });
     let next = date ? rebalanceDay(date, updated, routines, prefs) : updated;
     if (attackPair) next = next.concat([attackPair.task]);
+    let newExamSessions = [];
     if (kind === "exam" && examPlan.proposeSessions && linkedSessions.length === 0) {
       const baseDuration = suggestDurationFor(subject, "study block") || 25;
       const materialCharCount = examPlan.materialFiles.map((f) => f.text || "").join("\n\n").length;
       const daysUntilExam = date ? Math.round((/* @__PURE__ */ new Date(date + "T12:00:00") - /* @__PURE__ */ new Date(dayKey() + "T12:00:00")) / 864e5) : void 0;
       const planParams = computeStudyPlanParams(ev.examWeight, baseDuration, examConfidence, materialCharCount, ev.importanceLevel, daysUntilExam, ev.gradeWeightPercent, ev.confidenceLog);
-      const sessions = buildExamSessionEvents(title.trim(), date, subject, examPlan.sessionCount || planParams.sessionCount, "edittask-exam-" + ev.id, next, routines, prefs, { dueEventId: ev.id }, planParams.difficultyValue, planParams.sessionDuration, ev.examWeight, ev.confidenceLog);
-      next = next.concat(sessions);
+      newExamSessions = buildExamSessionEvents(title.trim(), date, subject, examPlan.sessionCount || planParams.sessionCount, "edittask-exam-" + ev.id, next, routines, prefs, { dueEventId: ev.id }, planParams.difficultyValue, planParams.sessionDuration, ev.examWeight, ev.confidenceLog);
+      next = next.concat(newExamSessions);
     }
     commit(next);
+    if (attackPair || newExamSessions.length > 0) {
+      const newIds = [...attackPair ? [attackPair.marker.id, attackPair.task.id] : [], ...newExamSessions.map((s) => s.id)];
+      lsSet("calendarHighlightIds", { ids: newIds, setAt: Date.now() });
+      if (setActive) setActive("calendar");
+    }
     onClose();
+  };
+  const save = () => {
+    if (!title.trim()) return;
+    if (deadline && date > deadline) {
+      setDeadlineErr("Can't schedule past the deadline (" + deadline + ").");
+      return;
+    }
+    if ((showsPhaseDetail || requiresProjectDetail) && !notes.trim()) {
+      setDetailErr("Add a bit of detail so Studlin can suggest real phases, not a generic template.");
+      return;
+    }
+    setDetailErr("");
+    if (canAddAttackBlock && addAttackBlock) {
+      const prefs = getSchedulePreferences();
+      const desiredDate = date && date >= dayKey() ? date : dayKey();
+      const probeMins = attackProbeMins || ATTACK_BLOCK_DEFAULT_PROBE_MINS;
+      const candidates = computeNewSlotCandidates(allEvents, routines, prefs, desiredDate, prefs.workStartTime, probeMins, deadline || null, difficulty);
+      if (candidates.length > 0) {
+        setAttackSlotPicker({ candidates, confirm: (slot) => {
+          finishSave(slot);
+          setAttackSlotPicker(null);
+        } });
+        return;
+      }
+    }
+    finishSave(null);
   };
   const writePhases = (nextPhases) => commit(allEvents.map((x) => x.id === ev.id ? { ...x, phases: nextPhases } : x));
   const writeOutline = (nextOutline) => commit(allEvents.map((x) => x.id === ev.id ? { ...x, outline: nextOutline } : x));
@@ -12419,6 +12571,16 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
     },
     (ev.phases && ev.phases.length > 0 || ev.outline && ev.outline.length > 0) && /* @__PURE__ */ React.createElement("div", { style: { background: T.amber + "0A", border: `1px solid ${T.amber}33`, borderRadius: 8, padding: "10px 12px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, fontWeight: 600, color: T.text, marginBottom: 6 } }, "This plan was generated from your notes"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginBottom: 8, lineHeight: 1.5 } }, "Collaborators will see everything below once they accept. Close this and edit it above first if anything's too personal to share."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4, maxHeight: 140, overflowY: "auto" } }, (ev.phases || []).map((p, i) => /* @__PURE__ */ React.createElement("div", { key: "ph" + i, style: { fontSize: 11.5, color: T.text } }, "\u2022 " + p.name)), (ev.outline || []).map((o, i) => /* @__PURE__ */ React.createElement("div", { key: "ol" + i, style: { fontSize: 11.5, color: T.text } }, "\u2022 " + o.text)))),
     collabLoading ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "Loading your friends\u2026") : collabCandidates.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "No friends yet \u2014 add some in Studlin Network first.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, collabCandidates.map((c) => /* @__PURE__ */ React.createElement("label", { key: c.uid, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 8, border: `1px solid ${T.border}`, cursor: "pointer", background: collabSelected.includes(c.uid) ? T.card2 : "transparent" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: collabSelected.includes(c.uid), onChange: () => toggleCollabSelected(c.uid), style: { cursor: "pointer" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text } }, c.name))))
+  ), attackSlotPicker && /* @__PURE__ */ React.createElement(
+    NewSlotPickerModal,
+    {
+      title: "Choose when to start",
+      sub: "Studlin found a few real options for your first session:",
+      candidates: attackSlotPicker.candidates,
+      confirmLabel: "Start here",
+      onConfirm: attackSlotPicker.confirm,
+      onClose: () => setAttackSlotPicker(null)
+    }
   ));
 }
 function findOverlapConflict(date, startTime, endTime, events, routines) {
@@ -12722,6 +12884,7 @@ function CalendarTab({ setActive = () => {
     setEvents2(lsGet("events", []).filter((e) => !e.id.startsWith("seed-")));
   };
   const [newItemHighlightIds, setNewItemHighlightIds] = useState([]);
+  const [attackSlotPicker, setAttackSlotPicker] = useState(null);
   const finishClassSetup = (newIds) => {
     lsSet("subjects-configured", true);
     lsSet("hasConfiguredRoutine", true);
@@ -13681,6 +13844,30 @@ function CalendarTab({ setActive = () => {
     }
     if (onTaskSaved) onTaskSaved();
   };
+  const startAttackBlockWithChoice = (markerId, fields, phases, isProject2, desiredDate, desiredTime) => {
+    const prefs = getSchedulePreferences();
+    const probeMins = fields.probeMins || ATTACK_BLOCK_DEFAULT_PROBE_MINS;
+    const finish = (forcedSlot) => {
+      const pair = buildAssignmentAttackBlockPair(markerId, fields, phases, events, routines, prefs, desiredDate, desiredTime, false, forcedSlot);
+      if (!pair) {
+        setDeadlineToast("That time conflicts and there's no open slot before the deadline.");
+        setTimeout(() => setDeadlineToast(""), 2800);
+        return;
+      }
+      if (isProject2) recordProjectBreakdown();
+      commitTasks([pair.marker, pair.task]);
+      setNewItemHighlightIds([pair.marker.id, pair.task.id]);
+    };
+    const candidates = computeNewSlotCandidates(events, routines, prefs, desiredDate, desiredTime, probeMins, fields.deadline || null, fields.difficulty);
+    if (candidates.length === 0) {
+      finish(null);
+      return;
+    }
+    setAttackSlotPicker({ candidates, confirm: (slot) => {
+      finish(slot);
+      setAttackSlotPicker(null);
+    } });
+  };
   const saveChecklistItem = () => {
     if (!evTitle.trim()) return;
     const subj = evSubject === "None" ? "" : evSubject === "Other" && evCustom.trim() ? evCustom.trim() : evSubject;
@@ -13835,18 +14022,10 @@ function CalendarTab({ setActive = () => {
         return;
       }
       const subj = evSubject === "None" ? "" : evSubject === "Other" && evCustom.trim() ? evCustom.trim() : evSubject;
-      const prefs = getSchedulePreferences();
       const phases = evKind === "project" ? (evProjectPlan.phases || []).map((p) => p.trim()).filter(Boolean) : [];
       const outline = evKind === "project" ? normalizeOutlineDraft(evProjectPlan.outline) : [];
       const markerId = String(Date.now() + Math.random() * 1e3);
-      const pair = buildAssignmentAttackBlockPair(markerId, { title: evTitle.trim(), subject: subj, courseId: courseIdForLabel(subj), notes: evNotes, deadline: evDeadline || null, priority: evPriority, difficulty: evDifficulty, probeMins: evAttackProbeMins, outline }, phases, events, routines, prefs, evDate, evTime);
-      if (!pair) {
-        setDeadlineToast("That time conflicts and there's no open slot before the deadline.");
-        setTimeout(() => setDeadlineToast(""), 2800);
-        return;
-      }
-      if (isProject2) recordProjectBreakdown();
-      commitTasks([pair.marker, pair.task]);
+      startAttackBlockWithChoice(markerId, { title: evTitle.trim(), subject: subj, courseId: courseIdForLabel(subj), notes: evNotes, deadline: evDeadline || null, priority: evPriority, difficulty: evDifficulty, probeMins: evAttackProbeMins, outline }, phases, isProject2, evDate, evTime);
       return;
     }
     if (evKind === "exam") {
@@ -13873,6 +14052,7 @@ function CalendarTab({ setActive = () => {
         tasks2 = tasks2.concat(sessions);
       }
       commitTasks(tasks2, { userPinned: true });
+      setNewItemHighlightIds(tasks2.map((t) => t.id));
       const examReconcile = reconcileFixedEventConflicts([examTask]);
       surfaceReconcileResult(examReconcile);
       if (examReconcile.moved.length > 0) setEvents2(examReconcile.events);
@@ -13976,19 +14156,13 @@ function CalendarTab({ setActive = () => {
     const windowStart = isDesiredToday ? earliestTodayMins : desiredStartMins;
     const windowStartTime = isDesiredToday ? earliestTodayTime : minutesToTime(desiredStartMins);
     if (evAttackBlock) {
+      const isProject2 = evKind === "project";
       const subj = evSubject === "None" ? "" : evSubject === "Other" && evCustom.trim() ? evCustom.trim() : evSubject;
       const phases = evKind === "project" ? (evProjectPlan.phases || []).map((p) => p.trim()).filter(Boolean) : [];
       const outline = evKind === "project" ? normalizeOutlineDraft(evProjectPlan.outline) : [];
       const markerId = String(Date.now() + Math.random() * 1e3);
-      const pair = buildAssignmentAttackBlockPair(markerId, { title: evTitle.trim(), subject: subj, courseId: courseIdForLabel(subj), notes: evNotes, deadline: evDeadline || null, priority: evPriority, difficulty: evDifficulty, probeMins: evAttackProbeMins, outline }, phases, events, routines, prefs, desiredStartDate, windowStartTime);
       setAiLoading(false);
-      if (!pair) {
-        setDeadlineToast("That time conflicts and there's no open slot before the deadline.");
-        setTimeout(() => setDeadlineToast(""), 2800);
-        return;
-      }
-      if (isProject) recordProjectBreakdown();
-      commitTasks([pair.marker, pair.task]);
+      startAttackBlockWithChoice(markerId, { title: evTitle.trim(), subject: subj, courseId: courseIdForLabel(subj), notes: evNotes, deadline: evDeadline || null, priority: evPriority, difficulty: evDifficulty, probeMins: evAttackProbeMins, outline }, phases, isProject2, desiredStartDate, windowStartTime);
       return;
     }
     const windowMins = Math.max(0, desiredEndMins - windowStart);
@@ -14894,7 +15068,17 @@ Examples:
     lsSet("events", next);
     setRescheduleToast(evictedCount > 0 ? `Task rescheduled \u2014 ${evictedCount} other${evictedCount !== 1 ? "s" : ""} shifted to make room.` : "Task rescheduled.");
     setTimeout(() => setRescheduleToast(""), 2800);
-  } }), /* @__PURE__ */ React.createElement(
+  } }), attackSlotPicker && /* @__PURE__ */ React.createElement(
+    NewSlotPickerModal,
+    {
+      title: "Choose when to start",
+      sub: "Studlin found a few real options for your first session:",
+      candidates: attackSlotPicker.candidates,
+      confirmLabel: "Start here",
+      onConfirm: attackSlotPicker.confirm,
+      onClose: () => setAttackSlotPicker(null)
+    }
+  ), /* @__PURE__ */ React.createElement(
     Modal,
     {
       open: newOpen,
@@ -16969,6 +17153,7 @@ function App() {
   }, []);
   const [prepPromptBatch, setPrepPromptBatch] = useState([]);
   const [prepAutoToast, setPrepAutoToast] = useState("");
+  const [prepAttackSlotPicker, setPrepAttackSlotPicker] = useState(null);
   const [lockInErrorToast, setLockInErrorToast] = useState("");
   const acceptPrepPrompt = (item) => {
     const isProject2 = item.phases && item.phases.length > 0;
@@ -16979,11 +17164,27 @@ function App() {
     const events = lsGet("events", []);
     const routines = getWeeklyRoutine();
     const prefs = getSchedulePreferences();
-    const task = startPhaseAwareAttackChain({ title: item.title, deadline: item.date, priority: item.priority, difficulty: item.difficulty, noteId: item.noteId, dueEventId: item.id }, item.phases, events, routines, prefs, dayKey(), prefs.workStartTime);
-    const next = events.map((e) => e.id === item.id ? { ...e, prepPending: false } : e).concat([task]);
-    lsSet("events", next);
-    if (isProject2) recordProjectBreakdown();
-    setPrepPromptBatch((b) => b.filter((x) => x.id !== item.id));
+    const finish = (forcedSlot) => {
+      const task = startPhaseAwareAttackChain({ title: item.title, deadline: item.date, priority: item.priority, difficulty: item.difficulty, noteId: item.noteId, dueEventId: item.id }, item.phases, events, routines, prefs, dayKey(), prefs.workStartTime, forcedSlot);
+      const next = events.map((e) => e.id === item.id ? { ...e, prepPending: false } : e).concat([task]);
+      lsSet("events", next);
+      if (isProject2) recordProjectBreakdown();
+      setPrepPromptBatch((b) => b.filter((x) => x.id !== item.id));
+      if (task) {
+        lsSet("calendarHighlightIds", { ids: [task.id], setAt: Date.now() });
+        setActive("calendar");
+      }
+    };
+    const probeMins = ATTACK_BLOCK_DEFAULT_PROBE_MINS;
+    const candidates = computeNewSlotCandidates(events, routines, prefs, dayKey(), prefs.workStartTime, probeMins, item.date || null, item.difficulty);
+    if (candidates.length === 0) {
+      finish(null);
+      return;
+    }
+    setPrepAttackSlotPicker({ candidates, confirm: (slot) => {
+      finish(slot);
+      setPrepAttackSlotPicker(null);
+    } });
   };
   const declinePrepPrompt = (item) => {
     const events = lsGet("events", []);
@@ -17856,6 +18057,16 @@ function App() {
       },
       setActive,
       setPricingOpen
+    }
+  ), prepAttackSlotPicker && /* @__PURE__ */ React.createElement(
+    NewSlotPickerModal,
+    {
+      title: "Choose when to start",
+      sub: "Studlin found a few real options for your first session:",
+      candidates: prepAttackSlotPicker.candidates,
+      confirmLabel: "Start here",
+      onConfirm: prepAttackSlotPicker.confirm,
+      onClose: () => setPrepAttackSlotPicker(null)
     }
   ), /* @__PURE__ */ React.createElement(Modal, { open: pricingOpen, onClose: () => setPricingOpen(false), title: "Studlin plans", sub: (PRICING_REASON_COPY[pricingReason] ? PRICING_REASON_COPY[pricingReason] + " " : "") + "Start free. Upgrade when you're ready. Cancel anytime.", width: 820 }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "center", marginBottom: 18 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 0, background: T.card2, border: `1px solid ${T.border}`, padding: 4, borderRadius: 99 } }, ["monthly", "annual"].map((b) => /* @__PURE__ */ React.createElement("button", { key: b, type: "button", onClick: () => setPricingBilling(b), style: { padding: "9px 16px", border: "none", borderRadius: 99, background: pricingBilling === b ? T.ink : "transparent", color: pricingBilling === b ? T.cream : T.muted, fontFamily: T.font, fontSize: 13.5, fontWeight: 500, cursor: "pointer", display: "flex", alignItems: "center", gap: 7 } }, b === "monthly" ? "Monthly" : "Annual", b === "annual" && /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.mono, fontSize: 9.5, fontWeight: 700, background: T.lime, color: T.ink, padding: "2px 7px", borderRadius: 99 } }, "Save 29%"))))), /* @__PURE__ */ React.createElement(PlanCards, { billing: pricingBilling, onSelect: (key) => {
     setPricingOpen(false);
