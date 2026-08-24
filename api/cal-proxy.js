@@ -16,11 +16,19 @@ const { verifyPublicDomain } = require('./_lib/ssrf-guard');
 // non-listed domain isn't pointed at a private/internal address before
 // ever fetching it, and ONLY when the client identifies the connection as
 // a Blackboard one.
+// Moodle gets the identical treatment, for the identical reason: it's
+// self-hosted per school with no shared vendor domain (Lehigh brands
+// theirs "Course Site" at coursesite.lehigh.edu; every other school runs
+// it under its own name/domain), so no static suffix could ever cover it.
+// The frontend already sends platform==='moodle' as its hint (see
+// PLATFORM_HELP.moodle / openImportCalModal in studlin-app.jsx) -- this
+// was the missing half, leaving every real Moodle URL 403ing here despite
+// the connect flow being fully built on the client side.
 // PowerSchool and Infinite Campus are deliberately NOT given the same
 // treatment yet -- both are commonly self-hosted on arbitrary
 // district-owned domains too, but nothing in this file currently marks a
 // request as "this is a PowerSchool/Infinite Campus connect" the way the
-// Blackboard platform hint does, so extending the same DNS-verified
+// Blackboard/Moodle platform hints do, so extending the same DNS-verified
 // fallback to them would need that plumbing added first, not just a
 // bigger allowlist.
 const ALLOWED_DOMAINS = [
@@ -49,7 +57,7 @@ function isAllowedCalendarHost(hostname) {
 // unvetted platforms stay blocked exactly as before.
 async function isCalendarHostAllowedForPlatform(hostname, platform) {
   if (isAllowedCalendarHost(hostname)) return true;
-  if (platform === 'blackboard') return verifyPublicDomain(hostname);
+  if (platform === 'blackboard' || platform === 'moodle') return verifyPublicDomain(hostname);
   return false;
 }
 
@@ -62,9 +70,15 @@ async function isCalendarHostAllowedForPlatform(hostname, platform) {
 // plus platform==='blackboard' for the self-hosted-custom-domain case
 // (already DNS-verified by isCalendarHostAllowedForPlatform above -- by the
 // time that's true, the client has explicitly identified this as Blackboard).
+// Moodle belongs in the platform check below for the same reason
+// Blackboard does: the frontend already runs Moodle imports through AI
+// classification as a real academic source (see isAcademicCalendarSource
+// in studlin-app.jsx), so a same-day exam entered with no clock time
+// needs to survive the import instead of being silently dropped as
+// "non-academic."
 const ACADEMIC_DOMAINS = ['schoology.com', 'instructure.com', 'blackboard.com'];
 function isAcademicCalendarHost(hostname, platform) {
-  return ACADEMIC_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d)) || platform === 'blackboard';
+  return ACADEMIC_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d)) || platform === 'blackboard' || platform === 'moodle';
 }
 
 // Re-validates the hostname on every hop instead of a bare

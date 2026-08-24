@@ -192,6 +192,26 @@ describe("isAcademicCalendarHost (which sources get all-day exams/assignments in
   });
 });
 
+describe("2026-08-23: Moodle self-hosted calendar support (fix: Course Site at Lehigh, and every other self-hosted Moodle, was 403ing despite being fully built on the frontend)", () => {
+  test("a Moodle domain is not on the static allowlist -- it only ever gets through via the platform-gated DNS-verified fallback below, same as Blackboard's own self-hosted case", () => {
+    assert.equal(isAllowedCalendarHost("coursesite.lehigh.edu"), false);
+  });
+  test("a Moodle domain is rejected outright when the platform hint isn't 'moodle' -- no DNS lookup attempted, matches the existing Blackboard-only gating", async () => {
+    assert.equal(await isCalendarHostAllowedForPlatform("coursesite.lehigh.edu", undefined), false);
+    assert.equal(await isCalendarHostAllowedForPlatform("coursesite.lehigh.edu", "schoology"), false);
+  });
+  // The true "custom Moodle domain that resolves publicly" case needs a
+  // real DNS lookup (verifyPublicDomain) and is deliberately NOT exercised
+  // here, same as the existing Blackboard test above -- see
+  // tests/ssrf-guard.test.js for the pure IP-range logic that decision is
+  // actually built on.
+  test("isAcademicCalendarHost treats a Moodle-hinted domain as academic (all-day exams/assignments kept, not dropped) -- matches isAcademicCalendarSource already treating Moodle as academic on the frontend", () => {
+    assert.equal(isAcademicCalendarHost("coursesite.lehigh.edu", "moodle"), true);
+    assert.equal(isAcademicCalendarHost("coursesite.lehigh.edu", undefined), false);
+    assert.equal(isAcademicCalendarHost("coursesite.lehigh.edu", "schoology"), false);
+  });
+});
+
 describe("normalizeCalendarUrl (regression: iCloud's own Public Calendar link defaults to webcal://, which the HTTP client can't fetch as-is)", () => {
   test("rewrites a webcal:// iCloud link to https://", () => {
     assert.equal(
