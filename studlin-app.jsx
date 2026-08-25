@@ -5958,6 +5958,25 @@ const PRO_SYLLABUS_SCAN_LIMIT=40;
 const getSyllabusScanUsage=makeMonthlyUsage("syllabusScans");
 function canScanSyllabus(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getSyllabusScanUsage().count<PRO_SYLLABUS_SCAN_LIMIT;}
 function recordSyllabusScan(){const u=getSyllabusScanUsage();lsSet("syllabusScans",{month:u.month,count:u.count+1});chargeAiSpend("syllabusScan");}
+// 2026-08-22 intelligence audit fix: every canXxx() gate in this section
+// collapses three different block reasons -- not on Pro at all, the
+// shared AI-spend ceiling, or this one feature's own monthly cap -- down
+// to a single boolean, so every upgrade-copy call site below showed the
+// exact same "this is a Pro feature" message even to an already-Pro
+// student who simply used a lot of this feature this month, which is
+// just factually wrong. This answers WHY a gate is closed without
+// touching any gate's own pass/fail result -- every canXxx() above still
+// returns exactly the same true/false it always did, so no existing
+// `if(!canXxx())` call site needed to change -- call sites that show
+// upgrade copy call the matching ...Reason() alongside the existing gate
+// check to choose honest wording instead.
+const AI_USAGE_CAP_MESSAGE="You've hit this month's AI usage limit. Resets on the 1st.";
+function aiGateBlockReason(usage,limit){
+  if(getPlan()==="Free")return "free-tier";
+  if(!underAiSpendCeiling())return "spend-ceiling";
+  return usage.count<limit?null:"feature-cap";
+}
+function canScanSyllabusReason(){return aiGateBlockReason(getSyllabusScanUsage(),PRO_SYLLABUS_SCAN_LIMIT);}
 
 // A screenshot import (Canvas weekly view, a photographed syllabus page)
 // costs meaningfully more than a text-only syllabus scan -- image tokens,
@@ -5969,6 +5988,7 @@ const PRO_SCREENSHOT_SCAN_LIMIT=40;
 const getScreenshotScanUsage=makeMonthlyUsage("screenshotScans");
 function canScanScreenshot(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getScreenshotScanUsage().count<PRO_SCREENSHOT_SCAN_LIMIT;}
 function recordScreenshotScan(){const u=getScreenshotScanUsage();lsSet("screenshotScans",{month:u.month,count:u.count+1});chargeAiSpend("screenshotScan");}
+function canScanScreenshotReason(){return aiGateBlockReason(getScreenshotScanUsage(),PRO_SCREENSHOT_SCAN_LIMIT);}
 
 // AI note scans — "Scan a file", "Record lecture" and "YouTube link" all
 // turn raw material into AI-summarized notes, so they share one pool
@@ -5981,6 +6001,7 @@ const PRO_NOTE_SCAN_LIMIT=150;
 const getNoteScanUsage=makeMonthlyUsage("noteScans");
 function canScanNote(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getNoteScanUsage().count<PRO_NOTE_SCAN_LIMIT;}
 function recordNoteScan(){const u=getNoteScanUsage();lsSet("noteScans",{month:u.month,count:u.count+1});chargeAiSpend("noteScan");}
+function canScanNoteReason(){return aiGateBlockReason(getNoteScanUsage(),PRO_NOTE_SCAN_LIMIT);}
 
 // AI flashcard generation from notes (distinct from manual deck creation,
 // which stays unlimited). ~$0.033/call (json extraction, material up to
@@ -5990,6 +6011,7 @@ const PRO_FLASHCARD_GEN_LIMIT=60;
 const getFlashcardGenUsage=makeMonthlyUsage("flashcardGens");
 function canGenFlashcards(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getFlashcardGenUsage().count<PRO_FLASHCARD_GEN_LIMIT;}
 function recordFlashcardGen(){const u=getFlashcardGenUsage();lsSet("flashcardGens",{month:u.month,count:u.count+1});chargeAiSpend("flashcardGen");}
+function canGenFlashcardsReason(){return aiGateBlockReason(getFlashcardGenUsage(),PRO_FLASHCARD_GEN_LIMIT);}
 
 // Studlin Prep's AI-driven planning flows. ~$0.009/call (session-focus
 // text is short output even when material input is real). Cap sized
@@ -5998,6 +6020,7 @@ const PRO_EXAM_PLAN_LIMIT=40;
 const getExamPlanUsage=makeMonthlyUsage("examPlanBuilds");
 function canBuildExamPlan(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getExamPlanUsage().count<PRO_EXAM_PLAN_LIMIT;}
 function recordExamPlanBuild(){const u=getExamPlanUsage();lsSet("examPlanBuilds",{month:u.month,count:u.count+1});chargeAiSpend("examPlanBuild");}
+function canBuildExamPlanReason(){return aiGateBlockReason(getExamPlanUsage(),PRO_EXAM_PLAN_LIMIT);}
 
 // proposeSessionFocuses (session "what to study" labels) has 4 call sites
 // -- 2026-08-19 audit found only 1 of them (Build Study Plan's
@@ -6018,6 +6041,7 @@ const PRO_SESSION_FOCUS_LIMIT=100;
 const getSessionFocusUsage=makeMonthlyUsage("sessionFocuses");
 function canAddSessionFocus(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getSessionFocusUsage().count<PRO_SESSION_FOCUS_LIMIT;}
 function recordSessionFocus(){const u=getSessionFocusUsage();lsSet("sessionFocuses",{month:u.month,count:u.count+1});chargeAiSpend("sessionFocus");}
+function canAddSessionFocusReason(){return aiGateBlockReason(getSessionFocusUsage(),PRO_SESSION_FOCUS_LIMIT);}
 
 // Attack Block (no phases -- a plain assignment, not a Project) is
 // deterministic probe-then-schedule with no AI call at all, so it's never
@@ -6029,6 +6053,7 @@ const PRO_PROJECT_BREAKDOWN_LIMIT=30;
 const getProjectBreakdownUsage=makeMonthlyUsage("projectBreakdowns");
 function canBreakDownProject(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getProjectBreakdownUsage().count<PRO_PROJECT_BREAKDOWN_LIMIT;}
 function recordProjectBreakdown(){const u=getProjectBreakdownUsage();lsSet("projectBreakdowns",{month:u.month,count:u.count+1});chargeAiSpend("projectBreakdown");}
+function canBreakDownProjectReason(){return aiGateBlockReason(getProjectBreakdownUsage(),PRO_PROJECT_BREAKDOWN_LIMIT);}
 
 // Smart Reschedule -- paid-only, no free tier at all. Was already the
 // odd one out under the old model (every other AI feature got a free
@@ -6040,6 +6065,7 @@ const PRO_SMART_RESCHEDULE_LIMIT=200;
 const getSmartRescheduleUsage=makeMonthlyUsage("smartReschedules");
 function canUseSmartReschedule(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getSmartRescheduleUsage().count<PRO_SMART_RESCHEDULE_LIMIT;}
 function recordSmartReschedule(){const u=getSmartRescheduleUsage();lsSet("smartReschedules",{month:u.month,count:u.count+1});chargeAiSpend("smartReschedule");}
+function canUseSmartRescheduleReason(){return aiGateBlockReason(getSmartRescheduleUsage(),PRO_SMART_RESCHEDULE_LIMIT);}
 
 // Brain Dump -- turns free-text into scheduled items via a real /api/chat
 // call (see parseBrainDump), but previously had no gate at all: unlimited
@@ -6049,6 +6075,7 @@ const PRO_BRAIN_DUMP_LIMIT=100;
 const getBrainDumpUsage=makeMonthlyUsage("brainDumps");
 function canUseBrainDump(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getBrainDumpUsage().count<PRO_BRAIN_DUMP_LIMIT;}
 function recordBrainDump(){const u=getBrainDumpUsage();lsSet("brainDumps",{month:u.month,count:u.count+1});chargeAiSpend("brainDump");}
+function canUseBrainDumpReason(){return aiGateBlockReason(getBrainDumpUsage(),PRO_BRAIN_DUMP_LIMIT);}
 
 // "Add Task with AI" (CalendarTab's aiArrange) -- the primary AI-scheduling
 // action in the main Add Task modal, real /api/chat cost (directly, and via
@@ -6064,6 +6091,7 @@ function recordBrainDump(){const u=getBrainDumpUsage();lsSet("brainDumps",{month
 const PRO_AI_ARRANGE_LIMIT=400;
 const getAiArrangeUsage=makeMonthlyUsage("aiArranges");
 function canUseAiArrange(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getAiArrangeUsage().count<PRO_AI_ARRANGE_LIMIT;}
+function canUseAiArrangeReason(){return aiGateBlockReason(getAiArrangeUsage(),PRO_AI_ARRANGE_LIMIT);}
 
 // Canvas/Schoology/Blackboard calendar-connect classification
 // (classifyImportedCalendarEvents) -- found during a 2026-08-19 audit to
@@ -6652,6 +6680,20 @@ function computeFillSuggestions(freedDate,freedTime,freedDuration){
     .slice(0,3)
     .map(ev=>({id:ev.id,title:ev.title,duration:ev.duration||30}));
 }
+// Exam-stakes-aware ranking for computePausePlan's shift/clear_day/
+// clear_week reslotting below -- an exam-prep session looks up its real
+// exam and scores off computeSessionPriority's full urgency/impact/
+// confidence/difficulty blend (the same score already stamped onto the
+// session and kept fresh by restampSessionPriorities); anything else
+// (a plain deadline/reminder with no dueEventId) scores off its own
+// fields, which is still a meaningful urgency+difficulty signal even
+// without exam-specific impact data. Without this, a slot race during a
+// busy reshuffle is won by whichever qualifying event simply comes first
+// on the clock, not by which one actually matters more.
+function sessionPriorityFor(ev,pool){
+  const exam=ev.dueEventId?pool.find(e=>e.id===ev.dueEventId&&e.kind==="exam"):null;
+  return computeSessionPriority(exam||ev,dayKey());
+}
 function computePausePlan(intent,forcedId){
   const today=dayKey();
   if(intent.intent==="move_event"||intent.intent==="retime_event"){
@@ -6751,7 +6793,14 @@ function computePausePlan(intent,forcedId){
   const all=lsGet("events",[]);
   const routinesNow=getWeeklyRoutine();
   const prefsNow=getSchedulePreferences();
-  const affected=all.filter(inWindow).sort((a,b)=>a.date===b.date?((a.time||"")<(b.time||"")?-1:1):(a.date<b.date?-1:1));
+  // Higher-stakes items (a final's last prep session) claim scarce slots
+  // before lower-stakes ones (a flashcard review) -- see sessionPriorityFor.
+  // Same date/time order as before is kept only as the tiebreaker.
+  const affected=all.filter(inWindow).sort((a,b)=>{
+    const pa=sessionPriorityFor(a,all),pb=sessionPriorityFor(b,all);
+    if(pa!==pb)return pb-pa;
+    return a.date===b.date?((a.time||"")<(b.time||"")?-1:1):(a.date<b.date?-1:1);
+  });
   let working=all.filter(ev=>!inWindow(ev));
   const moved=[],couldntMove=[];
   affected.forEach(ev=>{
@@ -6761,7 +6810,21 @@ function computePausePlan(intent,forcedId){
       moved.push({id:ev.id,title:ev.title,oldDate:ev.date,oldTime:ev.time,newDate:slot.date,newTime:slot.time});
       working=working.concat([{...ev,date:slot.date,time:slot.time}]);
     }else{
-      couldntMove.push({id:ev.id,title:ev.title,deadline:ev.deadline});
+      // Flag it distinctly when the un-reschedulable item is prep for a
+      // high-stakes exam (major/critical importance, or close enough that
+      // CATCHUP_EXAM_URGENT_DAYS already treats it as time-sensitive
+      // elsewhere) so the student sees this BEFORE confirming, not after --
+      // see the Reschedule preview's couldntMove rendering.
+      const linkedExam=ev.dueEventId?all.find(e=>e.id===ev.dueEventId&&e.kind==="exam"):null;
+      let examWarning=null;
+      if(linkedExam){
+        const daysUntilExam=Math.round((new Date(linkedExam.date+"T12:00:00")-new Date(today+"T12:00:00"))/86400000);
+        const highStakes=linkedExam.importanceLevel==="major"||linkedExam.importanceLevel==="critical";
+        if(highStakes||(daysUntilExam>=0&&daysUntilExam<=CATCHUP_EXAM_URGENT_DAYS)){
+          examWarning={examTitle:linkedExam.title,daysUntilExam};
+        }
+      }
+      couldntMove.push({id:ev.id,title:ev.title,deadline:ev.deadline,examWarning});
       working=working.concat([ev]);
     }
   });
@@ -7139,7 +7202,7 @@ function todaysPlan(){
 function markEventDone(id){
   const events=lsGet("events",[]);
   const target=events.find(ev=>ev.id===id);
-  if(target&&target.time)logCompletionOutcome("done",target.time,difficultyTierOf(target));
+  if(target&&target.time)logCompletionOutcome("done",target.time,difficultyTierOf(target),target.id);
   const next=events.map(ev=>{if(ev.id!==id)return ev;const {movedByStudlin,movedFrom,movedAt,...rest}=ev;return {...rest,status:"done",completedAt:Date.now()};});
   lsSet("events",next);
   return next;
@@ -7474,7 +7537,11 @@ const navIcon = {dashboard:Icon.grid,prep:Icon.brain,writestudio:Icon.pen,essays
 // cards this exact way). No UI-state side effects (no loading flag) —
 // callers own that themselves, since they need it wrapped around more
 // than just this one call in some cases.
-async function generateFlashcardsFromText(content,context,count=10){
+// focus is optional -- a comma-separated list of topics to specifically
+// target, same shape/contract as generateQuizFromText's own focus param
+// below (see wrongTopicsFor/latestWrongTopicsForExam). Every existing
+// caller omits it and sees no behavior change.
+async function generateFlashcardsFromText(content,context,count=10,focus){
   try{
     // "auto" reuses the same "AI decides quantity, no fixed number
     // requested" shape already used by extractSyllabusDeadlines and
@@ -7483,7 +7550,8 @@ async function generateFlashcardsFromText(content,context,count=10){
     const countInstruction=count==="auto"
       ?"Create as many flashcards as needed to cover the key concepts in this "+context+" — typically 5 to 30. Don't pad with filler or skip real content just to hit a number."
       :"Create "+count+" flashcards from this "+context+".";
-    const prompt=countInstruction+" Base every card on real academic content only -- concepts, definitions, facts, processes. If the material also contains course-administrative or policy information (grading breakdowns, exam schedule/count, attendance rules, syllabus logistics), ignore that entirely; it's never something to be tested on. Format as a JSON array where each object has a \"q\" key (question) and \"a\" key (answer). Return only the JSON array, no other text. Material:\n\n"+content.slice(0,MATERIAL_TEXT_CAP);
+    const focusInstruction=focus?" This deck should specifically target these topics the student has gotten wrong before: "+focus+". Weight the cards toward those topics without ignoring the rest of the material entirely.":"";
+    const prompt=countInstruction+focusInstruction+" Base every card on real academic content only -- concepts, definitions, facts, processes. If the material also contains course-administrative or policy information (grading breakdowns, exam schedule/count, attendance rules, syllabus logistics), ignore that entirely; it's never something to be tested on. Format as a JSON array where each object has a \"q\" key (question) and \"a\" key (answer). Return only the JSON array, no other text. Material:\n\n"+content.slice(0,MATERIAL_TEXT_CAP);
     // format:"json" gets the extraction-only system prompt (no chatty
     // tutor persona bleeding into card text) and the larger 4096-token
     // budget -- without it a big card count for a large material dump
@@ -7580,6 +7648,25 @@ function wrongTopicsFor(questions,answers){
   });
   return topics;
 }
+// 2026-08-22 intelligence audit fix: a practice-exam attempt already
+// records exactly which topics the student got wrong (wrongTopicsFor
+// above, stamped onto the attempt by recordPracticeExamAttempt), and the
+// weak-spot follow-up quiz already targets them via generateQuizFromText's
+// focus param -- but regenerating this exam's own flashcard deck never
+// looked at that same data, so a new deck covered the material generically
+// even when Studlin already knows exactly what the student is weak on.
+// Same latest-attempt lookup computePreparedness already uses for exam
+// score, just returning wrongTopics instead of score.
+function latestWrongTopicsForExam(examId){
+  if(!examId)return [];
+  const practiceExams=lsGet("practiceExams",[]).filter(pe=>pe.examEventId===examId);
+  const lastAttempt=practiceExams.reduce((latest,pe)=>{
+    const a=(pe.attempts&&pe.attempts.length)?pe.attempts[pe.attempts.length-1]:null;
+    if(!a)return latest;
+    return(!latest||a.at>latest.at)?a:latest;
+  },null);
+  return (lastAttempt&&lastAttempt.wrongTopics&&lastAttempt.wrongTopics.length>0)?lastAttempt.wrongTopics:[];
+}
 // Pro-only, real monthly cap underneath -- see the 2026-08-18 pricing-pass
 // comment above canScanSyllabus for the full sizing rationale.
 // ~$0.037/call (json extraction, the priciest per-call cost of any gated
@@ -7589,6 +7676,7 @@ const PRO_QUIZ_GEN_LIMIT=60;
 const getQuizGenUsage=makeMonthlyUsage("quizGens");
 function canGenQuiz(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getQuizGenUsage().count<PRO_QUIZ_GEN_LIMIT;}
 function recordQuizGen(){const u=getQuizGenUsage();lsSet("quizGens",{month:u.month,count:u.count+1});chargeAiSpend("quizGen");}
+function canGenQuizReason(){return aiGateBlockReason(getQuizGenUsage(),PRO_QUIZ_GEN_LIMIT);}
 
 // Cap on how much text one uploaded/pasted material entry can contribute --
 // keeps a single huge PDF from blowing up the flashcard/practice-exam
@@ -8060,7 +8148,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
     // generating a preview and just never confirming it. Same check
     // here, before anything AI-costing runs, not just at commit.
     if(!canBuildExamPlan()){
-      setUpgradeModal({feature:"AI study plans",detail:"AI study plans are a Pro feature. Upgrade to use them."});
+      setUpgradeModal({feature:"AI study plans",detail:canBuildExamPlanReason()==="free-tier"?"AI study plans are a Pro feature. Upgrade to use them.":AI_USAGE_CAP_MESSAGE});
       return;
     }
     // Was an instant reveal -- the numbers are real (confidence, importance,
@@ -8202,7 +8290,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   const commitBuildPlan=async()=>{
     if(!buildPlanExam||!buildPlanPreview)return;
     if(!canBuildExamPlan()){
-      setUpgradeModal({feature:"AI study plans",detail:"AI study plans are a Pro feature. Upgrade to use them."});
+      setUpgradeModal({feature:"AI study plans",detail:canBuildExamPlanReason()==="free-tier"?"AI study plans are a Pro feature. Upgrade to use them.":AI_USAGE_CAP_MESSAGE});
       return;
     }
     setBuildPlanLoading(true);
@@ -8393,7 +8481,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
     // Scoped to the fields computeSessionPriority actually reads, so
     // patching something unrelated (title, notes) doesn't trigger a
     // pointless restamp pass.
-    if(["priority","difficulty","examWeight","importanceLevel"].some(k=>k in patch))restampSessionPriorities(examId);
+    if(["priority","difficulty","examWeight","importanceLevel","gradeWeightPercent"].some(k=>k in patch))restampSessionPriorities(examId);
     refresh();
   };
   // Bucketed edit for priority("urgency")/difficulty -- both already exist
@@ -8510,11 +8598,18 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   const doGenDeckForExam=async()=>{
     if(!materialText.trim()||!selectedExam)return;
     if(!canGenFlashcards()){
-      setUpgradeModal({feature:"AI flashcard generations",detail:"AI flashcard generations are a Pro feature. Upgrade to use them."});
+      setUpgradeModal({feature:"AI flashcard generations",detail:canGenFlashcardsReason()==="free-tier"?"AI flashcard generations are a Pro feature. Upgrade to use them.":AI_USAGE_CAP_MESSAGE});
       return;
     }
     setGenLoading("cards");setGenMsg("");
-    const cards=await generateFlashcardsFromText(materialText,selectedExam.subject||"this exam",scaledFlashcardCount(materialText.length));
+    // Weak-spot-aware regeneration: an exam with a prior practice-exam
+    // attempt already has real "what did they get wrong" data (see
+    // latestWrongTopicsForExam) -- feed it in as focus so a rebuilt deck
+    // actively targets those topics instead of covering the material
+    // generically again. A brand-new exam with no attempt yet just gets
+    // undefined, same as before this fix.
+    const weakTopics=latestWrongTopicsForExam(selectedExam.id);
+    const cards=await generateFlashcardsFromText(materialText,selectedExam.subject||"this exam",scaledFlashcardCount(materialText.length),weakTopics.length>0?weakTopics.join(", "):undefined);
     setGenLoading(null);
     if(cards.length===0){setGenMsg("Couldn't generate cards. Try again.");return;}
     recordFlashcardGen();
@@ -8530,7 +8625,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   const doGenPracticeExamForExam=async()=>{
     if(!materialText.trim()||!selectedExam)return;
     if(!canGenQuiz()){
-      setUpgradeModal({feature:"AI practice exams",detail:"AI practice exams are a Pro feature. Upgrade to use them."});
+      setUpgradeModal({feature:"AI practice exams",detail:canGenQuizReason()==="free-tier"?"AI practice exams are a Pro feature. Upgrade to use them.":AI_USAGE_CAP_MESSAGE});
       return;
     }
     setGenLoading("quiz");setGenMsg("");
@@ -8773,7 +8868,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   const generateFollowUpPracticeExam=async()=>{
     if(!takingQuiz||!takingQuiz.done||!takingQuiz.wrongTopics||takingQuiz.wrongTopics.length===0)return;
     if(!canGenQuiz()){
-      setUpgradeModal({feature:"AI practice exams",detail:"AI practice exams are a Pro feature. Upgrade to use them."});
+      setUpgradeModal({feature:"AI practice exams",detail:canGenQuizReason()==="free-tier"?"AI practice exams are a Pro feature. Upgrade to use them.":AI_USAGE_CAP_MESSAGE});
       return;
     }
     setFollowUpLoading(true);setFollowUpError("");
@@ -9204,7 +9299,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
         const addFocusToExisting=async()=>{
           const genericPending=examSessions.filter(s=>!s.deckId&&!s.practiceExamId&&s.status!=="done");
           if(genericPending.length===0)return;
-          if(!canAddSessionFocus()){setUpgradeModal({feature:"AI study focus",detail:"AI study focus is a Pro feature. Upgrade to use it."});return;}
+          if(!canAddSessionFocus()){setUpgradeModal({feature:"AI study focus",detail:canAddSessionFocusReason()==="free-tier"?"AI study focus is a Pro feature. Upgrade to use it.":AI_USAGE_CAP_MESSAGE});return;}
           setSessionScheduleLoading(true);
           const focuses=await proposeSessionFocuses(selectedExam.title,materialText,genericPending.length,selectedExam.subject);
           setSessionScheduleLoading(false);
@@ -10525,7 +10620,7 @@ function Flashcards({setActive=()=>{}}={}) {
     else if(dSource==="file"){
       if(fileTexts.length===0){setCreateDeckError("Upload a file first.");return;}
       if(!canGenFlashcards()){
-        setUpgradeModal({feature:"AI flashcard generations",detail:"AI flashcard generations are a Pro feature. Upgrade to use them."});
+        setUpgradeModal({feature:"AI flashcard generations",detail:canGenFlashcardsReason()==="free-tier"?"AI flashcard generations are a Pro feature. Upgrade to use them.":AI_USAGE_CAP_MESSAGE});
         return;
       }
       const combined=fileTexts.map(f=>"--- "+f.name+" ---\n"+f.text).join("\n\n");
@@ -10536,7 +10631,7 @@ function Flashcards({setActive=()=>{}}={}) {
     else if(dSource==="record"){
       if(!recText){setCreateDeckError("Record a lecture first.");return;}
       if(!canGenFlashcards()){
-        setUpgradeModal({feature:"AI flashcard generations",detail:"AI flashcard generations are a Pro feature. Upgrade to use them."});
+        setUpgradeModal({feature:"AI flashcard generations",detail:canGenFlashcardsReason()==="free-tier"?"AI flashcard generations are a Pro feature. Upgrade to use them.":AI_USAGE_CAP_MESSAGE});
         return;
       }
       cards=await aiGenCards("Lecture transcription:\n\n"+recText,"lecture transcription",cardCount);
@@ -11167,7 +11262,7 @@ function Notes({setActive=()=>{}}){
     const plain=(tmp.textContent||tmp.innerText||"").trim();
     if(!plain)return;
     if(!canScanSyllabus()){
-      setUpgradeModal({feature:"deadline scans",detail:proOnlyNote("deadline scans","upgrade to keep scanning notes for dates")});
+      setUpgradeModal({feature:"deadline scans",detail:canScanSyllabusReason()==="free-tier"?proOnlyNote("deadline scans","upgrade to keep scanning notes for dates"):AI_USAGE_CAP_MESSAGE});
       return;
     }
     setScanningDates(true);
@@ -11315,8 +11410,9 @@ function Notes({setActive=()=>{}}){
         // vision-based deadline extraction, gated by its own pricier usage
         // pool (SCREENSHOT_SCAN_LIMIT), separate from AI note scans.
         if(!canScanScreenshot()){
-          body="<p>Screenshot uploaded, but screenshot imports are a Pro feature.</p>";
-          setUpgradeModal({feature:"screenshot imports",detail:proOnlyNote("screenshot imports")});
+          const screenshotReason=canScanScreenshotReason();
+          body=screenshotReason==="free-tier"?"<p>Screenshot uploaded, but screenshot imports are a Pro feature.</p>":"<p>Screenshot uploaded, but you've hit this month's AI usage limit.</p>";
+          setUpgradeModal({feature:"screenshot imports",detail:screenshotReason==="free-tier"?proOnlyNote("screenshot imports"):AI_USAGE_CAP_MESSAGE});
         }else{
           setAiLoading(true);
           const result=await extractSyllabusDeadlinesFromImage(fileImage.base64,fileImage.mediaType);
@@ -11338,7 +11434,7 @@ function Notes({setActive=()=>{}}){
         await detectDates(fileText);
       }else{
         body="<p>"+fileText.trim().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/\n/g,"<br>")+"</p>";
-        setUpgradeModal({feature:"AI note scans",detail:proOnlyNote("AI note scans","this file was saved as plain text, not AI-summarized")});
+        setUpgradeModal({feature:"AI note scans",detail:canScanNoteReason()==="free-tier"?proOnlyNote("AI note scans","this file was saved as plain text, not AI-summarized"):AI_USAGE_CAP_MESSAGE});
       }
     }
     const newNote={id:String(Date.now()),title,body,tag,date:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"}),createdAt:Date.now()};
@@ -11425,7 +11521,7 @@ function Notes({setActive=()=>{}}){
     const text=getNotePlainText();
     if(!text){setPanelMsg("This note is empty — write something first.");return;}
     if(!canGenFlashcards()){
-      setUpgradeModal({feature:"AI flashcard generations",detail:proOnlyNote("AI flashcard generations","you can still build cards manually anytime")});
+      setUpgradeModal({feature:"AI flashcard generations",detail:canGenFlashcardsReason()==="free-tier"?proOnlyNote("AI flashcard generations","you can still build cards manually anytime"):AI_USAGE_CAP_MESSAGE});
       return;
     }
     setPanelLoading("cards");setPanelMsg("");
@@ -11450,7 +11546,7 @@ function Notes({setActive=()=>{}}){
     const text=getNotePlainText();
     if(!text){setPanelMsg("This note is empty — write something first.");return;}
     if(!canGenQuiz()){
-      setUpgradeModal({feature:"AI practice quizzes",detail:proOnlyNote("AI practice quizzes")});
+      setUpgradeModal({feature:"AI practice quizzes",detail:canGenQuizReason()==="free-tier"?proOnlyNote("AI practice quizzes"):AI_USAGE_CAP_MESSAGE});
       return;
     }
     setPanelLoading("quiz");setPanelMsg("");
@@ -11478,7 +11574,7 @@ function Notes({setActive=()=>{}}){
     // 2026-08-18 pricing pass. Reuses canScanNote rather than a new gate
     // -- same "AI reads/processes your note" class of cost as a note scan.
     if(!canScanNote()){
-      setUpgradeModal({feature:"AI note summaries",detail:proOnlyNote("AI note summaries")});
+      setUpgradeModal({feature:"AI note summaries",detail:canScanNoteReason()==="free-tier"?proOnlyNote("AI note summaries"):AI_USAGE_CAP_MESSAGE});
       return;
     }
     setPanelLoading("summary");setPanelMsg("");
@@ -12955,10 +13051,16 @@ function weekPrepLoad(dateKey,examEvent,events,prefs){
     return Math.max(0,end-start);
   };
   const totalCapacity=weekDates.reduce((sum,dk)=>sum+capacityPerDay(dk),0);
-  const loadEvents=events.filter(e=>weekSet.has(e.date)&&e.status==="pending"&&e.duration&&e.kind==="study block"&&e.dueEventId!==examEvent.id);
+  // "assignment" (an essay, problem set -- real, duration-bearing,
+  // deadline-bearing work) used to be filtered out of both load and
+  // competitor-naming here, so a week genuinely packed with non-exam
+  // assignments registered as zero pressure -- study blocks are the only
+  // AI-scheduled kind, but a week's actual capacity doesn't care what
+  // scheduled the time that's already spoken for.
+  const loadEvents=events.filter(e=>weekSet.has(e.date)&&e.status==="pending"&&e.duration&&(e.kind==="study block"||e.kind==="assignment")&&e.dueEventId!==examEvent.id);
   const usedMins=loadEvents.reduce((sum,e)=>sum+(e.duration||0),0);
   const ratio=totalCapacity>0?usedMins/totalCapacity:1;
-  const competing=events.filter(e=>weekSet.has(e.date)&&e.status==="pending"&&e.id!==examEvent.id&&!e.isExamPrepSession&&(e.kind==="exam"||e.kind==="deadline"))
+  const competing=events.filter(e=>weekSet.has(e.date)&&e.status==="pending"&&e.id!==examEvent.id&&!e.isExamPrepSession&&(e.kind==="exam"||e.kind==="deadline"||e.kind==="assignment"))
     .sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:(b.priority||0)-(a.priority||0))[0];
   return {isPressured:ratio>=0.65,ratio,competingTitle:competing?competing.title:null};
 }
@@ -17228,14 +17330,14 @@ function MaterialEditor({item,onChange,label,idPrefix}){
 // "session" -- a user can suggest just one or the other.
 function PhasesOutlineEditor({item,onChange,subject,onGateBlocked=()=>{}}){
   const suggestPhases=async()=>{
-    if(!canBreakDownProject()){onGateBlocked();return;}
+    if(!canBreakDownProject()){onGateBlocked(canBreakDownProjectReason());return;}
     onChange({phasesLoading:true});
     const names=await proposeProjectPhases(item.title,item.detail||"",subject);
     recordProjectBreakdown();
     onChange({phasesLoading:false,phases:names||[]});
   };
   const suggestOutline=async()=>{
-    if(!canBreakDownProject()){onGateBlocked();return;}
+    if(!canBreakDownProject()){onGateBlocked(canBreakDownProjectReason());return;}
     onChange({outlineLoading:true});
     const steps=await proposeOutline(item.title,item.detail||"",subject);
     recordProjectBreakdown();
@@ -17654,8 +17756,8 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   const handleScanFile=async(e)=>{
     const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";
     const ext=file.name.split(".").pop().toLowerCase();
-    if(IMAGE_EXT_MEDIA_TYPES[ext]){if(!canScanScreenshot()){setPricingOpen("screenshotScan");return;}}
-    else{if(!canScanSyllabus()){setPricingOpen("syllabusScan");return;}}
+    if(IMAGE_EXT_MEDIA_TYPES[ext]){if(!canScanScreenshot()){setPricingOpen(canScanScreenshotReason()==="free-tier"?"screenshotScan":"aiUsageCap");return;}}
+    else{if(!canScanSyllabus()){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}}
     setScanning(true);setScanError("");
     try{
       if(IMAGE_EXT_MEDIA_TYPES[ext]){
@@ -17693,7 +17795,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
 
   const handlePasteScan=async()=>{
     if(!pasteText.trim())return;
-    if(!canScanSyllabus()){setPricingOpen("syllabusScan");return;}
+    if(!canScanSyllabus()){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}
     setScanning(true);setScanError("");
     try{
       const result=await extractClassSyllabusText(pasteText);
@@ -17745,8 +17847,8 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   const handleCollegeScheduleFile=async(e)=>{
     const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";
     const ext=file.name.split(".").pop().toLowerCase();
-    if(IMAGE_EXT_MEDIA_TYPES[ext]){if(!canScanScreenshot()){setPricingOpen("screenshotScan");return;}}
-    else{if(!canScanSyllabus()){setPricingOpen("syllabusScan");return;}}
+    if(IMAGE_EXT_MEDIA_TYPES[ext]){if(!canScanScreenshot()){setPricingOpen(canScanScreenshotReason()==="free-tier"?"screenshotScan":"aiUsageCap");return;}}
+    else{if(!canScanSyllabus()){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}}
     setScanning(true);setScanError("");
     try{
       if(IMAGE_EXT_MEDIA_TYPES[ext]){
@@ -17783,7 +17885,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   };
   const handleCollegeSchedulePaste=async()=>{
     if(!pasteText.trim())return;
-    if(!canScanSyllabus()){setPricingOpen("syllabusScan");return;}
+    if(!canScanSyllabus()){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}
     setScanning(true);setScanError("");
     try{
       const result=await extractCollegeScheduleText(pasteText);
@@ -17821,8 +17923,8 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   const handleHsScheduleFile=async(e)=>{
     const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";
     const ext=file.name.split(".").pop().toLowerCase();
-    if(IMAGE_EXT_MEDIA_TYPES[ext]){if(!canScanScreenshot()){setPricingOpen("screenshotScan");return;}}
-    else{if(!canScanSyllabus()){setPricingOpen("syllabusScan");return;}}
+    if(IMAGE_EXT_MEDIA_TYPES[ext]){if(!canScanScreenshot()){setPricingOpen(canScanScreenshotReason()==="free-tier"?"screenshotScan":"aiUsageCap");return;}}
+    else{if(!canScanSyllabus()){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}}
     setScanning(true);setScanError("");
     try{
       if(IMAGE_EXT_MEDIA_TYPES[ext]){
@@ -17866,7 +17968,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
 
   const handleHsPasteScan=async()=>{
     if(!hsPasteText.trim())return;
-    if(!canScanSyllabus()){setPricingOpen("syllabusScan");return;}
+    if(!canScanSyllabus()){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}
     setScanning(true);setScanError("");
     try{
       const result=await extractHsScheduleFromText(hsPasteText);
@@ -20285,7 +20387,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
       {requiresProjectDetail&&(
         <div style={{marginBottom:14}}>
           <div style={{fontSize:11.5,color:T.muted,marginBottom:8}}>Marked as a Project — use the Detail field below to describe it, and Studlin will suggest phases and a checklist.</div>
-          <PhasesOutlineEditor item={{...projectPlan,title,detail:notes}} onChange={patch=>setProjectPlan(p=>({...p,...patch}))} subject={subject} onGateBlocked={()=>setPricingOpen("projectBreakdown")} />
+          <PhasesOutlineEditor item={{...projectPlan,title,detail:notes}} onChange={patch=>setProjectPlan(p=>({...p,...patch}))} subject={subject} onGateBlocked={(reason)=>setPricingOpen(reason==="free-tier"?"projectBreakdown":"aiUsageCap")} />
         </div>
       )}
       {isProject&&(
@@ -20307,7 +20409,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
               <Field label="Probe session length"><NumField min={15} max={60} fallback={ATTACK_BLOCK_DEFAULT_PROBE_MINS} value={attackProbeMins} onChange={setAttackProbeMins} /></Field>
             </div>
             {isPhaseCandidate&&(
-              <PhasesOutlineEditor item={{...projectPlan,title,detail:notes}} onChange={patch=>setProjectPlan(p=>({...p,...patch}))} subject={subject} onGateBlocked={()=>setPricingOpen("projectBreakdown")} />
+              <PhasesOutlineEditor item={{...projectPlan,title,detail:notes}} onChange={patch=>setProjectPlan(p=>({...p,...patch}))} subject={subject} onGateBlocked={(reason)=>setPricingOpen(reason==="free-tier"?"projectBreakdown":"aiUsageCap")} />
             )}
           </>)}
         </div>
@@ -21921,7 +22023,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // confirm-before-delete and "ask before filling the gap" for free, reusing
   // the same modal skip_class already drives.
   const skipOneOccurrence=(ev)=>{
-    if(!canUseSmartReschedule()){setPricingOpen("smartReschedule");return;}
+    if(!canUseSmartReschedule()){setPricingOpen(canUseSmartRescheduleReason()==="free-tier"?"smartReschedule":"aiUsageCap");return;}
     setPauseError("");setPauseLastIntent(null);
     setPausePreview(computeClassSkipPlan([ev.routineId],ev.date));
     setPauseOpen(true);
@@ -22676,7 +22778,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // Smart Reschedule already uses in this component, not a separate
     // UpgradeModal (that one lives in a different component's own local
     // state, not reachable from here).
-    if(!canUseBrainDump()){setPricingOpen("brainDump");return;}
+    if(!canUseBrainDump()){setPricingOpen(canUseBrainDumpReason()==="free-tier"?"brainDump":"aiUsageCap");return;}
     if(bdListening)stopBdRec();
     setBrainDumpLoading(true);
     setBdError("");
@@ -22820,7 +22922,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       // A passive toast here used to be a dead end -- told the student
       // it's Pro-only with no way to actually act on that. Opens the real
       // paywall now, same as every other Pro-only gate in this component.
-      if(isProject&&!canBreakDownProject()){setPricingOpen("projectBreakdown");return;}
+      if(isProject&&!canBreakDownProject()){setPricingOpen(canBreakDownProjectReason()==="free-tier"?"projectBreakdown":"aiUsageCap");return;}
       const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
       const phases=evKind==="project"?(evProjectPlan.phases||[]).map(p=>p.trim()).filter(Boolean):[];
       const outline=evKind==="project"?normalizeOutlineDraft(evProjectPlan.outline):[];
@@ -22963,7 +23065,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // for a project) -- was completely ungated. Same setPricingOpen
     // paywall as Smart Reschedule/Brain Dump elsewhere in this component,
     // fired before anything AI-costing runs.
-    if(!canUseAiArrange()){setPricingOpen("aiArrange");return;}
+    if(!canUseAiArrange()){setPricingOpen(canUseAiArrangeReason()==="free-tier"?"aiArrange":"aiUsageCap");return;}
     if(evKind==="exam"||evKind==="class"||evKind==="busy block")return; // fixed real-world blocks — AI never touches these
     if(taskMode==="manual")return; // Manual Placement is active — use Save to Calendar instead
     if(evKind==="project"&&!evNotes.trim()){setEvDetailErr("Add a bit of detail so Studlin can suggest real phases, not a generic template.");return;}
@@ -23218,7 +23320,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // text box would otherwise let a Free user reach this real AI call
     // (the intent classifier below) without ever passing a gate. Checked
     // here too, right before the AI-costing call, not just at commit.
-    if(!canUseSmartReschedule()){setPricingOpen("smartReschedule");return;}
+    if(!canUseSmartReschedule()){setPricingOpen(canUseSmartRescheduleReason()==="free-tier"?"smartReschedule":"aiUsageCap");return;}
     setPauseLoading(true);setPauseError("");
     const today=dayKey();
     const tomorrow=dayKey(new Date(Date.now()+86400000));
@@ -23266,7 +23368,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
 
   const confirmPausePlan=()=>{
     if(!pausePreview)return;
-    if(!canUseSmartReschedule()){setPauseOpen(false);setPricingOpen("smartReschedule");return;}
+    if(!canUseSmartReschedule()){setPauseOpen(false);setPricingOpen(canUseSmartRescheduleReason()==="free-tier"?"smartReschedule":"aiUsageCap");return;}
     const all=lsGet("events",[]);
     // A moved/retimed entry whose id points at a virtual routine occurrence
     // (isRoutine:true — never in `events` to begin with, see
@@ -23851,7 +23953,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                   // canUseSmartReschedule) -- deliberately not a capped
                   // free-taste feature like the Prep flows above. Free users
                   // get the pricing modal instead of the pauseOpen flow.
-                  {icon:Icon.refresh,label:"Reschedule",sub:"Push back, clear, or balance your week",onClick:()=>{setToolsMenuOpen(false);if(!canUseSmartReschedule()){setPricingOpen("smartReschedule");return;}setPauseOpen(true);setPauseError("");setPausePreview(null);},danger:true},
+                  {icon:Icon.refresh,label:"Reschedule",sub:"Push back, clear, or balance your week",onClick:()=>{setToolsMenuOpen(false);if(!canUseSmartReschedule()){setPricingOpen(canUseSmartRescheduleReason()==="free-tier"?"smartReschedule":"aiUsageCap");return;}setPauseOpen(true);setPauseError("");setPausePreview(null);},danger:true},
                 ].map(item=>(
                   <div key={item.label} onClick={item.onClick} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 14px",cursor:"pointer"}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                     <span style={{width:16,color:item.danger?T.red:T.muted,display:"flex",marginTop:2}}>{item.icon}</span>
@@ -24533,7 +24635,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             <Textarea placeholder="e.g. Build a working demo, write a report, present to the class by the deadline." value={evNotes} onChange={ev=>{setEvNotes(ev.target.value);if(evDetailErr)setEvDetailErr("");}} />
           </Field>
           {evDetailErr&&<div style={{fontSize:12,color:T.red,marginTop:-8,marginBottom:14}}>{evDetailErr}</div>}
-          <PhasesOutlineEditor item={{...evProjectPlan,title:evTitle,detail:evNotes}} onChange={patch=>setEvProjectPlan(p=>({...p,...patch}))} subject={evSubject==="Other"?evCustom:evSubject} onGateBlocked={()=>setPricingOpen("projectBreakdown")} />
+          <PhasesOutlineEditor item={{...evProjectPlan,title:evTitle,detail:evNotes}} onChange={patch=>setEvProjectPlan(p=>({...p,...patch}))} subject={evSubject==="Other"?evCustom:evSubject} onGateBlocked={(reason)=>setPricingOpen(reason==="free-tier"?"projectBreakdown":"aiUsageCap")} />
           <div style={{marginBottom:14}}>
             {evCollabSelected.length>0
               ?<div style={{display:"flex",flexWrap:"wrap",gap:6,alignItems:"center"}}>
@@ -25003,19 +25105,43 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
               ))}
             </div>
           )}
-          {pausePreview.couldntMove.length>0&&(
-            <div>
-              <div style={{fontSize:11,fontWeight:700,color:T.red,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:8}}>Couldn't reschedule, deadline conflict ({pausePreview.couldntMove.length})</div>
-              <div style={{display:"flex",flexDirection:"column",gap:7,maxHeight:160,overflowY:"auto"}}>
-                {pausePreview.couldntMove.map(m=>(
-                  <div key={m.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:T.red+"0d",borderRadius:8,border:`1px solid ${T.red}33`}}>
-                    <div style={{flex:1,fontSize:13,color:T.text,fontWeight:500}}>{m.title}</div>
-                    <div style={{fontSize:11,color:T.red,flexShrink:0}}>Deadline {m.deadline}</div>
+          {pausePreview.couldntMove.length>0&&(()=>{
+            // Exam-linked prep that couldn't be rescheduled gets its own,
+            // specifically-worded warning ahead of the generic deadline-
+            // conflict list -- a low-stakes flashcard review silently
+            // failing to move reads very differently than a final's last
+            // prep session doing the same, and the student needs to see
+            // that distinction before confirming, not after.
+            const examWarnings=pausePreview.couldntMove.filter(m=>m.examWarning);
+            const generic=pausePreview.couldntMove.filter(m=>!m.examWarning);
+            return (<>
+              {examWarnings.length>0&&(
+                <div style={{marginBottom:generic.length?18:0}}>
+                  <div style={{fontSize:11,fontWeight:700,color:T.amber,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:8}}>Exam prep couldn't be rescheduled</div>
+                  <div style={{display:"flex",flexDirection:"column",gap:7}}>
+                    {examWarnings.map(m=>(
+                      <div key={m.id} style={{padding:"9px 12px",background:T.amber+"14",borderRadius:8,border:`1px solid ${T.amber}44`}}>
+                        <div style={{fontSize:13,color:T.text,fontWeight:500}}>{m.examWarning.examTitle}'s remaining prep couldn't be rescheduled, it's {m.examWarning.daysUntilExam<=0?"today":"in "+m.examWarning.daysUntilExam+" day"+(m.examWarning.daysUntilExam===1?"":"s")}.</div>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            </div>
-          )}
+                </div>
+              )}
+              {generic.length>0&&(
+                <div>
+                  <div style={{fontSize:11,fontWeight:700,color:T.red,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:8}}>Couldn't reschedule, deadline conflict ({generic.length})</div>
+                  <div style={{display:"flex",flexDirection:"column",gap:7,maxHeight:160,overflowY:"auto"}}>
+                    {generic.map(m=>(
+                      <div key={m.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:T.red+"0d",borderRadius:8,border:`1px solid ${T.red}33`}}>
+                        <div style={{flex:1,fontSize:13,color:T.text,fontWeight:500}}>{m.title}</div>
+                        <div style={{fontSize:11,color:T.red,flexShrink:0}}>Deadline {m.deadline}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>);
+          })()}
           {pausePreview.moved.length===0&&pausePreview.couldntMove.length===0&&!pausePreview.noMatch&&(
             <div style={{fontSize:13,color:T.muted}}>{pausePreview.skipRoutine?"Class skipped. Nothing needed to move into the freed time.":"Nothing to reschedule."}</div>
           )}
@@ -25791,7 +25917,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     // zero gate at all, same gap Brain Dump/note summaries had. Reuses
     // canScanScreenshot -- same "image-based AI extraction" cost class as
     // the Canvas/syllabus screenshot import already gated on it.
-    if(!canScanScreenshot()){setWorkScanOpen(false);setPricingOpen("screenshotScan");return;}
+    if(!canScanScreenshot()){setWorkScanOpen(false);setPricingOpen(canScanScreenshotReason()==="free-tier"?"screenshotScan":"aiUsageCap");return;}
     const ext=file.name.split(".").pop().toLowerCase();
     if(!WORK_IMAGE_EXT_MEDIA_TYPES[ext]){setWorkScanError("Upload a photo or screenshot of your shift schedule (JPG, PNG, etc).");return;}
     setWorkScanning(true);setWorkScanError("");
@@ -27271,7 +27397,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   const toggleChecklistItem=(id)=>{
     const all=lsGet("events",[]);
     const target=all.find(ev=>ev.id===id);
-    if(target&&target.status!=="done"&&target.time)logCompletionOutcome("done",target.time,difficultyTierOf(target));
+    if(target&&target.status!=="done"&&target.time)logCompletionOutcome("done",target.time,difficultyTierOf(target),target.id);
     const next=all.map(ev=>ev.id===id?{...ev,status:ev.status==="done"?"pending":"done",completedAt:ev.status==="done"?null:Date.now()}:ev);
     lsSet("events",next);forcePlan(x=>x+1);
   };
@@ -28195,7 +28321,7 @@ function App() {
     const target=all.find(ev=>ev.id===taskId);
     if(!target)return;
     if(!target.timeSpent)logSession(mins,"Task: "+target.title);
-    if(evTime)logCompletionOutcome("done",evTime,difficultyTierOf(target));
+    if(evTime)logCompletionOutcome("done",evTime,difficultyTierOf(target),taskId);
     const next=all.map(ev=>ev.id===taskId?{...ev,status:"done",timeSpent:mins,completedAt:Date.now()}:ev);
     setEvents(next);lsSet("events",next);
   };
@@ -28323,7 +28449,7 @@ function App() {
     // A passive toast here used to be a dead end -- told the student it's
     // Pro-only with no way to actually act on that. Opens the real
     // paywall now, same as every other Pro-only gate in this file.
-    if(isProject&&!canBreakDownProject()){setPricingOpen("projectBreakdown");return;}
+    if(isProject&&!canBreakDownProject()){setPricingOpen(canBreakDownProjectReason()==="free-tier"?"projectBreakdown":"aiUsageCap");return;}
     const events=lsGet("events",[]);
     const routines=getWeeklyRoutine();
     const prefs=getSchedulePreferences();
@@ -28803,6 +28929,13 @@ function App() {
     aiArrange:"AI scheduling is a Pro feature.",
     syllabusScan:"Syllabus & schedule scans are a Pro feature.",
     screenshotScan:"Screenshot imports are a Pro feature.",
+    // 2026-08-22 intelligence audit fix: every reason above assumed the
+    // student wasn't Pro yet -- wrong copy for an already-Pro student who
+    // simply used a lot of a feature this month (the shared AI-spend
+    // ceiling or that feature's own monthly cap). Call sites pick this key
+    // instead of the feature-specific one above once the block reason
+    // isn't "free-tier" (see canXxxReason() next to each gate).
+    aiUsageCap:AI_USAGE_CAP_MESSAGE,
   };
   // Dashboard's "Reschedule" confirm + its toast — lifted up from Dashboard
   // itself: [data-page]'s own entrance animation makes it a containing
@@ -29851,7 +29984,19 @@ function App() {
         // same real minutes can't be farmed for XP twice.
         const alreadyClaimed=!!(lsGet("events",[]).find(ev=>ev.id===timerTask.id)||{}).timeSpent;
         if(!alreadyClaimed)logSession(mins,"Task: "+timerTask.title);
-        if(timerTask.time)logCompletionOutcome("done",timerTask.time,difficultyTierOf(timerTask),timerTask.id);
+        // Reliability should learn from when the student actually sat down
+        // and worked, not from wherever the task happened to be scheduled --
+        // a Lock-In session is the one completion path with a real clock
+        // timestamp (Date.now(), same one logSession above just used) to
+        // derive that from. Date object (not minutesToTime's 0-1439 clamp)
+        // so a session that started just before midnight still buckets to
+        // its real hour instead of clamping into "today". Checkbox/
+        // toggleChecklistItem/completeTaskWithMinutes completions have no
+        // elapsed-time data to derive an actual start from, so they
+        // deliberately keep using the event's own scheduled time.
+        const actualStart=new Date(Date.now()-mins*60000);
+        const actualStartTime=String(actualStart.getHours()).padStart(2,"0")+":"+String(actualStart.getMinutes()).padStart(2,"0");
+        if(timerTask.time)logCompletionOutcome("done",actualStartTime,difficultyTierOf(timerTask),timerTask.id);
         const next=lsGet("events",[]).map(ev=>ev.id===timerTask.id?{...ev,status:"done",timeSpent:mins,completedAt:Date.now()}:ev);
         lsSet("events",next);
         // Any flexible study block finished through the Lock-In Timer gets

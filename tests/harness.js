@@ -161,7 +161,17 @@ function loadStudlinModule(options) {
     "resolveCalendarHighlightFlag","CALENDAR_HIGHLIGHT_MAX_AGE_MS",
     "computeNewSlotCandidates","NEW_PLACEMENT_SCAN_DAYS","NEW_PLACEMENT_MAX_CANDIDATES",
     "computeRescheduleCandidates","RESCHEDULE_SCAN_DAYS","RESCHEDULE_MAX_CANDIDATES",
-    "computeAcceptanceSummary","refreshPendingAcceptance","addTaskWithRebalance"];
+    "computeAcceptanceSummary","refreshPendingAcceptance","addTaskWithRebalance",
+    // 2026-08-22 intelligence audit fixes (batch 1) -- exported so their
+    // regression tests can call them directly rather than reaching them
+    // only indirectly through a component closure.
+    "markEventDone",
+    "aiGateBlockReason","AI_USAGE_CAP_MESSAGE",
+    "canGenQuizReason","canScanSyllabusReason","canScanScreenshotReason","canScanNoteReason",
+    "canGenFlashcardsReason","canBuildExamPlanReason","canAddSessionFocusReason",
+    "canBreakDownProjectReason","canUseSmartRescheduleReason","canUseBrainDumpReason","canUseAiArrangeReason",
+    "generateFlashcardsFromText","generateQuizFromText","latestWrongTopicsForExam","sessionPriorityFor",
+    "hourBucket","timeToMinutes","minutesToTime"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }

@@ -3779,6 +3779,15 @@ function recordSyllabusScan() {
   lsSet("syllabusScans", { month: u.month, count: u.count + 1 });
   chargeAiSpend("syllabusScan");
 }
+const AI_USAGE_CAP_MESSAGE = "You've hit this month's AI usage limit. Resets on the 1st.";
+function aiGateBlockReason(usage, limit) {
+  if (getPlan() === "Free") return "free-tier";
+  if (!underAiSpendCeiling()) return "spend-ceiling";
+  return usage.count < limit ? null : "feature-cap";
+}
+function canScanSyllabusReason() {
+  return aiGateBlockReason(getSyllabusScanUsage(), PRO_SYLLABUS_SCAN_LIMIT);
+}
 const PRO_SCREENSHOT_SCAN_LIMIT = 40;
 const getScreenshotScanUsage = makeMonthlyUsage("screenshotScans");
 function canScanScreenshot() {
@@ -3790,6 +3799,9 @@ function recordScreenshotScan() {
   const u = getScreenshotScanUsage();
   lsSet("screenshotScans", { month: u.month, count: u.count + 1 });
   chargeAiSpend("screenshotScan");
+}
+function canScanScreenshotReason() {
+  return aiGateBlockReason(getScreenshotScanUsage(), PRO_SCREENSHOT_SCAN_LIMIT);
 }
 const PRO_NOTE_SCAN_LIMIT = 150;
 const getNoteScanUsage = makeMonthlyUsage("noteScans");
@@ -3803,6 +3815,9 @@ function recordNoteScan() {
   lsSet("noteScans", { month: u.month, count: u.count + 1 });
   chargeAiSpend("noteScan");
 }
+function canScanNoteReason() {
+  return aiGateBlockReason(getNoteScanUsage(), PRO_NOTE_SCAN_LIMIT);
+}
 const PRO_FLASHCARD_GEN_LIMIT = 60;
 const getFlashcardGenUsage = makeMonthlyUsage("flashcardGens");
 function canGenFlashcards() {
@@ -3814,6 +3829,9 @@ function recordFlashcardGen() {
   const u = getFlashcardGenUsage();
   lsSet("flashcardGens", { month: u.month, count: u.count + 1 });
   chargeAiSpend("flashcardGen");
+}
+function canGenFlashcardsReason() {
+  return aiGateBlockReason(getFlashcardGenUsage(), PRO_FLASHCARD_GEN_LIMIT);
 }
 const PRO_EXAM_PLAN_LIMIT = 40;
 const getExamPlanUsage = makeMonthlyUsage("examPlanBuilds");
@@ -3827,6 +3845,9 @@ function recordExamPlanBuild() {
   lsSet("examPlanBuilds", { month: u.month, count: u.count + 1 });
   chargeAiSpend("examPlanBuild");
 }
+function canBuildExamPlanReason() {
+  return aiGateBlockReason(getExamPlanUsage(), PRO_EXAM_PLAN_LIMIT);
+}
 const PRO_SESSION_FOCUS_LIMIT = 100;
 const getSessionFocusUsage = makeMonthlyUsage("sessionFocuses");
 function canAddSessionFocus() {
@@ -3838,6 +3859,9 @@ function recordSessionFocus() {
   const u = getSessionFocusUsage();
   lsSet("sessionFocuses", { month: u.month, count: u.count + 1 });
   chargeAiSpend("sessionFocus");
+}
+function canAddSessionFocusReason() {
+  return aiGateBlockReason(getSessionFocusUsage(), PRO_SESSION_FOCUS_LIMIT);
 }
 const PRO_PROJECT_BREAKDOWN_LIMIT = 30;
 const getProjectBreakdownUsage = makeMonthlyUsage("projectBreakdowns");
@@ -3851,6 +3875,9 @@ function recordProjectBreakdown() {
   lsSet("projectBreakdowns", { month: u.month, count: u.count + 1 });
   chargeAiSpend("projectBreakdown");
 }
+function canBreakDownProjectReason() {
+  return aiGateBlockReason(getProjectBreakdownUsage(), PRO_PROJECT_BREAKDOWN_LIMIT);
+}
 const PRO_SMART_RESCHEDULE_LIMIT = 200;
 const getSmartRescheduleUsage = makeMonthlyUsage("smartReschedules");
 function canUseSmartReschedule() {
@@ -3862,6 +3889,9 @@ function recordSmartReschedule() {
   const u = getSmartRescheduleUsage();
   lsSet("smartReschedules", { month: u.month, count: u.count + 1 });
   chargeAiSpend("smartReschedule");
+}
+function canUseSmartRescheduleReason() {
+  return aiGateBlockReason(getSmartRescheduleUsage(), PRO_SMART_RESCHEDULE_LIMIT);
 }
 const PRO_BRAIN_DUMP_LIMIT = 100;
 const getBrainDumpUsage = makeMonthlyUsage("brainDumps");
@@ -3875,12 +3905,18 @@ function recordBrainDump() {
   lsSet("brainDumps", { month: u.month, count: u.count + 1 });
   chargeAiSpend("brainDump");
 }
+function canUseBrainDumpReason() {
+  return aiGateBlockReason(getBrainDumpUsage(), PRO_BRAIN_DUMP_LIMIT);
+}
 const PRO_AI_ARRANGE_LIMIT = 400;
 const getAiArrangeUsage = makeMonthlyUsage("aiArranges");
 function canUseAiArrange() {
   if (getPlan() === "Free") return false;
   if (!underAiSpendCeiling()) return false;
   return getAiArrangeUsage().count < PRO_AI_ARRANGE_LIMIT;
+}
+function canUseAiArrangeReason() {
+  return aiGateBlockReason(getAiArrangeUsage(), PRO_AI_ARRANGE_LIMIT);
 }
 const PRO_CALENDAR_CLASSIFY_LIMIT = 60;
 const getCalendarClassifyUsage = makeMonthlyUsage("calendarClassifies");
@@ -4230,6 +4266,10 @@ function computeFillSuggestions(freedDate, freedTime, freedDuration) {
     return da < db ? -1 : da > db ? 1 : 0;
   }).slice(0, 3).map((ev) => ({ id: ev.id, title: ev.title, duration: ev.duration || 30 }));
 }
+function sessionPriorityFor(ev, pool) {
+  const exam = ev.dueEventId ? pool.find((e) => e.id === ev.dueEventId && e.kind === "exam") : null;
+  return computeSessionPriority(exam || ev, dayKey());
+}
 function computePausePlan(intent, forcedId) {
   const today = dayKey();
   if (intent.intent === "move_event" || intent.intent === "retime_event") {
@@ -4322,7 +4362,11 @@ function computePausePlan(intent, forcedId) {
   const all = lsGet("events", []);
   const routinesNow = getWeeklyRoutine();
   const prefsNow = getSchedulePreferences();
-  const affected = all.filter(inWindow).sort((a, b) => a.date === b.date ? (a.time || "") < (b.time || "") ? -1 : 1 : a.date < b.date ? -1 : 1);
+  const affected = all.filter(inWindow).sort((a, b) => {
+    const pa = sessionPriorityFor(a, all), pb = sessionPriorityFor(b, all);
+    if (pa !== pb) return pb - pa;
+    return a.date === b.date ? (a.time || "") < (b.time || "") ? -1 : 1 : a.date < b.date ? -1 : 1;
+  });
   let working = all.filter((ev) => !inWindow(ev));
   const moved = [], couldntMove = [];
   affected.forEach((ev) => {
@@ -4332,7 +4376,16 @@ function computePausePlan(intent, forcedId) {
       moved.push({ id: ev.id, title: ev.title, oldDate: ev.date, oldTime: ev.time, newDate: slot.date, newTime: slot.time });
       working = working.concat([{ ...ev, date: slot.date, time: slot.time }]);
     } else {
-      couldntMove.push({ id: ev.id, title: ev.title, deadline: ev.deadline });
+      const linkedExam = ev.dueEventId ? all.find((e) => e.id === ev.dueEventId && e.kind === "exam") : null;
+      let examWarning = null;
+      if (linkedExam) {
+        const daysUntilExam = Math.round((/* @__PURE__ */ new Date(linkedExam.date + "T12:00:00") - /* @__PURE__ */ new Date(today + "T12:00:00")) / 864e5);
+        const highStakes = linkedExam.importanceLevel === "major" || linkedExam.importanceLevel === "critical";
+        if (highStakes || daysUntilExam >= 0 && daysUntilExam <= CATCHUP_EXAM_URGENT_DAYS) {
+          examWarning = { examTitle: linkedExam.title, daysUntilExam };
+        }
+      }
+      couldntMove.push({ id: ev.id, title: ev.title, deadline: ev.deadline, examWarning });
       working = working.concat([ev]);
     }
   });
@@ -4543,7 +4596,7 @@ function todaysPlan() {
 function markEventDone(id) {
   const events = lsGet("events", []);
   const target = events.find((ev) => ev.id === id);
-  if (target && target.time) logCompletionOutcome("done", target.time, difficultyTierOf(target));
+  if (target && target.time) logCompletionOutcome("done", target.time, difficultyTierOf(target), target.id);
   const next = events.map((ev) => {
     if (ev.id !== id) return ev;
     const { movedByStudlin, movedFrom, movedAt, ...rest } = ev;
@@ -4724,10 +4777,11 @@ function UpgradeModal({ open, onClose, feature, detail, onUpgraded }) {
   );
 }
 const navIcon = { dashboard: Icon.grid, prep: Icon.brain, writestudio: Icon.pen, essays: Icon.pen, flashcards: Icon.layers, notes: Icon.file, calendar: Icon.cal, friends: Icon.users, lectures: Icon.mic, solve: Icon.zap, grammar: Icon.check, humanizer: Icon.scan, feedback: Icon.heart, settings: Icon.settings, profile: Icon.user };
-async function generateFlashcardsFromText(content, context, count = 10) {
+async function generateFlashcardsFromText(content, context, count = 10, focus) {
   try {
     const countInstruction = count === "auto" ? "Create as many flashcards as needed to cover the key concepts in this " + context + " \u2014 typically 5 to 30. Don't pad with filler or skip real content just to hit a number." : "Create " + count + " flashcards from this " + context + ".";
-    const prompt = countInstruction + ` Base every card on real academic content only -- concepts, definitions, facts, processes. If the material also contains course-administrative or policy information (grading breakdowns, exam schedule/count, attendance rules, syllabus logistics), ignore that entirely; it's never something to be tested on. Format as a JSON array where each object has a "q" key (question) and "a" key (answer). Return only the JSON array, no other text. Material:
+    const focusInstruction = focus ? " This deck should specifically target these topics the student has gotten wrong before: " + focus + ". Weight the cards toward those topics without ignoring the rest of the material entirely." : "";
+    const prompt = countInstruction + focusInstruction + ` Base every card on real academic content only -- concepts, definitions, facts, processes. If the material also contains course-administrative or policy information (grading breakdowns, exam schedule/count, attendance rules, syllabus logistics), ignore that entirely; it's never something to be tested on. Format as a JSON array where each object has a "q" key (question) and "a" key (answer). Return only the JSON array, no other text. Material:
 
 ` + content.slice(0, MATERIAL_TEXT_CAP);
     const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt }], model: "standard", format: "json" }) });
@@ -4802,6 +4856,16 @@ function wrongTopicsFor(questions, answers) {
   });
   return topics;
 }
+function latestWrongTopicsForExam(examId) {
+  if (!examId) return [];
+  const practiceExams = lsGet("practiceExams", []).filter((pe) => pe.examEventId === examId);
+  const lastAttempt = practiceExams.reduce((latest, pe) => {
+    const a = pe.attempts && pe.attempts.length ? pe.attempts[pe.attempts.length - 1] : null;
+    if (!a) return latest;
+    return !latest || a.at > latest.at ? a : latest;
+  }, null);
+  return lastAttempt && lastAttempt.wrongTopics && lastAttempt.wrongTopics.length > 0 ? lastAttempt.wrongTopics : [];
+}
 const PRO_QUIZ_GEN_LIMIT = 60;
 const getQuizGenUsage = makeMonthlyUsage("quizGens");
 function canGenQuiz() {
@@ -4813,6 +4877,9 @@ function recordQuizGen() {
   const u = getQuizGenUsage();
   lsSet("quizGens", { month: u.month, count: u.count + 1 });
   chargeAiSpend("quizGen");
+}
+function canGenQuizReason() {
+  return aiGateBlockReason(getQuizGenUsage(), PRO_QUIZ_GEN_LIMIT);
 }
 const MATERIAL_TEXT_CAP = 5e4;
 function finalizeExtractedText(raw) {
@@ -5104,7 +5171,7 @@ function StudlinPrep({ setActive = () => {
   const generatePreview = async () => {
     if (!buildPlanExam) return;
     if (!canBuildExamPlan()) {
-      setUpgradeModal({ feature: "AI study plans", detail: "AI study plans are a Pro feature. Upgrade to use them." });
+      setUpgradeModal({ feature: "AI study plans", detail: canBuildExamPlanReason() === "free-tier" ? "AI study plans are a Pro feature. Upgrade to use them." : AI_USAGE_CAP_MESSAGE });
       return;
     }
     setBuildPlanStep("generating");
@@ -5176,7 +5243,7 @@ function StudlinPrep({ setActive = () => {
   const commitBuildPlan = async () => {
     if (!buildPlanExam || !buildPlanPreview) return;
     if (!canBuildExamPlan()) {
-      setUpgradeModal({ feature: "AI study plans", detail: "AI study plans are a Pro feature. Upgrade to use them." });
+      setUpgradeModal({ feature: "AI study plans", detail: canBuildExamPlanReason() === "free-tier" ? "AI study plans are a Pro feature. Upgrade to use them." : AI_USAGE_CAP_MESSAGE });
       return;
     }
     setBuildPlanLoading(true);
@@ -5267,7 +5334,7 @@ function StudlinPrep({ setActive = () => {
   const patchExam = (examId, patch) => {
     const all = lsGet("events", []);
     lsSet("events", all.map((e) => e.id === examId ? { ...e, ...patch } : e));
-    if (["priority", "difficulty", "examWeight", "importanceLevel"].some((k) => k in patch)) restampSessionPriorities(examId);
+    if (["priority", "difficulty", "examWeight", "importanceLevel", "gradeWeightPercent"].some((k) => k in patch)) restampSessionPriorities(examId);
     refresh();
   };
   const BUCKET_VALS = { low: 200, medium: 500, high: 800 };
@@ -5315,12 +5382,13 @@ function StudlinPrep({ setActive = () => {
   const doGenDeckForExam = async () => {
     if (!materialText.trim() || !selectedExam) return;
     if (!canGenFlashcards()) {
-      setUpgradeModal({ feature: "AI flashcard generations", detail: "AI flashcard generations are a Pro feature. Upgrade to use them." });
+      setUpgradeModal({ feature: "AI flashcard generations", detail: canGenFlashcardsReason() === "free-tier" ? "AI flashcard generations are a Pro feature. Upgrade to use them." : AI_USAGE_CAP_MESSAGE });
       return;
     }
     setGenLoading("cards");
     setGenMsg("");
-    const cards = await generateFlashcardsFromText(materialText, selectedExam.subject || "this exam", scaledFlashcardCount(materialText.length));
+    const weakTopics = latestWrongTopicsForExam(selectedExam.id);
+    const cards = await generateFlashcardsFromText(materialText, selectedExam.subject || "this exam", scaledFlashcardCount(materialText.length), weakTopics.length > 0 ? weakTopics.join(", ") : void 0);
     setGenLoading(null);
     if (cards.length === 0) {
       setGenMsg("Couldn't generate cards. Try again.");
@@ -5336,7 +5404,7 @@ function StudlinPrep({ setActive = () => {
   const doGenPracticeExamForExam = async () => {
     if (!materialText.trim() || !selectedExam) return;
     if (!canGenQuiz()) {
-      setUpgradeModal({ feature: "AI practice exams", detail: "AI practice exams are a Pro feature. Upgrade to use them." });
+      setUpgradeModal({ feature: "AI practice exams", detail: canGenQuizReason() === "free-tier" ? "AI practice exams are a Pro feature. Upgrade to use them." : AI_USAGE_CAP_MESSAGE });
       return;
     }
     setGenLoading("quiz");
@@ -5531,7 +5599,7 @@ function StudlinPrep({ setActive = () => {
   const generateFollowUpPracticeExam = async () => {
     if (!takingQuiz || !takingQuiz.done || !takingQuiz.wrongTopics || takingQuiz.wrongTopics.length === 0) return;
     if (!canGenQuiz()) {
-      setUpgradeModal({ feature: "AI practice exams", detail: "AI practice exams are a Pro feature. Upgrade to use them." });
+      setUpgradeModal({ feature: "AI practice exams", detail: canGenQuizReason() === "free-tier" ? "AI practice exams are a Pro feature. Upgrade to use them." : AI_USAGE_CAP_MESSAGE });
       return;
     }
     setFollowUpLoading(true);
@@ -5846,7 +5914,7 @@ function StudlinPrep({ setActive = () => {
       const genericPending = examSessions.filter((s) => !s.deckId && !s.practiceExamId && s.status !== "done");
       if (genericPending.length === 0) return;
       if (!canAddSessionFocus()) {
-        setUpgradeModal({ feature: "AI study focus", detail: "AI study focus is a Pro feature. Upgrade to use it." });
+        setUpgradeModal({ feature: "AI study focus", detail: canAddSessionFocusReason() === "free-tier" ? "AI study focus is a Pro feature. Upgrade to use it." : AI_USAGE_CAP_MESSAGE });
         return;
       }
       setSessionScheduleLoading(true);
@@ -6512,7 +6580,7 @@ function Flashcards({ setActive = () => {
         return;
       }
       if (!canGenFlashcards()) {
-        setUpgradeModal({ feature: "AI flashcard generations", detail: "AI flashcard generations are a Pro feature. Upgrade to use them." });
+        setUpgradeModal({ feature: "AI flashcard generations", detail: canGenFlashcardsReason() === "free-tier" ? "AI flashcard generations are a Pro feature. Upgrade to use them." : AI_USAGE_CAP_MESSAGE });
         return;
       }
       const combined = fileTexts.map((f) => "--- " + f.name + " ---\n" + f.text).join("\n\n");
@@ -6528,7 +6596,7 @@ function Flashcards({ setActive = () => {
         return;
       }
       if (!canGenFlashcards()) {
-        setUpgradeModal({ feature: "AI flashcard generations", detail: "AI flashcard generations are a Pro feature. Upgrade to use them." });
+        setUpgradeModal({ feature: "AI flashcard generations", detail: canGenFlashcardsReason() === "free-tier" ? "AI flashcard generations are a Pro feature. Upgrade to use them." : AI_USAGE_CAP_MESSAGE });
         return;
       }
       cards = await aiGenCards("Lecture transcription:\n\n" + recText, "lecture transcription", cardCount);
@@ -7028,7 +7096,7 @@ function Notes({ setActive = () => {
     const plain = (tmp.textContent || tmp.innerText || "").trim();
     if (!plain) return;
     if (!canScanSyllabus()) {
-      setUpgradeModal({ feature: "deadline scans", detail: proOnlyNote("deadline scans", "upgrade to keep scanning notes for dates") });
+      setUpgradeModal({ feature: "deadline scans", detail: canScanSyllabusReason() === "free-tier" ? proOnlyNote("deadline scans", "upgrade to keep scanning notes for dates") : AI_USAGE_CAP_MESSAGE });
       return;
     }
     setScanningDates(true);
@@ -7155,8 +7223,9 @@ function Notes({ setActive = () => {
       if (!title) title = viaSyllabusScan ? tag + " Syllabus" : "Scanned notes";
       if (fileImage) {
         if (!canScanScreenshot()) {
-          body = "<p>Screenshot uploaded, but screenshot imports are a Pro feature.</p>";
-          setUpgradeModal({ feature: "screenshot imports", detail: proOnlyNote("screenshot imports") });
+          const screenshotReason = canScanScreenshotReason();
+          body = screenshotReason === "free-tier" ? "<p>Screenshot uploaded, but screenshot imports are a Pro feature.</p>" : "<p>Screenshot uploaded, but you've hit this month's AI usage limit.</p>";
+          setUpgradeModal({ feature: "screenshot imports", detail: screenshotReason === "free-tier" ? proOnlyNote("screenshot imports") : AI_USAGE_CAP_MESSAGE });
         } else {
           setAiLoading(true);
           const result = await extractSyllabusDeadlinesFromImage(fileImage.base64, fileImage.mediaType);
@@ -7179,7 +7248,7 @@ function Notes({ setActive = () => {
         await detectDates(fileText);
       } else {
         body = "<p>" + fileText.trim().replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/\n/g, "<br>") + "</p>";
-        setUpgradeModal({ feature: "AI note scans", detail: proOnlyNote("AI note scans", "this file was saved as plain text, not AI-summarized") });
+        setUpgradeModal({ feature: "AI note scans", detail: canScanNoteReason() === "free-tier" ? proOnlyNote("AI note scans", "this file was saved as plain text, not AI-summarized") : AI_USAGE_CAP_MESSAGE });
       }
     }
     const newNote = { id: String(Date.now()), title, body, tag, date: (/* @__PURE__ */ new Date()).toLocaleDateString("en-US", { month: "short", day: "numeric" }), createdAt: Date.now() };
@@ -7289,7 +7358,7 @@ function Notes({ setActive = () => {
       return;
     }
     if (!canGenFlashcards()) {
-      setUpgradeModal({ feature: "AI flashcard generations", detail: proOnlyNote("AI flashcard generations", "you can still build cards manually anytime") });
+      setUpgradeModal({ feature: "AI flashcard generations", detail: canGenFlashcardsReason() === "free-tier" ? proOnlyNote("AI flashcard generations", "you can still build cards manually anytime") : AI_USAGE_CAP_MESSAGE });
       return;
     }
     setPanelLoading("cards");
@@ -7318,7 +7387,7 @@ function Notes({ setActive = () => {
       return;
     }
     if (!canGenQuiz()) {
-      setUpgradeModal({ feature: "AI practice quizzes", detail: proOnlyNote("AI practice quizzes") });
+      setUpgradeModal({ feature: "AI practice quizzes", detail: canGenQuizReason() === "free-tier" ? proOnlyNote("AI practice quizzes") : AI_USAGE_CAP_MESSAGE });
       return;
     }
     setPanelLoading("quiz");
@@ -7348,7 +7417,7 @@ function Notes({ setActive = () => {
       return;
     }
     if (!canScanNote()) {
-      setUpgradeModal({ feature: "AI note summaries", detail: proOnlyNote("AI note summaries") });
+      setUpgradeModal({ feature: "AI note summaries", detail: canScanNoteReason() === "free-tier" ? proOnlyNote("AI note summaries") : AI_USAGE_CAP_MESSAGE });
       return;
     }
     setPanelLoading("summary");
@@ -8274,10 +8343,10 @@ function weekPrepLoad(dateKey, examEvent, events, prefs) {
     return Math.max(0, end - start);
   };
   const totalCapacity = weekDates.reduce((sum, dk) => sum + capacityPerDay(dk), 0);
-  const loadEvents = events.filter((e) => weekSet.has(e.date) && e.status === "pending" && e.duration && e.kind === "study block" && e.dueEventId !== examEvent.id);
+  const loadEvents = events.filter((e) => weekSet.has(e.date) && e.status === "pending" && e.duration && (e.kind === "study block" || e.kind === "assignment") && e.dueEventId !== examEvent.id);
   const usedMins = loadEvents.reduce((sum, e) => sum + (e.duration || 0), 0);
   const ratio = totalCapacity > 0 ? usedMins / totalCapacity : 1;
-  const competing = events.filter((e) => weekSet.has(e.date) && e.status === "pending" && e.id !== examEvent.id && !e.isExamPrepSession && (e.kind === "exam" || e.kind === "deadline")).sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : (b.priority || 0) - (a.priority || 0))[0];
+  const competing = events.filter((e) => weekSet.has(e.date) && e.status === "pending" && e.id !== examEvent.id && !e.isExamPrepSession && (e.kind === "exam" || e.kind === "deadline" || e.kind === "assignment")).sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : (b.priority || 0) - (a.priority || 0))[0];
   return { isPressured: ratio >= 0.65, ratio, competingTitle: competing ? competing.title : null };
 }
 function pressuredExamItems(items, events, prefs) {
@@ -10861,7 +10930,7 @@ function PhasesOutlineEditor({ item, onChange, subject, onGateBlocked = () => {
 } }) {
   const suggestPhases = async () => {
     if (!canBreakDownProject()) {
-      onGateBlocked();
+      onGateBlocked(canBreakDownProjectReason());
       return;
     }
     onChange({ phasesLoading: true });
@@ -10871,7 +10940,7 @@ function PhasesOutlineEditor({ item, onChange, subject, onGateBlocked = () => {
   };
   const suggestOutline = async () => {
     if (!canBreakDownProject()) {
-      onGateBlocked();
+      onGateBlocked(canBreakDownProjectReason());
       return;
     }
     onChange({ outlineLoading: true });
@@ -11095,12 +11164,12 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     const ext = file.name.split(".").pop().toLowerCase();
     if (IMAGE_EXT_MEDIA_TYPES[ext]) {
       if (!canScanScreenshot()) {
-        setPricingOpen("screenshotScan");
+        setPricingOpen(canScanScreenshotReason() === "free-tier" ? "screenshotScan" : "aiUsageCap");
         return;
       }
     } else {
       if (!canScanSyllabus()) {
-        setPricingOpen("syllabusScan");
+        setPricingOpen(canScanSyllabusReason() === "free-tier" ? "syllabusScan" : "aiUsageCap");
         return;
       }
     }
@@ -11165,7 +11234,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
   const handlePasteScan = async () => {
     if (!pasteText.trim()) return;
     if (!canScanSyllabus()) {
-      setPricingOpen("syllabusScan");
+      setPricingOpen(canScanSyllabusReason() === "free-tier" ? "syllabusScan" : "aiUsageCap");
       return;
     }
     setScanning(true);
@@ -11217,12 +11286,12 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     const ext = file.name.split(".").pop().toLowerCase();
     if (IMAGE_EXT_MEDIA_TYPES[ext]) {
       if (!canScanScreenshot()) {
-        setPricingOpen("screenshotScan");
+        setPricingOpen(canScanScreenshotReason() === "free-tier" ? "screenshotScan" : "aiUsageCap");
         return;
       }
     } else {
       if (!canScanSyllabus()) {
-        setPricingOpen("syllabusScan");
+        setPricingOpen(canScanSyllabusReason() === "free-tier" ? "syllabusScan" : "aiUsageCap");
         return;
       }
     }
@@ -11287,7 +11356,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
   const handleCollegeSchedulePaste = async () => {
     if (!pasteText.trim()) return;
     if (!canScanSyllabus()) {
-      setPricingOpen("syllabusScan");
+      setPricingOpen(canScanSyllabusReason() === "free-tier" ? "syllabusScan" : "aiUsageCap");
       return;
     }
     setScanning(true);
@@ -11326,12 +11395,12 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     const ext = file.name.split(".").pop().toLowerCase();
     if (IMAGE_EXT_MEDIA_TYPES[ext]) {
       if (!canScanScreenshot()) {
-        setPricingOpen("screenshotScan");
+        setPricingOpen(canScanScreenshotReason() === "free-tier" ? "screenshotScan" : "aiUsageCap");
         return;
       }
     } else {
       if (!canScanSyllabus()) {
-        setPricingOpen("syllabusScan");
+        setPricingOpen(canScanSyllabusReason() === "free-tier" ? "syllabusScan" : "aiUsageCap");
         return;
       }
     }
@@ -11408,7 +11477,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
   const handleHsPasteScan = async () => {
     if (!hsPasteText.trim()) return;
     if (!canScanSyllabus()) {
-      setPricingOpen("syllabusScan");
+      setPricingOpen(canScanSyllabusReason() === "free-tier" ? "syllabusScan" : "aiUsageCap");
       return;
     }
     setScanning(true);
@@ -12634,9 +12703,9 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
       reoptimizeAttackChain(chainIdForReschedule);
       commit(lsGet("events", []));
     } }, "Re-optimize schedule")),
-    requiresProjectDetail && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 8 } }, "Marked as a Project \u2014 use the Detail field below to describe it, and Studlin will suggest phases and a checklist."), /* @__PURE__ */ React.createElement(PhasesOutlineEditor, { item: { ...projectPlan, title, detail: notes }, onChange: (patch) => setProjectPlan((p) => ({ ...p, ...patch })), subject, onGateBlocked: () => setPricingOpen("projectBreakdown") })),
+    requiresProjectDetail && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 8 } }, "Marked as a Project \u2014 use the Detail field below to describe it, and Studlin will suggest phases and a checklist."), /* @__PURE__ */ React.createElement(PhasesOutlineEditor, { item: { ...projectPlan, title, detail: notes }, onChange: (patch) => setProjectPlan((p) => ({ ...p, ...patch })), subject, onGateBlocked: (reason) => setPricingOpen(reason === "free-tier" ? "projectBreakdown" : "aiUsageCap") })),
     isProject2 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, ev.sharedProjectId ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted } }, "Shared with collaborators \u2014 they'll see your progress once they accept.") : /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: openCollabPicker }, "+ Add collaborators")),
-    canAddAttackBlock && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "12px 14px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setAddAttackBlock((a) => !a), style: { display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text } }, "Start an Attack Block for this"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, "A short probe session, scheduled the moment you save. Studlin figures out the rest.")), /* @__PURE__ */ React.createElement("div", { style: { width: 36, height: 20, borderRadius: 10, background: addAttackBlock ? T.lime : T.faint, position: "relative", transition: "background 0.2s", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 16, height: 16, borderRadius: "50%", background: "#fff", position: "absolute", top: 2, left: addAttackBlock ? 18 : 2, transition: "left 0.2s" } }))), /* @__PURE__ */ React.createElement(AttackBlockExplainer, null), addAttackBlock && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement(Field, { label: "Probe session length" }, /* @__PURE__ */ React.createElement(NumField, { min: 15, max: 60, fallback: ATTACK_BLOCK_DEFAULT_PROBE_MINS, value: attackProbeMins, onChange: setAttackProbeMins }))), isPhaseCandidate && /* @__PURE__ */ React.createElement(PhasesOutlineEditor, { item: { ...projectPlan, title, detail: notes }, onChange: (patch) => setProjectPlan((p) => ({ ...p, ...patch })), subject, onGateBlocked: () => setPricingOpen("projectBreakdown") })))),
+    canAddAttackBlock && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "12px 14px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setAddAttackBlock((a) => !a), style: { display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text } }, "Start an Attack Block for this"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, "A short probe session, scheduled the moment you save. Studlin figures out the rest.")), /* @__PURE__ */ React.createElement("div", { style: { width: 36, height: 20, borderRadius: 10, background: addAttackBlock ? T.lime : T.faint, position: "relative", transition: "background 0.2s", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 16, height: 16, borderRadius: "50%", background: "#fff", position: "absolute", top: 2, left: addAttackBlock ? 18 : 2, transition: "left 0.2s" } }))), /* @__PURE__ */ React.createElement(AttackBlockExplainer, null), addAttackBlock && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement(Field, { label: "Probe session length" }, /* @__PURE__ */ React.createElement(NumField, { min: 15, max: 60, fallback: ATTACK_BLOCK_DEFAULT_PROBE_MINS, value: attackProbeMins, onChange: setAttackProbeMins }))), isPhaseCandidate && /* @__PURE__ */ React.createElement(PhasesOutlineEditor, { item: { ...projectPlan, title, detail: notes }, onChange: (patch) => setProjectPlan((p) => ({ ...p, ...patch })), subject, onGateBlocked: (reason) => setPricingOpen(reason === "free-tier" ? "projectBreakdown" : "aiUsageCap") })))),
     kind === "exam" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "Study material (optional)", hint: "Upload files, paste notes, or drop a link \u2014 you can always add more later in Studlin Prep." }, /* @__PURE__ */ React.createElement(MaterialEditor, { item: examPlan, onChange: (patch) => setExamPlan((m) => ({ ...m, ...patch })), label: title.trim() || "Untitled exam", idPrefix: "edittask-" + ev.id })), linkedSessions.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { background: T.lime + "0A", border: `1px solid ${T.lime}33`, borderRadius: 8, padding: "12px 14px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setExamPlan((m) => ({ ...m, proposeSessions: !m.proposeSessions })), style: { display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "flex-start" } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.lime, flexShrink: 0, marginTop: 1 } }, Icon.zap), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text } }, "Have Studlin make your study plan"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, "Spaced study sessions counting down to the exam date, added the moment you save."))), /* @__PURE__ */ React.createElement("div", { style: { width: 36, height: 20, borderRadius: 10, background: examPlan.proposeSessions ? T.lime : T.faint, position: "relative", transition: "background 0.2s", cursor: "pointer", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 16, height: 16, borderRadius: "50%", background: "#fff", position: "absolute", top: 2, left: examPlan.proposeSessions ? 18 : 2, transition: "left 0.2s" } }))), examPlan.proposeSessions && (() => {
       const dates = date ? computeReviewDates(date, dayKey(), examPlan.sessionCount || 4) : [];
       return /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.muted, marginBottom: 6 } }, "How confident are you on this material?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 12 } }, ["shaky", "okay", "solid"].map((level) => /* @__PURE__ */ React.createElement(
@@ -13543,7 +13612,7 @@ function CalendarTab({ setActive = () => {
   const deleteRoutineGroup = (ids) => persistRoutines(routines.filter((r) => !ids.includes(r.id)));
   const skipOneOccurrence = (ev) => {
     if (!canUseSmartReschedule()) {
-      setPricingOpen("smartReschedule");
+      setPricingOpen(canUseSmartRescheduleReason() === "free-tier" ? "smartReschedule" : "aiUsageCap");
       return;
     }
     setPauseError("");
@@ -14215,7 +14284,7 @@ function CalendarTab({ setActive = () => {
   const submitBrainDump = async () => {
     if (!brainDumpText.trim() || brainDumpLoading) return;
     if (!canUseBrainDump()) {
-      setPricingOpen("brainDump");
+      setPricingOpen(canUseBrainDumpReason() === "free-tier" ? "brainDump" : "aiUsageCap");
       return;
     }
     if (bdListening) stopBdRec();
@@ -14330,7 +14399,7 @@ function CalendarTab({ setActive = () => {
     if ((evKind === "assignment" || evKind === "project") && evAttackBlock) {
       const isProject2 = evKind === "project";
       if (isProject2 && !canBreakDownProject()) {
-        setPricingOpen("projectBreakdown");
+        setPricingOpen(canBreakDownProjectReason() === "free-tier" ? "projectBreakdown" : "aiUsageCap");
         return;
       }
       const subj = evSubject === "None" ? "" : evSubject === "Other" && evCustom.trim() ? evCustom.trim() : evSubject;
@@ -14438,7 +14507,7 @@ function CalendarTab({ setActive = () => {
   const aiArrange = async () => {
     if (!evTitle.trim()) return;
     if (!canUseAiArrange()) {
-      setPricingOpen("aiArrange");
+      setPricingOpen(canUseAiArrangeReason() === "free-tier" ? "aiArrange" : "aiUsageCap");
       return;
     }
     if (evKind === "exam" || evKind === "class" || evKind === "busy block") return;
@@ -14664,7 +14733,7 @@ function CalendarTab({ setActive = () => {
   const submitPauseCommand = async () => {
     if (!pauseText.trim() || pauseLoading) return;
     if (!canUseSmartReschedule()) {
-      setPricingOpen("smartReschedule");
+      setPricingOpen(canUseSmartRescheduleReason() === "free-tier" ? "smartReschedule" : "aiUsageCap");
       return;
     }
     setPauseLoading(true);
@@ -14704,7 +14773,7 @@ Examples:
     if (!pausePreview) return;
     if (!canUseSmartReschedule()) {
       setPauseOpen(false);
-      setPricingOpen("smartReschedule");
+      setPricingOpen(canUseSmartRescheduleReason() === "free-tier" ? "smartReschedule" : "aiUsageCap");
       return;
     }
     const all = lsGet("events", []);
@@ -15131,7 +15200,7 @@ Examples:
     { icon: Icon.refresh, label: "Reschedule", sub: "Push back, clear, or balance your week", onClick: () => {
       setToolsMenuOpen(false);
       if (!canUseSmartReschedule()) {
-        setPricingOpen("smartReschedule");
+        setPricingOpen(canUseSmartRescheduleReason() === "free-tier" ? "smartReschedule" : "aiUsageCap");
         return;
       }
       setPauseOpen(true);
@@ -15526,7 +15595,7 @@ Examples:
     isProjectKind && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "Describe what you want to do", hint: "A sentence or two is enough \u2014 Studlin uses this to suggest phases and a checklist." }, /* @__PURE__ */ React.createElement(Textarea, { placeholder: "e.g. Build a working demo, write a report, present to the class by the deadline.", value: evNotes, onChange: (ev) => {
       setEvNotes(ev.target.value);
       if (evDetailErr) setEvDetailErr("");
-    } })), evDetailErr && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: -8, marginBottom: 14 } }, evDetailErr), /* @__PURE__ */ React.createElement(PhasesOutlineEditor, { item: { ...evProjectPlan, title: evTitle, detail: evNotes }, onChange: (patch) => setEvProjectPlan((p) => ({ ...p, ...patch })), subject: evSubject === "Other" ? evCustom : evSubject, onGateBlocked: () => setPricingOpen("projectBreakdown") }), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, evCollabSelected.length > 0 ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" } }, evCollabSelected.map((uid) => {
+    } })), evDetailErr && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: -8, marginBottom: 14 } }, evDetailErr), /* @__PURE__ */ React.createElement(PhasesOutlineEditor, { item: { ...evProjectPlan, title: evTitle, detail: evNotes }, onChange: (patch) => setEvProjectPlan((p) => ({ ...p, ...patch })), subject: evSubject === "Other" ? evCustom : evSubject, onGateBlocked: (reason) => setPricingOpen(reason === "free-tier" ? "projectBreakdown" : "aiUsageCap") }), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, evCollabSelected.length > 0 ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" } }, evCollabSelected.map((uid) => {
       const name = (evCollabCandidates.find((c) => c.uid === uid) || {}).name || "Studlin User";
       return /* @__PURE__ */ React.createElement("span", { key: uid, style: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 600, color: T.text, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 99, padding: "4px 10px" } }, name, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => toggleEvCollabSelected(uid), style: { background: "none", border: "none", color: T.muted, cursor: "pointer", padding: 0, fontSize: 13, lineHeight: 1 } }, "\xD7"));
     }), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: openEvCollabPicker }, "+ Add more")) : /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: openEvCollabPicker }, "+ Add collaborators"))),
@@ -15759,7 +15828,11 @@ Examples:
       openWeekBalance();
     } }, "Balance my week (spread out an overloaded week)"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => applyPausePreset({ intent: "shift", days: 1 }) }, "Push everything back 1 day"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => applyPausePreset({ intent: "shift", days: 3 }) }, "Push everything back 3 days"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => applyPausePreset({ intent: "clear_day", date: dayKey() }) }, "Clear today"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => applyPausePreset({ intent: "clear_week" }) }, "Clear this week"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => applyPausePreset({ intent: "skip_class", date: dayKey() }) }, "Not going to class today, use that time"))),
     pausePreview && pausePreview.disambiguate && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, pausePreview.disambiguate.map((ev) => /* @__PURE__ */ React.createElement(Btn, { key: ev.id, variant: "subtle", onClick: () => pickDisambiguatedEvent(ev.id), style: { justifyContent: "space-between", width: "100%" } }, /* @__PURE__ */ React.createElement("span", null, ev.title), /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, fontSize: 12 } }, ev.date, " ", ev.time)))),
-    pausePreview && !pausePreview.disambiguate && /* @__PURE__ */ React.createElement(React.Fragment, null, pausePreview.moved.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 7, marginBottom: pausePreview.couldntMove.length ? 18 : 0, maxHeight: 220, overflowY: "auto" } }, pausePreview.moved.map((m) => /* @__PURE__ */ React.createElement("div", { key: m.id, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: T.card2, borderRadius: 8, border: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: 13, color: T.text, fontWeight: 500 } }, m.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, flexShrink: 0 } }, m.oldDate === dayKey() ? "Today" : dayOfWeekLabel(m.oldDate).slice(0, 3), " ", fmtClock12(m.oldTime), " \u2192 ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, m.newDate === dayKey() ? "Today" : dayOfWeekLabel(m.newDate).slice(0, 3), " ", fmtClock12(m.newTime)))))), pausePreview.couldntMove.length > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 700, color: T.red, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Couldn't reschedule, deadline conflict (", pausePreview.couldntMove.length, ")"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 7, maxHeight: 160, overflowY: "auto" } }, pausePreview.couldntMove.map((m) => /* @__PURE__ */ React.createElement("div", { key: m.id, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: T.red + "0d", borderRadius: 8, border: `1px solid ${T.red}33` } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: 13, color: T.text, fontWeight: 500 } }, m.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.red, flexShrink: 0 } }, "Deadline ", m.deadline))))), pausePreview.moved.length === 0 && pausePreview.couldntMove.length === 0 && !pausePreview.noMatch && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted } }, pausePreview.skipRoutine ? "Class skipped. Nothing needed to move into the freed time." : "Nothing to reschedule."))
+    pausePreview && !pausePreview.disambiguate && /* @__PURE__ */ React.createElement(React.Fragment, null, pausePreview.moved.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 7, marginBottom: pausePreview.couldntMove.length ? 18 : 0, maxHeight: 220, overflowY: "auto" } }, pausePreview.moved.map((m) => /* @__PURE__ */ React.createElement("div", { key: m.id, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: T.card2, borderRadius: 8, border: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: 13, color: T.text, fontWeight: 500 } }, m.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, flexShrink: 0 } }, m.oldDate === dayKey() ? "Today" : dayOfWeekLabel(m.oldDate).slice(0, 3), " ", fmtClock12(m.oldTime), " \u2192 ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, m.newDate === dayKey() ? "Today" : dayOfWeekLabel(m.newDate).slice(0, 3), " ", fmtClock12(m.newTime)))))), pausePreview.couldntMove.length > 0 && (() => {
+      const examWarnings = pausePreview.couldntMove.filter((m) => m.examWarning);
+      const generic = pausePreview.couldntMove.filter((m) => !m.examWarning);
+      return /* @__PURE__ */ React.createElement(React.Fragment, null, examWarnings.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: generic.length ? 18 : 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 700, color: T.amber, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Exam prep couldn't be rescheduled"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 7 } }, examWarnings.map((m) => /* @__PURE__ */ React.createElement("div", { key: m.id, style: { padding: "9px 12px", background: T.amber + "14", borderRadius: 8, border: `1px solid ${T.amber}44` } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, fontWeight: 500 } }, m.examWarning.examTitle, "'s remaining prep couldn't be rescheduled, it's ", m.examWarning.daysUntilExam <= 0 ? "today" : "in " + m.examWarning.daysUntilExam + " day" + (m.examWarning.daysUntilExam === 1 ? "" : "s"), "."))))), generic.length > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 700, color: T.red, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Couldn't reschedule, deadline conflict (", generic.length, ")"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 7, maxHeight: 160, overflowY: "auto" } }, generic.map((m) => /* @__PURE__ */ React.createElement("div", { key: m.id, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: T.red + "0d", borderRadius: 8, border: `1px solid ${T.red}33` } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: 13, color: T.text, fontWeight: 500 } }, m.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.red, flexShrink: 0 } }, "Deadline ", m.deadline))))));
+    })(), pausePreview.moved.length === 0 && pausePreview.couldntMove.length === 0 && !pausePreview.noMatch && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted } }, pausePreview.skipRoutine ? "Class skipped. Nothing needed to move into the freed time." : "Nothing to reschedule."))
   ), /* @__PURE__ */ React.createElement(
     Modal,
     {
@@ -16389,7 +16462,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     e.target.value = "";
     if (!canScanScreenshot()) {
       setWorkScanOpen(false);
-      setPricingOpen("screenshotScan");
+      setPricingOpen(canScanScreenshotReason() === "free-tier" ? "screenshotScan" : "aiUsageCap");
       return;
     }
     const ext = file.name.split(".").pop().toLowerCase();
@@ -16904,7 +16977,7 @@ function Dashboard({ setActive, seriousMode = false, rescheduleTask, setReschedu
   const toggleChecklistItem = (id) => {
     const all = lsGet("events", []);
     const target = all.find((ev) => ev.id === id);
-    if (target && target.status !== "done" && target.time) logCompletionOutcome("done", target.time, difficultyTierOf(target));
+    if (target && target.status !== "done" && target.time) logCompletionOutcome("done", target.time, difficultyTierOf(target), target.id);
     const next = all.map((ev) => ev.id === id ? { ...ev, status: ev.status === "done" ? "pending" : "done", completedAt: ev.status === "done" ? null : Date.now() } : ev);
     lsSet("events", next);
     forcePlan((x) => x + 1);
@@ -17453,7 +17526,7 @@ function App() {
     const target = all.find((ev) => ev.id === taskId);
     if (!target) return;
     if (!target.timeSpent) logSession(mins, "Task: " + target.title);
-    if (evTime) logCompletionOutcome("done", evTime, difficultyTierOf(target));
+    if (evTime) logCompletionOutcome("done", evTime, difficultyTierOf(target), taskId);
     const next = all.map((ev) => ev.id === taskId ? { ...ev, status: "done", timeSpent: mins, completedAt: Date.now() } : ev);
     setEvents(next);
     lsSet("events", next);
@@ -17508,7 +17581,7 @@ function App() {
   const acceptPrepPrompt = (item) => {
     const isProject2 = item.phases && item.phases.length > 0;
     if (isProject2 && !canBreakDownProject()) {
-      setPricingOpen("projectBreakdown");
+      setPricingOpen(canBreakDownProjectReason() === "free-tier" ? "projectBreakdown" : "aiUsageCap");
       return;
     }
     const events = lsGet("events", []);
@@ -17878,7 +17951,14 @@ function App() {
     projectBreakdown: "AI project breakdowns are a Pro feature.",
     aiArrange: "AI scheduling is a Pro feature.",
     syllabusScan: "Syllabus & schedule scans are a Pro feature.",
-    screenshotScan: "Screenshot imports are a Pro feature."
+    screenshotScan: "Screenshot imports are a Pro feature.",
+    // 2026-08-22 intelligence audit fix: every reason above assumed the
+    // student wasn't Pro yet -- wrong copy for an already-Pro student who
+    // simply used a lot of a feature this month (the shared AI-spend
+    // ceiling or that feature's own monthly cap). Call sites pick this key
+    // instead of the feature-specific one above once the block reason
+    // isn't "free-tier" (see canXxxReason() next to each gate).
+    aiUsageCap: AI_USAGE_CAP_MESSAGE
   };
   const [rescheduleTask, setRescheduleTask] = useState(null);
   const [dashToast, setDashToast] = useState("");
@@ -18530,7 +18610,9 @@ function App() {
       onComplete: (mins) => {
         const alreadyClaimed = !!(lsGet("events", []).find((ev) => ev.id === timerTask.id) || {}).timeSpent;
         if (!alreadyClaimed) logSession(mins, "Task: " + timerTask.title);
-        if (timerTask.time) logCompletionOutcome("done", timerTask.time, difficultyTierOf(timerTask), timerTask.id);
+        const actualStart = new Date(Date.now() - mins * 6e4);
+        const actualStartTime = String(actualStart.getHours()).padStart(2, "0") + ":" + String(actualStart.getMinutes()).padStart(2, "0");
+        if (timerTask.time) logCompletionOutcome("done", actualStartTime, difficultyTierOf(timerTask), timerTask.id);
         const next = lsGet("events", []).map((ev) => ev.id === timerTask.id ? { ...ev, status: "done", timeSpent: mins, completedAt: Date.now() } : ev);
         lsSet("events", next);
         if (timerTask.kind === "study block" && !timerTask.routineId) setExamCheckIn(timerTask);
