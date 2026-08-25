@@ -6813,6 +6813,54 @@ function addTaskWithRebalance(task){
   return next;
 }
 
+// Pending group-proposal calendar blocks (Schedule with Friends / Find
+// Shared Study Window) carry chatRoomId+chatMessageId back to the chat
+// message that's the real source of truth for who's accepted (see
+// ChatDrawer's confirmStudyTime comment). This re-reads that message and
+// refreshes the event's own cached proposalMemberUids/proposalResponses --
+// deliberately fetch-on-demand, not a live Firestore listener: this app
+// doesn't hold persistent onSnapshot listeners open for calendar data
+// anywhere else (fetch-on-mount/fetch-on-action is the existing pattern,
+// e.g. pullGoogleCalendarIfConnected above), and acceptance changes are
+// rare and low-urgency enough that "current as of the last time you opened
+// the tab or this block" is an honest, simple tradeoff, not a shortcut --
+// see CLAUDE.md's "avoid overengineering." Called once on CalendarTab mount
+// for every pending block, and again for a single block when its popover
+// opens (see WeeklyPlanner/DayPlanner).
+// Skips any event whose cached state already shows allAccepted -- once
+// every invited member has accepted, computeAcceptanceSummary flips to
+// allAccepted:true and the block just renders as a fully normal event from
+// then on (no dim, no badge -- see the rendering in WeeklyPlanner/
+// DayPlanner). There's nothing left to learn about a settled proposal, so
+// it's never re-fetched again, instead of paying for that request forever.
+// ids (optional): restrict the refresh to specific event ids (a single
+// block's popover opening); omitted, it refreshes every still-pending
+// proposal on the calendar (CalendarTab's mount effect).
+// Returns the updated events array (and persists it), or null if nothing
+// needed refreshing / nothing actually changed -- callers should only call
+// setEvents when they get a real array back.
+async function refreshPendingAcceptance(events,ids){
+  const targets=(events||[]).filter(ev=>ev.chatRoomId&&ev.chatMessageId&&ev.proposalMemberUids
+    &&!computeAcceptanceSummary(ev.proposalMemberUids,ev.proposalResponses).allAccepted
+    &&(!ids||ids.includes(ev.id)));
+  if(targets.length===0)return null;
+  const fetched=await Promise.all(targets.map(ev=>
+    fsdb().collection('chatRooms').doc(ev.chatRoomId).collection('messages').doc(ev.chatMessageId).get()
+      .then(doc=>doc.exists?{id:ev.id,memberUids:doc.data().memberUids||ev.proposalMemberUids,responses:doc.data().responses||{}}:null)
+      .catch(()=>null)
+  ));
+  let changed=false;
+  const next=events.map(ev=>{
+    const u=fetched.find(x=>x&&x.id===ev.id);
+    if(!u)return ev;
+    changed=true;
+    return {...ev,proposalMemberUids:u.memberUids,proposalResponses:u.responses};
+  });
+  if(!changed)return null;
+  lsSet("events",next);
+  return next;
+}
+
 // Feature 3: Task priority scoring (0-1000 scale with exponential deadline urgency)
 function calculateTaskPriority(task,allTasks){
   let score=0;
@@ -14192,6 +14240,23 @@ function checkManualStudyTime(date,time,duration){
     timeLabel:fmt(time),
   };
 }
+// Pure summary of where a group-proposal calendar block stands, given the
+// same memberUids/responses shape the chat message itself carries (see
+// respondToShare's calendar branch, scheduleGroupSession, postGroupSchedule
+// -- all three read/write this exact shape). Pulled out as its own function
+// so both the calendar block's dim/badge rendering and its popover's
+// "who's in" list read from one place instead of three slightly-different
+// inline reimplementations, and so it's independently testable -- see
+// tests/schedule-with-friends.test.js.
+function computeAcceptanceSummary(memberUids,responses){
+  const uids=memberUids||[];
+  const r=responses||{};
+  const total=uids.length;
+  const accepted=uids.filter(uid=>r[uid]==="accepted").length;
+  const declined=uids.filter(uid=>r[uid]==="declined").length;
+  const pending=total-accepted-declined;
+  return {total,accepted,declined,pending,allAccepted:total>0&&accepted===total};
+}
 // Ranks up to 3 shared-availability options for myUid + otherUids, best day
 // first (see scoring below). Lifted out of ChatDrawer (2026-08-21) -- it
 // used to read isGroup/target/myUid straight from that component's closure,
@@ -14403,13 +14468,27 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
   // is the one whose own browser this runs in. Shared by both the
   // proposer's immediate commit (scheduleGroupSession) and a responder's
   // Accept (see respondToShare's calendar branch).
-  const confirmStudyTime=(w,mode,studySessionId)=>{
+  // proposal (optional) carries {roomId, messageId, memberUids, memberNames,
+  // responses} -- the FK back into the negotiation (chatRoomId/chatMessageId)
+  // plus a cached read-model of who's invited/responded, so the calendar
+  // block can render dimmed-with-a-badge and a "who's in" list without a
+  // live Firestore listener (see CalendarTab's refreshPendingAcceptance,
+  // which is the one place this cache actually gets refreshed). Applies to
+  // BOTH "busy block" and "study block" modes uniformly -- a plain meetup
+  // used to get no trackable reference at all once written to the local
+  // calendar, unlike a study block's studySessionId.
+  const confirmStudyTime=(w,mode,studySessionId,proposal)=>{
     addTaskWithRebalance({
       id:"netsync-"+Date.now(),date:w.date,time:w.time,duration:w.duration,
       title:mode==="study block"?peerName+" study session":"Meet up with "+peerName,
       subject:peerName,kind:mode,notes:"",
       priority:5,difficulty:5,deadline:null,status:"pending",timeSpent:0,completedAt:null,
       ...(studySessionId?{studySessionId}:{}),
+      ...(proposal?{
+        chatRoomId:proposal.roomId,chatMessageId:proposal.messageId,
+        proposalMemberUids:proposal.memberUids,proposalMemberNames:proposal.memberNames,
+        proposalResponses:proposal.responses,
+      }:{}),
     });
   };
   // Proposes a time — no longer finalizes it for everyone unilaterally.
@@ -14452,7 +14531,7 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
       }).catch(()=>null);
       studySessionId=doc&&doc.id;
     }
-    confirmStudyTime(w,mode,studySessionId);
+    confirmStudyTime(w,mode,studySessionId,{roomId,messageId:id,memberUids,memberNames,responses:{[myUid]:"accepted"}});
     fsdb().collection('chatRooms').doc(roomId).collection('messages').doc(id).update({
       status:"proposed",proposedBy:myUid,scheduledOption:optionIndex,scheduledMode:mode,
       memberUids,studySessionId:studySessionId||null,
@@ -14483,14 +14562,19 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
     // not just mine.
     if(msg.kind==="calendar"){
       if(!myUid)return;
+      // Computed up-front (not just inside the accepted branch below) since
+      // confirmStudyTime's proposal snapshot needs both memberUids and
+      // memberNames -- same fallback shape scheduleGroupSession already uses
+      // for a message sent before memberUids/memberNames existed on it.
+      const memberUids=msg.memberUids||(isGroup?target.group.memberUids:[myUid,target.user.uid].sort());
+      const memberNames=isGroup?(target.group.memberNames||{}):{[myUid]:getUserName()||"You",[target.user.uid]:target.user.n};
       if(decision==="accepted"){
         const w=(msg.meta.options||[msg.meta])[msg.scheduledOption||0];
-        if(w)confirmStudyTime(w,msg.scheduledMode||"busy block",msg.studySessionId);
+        if(w)confirmStudyTime(w,msg.scheduledMode||"busy block",msg.studySessionId,{roomId,messageId:id,memberUids,memberNames,responses:{...(msg.responses||{}),[myUid]:"accepted"}});
         if(msg.studySessionId){
           fsdb().collection('studySessions').doc(msg.studySessionId).update({["participants."+myUid+".state"]:"accepted"}).catch(()=>{});
         }
       }
-      const memberUids=msg.memberUids||(isGroup?target.group.memberUids:[myUid,target.user.uid].sort());
       const nextResponses={...(msg.responses||{}),[myUid]:decision};
       const allAccepted=memberUids.length>0&&memberUids.every(uid=>nextResponses[uid]==="accepted");
       const nextStatus=decision==="declined"?"declined":(allAccepted?"confirmed":"proposed");
@@ -15817,6 +15901,38 @@ function computeEventBlockHeightPx(durationMins, gapToNextMins, pxPerHr) {
   return Math.min(floored, Math.max(4, gapToNextMins * (pxPerHr / 60)));
 }
 
+// "Who's in" list for a pending group-proposal calendar block -- reused by
+// both WeeklyPlanner's existing block popover and DayPlanner's own minimal
+// one (see DayPlanner's whoInAnchor). Reuses the same Av-plus-name row
+// pattern as ChatDrawer's group-settings member list (see its own Members
+// section) rather than inventing a new roster look. memberUids drives the
+// row order/membership (the invite list never shrinks), memberNames and
+// responses are cached snapshots refreshed by refreshPendingAcceptance --
+// a uid missing from responses just reads as "Pending," which is exactly
+// what "hasn't answered yet" should look like.
+function AcceptanceRoster({memberUids, memberNames, responses}) {
+  const uids = memberUids || [];
+  const names = memberNames || {};
+  const r = responses || {};
+  const statusLabel = {accepted:"Accepted", declined:"Declined"};
+  const statusColor = {accepted:T.lime, declined:T.red};
+  return (
+    <div style={{display:"flex", flexDirection:"column", gap:8}}>
+      {uids.map(uid=>{
+        const name = names[uid] || "Studlin User";
+        const status = r[uid] || "pending";
+        return (
+          <div key={uid} style={{display:"flex", alignItems:"center", gap:9}}>
+            <Av initials={name.split(" ").map(x=>x[0]).join("")} color={T.lime} size={24} picUrl="" />
+            <div style={{fontSize:12, fontWeight:600, color:T.text, flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{name}</div>
+            <div style={{fontSize:10.5, fontWeight:700, color:statusColor[status]||T.muted, flexShrink:0}}>{statusLabel[status]||"Pending"}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent, selectedRoutineKey, onSelectRoutineOccurrence, blockRefs, flipOldRectsRef, flipSeq, newItemHighlightIds, gsBusyByDate, gsRecommended}) {
   // "Watch it happen" FLIP playback (see CalendarTab's captureFlip) --
   // flipSeq changing means flipOldRectsRef.current now holds a snapshot
@@ -16485,6 +16601,17 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                       : {background:subjectColor+"1E",color:subjectColor};
                   const dimmedByRoutineMode = editRoutineMode && !isRoutine;
                   const highlightedByRoutineMode = editRoutineMode && isRoutine;
+                  // Schedule with Friends / Find Shared Study Window: a
+                  // proposal only reaches full opacity once every invited
+                  // member has accepted (see respondToShare's own
+                  // allAccepted check -- computeAcceptanceSummary mirrors
+                  // that same logic here so the two never drift apart).
+                  // proposalMemberUids only exists on an event that actually
+                  // came from a proposal (see confirmStudyTime); a plain
+                  // manually-created event never has it, so this is a no-op
+                  // for every other block on the grid.
+                  const acceptanceSummary = ev.proposalMemberUids ? computeAcceptanceSummary(ev.proposalMemberUids, ev.proposalResponses) : null;
+                  const isPendingAcceptance = !!acceptanceSummary && !acceptanceSummary.allAccepted;
                   const isSelected = !isRoutine && selectedEventId === ev.id;
                   const isRoutineSelected = isRoutine && selectedRoutineKey === (ev.routineId+"|"+ev.date);
                   // "Just added/imported" marker (see CalendarTab's own
@@ -16538,7 +16665,15 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                         e.stopPropagation();
                         if(onSelectRoutineOccurrence)onSelectRoutineOccurrence(null);
                         if(selectedEventId===ev.id){closePopover();}
-                        else{setSelectedEventId(ev.id);setPopoverAnchor({id:ev.id,rect:e.currentTarget.getBoundingClientRect()});if(onSelectEvent)onSelectEvent(ev.id);}
+                        else{
+                          setSelectedEventId(ev.id);setPopoverAnchor({id:ev.id,rect:e.currentTarget.getBoundingClientRect()});if(onSelectEvent)onSelectEvent(ev.id);
+                          // Opening the popover is one of the two refresh
+                          // points for a pending proposal's live acceptance
+                          // state (the other is CalendarTab's mount effect)
+                          // -- see refreshPendingAcceptance's own comment
+                          // for why this is fetch-on-open, not a listener.
+                          if(isPendingAcceptance)refreshPendingAcceptance(events,[ev.id]).then(next=>{ if(next)setEvents(next); });
+                        }
                       }}
                       onMouseEnter={()=>{ if(isRoutine&&setHoveredRoutineId)setHoveredRoutineId(ev.routineId); }}
                       onMouseLeave={()=>{ if(isRoutine&&setHoveredRoutineId)setHoveredRoutineId(null); }}
@@ -16552,7 +16687,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                       // that's no longer rendered here doesn't leave a
                       // stale/detached node in the map.
                       ref={el=>{ if(el)blockRefs.current.set(ev.id,el); else blockRefs.current.delete(ev.id); }}
-                      style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:5,padding:"2px 5px 2px 8px",cursor:"grab",overflow:"hidden",zIndex:3,opacity:dimmedByRoutineMode?0.3:(isDone?0.6:1),boxSizing:"border-box",userSelect:"none",...kindStyle,...(highlightedByRoutineMode?{outline:`2px solid ${T.lime}`,outlineOffset:1}:{}),...(newItemBoxShadow?{boxShadow:newItemBoxShadow}:{}),...((isSelected||isRoutineSelected)?{outline:`2px solid ${T.lime}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.lime}22`}:{}),...(!isRoutine&&highlightedSessionId===ev.id?{outline:`2px solid ${T.amber}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.amber}33`}:{})}}>
+                      style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:5,padding:"2px 5px 2px 8px",cursor:"grab",overflow:"hidden",zIndex:3,opacity:dimmedByRoutineMode?0.3:(isPendingAcceptance||isDone?0.6:1),boxSizing:"border-box",userSelect:"none",...kindStyle,...(highlightedByRoutineMode?{outline:`2px solid ${T.lime}`,outlineOffset:1}:{}),...(newItemBoxShadow?{boxShadow:newItemBoxShadow}:{}),...((isSelected||isRoutineSelected)?{outline:`2px solid ${T.lime}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.lime}22`}:{}),...(!isRoutine&&highlightedSessionId===ev.id?{outline:`2px solid ${T.amber}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.amber}33`}:{})}}>
                       {/* Subject marker -- see comment above kindStyle */}
                       <div style={{position:"absolute",left:0,top:0,bottom:0,width:3,background:subjectColor,borderRadius:"5px 0 0 5px"}} />
                       {/* Suppressed while a Catch Me Up rebuild is pending -- the
@@ -16560,6 +16695,14 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                           behind" now, not a per-item red dot competing with it. */}
                       {!catchUpPending&&over>0&&<span title={over+"d overdue"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:"0 0 0 1.5px rgba(255,255,255,0.9)",zIndex:1}} />}
                       {overflowCount>0&&<span title={overflowCount+" more at this time — open the day to see them"} style={{position:"absolute",bottom:2,right:2,fontSize:8,fontWeight:800,color:kindStyle.color,background:"rgba(0,0,0,0.18)",borderRadius:8,padding:"1px 4px",lineHeight:1.3,zIndex:1}}>+{overflowCount}</span>}
+                      {/* Acceptance-progress badge -- same corner-pill style
+                          as the overflow "+N" badge above (bottom-left
+                          instead of bottom-right so the two never collide
+                          when both apply to the same block). Disappears the
+                          moment allAccepted flips true on a refresh -- see
+                          isPendingAcceptance above -- with nothing else to
+                          clean up, the block is already rendering normally. */}
+                      {isPendingAcceptance&&<span title={acceptanceSummary.accepted+"/"+acceptanceSummary.total+" accepted"} style={{position:"absolute",bottom:2,left:2,fontSize:8,fontWeight:800,color:kindStyle.color,background:"rgba(0,0,0,0.18)",borderRadius:8,padding:"1px 4px",lineHeight:1.3,zIndex:1}}>{acceptanceSummary.accepted}/{acceptanceSummary.total}</span>}
                       {conflictTitles.length>0&&<span title={"Overlaps with "+conflictTitles.join(", ")} style={{position:"absolute",top:2,left:2,fontSize:9,lineHeight:1,zIndex:1,filter:"drop-shadow(0 1px 1px rgba(0,0,0,0.35))"}}>⚠️</span>}
                       <div style={{fontSize:9.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isExam?"EXAM · ":""}{ev.title}</div>
                       {heightPx > 34 && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isWarningKind?tokens.color.warning:tokens.color.textSecondary,marginTop:1}}>{fmtTimeRange(String(Math.floor(effStartMin/60)).padStart(2,"0")+":"+String(effStartMin%60).padStart(2,"0"),effDuration)}</div>}
@@ -16634,15 +16777,28 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
       {popoverAnchor && (()=>{
         const ev = events.find(e=>e.id===popoverAnchor.id);
         if(!ev) return null;
+        // "Who's in" -- see confirmStudyTime/computeAcceptanceSummary.
+        // Gated on !allAccepted, same as the block's own dim/badge: once
+        // everyone's accepted there's nothing left to show here, this
+        // section just stops appearing (no separate "confirmed" UI state).
+        const pendingSummary = ev.proposalMemberUids ? computeAcceptanceSummary(ev.proposalMemberUids, ev.proposalResponses) : null;
+        const showRoster = !!pendingSummary && !pendingSummary.allAccepted;
         const rect = popoverAnchor.rect;
-        const top = Math.min(rect.bottom+6, window.innerHeight-180);
-        const left = Math.min(Math.max(8,rect.left), window.innerWidth-216);
+        const popoverWidth = showRoster ? 240 : 208;
+        const top = Math.min(rect.bottom+6, window.innerHeight-(showRoster?340:180));
+        const left = Math.min(Math.max(8,rect.left), window.innerWidth-(popoverWidth+8));
         const itemStyle = {display:"block",width:"100%",textAlign:"left",padding:"9px 14px",background:"none",border:"none",cursor:"pointer",fontSize:12.5,fontWeight:500,fontFamily:T.font,color:T.text};
         return ReactDOM.createPortal((
           <>
             <div onClick={closePopover} style={{position:"fixed",inset:0,zIndex:998}} />
-            <div style={{position:"fixed",top,left,width:208,background:T.card,border:`1px solid ${T.border}`,borderRadius:6,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:999,overflow:"hidden",animation:"studlinPop 0.15s cubic-bezier(.2,.85,.3,1)"}}>
+            <div style={{position:"fixed",top,left,width:popoverWidth,background:T.card,border:`1px solid ${T.border}`,borderRadius:6,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:999,overflow:"hidden",animation:"studlinPop 0.15s cubic-bezier(.2,.85,.3,1)"}}>
               <div style={{padding:"9px 14px",borderBottom:`1px solid ${T.border}`,fontSize:12.5,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.title}</div>
+              {showRoster&&(
+                <div style={{padding:"10px 14px",borderBottom:`1px solid ${T.border}`}}>
+                  <div style={{fontSize:10,fontWeight:800,letterSpacing:"0.06em",color:T.muted,marginBottom:8,textTransform:"uppercase"}}>Who's in · {pendingSummary.accepted}/{pendingSummary.total}</div>
+                  <AcceptanceRoster memberUids={ev.proposalMemberUids} memberNames={ev.proposalMemberNames} responses={ev.proposalResponses} />
+                </div>
+              )}
               {/* Phase 10a: same window._setTimerTask/isTimerEligible bridge
                   the day-detail popover's Begin button already uses --
                   no new timer plumbing, just adding this button to the one
@@ -18584,9 +18740,17 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
 // illegibility on a packed day and clamp to a narrow window on a light
 // one). The container just scrolls, same as any normal calendar, landing
 // near the current time or the first real event on open.
-function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending, openNew, newItemHighlightIds}) {
+function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending, openNew, newItemHighlightIds}) {
   const scrollRef=useRef(null);
   const [dayPreviewOpen,setDayPreviewOpen]=useState(false);
+  // Minimal "who's in" popover for a pending group-proposal block -- Day
+  // view never had a click-for-actions menu the way Week view does (a
+  // plain click here toggles done instead), so rather than bolting a full
+  // Begin/Complete/Edit/Delete menu on just for this, a pending block's
+  // click opens this read-only roster instead of toggling done (toggling
+  // done on something nobody's confirmed yet wasn't a meaningful action
+  // anyway). Every other block's click behavior is untouched.
+  const [whoInAnchor,setWhoInAnchor]=useState(null); // {id,rect}|null -- id, not the event object itself, so a refresh (see refreshPendingAcceptance below) that lands while this is open is picked up live off dayEvents instead of showing a stale captured snapshot.
   const stepDay=(n)=>{const d=new Date(selDay+"T12:00:00");d.setDate(d.getDate()+n);setSelDay(dayKey(d));};
   const niceDayLabel=(()=>{const p=selDay.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});})();
   const visibleEvs=(dayEvents||[]).filter(ev=>ev.kind!=="free period"&&ev.time);
@@ -18691,6 +18855,10 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, 
               const heightPx=computeEventBlockHeightPx(dur,nextInCol?nextInCol.start-start:null,pxPerHr);
               const isDone=ev.status==="done";
               const over=daysOverdue(ev);
+              // Same acceptance dim/badge as WeeklyPlanner -- see its own
+              // comment for why proposalMemberUids is the presence check.
+              const acceptanceSummary=ev.proposalMemberUids?computeAcceptanceSummary(ev.proposalMemberUids,ev.proposalResponses):null;
+              const isPendingAcceptance=!!acceptanceSummary&&!acceptanceSummary.allAccepted;
               // Subject color always wins now -- see the matching comment in
               // WeeklyPlanner. Overdue is a small red dot, not a full recolor.
               const color=ev.color||colorOf(ev.courseId||ev.subject);
@@ -18724,11 +18892,22 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, 
                   </div>
                 )}
                 <div onDoubleClick={()=>openEdit(ev)}
-                  onClick={()=>{if(ev.isRoutine)return;isDone?uncrossDone(ev.id):markDone(ev.id);}}
-                  title={(isNewlyAdded?"Just added · ":"")+(ev.isRoutine?"Double-click to edit":"Click to toggle done, double-click to edit")}
-                  style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:6,padding:"4px 8px",cursor:"pointer",overflow:"hidden",zIndex:3,opacity:isDone?0.6:1,boxSizing:"border-box",...kindStyle,...(newItemBoxShadow?{boxShadow:newItemBoxShadow}:{})}}>
+                  onClick={(e)=>{
+                    if(ev.isRoutine)return;
+                    if(isPendingAcceptance){
+                      setWhoInAnchor({id:ev.id,rect:e.currentTarget.getBoundingClientRect()});
+                      // Refresh point #2 (see refreshPendingAcceptance's own
+                      // comment) -- CalendarTab's mount effect is #1.
+                      refreshPendingAcceptance(lsGet("events",[]),[ev.id]).then(next=>{ if(next&&setEvents)setEvents(next); });
+                      return;
+                    }
+                    isDone?uncrossDone(ev.id):markDone(ev.id);
+                  }}
+                  title={(isNewlyAdded?"Just added · ":"")+(ev.isRoutine?"Double-click to edit":isPendingAcceptance?"Click to see who's accepted":"Click to toggle done, double-click to edit")}
+                  style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:6,padding:"4px 8px",cursor:"pointer",overflow:"hidden",zIndex:3,opacity:(isPendingAcceptance||isDone)?0.6:1,boxSizing:"border-box",...kindStyle,...(newItemBoxShadow?{boxShadow:newItemBoxShadow}:{})}}>
                   {!catchUpPending&&over>0&&<span title={over+"d overdue"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:`0 0 0 1.5px ${isExam?T.ink:"#fff"}`,zIndex:1}} />}
                   {overflowCount>0&&<span title={overflowCount+" more at this time"} style={{position:"absolute",bottom:2,right:2,fontSize:8,fontWeight:800,color:kindStyle.color,background:"rgba(0,0,0,0.18)",borderRadius:8,padding:"1px 4px",lineHeight:1.3,zIndex:1}}>+{overflowCount}</span>}
+                  {isPendingAcceptance&&<span title={acceptanceSummary.accepted+"/"+acceptanceSummary.total+" accepted"} style={{position:"absolute",bottom:2,left:2,fontSize:8,fontWeight:800,color:kindStyle.color,background:"rgba(0,0,0,0.18)",borderRadius:8,padding:"1px 4px",lineHeight:1.3,zIndex:1}}>{acceptanceSummary.accepted}/{acceptanceSummary.total}</span>}
                   {conflictTitles.length>0&&<span title={"Overlaps with "+conflictTitles.join(", ")} style={{position:"absolute",top:2,left:2,fontSize:9,lineHeight:1,zIndex:1,filter:"drop-shadow(0 1px 1px rgba(0,0,0,0.35))"}}>⚠️</span>}
                   <div style={{fontSize:11.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textDecoration:isDone?"line-through":"none"}}>{isExam?"EXAM · ":""}{ev.title}</div>
                   {heightPx>34&&<div style={{fontSize:9.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:2}}>{fmtTimeRange(ev.time,dur)}</div>}
@@ -18748,6 +18927,33 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, 
       </div>
     </Card>
     <DayPreviewModal open={dayPreviewOpen} onClose={()=>setDayPreviewOpen(false)} dayEvents={dayEvents} selDay={selDay} dayLabel={niceDayLabel} colorOf={colorOf} fmtTime={fmtTime} fmtTimeRange={fmtTimeRange} catchUpPending={catchUpPending} openNew={openNew} />
+    {/* Minimal "who's in" popover -- see whoInAnchor's own comment above for
+        why this exists separately from WeeklyPlanner's fuller popover
+        instead of reusing it directly (Day view has no click-for-actions
+        menu to attach a section to). Same portaled-to-body treatment as
+        every other popover in this file, for the same containing-block
+        reason. */}
+    {whoInAnchor && (()=>{
+      const ev=(dayEvents||[]).find(e=>e.id===whoInAnchor.id);
+      if(!ev)return null;
+      const summary=ev.proposalMemberUids?computeAcceptanceSummary(ev.proposalMemberUids,ev.proposalResponses):null;
+      if(!summary)return null;
+      const rect=whoInAnchor.rect;
+      const top=Math.min(rect.bottom+6,window.innerHeight-260);
+      const left=Math.min(Math.max(8,rect.left),window.innerWidth-248);
+      return ReactDOM.createPortal((
+        <>
+          <div onClick={()=>setWhoInAnchor(null)} style={{position:"fixed",inset:0,zIndex:998}} />
+          <div style={{position:"fixed",top,left,width:232,background:T.card,border:`1px solid ${T.border}`,borderRadius:6,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:999,overflow:"hidden",animation:"studlinPop 0.15s cubic-bezier(.2,.85,.3,1)"}}>
+            <div style={{padding:"9px 14px",borderBottom:`1px solid ${T.border}`,fontSize:12.5,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.title}</div>
+            <div style={{padding:"10px 14px"}}>
+              <div style={{fontSize:10,fontWeight:800,letterSpacing:"0.06em",color:T.muted,marginBottom:8,textTransform:"uppercase"}}>Who's in · {summary.accepted}/{summary.total}</div>
+              <AcceptanceRoster memberUids={ev.proposalMemberUids} memberNames={ev.proposalMemberNames} responses={ev.proposalResponses} />
+            </div>
+          </div>
+        </>
+      ), document.body);
+    })()}
     </>
   );
 }
@@ -21031,6 +21237,17 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     if(registerSetEvents)registerSetEvents(setEvents);
     return ()=>{if(registerSetEvents)registerSetEvents(null);};
   },[]);
+  // Refresh once on mount for every still-pending group-proposal block (see
+  // refreshPendingAcceptance's own comment for why this is fetch-on-mount,
+  // not a live listener) -- reads straight from localStorage rather than
+  // the `events` state above so it always sees whatever's actually current
+  // on disk, not a stale closure from this render. A single block's
+  // popover opening refreshes just that one event too (see WeeklyPlanner/
+  // DayPlanner) so acceptance mid-visit still shows up without waiting for
+  // a full tab remount.
+  useEffect(()=>{
+    refreshPendingAcceptance(lsGet("events",[])).then(next=>{ if(next)setEvents(next); });
+  },[]);
 
   const now=new Date();
   const [ym,setYm]=useState({y:now.getFullYear(),m:now.getMonth()});
@@ -21930,12 +22147,16 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       studySessionId=doc&&doc.id;
     }
     const roomRef=fsdb().collection('chatRooms').doc(gsRoomId);
-    await roomRef.collection('messages').add({
+    // Captured (not just fire-and-forgotten like everything else here) so
+    // the calendar event below can carry chatMessageId -- its FK back into
+    // this exact proposal's live accept/decline state (see ChatDrawer's
+    // confirmStudyTime comment for why this needs to exist for both modes).
+    const msgDoc=await roomRef.collection('messages').add({
       senderId:myUid,ts:now,kind:"calendar",status:"proposed",proposedBy:myUid,
       meta:{options:[option]},scheduledOption:0,scheduledMode:gsDraft.mode,
       memberUids:gsMemberUids,studySessionId:studySessionId||null,
       responses:{[myUid]:"accepted"},
-    }).catch(()=>{});
+    }).catch(()=>null);
     await roomRef.update({lastMessage:{text:null,kind:"calendar",ts:now,senderId:myUid},updatedAt:nowIso}).catch(()=>{});
     authFetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"push",roomId:gsRoomId,preview:"Shared free time found"})}).catch(()=>{});
     // Commits onto MY OWN calendar only -- there's no backend that can push
@@ -21947,6 +22168,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       subject:"",kind:gsDraft.mode,notes:"",
       priority:5,difficulty:5,deadline:null,status:"pending",timeSpent:0,completedAt:null,
       ...(studySessionId?{studySessionId}:{}),
+      ...(msgDoc?{
+        chatRoomId:gsRoomId,chatMessageId:msgDoc.id,
+        proposalMemberUids:gsMemberUids,proposalMemberNames:gsMemberNames,
+        proposalResponses:{[myUid]:"accepted"},
+      }:{}),
     });
     setGsSending(false);
     closeGroupSchedule();
@@ -23757,7 +23983,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           gsBusyByDate={gsOpen&&gsStep==="place"?gsBusyByDate:null} gsRecommended={gsOpen&&gsStep==="place"?gsRecommended:null} />
       )}
       {calView==="daily"&&(
-        <DayPlanner dayEvents={dayEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} fmtTimeRange={fmtTimeRange} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} catchUpPending={catchUpPending} openNew={openNew} newItemHighlightIds={newItemHighlightSet} />
+        <DayPlanner dayEvents={dayEvents} setEvents={setEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} fmtTimeRange={fmtTimeRange} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} catchUpPending={catchUpPending} openNew={openNew} newItemHighlightIds={newItemHighlightSet} />
       )}
     </div>
       {/* Right-hand column (Phase 5e) -- upcoming across everything by
