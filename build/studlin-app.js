@@ -2470,9 +2470,15 @@ async function extractClassSyllabusText(text) {
     const prompt = "This is a class syllabus or schedule (it may include other content too, ignore anything irrelevant). Today's date is " + dayKey() + ". If a deadline date has no year, infer the most likely upcoming year given today's date. Extract the class's name, its recurring weekly meeting time(s), and every deadline/due date/exam date mentioned. " + CLASS_SYLLABUS_JSON_CONTRACT + "\n\n" + text.slice(0, 3e4);
     const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt }], model: "standard", format: "json" }) });
     const data = await res.json();
-    if (!res.ok) return { subject: null, meetingTimes: [], deadlines: [], error: data.error || "Couldn't read that file. Try again." };
+    if (!res.ok) return { subject: null, meetingTimes: [], deadlines: [], error: data.error || "Couldn't read that text. Try again." };
     const raw = (data.reply || "").replace(/```json?\n?/gi, "").replace(/```/g, "").trim();
-    const parsed = JSON.parse(raw);
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (parseErr) {
+      console.warn("extractClassSyllabusText: reply was not valid JSON", parseErr.message, raw.slice(0, 500));
+      return { subject: null, meetingTimes: [], deadlines: [], error: "Couldn't understand what came back. Try again, or paste a shorter section of the syllabus." };
+    }
     return {
       subject: parsed && parsed.subject && parsed.subject.name ? parsed.subject : null,
       meetingTimes: parsed && Array.isArray(parsed.meetingTimes) ? parsed.meetingTimes : [],
@@ -2480,7 +2486,8 @@ async function extractClassSyllabusText(text) {
       error: null
     };
   } catch (e) {
-    return { subject: null, meetingTimes: [], deadlines: [], error: "Couldn't read that file. Try again." };
+    console.warn("extractClassSyllabusText: unexpected failure", e.message);
+    return { subject: null, meetingTimes: [], deadlines: [], error: "Couldn't read that text. Try again." };
   }
 }
 async function extractClassSyllabusImage(base64Data, mediaType) {
@@ -2510,7 +2517,13 @@ async function extractCollegeScheduleText(text) {
     const data = await res.json();
     if (!res.ok) return { classes: [], error: data.error || "Couldn't read that. Try again." };
     const raw = (data.reply || "").replace(/```json?\n?/gi, "").replace(/```/g, "").trim();
-    const parsed = JSON.parse(raw);
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (parseErr) {
+      console.warn("extractCollegeScheduleText: reply was not valid JSON", parseErr.message, raw.slice(0, 500));
+      return { classes: [], error: "Couldn't understand what came back. Try again, or paste a shorter section of your schedule." };
+    }
     const classes = parsed && Array.isArray(parsed.classes) ? parsed.classes.filter((c) => c && c.subject && c.subject.name).map((c) => ({
       subject: c.subject,
       meetingTimes: Array.isArray(c.meetingTimes) ? c.meetingTimes : [],
@@ -2518,6 +2531,7 @@ async function extractCollegeScheduleText(text) {
     })) : [];
     return { classes, error: null };
   } catch (e) {
+    console.warn("extractCollegeScheduleText: unexpected failure", e.message);
     return { classes: [], error: "Couldn't read that. Try again." };
   }
 }
@@ -2563,9 +2577,16 @@ async function extractHsScheduleFromText(text) {
     const data = await res.json();
     if (!res.ok) return { periods: [], error: data.error || "Couldn't read that text. Try again." };
     const raw = (data.reply || "").replace(/```json?\n?/gi, "").replace(/```/g, "").trim();
-    const parsed = JSON.parse(raw);
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (parseErr) {
+      console.warn("extractHsScheduleFromText: reply was not valid JSON", parseErr.message, raw.slice(0, 500));
+      return { periods: [], error: "Couldn't understand what came back. Try again, or paste a shorter section of your schedule." };
+    }
     return { periods: parsed && Array.isArray(parsed.periods) ? parsed.periods : [], error: null };
   } catch (e) {
+    console.warn("extractHsScheduleFromText: unexpected failure", e.message);
     return { periods: [], error: "Couldn't read that text. Try again." };
   }
 }

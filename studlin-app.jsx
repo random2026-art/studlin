@@ -4002,16 +4002,36 @@ async function extractClassSyllabusText(text){
       CLASS_SYLLABUS_JSON_CONTRACT+"\n\n"+text.slice(0,30000);
     const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard",format:"json"})});
     const data=await res.json();
-    if(!res.ok)return{subject:null,meetingTimes:[],deadlines:[],error:data.error||"Couldn't read that file. Try again."};
+    // This is the paste-text path -- no file is ever involved, so the
+    // fallback here must never say "file" (a leftover copy-paste from this
+    // function's file/image sibling). Also surface data.error instead of a
+    // fixed string whenever the server actually sent one (rate limit, low
+    // credits, etc.) -- that's real, specific information a generic
+    // fallback would otherwise throw away.
+    if(!res.ok)return{subject:null,meetingTimes:[],deadlines:[],error:data.error||"Couldn't read that text. Try again."};
     const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
-    const parsed=JSON.parse(raw);
+    let parsed;
+    try{parsed=JSON.parse(raw);}
+    catch(parseErr){
+      // A genuinely distinct failure from a network/API error above -- the
+      // request succeeded but what came back wasn't valid JSON (api/chat.js
+      // already retries this server-side once; this is what a SECOND bad
+      // response looks like, most likely on unusually long or dense pasted
+      // text). Logged so a real occurrence is actually diagnosable instead
+      // of vanishing into a generic "try again" with no trace of why.
+      console.warn("extractClassSyllabusText: reply was not valid JSON",parseErr.message,raw.slice(0,500));
+      return{subject:null,meetingTimes:[],deadlines:[],error:"Couldn't understand what came back. Try again, or paste a shorter section of the syllabus."};
+    }
     return{
       subject:(parsed&&parsed.subject&&parsed.subject.name)?parsed.subject:null,
       meetingTimes:(parsed&&Array.isArray(parsed.meetingTimes))?parsed.meetingTimes:[],
       deadlines:(parsed&&Array.isArray(parsed.deadlines))?parsed.deadlines.filter(d=>looksLikeRealDeadlineTitle(d&&d.title)).map(withDerivedExamImportance):[],
       error:null,
     };
-  }catch(e){return{subject:null,meetingTimes:[],deadlines:[],error:"Couldn't read that file. Try again."};}
+  }catch(e){
+    console.warn("extractClassSyllabusText: unexpected failure",e.message);
+    return{subject:null,meetingTimes:[],deadlines:[],error:"Couldn't read that text. Try again."};
+  }
 }
 async function extractClassSyllabusImage(base64Data,mediaType){
   try{
@@ -4066,14 +4086,26 @@ async function extractCollegeScheduleText(text){
     const data=await res.json();
     if(!res.ok)return{classes:[],error:data.error||"Couldn't read that. Try again."};
     const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
-    const parsed=JSON.parse(raw);
+    let parsed;
+    try{parsed=JSON.parse(raw);}
+    catch(parseErr){
+      // See extractClassSyllabusText's identical comment -- a second bad
+      // response after api/chat.js's own server-side retry, most likely on
+      // an unusually long or messy pasted schedule. Logged so a real
+      // occurrence is diagnosable instead of vanishing into "try again."
+      console.warn("extractCollegeScheduleText: reply was not valid JSON",parseErr.message,raw.slice(0,500));
+      return{classes:[],error:"Couldn't understand what came back. Try again, or paste a shorter section of your schedule."};
+    }
     const classes=(parsed&&Array.isArray(parsed.classes))?parsed.classes.filter(c=>c&&c.subject&&c.subject.name).map(c=>({
       subject:c.subject,
       meetingTimes:Array.isArray(c.meetingTimes)?c.meetingTimes:[],
       deadlines:(Array.isArray(c.deadlines)?c.deadlines:[]).filter(d=>looksLikeRealDeadlineTitle(d&&d.title)).map(withDerivedExamImportance),
     })):[];
     return{classes,error:null};
-  }catch(e){return{classes:[],error:"Couldn't read that. Try again."};}
+  }catch(e){
+    console.warn("extractCollegeScheduleText: unexpected failure",e.message);
+    return{classes:[],error:"Couldn't read that. Try again."};
+  }
 }
 async function extractCollegeScheduleImage(base64Data,mediaType){
   try{
@@ -4140,9 +4172,18 @@ async function extractHsScheduleFromText(text){
     const data=await res.json();
     if(!res.ok)return{periods:[],error:data.error||"Couldn't read that text. Try again."};
     const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
-    const parsed=JSON.parse(raw);
+    let parsed;
+    try{parsed=JSON.parse(raw);}
+    catch(parseErr){
+      // See extractClassSyllabusText's identical comment.
+      console.warn("extractHsScheduleFromText: reply was not valid JSON",parseErr.message,raw.slice(0,500));
+      return{periods:[],error:"Couldn't understand what came back. Try again, or paste a shorter section of your schedule."};
+    }
     return{periods:(parsed&&Array.isArray(parsed.periods))?parsed.periods:[],error:null};
-  }catch(e){return{periods:[],error:"Couldn't read that text. Try again."};}
+  }catch(e){
+    console.warn("extractHsScheduleFromText: unexpected failure",e.message);
+    return{periods:[],error:"Couldn't read that text. Try again."};
+  }
 }
 // Work shift schedule -- deliberately dated shifts, not a recurring weekly
 // pattern like the class scan above: shift schedules from apps like When I
