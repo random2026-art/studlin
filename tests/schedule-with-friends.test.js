@@ -110,3 +110,55 @@ describe("refreshPendingAcceptance", () => {
     assert.equal(result, null);
   });
 });
+
+// Fix 3: Schedule with Friends' calendar-overlay step (openGroupSchedule's
+// people-picker -> confirmGsPeople's own findSharedStudyWindow call) used to
+// keep only ONE of the up to 3 options findSharedStudyWindow already
+// computes and ranks (setGsRecommended(rec.options.find(o=>o.isBest)||
+// rec.options[0]||null)), discarding the rest -- the sibling feature built
+// on this exact same function (ChatDrawer's own "Find Shared Study Window"
+// flow) already renders all of them as a real "Found N windows -- pick one"
+// list. The actual fix keeps a new gsRecommendedOptions array state (see
+// studlin-app.jsx) alongside the existing single gsRecommended "currently
+// highlighted ghost block" state, both React-component-local state that
+// tests/harness.js's fake React stub can't exercise interactively (see its
+// own comment on what it stubs -- useState always reads back undefined).
+// What IS directly testable, and is the fix's real precondition, is that
+// findSharedStudyWindow itself genuinely returns more than one ranked
+// option for a normal (not fully booked) week -- if it only ever returned
+// one, keeping "all of rec.options" would be a no-op fix.
+describe("findSharedStudyWindow (Fix 3: real ranked alternatives, not just the top pick)", () => {
+  test("a free week returns more than one distinct-day option, one per day, with exactly one isBest and it's first", async () => {
+    const { findSharedStudyWindow, lsSet } = loadStudlinModule({});
+    lsSet("events", []);
+    lsSet("weeklyRoutine", []);
+    const rec = await findSharedStudyWindow("me", [], { timeMode: "anytime", lookAheadDayRange: 7, durationInMinutes: 60 });
+    assert.equal(!!rec.noneFound, false);
+    assert.ok(rec.options.length > 1, "a free week must yield real alternatives, not just one candidate -- otherwise Fix 3 has nothing to preserve");
+    assert.ok(rec.options.length <= 3, "capped at 3, same as ChatDrawer's own list");
+    const bestFlags = rec.options.filter(o => o.isBest === true);
+    assert.equal(bestFlags.length, 1, "exactly one option is ever marked isBest");
+    assert.equal(rec.options[0].isBest, true, "the best option leads the list");
+    const dates = new Set(rec.options.map(o => o.date));
+    assert.equal(dates.size, rec.options.length, "one suggestion per day -- never the same day at three slightly different times");
+    // Every option carries the real shape both ChatDrawer's list and the
+    // calendar ghost-block overlay (gsRecommendedEl) read from directly.
+    for (const o of rec.options) {
+      assert.equal(typeof o.date, "string");
+      assert.equal(typeof o.time, "string");
+      assert.equal(o.duration, 60);
+      assert.equal(typeof o.dayLabel, "string");
+      assert.equal(typeof o.timeLabel, "string");
+    }
+  });
+
+  test("options are ranked descending by score -- the list order a 'pick one' UI shows is meaningful, not arbitrary", async () => {
+    const { findSharedStudyWindow, lsSet } = loadStudlinModule({});
+    lsSet("events", []);
+    lsSet("weeklyRoutine", []);
+    const rec = await findSharedStudyWindow("me", [], { timeMode: "anytime", lookAheadDayRange: 7, durationInMinutes: 60 });
+    for (let i = 1; i < rec.options.length; i++) {
+      assert.ok(rec.options[i - 1].score >= rec.options[i].score, "each option scores at least as high as the next");
+    }
+  });
+});
