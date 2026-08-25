@@ -14172,7 +14172,6 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
   const [messages,setMessages]=useState([]);
   const [input,setInput]=useState("");
   const [quickOpen,setQuickOpen]=useState(false);
-  const [notePicker,setNotePicker]=useState(false);
   const [deckPicker,setDeckPicker]=useState(false);
   const [syncRunning,setSyncRunning]=useState(false);
   const [settingsOpen,setSettingsOpen]=useState(false);
@@ -14205,7 +14204,7 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
   // messages subcollection's security rules (which look up its memberUids)
   // resolve for reads/writes.
   useEffect(()=>{
-    setInput("");setQuickOpen(false);setNotePicker(false);setDeckPicker(false);setSyncRunning(false);setSettingsOpen(false);setFindWindowOpen(false);setUnfriendConfirmOpen(false);setFwMode("auto");setFwManualDate("");setFwManualCheck(null);
+    setInput("");setQuickOpen(false);setDeckPicker(false);setSyncRunning(false);setSettingsOpen(false);setFindWindowOpen(false);setUnfriendConfirmOpen(false);setFwMode("auto");setFwManualDate("");setFwManualCheck(null);
     if(!roomId||!myUid){setMessages([]);return;}
     let cancelled=false;
     let unsub=()=>{};
@@ -14437,11 +14436,6 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
   // Comments live in a separate note-comments localStorage map keyed by note
   // id (see Notes' doAddComment) — body alone doesn't carry them, so they're
   // pulled in explicitly here and carried through respondToShare below.
-  const attachNote=(note)=>{
-    const comments=lsGet("note-comments",{})[note.id]||[];
-    sendMessage({kind:"note",status:"pending",meta:{title:note.title,id:note.id,body:note.body,comments}});
-    setNotePicker(false);
-  };
   const attachDeck=(deck)=>{sendMessage({kind:"deck",status:"pending",meta:{name:deck.name,count:deck.cards?deck.cards.length:(deck.count||0),id:deck.id,cards:deck.cards}});setDeckPicker(false);};
 
   const peerName=target?(isGroup?target.group.name:target.user.n):"";
@@ -14497,15 +14491,13 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
     fsdb().collection('chatRooms').doc(roomId).collection('messages').doc(id).update({status:decision}).catch(()=>{});
   };
 
-  // Ask the other person to share a note/deck. There's no way to make them
+  // Ask the other person to share a deck. There's no way to make them
   // actually respond, so this just sends the request text — no fabricated
   // reply. (Faking a message "from" them would be spoofing, and the security
   // rules block a client from writing a message with someone else's senderId
   // anyway.)
-  const requestNote=()=>{setQuickOpen(false);sendMessage({kind:"text",text:"Requested notes from "+peerFirst+"."});};
   const requestDeck=()=>{setQuickOpen(false);sendMessage({kind:"text",text:"Requested a flashcard deck from "+peerFirst+"."});};
 
-  const notesList=lsGet("notes",[]);
   const decksList=lsGet("decks",[]);
   const expiry=isGroup?fmtGroupCountdown(target.group.expiresAt):null;
   const title=peerName;
@@ -14553,20 +14545,6 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
             {messages.map(m=><ChatBubble key={m.id} m={m} myUid={myUid} onRespond={respondToShare} onSchedule={scheduleGroupSession} onCounter={counterProposeTime} />)}
           </div>
 
-          {notePicker&&(
-            <div style={{borderTop:`1px solid ${pp.border}`,padding:"12px 18px",maxHeight:180,overflowY:"auto"}}>
-              <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:pp.faint,marginBottom:8}}>Send a note</div>
-              {notesList.length===0
-                ?<div style={{fontSize:12,color:pp.muted}}>No notes yet.</div>
-                :notesList.slice(0,8).map(n=>(
-                  <div key={n.id} onClick={()=>attachNote(n)} style={{display:"flex",alignItems:"center",gap:9,padding:"8px 9px",borderRadius:8,cursor:"pointer"}}>
-                    <span style={{color:T.amber,flexShrink:0}}>{Icon.file}</span>
-                    <div style={{fontSize:12,color:pp.text,fontWeight:600,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{n.title}</div>
-                  </div>
-                ))
-              }
-            </div>
-          )}
           {deckPicker&&(
             <div style={{borderTop:`1px solid ${pp.border}`,padding:"12px 18px",maxHeight:180,overflowY:"auto"}}>
               <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:pp.faint,marginBottom:8}}>Send a deck</div>
@@ -14592,15 +14570,13 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
           {quickOpen&&(
             <div style={{borderTop:`1px solid ${pp.border}`,padding:"8px",display:"flex",flexDirection:"column",gap:2}}>
               <button onClick={()=>{setQuickOpen(false);setFindWindowOpen(true);}} style={qaBtn}><span style={{color:T.purple,display:"flex"}}>{Icon.cal}</span><span style={{flex:1}}>Find Shared Study Window</span><span style={{fontSize:10.5,color:pp.faint,fontWeight:400}}>Find free time</span></button>
-              <button onClick={()=>{setNotePicker(true);setDeckPicker(false);setQuickOpen(false);}} style={qaBtn}><span style={{color:T.amber,display:"flex"}}>{Icon.file}</span><span style={{flex:1}}>Send Notes</span><span style={{fontSize:10.5,color:pp.faint,fontWeight:400}}>Drop a note link</span></button>
-              <button onClick={()=>{setDeckPicker(true);setNotePicker(false);setQuickOpen(false);}} style={qaBtn}><span style={{color:T.teal,display:"flex"}}>{Icon.layers}</span><span style={{flex:1}}>Send Flashcard Deck</span><span style={{fontSize:10.5,color:pp.faint,fontWeight:400}}>Share a deck</span></button>
-              <button onClick={requestNote} style={qaBtn}><span style={{color:T.amber,display:"flex"}}>{Icon.file}</span><span style={{flex:1}}>Request a Note</span><span style={{fontSize:10.5,color:pp.faint,fontWeight:400}}>Ask {peerFirst||"them"}</span></button>
+              <button onClick={()=>{setDeckPicker(true);setQuickOpen(false);}} style={qaBtn}><span style={{color:T.teal,display:"flex"}}>{Icon.layers}</span><span style={{flex:1}}>Send Flashcard Deck</span><span style={{fontSize:10.5,color:pp.faint,fontWeight:400}}>Share a deck</span></button>
               <button onClick={requestDeck} style={qaBtn}><span style={{color:T.teal,display:"flex"}}>{Icon.layers}</span><span style={{flex:1}}>Request a Deck</span><span style={{fontSize:10.5,color:pp.faint,fontWeight:400}}>Ask {peerFirst||"them"}</span></button>
             </div>
           )}
 
           <div style={{display:"flex",alignItems:"center",gap:8,padding:"12px 16px",borderTop:`1px solid ${pp.border}`}}>
-            <button onClick={()=>{setQuickOpen(q=>!q);setNotePicker(false);setDeckPicker(false);}} style={{width:34,height:34,borderRadius:9,border:`1px solid ${quickOpen?T.lime+"55":pp.border}`,background:quickOpen?T.lime+"20":pp.card2,color:quickOpen?T.lime:pp.muted,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.plus}</button>
+            <button onClick={()=>{setQuickOpen(q=>!q);setDeckPicker(false);}} style={{width:34,height:34,borderRadius:9,border:`1px solid ${quickOpen?T.lime+"55":pp.border}`,background:quickOpen?T.lime+"20":pp.card2,color:quickOpen?T.lime:pp.muted,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.plus}</button>
             <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")sendText();}} placeholder="Message…" style={{flex:1,background:pp.card2,border:`1px solid ${pp.border}`,borderRadius:9,padding:"9px 12px",color:pp.text,fontSize:13,fontFamily:T.font,outline:"none"}} />
             <button onClick={sendText} style={{width:34,height:34,borderRadius:9,border:"none",background:input.trim()?T.lime:pp.card2,color:input.trim()?T.bg:pp.faint,display:"grid",placeItems:"center",cursor:input.trim()?"pointer":"default",flexShrink:0}}>{Icon.send}</button>
           </div>
