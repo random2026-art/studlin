@@ -8998,6 +8998,61 @@ function checkManualStudyTime(date, time, duration) {
     timeLabel: fmt(time)
   };
 }
+async function findSharedStudyWindow(myUid, otherUids, params) {
+  const fmtTimeLabel = (t) => {
+    const p = t.split(":");
+    let h = +p[0];
+    const ap = h >= 12 ? "PM" : "AM";
+    h = h % 12 || 12;
+    return h + ":" + p[1] + " " + ap;
+  };
+  const prefStart = params.timeMode === "custom" ? timeToMinutes(params.timeFrom) : timeToMinutes("08:00");
+  const prefEnd = params.timeMode === "custom" ? timeToMinutes(params.timeTo) : timeToMinutes("22:00");
+  const scanDays = Math.max(1, params.lookAheadDayRange || 1);
+  const duration = params.durationInMinutes;
+  const today = /* @__PURE__ */ new Date();
+  const EVENING_START = 18 * 60;
+  const isFree = (occupied, start, end) => !occupied.some((o) => !(end <= o.s || start >= o.e));
+  const labelFor = (offset, d) => offset === 1 ? "tomorrow" : d.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+  const friendsBusy = await fetchFriendsBusyIntervals(otherUids.filter((u) => u !== myUid));
+  const candidates = [];
+  for (let offset = 1; offset <= scanDays; offset++) {
+    const d = new Date(today);
+    d.setDate(today.getDate() + offset);
+    const dk = dayKey(d);
+    const occupied = getDayOccupiedIntervals(dk).concat(friendsBusy.get(dk) || []);
+    for (let start = prefStart; start + duration <= prefEnd; start += 30) {
+      const end = start + duration;
+      if (!isFree(occupied, start, end)) continue;
+      const before = occupied.filter((o) => o.e <= start).sort((a, b) => b.e - a.e)[0];
+      const after = occupied.filter((o) => o.s >= end).sort((a, b) => a.s - b.s)[0];
+      const gapBefore = before ? start - before.e : null;
+      const gapAfter = after ? after.s - end : null;
+      const fillsDeadTimeGap = gapBefore !== null && gapAfter !== null && gapBefore <= 120 && gapAfter <= 120;
+      let score = 0;
+      score += start < EVENING_START ? 100 : -40;
+      score += fillsDeadTimeGap ? 60 : 0;
+      score -= Math.floor((start - prefStart) / 30);
+      score -= offset * 2;
+      const time = minutesToTime(start);
+      candidates.push({ date: dk, time, duration, dayLabel: labelFor(offset, d), timeLabel: fmtTimeLabel(time), score });
+    }
+  }
+  if (candidates.length === 0) {
+    return { options: [], noneFound: true };
+  }
+  candidates.sort((a, b) => b.score - a.score);
+  const seenDays = /* @__PURE__ */ new Set();
+  const top = [];
+  for (const c of candidates) {
+    if (seenDays.has(c.date)) continue;
+    seenDays.add(c.date);
+    top.push(c);
+    if (top.length >= 3) break;
+  }
+  top[0].isBest = true;
+  return { options: top };
+}
 function ChatDrawer({ open, target, myUid, onClose, onMakePermanent, onDeleteGroup, onUnfriend }) {
   const isGroup = !!(target && target.kind === "group");
   const roomId = target ? isGroup ? target.group.id : myUid && target.user.uid ? dmRoomId(myUid, target.user.uid) : null : null;
@@ -9098,55 +9153,6 @@ function ChatDrawer({ open, target, myUid, onClose, onMakePermanent, onDeleteGro
     h = h % 12 || 12;
     return h + ":" + p[1] + " " + ap;
   };
-  const findSharedStudyWindow = async (params) => {
-    const prefStart = params.timeMode === "custom" ? timeToMinutes(params.timeFrom) : timeToMinutes("08:00");
-    const prefEnd = params.timeMode === "custom" ? timeToMinutes(params.timeTo) : timeToMinutes("22:00");
-    const scanDays = Math.max(1, params.lookAheadDayRange || 1);
-    const duration = params.durationInMinutes;
-    const today = /* @__PURE__ */ new Date();
-    const EVENING_START = 18 * 60;
-    const isFree = (occupied, start, end) => !occupied.some((o) => !(end <= o.s || start >= o.e));
-    const labelFor = (offset, d) => offset === 1 ? "tomorrow" : d.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
-    const otherUids = (isGroup ? target.group.memberUids : [target.user.uid]).filter((u) => u !== myUid);
-    const friendsBusy = await fetchFriendsBusyIntervals(otherUids);
-    const candidates = [];
-    for (let offset = 1; offset <= scanDays; offset++) {
-      const d = new Date(today);
-      d.setDate(today.getDate() + offset);
-      const dk = dayKey(d);
-      const occupied = getDayOccupiedIntervals(dk).concat(friendsBusy.get(dk) || []);
-      for (let start = prefStart; start + duration <= prefEnd; start += 30) {
-        const end = start + duration;
-        if (!isFree(occupied, start, end)) continue;
-        const before = occupied.filter((o) => o.e <= start).sort((a, b) => b.e - a.e)[0];
-        const after = occupied.filter((o) => o.s >= end).sort((a, b) => a.s - b.s)[0];
-        const gapBefore = before ? start - before.e : null;
-        const gapAfter = after ? after.s - end : null;
-        const fillsDeadTimeGap = gapBefore !== null && gapAfter !== null && gapBefore <= 120 && gapAfter <= 120;
-        let score = 0;
-        score += start < EVENING_START ? 100 : -40;
-        score += fillsDeadTimeGap ? 60 : 0;
-        score -= Math.floor((start - prefStart) / 30);
-        score -= offset * 2;
-        const time = minutesToTime(start);
-        candidates.push({ date: dk, time, duration, dayLabel: labelFor(offset, d), timeLabel: fmtTimeLabel(time), score });
-      }
-    }
-    if (candidates.length === 0) {
-      return { options: [], noneFound: true };
-    }
-    candidates.sort((a, b) => b.score - a.score);
-    const seenDays = /* @__PURE__ */ new Set();
-    const top = [];
-    for (const c of candidates) {
-      if (seenDays.has(c.date)) continue;
-      seenDays.add(c.date);
-      top.push(c);
-      if (top.length >= 3) break;
-    }
-    top[0].isBest = true;
-    return { options: top };
-  };
   const submitFindWindow = () => {
     setFindWindowOpen(false);
     setSyncRunning(true);
@@ -9155,8 +9161,9 @@ function ChatDrawer({ open, target, myUid, onClose, onMakePermanent, onDeleteGro
     const supersedes = counterSupersedes;
     setCounterSupersedes(null);
     publishBusyWindows();
+    const otherUids = (isGroup ? target.group.memberUids : [target.user.uid]).filter((u) => u !== myUid);
     setTimeout(async () => {
-      const meta = await findSharedStudyWindow(params);
+      const meta = await findSharedStudyWindow(myUid, otherUids, params);
       setSyncRunning(false);
       sendMessage({ kind: "calendar", status: "unscheduled", meta, ...supersedes ? { supersedes } : {} });
     }, 2100);
@@ -10023,7 +10030,7 @@ function computeEventBlockHeightPx(durationMins, gapToNextMins, pxPerHr) {
   if (gapToNextMins == null) return floored;
   return Math.min(floored, Math.max(4, gapToNextMins * (pxPerHr / 60)));
 }
-function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent, selectedRoutineKey, onSelectRoutineOccurrence, blockRefs, flipOldRectsRef, flipSeq, newItemHighlightIds }) {
+function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent, selectedRoutineKey, onSelectRoutineOccurrence, blockRefs, flipOldRectsRef, flipSeq, newItemHighlightIds, gsBusyByDate, gsRecommended }) {
   const [exitGhosts, setExitGhosts] = useState([]);
   useLayoutEffect(() => {
     if (!flipSeq || !flipOldRectsRef) return;
@@ -10412,6 +10419,19 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
       };
       previewEl = /* @__PURE__ */ React.createElement("div", { onMouseDown: startMove, style: { position: "absolute", top: pStart * (WK_PX_HR / 60), left: 2, right: 2, height: Math.max(22, pDur * (WK_PX_HR / 60)), borderRadius: 5, padding: "2px 5px 2px 8px", background: previewEvent.color + "22", border: `1.5px dashed ${previewEvent.color}`, zIndex: 6, pointerEvents: draggable ? "auto" : "none", cursor: draggable ? "grab" : "default", boxSizing: "border-box", overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 9.5, fontWeight: 700, color: previewEvent.color, lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, previewEvent.title || "New event"), onPreviewResize && /* @__PURE__ */ React.createElement("div", { onMouseDown: startResize, title: "Drag to change duration", style: { position: "absolute", bottom: 0, left: 0, right: 0, height: 9, cursor: "ns-resize", display: "flex", alignItems: "center", justifyContent: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 26, height: 3, borderRadius: 99, background: previewEvent.color, opacity: 0.65 } })));
     }
+    let gsBusyEl = null;
+    if (gsBusyByDate) {
+      const busyIntervals = (gsBusyByDate[dk] || []).concat(getDayOccupiedIntervals(dk));
+      if (busyIntervals.length > 0) {
+        gsBusyEl = busyIntervals.map((iv, ii) => /* @__PURE__ */ React.createElement("div", { key: "gsb" + ii, style: { position: "absolute", top: iv.s * (WK_PX_HR / 60), left: 0, right: 0, height: Math.max(4, (iv.e - iv.s) * (WK_PX_HR / 60)), background: T.muted + "1E", zIndex: 3, pointerEvents: "none" } }));
+      }
+    }
+    let gsRecommendedEl = null;
+    if (gsRecommended && gsRecommended.date === dk) {
+      const rStart = timeToMinutes(gsRecommended.time);
+      const rDur = gsRecommended.duration || 60;
+      gsRecommendedEl = /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: rStart * (WK_PX_HR / 60), left: 2, right: 2, height: Math.max(22, rDur * (WK_PX_HR / 60)), borderRadius: 5, background: T.lime + "10", border: `1.5px dashed ${T.lime}`, zIndex: 5, pointerEvents: "none", display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: 2, boxSizing: "border-box" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 8, fontWeight: 700, letterSpacing: "0.05em", color: T.lime, background: T.card, padding: "1px 5px", borderRadius: 3, whiteSpace: "nowrap" } }, "STUDLIN RECOMMENDS"));
+    }
     return /* @__PURE__ */ React.createElement(
       "div",
       {
@@ -10560,6 +10580,8 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
           ), ev.commuteAfter > 0 && /* @__PURE__ */ React.createElement("div", { title: ev.commuteAfter + " min commute", style: commuteStripStyle(ev.commuteAfter, "after") }, ev.commuteAfter * (WK_PX_HR / 60) > 13 && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 8, color: subjectColor, fontWeight: 600, whiteSpace: "nowrap" } }, ev.commuteAfter, "m commute")));
         });
       })(),
+      gsBusyEl,
+      gsRecommendedEl,
       ghostEl,
       previewEl
     );
@@ -12827,6 +12849,18 @@ function CalendarTab({ setActive = () => {
   const [previewEvent, setPreviewEvent] = useState(null);
   const [previewOverride, setPreviewOverride] = useState(null);
   const [previewDragActive, setPreviewDragActive] = useState(false);
+  const [gsOpen, setGsOpen] = useState(false);
+  const [gsStep, setGsStep] = useState("pick");
+  const [gsCandidates, setGsCandidates] = useState([]);
+  const [gsSelected, setGsSelected] = useState([]);
+  const [gsLoading, setGsLoading] = useState(false);
+  const [gsRoomId, setGsRoomId] = useState(null);
+  const [gsMemberUids, setGsMemberUids] = useState([]);
+  const [gsMemberNames, setGsMemberNames] = useState({});
+  const [gsBusyByDate, setGsBusyByDate] = useState({});
+  const [gsRecommended, setGsRecommended] = useState(null);
+  const [gsDraft, setGsDraft] = useState(null);
+  const [gsSending, setGsSending] = useState(false);
   const [routineDropPending, setRoutineDropPending] = useState(null);
   const [routineDragActive, setRoutineDragActive] = useState(false);
   const [selectedCourseId, setSelectedCourseId] = useState(null);
@@ -13506,6 +13540,10 @@ function CalendarTab({ setActive = () => {
     setRenamingCourseId(null);
   };
   const openNewEventForDrop = (chip, dateKey, startTime, anchorPoint) => {
+    if (chip && chip.kind === "groupSession") {
+      placeGroupScheduleChip(chip, dateKey, startTime);
+      return;
+    }
     setNewEventPrefill({
       title: chip && chip.title || "",
       date: dateKey,
@@ -13519,6 +13557,157 @@ function CalendarTab({ setActive = () => {
       anchorY: anchorPoint && anchorPoint.y || null
     });
     setNewEventOpen(true);
+  };
+  const openGroupSchedule = async () => {
+    setGsOpen(true);
+    setGsStep("pick");
+    setGsSelected([]);
+    setGsLoading(true);
+    setGsRoomId(null);
+    setGsMemberUids([]);
+    setGsMemberNames({});
+    setGsBusyByDate({});
+    setGsRecommended(null);
+    setGsDraft(null);
+    const myUid = firebase.auth().currentUser?.uid;
+    const uids = myUid ? await getAcceptedFriendUids(myUid) : [];
+    const docs = await Promise.all(uids.map((uid) => fsdb().collection("profiles").doc(uid).get().catch(() => null)));
+    setGsCandidates(uids.map((uid, i) => {
+      const p = docs[i] && docs[i].exists ? docs[i].data() : null;
+      return { uid, name: p && p.name || "Studlin User" };
+    }));
+    setGsLoading(false);
+  };
+  const toggleGsSelected = (uid) => setGsSelected((s) => s.includes(uid) ? s.filter((x) => x !== uid) : s.length >= 8 ? s : [...s, uid]);
+  const confirmGsPeople = async () => {
+    const myUid = firebase.auth().currentUser?.uid;
+    if (!myUid || gsSelected.length === 0) return;
+    setGsLoading(true);
+    const names = {};
+    gsSelected.forEach((uid) => {
+      names[uid] = (gsCandidates.find((c) => c.uid === uid) || {}).name || "Studlin User";
+    });
+    const myName = getUserName() || "You";
+    const now2 = (/* @__PURE__ */ new Date()).toISOString();
+    let roomId;
+    if (gsSelected.length === 1) {
+      const otherUid = gsSelected[0];
+      roomId = dmRoomId(myUid, otherUid);
+      await fsdb().collection("chatRooms").doc(roomId).set({ type: "dm", memberUids: [myUid, otherUid].sort(), createdBy: myUid, createdAt: now2, updatedAt: now2, lastMessage: null }, { merge: true });
+    } else {
+      const doc = await fsdb().collection("chatRooms").add({
+        type: "group",
+        memberUids: [myUid, ...gsSelected],
+        createdBy: myUid,
+        name: gsSelected.map((uid) => names[uid]).join(", ") + " & " + myName,
+        groupType: "permanent",
+        expiresAt: null,
+        memberNames: { [myUid]: myName, ...names },
+        createdAt: now2,
+        updatedAt: now2,
+        lastMessage: null
+      });
+      roomId = doc.id;
+    }
+    const memberUids = [myUid, ...gsSelected];
+    const memberNames = { [myUid]: myName, ...names };
+    setGsRoomId(roomId);
+    setGsMemberUids(memberUids);
+    setGsMemberNames(memberNames);
+    const friendsBusy = await fetchFriendsBusyIntervals(gsSelected);
+    const busyObj = {};
+    friendsBusy.forEach((intervals, date) => {
+      busyObj[date] = intervals;
+    });
+    setGsBusyByDate(busyObj);
+    const rec = await findSharedStudyWindow(myUid, gsSelected, { timeMode: "anytime", lookAheadDayRange: 7, durationInMinutes: 60 });
+    setGsRecommended(rec.noneFound ? null : rec.options.find((o) => o.isBest) || rec.options[0] || null);
+    setGsLoading(false);
+    setGsStep("place");
+  };
+  const placeGroupScheduleChip = (chip, dateKey, startTime) => {
+    const start = timeToMinutes(startTime || "09:00");
+    setGsDraft({ date: dateKey, startTime: startTime || "09:00", endTime: minutesToTime(start + 60), mode: chip.mode, title: chip.title, color: chip.color });
+  };
+  const gsPreviewMove = (date, startTime, endTime) => setGsDraft((d) => d ? { ...d, date, startTime, endTime } : d);
+  const gsPreviewResize = (endTime) => setGsDraft((d) => d ? { ...d, endTime } : d);
+  const closeGroupSchedule = () => {
+    setGsOpen(false);
+    setGsStep("pick");
+    setGsDraft(null);
+  };
+  const postGroupSchedule = async () => {
+    const myUid = firebase.auth().currentUser?.uid;
+    if (!myUid || !gsDraft || !gsRoomId || gsSending) return;
+    setGsSending(true);
+    const duration = Math.max(15, timeToMinutes(gsDraft.endTime) - timeToMinutes(gsDraft.startTime));
+    const { conflicts, ...option } = checkManualStudyTime(gsDraft.date, gsDraft.startTime, duration);
+    const now2 = Date.now();
+    const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+    let studySessionId = null;
+    if (gsDraft.mode === "study block") {
+      const doc = await fsdb().collection("studySessions").add({
+        memberUids: gsMemberUids,
+        createdBy: myUid,
+        roomId: gsRoomId,
+        title: gsDraft.title || "Study session",
+        subject: "",
+        scheduledDate: option.date,
+        scheduledTime: option.time,
+        duration: option.duration,
+        status: "scheduled",
+        startedBy: null,
+        startedAt: null,
+        endedAt: null,
+        participants: Object.fromEntries(gsMemberUids.map((uid) => {
+          const name = gsMemberNames[uid] || "Studlin User";
+          return [uid, { name, initials: name.split(" ").map((x) => x[0]).join(""), state: uid === myUid ? "accepted" : "invited", joinedAt: null, leftAt: null }];
+        })),
+        createdAt: nowIso,
+        updatedAt: nowIso
+      }).catch(() => null);
+      studySessionId = doc && doc.id;
+    }
+    const roomRef = fsdb().collection("chatRooms").doc(gsRoomId);
+    await roomRef.collection("messages").add({
+      senderId: myUid,
+      ts: now2,
+      kind: "calendar",
+      status: "proposed",
+      proposedBy: myUid,
+      meta: { options: [option] },
+      scheduledOption: 0,
+      scheduledMode: gsDraft.mode,
+      memberUids: gsMemberUids,
+      studySessionId: studySessionId || null,
+      responses: { [myUid]: "accepted" }
+    }).catch(() => {
+    });
+    await roomRef.update({ lastMessage: { text: null, kind: "calendar", ts: now2, senderId: myUid }, updatedAt: nowIso }).catch(() => {
+    });
+    authFetch("/api/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "push", roomId: gsRoomId, preview: "Shared free time found" }) }).catch(() => {
+    });
+    addTaskWithRebalance({
+      id: "gs-" + now2,
+      date: option.date,
+      time: option.time,
+      duration: option.duration,
+      title: gsDraft.title || (gsDraft.mode === "study block" ? "Study session" : "Meeting"),
+      subject: "",
+      kind: gsDraft.mode,
+      notes: "",
+      priority: 5,
+      difficulty: 5,
+      deadline: null,
+      status: "pending",
+      timeSpent: 0,
+      completedAt: null,
+      ...studySessionId ? { studySessionId } : {}
+    });
+    setGsSending(false);
+    closeGroupSchedule();
+    setPlacementToast("Sent. It'll land on their calendar once they accept.");
+    setTimeout(() => setPlacementToast(""), 3200);
   };
   const buildRoutineObjectsForDays = (base, days, startTime, duration, dayTimes) => {
     const isRealOverride = (d) => {
@@ -14834,6 +15023,10 @@ Examples:
       setTimeOffResult(null);
       setTimeOffOpen(true);
     } },
+    { icon: Icon.users, label: "Schedule with Friends", sub: "Drag a time onto the calendar, send it", onClick: () => {
+      setToolsMenuOpen(false);
+      openGroupSchedule();
+    } },
     // Balance My Week used to be its own separate item here --
     // folded into Reschedule as one of its modes instead,
     // since both are the same underlying job (redistribute
@@ -14955,18 +15148,20 @@ Examples:
       onResizeRoutineOccurrence,
       pendingRoutineChange: routineDropPending,
       onRoutineDragStateChange: setRoutineDragActive,
-      previewEvent,
+      previewEvent: gsOpen && gsStep === "place" ? gsDraft : previewEvent,
       highlightedSessionId,
       blockRefs,
       flipOldRectsRef,
       flipSeq,
-      onPreviewMove: (date, startTime, endTime) => setPreviewOverride({ date, startTime, endTime }),
-      onPreviewResize: (endTime) => setPreviewOverride((o) => ({ date: o && o.date || previewEvent.date, startTime: o && o.startTime || previewEvent.startTime, endTime })),
+      onPreviewMove: gsOpen && gsStep === "place" ? gsPreviewMove : (date, startTime, endTime) => setPreviewOverride({ date, startTime, endTime }),
+      onPreviewResize: gsOpen && gsStep === "place" ? gsPreviewResize : (endTime) => setPreviewOverride((o) => ({ date: o && o.date || previewEvent.date, startTime: o && o.startTime || previewEvent.startTime, endTime })),
       onPreviewDraggingChange: setPreviewDragActive,
       onSelectEvent: setSelectedCalEventId,
       selectedRoutineKey: selectedRoutineOccurrence ? selectedRoutineOccurrence.routineId + "|" + selectedRoutineOccurrence.date : null,
       onSelectRoutineOccurrence: setSelectedRoutineOccurrence,
-      newItemHighlightIds: newItemHighlightSet
+      newItemHighlightIds: newItemHighlightSet,
+      gsBusyByDate: gsOpen && gsStep === "place" ? gsBusyByDate : null,
+      gsRecommended: gsOpen && gsStep === "place" ? gsRecommended : null
     }
   ), calView === "daily" && /* @__PURE__ */ React.createElement(DayPlanner, { dayEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, openEdit, markDone, uncrossDone, prefs: getSchedulePreferences(), setSelDay, catchUpPending, openNew, newItemHighlightIds: newItemHighlightSet })), /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, display: "flex", position: "relative", height: "calc(100vh - 150px)" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 0, bottom: 0, left: calRightColCollapsed ? 0 : 14, width: 1, background: T.border, boxShadow: `-1px 0 3px rgba(0,0,0,0.12)` } }), !calRightColCollapsed && /* @__PURE__ */ React.createElement("div", { style: { width: 220, marginLeft: 34, maxHeight: "100%", overflowY: "auto" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontWeight: 700, color: T.white } }, selectedCourse ? selectedCourse.label : "Upcoming"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: toggleCalRightColCollapsed, style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontWeight: 600, fontFamily: T.font, cursor: "pointer", padding: 0 } }, "Close \u203A")), sidebarRecentItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 10, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setRecentlyCreatedOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.faint, transform: recentlyCreatedOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.text } }, "Recently created")), recentlyCreatedOpen && sidebarRecentItems.map(renderSidebarItem)), sidebarOverdueItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setOverdueSectionOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.red, transform: overdueSectionOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.red } }, "Overdue (", sidebarOverdueItems.length, ")")), overdueSectionOpen && sidebarOverdueItems.map(renderSidebarItem)), sidebarUpcomingItems.length === 0 && sidebarRecentItems.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.faint } }, "Nothing upcoming."), sidebarUpcomingGroups.map((group) => /* @__PURE__ */ React.createElement("div", { key: group.label, style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, color: group.label === "Overdue" ? T.red : T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 } }, "Due: ", group.label), group.items.map(renderSidebarItem)))), calRightColCollapsed && /* @__PURE__ */ React.createElement(
     "button",
@@ -15007,6 +15202,35 @@ Examples:
       return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10 } }, r.days.slice().sort((a, b) => a - b).map((day) => /* @__PURE__ */ React.createElement(Field, { key: day, label: ROUTINE_DOW[day] }, /* @__PURE__ */ React.createElement(Input, { value: weeklyContentDraft[day] || "", onChange: (e) => setWeeklyContentDraft((d) => ({ ...d, [day]: e.target.value })), placeholder: "e.g. Lecture, ch. 4" }))));
     })()
   ), /* @__PURE__ */ React.createElement(
+    Modal,
+    {
+      open: gsOpen && gsStep === "pick",
+      onClose: closeGroupSchedule,
+      title: "Schedule with Friends",
+      sub: "Pick who you want to find time with. They only see this once you send it.",
+      width: 420,
+      footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeGroupSchedule }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: confirmGsPeople, disabled: gsSelected.length === 0 || gsLoading }, gsLoading ? "\u2026" : "Continue"))
+    },
+    gsLoading ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "Loading your friends\u2026") : gsCandidates.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "No friends yet -- add some in Studlin Network first.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, gsCandidates.map((c) => /* @__PURE__ */ React.createElement("label", { key: c.uid, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 8, border: `1px solid ${T.border}`, cursor: "pointer", background: gsSelected.includes(c.uid) ? T.card2 : "transparent" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: gsSelected.includes(c.uid), onChange: () => toggleGsSelected(c.uid), style: { cursor: "pointer" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text } }, c.name))))
+  ), gsOpen && gsStep === "place" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 70, background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)", padding: "14px 18px", display: "flex", alignItems: "center", gap: 14, maxWidth: 600 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 3 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, fontWeight: 700, color: T.text } }, "Drag onto an open slot"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.muted } }, "Grayed-out time is when someone's busy -- you can still place there.")), /* @__PURE__ */ React.createElement(
+    "div",
+    {
+      draggable: true,
+      onDragStart: () => setSidebarDragChip({ title: "Meeting", kind: "groupSession", mode: "busy block", color: T.lime }),
+      onDragEnd: () => setSidebarDragChip(null),
+      style: { padding: "8px 14px", borderRadius: 8, background: T.lime + "18", border: `1px solid ${T.lime}55`, color: T.lime, fontSize: 12, fontWeight: 700, cursor: "grab", whiteSpace: "nowrap" }
+    },
+    "Meeting"
+  ), /* @__PURE__ */ React.createElement(
+    "div",
+    {
+      draggable: true,
+      onDragStart: () => setSidebarDragChip({ title: "Study Session", kind: "groupSession", mode: "study block", color: T.teal }),
+      onDragEnd: () => setSidebarDragChip(null),
+      style: { padding: "8px 14px", borderRadius: 8, background: T.teal + "18", border: `1px solid ${T.teal}55`, color: T.teal, fontSize: 12, fontWeight: 700, cursor: "grab", whiteSpace: "nowrap" }
+    },
+    "Study Session"
+  ), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginLeft: "auto" } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeGroupSchedule }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: postGroupSchedule, disabled: !gsDraft || gsSending }, gsSending ? "Sending\u2026" : "Done"))), /* @__PURE__ */ React.createElement(
     NewEventModal,
     {
       open: newEventOpen || !!routineEditItem,
