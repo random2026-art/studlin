@@ -16657,7 +16657,7 @@ function WizardRoutineList({items,onRemove}){
         <div key={it.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:10}}>
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontSize:13,fontWeight:600,color:T.text}}>{it.title}</div>
-            <div style={{fontSize:11,color:T.muted,marginTop:2}}>{it.days.map(d=>ROUTINE_DOW[d]).join(", ")} · {fmtTimeShort(it.startTime)} · {it.duration}m</div>
+            <div style={{fontSize:11,color:T.muted,marginTop:2}}>{it.days.map(d=>ROUTINE_DOW[d]).join(", ")} · {fmtTimeShort(it.startTime)}–{fmtTimeShort(minutesToTime(timeToMinutes(it.startTime)+it.duration))}</div>
           </div>
           <button type="button" onClick={()=>onRemove(it.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:18,lineHeight:1,padding:"2px 6px"}}>×</button>
         </div>
@@ -16674,11 +16674,19 @@ function WizardHsBuilder({schoolStart,setSchoolStart,schoolEnd,setSchoolEnd,item
   const [kind,setKind]=useState("busy"); // "busy" (after-school shield) or "free" (free period / study hall — punches through the School Hours tint)
   const [days,setDays]=useState([]);
   const [start,setStart]=useState("15:30");
-  const [duration,setDuration]=useState(60);
+  // Start/end time, not start+duration -- same reasoning as
+  // WizardCollegeBuilder's identical change: a student thinks "practice is
+  // 3:30 to 4:30," not "3:30 for 60 minutes." Duration is still what
+  // addItem/items store, just derived from the two times typed here.
+  const [end,setEnd]=useState("16:30");
+  const [timeError,setTimeError]=useState("");
   const toggleDay=(i)=>setDays(days.includes(i)?days.filter(d=>d!==i):[...days,i]);
   const isFree=kind==="free";
   const add=()=>{
     if((!isFree&&!title.trim())||days.length===0)return;
+    const duration=timeToMinutes(end)-timeToMinutes(start);
+    if(duration<=0){setTimeError("End time must be after start time.");return;}
+    setTimeError("");
     addItem({title:isFree?(title.trim()||"Free Period"):title.trim(),kind,days:[...days],startTime:start,duration});
     setTitle("");setDays([]);
   };
@@ -16701,11 +16709,11 @@ function WizardHsBuilder({schoolStart,setSchoolStart,schoolEnd,setSchoolEnd,item
       </div>
       <div style={{display:"flex",gap:8,alignItems:"center",justifyContent:"flex-end"}}>
         <TimeInput value={start} onChange={setStart} style={{width:"fit-content"}} />
-        <select value={duration} onChange={e=>setDuration(+e.target.value)} style={wizardSelectStyle}>
-          {[30,45,60,90,120].map(m=><option key={m} value={m}>{m} min</option>)}
-        </select>
+        <span style={{color:T.muted,fontSize:12}}>–</span>
+        <TimeInput value={end} onChange={setEnd} style={{width:"fit-content"}} />
         <button type="button" onClick={add} style={wizardAddBtnStyle}>+ Add</button>
       </div>
+      {timeError&&<div style={{fontSize:11.5,color:T.red,marginTop:6,textAlign:"right"}}>{timeError}</div>}
       <WizardRoutineList items={items} onRemove={removeItem} />
     </div>
   );
@@ -16737,7 +16745,15 @@ function WizardCollegeBuilder({items,addItem,removeItem,updateItem,defaultTitle,
   const [kind,setKind]=useState("class");
   const [days,setDays]=useState([]);
   const [time,setTime]=useState("10:00");
-  const [duration,setDuration]=useState(50);
+  // Start/end time, not start+duration -- a student thinks of a class as
+  // "10:00 to 10:50," not "10:00 for 50 minutes." Duration is still what
+  // gets stored (every downstream consumer -- meetingTimes, the syllabus
+  // JSON contracts, formatMeetingTimes, routine items -- already expects
+  // {startTime,duration}), it's just derived from the two times the
+  // student actually typed, right here, instead of asking for a raw
+  // minute count directly.
+  const [endTime,setEndTime]=useState("10:50");
+  const [timeError,setTimeError]=useState("");
   // Which committed chip (if any) has its inline time/duration editor
   // open. Deliberately NOT "pull it out of the list, drop it back on
   // +Add" (the previous approach) -- that read as an outright delete the
@@ -16750,6 +16766,9 @@ function WizardCollegeBuilder({items,addItem,removeItem,updateItem,defaultTitle,
   const toggleDay=(i)=>setDays(days.includes(i)?days.filter(d=>d!==i):[...days,i]);
   const add=()=>{
     if(!title.trim()||days.length===0)return;
+    const duration=timeToMinutes(endTime)-timeToMinutes(time);
+    if(duration<=0){setTimeError("End time must be after start time.");return;}
+    setTimeError("");
     addItem({title:title.trim(),kind,days:[...days],startTime:time,duration});
     if(defaultTitle===undefined)setTitle("");
     setDays([]);
@@ -16771,11 +16790,11 @@ function WizardCollegeBuilder({items,addItem,removeItem,updateItem,defaultTitle,
       </div>
       <div style={{display:"flex",gap:8,alignItems:"center",justifyContent:"flex-end"}}>
         <TimeInput value={time} onChange={setTime} style={{width:"fit-content"}} />
-        <select value={duration} onChange={e=>setDuration(+e.target.value)} style={wizardSelectStyle}>
-          {[30,45,50,60,75,90,120].map(m=><option key={m} value={m}>{m} min</option>)}
-        </select>
+        <span style={{color:T.muted,fontSize:12}}>–</span>
+        <TimeInput value={endTime} onChange={setEndTime} style={{width:"fit-content"}} />
         <button type="button" onClick={add} style={wizardAddBtnStyle}>+ Add</button>
       </div>
+      {timeError&&<div style={{fontSize:11.5,color:T.red,marginTop:6,textAlign:"right"}}>{timeError}</div>}
       {/* Plain at-a-glance summary of what's already committed -- the day
           pills above are only ever the add-form's own draft state, never
           a "which days does this meet" indicator (pre-checking them to
@@ -16800,14 +16819,25 @@ function WizardCollegeBuilder({items,addItem,removeItem,updateItem,defaultTitle,
                       <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{it.title}</span>
                       <button type="button" onClick={e=>{e.stopPropagation();if(isEditing)setEditingId(null);removeItem(it.id);}} title="Remove" style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:11,lineHeight:1,padding:"0 1px",flexShrink:0}}>×</button>
                     </div>
-                    {isEditing&&(
+                    {isEditing&&(()=>{
+                      // Same start/end derivation as the add-form above --
+                      // the chip only ever stores {startTime,duration}, so
+                      // the end time shown here is computed for display and
+                      // converted straight back to a duration on change.
+                      // Editing start time alone keeps the class length
+                      // fixed (end shifts with it), matching how this
+                      // already behaved before this change.
+                      const chipEndTime=minutesToTime(timeToMinutes(it.startTime)+(it.duration||50));
+                      return (
                       <div onClick={e=>e.stopPropagation()} style={{display:"flex",flexDirection:"column",gap:4,padding:"5px 5px 6px",borderRadius:"0 0 6px 6px",border:`1px solid ${T.lime}66`,borderTop:"none",background:T.card2}}>
-                        <TimeInput value={it.startTime} onChange={v=>updateItem(it.id,{startTime:v})} style={{width:"fit-content"}} />
-                        <select value={it.duration||50} onChange={e=>updateItem(it.id,{duration:+e.target.value})} style={{...wizardSelectStyle,fontSize:9.5,padding:"3px 4px"}}>
-                          {[30,45,50,60,75,90,120].map(m=><option key={m} value={m}>{m} min</option>)}
-                        </select>
+                        <div style={{display:"flex",alignItems:"center",gap:4}}>
+                          <TimeInput value={it.startTime} onChange={v=>updateItem(it.id,{startTime:v})} style={{width:"fit-content"}} />
+                          <span style={{color:T.muted,fontSize:9.5}}>–</span>
+                          <TimeInput value={chipEndTime} onChange={v=>{const d=timeToMinutes(v)-timeToMinutes(it.startTime);if(d>0)updateItem(it.id,{duration:d});}} style={{width:"fit-content"}} />
+                        </div>
                       </div>
-                    )}
+                      );
+                    })()}
                   </div>
                   );
                 })}
