@@ -21263,6 +21263,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const [gsStep,setGsStep]=useState("pick");
   const [gsCandidates,setGsCandidates]=useState([]);
   const [gsSelected,setGsSelected]=useState([]);
+  // Client-side filter over the already-loaded accepted-friends list --
+  // this isn't a server search (gsCandidates is already scoped to
+  // accepted friends only), just a way to find one person quickly once
+  // that list gets long, same as any other search-to-filter field.
+  const [gsSearchQuery,setGsSearchQuery]=useState("");
   const [gsLoading,setGsLoading]=useState(false);
   const [gsRoomId,setGsRoomId]=useState(null);
   const [gsMemberUids,setGsMemberUids]=useState([]);
@@ -22375,7 +22380,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   };
   // ── Schedule with Friends ────────────────────────────────────────────
   const openGroupSchedule=async()=>{
-    setGsOpen(true);setGsStep("pick");setGsSelected([]);setGsLoading(true);
+    setGsOpen(true);setGsStep("pick");setGsSelected([]);setGsLoading(true);setGsSearchQuery("");
     setGsRoomId(null);setGsMemberUids([]);setGsMemberNames({});setGsBusyByDate({});setGsRecommended(null);setGsRecommendedOptions([]);setGsDraft(null);
     const myUid=firebase.auth().currentUser?.uid;
     const uids=myUid?await getAcceptedFriendUids(myUid):[];
@@ -24395,16 +24400,25 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           <div style={{fontSize:12.5,color:T.muted}}>Loading your friends…</div>
         ):gsCandidates.length===0?(
           <div style={{fontSize:12.5,color:T.muted}}>No friends yet -- add some in Studlin Network first.</div>
-        ):(
+        ):(<>
+          {/* Only worth showing once the list is long enough to actually
+              need finding someone in -- a couple of friends don't need a
+              search box, they need a glance. */}
+          {gsCandidates.length>5&&(
+            <Input value={gsSearchQuery} onChange={e=>setGsSearchQuery(e.target.value)} placeholder="Search friends" style={{marginBottom:10,width:"100%"}} />
+          )}
           <div style={{display:"flex",flexDirection:"column",gap:8}}>
-            {gsCandidates.map(c=>(
+            {gsCandidates.filter(c=>c.name.toLowerCase().includes(gsSearchQuery.trim().toLowerCase())).map(c=>(
               <label key={c.uid} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:8,border:`1px solid ${T.border}`,cursor:"pointer",background:gsSelected.includes(c.uid)?T.card2:"transparent"}}>
                 <input type="checkbox" checked={gsSelected.includes(c.uid)} onChange={()=>toggleGsSelected(c.uid)} style={{cursor:"pointer"}} />
                 <div style={{fontSize:13,fontWeight:600,color:T.text}}>{c.name}</div>
               </label>
             ))}
+            {gsSearchQuery.trim()&&gsCandidates.filter(c=>c.name.toLowerCase().includes(gsSearchQuery.trim().toLowerCase())).length===0&&(
+              <div style={{fontSize:12.5,color:T.muted}}>No friends match "{gsSearchQuery.trim()}".</div>
+            )}
           </div>
-        )}
+        </>)}
       </Modal>
       {/* ── Schedule with Friends -- step 2, place it. A floating panel, not
           a Modal -- the whole point is seeing/using the real calendar
