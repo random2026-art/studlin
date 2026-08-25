@@ -204,6 +204,21 @@ describe("advancedSchedulePlanner / todaysPlan (Today's Plan, regression: isFlex
     // crowd out or replace the actual to-do items already being shown.
     assert.ok(plan.find((t) => t.id === "task-1"), "the real task should still be in the plan alongside the class");
   });
+
+  test("2026-08-25 regression: a flexible timeless task no longer lands with zero gap against a fixed block's start -- occupiedSlots was missing effectiveLeadIn entirely", () => {
+    const { advancedSchedulePlanner, setSchedulePreferences } = loadStudlinModule({ now: "2026-07-20T08:00:00" });
+    setSchedulePreferences({ ...DEFAULT_PREFS, workStartTime: "09:00", workEndTime: "12:00" });
+    // Fixed "busy block" at 10:00-10:30 gets the standard 15min lead-in --
+    // a 60min flexible task can't fit in the 45min before it (9:00-9:45),
+    // so it must land AFTER the block (+ its own trail-out breathing room),
+    // never touching 10:00 with zero gap the way the old code allowed.
+    const fixedBlock = realTask({ id: "class-1", kind: "busy block", time: "10:00", duration: 30 });
+    const flexTask = dueDateMarker({ id: "flex-1", time: "", kind: "study block", duration: 60, priority: 900 });
+    const plan = advancedSchedulePlanner([fixedBlock, flexTask]);
+    const placed = plan.find((t) => t.id === "flex-1" || t.parentId === "flex-1");
+    assert.ok(placed && placed.time, "the flexible task should still get placed somewhere today");
+    assert.notEqual(placed.time, "09:00", "must not be placed touching the fixed block's start with zero gap");
+  });
 });
 
 describe("finalizeExtractedText (study-material size cap + empty-file detection)", () => {

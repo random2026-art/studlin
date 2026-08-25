@@ -4475,9 +4475,9 @@ function advancedSchedulePlanner(baseEvents) {
   const shieldOccurrences = routineToday.filter((r) => r.kind !== "free period");
   const freeWindows = routineToday.filter((r) => r.kind === "free period").map((r) => ({ start: timeToMinutes(r.time), end: timeToMinutes(r.time) + (r.duration || 30) }));
   const occupiedSlots = [
-    ...hardEvents.map((e) => ({ start: timeToMinutes(e.time), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) })),
-    ...flexibleTimed.map((e) => ({ start: timeToMinutes(e.time), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) })),
-    ...shieldOccurrences.map((r) => ({ start: timeToMinutes(r.time), end: timeToMinutes(r.time) + (r.duration || 30) }))
+    ...hardEvents.map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) })),
+    ...flexibleTimed.map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) })),
+    ...shieldOccurrences.map((r) => ({ start: timeToMinutes(r.time) - effectiveLeadIn(r), end: timeToMinutes(r.time) + (r.duration || 30) + effectiveTrailOut(r) }))
   ];
   const placedTimeless = [];
   const unplacedTimeless = [];
@@ -13295,7 +13295,7 @@ function CalendarTab({ setActive = () => {
       if (ev.date > horizonEnd) return ev;
       const duration = ev.duration || 30;
       const tMins = timeToMinutes(ev.time);
-      const occupied = expandRoutineOccurrences(nextRoutines, ev.date, ev.date).filter((o) => o.kind !== "free period").map((o) => ({ start: timeToMinutes(o.time), end: timeToMinutes(o.time) + (o.duration || 30) }));
+      const occupied = expandRoutineOccurrences(nextRoutines, ev.date, ev.date).filter((o) => o.kind !== "free period").map((o) => ({ start: timeToMinutes(o.time) - effectiveLeadIn(o), end: timeToMinutes(o.time) + (o.duration || 30) + effectiveTrailOut(o) }));
       const conflict = occupied.some((o) => !(tMins + duration <= o.start || tMins >= o.end));
       if (!conflict) return ev;
       const slot = findLegalSlotOrNull(events.filter((e) => e.id !== ev.id), nextRoutines, prefs, ev.date, ev.time, duration);

@@ -6983,11 +6983,18 @@ function advancedSchedulePlanner(baseEvents){
 
   // Seeded with everything that already has a real, fixed span -- hard
   // events AND already-timed flexible tasks both have to block a timeless
-  // item from landing on top of them.
+  // item from landing on top of them. 2026-08-25 regression: only the
+  // trailing side (effectiveTrailOut) was ever applied here -- the leading
+  // buffer (effectiveLeadIn, e.g. a commute time set before a fixed event)
+  // was silently dropped, and shieldOccurrences (today's classes) got
+  // neither side at all -- so a timeless task could land right up against
+  // the start of a class/commute with zero gap. Now matches the same
+  // effectiveLeadIn/effectiveTrailOut treatment every other occupied-
+  // interval builder in this file already uses.
   const occupiedSlots=[
-    ...hardEvents.map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)})),
-    ...flexibleTimed.map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)})),
-    ...shieldOccurrences.map(r=>({start:timeToMinutes(r.time),end:timeToMinutes(r.time)+(r.duration||30)})),
+    ...hardEvents.map(e=>({start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)})),
+    ...flexibleTimed.map(e=>({start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)})),
+    ...shieldOccurrences.map(r=>({start:timeToMinutes(r.time)-effectiveLeadIn(r),end:timeToMinutes(r.time)+(r.duration||30)+effectiveTrailOut(r)})),
   ];
 
   // Place genuinely timeless flexible tasks into whatever room is left,
@@ -21439,10 +21446,14 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       const duration=ev.duration||30;
       const tMins=timeToMinutes(ev.time);
       // Free periods are open windows, not locked blocks — a task inside one
-      // is never a conflict to shuffle away from.
+      // is never a conflict to shuffle away from. effectiveLeadIn/
+      // effectiveTrailOut applied here too (2026-08-25) -- this used to
+      // check raw start/end only, so a task sitting inside another block's
+      // commute/lead-in buffer after a routine edit could be judged
+      // conflict-free and left in place instead of relocated.
       const occupied=expandRoutineOccurrences(nextRoutines,ev.date,ev.date)
         .filter(o=>o.kind!=="free period")
-        .map(o=>({start:timeToMinutes(o.time),end:timeToMinutes(o.time)+(o.duration||30)}));
+        .map(o=>({start:timeToMinutes(o.time)-effectiveLeadIn(o),end:timeToMinutes(o.time)+(o.duration||30)+effectiveTrailOut(o)}));
       const conflict=occupied.some(o=>!(tMins+duration<=o.start||tMins>=o.end));
       if(!conflict)return ev;
       // findLegalSlotOrNull instead of plain findOpenSlotFor: this silent
