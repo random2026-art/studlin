@@ -4512,7 +4512,7 @@ function advancedSchedulePlanner(baseEvents) {
     }
   });
   const chunked = chunkTasksWithBreaks([...flexibleTimed, ...placedTimeless]);
-  return [...hardEvents, ...chunked, ...unplacedTimeless].map((t) => ({ ...t, done: t.status === "done", scheduled: !!t.time })).sort((a, b) => {
+  return [...hardEvents, ...chunked, ...unplacedTimeless, ...shieldOccurrences].map((t) => ({ ...t, done: t.status === "done", scheduled: !!t.time })).sort((a, b) => {
     if (!a.time && !b.time) return 0;
     if (!a.time) return 1;
     if (!b.time) return -1;
@@ -16526,7 +16526,7 @@ function Dashboard({ setActive, seriousMode = false, rescheduleTask, setReschedu
   const realStreak = getStreak();
   const [, forcePlan] = useState(0);
   const plan = todaysPlan();
-  const isPlanPrimaryRow = (t) => !t.isBreak && !(t.isChunk && t.chunkIndex > 0);
+  const isPlanPrimaryRow = (t) => !t.isBreak && !(t.isChunk && t.chunkIndex > 0) && !t.isRoutine;
   const planCountable = plan.filter(isPlanPrimaryRow);
   const planDoneCount = planCountable.filter((t) => t.done).length;
   const subjColor = { Chemistry: T.red, "English IV": T.purple, Biology: T.teal, Calculus: T.blue, Spanish: T.amber, History: T.muted };
@@ -16703,6 +16703,9 @@ function Dashboard({ setActive, seriousMode = false, rescheduleTask, setReschedu
     setActive("calendar");
   }, style: { display: "inline-flex", alignItems: "center", gap: 7, padding: "9px 18px", background: "transparent", color: T.text, border: `1px solid ${T.border}`, borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: T.font } }, "Brain dump everything"))) : plan.map((t) => {
     const c = scOf(t.subject);
+    if (t.isRoutine) {
+      return /* @__PURE__ */ React.createElement("div", { key: t.id, style: { display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", borderRadius: 12, border: `1px solid ${T.border}`, marginBottom: 8, background: T.card } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13.5, color: T.text, fontWeight: 500 } }, t.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 1 } }, t.subject, t.subject ? " \xB7 " : "", t.kind === "class" ? "Class" : "Recurring")), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.mono, fontSize: 10, color: T.faint } }, fmtClock(t.time)));
+    }
     if (!isPlanPrimaryRow(t)) {
       return /* @__PURE__ */ React.createElement("div", { key: t.id, style: { display: "flex", alignItems: "center", gap: 12, padding: "7px 14px 7px 34px", marginBottom: 8, opacity: 0.55 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: t.done ? T.faint : T.muted, textDecoration: t.done ? "line-through" : "none", fontStyle: t.isBreak ? "italic" : "normal" } }, t.title), /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.mono, fontSize: 10, color: T.faint } }, fmtClock(t.time)));
     }

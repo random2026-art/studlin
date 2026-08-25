@@ -184,6 +184,26 @@ describe("advancedSchedulePlanner / todaysPlan (Today's Plan, regression: isFlex
     }
     assert.equal(plan[0].id, "early-flex");
   });
+
+  test("2026-08-25 regression: today's classes/activities now appear in the plan, not just tasks -- the planner already used them internally to block conflicts, but never surfaced them", () => {
+    const { advancedSchedulePlanner, saveWeeklyRoutine } = loadStudlinModule({ now: "2026-07-20T08:00:00" });
+    // days:[0..6] so this fires regardless of which weekday 2026-07-20 is --
+    // the point of this test is "does a routine occurrence show up at all,"
+    // not pinning down a specific day-of-week mapping.
+    saveWeeklyRoutine([
+      { id: "rt-bio", title: "Biology 101", kind: "class", subject: "Biology", days: [0, 1, 2, 3, 4, 5, 6], startTime: "11:00", duration: 50 },
+    ]);
+    const task = realTask({ id: "task-1", time: "14:00" });
+    const plan = advancedSchedulePlanner([task]);
+    const classRow = plan.find((t) => t.routineId === "rt-bio");
+    assert.ok(classRow, "the class occurrence should be in the returned plan");
+    assert.equal(classRow.isRoutine, true);
+    assert.equal(classRow.title, "Biology 101");
+    assert.equal(classRow.time, "11:00");
+    // The real task must still be there too -- adding classes must not
+    // crowd out or replace the actual to-do items already being shown.
+    assert.ok(plan.find((t) => t.id === "task-1"), "the real task should still be in the plan alongside the class");
+  });
 });
 
 describe("finalizeExtractedText (study-material size cap + empty-file detection)", () => {

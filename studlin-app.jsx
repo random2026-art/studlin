@@ -7044,7 +7044,13 @@ function advancedSchedulePlanner(baseEvents){
   // that only ever looked right because the flexible bucket was always
   // empty (isFlexible was never set anywhere). Anything with no time (a
   // task that genuinely couldn't be placed anywhere today) sorts last.
-  return [...hardEvents,...chunked,...unplacedTimeless]
+  // shieldOccurrences (today's classes/activities) were already computed
+  // above and used to block flexible tasks from landing on top of them --
+  // but never actually shown here, so "Today's plan" silently omitted
+  // every class while still correctly working around them. Included now
+  // so the plan reads as an honest full picture of the day, not just the
+  // to-do portion of it.
+  return [...hardEvents,...chunked,...unplacedTimeless,...shieldOccurrences]
     .map(t=>({...t,done:t.status==="done",scheduled:!!t.time}))
     .sort((a,b)=>{
       if(!a.time&&!b.time)return 0;
@@ -26691,8 +26697,10 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   // A single real session can now expand into several display rows (see
   // chunkTasksWithBreaks) -- "X/Y done" should still mean "X of Y real
   // sessions," not "X of Y rows," so only count each session's primary row
-  // (never a break, never a continuation chunk past the first).
-  const isPlanPrimaryRow=t=>!t.isBreak&&!(t.isChunk&&t.chunkIndex>0);
+  // (never a break, never a continuation chunk past the first). A class/
+  // activity (isRoutine) isn't a to-do either -- it can't be marked done,
+  // so it stays out of the X/Y fraction the same way.
+  const isPlanPrimaryRow=t=>!t.isBreak&&!(t.isChunk&&t.chunkIndex>0)&&!t.isRoutine;
   const planCountable=plan.filter(isPlanPrimaryRow);
   const planDoneCount=planCountable.filter(t=>t.done).length;
   const subjColor={Chemistry:T.red,"English IV":T.purple,Biology:T.teal,Calculus:T.blue,Spanish:T.amber,History:T.muted};
@@ -26956,6 +26964,23 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
             </div>
             :plan.map((t)=>{
               const c=scOf(t.subject);
+              // A class/activity is real, fixed, and part of the day --
+              // shown at full visual weight, not dimmed like a break/chunk
+              // continuation below -- but it isn't a to-do: no checkbox, no
+              // click-to-complete (matches the Calendar grid's own routine
+              // occurrences, which the same way never toggle done/undone),
+              // since there's no real events[] entry behind it to mark.
+              if(t.isRoutine){
+                return(
+                  <div key={t.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,background:T.card}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <span style={{fontSize:13.5,color:T.text,fontWeight:500}}>{t.title}</span>
+                      <div style={{fontSize:11,color:T.muted,marginTop:1}}>{t.subject}{t.subject?" · ":""}{t.kind==="class"?"Class":"Recurring"}</div>
+                    </div>
+                    <span style={{fontFamily:T.mono,fontSize:10,color:T.faint}}>{fmtClock(t.time)}</span>
+                  </div>
+                );
+              }
               // A chunk past the first, or a "Break" row, is a display-only
               // continuation of the real session above it -- its id doesn't
               // point at a real events[] entry (see chunkTasksWithBreaks),
