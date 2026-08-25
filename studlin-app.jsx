@@ -14165,6 +14165,70 @@ function checkManualStudyTime(date,time,duration){
     timeLabel:fmt(time),
   };
 }
+// Ranks up to 3 shared-availability options for myUid + otherUids, best day
+// first (see scoring below). Lifted out of ChatDrawer (2026-08-21) -- it
+// used to read isGroup/target/myUid straight from that component's closure,
+// which meant only the chat "sync calendars" flow could call it. Explicit
+// params instead so CalendarTab's "Schedule with Friends" recommended-slot
+// overlay can call the exact same ranking, not a second copy of it. Same
+// body/logic as before.
+// Returns {options: [...]}, ranked best-first and capped at 3 distinct
+// days. Scoring favors daytime slots (before 6pm, "saves evening free
+// time") that fill a gap between two existing events ("dead time") over
+// slots that just carve into an otherwise wide-open evening block.
+async function findSharedStudyWindow(myUid,otherUids,params){
+  const fmtTimeLabel=(t)=>{const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+" "+ap;};
+  const prefStart=params.timeMode==="custom"?timeToMinutes(params.timeFrom):timeToMinutes("08:00");
+  const prefEnd=params.timeMode==="custom"?timeToMinutes(params.timeTo):timeToMinutes("22:00");
+  const scanDays=Math.max(1,params.lookAheadDayRange||1);
+  const duration=params.durationInMinutes;
+  const today=new Date();
+  const EVENING_START=18*60;
+  const isFree=(occupied,start,end)=>!occupied.some(o=>!(end<=o.s||start>=o.e));
+  const labelFor=(offset,d)=>offset===1?"tomorrow":d.toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"});
+  const friendsBusy=await fetchFriendsBusyIntervals(otherUids.filter(u=>u!==myUid));
+  const candidates=[];
+  for(let offset=1;offset<=scanDays;offset++){
+    const d=new Date(today);d.setDate(today.getDate()+offset);
+    const dk=dayKey(d);
+    const occupied=getDayOccupiedIntervals(dk).concat(friendsBusy.get(dk)||[]);
+    for(let start=prefStart;start+duration<=prefEnd;start+=30){
+      const end=start+duration;
+      if(!isFree(occupied,start,end))continue;
+      const before=occupied.filter(o=>o.e<=start).sort((a,b)=>b.e-a.e)[0];
+      const after=occupied.filter(o=>o.s>=end).sort((a,b)=>a.s-b.s)[0];
+      const gapBefore=before?start-before.e:null;
+      const gapAfter=after?after.s-end:null;
+      const fillsDeadTimeGap=gapBefore!==null&&gapAfter!==null&&gapBefore<=120&&gapAfter<=120;
+      let score=0;
+      score+=start<EVENING_START?100:-40;
+      score+=fillsDeadTimeGap?60:0;
+      score-=Math.floor((start-prefStart)/30);
+      score-=offset*2;
+      const time=minutesToTime(start);
+      candidates.push({date:dk,time,duration,dayLabel:labelFor(offset,d),timeLabel:fmtTimeLabel(time),score});
+    }
+  }
+  if(candidates.length===0){
+    // Genuinely nothing free anywhere in range, including routine/class
+    // blocks now excluded above -- say so honestly instead of forcing a
+    // slot that isn't actually free onto the calendar.
+    return{options:[],noneFound:true};
+  }
+  candidates.sort((a,b)=>b.score-a.score);
+  // Cap at one suggestion per day so the options presented are genuinely
+  // distinct choices, not the same day at three slightly different times.
+  const seenDays=new Set();
+  const top=[];
+  for(const c of candidates){
+    if(seenDays.has(c.date))continue;
+    seenDays.add(c.date);
+    top.push(c);
+    if(top.length>=3)break;
+  }
+  top[0].isBest=true;
+  return{options:top};
+}
 // ─── NETWORK: sliding chat drawer (DM + Group, w/ Quick Actions) ─────────────
 function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onUnfriend}){
   const isGroup=!!(target&&target.kind==="group");
@@ -14263,72 +14327,9 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
 
   const sendText=()=>{if(!input.trim())return;sendMessage({kind:"text",text:input.trim()});setInput("");};
   const fmtTimeLabel=(t)=>{const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+" "+ap;};
-  // Used to have no real shared-schedule backend behind these friends —
-  // this client could only see the sender's own calendar
-  // (localStorage `events`, never synced to Firestore), so the "match"
-  // couldn't confirm mutual availability, only guess and let the other
-  // side accept/decline/counter afterward. Now checks each OTHER
-  // participant's opted-in busy-time-only Firestore doc too (see
-  // publishBusyWindows/fetchFriendsBusyIntervals) — a participant who
-  // hasn't opted in just contributes nothing extra, same as before, so
-  // this degrades gracefully rather than requiring universal opt-in.
-  // Returns {options: [...]}, ranked best-first and capped at 3 distinct
-  // days. Scoring favors daytime slots (before 6pm, "saves evening free
-  // time") that fill a gap between two existing events ("dead time") over
-  // slots that just carve into an otherwise wide-open evening block.
-  const findSharedStudyWindow=async(params)=>{
-    const prefStart=params.timeMode==="custom"?timeToMinutes(params.timeFrom):timeToMinutes("08:00");
-    const prefEnd=params.timeMode==="custom"?timeToMinutes(params.timeTo):timeToMinutes("22:00");
-    const scanDays=Math.max(1,params.lookAheadDayRange||1);
-    const duration=params.durationInMinutes;
-    const today=new Date();
-    const EVENING_START=18*60;
-    const isFree=(occupied,start,end)=>!occupied.some(o=>!(end<=o.s||start>=o.e));
-    const labelFor=(offset,d)=>offset===1?"tomorrow":d.toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"});
-    const otherUids=(isGroup?target.group.memberUids:[target.user.uid]).filter(u=>u!==myUid);
-    const friendsBusy=await fetchFriendsBusyIntervals(otherUids);
-    const candidates=[];
-    for(let offset=1;offset<=scanDays;offset++){
-      const d=new Date(today);d.setDate(today.getDate()+offset);
-      const dk=dayKey(d);
-      const occupied=getDayOccupiedIntervals(dk).concat(friendsBusy.get(dk)||[]);
-      for(let start=prefStart;start+duration<=prefEnd;start+=30){
-        const end=start+duration;
-        if(!isFree(occupied,start,end))continue;
-        const before=occupied.filter(o=>o.e<=start).sort((a,b)=>b.e-a.e)[0];
-        const after=occupied.filter(o=>o.s>=end).sort((a,b)=>a.s-b.s)[0];
-        const gapBefore=before?start-before.e:null;
-        const gapAfter=after?after.s-end:null;
-        const fillsDeadTimeGap=gapBefore!==null&&gapAfter!==null&&gapBefore<=120&&gapAfter<=120;
-        let score=0;
-        score+=start<EVENING_START?100:-40;
-        score+=fillsDeadTimeGap?60:0;
-        score-=Math.floor((start-prefStart)/30);
-        score-=offset*2;
-        const time=minutesToTime(start);
-        candidates.push({date:dk,time,duration,dayLabel:labelFor(offset,d),timeLabel:fmtTimeLabel(time),score});
-      }
-    }
-    if(candidates.length===0){
-      // Genuinely nothing free anywhere in range, including routine/class
-      // blocks now excluded above — say so honestly instead of forcing a
-      // slot that isn't actually free onto the calendar.
-      return{options:[],noneFound:true};
-    }
-    candidates.sort((a,b)=>b.score-a.score);
-    // Cap at one suggestion per day so the options presented are genuinely
-    // distinct choices, not the same day at three slightly different times.
-    const seenDays=new Set();
-    const top=[];
-    for(const c of candidates){
-      if(seenDays.has(c.date))continue;
-      seenDays.add(c.date);
-      top.push(c);
-      if(top.length>=3)break;
-    }
-    top[0].isBest=true;
-    return{options:top};
-  };
+  // findSharedStudyWindow now lives at module scope, above ChatDrawer, so
+  // CalendarTab's "Schedule with Friends" can call the same ranking (it
+  // used to read isGroup/target/myUid off this closure directly).
   const submitFindWindow=()=>{
     setFindWindowOpen(false);setSyncRunning(true);
     const lookAheadDayRange=fwDayScope==="custom"?fwCustomDays:fwDayScope==="tomorrow"?1:fwDayScope==="3days"?3:7;
@@ -14339,7 +14340,8 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
     // times reasonably current without needing to hook every single
     // event-mutation path in the app; a no-op if the opt-in setting is off.
     publishBusyWindows();
-    setTimeout(async()=>{const meta=await findSharedStudyWindow(params);setSyncRunning(false);sendMessage({kind:"calendar",status:"unscheduled",meta,...(supersedes?{supersedes}:{})});},2100);
+    const otherUids=(isGroup?target.group.memberUids:[target.user.uid]).filter(u=>u!==myUid);
+    setTimeout(async()=>{const meta=await findSharedStudyWindow(myUid,otherUids,params);setSyncRunning(false);sendMessage({kind:"calendar",status:"unscheduled",meta,...(supersedes?{supersedes}:{})});},2100);
   };
   // "Pick a time" mode's Continue button — checks first rather than
   // posting straight away, same inline-validate-before-committing
@@ -15788,7 +15790,7 @@ function computeEventBlockHeightPx(durationMins, gapToNextMins, pxPerHr) {
   return Math.min(floored, Math.max(4, gapToNextMins * (pxPerHr / 60)));
 }
 
-function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent, selectedRoutineKey, onSelectRoutineOccurrence, blockRefs, flipOldRectsRef, flipSeq, newItemHighlightIds}) {
+function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent, selectedRoutineKey, onSelectRoutineOccurrence, blockRefs, flipOldRectsRef, flipSeq, newItemHighlightIds, gsBusyByDate, gsRecommended}) {
   // "Watch it happen" FLIP playback (see CalendarTab's captureFlip) --
   // flipSeq changing means flipOldRectsRef.current now holds a snapshot
   // of every block's on-screen position from right before events just
@@ -16320,6 +16322,33 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                 </div>
               );
             }
+            // Schedule with Friends: busy overlay (any picked friend, or
+            // this user's own calendar, occupied) -- a visual hint only,
+            // never a hard block, so placement anywhere stays allowed on
+            // top of it. Same tinted-rectangle technique as the School
+            // Hours mask just below.
+            let gsBusyEl = null;
+            if (gsBusyByDate) {
+              const busyIntervals = (gsBusyByDate[dk] || []).concat(getDayOccupiedIntervals(dk));
+              if (busyIntervals.length > 0) {
+                gsBusyEl = busyIntervals.map((iv, ii) => (
+                  <div key={"gsb"+ii} style={{position:"absolute",top:iv.s*(WK_PX_HR/60),left:0,right:0,height:Math.max(4,(iv.e-iv.s)*(WK_PX_HR/60)),background:T.muted+"1E",zIndex:3,pointerEvents:"none"}} />
+                ));
+              }
+            }
+            // Studlin's top-ranked findSharedStudyWindow option, shown as a
+            // dashed suggestion -- never interactive, the user's own placed
+            // draft (previewEl above) is what actually gets sent.
+            let gsRecommendedEl = null;
+            if (gsRecommended && gsRecommended.date === dk) {
+              const rStart = timeToMinutes(gsRecommended.time);
+              const rDur = gsRecommended.duration || 60;
+              gsRecommendedEl = (
+                <div style={{position:"absolute",top:rStart*(WK_PX_HR/60),left:2,right:2,height:Math.max(22,rDur*(WK_PX_HR/60)),borderRadius:5,background:T.lime+"10",border:`1.5px dashed ${T.lime}`,zIndex:5,pointerEvents:"none",display:"flex",alignItems:"flex-start",justifyContent:"center",paddingTop:2,boxSizing:"border-box"}}>
+                  <span style={{fontSize:8,fontWeight:700,letterSpacing:"0.05em",color:T.lime,background:T.card,padding:"1px 5px",borderRadius:3,whiteSpace:"nowrap"}}>STUDLIN RECOMMENDS</span>
+                </div>
+              );
+            }
             return (
               <div key={colIdx} style={{position:"relative",borderLeft:`1px solid ${T.border}`,height:24*WK_PX_HR,boxSizing:"border-box"}}
                 ref={el => { wkColRefs.current[dk] = el; }}
@@ -16551,6 +16580,8 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                     </React.Fragment>
                   );
                 }); })()}
+                {gsBusyEl}
+                {gsRecommendedEl}
                 {ghostEl}
                 {previewEl}
               </div>
@@ -20663,6 +20694,35 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // Whether the preview block is actively being dragged/resized on the
   // calendar right now -- NewEventModal hides itself while this is true.
   const [previewDragActive,setPreviewDragActive]=useState(false);
+  // ── Schedule with Friends (2026-08-21) ──────────────────────────────────
+  // A calendar-native front door onto the exact same propose/accept/decline
+  // negotiation ChatDrawer's "sync calendars" flow already uses (see
+  // findSharedStudyWindow, checkManualStudyTime, scheduleGroupSession,
+  // respondToShare, confirmStudyTime) -- this doesn't duplicate that
+  // machinery, it just gives it a full-calendar drag-and-drop placement UI
+  // instead of a small time-of-day/duration form. gsStep "pick" = choosing
+  // friends; "place" = the busy-overlay + drag/resize step.
+  const [gsOpen,setGsOpen]=useState(false);
+  const [gsStep,setGsStep]=useState("pick");
+  const [gsCandidates,setGsCandidates]=useState([]);
+  const [gsSelected,setGsSelected]=useState([]);
+  const [gsLoading,setGsLoading]=useState(false);
+  const [gsRoomId,setGsRoomId]=useState(null);
+  const [gsMemberUids,setGsMemberUids]=useState([]);
+  const [gsMemberNames,setGsMemberNames]=useState({});
+  // {dateKey: [{s,e}]} -- grays out anywhere any picked friend (or this
+  // user's own calendar) is busy. Purely a visual hint, never a hard block
+  // -- manual placement stays allowed on top of it, same reasoning as
+  // findSharedStudyWindow's own honest degrade-gracefully behavior.
+  const [gsBusyByDate,setGsBusyByDate]=useState({});
+  // Top-ranked findSharedStudyWindow option, rendered as a dashed
+  // "Studlin recommends this time" ghost block -- suggestion only.
+  const [gsRecommended,setGsRecommended]=useState(null);
+  // The user's own placed draft: {date,startTime,endTime,mode,title}|null.
+  // mode is "busy block" (Meeting) or "study block" (Study Session) --
+  // same two modes ChatDrawer's scheduleGroupSession already knows about.
+  const [gsDraft,setGsDraft]=useState(null);
+  const [gsSending,setGsSending]=useState(false);
   // Phase 7e: set when a routine occurrence was just dropped somewhere new,
   // waiting on the student to pick "just this one" or "every week".
   const [routineDropPending,setRoutineDropPending]=useState(null); // {routineId,fromDate,toDate,toTime,newDuration?}|null -- newDuration only set by a resize
@@ -21715,12 +21775,143 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // ({x,y}, the actual drop position) lets the New Event popover open
     // right next to where the student dropped it, not centered on the
     // whole screen.
+    // A Meeting/Study Session chip from the Schedule with Friends sidebar
+    // (see gsOpen) doesn't go through NewEventModal at all -- there's no
+    // title/repeat/location form to fill out, just a placed block you can
+    // drag/resize and then send as a proposal (see placeGroupScheduleChip).
+    if(chip&&chip.kind==="groupSession"){
+      placeGroupScheduleChip(chip,dateKey,startTime);
+      return;
+    }
     setNewEventPrefill({title:(chip&&chip.title)||"",date:dateKey,startTime:startTime||"09:00",
       chipKind:(chip&&chip.kind)||null,courseId:(chip&&chip.courseId)||null,routineId:(chip&&chip.routineId)||null,
       sessionId:(chip&&chip.sessionId)||null,
       color:(chip&&chip.color)||T.lime,
       anchorX:(anchorPoint&&anchorPoint.x)||null,anchorY:(anchorPoint&&anchorPoint.y)||null});
     setNewEventOpen(true);
+  };
+  // ── Schedule with Friends ────────────────────────────────────────────
+  const openGroupSchedule=async()=>{
+    setGsOpen(true);setGsStep("pick");setGsSelected([]);setGsLoading(true);
+    setGsRoomId(null);setGsMemberUids([]);setGsMemberNames({});setGsBusyByDate({});setGsRecommended(null);setGsDraft(null);
+    const myUid=firebase.auth().currentUser?.uid;
+    const uids=myUid?await getAcceptedFriendUids(myUid):[];
+    const docs=await Promise.all(uids.map(uid=>fsdb().collection('profiles').doc(uid).get().catch(()=>null)));
+    setGsCandidates(uids.map((uid,i)=>{
+      const p=docs[i]&&docs[i].exists?docs[i].data():null;
+      return {uid,name:(p&&p.name)||"Studlin User"};
+    }));
+    setGsLoading(false);
+  };
+  // Soft cap at 8 -- past that a row-per-person busy overlay gets visually
+  // dense fast; silently ignores further picks rather than erroring.
+  const toggleGsSelected=(uid)=>setGsSelected(s=>s.includes(uid)?s.filter(x=>x!==uid):(s.length>=8?s:[...s,uid]));
+  // Resolves (or creates) the chat room to post the proposal into -- a
+  // single friend reuses the existing deterministic-id DM pattern, 2+
+  // friends get a fresh group room. Same shapes chatRooms already uses
+  // elsewhere (see sendDeck's dmRoomId set/merge, submitCreateGroup's
+  // group .add()) so ChatDrawer/FriendsChat need no changes to show them.
+  const confirmGsPeople=async()=>{
+    const myUid=firebase.auth().currentUser?.uid;
+    if(!myUid||gsSelected.length===0)return;
+    setGsLoading(true);
+    const names={};
+    gsSelected.forEach(uid=>{names[uid]=(gsCandidates.find(c=>c.uid===uid)||{}).name||"Studlin User";});
+    const myName=getUserName()||"You";
+    const now=new Date().toISOString();
+    let roomId;
+    if(gsSelected.length===1){
+      const otherUid=gsSelected[0];
+      roomId=dmRoomId(myUid,otherUid);
+      await fsdb().collection('chatRooms').doc(roomId).set({type:"dm",memberUids:[myUid,otherUid].sort(),createdBy:myUid,createdAt:now,updatedAt:now,lastMessage:null},{merge:true});
+    }else{
+      const doc=await fsdb().collection('chatRooms').add({
+        type:"group",memberUids:[myUid,...gsSelected],createdBy:myUid,
+        name:gsSelected.map(uid=>names[uid]).join(", ")+" & "+myName,
+        groupType:"permanent",expiresAt:null,memberNames:{[myUid]:myName,...names},
+        createdAt:now,updatedAt:now,lastMessage:null,
+      });
+      roomId=doc.id;
+    }
+    const memberUids=[myUid,...gsSelected];
+    const memberNames={[myUid]:myName,...names};
+    setGsRoomId(roomId);setGsMemberUids(memberUids);setGsMemberNames(memberNames);
+    // This user's own occupied time is computed per-day straight off
+    // getDayOccupiedIntervals as the grid renders -- only friends' opted-in
+    // busy time needs fetching up front here.
+    const friendsBusy=await fetchFriendsBusyIntervals(gsSelected);
+    const busyObj={};
+    friendsBusy.forEach((intervals,date)=>{busyObj[date]=intervals;});
+    setGsBusyByDate(busyObj);
+    // Recommended ghost block -- a visual suggestion only (see gsRecommended
+    // state comment); manual placement anywhere else stays fully available.
+    const rec=await findSharedStudyWindow(myUid,gsSelected,{timeMode:"anytime",lookAheadDayRange:7,durationInMinutes:60});
+    setGsRecommended(rec.noneFound?null:(rec.options.find(o=>o.isBest)||rec.options[0]||null));
+    setGsLoading(false);setGsStep("place");
+  };
+  // Dropping the Meeting or Study Session sidebar chip -- default to a 1hr
+  // block at the drop point, immediately draggable/resizable from there via
+  // gsPreviewMove/gsPreviewResize below.
+  const placeGroupScheduleChip=(chip,dateKey,startTime)=>{
+    const start=timeToMinutes(startTime||"09:00");
+    setGsDraft({date:dateKey,startTime:startTime||"09:00",endTime:minutesToTime(start+60),mode:chip.mode,title:chip.title,color:chip.color});
+  };
+  const gsPreviewMove=(date,startTime,endTime)=>setGsDraft(d=>d?({...d,date,startTime,endTime}):d);
+  const gsPreviewResize=(endTime)=>setGsDraft(d=>d?({...d,endTime}):d);
+  const closeGroupSchedule=()=>{setGsOpen(false);setGsStep("pick");setGsDraft(null);};
+  // Sends the placed block as a proposal -- writes straight to
+  // status:"proposed" (skipping the "unscheduled, pick one of 3 options"
+  // stage ChatDrawer's own auto-find posts) since the organizer already
+  // picked the exact slot by placing it. Same message shape scheduleGroupSession
+  // writes, so ChatBubble/respondToShare/counterProposeTime need zero
+  // changes to handle it. The organizer's own acceptance is implicit here
+  // too, exactly like ChatDrawer's version.
+  const postGroupSchedule=async()=>{
+    const myUid=firebase.auth().currentUser?.uid;
+    if(!myUid||!gsDraft||!gsRoomId||gsSending)return;
+    setGsSending(true);
+    const duration=Math.max(15,timeToMinutes(gsDraft.endTime)-timeToMinutes(gsDraft.startTime));
+    const {conflicts,...option}=checkManualStudyTime(gsDraft.date,gsDraft.startTime,duration);
+    const now=Date.now();
+    const nowIso=new Date().toISOString();
+    let studySessionId=null;
+    if(gsDraft.mode==="study block"){
+      const doc=await fsdb().collection('studySessions').add({
+        memberUids:gsMemberUids,createdBy:myUid,roomId:gsRoomId,
+        title:gsDraft.title||"Study session",subject:"",
+        scheduledDate:option.date,scheduledTime:option.time,duration:option.duration,
+        status:"scheduled",startedBy:null,startedAt:null,endedAt:null,
+        participants:Object.fromEntries(gsMemberUids.map(uid=>{
+          const name=gsMemberNames[uid]||"Studlin User";
+          return [uid,{name,initials:name.split(" ").map(x=>x[0]).join(""),state:uid===myUid?"accepted":"invited",joinedAt:null,leftAt:null}];
+        })),
+        createdAt:nowIso,updatedAt:nowIso,
+      }).catch(()=>null);
+      studySessionId=doc&&doc.id;
+    }
+    const roomRef=fsdb().collection('chatRooms').doc(gsRoomId);
+    await roomRef.collection('messages').add({
+      senderId:myUid,ts:now,kind:"calendar",status:"proposed",proposedBy:myUid,
+      meta:{options:[option]},scheduledOption:0,scheduledMode:gsDraft.mode,
+      memberUids:gsMemberUids,studySessionId:studySessionId||null,
+      responses:{[myUid]:"accepted"},
+    }).catch(()=>{});
+    await roomRef.update({lastMessage:{text:null,kind:"calendar",ts:now,senderId:myUid},updatedAt:nowIso}).catch(()=>{});
+    authFetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"push",roomId:gsRoomId,preview:"Shared free time found"})}).catch(()=>{});
+    // Commits onto MY OWN calendar only -- there's no backend that can push
+    // an event into someone else's account; everyone else materializes it
+    // themselves via Accept (see ChatDrawer's respondToShare).
+    addTaskWithRebalance({
+      id:"gs-"+now,date:option.date,time:option.time,duration:option.duration,
+      title:gsDraft.title||(gsDraft.mode==="study block"?"Study session":"Meeting"),
+      subject:"",kind:gsDraft.mode,notes:"",
+      priority:5,difficulty:5,deadline:null,status:"pending",timeSpent:0,completedAt:null,
+      ...(studySessionId?{studySessionId}:{}),
+    });
+    setGsSending(false);
+    closeGroupSchedule();
+    setPlacementToast("Sent. It'll land on their calendar once they accept.");
+    setTimeout(()=>setPlacementToast(""),3200);
   };
   // Builds one-or-more routine objects for a repeating item from its
   // shared days/startTime/duration plus any per-day time overrides --
@@ -23384,6 +23575,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                   {icon:Icon.file,label:"Scan syllabus",sub:"Upload a doc, AI extracts dates",onClick:()=>{setToolsMenuOpen(false);setQuickScanOpen(true);}},
                   {icon:Icon.cal,label:"Routine",sub:"Manage your weekly schedule",onClick:()=>{setToolsMenuOpen(false);setRoutineCenterOpen(true);}},
                   {icon:Icon.check,label:"Can I go?",sub:"See if free time now is safe",onClick:()=>{setToolsMenuOpen(false);setTimeOffResult(null);setTimeOffOpen(true);}},
+                  {icon:Icon.users,label:"Schedule with Friends",sub:"Drag a time onto the calendar, send it",onClick:()=>{setToolsMenuOpen(false);openGroupSchedule();}},
                   // Balance My Week used to be its own separate item here --
                   // folded into Reschedule as one of its modes instead,
                   // since both are the same underlying job (redistribute
@@ -23514,13 +23706,15 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
           selDay={selDay} setSelDay={setSelDay} onDeleteEvent={deleteEventWithUndo} catchUpPending={catchUpPending}
           sidebarDragChip={sidebarDragChip} onDropSidebarChip={(dk,time,anchorPoint)=>{openNewEventForDrop(sidebarDragChip,dk,time,anchorPoint);setSidebarDragChip(null);}}
-          onDropRoutineOccurrence={onDropRoutineOccurrence} onResizeRoutineOccurrence={onResizeRoutineOccurrence} pendingRoutineChange={routineDropPending} onRoutineDragStateChange={setRoutineDragActive} previewEvent={previewEvent} highlightedSessionId={highlightedSessionId}
+          onDropRoutineOccurrence={onDropRoutineOccurrence} onResizeRoutineOccurrence={onResizeRoutineOccurrence} pendingRoutineChange={routineDropPending} onRoutineDragStateChange={setRoutineDragActive}
+          previewEvent={gsOpen&&gsStep==="place"?gsDraft:previewEvent} highlightedSessionId={highlightedSessionId}
           blockRefs={blockRefs} flipOldRectsRef={flipOldRectsRef} flipSeq={flipSeq}
-          onPreviewMove={(date,startTime,endTime)=>setPreviewOverride({date,startTime,endTime})}
-          onPreviewResize={(endTime)=>setPreviewOverride(o=>({date:(o&&o.date)||previewEvent.date,startTime:(o&&o.startTime)||previewEvent.startTime,endTime}))}
+          onPreviewMove={gsOpen&&gsStep==="place"?gsPreviewMove:(date,startTime,endTime)=>setPreviewOverride({date,startTime,endTime})}
+          onPreviewResize={gsOpen&&gsStep==="place"?gsPreviewResize:(endTime)=>setPreviewOverride(o=>({date:(o&&o.date)||previewEvent.date,startTime:(o&&o.startTime)||previewEvent.startTime,endTime}))}
           onPreviewDraggingChange={setPreviewDragActive} onSelectEvent={setSelectedCalEventId}
           selectedRoutineKey={selectedRoutineOccurrence?selectedRoutineOccurrence.routineId+"|"+selectedRoutineOccurrence.date:null}
-          onSelectRoutineOccurrence={setSelectedRoutineOccurrence} newItemHighlightIds={newItemHighlightSet} />
+          onSelectRoutineOccurrence={setSelectedRoutineOccurrence} newItemHighlightIds={newItemHighlightSet}
+          gsBusyByDate={gsOpen&&gsStep==="place"?gsBusyByDate:null} gsRecommended={gsOpen&&gsStep==="place"?gsRecommended:null} />
       )}
       {calView==="daily"&&(
         <DayPlanner dayEvents={dayEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} fmtTimeRange={fmtTimeRange} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} catchUpPending={catchUpPending} openNew={openNew} newItemHighlightIds={newItemHighlightSet} />
@@ -23600,6 +23794,45 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           );
         })()}
       </Modal>
+      {/* ── Schedule with Friends -- step 1, pick people ── */}
+      <Modal open={gsOpen&&gsStep==="pick"} onClose={closeGroupSchedule} title="Schedule with Friends" sub="Pick who you want to find time with. They only see this once you send it." width={420}
+        footer={<><Btn variant="subtle" onClick={closeGroupSchedule}>Cancel</Btn><Btn onClick={confirmGsPeople} disabled={gsSelected.length===0||gsLoading}>{gsLoading?"…":"Continue"}</Btn></>}>
+        {gsLoading?(
+          <div style={{fontSize:12.5,color:T.muted}}>Loading your friends…</div>
+        ):gsCandidates.length===0?(
+          <div style={{fontSize:12.5,color:T.muted}}>No friends yet -- add some in Studlin Network first.</div>
+        ):(
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {gsCandidates.map(c=>(
+              <label key={c.uid} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:8,border:`1px solid ${T.border}`,cursor:"pointer",background:gsSelected.includes(c.uid)?T.card2:"transparent"}}>
+                <input type="checkbox" checked={gsSelected.includes(c.uid)} onChange={()=>toggleGsSelected(c.uid)} style={{cursor:"pointer"}} />
+                <div style={{fontSize:13,fontWeight:600,color:T.text}}>{c.name}</div>
+              </label>
+            ))}
+          </div>
+        )}
+      </Modal>
+      {/* ── Schedule with Friends -- step 2, place it. A floating panel, not
+          a Modal -- the whole point is seeing/using the real calendar
+          underneath, so it must never dim or block it. Busy overlay +
+          recommended ghost block render inside WeeklyPlanner itself (see
+          gsBusyByDate/gsRecommended props above). ── */}
+      {gsOpen&&gsStep==="place"&&(
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:70,background:T.card,border:`1px solid ${T.border}`,borderRadius:12,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",padding:"14px 18px",display:"flex",alignItems:"center",gap:14,maxWidth:600}}>
+          <div style={{display:"flex",flexDirection:"column",gap:3}}>
+            <div style={{fontSize:11.5,fontWeight:700,color:T.text}}>Drag onto an open slot</div>
+            <div style={{fontSize:10.5,color:T.muted}}>Grayed-out time is when someone's busy -- you can still place there.</div>
+          </div>
+          <div draggable onDragStart={()=>setSidebarDragChip({title:"Meeting",kind:"groupSession",mode:"busy block",color:T.lime})} onDragEnd={()=>setSidebarDragChip(null)}
+            style={{padding:"8px 14px",borderRadius:8,background:T.lime+"18",border:`1px solid ${T.lime}55`,color:T.lime,fontSize:12,fontWeight:700,cursor:"grab",whiteSpace:"nowrap"}}>Meeting</div>
+          <div draggable onDragStart={()=>setSidebarDragChip({title:"Study Session",kind:"groupSession",mode:"study block",color:T.teal})} onDragEnd={()=>setSidebarDragChip(null)}
+            style={{padding:"8px 14px",borderRadius:8,background:T.teal+"18",border:`1px solid ${T.teal}55`,color:T.teal,fontSize:12,fontWeight:700,cursor:"grab",whiteSpace:"nowrap"}}>Study Session</div>
+          <div style={{display:"flex",gap:8,marginLeft:"auto"}}>
+            <Btn variant="subtle" onClick={closeGroupSchedule}>Cancel</Btn>
+            <Btn onClick={postGroupSchedule} disabled={!gsDraft||gsSending}>{gsSending?"Sending…":"Done"}</Btn>
+          </div>
+        </div>
+      )}
       <NewEventModal open={newEventOpen||!!routineEditItem} initialTitle={newEventPrefill.title} initialDate={newEventPrefill.date} initialStartTime={newEventPrefill.startTime} initialKind={newEventPrefill.chipKind}
         anchorX={newEventPrefill.anchorX} anchorY={newEventPrefill.anchorY} color={newEventPrefill.color}
         hideRepeat={newEventPrefill.chipKind==="session"}
