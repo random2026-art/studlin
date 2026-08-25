@@ -1462,6 +1462,43 @@ describe("checkManualStudyTime (manually-picked shared-study time, regression: t
     assert.equal(result.conflicts.length, 1);
     assert.equal(result.conflicts[0].title, "Gym");
   });
+
+  // 2026-08-25 regression: a proposed shared time starting the exact
+  // instant a class ends (zero gap) used to report no conflict at all --
+  // getDayOccupiedIntervals was the one occupied-interval builder in the
+  // whole file that never applied the lead-in/trail-out buffer every other
+  // scheduling path already respects, so "Schedule with Friends" could
+  // (and did, in a real screenshot) place a meetup with literally zero
+  // breathing room after a class.
+  test("a proposed time starting right when a class ends is flagged as a conflict (buffer margin), not treated as free", () => {
+    const m = loadStudlinModule();
+    const dow = (new Date("2026-07-20T12:00:00").getDay() + 6) % 7;
+    const cls = { id: "routine-bio", title: "Biology 101", kind: "class", days: [dow], startTime: "07:50", duration: 70, subject: "Biology" };
+    m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([cls]));
+    m.localStorage.setItem("studlin-events", JSON.stringify([]));
+    // Class is 7:50-9:00. Proposing 9:00-10:30 (the exact screenshot case)
+    // must now conflict -- a fixed class gets a real lead-in/trail-out
+    // margin, not a knife's-edge boundary.
+    const result = m.checkManualStudyTime("2026-07-20", "09:00", 90);
+    assert.equal(result.conflicts.length, 1);
+    assert.equal(result.conflicts[0].title, "Biology 101");
+    // The conflict label must show the class's REAL time, not the padded
+    // buffer window -- a student would be confused seeing "9:10 AM" for a
+    // class that actually ends at 9:00.
+    assert.equal(result.conflicts[0].timeLabel, "7:50 AM–9:00 AM");
+  });
+
+  test("a proposed time with real breathing room after a class is genuinely free", () => {
+    const m = loadStudlinModule();
+    const dow = (new Date("2026-07-20T12:00:00").getDay() + 6) % 7;
+    const cls = { id: "routine-bio", title: "Biology 101", kind: "class", days: [dow], startTime: "07:50", duration: 70, subject: "Biology" };
+    m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([cls]));
+    m.localStorage.setItem("studlin-events", JSON.stringify([]));
+    // Class's real buffer is 15min lead-in + ~10min breathing room trail-out
+    // -- 9:20 is comfortably past all of that.
+    const result = m.checkManualStudyTime("2026-07-20", "09:20", 60);
+    assert.equal(result.conflicts.length, 0);
+  });
 });
 
 describe("scoreTask difficulty preference (regression: read a dead prefs key, so Settings' Hard First / Easy First did nothing)", () => {

@@ -14140,13 +14140,27 @@ function ChatBubble({m,myUid,onRespond,onSchedule,onCounter}){
 // flagged. Pulled out as its own function so findSharedStudyWindow and
 // checkManualStudyTime (below) share exactly one definition of "busy on
 // this day" instead of two that could quietly drift apart.
+// s/e are the buffer-expanded bounds (effectiveLeadIn/effectiveTrailOut --
+// the same commute/breathing-room margin every other occupied-interval
+// computation in this file already respects, see findOpenSlotFor's own
+// identical .map shape) -- this is what conflict detection and the busy
+// overlay must both treat as "occupied," or a shared meeting could land
+// with zero gap right up against a class boundary, which is exactly the
+// bug this fixes (getDayOccupiedIntervals was the one occupied-interval
+// builder in the whole file that never applied the buffer, since it
+// predates effectiveLeadIn/effectiveTrailOut and was never updated to use
+// them). realS/realE are the event's own actual, unpadded start/end, kept
+// alongside so a conflict message can name the real class time instead of
+// the padded one -- "conflicts with Applied Engineering, 7:50-9:00 AM,"
+// not a confusing "...9:10 AM" that doesn't match what's really on the
+// calendar.
 function getDayOccupiedIntervals(dateKey){
   const events=lsGet("events",[]);
   const routines=getWeeklyRoutine();
   return events.filter(e=>e.date===dateKey)
-    .map(e=>({s:timeToMinutes(e.time||"0:00"),e:timeToMinutes(e.time||"0:00")+(e.duration||60),title:e.title||"Untitled"}))
+    .map(e=>{const realS=timeToMinutes(e.time||"0:00"),realE=realS+(e.duration||60);return{s:realS-effectiveLeadIn(e),e:realE+effectiveTrailOut(e),realS,realE,title:e.title||"Untitled"};})
     .concat(expandRoutineOccurrences(routines,dateKey,dateKey).filter(o=>o.kind!=="free period")
-      .map(o=>({s:timeToMinutes(o.time),e:timeToMinutes(o.time)+(o.duration||30),title:o.title||"Routine"})))
+      .map(o=>{const realS=timeToMinutes(o.time),realE=realS+(o.duration||30);return{s:realS-effectiveLeadIn(o),e:realE+effectiveTrailOut(o),realS,realE,title:o.title||"Routine"};}))
     .sort((a,b)=>a.s-b.s);
 }
 // Checks one specific manually-picked date/time/duration against the
@@ -14162,7 +14176,7 @@ function checkManualStudyTime(date,time,duration){
   const end=start+duration;
   const occupied=getDayOccupiedIntervals(date);
   const conflicts=occupied.filter(o=>!(end<=o.s||start>=o.e))
-    .map(o=>({title:o.title,timeLabel:fmt(minutesToTime(o.s))+"–"+fmt(minutesToTime(o.e))}));
+    .map(o=>({title:o.title,timeLabel:fmt(minutesToTime(o.realS))+"–"+fmt(minutesToTime(o.realE))}));
   const d=new Date(date+"T12:00:00");
   const today=dayKey();
   return {
