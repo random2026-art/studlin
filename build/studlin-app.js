@@ -4369,6 +4369,23 @@ function addTaskWithRebalance(task) {
   lsSet("events", next);
   return next;
 }
+async function refreshPendingAcceptance(events, ids) {
+  const targets = (events || []).filter((ev) => ev.chatRoomId && ev.chatMessageId && ev.proposalMemberUids && !computeAcceptanceSummary(ev.proposalMemberUids, ev.proposalResponses).allAccepted && (!ids || ids.includes(ev.id)));
+  if (targets.length === 0) return null;
+  const fetched = await Promise.all(targets.map(
+    (ev) => fsdb().collection("chatRooms").doc(ev.chatRoomId).collection("messages").doc(ev.chatMessageId).get().then((doc) => doc.exists ? { id: ev.id, memberUids: doc.data().memberUids || ev.proposalMemberUids, responses: doc.data().responses || {} } : null).catch(() => null)
+  ));
+  let changed = false;
+  const next = events.map((ev) => {
+    const u = fetched.find((x) => x && x.id === ev.id);
+    if (!u) return ev;
+    changed = true;
+    return { ...ev, proposalMemberUids: u.memberUids, proposalResponses: u.responses };
+  });
+  if (!changed) return null;
+  lsSet("events", next);
+  return next;
+}
 function calculateTaskPriority(task, allTasks) {
   let score = 0;
   const prefs = getSchedulePreferences();
@@ -9004,6 +9021,15 @@ function checkManualStudyTime(date, time, duration) {
     timeLabel: fmt(time)
   };
 }
+function computeAcceptanceSummary(memberUids, responses) {
+  const uids = memberUids || [];
+  const r = responses || {};
+  const total = uids.length;
+  const accepted = uids.filter((uid) => r[uid] === "accepted").length;
+  const declined = uids.filter((uid) => r[uid] === "declined").length;
+  const pending = total - accepted - declined;
+  return { total, accepted, declined, pending, allAccepted: total > 0 && accepted === total };
+}
 async function findSharedStudyWindow(myUid, otherUids, params) {
   const fmtTimeLabel = (t) => {
     const p = t.split(":");
@@ -9195,7 +9221,7 @@ function ChatDrawer({ open, target, myUid, onClose, onMakePermanent, onDeleteGro
     setCounterSupersedes(supersededId);
     setFindWindowOpen(true);
   };
-  const confirmStudyTime = (w, mode, studySessionId) => {
+  const confirmStudyTime = (w, mode, studySessionId, proposal) => {
     addTaskWithRebalance({
       id: "netsync-" + Date.now(),
       date: w.date,
@@ -9211,7 +9237,14 @@ function ChatDrawer({ open, target, myUid, onClose, onMakePermanent, onDeleteGro
       status: "pending",
       timeSpent: 0,
       completedAt: null,
-      ...studySessionId ? { studySessionId } : {}
+      ...studySessionId ? { studySessionId } : {},
+      ...proposal ? {
+        chatRoomId: proposal.roomId,
+        chatMessageId: proposal.messageId,
+        proposalMemberUids: proposal.memberUids,
+        proposalMemberNames: proposal.memberNames,
+        proposalResponses: proposal.responses
+      } : {}
     });
   };
   const scheduleGroupSession = async (id, optionIndex = 0, mode = "busy block") => {
@@ -9253,7 +9286,7 @@ function ChatDrawer({ open, target, myUid, onClose, onMakePermanent, onDeleteGro
       }).catch(() => null);
       studySessionId = doc && doc.id;
     }
-    confirmStudyTime(w, mode, studySessionId);
+    confirmStudyTime(w, mode, studySessionId, { roomId, messageId: id, memberUids, memberNames, responses: { [myUid]: "accepted" } });
     fsdb().collection("chatRooms").doc(roomId).collection("messages").doc(id).update({
       status: "proposed",
       proposedBy: myUid,
@@ -9275,15 +9308,16 @@ function ChatDrawer({ open, target, myUid, onClose, onMakePermanent, onDeleteGro
     if (!msg || !roomId) return;
     if (msg.kind === "calendar") {
       if (!myUid) return;
+      const memberUids = msg.memberUids || (isGroup ? target.group.memberUids : [myUid, target.user.uid].sort());
+      const memberNames = isGroup ? target.group.memberNames || {} : { [myUid]: getUserName() || "You", [target.user.uid]: target.user.n };
       if (decision === "accepted") {
         const w = (msg.meta.options || [msg.meta])[msg.scheduledOption || 0];
-        if (w) confirmStudyTime(w, msg.scheduledMode || "busy block", msg.studySessionId);
+        if (w) confirmStudyTime(w, msg.scheduledMode || "busy block", msg.studySessionId, { roomId, messageId: id, memberUids, memberNames, responses: { ...msg.responses || {}, [myUid]: "accepted" } });
         if (msg.studySessionId) {
           fsdb().collection("studySessions").doc(msg.studySessionId).update({ ["participants." + myUid + ".state"]: "accepted" }).catch(() => {
           });
         }
       }
-      const memberUids = msg.memberUids || (isGroup ? target.group.memberUids : [myUid, target.user.uid].sort());
       const nextResponses = { ...msg.responses || {}, [myUid]: decision };
       const allAccepted = memberUids.length > 0 && memberUids.every((uid) => nextResponses[uid] === "accepted");
       const nextStatus = decision === "declined" ? "declined" : allAccepted ? "confirmed" : "proposed";
@@ -10036,6 +10070,18 @@ function computeEventBlockHeightPx(durationMins, gapToNextMins, pxPerHr) {
   if (gapToNextMins == null) return floored;
   return Math.min(floored, Math.max(4, gapToNextMins * (pxPerHr / 60)));
 }
+function AcceptanceRoster({ memberUids, memberNames, responses }) {
+  const uids = memberUids || [];
+  const names = memberNames || {};
+  const r = responses || {};
+  const statusLabel = { accepted: "Accepted", declined: "Declined" };
+  const statusColor = { accepted: T.lime, declined: T.red };
+  return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, uids.map((uid) => {
+    const name = names[uid] || "Studlin User";
+    const status = r[uid] || "pending";
+    return /* @__PURE__ */ React.createElement("div", { key: uid, style: { display: "flex", alignItems: "center", gap: 9 } }, /* @__PURE__ */ React.createElement(Av, { initials: name.split(" ").map((x) => x[0]).join(""), color: T.lime, size: 24, picUrl: "" }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 600, color: T.text, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: statusColor[status] || T.muted, flexShrink: 0 } }, statusLabel[status] || "Pending"));
+  }));
+}
 function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent, selectedRoutineKey, onSelectRoutineOccurrence, blockRefs, flipOldRectsRef, flipSeq, newItemHighlightIds, gsBusyByDate, gsRecommended }) {
   const [exitGhosts, setExitGhosts] = useState([]);
   useLayoutEffect(() => {
@@ -10486,6 +10532,8 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
           const kindStyle = isStudy ? { background: tokens.color.accent, color: T.ink } : isWarningKind ? { background: tokens.color.warningSubtle, border: `1px solid ${tokens.color.warning}`, color: tokens.color.warning } : { background: subjectColor + "1E", color: subjectColor };
           const dimmedByRoutineMode = editRoutineMode && !isRoutine;
           const highlightedByRoutineMode = editRoutineMode && isRoutine;
+          const acceptanceSummary = ev.proposalMemberUids ? computeAcceptanceSummary(ev.proposalMemberUids, ev.proposalResponses) : null;
+          const isPendingAcceptance = !!acceptanceSummary && !acceptanceSummary.allAccepted;
           const isSelected = !isRoutine && selectedEventId === ev.id;
           const isRoutineSelected = isRoutine && selectedRoutineKey === ev.routineId + "|" + ev.date;
           const isNewlyAdded = !!newItemHighlightIds && (newItemHighlightIds.has(ev.id) || ev.routineId && newItemHighlightIds.has(ev.routineId));
@@ -10530,6 +10578,9 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
                   setSelectedEventId(ev.id);
                   setPopoverAnchor({ id: ev.id, rect: e.currentTarget.getBoundingClientRect() });
                   if (onSelectEvent) onSelectEvent(ev.id);
+                  if (isPendingAcceptance) refreshPendingAcceptance(events, [ev.id]).then((next) => {
+                    if (next) setEvents2(next);
+                  });
                 }
               },
               onMouseEnter: () => {
@@ -10543,11 +10594,12 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
                 if (el) blockRefs.current.set(ev.id, el);
                 else blockRefs.current.delete(ev.id);
               },
-              style: { position: "absolute", top: topPx, left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`, height: heightPx, borderRadius: 5, padding: "2px 5px 2px 8px", cursor: "grab", overflow: "hidden", zIndex: 3, opacity: dimmedByRoutineMode ? 0.3 : isDone ? 0.6 : 1, boxSizing: "border-box", userSelect: "none", ...kindStyle, ...highlightedByRoutineMode ? { outline: `2px solid ${T.lime}`, outlineOffset: 1 } : {}, ...newItemBoxShadow ? { boxShadow: newItemBoxShadow } : {}, ...isSelected || isRoutineSelected ? { outline: `2px solid ${T.lime}`, outlineOffset: 1, boxShadow: `0 0 0 4px ${T.lime}22` } : {}, ...!isRoutine && highlightedSessionId === ev.id ? { outline: `2px solid ${T.amber}`, outlineOffset: 1, boxShadow: `0 0 0 4px ${T.amber}33` } : {} }
+              style: { position: "absolute", top: topPx, left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`, height: heightPx, borderRadius: 5, padding: "2px 5px 2px 8px", cursor: "grab", overflow: "hidden", zIndex: 3, opacity: dimmedByRoutineMode ? 0.3 : isPendingAcceptance || isDone ? 0.6 : 1, boxSizing: "border-box", userSelect: "none", ...kindStyle, ...highlightedByRoutineMode ? { outline: `2px solid ${T.lime}`, outlineOffset: 1 } : {}, ...newItemBoxShadow ? { boxShadow: newItemBoxShadow } : {}, ...isSelected || isRoutineSelected ? { outline: `2px solid ${T.lime}`, outlineOffset: 1, boxShadow: `0 0 0 4px ${T.lime}22` } : {}, ...!isRoutine && highlightedSessionId === ev.id ? { outline: `2px solid ${T.amber}`, outlineOffset: 1, boxShadow: `0 0 0 4px ${T.amber}33` } : {} }
             },
             /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: subjectColor, borderRadius: "5px 0 0 5px" } }),
             !catchUpPending && over > 0 && /* @__PURE__ */ React.createElement("span", { title: over + "d overdue", style: { position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: "50%", background: T.red, boxShadow: "0 0 0 1.5px rgba(255,255,255,0.9)", zIndex: 1 } }),
             overflowCount > 0 && /* @__PURE__ */ React.createElement("span", { title: overflowCount + " more at this time \u2014 open the day to see them", style: { position: "absolute", bottom: 2, right: 2, fontSize: 8, fontWeight: 800, color: kindStyle.color, background: "rgba(0,0,0,0.18)", borderRadius: 8, padding: "1px 4px", lineHeight: 1.3, zIndex: 1 } }, "+", overflowCount),
+            isPendingAcceptance && /* @__PURE__ */ React.createElement("span", { title: acceptanceSummary.accepted + "/" + acceptanceSummary.total + " accepted", style: { position: "absolute", bottom: 2, left: 2, fontSize: 8, fontWeight: 800, color: kindStyle.color, background: "rgba(0,0,0,0.18)", borderRadius: 8, padding: "1px 4px", lineHeight: 1.3, zIndex: 1 } }, acceptanceSummary.accepted, "/", acceptanceSummary.total),
             conflictTitles.length > 0 && /* @__PURE__ */ React.createElement("span", { title: "Overlaps with " + conflictTitles.join(", "), style: { position: "absolute", top: 2, left: 2, fontSize: 9, lineHeight: 1, zIndex: 1, filter: "drop-shadow(0 1px 1px rgba(0,0,0,0.35))" } }, "\u26A0\uFE0F"),
             /* @__PURE__ */ React.createElement("div", { style: { fontSize: 9.5, fontWeight: 700, color: kindStyle.color, lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, isExam ? "EXAM \xB7 " : "", ev.title),
             heightPx > 34 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 8.5, color: isStudy ? T.ink + "aa" : isWarningKind ? tokens.color.warning : tokens.color.textSecondary, marginTop: 1 } }, fmtTimeRange(String(Math.floor(effStartMin / 60)).padStart(2, "0") + ":" + String(effStartMin % 60).padStart(2, "0"), effDuration)),
@@ -10594,11 +10646,14 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
   }))), popoverAnchor && (() => {
     const ev = events.find((e) => e.id === popoverAnchor.id);
     if (!ev) return null;
+    const pendingSummary = ev.proposalMemberUids ? computeAcceptanceSummary(ev.proposalMemberUids, ev.proposalResponses) : null;
+    const showRoster = !!pendingSummary && !pendingSummary.allAccepted;
     const rect = popoverAnchor.rect;
-    const top = Math.min(rect.bottom + 6, window.innerHeight - 180);
-    const left = Math.min(Math.max(8, rect.left), window.innerWidth - 216);
+    const popoverWidth = showRoster ? 240 : 208;
+    const top = Math.min(rect.bottom + 6, window.innerHeight - (showRoster ? 340 : 180));
+    const left = Math.min(Math.max(8, rect.left), window.innerWidth - (popoverWidth + 8));
     const itemStyle = { display: "block", width: "100%", textAlign: "left", padding: "9px 14px", background: "none", border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 500, fontFamily: T.font, color: T.text };
-    return ReactDOM.createPortal(/* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: closePopover, style: { position: "fixed", inset: 0, zIndex: 998 } }), /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top, left, width: 208, background: T.card, border: `1px solid ${T.border}`, borderRadius: 6, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)", zIndex: 999, overflow: "hidden", animation: "studlinPop 0.15s cubic-bezier(.2,.85,.3,1)" } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "9px 14px", borderBottom: `1px solid ${T.border}`, fontSize: 12.5, fontWeight: 600, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.title), ev.status !== "done" && isTimerEligible(ev) && /* @__PURE__ */ React.createElement("button", { onClick: () => {
+    return ReactDOM.createPortal(/* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: closePopover, style: { position: "fixed", inset: 0, zIndex: 998 } }), /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top, left, width: popoverWidth, background: T.card, border: `1px solid ${T.border}`, borderRadius: 6, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)", zIndex: 999, overflow: "hidden", animation: "studlinPop 0.15s cubic-bezier(.2,.85,.3,1)" } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "9px 14px", borderBottom: `1px solid ${T.border}`, fontSize: 12.5, fontWeight: 600, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.title), showRoster && /* @__PURE__ */ React.createElement("div", { style: { padding: "10px 14px", borderBottom: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", color: T.muted, marginBottom: 8, textTransform: "uppercase" } }, "Who's in \xB7 ", pendingSummary.accepted, "/", pendingSummary.total), /* @__PURE__ */ React.createElement(AcceptanceRoster, { memberUids: ev.proposalMemberUids, memberNames: ev.proposalMemberNames, responses: ev.proposalResponses })), ev.status !== "done" && isTimerEligible(ev) && /* @__PURE__ */ React.createElement("button", { onClick: () => {
       closePopover();
       if (window._setTimerTask) window._setTimerTask(ev);
     }, style: itemStyle, onMouseEnter: (e) => e.currentTarget.style.background = T.card2, onMouseLeave: (e) => e.currentTarget.style.background = "none" }, "Begin"), ev.status !== "done" && isTimerEligible(ev) && /* @__PURE__ */ React.createElement("button", { onClick: () => {
@@ -11672,9 +11727,10 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
   // windowInvalid guard is the only real precondition left.
   /* @__PURE__ */ React.createElement(Btn, { onClick: commitAllToCalendar }, pendingClasses.length > 0 ? "Add to Calendar" : "Finish")))));
 }
-function DayPlanner({ dayEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending, openNew, newItemHighlightIds }) {
+function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf, fmtTime, fmtTimeRange, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending, openNew, newItemHighlightIds }) {
   const scrollRef = useRef(null);
   const [dayPreviewOpen, setDayPreviewOpen] = useState(false);
+  const [whoInAnchor, setWhoInAnchor] = useState(null);
   const stepDay = (n) => {
     const d = /* @__PURE__ */ new Date(selDay + "T12:00:00");
     d.setDate(d.getDate() + n);
@@ -11761,6 +11817,8 @@ function DayPlanner({ dayEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange,
     const heightPx = computeEventBlockHeightPx(dur, nextInCol ? nextInCol.start - start : null, pxPerHr);
     const isDone = ev.status === "done";
     const over = daysOverdue(ev);
+    const acceptanceSummary = ev.proposalMemberUids ? computeAcceptanceSummary(ev.proposalMemberUids, ev.proposalResponses) : null;
+    const isPendingAcceptance = !!acceptanceSummary && !acceptanceSummary.allAccepted;
     const color = ev.color || colorOf(ev.courseId || ev.subject);
     const isStudy = ev.kind === "study block";
     const isExam = ev.kind === "exam";
@@ -11774,21 +11832,38 @@ function DayPlanner({ dayEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange,
       "div",
       {
         onDoubleClick: () => openEdit(ev),
-        onClick: () => {
+        onClick: (e) => {
           if (ev.isRoutine) return;
+          if (isPendingAcceptance) {
+            setWhoInAnchor({ id: ev.id, rect: e.currentTarget.getBoundingClientRect() });
+            refreshPendingAcceptance(lsGet("events", []), [ev.id]).then((next) => {
+              if (next && setEvents2) setEvents2(next);
+            });
+            return;
+          }
           isDone ? uncrossDone(ev.id) : markDone(ev.id);
         },
-        title: (isNewlyAdded ? "Just added \xB7 " : "") + (ev.isRoutine ? "Double-click to edit" : "Click to toggle done, double-click to edit"),
-        style: { position: "absolute", top: topPx, left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`, height: heightPx, borderRadius: 6, padding: "4px 8px", cursor: "pointer", overflow: "hidden", zIndex: 3, opacity: isDone ? 0.6 : 1, boxSizing: "border-box", ...kindStyle, ...newItemBoxShadow ? { boxShadow: newItemBoxShadow } : {} }
+        title: (isNewlyAdded ? "Just added \xB7 " : "") + (ev.isRoutine ? "Double-click to edit" : isPendingAcceptance ? "Click to see who's accepted" : "Click to toggle done, double-click to edit"),
+        style: { position: "absolute", top: topPx, left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`, height: heightPx, borderRadius: 6, padding: "4px 8px", cursor: "pointer", overflow: "hidden", zIndex: 3, opacity: isPendingAcceptance || isDone ? 0.6 : 1, boxSizing: "border-box", ...kindStyle, ...newItemBoxShadow ? { boxShadow: newItemBoxShadow } : {} }
       },
       !catchUpPending && over > 0 && /* @__PURE__ */ React.createElement("span", { title: over + "d overdue", style: { position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: "50%", background: T.red, boxShadow: `0 0 0 1.5px ${isExam ? T.ink : "#fff"}`, zIndex: 1 } }),
       overflowCount > 0 && /* @__PURE__ */ React.createElement("span", { title: overflowCount + " more at this time", style: { position: "absolute", bottom: 2, right: 2, fontSize: 8, fontWeight: 800, color: kindStyle.color, background: "rgba(0,0,0,0.18)", borderRadius: 8, padding: "1px 4px", lineHeight: 1.3, zIndex: 1 } }, "+", overflowCount),
+      isPendingAcceptance && /* @__PURE__ */ React.createElement("span", { title: acceptanceSummary.accepted + "/" + acceptanceSummary.total + " accepted", style: { position: "absolute", bottom: 2, left: 2, fontSize: 8, fontWeight: 800, color: kindStyle.color, background: "rgba(0,0,0,0.18)", borderRadius: 8, padding: "1px 4px", lineHeight: 1.3, zIndex: 1 } }, acceptanceSummary.accepted, "/", acceptanceSummary.total),
       conflictTitles.length > 0 && /* @__PURE__ */ React.createElement("span", { title: "Overlaps with " + conflictTitles.join(", "), style: { position: "absolute", top: 2, left: 2, fontSize: 9, lineHeight: 1, zIndex: 1, filter: "drop-shadow(0 1px 1px rgba(0,0,0,0.35))" } }, "\u26A0\uFE0F"),
       /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, fontWeight: 700, color: kindStyle.color, lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: isDone ? "line-through" : "none" } }, isExam ? "EXAM \xB7 " : "", ev.title),
       heightPx > 34 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 9.5, color: isStudy ? T.ink + "aa" : isExam ? color : T.muted, marginTop: 2 } }, fmtTimeRange(ev.time, dur)),
       heightPx > 48 && ev.location && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 9.5, color: isStudy ? T.ink + "aa" : isExam ? color : T.muted, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.location)
     ), ev.commuteAfter > 0 && /* @__PURE__ */ React.createElement("div", { title: ev.commuteAfter + " min commute", style: commuteStripStyle(ev.commuteAfter, "after") }, ev.commuteAfter * (pxPerHr / 60) > 13 && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color, fontWeight: 600, whiteSpace: "nowrap" } }, ev.commuteAfter, "m commute")));
-  }))))), /* @__PURE__ */ React.createElement(DayPreviewModal, { open: dayPreviewOpen, onClose: () => setDayPreviewOpen(false), dayEvents, selDay, dayLabel: niceDayLabel, colorOf, fmtTime, fmtTimeRange, catchUpPending, openNew }));
+  }))))), /* @__PURE__ */ React.createElement(DayPreviewModal, { open: dayPreviewOpen, onClose: () => setDayPreviewOpen(false), dayEvents, selDay, dayLabel: niceDayLabel, colorOf, fmtTime, fmtTimeRange, catchUpPending, openNew }), whoInAnchor && (() => {
+    const ev = (dayEvents || []).find((e) => e.id === whoInAnchor.id);
+    if (!ev) return null;
+    const summary = ev.proposalMemberUids ? computeAcceptanceSummary(ev.proposalMemberUids, ev.proposalResponses) : null;
+    if (!summary) return null;
+    const rect = whoInAnchor.rect;
+    const top = Math.min(rect.bottom + 6, window.innerHeight - 260);
+    const left = Math.min(Math.max(8, rect.left), window.innerWidth - 248);
+    return ReactDOM.createPortal(/* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: () => setWhoInAnchor(null), style: { position: "fixed", inset: 0, zIndex: 998 } }), /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top, left, width: 232, background: T.card, border: `1px solid ${T.border}`, borderRadius: 6, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)", zIndex: 999, overflow: "hidden", animation: "studlinPop 0.15s cubic-bezier(.2,.85,.3,1)" } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "9px 14px", borderBottom: `1px solid ${T.border}`, fontSize: 12.5, fontWeight: 600, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.title), /* @__PURE__ */ React.createElement("div", { style: { padding: "10px 14px" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", color: T.muted, marginBottom: 8, textTransform: "uppercase" } }, "Who's in \xB7 ", summary.accepted, "/", summary.total), /* @__PURE__ */ React.createElement(AcceptanceRoster, { memberUids: ev.proposalMemberUids, memberNames: ev.proposalMemberNames, responses: ev.proposalResponses })))), document.body);
+  })());
 }
 const DAY_PREVIEW_ICON_BY_KIND = { "class": Icon.cal, "study block": Icon.brain, "exam": Icon.zap, "deadline": Icon.file, "reminder": Icon.clock };
 function DayPreviewModal({ open, onClose, dayEvents, selDay, dayLabel, colorOf, fmtTime, fmtTimeRange, catchUpPending, openNew }) {
@@ -12992,6 +13067,11 @@ function CalendarTab({ setActive = () => {
       if (registerSetEvents) registerSetEvents(null);
     };
   }, []);
+  useEffect(() => {
+    refreshPendingAcceptance(lsGet("events", [])).then((next) => {
+      if (next) setEvents2(next);
+    });
+  }, []);
   const now = /* @__PURE__ */ new Date();
   const [ym, setYm] = useState({ y: now.getFullYear(), m: now.getMonth() });
   const [selDay, setSelDay] = useState(dayKey());
@@ -13675,7 +13755,7 @@ function CalendarTab({ setActive = () => {
       studySessionId = doc && doc.id;
     }
     const roomRef = fsdb().collection("chatRooms").doc(gsRoomId);
-    await roomRef.collection("messages").add({
+    const msgDoc = await roomRef.collection("messages").add({
       senderId: myUid,
       ts: now2,
       kind: "calendar",
@@ -13687,8 +13767,7 @@ function CalendarTab({ setActive = () => {
       memberUids: gsMemberUids,
       studySessionId: studySessionId || null,
       responses: { [myUid]: "accepted" }
-    }).catch(() => {
-    });
+    }).catch(() => null);
     await roomRef.update({ lastMessage: { text: null, kind: "calendar", ts: now2, senderId: myUid }, updatedAt: nowIso }).catch(() => {
     });
     authFetch("/api/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "push", roomId: gsRoomId, preview: "Shared free time found" }) }).catch(() => {
@@ -13708,7 +13787,14 @@ function CalendarTab({ setActive = () => {
       status: "pending",
       timeSpent: 0,
       completedAt: null,
-      ...studySessionId ? { studySessionId } : {}
+      ...studySessionId ? { studySessionId } : {},
+      ...msgDoc ? {
+        chatRoomId: gsRoomId,
+        chatMessageId: msgDoc.id,
+        proposalMemberUids: gsMemberUids,
+        proposalMemberNames: gsMemberNames,
+        proposalResponses: { [myUid]: "accepted" }
+      } : {}
     });
     setGsSending(false);
     closeGroupSchedule();
@@ -15169,7 +15255,7 @@ Examples:
       gsBusyByDate: gsOpen && gsStep === "place" ? gsBusyByDate : null,
       gsRecommended: gsOpen && gsStep === "place" ? gsRecommended : null
     }
-  ), calView === "daily" && /* @__PURE__ */ React.createElement(DayPlanner, { dayEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, openEdit, markDone, uncrossDone, prefs: getSchedulePreferences(), setSelDay, catchUpPending, openNew, newItemHighlightIds: newItemHighlightSet })), /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, display: "flex", position: "relative", height: "calc(100vh - 150px)" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 0, bottom: 0, left: calRightColCollapsed ? 0 : 14, width: 1, background: T.border, boxShadow: `-1px 0 3px rgba(0,0,0,0.12)` } }), !calRightColCollapsed && /* @__PURE__ */ React.createElement("div", { style: { width: 220, marginLeft: 34, maxHeight: "100%", overflowY: "auto" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontWeight: 700, color: T.white } }, selectedCourse ? selectedCourse.label : "Upcoming"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: toggleCalRightColCollapsed, style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontWeight: 600, fontFamily: T.font, cursor: "pointer", padding: 0 } }, "Close \u203A")), sidebarRecentItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 10, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setRecentlyCreatedOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.faint, transform: recentlyCreatedOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.text } }, "Recently created")), recentlyCreatedOpen && sidebarRecentItems.map(renderSidebarItem)), sidebarOverdueItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setOverdueSectionOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.red, transform: overdueSectionOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.red } }, "Overdue (", sidebarOverdueItems.length, ")")), overdueSectionOpen && sidebarOverdueItems.map(renderSidebarItem)), sidebarUpcomingItems.length === 0 && sidebarRecentItems.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.faint } }, "Nothing upcoming."), sidebarUpcomingGroups.map((group) => /* @__PURE__ */ React.createElement("div", { key: group.label, style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, color: group.label === "Overdue" ? T.red : T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 } }, "Due: ", group.label), group.items.map(renderSidebarItem)))), calRightColCollapsed && /* @__PURE__ */ React.createElement(
+  ), calView === "daily" && /* @__PURE__ */ React.createElement(DayPlanner, { dayEvents, setEvents: setEvents2, selDay, todayK, colorOf, fmtTime, fmtTimeRange, openEdit, markDone, uncrossDone, prefs: getSchedulePreferences(), setSelDay, catchUpPending, openNew, newItemHighlightIds: newItemHighlightSet })), /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, display: "flex", position: "relative", height: "calc(100vh - 150px)" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 0, bottom: 0, left: calRightColCollapsed ? 0 : 14, width: 1, background: T.border, boxShadow: `-1px 0 3px rgba(0,0,0,0.12)` } }), !calRightColCollapsed && /* @__PURE__ */ React.createElement("div", { style: { width: 220, marginLeft: 34, maxHeight: "100%", overflowY: "auto" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontWeight: 700, color: T.white } }, selectedCourse ? selectedCourse.label : "Upcoming"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: toggleCalRightColCollapsed, style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontWeight: 600, fontFamily: T.font, cursor: "pointer", padding: 0 } }, "Close \u203A")), sidebarRecentItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 10, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setRecentlyCreatedOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.faint, transform: recentlyCreatedOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.text } }, "Recently created")), recentlyCreatedOpen && sidebarRecentItems.map(renderSidebarItem)), sidebarOverdueItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setOverdueSectionOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.red, transform: overdueSectionOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.red } }, "Overdue (", sidebarOverdueItems.length, ")")), overdueSectionOpen && sidebarOverdueItems.map(renderSidebarItem)), sidebarUpcomingItems.length === 0 && sidebarRecentItems.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.faint } }, "Nothing upcoming."), sidebarUpcomingGroups.map((group) => /* @__PURE__ */ React.createElement("div", { key: group.label, style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, color: group.label === "Overdue" ? T.red : T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 } }, "Due: ", group.label), group.items.map(renderSidebarItem)))), calRightColCollapsed && /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
