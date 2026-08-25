@@ -1130,6 +1130,15 @@ const detectCalendarSourceType = (url) => {
   }
 };
 const isAcademicCalendarSource = (sourceType) => sourceType === "Schoology" || sourceType === "Canvas" || sourceType === "Blackboard" || sourceType === "Moodle";
+function buildDeferredCalendarReviewQueue(existingQueue, sub, newEvents, classifications) {
+  const reviewEvents = (newEvents || []).map((e) => {
+    const c = e.uid && classifications[e.uid];
+    return { ...e, kind: c ? c.kind : "assignment", subjectGuess: c ? c.subject : sub.viaToken ? e.subject : "Other", examWeight: c && c.examWeight, include: true };
+  });
+  const filtered = (existingQueue || []).filter((q) => !(q && typeof q === "object" && q.reviewPayload && q.reviewPayload.subId === sub.id));
+  const entry = { reviewPayload: { subId: sub.id, url: sub.url || null, label: sub.label, sourceType: sub.sourceType, events: reviewEvents, skippedAllDay: 0, classified: true, viaToken: !!sub.viaToken } };
+  return { queue: [...filtered, entry], reviewEvents };
+}
 const PLATFORM_HELP = {
   schoology: {
     label: "Schoology",
@@ -8611,6 +8620,54 @@ function buildExamSessionEvents(examTitle, examDate, subject, count, idPrefix, w
 function removeGenericExamPrepSessions(events, examId) {
   return events.filter((e) => !(e.dueEventId === examId && e.status === "pending" && e.isExamPrepSession && (e.interleavedReview || !e.deckId && !e.practiceExamId)));
 }
+function examLinkedPrepData(examId, events, decks, practiceExams) {
+  const pendingPrepSessions = (events || []).filter((e) => e.dueEventId === examId && e.status === "pending" && e.isExamPrepSession && (e.interleavedReview || !e.deckId && !e.practiceExamId));
+  const linkedDecks = (decks || []).filter((d) => deckLinkedToExam(d, examId));
+  const linkedPracticeExams = (practiceExams || []).filter((p) => p.examEventId === examId);
+  return { pendingPrepSessions, linkedDecks, linkedPracticeExams, hasData: pendingPrepSessions.length > 0 || linkedDecks.length > 0 || linkedPracticeExams.length > 0 };
+}
+function applyExamTypeSwitchCleanup(events, examId, decks, practiceExams) {
+  const { linkedDecks, linkedPracticeExams } = examLinkedPrepData(examId, events, decks, practiceExams);
+  let nextEvents = events || [];
+  let nextDecks = decks || [];
+  linkedDecks.forEach((d) => {
+    const linkedIds = deckExamIds(d);
+    if (linkedIds.length > 1) {
+      const remaining = linkedIds.filter((id) => id !== examId);
+      nextDecks = nextDecks.map((x) => x.id === d.id ? { ...x, examEventIds: remaining, examEventId: remaining[0] || null } : x);
+    } else {
+      nextDecks = nextDecks.filter((x) => x.id !== d.id);
+    }
+    nextEvents = nextEvents.filter((e) => !(e.deckId === d.id && e.dueEventId === examId));
+  });
+  let nextPracticeExams = practiceExams || [];
+  linkedPracticeExams.forEach((p) => {
+    nextPracticeExams = nextPracticeExams.filter((x) => x.id !== p.id);
+    nextEvents = nextEvents.filter((e) => e.practiceExamId !== p.id);
+  });
+  nextEvents = removeGenericExamPrepSessions(nextEvents, examId);
+  return { events: nextEvents, decks: nextDecks, practiceExams: nextPracticeExams };
+}
+function examTypeSwitchFieldPatch(oldKind, newKind) {
+  const switchedAwayFromExam = oldKind === "exam" && newKind !== "exam";
+  const switchedToExam = oldKind !== "exam" && newKind === "exam";
+  const patch = {};
+  if (switchedToExam) patch.confidenceLog = [];
+  if (switchedAwayFromExam) {
+    patch.confidenceLog = void 0;
+    patch.examWeight = void 0;
+    patch.examType = void 0;
+    patch.importanceLevel = void 0;
+    patch.gradeWeightPercent = void 0;
+    patch.scoreTier = void 0;
+    patch.scorePercent = void 0;
+    patch.quizScores = void 0;
+  }
+  return { switchedAwayFromExam, switchedToExam, patch };
+}
+function projectDropFieldPatch(wasProject, isProjectNow) {
+  return wasProject && !isProjectNow ? { phases: void 0, outline: void 0, sharedProjectId: void 0 } : {};
+}
 const WEEKDAY_ABBR_TO_JS_DOW = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
 function expandRecurringBrainDumpDates(startDate, days, untilDate) {
   const dowSet = new Set((days || []).map((d) => WEEKDAY_ABBR_TO_JS_DOW[d]).filter((x) => x !== void 0));
@@ -10857,9 +10914,19 @@ function MaterialEditor({ item, onChange, label, idPrefix }) {
     }
   }, placeholder: "Link \u2014 flashcards, slides, anything", style: { flex: 1, minWidth: 0 } }), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addLink, disabled: !item.linkDraft.trim(), style: { padding: "0 12px", borderRadius: 8, border: `1px solid ${T.border}`, background: "transparent", color: T.muted, cursor: item.linkDraft.trim() ? "pointer" : "default", fontFamily: T.font, fontSize: 12, opacity: item.linkDraft.trim() ? 1 : 0.45, flexShrink: 0 } }, "+ Add")), item.materialLinks.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, item.materialLinks.map((link, li) => /* @__PURE__ */ React.createElement("div", { key: li, style: { display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 12, padding: "7px 10px", background: T.card, borderRadius: 8, gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, link.label && /* @__PURE__ */ React.createElement("span", { style: { color: T.text, fontWeight: 600 } }, link.label, ": "), /* @__PURE__ */ React.createElement("span", { style: { color: link.label ? T.muted : T.text } }, link.url)), /* @__PURE__ */ React.createElement("button", { onClick: () => onChange({ materialLinks: item.materialLinks.filter((_, li2) => li2 !== li) }), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 14, lineHeight: 1, flexShrink: 0 } }, "\xD7")))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.faint } }, "You can also add or change this later in Studlin Prep."), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => onChange({ materialOpen: false }), style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline", textAlign: "left" } }, "Collapse")));
 }
+const MIN_DETAIL_CHARS_FOR_BREAKDOWN = 10;
+function hasEnoughDetailForBreakdown(detail) {
+  return (detail || "").trim().length >= MIN_DETAIL_CHARS_FOR_BREAKDOWN;
+}
 function PhasesOutlineEditor({ item, onChange, subject, onGateBlocked = () => {
+}, onNeedsDetail = () => {
 } }) {
+  const hasEnoughDetail = hasEnoughDetailForBreakdown(item.detail);
   const suggestPhases = async () => {
+    if (!hasEnoughDetail) {
+      onNeedsDetail();
+      return;
+    }
     if (!canBreakDownProject()) {
       onGateBlocked();
       return;
@@ -10870,6 +10937,10 @@ function PhasesOutlineEditor({ item, onChange, subject, onGateBlocked = () => {
     onChange({ phasesLoading: false, phases: names || [] });
   };
   const suggestOutline = async () => {
+    if (!hasEnoughDetail) {
+      onNeedsDetail();
+      return;
+    }
     if (!canBreakDownProject()) {
       onGateBlocked();
       return;
@@ -12289,6 +12360,8 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
   const [notes, setNotes] = useState("");
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
   const [completeSessionPrompt, setCompleteSessionPrompt] = useState(false);
+  const [examSwitchAwayConfirm, setExamSwitchAwayConfirm] = useState(false);
+  const [projectSwitchAwayConfirm, setProjectSwitchAwayConfirm] = useState(false);
   const [collabPickerOpen, setCollabPickerOpen] = useState(false);
   const [collabCandidates, setCollabCandidates] = useState([]);
   const [collabSelected, setCollabSelected] = useState([]);
@@ -12324,6 +12397,8 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
     setAsChecklist(!!ev.checklist);
     setCancelConfirmOpen(false);
     setDetailErr("");
+    setExamSwitchAwayConfirm(false);
+    setProjectSwitchAwayConfirm(false);
     setAddAttackBlock(false);
     setAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);
     setAddManualBlock(false);
@@ -12347,6 +12422,11 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
   if (!eventId || !ev) return null;
   const linkedSessions = allEvents.filter((e) => e.dueEventId === ev.id);
   const chainIdForReschedule = (allEvents.find((e) => e.dueEventId === ev.id && e.attackChainId && e.status === "pending") || {}).attackChainId || null;
+  const examPrepData = ev.kind === "exam" ? examLinkedPrepData(ev.id, allEvents, lsGet("decks", []), lsGet("practiceExams", [])) : { pendingPrepSessions: [], linkedDecks: [], linkedPracticeExams: [], hasData: false };
+  const examPendingPrepSessions = examPrepData.pendingPrepSessions;
+  const examLinkedDecks = examPrepData.linkedDecks;
+  const examLinkedPEs = examPrepData.linkedPracticeExams;
+  const hasExamPrepData = examPrepData.hasData;
   const jumpToCalendar = (sessionId) => {
     if (sessionId) lsSet("pendingCalendarJumpSessionId", sessionId);
     if (setActive) setActive("calendar");
@@ -12414,6 +12494,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
   const isPhaseCandidate = canAddAttackBlock && isPhaseDecompositionCandidate(ev.estimatedHours, date, dayKey());
   const showsPhaseDetail = addAttackBlock && isPhaseCandidate;
   const isProject2 = isProjectMarker(ev);
+  const droppedProject = isProject2 && !asProject;
   const typeChoice = asChecklist ? "todo" : asProject ? "project" : kind;
   const onTypeChange = (v) => {
     if (v === "project") {
@@ -12463,9 +12544,11 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
   const finishSave = (forcedAttackSlot) => {
     const timeChanged = time !== ev.time || date !== ev.date;
     const prefs = getSchedulePreferences();
-    const droppedProject = isProject2 && !asProject;
     const newProjPhases = requiresProjectDetail ? (projectPlan.phases || []).map((p) => p.trim()).filter(Boolean) : [];
     const newProjOutline = requiresProjectDetail ? normalizeOutlineDraft(projectPlan.outline) : [];
+    const projectFieldPatch = projectDropFieldPatch(isProject2, asProject);
+    const examFieldPatch = examTypeSwitchFieldPatch(ev.kind, kind);
+    const switchedAwayFromExam = examFieldPatch.switchedAwayFromExam;
     let attackPair = null;
     if (canAddAttackBlock && addAttackBlock) {
       const phases = isPhaseCandidate ? (projectPlan.phases || []).map((p) => p.trim()).filter(Boolean) : [];
@@ -12492,7 +12575,8 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
         checklist: asChecklist,
         ...timeChanged ? { userPinned: true } : {},
         ...kind === "exam" ? { sourceMaterials: examPlan.materialFiles, referenceLinks: examPlan.materialLinks } : {},
-        ...droppedProject ? { phases: void 0, outline: void 0 } : {},
+        ...projectFieldPatch,
+        ...examFieldPatch.patch,
         ...requiresProjectDetail && newProjPhases.length > 0 ? { phases: newProjPhases.map((name, pi) => ({ name, status: pi === 0 ? "active" : "pending" })) } : {},
         ...requiresProjectDetail && newProjOutline.length > 0 ? { outline: newProjOutline } : {},
         // The one place a student can directly re-prioritize a single
@@ -12510,6 +12594,12 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
     });
     let next = date ? rebalanceDay(date, updated, routines, prefs) : updated;
     if (attackPair) next = next.concat([attackPair.task]);
+    if (switchedAwayFromExam) {
+      const cleanup = applyExamTypeSwitchCleanup(next, ev.id, lsGet("decks", []), lsGet("practiceExams", []));
+      next = cleanup.events;
+      lsSet("decks", cleanup.decks);
+      lsSet("practiceExams", cleanup.practiceExams);
+    }
     let newExamSessions = [];
     if (kind === "exam" && examPlan.proposeSessions && linkedSessions.length === 0) {
       const baseDuration = suggestDurationFor(subject, "study block") || 25;
@@ -12527,17 +12617,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
     }
     onClose();
   };
-  const save = () => {
-    if (!title.trim()) return;
-    if (deadline && date > deadline) {
-      setDeadlineErr("Can't schedule past the deadline (" + deadline + ").");
-      return;
-    }
-    if ((showsPhaseDetail || requiresProjectDetail) && !notes.trim()) {
-      setDetailErr("Add a bit of detail so Studlin can suggest real phases, not a generic template.");
-      return;
-    }
-    setDetailErr("");
+  const proceedSave = () => {
     if (canAddAttackBlock && addAttackBlock) {
       const prefs = getSchedulePreferences();
       const desiredDate = date && date >= dayKey() ? date : dayKey();
@@ -12552,6 +12632,35 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
       }
     }
     finishSave(null);
+  };
+  const save = () => {
+    if (!title.trim()) return;
+    if (deadline && date > deadline) {
+      setDeadlineErr("Can't schedule past the deadline (" + deadline + ").");
+      return;
+    }
+    if ((showsPhaseDetail || requiresProjectDetail) && !notes.trim()) {
+      setDetailErr("Add a bit of detail so Studlin can suggest real phases, not a generic template.");
+      return;
+    }
+    setDetailErr("");
+    if (ev.kind === "exam" && kind !== "exam" && hasExamPrepData) {
+      setExamSwitchAwayConfirm(true);
+      return;
+    }
+    if (droppedProject && ev.sharedProjectId) {
+      setProjectSwitchAwayConfirm(true);
+      return;
+    }
+    proceedSave();
+  };
+  const confirmExamSwitchAway = () => {
+    setExamSwitchAwayConfirm(false);
+    proceedSave();
+  };
+  const confirmProjectSwitchAway = () => {
+    setProjectSwitchAwayConfirm(false);
+    proceedSave();
   };
   const writePhases = (nextPhases) => commit(allEvents.map((x) => x.id === ev.id ? { ...x, phases: nextPhases } : x));
   const writeOutline = (nextOutline) => commit(allEvents.map((x) => x.id === ev.id ? { ...x, outline: nextOutline } : x));
@@ -12634,9 +12743,33 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
       reoptimizeAttackChain(chainIdForReschedule);
       commit(lsGet("events", []));
     } }, "Re-optimize schedule")),
-    requiresProjectDetail && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 8 } }, "Marked as a Project \u2014 use the Detail field below to describe it, and Studlin will suggest phases and a checklist."), /* @__PURE__ */ React.createElement(PhasesOutlineEditor, { item: { ...projectPlan, title, detail: notes }, onChange: (patch) => setProjectPlan((p) => ({ ...p, ...patch })), subject, onGateBlocked: () => setPricingOpen("projectBreakdown") })),
+    requiresProjectDetail && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 8 } }, "Marked as a Project \u2014 use the Detail field below to describe it, and Studlin will suggest phases and a checklist."), /* @__PURE__ */ React.createElement(
+      PhasesOutlineEditor,
+      {
+        item: { ...projectPlan, title, detail: notes },
+        onChange: (patch) => setProjectPlan((p) => ({ ...p, ...patch })),
+        subject,
+        onGateBlocked: () => setPricingOpen("projectBreakdown"),
+        onNeedsDetail: () => {
+          setDetailErr("Add a sentence about what this involves first.");
+          document.getElementById("event-detail-notes")?.focus();
+        }
+      }
+    )),
     isProject2 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, ev.sharedProjectId ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted } }, "Shared with collaborators \u2014 they'll see your progress once they accept.") : /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: openCollabPicker }, "+ Add collaborators")),
-    canAddAttackBlock && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "12px 14px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setAddAttackBlock((a) => !a), style: { display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text } }, "Start an Attack Block for this"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, "A short probe session, scheduled the moment you save. Studlin figures out the rest.")), /* @__PURE__ */ React.createElement("div", { style: { width: 36, height: 20, borderRadius: 10, background: addAttackBlock ? T.lime : T.faint, position: "relative", transition: "background 0.2s", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 16, height: 16, borderRadius: "50%", background: "#fff", position: "absolute", top: 2, left: addAttackBlock ? 18 : 2, transition: "left 0.2s" } }))), /* @__PURE__ */ React.createElement(AttackBlockExplainer, null), addAttackBlock && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement(Field, { label: "Probe session length" }, /* @__PURE__ */ React.createElement(NumField, { min: 15, max: 60, fallback: ATTACK_BLOCK_DEFAULT_PROBE_MINS, value: attackProbeMins, onChange: setAttackProbeMins }))), isPhaseCandidate && /* @__PURE__ */ React.createElement(PhasesOutlineEditor, { item: { ...projectPlan, title, detail: notes }, onChange: (patch) => setProjectPlan((p) => ({ ...p, ...patch })), subject, onGateBlocked: () => setPricingOpen("projectBreakdown") })))),
+    canAddAttackBlock && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "12px 14px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setAddAttackBlock((a) => !a), style: { display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text } }, "Start an Attack Block for this"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, "A short probe session, scheduled the moment you save. Studlin figures out the rest.")), /* @__PURE__ */ React.createElement("div", { style: { width: 36, height: 20, borderRadius: 10, background: addAttackBlock ? T.lime : T.faint, position: "relative", transition: "background 0.2s", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 16, height: 16, borderRadius: "50%", background: "#fff", position: "absolute", top: 2, left: addAttackBlock ? 18 : 2, transition: "left 0.2s" } }))), /* @__PURE__ */ React.createElement(AttackBlockExplainer, null), addAttackBlock && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement(Field, { label: "Probe session length" }, /* @__PURE__ */ React.createElement(NumField, { min: 15, max: 60, fallback: ATTACK_BLOCK_DEFAULT_PROBE_MINS, value: attackProbeMins, onChange: setAttackProbeMins }))), isPhaseCandidate && /* @__PURE__ */ React.createElement(
+      PhasesOutlineEditor,
+      {
+        item: { ...projectPlan, title, detail: notes },
+        onChange: (patch) => setProjectPlan((p) => ({ ...p, ...patch })),
+        subject,
+        onGateBlocked: () => setPricingOpen("projectBreakdown"),
+        onNeedsDetail: () => {
+          setDetailErr("Add a sentence about what this involves first.");
+          document.getElementById("event-detail-notes")?.focus();
+        }
+      }
+    )))),
     kind === "exam" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "Study material (optional)", hint: "Upload files, paste notes, or drop a link \u2014 you can always add more later in Studlin Prep." }, /* @__PURE__ */ React.createElement(MaterialEditor, { item: examPlan, onChange: (patch) => setExamPlan((m) => ({ ...m, ...patch })), label: title.trim() || "Untitled exam", idPrefix: "edittask-" + ev.id })), linkedSessions.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { background: T.lime + "0A", border: `1px solid ${T.lime}33`, borderRadius: 8, padding: "12px 14px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setExamPlan((m) => ({ ...m, proposeSessions: !m.proposeSessions })), style: { display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "flex-start" } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.lime, flexShrink: 0, marginTop: 1 } }, Icon.zap), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text } }, "Have Studlin make your study plan"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, "Spaced study sessions counting down to the exam date, added the moment you save."))), /* @__PURE__ */ React.createElement("div", { style: { width: 36, height: 20, borderRadius: 10, background: examPlan.proposeSessions ? T.lime : T.faint, position: "relative", transition: "background 0.2s", cursor: "pointer", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 16, height: 16, borderRadius: "50%", background: "#fff", position: "absolute", top: 2, left: examPlan.proposeSessions ? 18 : 2, transition: "left 0.2s" } }))), examPlan.proposeSessions && (() => {
       const dates = date ? computeReviewDates(date, dayKey(), examPlan.sessionCount || 4) : [];
       return /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.muted, marginBottom: 6 } }, "How confident are you on this material?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 12 } }, ["shaky", "okay", "solid"].map((level) => /* @__PURE__ */ React.createElement(
@@ -12671,7 +12804,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
       setDeadline(e.target.value);
       setDeadlineErr("");
     } })), moreOpen ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: `Impact: ${Math.round(priority / 10)}%`, hint: "How critical this is, independent of its due date \u2014 higher-impact tasks get scheduled earlier" }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.muted, width: 28 } }, "Low"), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, position: "relative", paddingTop: 24 } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 0, left: `${priority / 10}%`, transform: "translateX(-50%)", fontSize: 10, fontWeight: 700, color: T.lime, background: T.lime + "18", border: `1px solid ${T.lime}44`, borderRadius: 5, padding: "2px 7px", whiteSpace: "nowrap", pointerEvents: "none" } }, prioLabel(priority)), /* @__PURE__ */ React.createElement("input", { type: "range", min: 0, max: 1e3, value: priority, onChange: (e) => setPriority(+e.target.value), style: { width: "100%", accentColor: T.lime, height: 6, borderRadius: 3, cursor: "pointer" } })), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.muted, width: 40, textAlign: "right" } }, "Urgent"))), /* @__PURE__ */ React.createElement(Field, { label: `Difficulty: ${diffLabel(difficulty)}`, hint: "How hard this task is for you \u2014 helps Studlin schedule it when your energy matches" }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.muted, width: 28 } }, "Easy"), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, position: "relative", paddingTop: 24 } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 0, left: `${difficulty / 10}%`, transform: "translateX(-50%)", fontSize: 10, fontWeight: 700, color: T.lime, background: T.lime + "18", border: `1px solid ${T.lime}44`, borderRadius: 5, padding: "2px 7px", whiteSpace: "nowrap", pointerEvents: "none" } }, diffLabel(difficulty)), /* @__PURE__ */ React.createElement("input", { type: "range", min: 0, max: 1e3, value: difficulty, onChange: (e) => setDifficulty(+e.target.value), style: { width: "100%", accentColor: T.lime, height: 6, borderRadius: 3, cursor: "pointer" } })), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.muted, width: 40, textAlign: "right" } }, "Hard"))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setMoreOpen(false), style: { background: "none", border: "none", color: T.muted, fontSize: 11.5, fontFamily: T.font, cursor: "pointer", padding: "0 0 14px", textDecoration: "underline" } }, "Collapse")) : /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setMoreOpen(true), style: { background: "none", border: "none", color: T.muted, fontSize: 12.5, fontFamily: T.font, cursor: "pointer", padding: "4px 0", marginBottom: 14, textDecoration: "underline" } }, "+ More details (impact & difficulty)")),
-    /* @__PURE__ */ React.createElement(Field, { label: showsPhaseDetail || requiresProjectDetail ? "Detail" : "Notes (optional)", hint: showsPhaseDetail || requiresProjectDetail ? "A sentence or two is enough \u2014 Studlin uses this to suggest phases and a checklist." : void 0 }, /* @__PURE__ */ React.createElement(Textarea, { value: notes, onChange: (e) => {
+    /* @__PURE__ */ React.createElement(Field, { label: showsPhaseDetail || requiresProjectDetail ? "Detail" : "Notes (optional)", hint: showsPhaseDetail || requiresProjectDetail ? "A sentence or two is enough \u2014 Studlin uses this to suggest phases and a checklist." : void 0 }, /* @__PURE__ */ React.createElement(Textarea, { id: "event-detail-notes", value: notes, onChange: (e) => {
       setNotes(e.target.value);
       if (detailErr) setDetailErr("");
     } })),
@@ -12687,6 +12820,28 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
       footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setCancelConfirmOpen(false) }, "Never mind"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: confirmCancelSessions }, "Cancel " + linkedSessions.filter((s) => s.status === "pending").length + " session" + (linkedSessions.filter((s) => s.status === "pending").length !== 1 ? "s" : "")))
     },
     /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text } }, ev.title)
+  ), /* @__PURE__ */ React.createElement(
+    Modal,
+    {
+      open: examSwitchAwayConfirm,
+      onClose: () => setExamSwitchAwayConfirm(false),
+      title: "Switch away from Exam?",
+      sub: "This removes the prep work Studlin scheduled for it. This can't be undone.",
+      width: 420,
+      footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setExamSwitchAwayConfirm(false) }, "Never mind"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: confirmExamSwitchAway }, "Switch and remove prep"))
+    },
+    /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, lineHeight: 1.7 } }, examPendingPrepSessions.length > 0 && /* @__PURE__ */ React.createElement("div", null, examPendingPrepSessions.length, " scheduled prep session", examPendingPrepSessions.length !== 1 ? "s" : ""), examLinkedDecks.length > 0 && /* @__PURE__ */ React.createElement("div", null, examLinkedDecks.length, " linked flashcard deck", examLinkedDecks.length !== 1 ? "s" : ""), examLinkedPEs.length > 0 && /* @__PURE__ */ React.createElement("div", null, examLinkedPEs.length, " linked practice exam", examLinkedPEs.length !== 1 ? "s" : ""))
+  ), /* @__PURE__ */ React.createElement(
+    Modal,
+    {
+      open: projectSwitchAwayConfirm,
+      onClose: () => setProjectSwitchAwayConfirm(false),
+      title: "Switch away from Project?",
+      sub: "This project is shared with collaborators.",
+      width: 420,
+      footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setProjectSwitchAwayConfirm(false) }, "Never mind"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: confirmProjectSwitchAway }, "Switch anyway"))
+    },
+    /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, lineHeight: 1.6 } }, "Its phases and checklist get cleared here and it disconnects from the shared project. Collaborators keep their own copy, but you won't see their updates on it anymore.")
   ), /* @__PURE__ */ React.createElement(
     Modal,
     {
@@ -12940,6 +13095,7 @@ function CalendarTab({ setActive = () => {
   const [gsMemberNames, setGsMemberNames] = useState({});
   const [gsBusyByDate, setGsBusyByDate] = useState({});
   const [gsRecommended, setGsRecommended] = useState(null);
+  const [gsRecommendedOptions, setGsRecommendedOptions] = useState([]);
   const [gsDraft, setGsDraft] = useState(null);
   const [gsSending, setGsSending] = useState(false);
   const [routineDropPending, setRoutineDropPending] = useState(null);
@@ -13654,6 +13810,7 @@ function CalendarTab({ setActive = () => {
     setGsMemberNames({});
     setGsBusyByDate({});
     setGsRecommended(null);
+    setGsRecommendedOptions([]);
     setGsDraft(null);
     const myUid = firebase.auth().currentUser?.uid;
     const uids = myUid ? await getAcceptedFriendUids(myUid) : [];
@@ -13707,7 +13864,9 @@ function CalendarTab({ setActive = () => {
     });
     setGsBusyByDate(busyObj);
     const rec = await findSharedStudyWindow(myUid, gsSelected, { timeMode: "anytime", lookAheadDayRange: 7, durationInMinutes: 60 });
-    setGsRecommended(rec.noneFound ? null : rec.options.find((o) => o.isBest) || rec.options[0] || null);
+    const opts = rec.noneFound ? [] : rec.options;
+    setGsRecommendedOptions(opts);
+    setGsRecommended(opts.find((o) => o.isBest) || opts[0] || null);
     setGsLoading(false);
     setGsStep("place");
   };
@@ -15304,7 +15463,33 @@ Examples:
       footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeGroupSchedule }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: confirmGsPeople, disabled: gsSelected.length === 0 || gsLoading }, gsLoading ? "\u2026" : "Continue"))
     },
     gsLoading ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "Loading your friends\u2026") : gsCandidates.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "No friends yet -- add some in Studlin Network first.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, gsCandidates.map((c) => /* @__PURE__ */ React.createElement("label", { key: c.uid, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 8, border: `1px solid ${T.border}`, cursor: "pointer", background: gsSelected.includes(c.uid) ? T.card2 : "transparent" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: gsSelected.includes(c.uid), onChange: () => toggleGsSelected(c.uid), style: { cursor: "pointer" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text } }, c.name))))
-  ), gsOpen && gsStep === "place" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 70, background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)", padding: "14px 18px", display: "flex", alignItems: "center", gap: 14, maxWidth: 600 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 3 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, fontWeight: 700, color: T.text } }, "Drag onto an open slot"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.muted } }, "Grayed-out time is when someone's busy -- you can still place there.")), /* @__PURE__ */ React.createElement(
+  ), gsOpen && gsStep === "place" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 70, background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10, maxWidth: 600 } }, gsRecommendedOptions.length > 1 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, whiteSpace: "nowrap" } }, "Found ", gsRecommendedOptions.length, " windows that work:"), gsRecommendedOptions.map((o, i) => {
+    const active = gsRecommended && gsRecommended.date === o.date && gsRecommended.time === o.time;
+    return /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        key: i,
+        type: "button",
+        onClick: () => setGsRecommended(o),
+        style: {
+          padding: "5px 10px",
+          borderRadius: 7,
+          fontSize: 10.5,
+          fontWeight: 700,
+          cursor: "pointer",
+          fontFamily: T.font,
+          whiteSpace: "nowrap",
+          background: active ? T.lime : o.isBest ? T.lime + "14" : T.card2,
+          color: active ? T.bg : o.isBest ? T.lime : T.text,
+          border: `1px solid ${active ? T.lime : o.isBest ? T.lime + "55" : T.border}`
+        }
+      },
+      o.isBest ? "\u2605 " : "",
+      o.dayLabel,
+      " \xB7 ",
+      o.timeLabel
+    );
+  })), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 3 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, fontWeight: 700, color: T.text } }, "Drag onto an open slot"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.muted } }, "Grayed-out time is when someone's busy -- you can still place there.")), /* @__PURE__ */ React.createElement(
     "div",
     {
       draggable: true,
@@ -15322,7 +15507,7 @@ Examples:
       style: { padding: "8px 14px", borderRadius: 8, background: T.teal + "18", border: `1px solid ${T.teal}55`, color: T.teal, fontSize: 12, fontWeight: 700, cursor: "grab", whiteSpace: "nowrap" }
     },
     "Study Session"
-  ), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginLeft: "auto" } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeGroupSchedule }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: postGroupSchedule, disabled: !gsDraft || gsSending }, gsSending ? "Sending\u2026" : "Done"))), /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginLeft: "auto" } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeGroupSchedule }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: postGroupSchedule, disabled: !gsDraft || gsSending }, gsSending ? "Sending\u2026" : "Done")))), /* @__PURE__ */ React.createElement(
     NewEventModal,
     {
       open: newEventOpen || !!routineEditItem,
@@ -15523,10 +15708,22 @@ Examples:
         }, style: { background: "none", border: "none", color: T.amber, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, textDecoration: "underline", flexShrink: 0, padding: 0 } }, "Spread out"));
       })());
     })())),
-    isProjectKind && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "Describe what you want to do", hint: "A sentence or two is enough \u2014 Studlin uses this to suggest phases and a checklist." }, /* @__PURE__ */ React.createElement(Textarea, { placeholder: "e.g. Build a working demo, write a report, present to the class by the deadline.", value: evNotes, onChange: (ev) => {
+    isProjectKind && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "Describe what you want to do", hint: "A sentence or two is enough \u2014 Studlin uses this to suggest phases and a checklist." }, /* @__PURE__ */ React.createElement(Textarea, { id: "newevent-detail-notes", placeholder: "e.g. Build a working demo, write a report, present to the class by the deadline.", value: evNotes, onChange: (ev) => {
       setEvNotes(ev.target.value);
       if (evDetailErr) setEvDetailErr("");
-    } })), evDetailErr && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: -8, marginBottom: 14 } }, evDetailErr), /* @__PURE__ */ React.createElement(PhasesOutlineEditor, { item: { ...evProjectPlan, title: evTitle, detail: evNotes }, onChange: (patch) => setEvProjectPlan((p) => ({ ...p, ...patch })), subject: evSubject === "Other" ? evCustom : evSubject, onGateBlocked: () => setPricingOpen("projectBreakdown") }), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, evCollabSelected.length > 0 ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" } }, evCollabSelected.map((uid) => {
+    } })), evDetailErr && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: -8, marginBottom: 14 } }, evDetailErr), /* @__PURE__ */ React.createElement(
+      PhasesOutlineEditor,
+      {
+        item: { ...evProjectPlan, title: evTitle, detail: evNotes },
+        onChange: (patch) => setEvProjectPlan((p) => ({ ...p, ...patch })),
+        subject: evSubject === "Other" ? evCustom : evSubject,
+        onGateBlocked: () => setPricingOpen("projectBreakdown"),
+        onNeedsDetail: () => {
+          setEvDetailErr("Add a sentence about what this involves first.");
+          document.getElementById("newevent-detail-notes")?.focus();
+        }
+      }
+    ), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, evCollabSelected.length > 0 ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" } }, evCollabSelected.map((uid) => {
       const name = (evCollabCandidates.find((c) => c.uid === uid) || {}).name || "Studlin User";
       return /* @__PURE__ */ React.createElement("span", { key: uid, style: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 600, color: T.text, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 99, padding: "4px 10px" } }, name, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => toggleEvCollabSelected(uid), style: { background: "none", border: "none", color: T.muted, cursor: "pointer", padding: 0, fontSize: 13, lineHeight: 1 } }, "\xD7"));
     }), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: openEvCollabPicker }, "+ Add more")) : /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: openEvCollabPicker }, "+ Add collaborators"))),
@@ -16185,6 +16382,11 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     if (!queue || queue.length === 0) return;
     const [next, ...rest] = queue;
     lsSet("openImportCalQueue", rest);
+    if (next && typeof next === "object" && next.reviewPayload) {
+      openImportCalModal(null);
+      setImportCalReview(next.reviewPayload);
+      return;
+    }
     openImportCalModal(next === true ? null : next.hint);
   };
   useEffect(() => {
@@ -16339,6 +16541,15 @@ function SettingsTab({ theme = "dark", setTheme = () => {
       if (isAcademicCalendarSource(sub.sourceType) && newEvents.length > 0 && canClassifyCalendarImport()) {
         classifications = await classifyImportedCalendarEvents(newEvents, sub.sourceType, mgmtSubjs.map((s) => s.label));
         recordCalendarClassify();
+      }
+      if (!manual && classifications) {
+        const { queue, reviewEvents } = buildDeferredCalendarReviewQueue(lsGet("openImportCalQueue", []), sub, newEvents, classifications);
+        lsSet("openImportCalQueue", queue);
+        const nextSubs2 = importedCals.map((s) => s.id === sub.id ? { ...s, lastSyncedAt: Date.now(), lastSyncError: null } : s);
+        setImportedCals(nextSubs2);
+        saveImportedCalendars(nextSubs2);
+        showToast(sub.label + ": " + reviewEvents.length + " new item" + (reviewEvents.length !== 1 ? "s" : "") + " ready to review next time you open Settings.");
+        return;
       }
       const merged = mergeImportedEvents(lsGet("events", []), sub.id, data.events, classifications);
       const result = reconcileFixedEventConflicts(merged.filter((e) => e.importSubId === sub.id));

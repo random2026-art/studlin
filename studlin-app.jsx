@@ -1647,6 +1647,27 @@ const detectCalendarSourceType=(url)=>{
 // classifyImportedCalendarEvents) instead of leaving every imported item as
 // a generic "busy block."
 const isAcademicCalendarSource=(sourceType)=>sourceType==="Schoology"||sourceType==="Canvas"||sourceType==="Blackboard"||sourceType==="Moodle";
+// Pure -- builds the review-queue entry the silent, once-a-day auto-resync
+// (see resyncCalendar) pushes into openImportCalQueue instead of merging
+// newly-classified academic items straight onto the calendar with zero
+// review, the way the first-connect (fetchCalendarPreview/
+// connectCanvasToken) and manual "Sync now" flows already do via
+// importCalReview. Mirrors those two flows' own classified-event shape
+// (kind/subjectGuess/examWeight/include) so importCalReview's existing
+// render logic needs no changes to show either one. Dedups the queue by
+// subId (replacing, not stacking) so a student who ignores this for a few
+// days doesn't build up several stale entries for the same source -- each
+// day's version is already a full re-fetch, a strict superset of what an
+// earlier unreviewed one held.
+function buildDeferredCalendarReviewQueue(existingQueue,sub,newEvents,classifications){
+  const reviewEvents=(newEvents||[]).map(e=>{
+    const c=e.uid&&classifications[e.uid];
+    return {...e,kind:c?c.kind:"assignment",subjectGuess:c?c.subject:(sub.viaToken?e.subject:"Other"),examWeight:c&&c.examWeight,include:true};
+  });
+  const filtered=(existingQueue||[]).filter(q=>!(q&&typeof q==="object"&&q.reviewPayload&&q.reviewPayload.subId===sub.id));
+  const entry={reviewPayload:{subId:sub.id,url:sub.url||null,label:sub.label,sourceType:sub.sourceType,events:reviewEvents,skippedAllDay:0,classified:true,viaToken:!!sub.viaToken}};
+  return {queue:[...filtered,entry],reviewEvents};
+}
 // Step-by-step, platform-specific instructions shown inside the connect
 // modal itself (not a separate help page, not a hover tooltip -- the old
 // Canvas tooltip was hover-only, which doesn't work on touch and collapses
@@ -13512,6 +13533,89 @@ function buildExamSessionEvents(examTitle,examDate,subject,count,idPrefix,workin
 function removeGenericExamPrepSessions(events,examId){
   return events.filter(e=>!(e.dueEventId===examId&&e.status==="pending"&&e.isExamPrepSession&&(e.interleavedReview||(!e.deckId&&!e.practiceExamId))));
 }
+// Everything real that would be silently orphaned by switching an existing
+// exam's Type away from "exam" -- EventDetailModal's onTypeChange used to
+// only flip kind/asProject/asChecklist, never checking whether the exam
+// being switched away from actually had linked prep work. Pure/data-in,
+// data-out on purpose (no lsGet/lsSet here) so both the confirm-gate check
+// in EventDetailModal's save() and the real cleanup in
+// applyExamTypeSwitchCleanup below can share one definition of "does this
+// exam have anything real to lose" instead of two that could drift.
+// pendingPrepSessions mirrors removeGenericExamPrepSessions' own filter
+// (the generic, non-kit sessions); a deck/practice-exam-linked session is
+// covered separately below since deleting/unlinking the deck or practice
+// exam itself is what actually removes those.
+function examLinkedPrepData(examId,events,decks,practiceExams){
+  const pendingPrepSessions=(events||[]).filter(e=>e.dueEventId===examId&&e.status==="pending"&&e.isExamPrepSession&&(e.interleavedReview||(!e.deckId&&!e.practiceExamId)));
+  const linkedDecks=(decks||[]).filter(d=>deckLinkedToExam(d,examId));
+  const linkedPracticeExams=(practiceExams||[]).filter(p=>p.examEventId===examId);
+  return {pendingPrepSessions,linkedDecks,linkedPracticeExams,hasData:pendingPrepSessions.length>0||linkedDecks.length>0||linkedPracticeExams.length>0};
+}
+// The actual cleanup once a switch-away-from-exam has been confirmed --
+// reuses the exact same deck-unlink-or-delete and practice-exam-delete
+// logic Studlin Prep's own deleteDeckAndSessions/deletePracticeExamAndSessions
+// already use when a study plan gets regenerated (see their own comments
+// for why a multi-exam-linked deck is unlinked rather than deleted
+// outright), plus removeGenericExamPrepSessions for the plain prep
+// sessions. Pure -- returns the next events/decks/practiceExams arrays,
+// the caller is responsible for actually writing them to storage (see
+// EventDetailModal's finishSave).
+function applyExamTypeSwitchCleanup(events,examId,decks,practiceExams){
+  const {linkedDecks,linkedPracticeExams}=examLinkedPrepData(examId,events,decks,practiceExams);
+  let nextEvents=events||[];
+  let nextDecks=decks||[];
+  linkedDecks.forEach(d=>{
+    const linkedIds=deckExamIds(d);
+    if(linkedIds.length>1){
+      const remaining=linkedIds.filter(id=>id!==examId);
+      nextDecks=nextDecks.map(x=>x.id===d.id?{...x,examEventIds:remaining,examEventId:remaining[0]||null}:x);
+    }else{
+      nextDecks=nextDecks.filter(x=>x.id!==d.id);
+    }
+    nextEvents=nextEvents.filter(e=>!(e.deckId===d.id&&e.dueEventId===examId));
+  });
+  let nextPracticeExams=practiceExams||[];
+  linkedPracticeExams.forEach(p=>{
+    nextPracticeExams=nextPracticeExams.filter(x=>x.id!==p.id);
+    nextEvents=nextEvents.filter(e=>e.practiceExamId!==p.id);
+  });
+  nextEvents=removeGenericExamPrepSessions(nextEvents,examId);
+  return {events:nextEvents,decks:nextDecks,practiceExams:nextPracticeExams};
+}
+// Which exam-only scalar fields need to be cleared/initialized this save,
+// given the ORIGINAL stored kind vs the newly-picked one -- pure so this
+// exact decision is trivially testable without rendering EventDetailModal
+// at all. Every real consumer of these fields (allExamsForPrep,
+// computeExamReadiness, Studlin Prep's own exam list) already gates on
+// kind==="exam" first, so a stale field here was never a live crash -- it
+// WAS silently stale data: switch away and back later and a "new" exam
+// would resurrect a completely unrelated exam's confidence history and
+// score. sourceMaterials/referenceLinks are deliberately excluded --
+// they're not exam-exclusive (buildSyllabusEventBatch attaches the same
+// fields to a Project too) and EventDetailModal never displays or
+// misreads them for anything other than kind==="exam".
+function examTypeSwitchFieldPatch(oldKind,newKind){
+  const switchedAwayFromExam=oldKind==="exam"&&newKind!=="exam";
+  const switchedToExam=oldKind!=="exam"&&newKind==="exam";
+  const patch={};
+  if(switchedToExam)patch.confidenceLog=[];
+  if(switchedAwayFromExam){
+    patch.confidenceLog=undefined;patch.examWeight=undefined;patch.examType=undefined;
+    patch.importanceLevel=undefined;patch.gradeWeightPercent=undefined;
+    patch.scoreTier=undefined;patch.scorePercent=undefined;patch.quizScores=undefined;
+  }
+  return {switchedAwayFromExam,switchedToExam,patch};
+}
+// Same idea as examTypeSwitchFieldPatch, for a Project being switched away
+// from -- clears phases/outline/sharedProjectId together rather than the
+// phases/outline-only clear this used to be. sharedProjectId matters just
+// as much: the App-level shared-project listener (see its "onSnapshot"
+// effect) matches purely on sharedProjectId regardless of kind, so leaving
+// it behind would let a future collaborator update silently resurrect
+// phases/outline onto what's now a plain assignment.
+function projectDropFieldPatch(wasProject,isProjectNow){
+  return (wasProject&&!isProjectNow)?{phases:undefined,outline:undefined,sharedProjectId:undefined}:{};
+}
 
 // A brain-dumped item describing a repeating pattern ("work 3-11pm
 // Mon-Fri for the next 2 weeks") used to just get flagged with an inert
@@ -17226,8 +17330,27 @@ function MaterialEditor({item,onChange,label,idPrefix}){
 // only fires at a later commit step. recordProjectBreakdown() fires once
 // per real call (phases and outline independently), not once per
 // "session" -- a user can suggest just one or the other.
-function PhasesOutlineEditor({item,onChange,subject,onGateBlocked=()=>{}}){
+// Pure -- proposeProjectPhases/proposeOutline already refuse to invent a
+// fake breakdown from a bare title with nothing else to go on (they come
+// back with an empty array, which correctly renders PhasesOutlineEditor's
+// own "Not enough detail here" message). But that still meant a real AI
+// call went out -- and a gated use got spent, see canBreakDownProject/
+// recordProjectBreakdown -- for a request that was always going to return
+// nothing. Checked client-side, before either button ever calls the
+// network, so an empty/too-short Detail skips the call entirely instead of
+// paying for a guaranteed-empty result.
+const MIN_DETAIL_CHARS_FOR_BREAKDOWN=10;
+function hasEnoughDetailForBreakdown(detail){
+  return (detail||"").trim().length>=MIN_DETAIL_CHARS_FOR_BREAKDOWN;
+}
+function PhasesOutlineEditor({item,onChange,subject,onGateBlocked=()=>{},onNeedsDetail=()=>{}}){
+  // onNeedsDetail lets whichever screen this is embedded in point the
+  // student at its own Detail field (see EventDetailModal/NewEventModal's
+  // own onNeedsDetail for what that looks like) rather than this component
+  // reaching for a DOM element it doesn't own.
+  const hasEnoughDetail=hasEnoughDetailForBreakdown(item.detail);
   const suggestPhases=async()=>{
+    if(!hasEnoughDetail){onNeedsDetail();return;}
     if(!canBreakDownProject()){onGateBlocked();return;}
     onChange({phasesLoading:true});
     const names=await proposeProjectPhases(item.title,item.detail||"",subject);
@@ -17235,6 +17358,7 @@ function PhasesOutlineEditor({item,onChange,subject,onGateBlocked=()=>{}}){
     onChange({phasesLoading:false,phases:names||[]});
   };
   const suggestOutline=async()=>{
+    if(!hasEnoughDetail){onNeedsDetail();return;}
     if(!canBreakDownProject()){onGateBlocked();return;}
     onChange({outlineLoading:true});
     const steps=await proposeOutline(item.title,item.detail||"",subject);
@@ -19743,6 +19867,14 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   const [notes,setNotes]=useState("");
   const [cancelConfirmOpen,setCancelConfirmOpen]=useState(false);
   const [completeSessionPrompt,setCompleteSessionPrompt]=useState(false);
+  // Type-switch data-safety confirms (see onTypeChange/save/finishSave
+  // below) -- switching the Type away from Exam when there's real linked
+  // prep work (sessions/deck/practice exam), or away from Project when
+  // it's actually shared with collaborators, is a real delete same as
+  // "Cancel sessions" above, so it gets its own confirm gate at Save time
+  // instead of silently dropping it the moment the chip is clicked.
+  const [examSwitchAwayConfirm,setExamSwitchAwayConfirm]=useState(false);
+  const [projectSwitchAwayConfirm,setProjectSwitchAwayConfirm]=useState(false);
   // Add-collaborators picker (shared/group projects) -- fetched fresh each
   // time the picker opens rather than a live subscription, same one-shot
   // pattern Studlin Prep's "Pull from your notes" picker already uses for a
@@ -19802,6 +19934,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
     setSubject(ev.subject||"Chemistry");setKind(ev.kind||"deadline");setNotes(ev.notes||"");
     setAsProject(isProjectMarker(ev));setAsChecklist(!!ev.checklist);
     setCancelConfirmOpen(false);setDetailErr("");
+    setExamSwitchAwayConfirm(false);setProjectSwitchAwayConfirm(false);
     setAddAttackBlock(false);setAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);
     setAddManualBlock(false);setManualDate(ev.date||dayKey());setManualTime("16:00");setManualDuration(30);
     setPaceProposal(null);setPaceDismissedState(isPaceNudgeDismissed(ev.id));
@@ -19824,6 +19957,18 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
 
   const linkedSessions=allEvents.filter(e=>e.dueEventId===ev.id);
   const chainIdForReschedule=(allEvents.find(e=>e.dueEventId===ev.id&&e.attackChainId&&e.status==="pending")||{}).attackChainId||null;
+  // Real linked prep work for THIS exam -- same pure examLinkedPrepData
+  // helper both this modal's save() confirm-gate and finishSave's actual
+  // cleanup (applyExamTypeSwitchCleanup) share, so the two can never
+  // disagree about what "this exam has real prep work" means. Only ever
+  // non-empty when ev.kind is currently "exam" (a non-exam event can't
+  // have exam prep sessions/a linked deck/a linked practice exam in the
+  // first place).
+  const examPrepData=ev.kind==="exam"?examLinkedPrepData(ev.id,allEvents,lsGet("decks",[]),lsGet("practiceExams",[])):{pendingPrepSessions:[],linkedDecks:[],linkedPracticeExams:[],hasData:false};
+  const examPendingPrepSessions=examPrepData.pendingPrepSessions;
+  const examLinkedDecks=examPrepData.linkedDecks;
+  const examLinkedPEs=examPrepData.linkedPracticeExams;
+  const hasExamPrepData=examPrepData.hasData;
   // Used to just switch tabs generically, landing wherever Calendar
   // happened to default to (today) instead of the block's actual date --
   // now sets the same one-shot deep-link flag pendingBrainDump already
@@ -19892,6 +20037,12 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   // project" (a real phases or outline array), not a fresh kind check that
   // doesn't exist once stored (project always collapses to kind:"deadline").
   const isProject=isProjectMarker(ev);
+  // True exactly when this save is dropping an existing real project back
+  // to a plain Type -- used by save()'s confirm gate (see
+  // projectSwitchAwayConfirm). finishSave computes the equivalent field
+  // patch itself via the pure projectDropFieldPatch(isProject,asProject),
+  // so the two can never disagree about what "dropping a project" means.
+  const droppedProject=isProject&&!asProject;
   // "Project"/"To-do" are shown as their own Type chips (see below) but
   // both resolve to kind:"deadline" underneath, so picking either always
   // forces kind to "deadline" -- exactly mirroring resolveAssignmentKind's
@@ -19943,15 +20094,19 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
     // Project/To-do are UI-level Type choices, not real kind values (see
     // typeChoice above) -- resolved here into the actual fields that get
     // written, same "type resolves at save time" split Add Task uses.
-    // droppedProject clears a previously-real project's phases/outline so
-    // switching away from Project doesn't leave it silently still tagged
-    // as one; newProjPhases/newProjOutline only ever apply when Project was
-    // JUST turned on this edit (requiresProjectDetail), never touching an
-    // already-existing project's checklist (that's edited via the display
-    // blocks above instead).
-    const droppedProject=isProject&&!asProject;
+    // projectDropFieldPatch/examTypeSwitchFieldPatch (pure, see their own
+    // comments) compare the ORIGINAL stored kind/isProject against the
+    // final picked one, same "only the net result at Save time matters"
+    // convention -- toggling through Exam/Project and back before saving is
+    // a no-op, not a false trigger. newProjPhases/newProjOutline only ever
+    // apply when Project was JUST turned on this edit (requiresProjectDetail),
+    // never touching an already-existing project's checklist (that's edited
+    // via the display blocks above instead).
     const newProjPhases=requiresProjectDetail?(projectPlan.phases||[]).map(p=>p.trim()).filter(Boolean):[];
     const newProjOutline=requiresProjectDetail?normalizeOutlineDraft(projectPlan.outline):[];
+    const projectFieldPatch=projectDropFieldPatch(isProject,asProject);
+    const examFieldPatch=examTypeSwitchFieldPatch(ev.kind,kind);
+    const switchedAwayFromExam=examFieldPatch.switchedAwayFromExam;
     // Retroactive Attack Block converts this event INTO the real due-date
     // marker (buildAssignmentAttackBlockPair, same shape
     // buildSyllabusEventBatch's own markers use, reusing this event's own
@@ -19972,7 +20127,8 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
       if(attackPair)return attackPair.marker;
       const merged={...e,title:title.trim(),date,time,duration,deadline:deadline||null,priority,difficulty,subject,courseId:courseIdForLabel(subject),kind,notes,checklist:asChecklist,...(timeChanged?{userPinned:true}:{}),
         ...(kind==="exam"?{sourceMaterials:examPlan.materialFiles,referenceLinks:examPlan.materialLinks}:{}),
-        ...(droppedProject?{phases:undefined,outline:undefined}:{}),
+        ...projectFieldPatch,
+        ...examFieldPatch.patch,
         ...(requiresProjectDetail&&newProjPhases.length>0?{phases:newProjPhases.map((name,pi)=>({name,status:pi===0?"active":"pending"}))}:{}),
         ...(requiresProjectDetail&&newProjOutline.length>0?{outline:newProjOutline}:{}),
         // The one place a student can directly re-prioritize a single
@@ -19986,6 +20142,25 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
     });
     let next=date?rebalanceDay(date,updated,routines,prefs):updated;
     if(attackPair)next=next.concat([attackPair.task]);
+    // Real linked prep work orphaned by leaving Exam -- reuses the exact
+    // same cleanup Studlin Prep's own deleteDeckAndSessions/
+    // deletePracticeExamAndSessions/removeGenericExamPrepSessions already
+    // do when a study plan gets regenerated, rather than inventing a
+    // second way to unlink a shared deck or delete a practice exam's
+    // sessions. Only ever reaches here once the student has confirmed via
+    // the "Switch away from Exam?" modal (see save()) -- hasExamPrepData is
+    // what decided whether that confirm was needed in the first place,
+    // computed from these exact same three lists. Deck unlink/delete and
+    // practice-exam delete write straight to their own storage keys (same
+    // as the original functions do); only the events side needs to filter
+    // `next` in memory instead of re-reading storage, since `next` is the
+    // definitive list about to be committed and hasn't hit storage yet.
+    if(switchedAwayFromExam){
+      const cleanup=applyExamTypeSwitchCleanup(next,ev.id,lsGet("decks",[]),lsGet("practiceExams",[]));
+      next=cleanup.events;
+      lsSet("decks",cleanup.decks);
+      lsSet("practiceExams",cleanup.practiceExams);
+    }
     let newExamSessions=[];
     if(kind==="exam"&&examPlan.proposeSessions&&linkedSessions.length===0){
       const baseDuration=suggestDurationFor(subject,"study block")||25;
@@ -20011,11 +20186,10 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
     }
     onClose();
   };
-  const save=()=>{
-    if(!title.trim())return;
-    if(deadline&&date>deadline){setDeadlineErr("Can't schedule past the deadline ("+deadline+").");return;}
-    if((showsPhaseDetail||requiresProjectDetail)&&!notes.trim()){setDetailErr("Add a bit of detail so Studlin can suggest real phases, not a generic template.");return;}
-    setDetailErr("");
+  // Split out of save() so the two type-switch confirms below (and the
+  // Attack Block slot picker, unchanged) can all pause for a choice before
+  // actually committing, then resume the exact same path once resolved.
+  const proceedSave=()=>{
     // Multi-option Attack Block placement (see NewSlotPickerModal/
     // computeNewSlotCandidates) -- only pauses for a choice when this save
     // is genuinely about to start a brand-new chain; every other edit path
@@ -20035,6 +20209,27 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
     }
     finishSave(null);
   };
+  const save=()=>{
+    if(!title.trim())return;
+    if(deadline&&date>deadline){setDeadlineErr("Can't schedule past the deadline ("+deadline+").");return;}
+    if((showsPhaseDetail||requiresProjectDetail)&&!notes.trim()){setDetailErr("Add a bit of detail so Studlin can suggest real phases, not a generic template.");return;}
+    setDetailErr("");
+    // Switching the Type away from Exam when there's real linked prep work
+    // (pending prep sessions, a linked flashcard deck, a linked practice
+    // exam) is a real delete, same as "Cancel sessions" elsewhere in this
+    // modal -- gets its own confirm instead of silently dropping it the
+    // moment Save is clicked. See finishSave for the actual cleanup.
+    if(ev.kind==="exam"&&kind!=="exam"&&hasExamPrepData){setExamSwitchAwayConfirm(true);return;}
+    // Same idea for dropping an actually-shared Project -- collaborators
+    // stop seeing this as a shared project and its phases/checklist are
+    // cleared (see projectDropFieldPatch, applied in finishSave). A plain
+    // unshared project has nothing worth confirming, so this only fires
+    // when ev.sharedProjectId is real.
+    if(droppedProject&&ev.sharedProjectId){setProjectSwitchAwayConfirm(true);return;}
+    proceedSave();
+  };
+  const confirmExamSwitchAway=()=>{setExamSwitchAwayConfirm(false);proceedSave();};
+  const confirmProjectSwitchAway=()=>{setProjectSwitchAwayConfirm(false);proceedSave();};
   const writePhases=(nextPhases)=>commit(allEvents.map(x=>x.id===ev.id?{...x,phases:nextPhases}:x));
   const writeOutline=(nextOutline)=>commit(allEvents.map(x=>x.id===ev.id?{...x,outline:nextOutline}:x));
   const confirmCancelSessions=()=>{
@@ -20285,7 +20480,8 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
       {requiresProjectDetail&&(
         <div style={{marginBottom:14}}>
           <div style={{fontSize:11.5,color:T.muted,marginBottom:8}}>Marked as a Project — use the Detail field below to describe it, and Studlin will suggest phases and a checklist.</div>
-          <PhasesOutlineEditor item={{...projectPlan,title,detail:notes}} onChange={patch=>setProjectPlan(p=>({...p,...patch}))} subject={subject} onGateBlocked={()=>setPricingOpen("projectBreakdown")} />
+          <PhasesOutlineEditor item={{...projectPlan,title,detail:notes}} onChange={patch=>setProjectPlan(p=>({...p,...patch}))} subject={subject} onGateBlocked={()=>setPricingOpen("projectBreakdown")}
+            onNeedsDetail={()=>{setDetailErr("Add a sentence about what this involves first.");document.getElementById("event-detail-notes")?.focus();}} />
         </div>
       )}
       {isProject&&(
@@ -20307,7 +20503,8 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
               <Field label="Probe session length"><NumField min={15} max={60} fallback={ATTACK_BLOCK_DEFAULT_PROBE_MINS} value={attackProbeMins} onChange={setAttackProbeMins} /></Field>
             </div>
             {isPhaseCandidate&&(
-              <PhasesOutlineEditor item={{...projectPlan,title,detail:notes}} onChange={patch=>setProjectPlan(p=>({...p,...patch}))} subject={subject} onGateBlocked={()=>setPricingOpen("projectBreakdown")} />
+              <PhasesOutlineEditor item={{...projectPlan,title,detail:notes}} onChange={patch=>setProjectPlan(p=>({...p,...patch}))} subject={subject} onGateBlocked={()=>setPricingOpen("projectBreakdown")}
+            onNeedsDetail={()=>{setDetailErr("Add a sentence about what this involves first.");document.getElementById("event-detail-notes")?.focus();}} />
             )}
           </>)}
         </div>
@@ -20388,13 +20585,29 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
         </>
       )}
       <Field label={(showsPhaseDetail||requiresProjectDetail)?"Detail":"Notes (optional)"} hint={(showsPhaseDetail||requiresProjectDetail)?"A sentence or two is enough — Studlin uses this to suggest phases and a checklist.":undefined}>
-        <Textarea value={notes} onChange={e=>{setNotes(e.target.value);if(detailErr)setDetailErr("");}} />
+        <Textarea id="event-detail-notes" value={notes} onChange={e=>{setNotes(e.target.value);if(detailErr)setDetailErr("");}} />
       </Field>
       {detailErr&&<div style={{fontSize:12,color:T.red,marginTop:-8,marginBottom:14}}>{detailErr}</div>}
     </Modal>
     <Modal open={cancelConfirmOpen} onClose={()=>setCancelConfirmOpen(false)} title="Cancel prep sessions?" sub="The due date stays on your calendar. Only the scheduled study time Studlin added for it gets removed. Sessions you've already completed stay put." width={420}
       footer={<><Btn variant="subtle" onClick={()=>setCancelConfirmOpen(false)}>Never mind</Btn><Btn variant="danger" onClick={confirmCancelSessions}>{"Cancel "+linkedSessions.filter(s=>s.status==="pending").length+" session"+(linkedSessions.filter(s=>s.status==="pending").length!==1?"s":"")}</Btn></>}>
       <div style={{fontSize:13,color:T.text}}>{ev.title}</div>
+    </Modal>
+    {/* ── Type-switch data-safety confirms -- see save()/finishSave for why
+        these exist (real linked prep work / an active shared project would
+        otherwise be silently orphaned or deleted the moment Save is
+        clicked). Same Modal/Btn shape as "Cancel prep sessions?" above. ── */}
+    <Modal open={examSwitchAwayConfirm} onClose={()=>setExamSwitchAwayConfirm(false)} title="Switch away from Exam?" sub="This removes the prep work Studlin scheduled for it. This can't be undone." width={420}
+      footer={<><Btn variant="subtle" onClick={()=>setExamSwitchAwayConfirm(false)}>Never mind</Btn><Btn variant="danger" onClick={confirmExamSwitchAway}>Switch and remove prep</Btn></>}>
+      <div style={{fontSize:13,color:T.text,lineHeight:1.7}}>
+        {examPendingPrepSessions.length>0&&<div>{examPendingPrepSessions.length} scheduled prep session{examPendingPrepSessions.length!==1?"s":""}</div>}
+        {examLinkedDecks.length>0&&<div>{examLinkedDecks.length} linked flashcard deck{examLinkedDecks.length!==1?"s":""}</div>}
+        {examLinkedPEs.length>0&&<div>{examLinkedPEs.length} linked practice exam{examLinkedPEs.length!==1?"s":""}</div>}
+      </div>
+    </Modal>
+    <Modal open={projectSwitchAwayConfirm} onClose={()=>setProjectSwitchAwayConfirm(false)} title="Switch away from Project?" sub="This project is shared with collaborators." width={420}
+      footer={<><Btn variant="subtle" onClick={()=>setProjectSwitchAwayConfirm(false)}>Never mind</Btn><Btn variant="danger" onClick={confirmProjectSwitchAway}>Switch anyway</Btn></>}>
+      <div style={{fontSize:13,color:T.text,lineHeight:1.6}}>Its phases and checklist get cleared here and it disconnects from the shared project. Collaborators keep their own copy, but you won't see their updates on it anymore.</div>
     </Modal>
     {/* ── Add collaborators -- nothing lands on anyone else's calendar from
         this click alone; createSharedProject only invites (state:"invited"),
@@ -20958,8 +21171,19 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // findSharedStudyWindow's own honest degrade-gracefully behavior.
   const [gsBusyByDate,setGsBusyByDate]=useState({});
   // Top-ranked findSharedStudyWindow option, rendered as a dashed
-  // "Studlin recommends this time" ghost block -- suggestion only.
+  // "Studlin recommends this time" ghost block -- suggestion only. Whichever
+  // one of gsRecommendedOptions below the student currently has selected
+  // (defaults to isBest) -- clicking a different option chip in the "place"
+  // step panel just reassigns this, moving the ghost block instead of
+  // changing what data exists.
   const [gsRecommended,setGsRecommended]=useState(null);
+  // Every option findSharedStudyWindow found (up to 3, one per day) -- used
+  // to collapse straight to a single best-of-three and throw the rest away,
+  // so a busy week where the top pick didn't actually work for the student
+  // meant re-running the whole search manually. Same {date,
+  // time,duration,dayLabel,timeLabel,isBest} shape ChatDrawer's own "Find
+  // Shared Study Window" flow already renders as a real pick-one list.
+  const [gsRecommendedOptions,setGsRecommendedOptions]=useState([]);
   // The user's own placed draft: {date,startTime,endTime,mode,title}|null.
   // mode is "busy block" (Meeting) or "study block" (Study Session) --
   // same two modes ChatDrawer's scheduleGroupSession already knows about.
@@ -22050,7 +22274,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // ── Schedule with Friends ────────────────────────────────────────────
   const openGroupSchedule=async()=>{
     setGsOpen(true);setGsStep("pick");setGsSelected([]);setGsLoading(true);
-    setGsRoomId(null);setGsMemberUids([]);setGsMemberNames({});setGsBusyByDate({});setGsRecommended(null);setGsDraft(null);
+    setGsRoomId(null);setGsMemberUids([]);setGsMemberNames({});setGsBusyByDate({});setGsRecommended(null);setGsRecommendedOptions([]);setGsDraft(null);
     const myUid=firebase.auth().currentUser?.uid;
     const uids=myUid?await getAcceptedFriendUids(myUid):[];
     const docs=await Promise.all(uids.map(uid=>fsdb().collection('profiles').doc(uid).get().catch(()=>null)));
@@ -22103,7 +22327,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // Recommended ghost block -- a visual suggestion only (see gsRecommended
     // state comment); manual placement anywhere else stays fully available.
     const rec=await findSharedStudyWindow(myUid,gsSelected,{timeMode:"anytime",lookAheadDayRange:7,durationInMinutes:60});
-    setGsRecommended(rec.noneFound?null:(rec.options.find(o=>o.isBest)||rec.options[0]||null));
+    const opts=rec.noneFound?[]:rec.options;
+    setGsRecommendedOptions(opts);
+    setGsRecommended(opts.find(o=>o.isBest)||opts[0]||null);
     setGsLoading(false);setGsStep("place");
   };
   // Dropping the Meeting or Study Session sidebar chip -- default to a 1hr
@@ -24084,18 +24310,44 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           recommended ghost block render inside WeeklyPlanner itself (see
           gsBusyByDate/gsRecommended props above). ── */}
       {gsOpen&&gsStep==="place"&&(
-        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:70,background:T.card,border:`1px solid ${T.border}`,borderRadius:12,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",padding:"14px 18px",display:"flex",alignItems:"center",gap:14,maxWidth:600}}>
-          <div style={{display:"flex",flexDirection:"column",gap:3}}>
-            <div style={{fontSize:11.5,fontWeight:700,color:T.text}}>Drag onto an open slot</div>
-            <div style={{fontSize:10.5,color:T.muted}}>Grayed-out time is when someone's busy -- you can still place there.</div>
-          </div>
-          <div draggable onDragStart={()=>setSidebarDragChip({title:"Meeting",kind:"groupSession",mode:"busy block",color:T.lime})} onDragEnd={()=>setSidebarDragChip(null)}
-            style={{padding:"8px 14px",borderRadius:8,background:T.lime+"18",border:`1px solid ${T.lime}55`,color:T.lime,fontSize:12,fontWeight:700,cursor:"grab",whiteSpace:"nowrap"}}>Meeting</div>
-          <div draggable onDragStart={()=>setSidebarDragChip({title:"Study Session",kind:"groupSession",mode:"study block",color:T.teal})} onDragEnd={()=>setSidebarDragChip(null)}
-            style={{padding:"8px 14px",borderRadius:8,background:T.teal+"18",border:`1px solid ${T.teal}55`,color:T.teal,fontSize:12,fontWeight:700,cursor:"grab",whiteSpace:"nowrap"}}>Study Session</div>
-          <div style={{display:"flex",gap:8,marginLeft:"auto"}}>
-            <Btn variant="subtle" onClick={closeGroupSchedule}>Cancel</Btn>
-            <Btn onClick={postGroupSchedule} disabled={!gsDraft||gsSending}>{gsSending?"Sending…":"Done"}</Btn>
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:70,background:T.card,border:`1px solid ${T.border}`,borderRadius:12,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",padding:"14px 18px",display:"flex",flexDirection:"column",gap:10,maxWidth:600}}>
+          {/* Every window findSharedStudyWindow found (up to 3), not just the
+              top pick -- same reference data ChatDrawer's own "Find Shared
+              Study Window" flow already lists, adapted to this panel's
+              compact single-row shape. Picking one just moves the dashed
+              ghost block on the calendar (see gsRecommendedEl in
+              WeeklyPlanner); it's still only a suggestion, dragging the
+              Meeting/Study Session chip anywhere else stays fully allowed. */}
+          {gsRecommendedOptions.length>1&&(
+            <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+              <span style={{fontSize:10.5,fontWeight:700,color:T.muted,whiteSpace:"nowrap"}}>Found {gsRecommendedOptions.length} windows that work:</span>
+              {gsRecommendedOptions.map((o,i)=>{
+                const active=gsRecommended&&gsRecommended.date===o.date&&gsRecommended.time===o.time;
+                return (
+                  <button key={i} type="button" onClick={()=>setGsRecommended(o)}
+                    style={{padding:"5px 10px",borderRadius:7,fontSize:10.5,fontWeight:700,cursor:"pointer",fontFamily:T.font,whiteSpace:"nowrap",
+                      background:active?T.lime:(o.isBest?T.lime+"14":T.card2),
+                      color:active?T.bg:(o.isBest?T.lime:T.text),
+                      border:`1px solid ${active?T.lime:(o.isBest?T.lime+"55":T.border)}`}}>
+                    {o.isBest?"★ ":""}{o.dayLabel} · {o.timeLabel}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <div style={{display:"flex",alignItems:"center",gap:14}}>
+            <div style={{display:"flex",flexDirection:"column",gap:3}}>
+              <div style={{fontSize:11.5,fontWeight:700,color:T.text}}>Drag onto an open slot</div>
+              <div style={{fontSize:10.5,color:T.muted}}>Grayed-out time is when someone's busy -- you can still place there.</div>
+            </div>
+            <div draggable onDragStart={()=>setSidebarDragChip({title:"Meeting",kind:"groupSession",mode:"busy block",color:T.lime})} onDragEnd={()=>setSidebarDragChip(null)}
+              style={{padding:"8px 14px",borderRadius:8,background:T.lime+"18",border:`1px solid ${T.lime}55`,color:T.lime,fontSize:12,fontWeight:700,cursor:"grab",whiteSpace:"nowrap"}}>Meeting</div>
+            <div draggable onDragStart={()=>setSidebarDragChip({title:"Study Session",kind:"groupSession",mode:"study block",color:T.teal})} onDragEnd={()=>setSidebarDragChip(null)}
+              style={{padding:"8px 14px",borderRadius:8,background:T.teal+"18",border:`1px solid ${T.teal}55`,color:T.teal,fontSize:12,fontWeight:700,cursor:"grab",whiteSpace:"nowrap"}}>Study Session</div>
+            <div style={{display:"flex",gap:8,marginLeft:"auto"}}>
+              <Btn variant="subtle" onClick={closeGroupSchedule}>Cancel</Btn>
+              <Btn onClick={postGroupSchedule} disabled={!gsDraft||gsSending}>{gsSending?"Sending…":"Done"}</Btn>
+            </div>
           </div>
         </div>
       )}
@@ -24530,10 +24782,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
 
         {isProjectKind&&(<>
           <Field label="Describe what you want to do" hint="A sentence or two is enough — Studlin uses this to suggest phases and a checklist.">
-            <Textarea placeholder="e.g. Build a working demo, write a report, present to the class by the deadline." value={evNotes} onChange={ev=>{setEvNotes(ev.target.value);if(evDetailErr)setEvDetailErr("");}} />
+            <Textarea id="newevent-detail-notes" placeholder="e.g. Build a working demo, write a report, present to the class by the deadline." value={evNotes} onChange={ev=>{setEvNotes(ev.target.value);if(evDetailErr)setEvDetailErr("");}} />
           </Field>
           {evDetailErr&&<div style={{fontSize:12,color:T.red,marginTop:-8,marginBottom:14}}>{evDetailErr}</div>}
-          <PhasesOutlineEditor item={{...evProjectPlan,title:evTitle,detail:evNotes}} onChange={patch=>setEvProjectPlan(p=>({...p,...patch}))} subject={evSubject==="Other"?evCustom:evSubject} onGateBlocked={()=>setPricingOpen("projectBreakdown")} />
+          <PhasesOutlineEditor item={{...evProjectPlan,title:evTitle,detail:evNotes}} onChange={patch=>setEvProjectPlan(p=>({...p,...patch}))} subject={evSubject==="Other"?evCustom:evSubject} onGateBlocked={()=>setPricingOpen("projectBreakdown")}
+            onNeedsDetail={()=>{setEvDetailErr("Add a sentence about what this involves first.");document.getElementById("newevent-detail-notes")?.focus();}} />
           <div style={{marginBottom:14}}>
             {evCollabSelected.length>0
               ?<div style={{display:"flex",flexWrap:"wrap",gap:6,alignItems:"center"}}>
@@ -25505,6 +25758,16 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     if(!queue||queue.length===0)return;
     const [next,...rest]=queue;
     lsSet("openImportCalQueue",rest);
+    // A queued entry is either the onboarding wizard's plain hint (true, or
+    // {hint}) or a full pre-classified review payload queued by the silent
+    // auto-resync below (see resyncCalendar) -- that one skips straight to
+    // the review screen with real events already attached instead of
+    // opening a blank connect form the student would have to re-fill.
+    if(next&&typeof next==="object"&&next.reviewPayload){
+      openImportCalModal(null);
+      setImportCalReview(next.reviewPayload);
+      return;
+    }
     openImportCalModal(next===true?null:next.hint);
   };
   // SettingsTab is conditionally rendered (active==="settings"?...:) so it
@@ -25727,6 +25990,33 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
       if(isAcademicCalendarSource(sub.sourceType)&&newEvents.length>0&&canClassifyCalendarImport()){
         classifications=await classifyImportedCalendarEvents(newEvents,sub.sourceType,mgmtSubjs.map(s=>s.label));
         recordCalendarClassify();
+      }
+      // The silent, once-a-day AUTOMATIC path (manual is falsy) used to
+      // merge these straight onto the calendar the moment classification
+      // came back -- a real AI guess ("this new Canvas item is an exam
+      // worth 20%") committed with nobody ever looking at it, unlike both
+      // user-initiated import paths (fetchCalendarPreview/connectCanvasToken
+      // above), which always route through importCalReview first. Reuses
+      // the exact same openImportCalQueue one-shot flag the onboarding
+      // wizard's deferred platform picks already use (see
+      // openNextQueuedImportCal) to defer this to that same review screen
+      // next time Settings opens, instead of inventing a second review
+      // path. Scoped to a genuine academic classification pass only (see
+      // classifications above, only ever set for Canvas/Schoology/
+      // Blackboard/Moodle) -- a plain personal busy-block calendar has
+      // nothing to misclassify, so it still merges straight through exactly
+      // as before. Deduped by subId (replacing, not stacking) so a student
+      // who ignores this for a few days doesn't build up several stale
+      // queue entries for the same source -- each day's version is already
+      // a full re-fetch, a strict superset of what an earlier unreviewed
+      // one held.
+      if(!manual&&classifications){
+        const {queue,reviewEvents}=buildDeferredCalendarReviewQueue(lsGet("openImportCalQueue",[]),sub,newEvents,classifications);
+        lsSet("openImportCalQueue",queue);
+        const nextSubs2=importedCals.map(s=>s.id===sub.id?{...s,lastSyncedAt:Date.now(),lastSyncError:null}:s);
+        setImportedCals(nextSubs2);saveImportedCalendars(nextSubs2);
+        showToast(sub.label+": "+reviewEvents.length+" new item"+(reviewEvents.length!==1?"s":"")+" ready to review next time you open Settings.");
+        return;
       }
       const merged=mergeImportedEvents(lsGet("events",[]),sub.id,data.events,classifications);
       const result=reconcileFixedEventConflicts(merged.filter(e=>e.importSubId===sub.id));
