@@ -16569,7 +16569,16 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                           because a location happens to be set. Same ellipsis
                           treatment as the title so a long address/building
                           name truncates cleanly instead of overflowing. */}
-                      {heightPx > 48 && ev.location && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isWarningKind?tokens.color.warning:tokens.color.textSecondary,marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.location}</div>}
+                      {/* 2026-08-25 fix: 48 was calibrated against nothing --
+                          at this view's own default zoom (48px/hr,
+                          CAL_ZOOM_DEFAULT), a typical 50min class only
+                          renders ~40px tall, so a >48 threshold meant
+                          location basically never showed for a normal-
+                          length event, only ones over a full hour. 40
+                          actually reflects real class durations at default
+                          zoom; still hides on very short blocks where three
+                          lines would genuinely crowd. */}
+                      {heightPx > 40 && ev.location && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isWarningKind?tokens.color.warning:tokens.color.textSecondary,marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.location}</div>}
                       {/* Drag-to-resize edge handles -- routine occurrences
                           included now (startWkResize/onUp branch on
                           isRoutine and route through onResizeRoutineOccurrence's
@@ -18723,8 +18732,8 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, 
                   {conflictTitles.length>0&&<span title={"Overlaps with "+conflictTitles.join(", ")} style={{position:"absolute",top:2,left:2,fontSize:9,lineHeight:1,zIndex:1,filter:"drop-shadow(0 1px 1px rgba(0,0,0,0.35))"}}>⚠️</span>}
                   <div style={{fontSize:11.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textDecoration:isDone?"line-through":"none"}}>{isExam?"EXAM · ":""}{ev.title}</div>
                   {heightPx>34&&<div style={{fontSize:9.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:2}}>{fmtTimeRange(ev.time,dur)}</div>}
-                  {/* Same progressive-disclosure location line as WeeklyPlanner's own -- see its comment. */}
-                  {heightPx>48&&ev.location&&<div style={{fontSize:9.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.location}</div>}
+                  {/* Same progressive-disclosure location line as WeeklyPlanner's own -- see its comment (threshold lowered from 48 to 40, same fix). */}
+                  {heightPx>40&&ev.location&&<div style={{fontSize:9.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.location}</div>}
                 </div>
                 {ev.commuteAfter>0 && (
                   <div title={ev.commuteAfter+" min commute"} style={commuteStripStyle(ev.commuteAfter,"after")}>
