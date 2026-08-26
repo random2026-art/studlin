@@ -1359,6 +1359,32 @@ function formatRealWorldScheduleForDate(events, routines, dateKey) {
   const realEvents = (events || []).filter((e) => e.date === dateKey && e.time && !e.timeUnconfirmed && isRealWorldKind(e.kind));
   return [...routineOccs, ...realEvents].sort((a, b) => a.time < b.time ? -1 : a.time > b.time ? 1 : 0).map((e) => e.title + ": " + fmtClock12(e.time) + "\u2013" + fmtClock12(minutesToTime(timeToMinutes(e.time) + (e.duration || 30))));
 }
+async function parseBrainDump(text) {
+  if (!text || !text.trim()) return { items: [], error: "" };
+  try {
+    const todaysSchedule = formatRealWorldScheduleForDate(lsGet("events", []), getWeeklyRoutine(), dayKey());
+    const prompt = "A student just brain-dumped everything they need to do, in their own words, in one go. Break it into separate individual items. Today's date is " + dayKey() + " (" + (/* @__PURE__ */ new Date()).toLocaleDateString("en-US", { weekday: "long" }) + "). " + (todaysSchedule.length > 0 ? "The student's REAL schedule for today (already on their calendar): " + todaysSchedule.join("; ") + `. If they describe something happening right after one of these by name (e.g. "after my engineering class", "once school lets out", "after my shift"), match it against this list and use that item's own listed END time above as dueTime (dueDate stays today) -- never guess a time or leave it null when a real match exists. Only match a class/activity actually on this list; if nothing here fits what they described, fall back to normal date/time extraction instead of guessing. ` : "") + `For each item return: "title" (short, e.g. "Chem homework" or "Email counselor"), "kind", one of: "study" \u2014 anything that takes real focused work time in a single sitting (homework, studying, reading) \u2014 Studlin finds an open slot for it; "project" \u2014 a bigger, multi-step piece of work with a due date further out (a paper, a presentation, building something, a multi-part assignment) \u2014 never a single-sitting task; "todo" \u2014 a quick task with no real duration and no fixed time, like sending an email, a form, or a phone call \u2014 this includes submitting or sending anything related to a class or exam (e.g. "send AP exam scores to a college", "submit lab report"), since the ACTION being done is a quick task even though the subject matter is academic; classify by the verb, not by incidental words like "exam" or "class" in the title; "event" \u2014 something the student personally attends or is present for at a specific real-world time that Studlin should never move, like an appointment, a class, a shift, or a meeting \u2014 never taking an exam/test/quiz itself (that's its own kind below), and never an action ABOUT an exam or class, like sending, submitting, or emailing something related to one; "exam" \u2014 the student is taking a quiz, test, midterm, or final at a specific date (e.g. "I have a chem test Friday", "my bio midterm is the 12th") \u2014 never an action about an exam like submitting or sending something; "reminder" \u2014 a quick nudge at a specific time, e.g. "remind me to..." or "don't forget to... at...". "durationMin" (your best-guess minutes needed, for kind:"study" or kind:"event" \u2014 null otherwise), "immediate" (true ONLY for kind:"study" when the student explicitly said "now"/"right now"/"immediately" \u2014 meaning start this the moment it's added, not just sometime today; false for everything else, including generic same-day urgency like "today" or "tonight" with no explicit "now"), "chained" (true ONLY for kind:"study" or a timeless kind:"event" when the student described it as coming right after the PREVIOUS item in this same dump \u2014 words like "then", "after that", "next", "once I'm done with that" \u2014 meaning it should start the moment the previous item ends, back-to-back in the order given, not get independently slotted wherever's smartest. The first item of a sequence has nothing before it, so it's "chained":false even if it kicks off an ordered plan \u2014 only items 2 and onward in that same plan are "chained":true. A plain list of separate homeworks with their own due dates and no "then"/sequence language is "chained":false throughout), "dueDate" (YYYY-MM-DD. For "study"/"todo"/"project" this is the deadline; for "event"/"exam"/"reminder" this is the day it happens. "today"/"tonight" means the date given above, "Friday" means the next occurrence of that weekday. Be literal: if the student named a specific day, always return it, even if it's today. Only use null when truly no timing was mentioned at all), "dueTime" (HH:MM 24-hour \u2014 ONLY for kind:"event" or kind:"reminder", when a specific time was stated or clearly implied like "tonight"=20:00 or "this morning"=9:00; null if genuinely no time was said), "examWeight" (ONLY when kind is "exam": "quiz" for a quiz or short in-class test worth relatively little, "major" for a midterm, final, or unit exam worth significant grade weight \u2014 omit otherwise), "needsDuration" (true ONLY if kind is "study" and you genuinely can't make a reasonable guess from context \u2014 be generous, most things can get a rough estimate), "recurring" (ONLY for kind:"event" items describing something that happens on more than one distinct calendar day in a repeating weekly pattern, e.g. "work 3-11pm Monday through Friday for the next 2 weeks" or "soccer practice every Tuesday and Thursday until October" \u2014 an object {"days":["Mon","Tue",...],"until":"YYYY-MM-DD"} using 3-letter weekday abbreviations and the last date it repeats through, inclusive. dueDate stays the FIRST occurrence. A single one-time event, even a long one, is never recurring \u2014 null for those and everything else), "clarify" (a short, specific follow-up question ONLY if something essential is truly missing and you can't reasonably guess it \u2014 e.g. an "event", "exam", or "reminder" with no date/time at all mentioned, or a title too vague to act on. Never used for a recurring pattern \u2014 "recurring" above already covers that. null otherwise \u2014 most items should NOT have this), "confidence" ("low" ONLY when you had to genuinely guess an important date, time, or duration because the student's wording was vague or ambiguous, e.g. "sometime soon" or "in a few days" or "later"; "high" for everything else, including the common case where nothing needed guessing at all). Respond with ONLY valid JSON, no markdown fences, no commentary: {"items":[{"title":"Chem homework","kind":"study","durationMin":45,"immediate":false,"chained":false,"dueDate":null,"dueTime":null,"needsDuration":false,"recurring":null,"clarify":null,"confidence":"high"},{"title":"Chem test","kind":"exam","dueDate":"2026-07-17","examWeight":"major","clarify":null,"confidence":"high"},{"title":"Work shift","kind":"event","dueDate":"2026-07-27","dueTime":"15:00","durationMin":480,"recurring":{"days":["Mon","Tue","Wed","Thu","Fri"],"until":"2026-08-07"},"clarify":null,"confidence":"high"}]}. If nothing usable is in the text, respond {"items":[]}.
+
+` + text.slice(0, 4e3);
+    const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt }], model: "standard", format: "json" }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { items: [], error: data.error || "Couldn't reach Studlin AI. Please try again." };
+    recordBrainDump();
+    const raw = (data.reply || "").replace(/```json?\n?/gi, "").replace(/```/g, "").trim();
+    let parsed = null;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      parsed = null;
+    }
+    if (parsed && Array.isArray(parsed.items)) {
+      return { items: parsed.items, error: "" };
+    }
+    return { items: fallbackSplitBrainDump(text), error: "Couldn't fully understand that \u2014 here's a basic breakdown. Edit anything that's off." };
+  } catch (e) {
+    return { items: [], error: "Something went wrong reaching Studlin AI. Check your connection and try again." };
+  }
+}
 function matchEventByTitle(phrase, dateKey) {
   const q = (phrase || "").trim().toLowerCase();
   if (!q) return { matches: [] };
@@ -4872,7 +4898,7 @@ function UpgradeModal({ open, onClose, feature, detail, onUpgraded }) {
     document.body
   );
 }
-const navIcon = { dashboard: Icon.grid, prep: Icon.brain, writestudio: Icon.pen, essays: Icon.pen, flashcards: Icon.layers, notes: Icon.file, calendar: Icon.cal, friends: Icon.users, lectures: Icon.mic, solve: Icon.zap, grammar: Icon.check, humanizer: Icon.scan, feedback: Icon.heart, settings: Icon.settings, profile: Icon.user };
+const navIcon = { dashboard: Icon.grid, prep: Icon.brain, writestudio: Icon.pen, essays: Icon.pen, flashcards: Icon.layers, notes: Icon.file, notepad: Icon.pen, calendar: Icon.cal, friends: Icon.users, lectures: Icon.mic, solve: Icon.zap, grammar: Icon.check, humanizer: Icon.scan, feedback: Icon.heart, settings: Icon.settings, profile: Icon.user };
 async function generateFlashcardsFromText(content, context, count = 10, focus) {
   try {
     const countInstruction = count === "auto" ? "Create as many flashcards as needed to cover the key concepts in this " + context + " \u2014 typically 5 to 30. Don't pad with filler or skip real content just to hit a number." : "Create " + count + " flashcards from this " + context + ".";
@@ -13209,6 +13235,232 @@ function NewEventModal({ open, initialTitle, initialDate, initialStartTime, init
     }
   ), " min")), /* @__PURE__ */ React.createElement(Input, { value: location2, onChange: (e) => setLocation(e.target.value), placeholder: "Location (optional)", style: { padding: "7px 10px", fontSize: 12 } }), /* @__PURE__ */ React.createElement("div", { onClick: () => setMovable((m) => !m), style: { display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", padding: "7px 10px", borderRadius: 6, border: `1px solid ${T.border}`, background: T.card2 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 600, color: T.text } }, movable ? "Free" : "Fixed"), /* @__PURE__ */ React.createElement("div", { style: { width: 32, height: 18, borderRadius: 9, background: movable ? T.lime : T.faint, position: "relative", transition: "background 0.2s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 14, borderRadius: "50%", background: "#fff", position: "absolute", top: 2, left: movable ? 16 : 2, transition: "left 0.2s" } })))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, justifyContent: editRoutine ? "space-between" : "flex-end", alignItems: "center", padding: "9px 12px", borderTop: `1px solid ${T.border}` } }, editRoutine && /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: onDelete, style: { padding: "6px 13px", fontSize: 12 } }, "Delete"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: onClose, style: { padding: "6px 13px", fontSize: 12 } }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: submit, disabled: invalid, style: { padding: "6px 13px", fontSize: 12 } }, editRoutine ? "Save changes" : "Create"))))), document.body);
 }
+const PLANNER_PAGE_CHAR_CAP = 900;
+const PLANNER_SPLIT_DEBOUNCE_MS = 700;
+const PLANNER_MAX_PAGES = 200;
+const PLANNER_OPENED_KEY = "plannerNotepadOpened";
+function splitPlannerPageOverflow(text, cap, scannedLen) {
+  if (!text || text.length <= cap) return null;
+  let cut = text.lastIndexOf(" ", cap);
+  const nl = text.lastIndexOf("\n", cap);
+  if (nl > cut) cut = nl;
+  if (cut <= 0) cut = cap;
+  if (cut < (scannedLen || 0)) return null;
+  const head = text.slice(0, cut).replace(/[ \n]+$/, "");
+  const tail = text.slice(cut).replace(/^[ \n]+/, "");
+  if (!tail) return null;
+  return { head, tail };
+}
+function newPlannerPage() {
+  return { id: "pg-" + Date.now() + "-" + Math.round(Math.random() * 1e3), createdAt: (/* @__PURE__ */ new Date()).toISOString(), dateKey: dayKey(), text: "", scannedLen: 0 };
+}
+function loadPlannerPages() {
+  const pages = lsGet("plannerNotepadPages", null);
+  if (Array.isArray(pages) && pages.length > 0) return pages;
+  return [newPlannerPage()];
+}
+function PlannerNotepad({ setActive = () => {
+} }) {
+  const [pages, setPages] = useState(loadPlannerPages);
+  const [activeIdx, setActiveIdx] = useState(() => Math.max(0, loadPlannerPages().length - 1));
+  const [showIntro, setShowIntro] = useState(() => !lsGet(PLANNER_OPENED_KEY, false));
+  const [listening, setListening] = useState(false);
+  const [micError, setMicError] = useState("");
+  const [toast, setToast] = useState("");
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [dragIdx, setDragIdx] = useState(null);
+  const recRef = useRef(null);
+  const trackRef = useRef(null);
+  const splitTimer = useRef(null);
+  useEffect(() => {
+    lsSet("plannerNotepadPages", pages);
+  }, [pages]);
+  useEffect(() => {
+    if (!showIntro) return;
+    const t = setTimeout(() => {
+      lsSet(PLANNER_OPENED_KEY, true);
+      setShowIntro(false);
+    }, 900);
+    return () => clearTimeout(t);
+  }, [showIntro]);
+  useEffect(() => () => {
+    if (recRef.current) recRef.current.stop();
+  }, []);
+  const activeIdxSafe = Math.min(activeIdx, pages.length - 1);
+  const page = pages[activeIdxSafe];
+  const isLastPage = activeIdxSafe === pages.length - 1;
+  const scannedLen = page.scannedLen || 0;
+  const scannedPrefix = page.text.slice(0, scannedLen);
+  const unscanned = page.text.slice(scannedLen);
+  useEffect(() => {
+    if (!isLastPage) return;
+    if (splitTimer.current) clearTimeout(splitTimer.current);
+    splitTimer.current = setTimeout(() => {
+      setPages((prev) => {
+        const cur = prev[prev.length - 1];
+        const split = splitPlannerPageOverflow(cur.text, PLANNER_PAGE_CHAR_CAP, cur.scannedLen || 0);
+        if (!split) return prev;
+        if (prev.length >= PLANNER_MAX_PAGES) {
+          setToast("This notebook is full. Delete an old page to keep writing.");
+          setTimeout(() => setToast(""), 3200);
+          return prev;
+        }
+        const next = [...prev];
+        next[next.length - 1] = { ...cur, text: split.head };
+        next.push({ ...newPlannerPage(), text: split.tail });
+        return next;
+      });
+      setActiveIdx((i) => i + 1);
+    }, PLANNER_SPLIT_DEBOUNCE_MS);
+    return () => {
+      if (splitTimer.current) clearTimeout(splitTimer.current);
+    };
+  }, [page.text, isLastPage]);
+  const setUnscannedText = (v) => {
+    setPages((prev) => prev.map((p, i) => i === activeIdxSafe ? { ...p, text: scannedPrefix + v } : p));
+  };
+  const goPrev = () => setActiveIdx((i) => Math.max(0, i - 1));
+  const goNext = () => setActiveIdx((i) => Math.min(pages.length - 1, i + 1));
+  const addPage = () => {
+    if (pages.length >= PLANNER_MAX_PAGES) {
+      setToast("This notebook is full. Delete an old page to keep writing.");
+      setTimeout(() => setToast(""), 3200);
+      return;
+    }
+    setPages((prev) => [...prev, newPlannerPage()]);
+    setActiveIdx(pages.length);
+  };
+  const deleteActivePage = () => {
+    setPages((prev) => {
+      if (prev.length <= 1) return [newPlannerPage()];
+      return prev.filter((_, i) => i !== activeIdxSafe);
+    });
+    setActiveIdx((i) => Math.max(0, Math.min(i, pages.length - 2)));
+    setDeleteConfirm(false);
+  };
+  const rescanPage = () => {
+    setPages((prev) => prev.map((p, i) => i === activeIdxSafe ? { ...p, scannedLen: 0 } : p));
+  };
+  const sortPage = () => {
+    if (!unscanned.trim()) return;
+    setPages((prev) => prev.map((p, i) => i === activeIdxSafe ? { ...p, scannedLen: p.text.length } : p));
+    lsSet("pendingBrainDumpText", unscanned.trim());
+    lsSet("pendingBrainDump", true);
+    setActive("calendar");
+  };
+  const startRec = async () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      setMicError("Speech recognition isn't supported in this browser. Try Chrome or Edge.");
+      return;
+    }
+    setMicError("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((t) => t.stop());
+    } catch (e) {
+      setMicError("Microphone access denied. Please allow mic access and try again.");
+      return;
+    }
+    const base = unscanned;
+    const r = new SR();
+    r.continuous = true;
+    r.interimResults = true;
+    r.lang = "en-US";
+    r.onstart = () => setListening(true);
+    r.onresult = (e) => {
+      let t = "";
+      for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
+      setUnscannedText((base ? base + " " : "") + t);
+    };
+    r.onend = () => setListening(false);
+    r.onerror = (e) => {
+      setListening(false);
+      if (e.error !== "aborted") setMicError("Mic error: " + e.error);
+    };
+    recRef.current = r;
+    r.start();
+  };
+  const stopRec = () => {
+    if (recRef.current) recRef.current.stop();
+    setListening(false);
+  };
+  const scrubTo = (clientX) => {
+    const el = trackRef.current;
+    if (!el || pages.length <= 1) return;
+    const r = el.getBoundingClientRect();
+    const pct = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
+    setDragIdx(Math.round(pct * (pages.length - 1)));
+  };
+  const onTrackDown = (e) => {
+    scrubTo(e.clientX);
+    const onMove = (ev) => scrubTo(ev.clientX);
+    const onUp = (ev) => {
+      scrubTo(ev.clientX);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      setDragIdx((i) => {
+        if (i != null) setActiveIdx(i);
+        return null;
+      });
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+  const shownIdx = dragIdx != null ? dragIdx : activeIdxSafe;
+  return /* @__PURE__ */ React.createElement("div", { style: { maxWidth: 640, margin: "0 auto", padding: "24px 20px 60px" } }, /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 18 } }, /* @__PURE__ */ React.createElement("h2", { style: { fontSize: 20, fontWeight: 700, color: T.text, margin: 0 } }, "Notepad"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginTop: 3 } }, "Write it all down. Sort it into your plan whenever you're ready.")), showIntro ? /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, padding: "60px 20px", textAlign: "center", animation: "plannerIntroOpen 0.9s cubic-bezier(.2,.8,.2,1)" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 16, height: 16, margin: "0 auto" } }, Icon.pen)) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, boxShadow: "0 8px 24px -16px rgba(0,0,0,0.25)", overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { key: page.id, style: { padding: "18px 20px 14px", animation: "plannerPageFlip 0.22s ease" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: T.muted } }, fmtDateShort(page.dateKey)), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint } }, "Page ", activeIdxSafe + 1, " of ", pages.length)), scannedPrefix && /* @__PURE__ */ React.createElement("div", { style: { background: T.lime + "12", border: `1px solid ${T.lime}28`, borderRadius: 8, padding: "9px 11px", fontSize: 13.5, color: T.text, lineHeight: 1.55, whiteSpace: "pre-wrap", marginBottom: 8 } }, scannedPrefix, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: rescanPage, style: { display: "block", marginTop: 6, background: "none", border: "none", color: T.lime, fontSize: 10.5, fontWeight: 600, cursor: "pointer", fontFamily: T.font, padding: 0 } }, "Already sorted \u2014 rescan this page")), /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(
+    Textarea,
+    {
+      placeholder: "e.g. Chem homework due Friday, need to email my counselor, gym at 6...",
+      value: unscanned,
+      onChange: (e) => setUnscannedText(e.target.value),
+      style: { minHeight: 220, border: "none", background: "transparent", padding: 0, paddingRight: 36, fontSize: 14, lineHeight: 1.6 }
+    }
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: listening ? stopRec : startRec,
+      title: listening ? "Stop listening" : "Speak instead of typing",
+      style: { position: "absolute", right: 2, bottom: 2, width: 28, height: 28, borderRadius: "50%", border: "none", background: listening ? T.red : T.lime, color: listening ? "#fff" : T.ink, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }
+    },
+    listening ? /* @__PURE__ */ React.createElement("span", { style: { width: 9, height: 9, background: "#fff", borderRadius: 2 } }) : Icon.mic
+  )), listening && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.red, marginTop: 6 } }, "Listening... tap the mic to stop"), !listening && micError && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.red, marginTop: 6 } }, micError))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginTop: 12 } }, /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: goPrev,
+      disabled: activeIdxSafe === 0,
+      title: "Previous page",
+      style: { width: 32, height: 32, borderRadius: 8, border: `1px solid ${T.border}`, background: T.card2, color: activeIdxSafe === 0 ? T.faint : T.text, cursor: activeIdxSafe === 0 ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }
+    },
+    "\u2039"
+  ), /* @__PURE__ */ React.createElement("div", { ref: trackRef, onPointerDown: onTrackDown, style: { flex: 1, height: 20, display: "flex", alignItems: "center", cursor: pages.length > 1 ? "pointer" : "default", position: "relative" } }, /* @__PURE__ */ React.createElement("div", { style: { width: "100%", height: 4, borderRadius: 2, background: T.card2, position: "relative" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", left: 0, top: 0, height: "100%", width: pages.length > 1 ? `${shownIdx / (pages.length - 1) * 100}%` : "100%", background: T.lime, borderRadius: 2, transition: dragIdx != null ? "none" : "width 0.15s ease" } }))), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: goNext,
+      disabled: activeIdxSafe === pages.length - 1,
+      title: "Next page",
+      style: { width: 32, height: 32, borderRadius: 8, border: `1px solid ${T.border}`, background: T.card2, color: activeIdxSafe === pages.length - 1 ? T.faint : T.text, cursor: activeIdxSafe === pages.length - 1 ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }
+    },
+    "\u203A"
+  )), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 14 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addPage, style: { background: "none", border: "none", color: T.muted, fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: T.font, padding: 0 } }, "+ New page"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setDeleteConfirm(true), style: { background: "none", border: "none", color: T.muted, fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: T.font, padding: 0 } }, "Delete this page")), /* @__PURE__ */ React.createElement(Btn, { onClick: sortPage, disabled: !unscanned.trim(), style: { opacity: unscanned.trim() ? 1 : 0.45 } }, "Sort this page \u2192"))), toast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 16px", fontSize: 12.5, color: T.text, boxShadow: "0 8px 24px -8px rgba(0,0,0,0.35)", zIndex: 60 } }, toast), /* @__PURE__ */ React.createElement(
+    Modal,
+    {
+      open: deleteConfirm,
+      onClose: () => setDeleteConfirm(false),
+      title: "Delete this page?",
+      sub: "This can't be undone.",
+      width: 380,
+      footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setDeleteConfirm(false) }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: deleteActivePage, style: { flex: 1, justifyContent: "center" } }, "Delete page"))
+    },
+    /* @__PURE__ */ React.createElement("div", null)
+  ), /* @__PURE__ */ React.createElement("style", null, `
+        @keyframes plannerIntroOpen{0%{opacity:0;transform:scale(0.92)}100%{opacity:1;transform:scale(1)}}
+        @keyframes plannerPageFlip{0%{opacity:0;transform:translateX(8px)}100%{opacity:1;transform:translateX(0)}}
+      `));
+}
 const CALENDAR_HIGHLIGHT_MAX_AGE_MS = 5 * 60 * 1e3;
 function resolveCalendarHighlightFlag(flag, nowMs) {
   if (!flag || !Array.isArray(flag.ids) || flag.ids.length === 0) return null;
@@ -13514,6 +13766,14 @@ function CalendarTab({ setActive = () => {
     try {
       localStorage.removeItem("studlin-pendingBrainDump");
     } catch (e) {
+    }
+    const text = lsGet("pendingBrainDumpText", "");
+    if (text) {
+      try {
+        localStorage.removeItem("studlin-pendingBrainDumpText");
+      } catch (e) {
+      }
+      setBrainDumpText(text);
     }
     setBrainDumpOpen(true);
   }, []);
@@ -14547,33 +14807,6 @@ function CalendarTab({ setActive = () => {
     const subj = evSubject === "None" ? "" : evSubject === "Other" && evCustom.trim() ? evCustom.trim() : evSubject;
     const item = { id: String(Date.now() + Math.random() * 1e3), title: evTitle.trim(), date: evDeadline || "", time: "", subject: subj, kind: "deadline", notes: evNotes, checklist: true, deadline: evDeadline || null, priority: 5, difficulty: 5, duration: 0, status: "pending", timeSpent: 0, completedAt: null };
     commitTasks([item]);
-  };
-  const todaysScheduleForBrainDump = () => formatRealWorldScheduleForDate(events, routines, dayKey());
-  const parseBrainDump = async (text) => {
-    if (!text || !text.trim()) return { items: [], error: "" };
-    try {
-      const todaysSchedule = todaysScheduleForBrainDump();
-      const prompt = "A student just brain-dumped everything they need to do, in their own words, in one go. Break it into separate individual items. Today's date is " + dayKey() + " (" + (/* @__PURE__ */ new Date()).toLocaleDateString("en-US", { weekday: "long" }) + "). " + (todaysSchedule.length > 0 ? "The student's REAL schedule for today (already on their calendar): " + todaysSchedule.join("; ") + `. If they describe something happening right after one of these by name (e.g. "after my engineering class", "once school lets out", "after my shift"), match it against this list and use that item's own listed END time above as dueTime (dueDate stays today) -- never guess a time or leave it null when a real match exists. Only match a class/activity actually on this list; if nothing here fits what they described, fall back to normal date/time extraction instead of guessing. ` : "") + `For each item return: "title" (short, e.g. "Chem homework" or "Email counselor"), "kind", one of: "study" \u2014 anything that takes real focused work time in a single sitting (homework, studying, reading) \u2014 Studlin finds an open slot for it; "project" \u2014 a bigger, multi-step piece of work with a due date further out (a paper, a presentation, building something, a multi-part assignment) \u2014 never a single-sitting task; "todo" \u2014 a quick task with no real duration and no fixed time, like sending an email, a form, or a phone call \u2014 this includes submitting or sending anything related to a class or exam (e.g. "send AP exam scores to a college", "submit lab report"), since the ACTION being done is a quick task even though the subject matter is academic; classify by the verb, not by incidental words like "exam" or "class" in the title; "event" \u2014 something the student personally attends or is present for at a specific real-world time that Studlin should never move, like an appointment, a class, a shift, or a meeting \u2014 never taking an exam/test/quiz itself (that's its own kind below), and never an action ABOUT an exam or class, like sending, submitting, or emailing something related to one; "exam" \u2014 the student is taking a quiz, test, midterm, or final at a specific date (e.g. "I have a chem test Friday", "my bio midterm is the 12th") \u2014 never an action about an exam like submitting or sending something; "reminder" \u2014 a quick nudge at a specific time, e.g. "remind me to..." or "don't forget to... at...". "durationMin" (your best-guess minutes needed, for kind:"study" or kind:"event" \u2014 null otherwise), "immediate" (true ONLY for kind:"study" when the student explicitly said "now"/"right now"/"immediately" \u2014 meaning start this the moment it's added, not just sometime today; false for everything else, including generic same-day urgency like "today" or "tonight" with no explicit "now"), "chained" (true ONLY for kind:"study" or a timeless kind:"event" when the student described it as coming right after the PREVIOUS item in this same dump \u2014 words like "then", "after that", "next", "once I'm done with that" \u2014 meaning it should start the moment the previous item ends, back-to-back in the order given, not get independently slotted wherever's smartest. The first item of a sequence has nothing before it, so it's "chained":false even if it kicks off an ordered plan \u2014 only items 2 and onward in that same plan are "chained":true. A plain list of separate homeworks with their own due dates and no "then"/sequence language is "chained":false throughout), "dueDate" (YYYY-MM-DD. For "study"/"todo"/"project" this is the deadline; for "event"/"exam"/"reminder" this is the day it happens. "today"/"tonight" means the date given above, "Friday" means the next occurrence of that weekday. Be literal: if the student named a specific day, always return it, even if it's today. Only use null when truly no timing was mentioned at all), "dueTime" (HH:MM 24-hour \u2014 ONLY for kind:"event" or kind:"reminder", when a specific time was stated or clearly implied like "tonight"=20:00 or "this morning"=9:00; null if genuinely no time was said), "examWeight" (ONLY when kind is "exam": "quiz" for a quiz or short in-class test worth relatively little, "major" for a midterm, final, or unit exam worth significant grade weight \u2014 omit otherwise), "needsDuration" (true ONLY if kind is "study" and you genuinely can't make a reasonable guess from context \u2014 be generous, most things can get a rough estimate), "recurring" (ONLY for kind:"event" items describing something that happens on more than one distinct calendar day in a repeating weekly pattern, e.g. "work 3-11pm Monday through Friday for the next 2 weeks" or "soccer practice every Tuesday and Thursday until October" \u2014 an object {"days":["Mon","Tue",...],"until":"YYYY-MM-DD"} using 3-letter weekday abbreviations and the last date it repeats through, inclusive. dueDate stays the FIRST occurrence. A single one-time event, even a long one, is never recurring \u2014 null for those and everything else), "clarify" (a short, specific follow-up question ONLY if something essential is truly missing and you can't reasonably guess it \u2014 e.g. an "event", "exam", or "reminder" with no date/time at all mentioned, or a title too vague to act on. Never used for a recurring pattern \u2014 "recurring" above already covers that. null otherwise \u2014 most items should NOT have this), "confidence" ("low" ONLY when you had to genuinely guess an important date, time, or duration because the student's wording was vague or ambiguous, e.g. "sometime soon" or "in a few days" or "later"; "high" for everything else, including the common case where nothing needed guessing at all). Respond with ONLY valid JSON, no markdown fences, no commentary: {"items":[{"title":"Chem homework","kind":"study","durationMin":45,"immediate":false,"chained":false,"dueDate":null,"dueTime":null,"needsDuration":false,"recurring":null,"clarify":null,"confidence":"high"},{"title":"Chem test","kind":"exam","dueDate":"2026-07-17","examWeight":"major","clarify":null,"confidence":"high"},{"title":"Work shift","kind":"event","dueDate":"2026-07-27","dueTime":"15:00","durationMin":480,"recurring":{"days":["Mon","Tue","Wed","Thu","Fri"],"until":"2026-08-07"},"clarify":null,"confidence":"high"}]}. If nothing usable is in the text, respond {"items":[]}.
-
-` + text.slice(0, 4e3);
-      const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt }], model: "standard", format: "json" }) });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) return { items: [], error: data.error || "Couldn't reach Studlin AI. Please try again." };
-      recordBrainDump();
-      const raw = (data.reply || "").replace(/```json?\n?/gi, "").replace(/```/g, "").trim();
-      let parsed = null;
-      try {
-        parsed = JSON.parse(raw);
-      } catch (e) {
-        parsed = null;
-      }
-      if (parsed && Array.isArray(parsed.items)) {
-        return { items: parsed.items, error: "" };
-      }
-      return { items: fallbackSplitBrainDump(text), error: "Couldn't fully understand that \u2014 here's a basic breakdown. Edit anything that's off." };
-    } catch (e) {
-      return { items: [], error: "Something went wrong reaching Studlin AI. Check your connection and try again." };
-    }
   };
   const [bdError, setBdError] = useState("");
   const submitBrainDump = async () => {
@@ -18774,7 +19007,8 @@ function App() {
   const navSections = [
     { label: "Home", items: [
       { id: "dashboard", label: "Dashboard" },
-      { id: "calendar", label: "Calendar" }
+      { id: "calendar", label: "Calendar" },
+      { id: "notepad", label: "Notepad" }
     ] },
     { label: "Tools", items: [
       { id: "prep", label: "Studlin Prep" },
@@ -18787,7 +19021,7 @@ function App() {
     ] }
   ];
   const bottomItems = [];
-  const pages = { prep: StudlinPrep, flashcards: Flashcards, notes: Notes, calendar: CalendarTab, friends: FriendsChat, profile: Profile, feedback: FeedbackPage };
+  const pages = { prep: StudlinPrep, flashcards: Flashcards, notes: Notes, notepad: PlannerNotepad, calendar: CalendarTab, friends: FriendsChat, profile: Profile, feedback: FeedbackPage };
   const ActivePage = pages[active];
   const isLight = T.mode === "light";
   const sidebarText = isLight ? "#F6F1E6" : T.text;
@@ -18847,7 +19081,7 @@ function App() {
     calendarSetEventsRef.current = fn;
   }, registerSkipSetEvents: (fn) => {
     calendarSkipSetEventsRef.current = fn;
-  }, onTaskCompleted: handleTaskCompleted, catchUpPending: !!catchUpBanner, onWizardOpenChange: setCalendarWizardOpen, jumpToSessionOnMount: pendingJumpSession, onJumpSessionConsumed: () => setPendingJumpSession(null), setPricingOpen }) : active === "notes" ? /* @__PURE__ */ React.createElement(Notes, { setActive }) : active === "friends" ? /* @__PURE__ */ React.createElement(FriendsChat, { onFriendRequestSent: askNotifIfNeeded, onActiveChatChange: setOpenChatRoomId, initialTarget: pendingChatTarget, onInitialTargetConsumed: () => setPendingChatTarget(null) }) : active === "profile" ? /* @__PURE__ */ React.createElement(Profile, { setActive, seriousMode }) : active === "prep" ? /* @__PURE__ */ React.createElement(StudlinPrep, { setActive, setDetailEventId }) : active === "flashcards" ? /* @__PURE__ */ React.createElement(Flashcards, { setActive }) : ActivePage ? /* @__PURE__ */ React.createElement(ActivePage, null) : null)), rescheduleTask && /* @__PURE__ */ React.createElement(RescheduleModal, { task: rescheduleTask, events: lsGet("events", []), onClose: () => setRescheduleTask(null), onManual: () => {
+  }, onTaskCompleted: handleTaskCompleted, catchUpPending: !!catchUpBanner, onWizardOpenChange: setCalendarWizardOpen, jumpToSessionOnMount: pendingJumpSession, onJumpSessionConsumed: () => setPendingJumpSession(null), setPricingOpen }) : active === "notes" ? /* @__PURE__ */ React.createElement(Notes, { setActive }) : active === "notepad" ? /* @__PURE__ */ React.createElement(PlannerNotepad, { setActive }) : active === "friends" ? /* @__PURE__ */ React.createElement(FriendsChat, { onFriendRequestSent: askNotifIfNeeded, onActiveChatChange: setOpenChatRoomId, initialTarget: pendingChatTarget, onInitialTargetConsumed: () => setPendingChatTarget(null) }) : active === "profile" ? /* @__PURE__ */ React.createElement(Profile, { setActive, seriousMode }) : active === "prep" ? /* @__PURE__ */ React.createElement(StudlinPrep, { setActive, setDetailEventId }) : active === "flashcards" ? /* @__PURE__ */ React.createElement(Flashcards, { setActive }) : ActivePage ? /* @__PURE__ */ React.createElement(ActivePage, null) : null)), rescheduleTask && /* @__PURE__ */ React.createElement(RescheduleModal, { task: rescheduleTask, events: lsGet("events", []), onClose: () => setRescheduleTask(null), onManual: () => {
     setActive("calendar");
     setPendingJumpSession(rescheduleTask);
   }, commit: (next, evictedCount) => {
