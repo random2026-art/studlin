@@ -1599,6 +1599,18 @@ function effectiveTrailOutForManualPlacement(e) {
   if (mode === "long") return Math.max(10, Math.min(30, Math.round(dur * 0.3 / 5) * 5)) + commute;
   return computeBreathingRoom(dur) + commute;
 }
+function findNowConflict(events, routines, prefs, dateKey, timeStr, duration, excludeId) {
+  const startMins = timeToMinutes(timeStr);
+  const overlaps = (o) => !(startMins + duration <= o.start || startMins >= o.end);
+  const routineHit = expandRoutineOccurrences(routines, dateKey, dateKey).filter((o) => o.kind !== "free period").map((o) => ({ title: o.title, start: timeToMinutes(o.time) - effectiveLeadInForManualPlacement(o), end: timeToMinutes(o.time) + (o.duration || 30) + effectiveTrailOutForManualPlacement(o) })).find(overlaps);
+  if (routineHit) return { kind: "fixed", title: routineHit.title };
+  const realEvents = events.filter((e) => e.id !== excludeId && e.date === dateKey && e.time && e.status !== "done" && e.kind !== "free period");
+  const fixedHit = realEvents.filter((e) => TIER0_FIXED_KINDS.has(e.kind) && !e.movable).map((e) => ({ title: e.title, start: timeToMinutes(e.time) - effectiveLeadInForManualPlacement(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOutForManualPlacement(e) })).find(overlaps);
+  if (fixedHit) return { kind: "fixed", title: fixedHit.title };
+  const flexHit = realEvents.filter((e) => !(TIER0_FIXED_KINDS.has(e.kind) && !e.movable)).map((e) => ({ event: e, start: timeToMinutes(e.time) - effectiveLeadInForManualPlacement(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOutForManualPlacement(e) })).find(overlaps);
+  if (flexHit) return { kind: "flexible", event: flexHit.event };
+  return null;
+}
 function isFixedItem(ev) {
   return isLeadInFixed(ev) || !!ev.userPinned;
 }
@@ -18287,12 +18299,61 @@ function App() {
     return () => clearInterval(id);
   }, [timerTask]);
   const [pendingBeginTask, setPendingBeginTask] = useState(null);
+  const [beginRetimeToast, setBeginRetimeToast] = useState("");
+  const [beginConflict, setBeginConflict] = useState(null);
+  const [beginBumpedTask, setBeginBumpedTask] = useState(null);
+  const beginTaskNow = (ev, bumpedEvent) => {
+    const events = lsGet("events", []);
+    const todayK = dayKey();
+    const now = /* @__PURE__ */ new Date();
+    const nowTime = String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0");
+    const nowMins = timeToMinutes(nowTime);
+    const scheduledStart = ev.date === todayK && ev.time ? timeToMinutes(ev.time) : null;
+    const onTime = scheduledStart != null && nowMins >= scheduledStart && nowMins < scheduledStart + (ev.duration || 30);
+    if (onTime) {
+      setTimerTask(ev);
+      return;
+    }
+    const retimed = { ...ev, date: todayK, time: nowTime, userPinned: true };
+    const next = events.map((e) => e.id === ev.id ? retimed : e);
+    lsSet("events", next);
+    if (calendarSetEventsRef.current) calendarSetEventsRef.current(next);
+    if (bumpedEvent) setBeginBumpedTask(bumpedEvent);
+    setBeginRetimeToast(`Moved "${ev.title}" to ${fmtClock12(nowTime)}`);
+    setTimeout(() => setBeginRetimeToast(""), 3200);
+    setTimerTask(retimed);
+  };
   window._setTimerTask = (ev) => {
     if (timerTask && timerTask.id !== ev.id) {
       setPendingBeginTask(ev);
       return;
     }
-    setTimerTask(ev);
+    if (!isTimerEligible(ev)) {
+      setTimerTask(ev);
+      return;
+    }
+    const events = lsGet("events", []);
+    const routines = getWeeklyRoutine();
+    const prefs = getSchedulePreferences();
+    const todayK = dayKey();
+    const now = /* @__PURE__ */ new Date();
+    const nowTime = String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0");
+    const conflict = findNowConflict(events, routines, prefs, todayK, nowTime, ev.duration || 30, ev.id);
+    if (!conflict) {
+      beginTaskNow(ev, null);
+      return;
+    }
+    if (conflict.kind === "fixed") {
+      setTimerTask(ev);
+      return;
+    }
+    setBeginConflict({ task: ev, conflictEvent: conflict.event });
+  };
+  const cancelBeginConflict = () => setBeginConflict(null);
+  const confirmBeginConflict = () => {
+    const { task, conflictEvent } = beginConflict;
+    setBeginConflict(null);
+    beginTaskNow(task, conflictEvent);
   };
   const cancelPendingBegin = () => setPendingBeginTask(null);
   const switchToPendingBeginAnyway = () => {
@@ -18911,7 +18972,18 @@ function App() {
       footer: /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: cancelPendingBegin, style: { width: "100%", justifyContent: "center" } }, "Keep working on ", timerTask ? '"' + timerTask.title + '"' : "it")
     },
     /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: finishCurrentThenDismiss, style: { width: "100%", justifyContent: "center" } }, 'Finish "', timerTask ? timerTask.title : "", '" early'), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: switchToPendingBeginAnyway, style: { width: "100%", justifyContent: "center" } }, 'Switch to "', pendingBeginTask ? pendingBeginTask.title : "", '" anyway'))
-  ), timerTask && /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement(
+    Modal,
+    {
+      open: !!beginConflict,
+      onClose: cancelBeginConflict,
+      title: "Something else is scheduled now",
+      sub: beginConflict ? `"${beginConflict.conflictEvent.title}" is scheduled right now. Start "${beginConflict.task.title}" instead and sort out "${beginConflict.conflictEvent.title}" once you're done?` : "",
+      width: 420,
+      footer: /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: cancelBeginConflict, style: { width: "100%", justifyContent: "center" } }, "Never mind")
+    },
+    /* @__PURE__ */ React.createElement(Btn, { onClick: confirmBeginConflict, style: { width: "100%", justifyContent: "center" } }, 'Start "', beginConflict ? beginConflict.task.title : "", '" now')
+  ), beginRetimeToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 998, background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, boxShadow: "0 12px 32px -8px rgba(0,0,0,0.45)", padding: "9px 16px", fontSize: 12.5, color: T.text, animation: "studlinPop 0.15s ease" } }, beginRetimeToast), timerTask && /* @__PURE__ */ React.createElement(
     TaskTimerModal,
     {
       task: timerTask,
@@ -18937,6 +19009,11 @@ function App() {
           });
         }
         setTimerTask(null);
+        if (beginBumpedTask) {
+          const fresh = lsGet("events", []).find((e) => e.id === beginBumpedTask.id);
+          if (fresh) setRescheduleTask(fresh);
+          setBeginBumpedTask(null);
+        }
       },
       onGoToLinkedResource: (t) => {
         const cp = getTimerCheckpoint();

@@ -2548,6 +2548,42 @@ function effectiveTrailOutForManualPlacement(e){
   if(mode==="long")return Math.max(10,Math.min(30,Math.round((dur*0.3)/5)*5))+commute;
   return computeBreathingRoom(dur)+commute; // "medium"
 }
+// Real-world "is right now actually free" check for the Lock-In Timer's
+// Begin button (2026-08-26) -- same manual-placement buffer functions
+// (respecting manualBufferMode) every other deliberate placement in this
+// file already uses, since choosing to start something right now is
+// exactly that kind of deliberate placement, not an automated one.
+// excludeId keeps the task being started from conflicting with its own
+// already-scheduled slot (starting a task exactly when it was already due
+// is never itself a conflict); a done task is excluded too, since it's
+// not occupying anything anymore.
+//
+// Returns one of three shapes: null (genuinely clear -- safe to retime);
+// {kind:"fixed",title} for a real, non-negotiable commitment right now
+// (a class/exam/busy block/reminder, or ANY routine occurrence -- Studlin
+// can't meaningfully "free up" an actual class, so Begin just starts the
+// task at its originally scheduled time in this case, same as always);
+// {kind:"flexible",event} for another real, reschedulable task (a plain
+// study block/deadline) -- the one case worth asking "swap and reschedule
+// that one after?" instead of silently doing nothing.
+function findNowConflict(events,routines,prefs,dateKey,timeStr,duration,excludeId){
+  const startMins=timeToMinutes(timeStr);
+  const overlaps=o=>!(startMins+duration<=o.start||startMins>=o.end);
+  const routineHit=expandRoutineOccurrences(routines,dateKey,dateKey).filter(o=>o.kind!=="free period")
+    .map(o=>({title:o.title,start:timeToMinutes(o.time)-effectiveLeadInForManualPlacement(o),end:timeToMinutes(o.time)+(o.duration||30)+effectiveTrailOutForManualPlacement(o)}))
+    .find(overlaps);
+  if(routineHit)return {kind:"fixed",title:routineHit.title};
+  const realEvents=events.filter(e=>e.id!==excludeId&&e.date===dateKey&&e.time&&e.status!=="done"&&e.kind!=="free period");
+  const fixedHit=realEvents.filter(e=>TIER0_FIXED_KINDS.has(e.kind)&&!e.movable)
+    .map(e=>({title:e.title,start:timeToMinutes(e.time)-effectiveLeadInForManualPlacement(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOutForManualPlacement(e)}))
+    .find(overlaps);
+  if(fixedHit)return {kind:"fixed",title:fixedHit.title};
+  const flexHit=realEvents.filter(e=>!(TIER0_FIXED_KINDS.has(e.kind)&&!e.movable))
+    .map(e=>({event:e,start:timeToMinutes(e.time)-effectiveLeadInForManualPlacement(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOutForManualPlacement(e)}))
+    .find(overlaps);
+  if(flexHit)return {kind:"flexible",event:flexHit.event};
+  return null;
+}
 // Canonical "this item can never be automatically relocated" check --
 // isLeadInFixed's own union (TIER0_FIXED_KINDS: exam/class/busy block/
 // reminder, plus co-op sessions) union'd with truly user-pinned items.
@@ -29645,9 +29681,72 @@ function App() {
   // first when a DIFFERENT task is already active. Reassigned every
   // render like before, since it closes over the current timerTask value.
   const [pendingBeginTask,setPendingBeginTask]=useState(null);
+  // Begin-time retime (2026-08-26) -- hitting Begin is a real, unambiguous
+  // signal of when a student is actually free and working, which Studlin
+  // otherwise has no way to learn except waiting for the reliability-
+  // bucket system to notice a pattern after the fact. If nothing real
+  // occupies right now, silently move the task to reflect that instead of
+  // leaving the calendar showing a time that never actually happened.
+  // beginRetimeToast is the small, dismissible confirmation this shows --
+  // never blocking, same idiom as Tier 0 reflow's own toast.
+  const [beginRetimeToast,setBeginRetimeToast]=useState("");
+  // If something else genuinely occupies right now, a quick yes/no
+  // instead -- same non-navigating, in-place Modal idiom as
+  // pendingBeginTask just below, not a trip to the calendar, since the
+  // moment you hit Begin is exactly the wrong moment to interrupt with a
+  // scheduling decision. beginBumpedTask carries the displaced task
+  // through to the CURRENT session's own onClose, where it hands off to
+  // the exact same rescheduleTask/RescheduleModal every other reschedule
+  // in the app already uses (auto-suggested slot or manual placement) --
+  // resolved only once the student's actually done working, never
+  // mid-session. A real fixed commitment (class/exam/routine) right now
+  // is never offered as something to swap out -- findNowConflict flags
+  // those separately, and Begin just starts the task at its originally
+  // scheduled time in that case, same as it always has.
+  const [beginConflict,setBeginConflict]=useState(null); // {task,conflictEvent}|null
+  const [beginBumpedTask,setBeginBumpedTask]=useState(null);
+  const beginTaskNow=(ev,bumpedEvent)=>{
+    const events=lsGet("events",[]);
+    const todayK=dayKey();
+    const now=new Date();
+    const nowTime=String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0");
+    const nowMins=timeToMinutes(nowTime);
+    // "On time" is a window, not one exact minute -- starting a couple
+    // minutes late/early within the task's own already-scheduled span is
+    // normal and shouldn't retime+toast every single Begin press. Only
+    // actually moving it (start genuinely outside that span, a different
+    // day, or no time at all yet) is worth reflecting on the calendar.
+    const scheduledStart=ev.date===todayK&&ev.time?timeToMinutes(ev.time):null;
+    const onTime=scheduledStart!=null&&nowMins>=scheduledStart&&nowMins<scheduledStart+(ev.duration||30);
+    if(onTime){setTimerTask(ev);return;}
+    const retimed={...ev,date:todayK,time:nowTime,userPinned:true};
+    const next=events.map(e=>e.id===ev.id?retimed:e);
+    lsSet("events",next);
+    if(calendarSetEventsRef.current)calendarSetEventsRef.current(next);
+    if(bumpedEvent)setBeginBumpedTask(bumpedEvent);
+    setBeginRetimeToast(`Moved "${ev.title}" to ${fmtClock12(nowTime)}`);
+    setTimeout(()=>setBeginRetimeToast(""),3200);
+    setTimerTask(retimed);
+  };
   window._setTimerTask=(ev)=>{
     if(timerTask&&timerTask.id!==ev.id){setPendingBeginTask(ev);return;}
-    setTimerTask(ev);
+    if(!isTimerEligible(ev)){setTimerTask(ev);return;}
+    const events=lsGet("events",[]);
+    const routines=getWeeklyRoutine();
+    const prefs=getSchedulePreferences();
+    const todayK=dayKey();
+    const now=new Date();
+    const nowTime=String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0");
+    const conflict=findNowConflict(events,routines,prefs,todayK,nowTime,ev.duration||30,ev.id);
+    if(!conflict){beginTaskNow(ev,null);return;}
+    if(conflict.kind==="fixed"){setTimerTask(ev);return;}
+    setBeginConflict({task:ev,conflictEvent:conflict.event});
+  };
+  const cancelBeginConflict=()=>setBeginConflict(null);
+  const confirmBeginConflict=()=>{
+    const {task,conflictEvent}=beginConflict;
+    setBeginConflict(null);
+    beginTaskNow(task,conflictEvent);
   };
   const cancelPendingBegin=()=>setPendingBeginTask(null);
   const switchToPendingBeginAnyway=()=>{const next=pendingBeginTask;setPendingBeginTask(null);setTimerTask(next);};
@@ -30671,6 +30770,18 @@ function App() {
           <Btn variant="ghost" onClick={switchToPendingBeginAnyway} style={{width:"100%",justifyContent:"center"}}>Switch to "{pendingBeginTask?pendingBeginTask.title:""}" anyway</Btn>
         </div>
       </Modal>
+      {/* Quick yes/no, not a trip to the calendar -- see beginConflict's
+          own comment for why this resolves at session-end instead of
+          interrupting Begin with a full reschedule flow right now. */}
+      <Modal open={!!beginConflict} onClose={cancelBeginConflict} title="Something else is scheduled now"
+        sub={beginConflict?`"${beginConflict.conflictEvent.title}" is scheduled right now. Start "${beginConflict.task.title}" instead and sort out "${beginConflict.conflictEvent.title}" once you're done?`:""}
+        width={420}
+        footer={<Btn variant="subtle" onClick={cancelBeginConflict} style={{width:"100%",justifyContent:"center"}}>Never mind</Btn>}>
+        <Btn onClick={confirmBeginConflict} style={{width:"100%",justifyContent:"center"}}>Start "{beginConflict?beginConflict.task.title:""}" now</Btn>
+      </Modal>
+      {beginRetimeToast&&(
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:998,background:T.card,border:`1px solid ${T.border}`,borderRadius:10,boxShadow:"0 12px 32px -8px rgba(0,0,0,0.45)",padding:"9px 16px",fontSize:12.5,color:T.text,animation:"studlinPop 0.15s ease"}}>{beginRetimeToast}</div>
+      )}
       {timerTask&&<TaskTimerModal task={timerTask} resumeElapsedSecs={timerTask.__resumeElapsedSecs||0} onClose={()=>{
         if(timerTask.studySessionId&&myUid){
           const sessionRef=fsdb().collection('studySessions').doc(timerTask.studySessionId);
@@ -30692,6 +30803,15 @@ function App() {
           }).catch(()=>{});
         }
         setTimerTask(null);
+        // See beginBumpedTask's own comment -- the conflict swapped out at
+        // Begin time gets resolved for real only now, once this session's
+        // actually over. Re-read fresh by id rather than trusting the
+        // captured object, in case anything else touched it meanwhile.
+        if(beginBumpedTask){
+          const fresh=lsGet("events",[]).find(e=>e.id===beginBumpedTask.id);
+          if(fresh)setRescheduleTask(fresh);
+          setBeginBumpedTask(null);
+        }
       }}
         onGoToLinkedResource={(t)=>{
           // Same deep-link handoff Studlin Prep's own "All Flashcards" list

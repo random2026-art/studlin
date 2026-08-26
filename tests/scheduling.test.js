@@ -1627,6 +1627,76 @@ describe("formatRealWorldScheduleForDate (regression: Brain Dump's AI prompt had
   });
 });
 
+describe("findNowConflict (2026-08-26: the Lock-In Timer's Begin button needs to know whether 'right now' is actually free before retiming a task to it)", () => {
+  test("a genuinely clear day returns null", () => {
+    const { findNowConflict } = loadStudlinModule();
+    const result = findNowConflict([], [], DEFAULT_PREFS, "2026-08-26", "14:00", 30, "task-1");
+    assert.equal(result, null);
+  });
+
+  test("a real fixed event (exam) right now is flagged 'fixed', never offered as swappable", () => {
+    const { findNowConflict } = loadStudlinModule();
+    const events = [realTask({ id: "exam-1", kind: "exam", date: "2026-08-26", time: "14:00", duration: 60, movable: false })];
+    const result = findNowConflict(events, [], DEFAULT_PREFS, "2026-08-26", "14:15", 30, "task-1");
+    assert.equal(result.kind, "fixed");
+    assert.equal(result.title, "Study chem");
+  });
+
+  test("a routine class occurrence right now is also flagged 'fixed'", () => {
+    const { findNowConflict } = loadStudlinModule();
+    // 2026-08-26 is a Wednesday -- Monday-first index 2.
+    const routines = [{ id: "r1", title: "Engineering", kind: "class", days: [2], startTime: "14:00", duration: 85 }];
+    const result = findNowConflict([], routines, DEFAULT_PREFS, "2026-08-26", "14:30", 30, "task-1");
+    assert.equal(result.kind, "fixed");
+    assert.equal(result.title, "Engineering");
+  });
+
+  test("a real flexible task (study block) right now is flagged 'flexible', with the actual event attached for a possible swap", () => {
+    const { findNowConflict } = loadStudlinModule();
+    const events = [realTask({ id: "other-task", kind: "study block", date: "2026-08-26", time: "14:00", duration: 30 })];
+    const result = findNowConflict(events, [], DEFAULT_PREFS, "2026-08-26", "14:15", 30, "task-1");
+    assert.equal(result.kind, "flexible");
+    assert.equal(result.event.id, "other-task");
+  });
+
+  test("excludeId keeps a task from conflicting with its own already-scheduled slot", () => {
+    const { findNowConflict } = loadStudlinModule();
+    const events = [realTask({ id: "task-1", kind: "study block", date: "2026-08-26", time: "14:00", duration: 30 })];
+    const result = findNowConflict(events, [], DEFAULT_PREFS, "2026-08-26", "14:00", 30, "task-1");
+    assert.equal(result, null);
+  });
+
+  test("a done task is never a conflict -- it isn't occupying anything anymore", () => {
+    const { findNowConflict } = loadStudlinModule();
+    const events = [realTask({ id: "other-task", kind: "study block", date: "2026-08-26", time: "14:00", duration: 30, status: "done" })];
+    const result = findNowConflict(events, [], DEFAULT_PREFS, "2026-08-26", "14:15", 30, "task-1");
+    assert.equal(result, null);
+  });
+
+  test("a free period is never a conflict", () => {
+    const { findNowConflict } = loadStudlinModule();
+    const routines = [{ id: "r1", title: "Free Period", kind: "free", days: [2], startTime: "14:00", duration: 45 }];
+    const result = findNowConflict([], routines, DEFAULT_PREFS, "2026-08-26", "14:10", 30, "task-1");
+    assert.equal(result, null);
+  });
+
+  test("respects manualBufferMode -- 'off' (default) only cares about a real literal overlap", () => {
+    const { findNowConflict } = loadStudlinModule();
+    const events = [realTask({ id: "other-task", kind: "study block", date: "2026-08-26", time: "13:00", duration: 30 })]; // ends 13:30
+    // Starting right at 13:30 (the instant it ends) is clear once mode is "off".
+    const result = findNowConflict(events, [], DEFAULT_PREFS, "2026-08-26", "13:30", 30, "task-1");
+    assert.equal(result, null);
+  });
+
+  test("respects manualBufferMode -- 'medium' still applies the guessed trailing cushion after a neighboring flexible task", () => {
+    const m = loadStudlinModule();
+    m.lsSet("schedulePrefs", { manualBufferMode: "medium" });
+    const events = [realTask({ id: "other-task", kind: "study block", date: "2026-08-26", time: "13:00", duration: 30 })]; // ends 13:30 + cushion
+    const result = m.findNowConflict(events, [], DEFAULT_PREFS, "2026-08-26", "13:30", 30, "task-1");
+    assert.equal(result.kind, "flexible", "medium mode's own cushion should still make 13:30 (right at the edge) a conflict");
+  });
+});
+
 describe("Lock-In timer checkpoint + recovery (regression: a real session was lost when the tab backgrounded mid-timer with no trace)", () => {
   test("checkpointTimerSession writes a record that getTimerCheckpoint reads back", () => {
     const { checkpointTimerSession, getTimerCheckpoint } = loadStudlinModule();
