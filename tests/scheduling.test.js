@@ -1752,6 +1752,47 @@ describe("timeUnconfirmed exclusion from occupied-interval math (2026-08-26: a f
   });
 });
 
+describe("done-task exclusion from occupied-interval math (2026-08-26: finishing a task ahead of its own scheduled time -- or via Begin, already retimed to when it was actually worked -- left its old slot still marked occupied everywhere else in the app; a genuinely still-pending task at the same time still blocks exactly as before)", () => {
+  test("computeOccupiedIntervals excludes a done study block entirely", () => {
+    const { computeOccupiedIntervals } = loadStudlinModule();
+    const events = [realTask({ id: "done-1", time: "18:00", status: "done" })];
+    const result = computeOccupiedIntervals(events, [], DEFAULT_PREFS, "2026-07-20");
+    assert.equal(result.length, 0);
+  });
+
+  test("a pending task at the same time still occupies exactly as before", () => {
+    const { computeOccupiedIntervals } = loadStudlinModule();
+    const events = [realTask({ id: "pending-1", time: "18:00" })];
+    const result = computeOccupiedIntervals(events, [], DEFAULT_PREFS, "2026-07-20");
+    assert.equal(result.length, 1);
+  });
+
+  test("findOpenSlotFor can now place a new task right at a done task's old scheduled time", () => {
+    const { findOpenSlotFor } = loadStudlinModule({ now: "2026-07-20T08:00:00" });
+    const events = [realTask({ id: "done-1", time: "18:00", status: "done" })];
+    const slot = findOpenSlotFor(events, [], DEFAULT_PREFS, "2026-07-20", "18:00", 30);
+    assert.equal(slot.date, "2026-07-20");
+    assert.equal(slot.time, "18:00", "a finished task's old slot must not still block a new one");
+  });
+
+  test("advancedSchedulePlanner's occupiedSlots no longer blocks a timeless task at a done task's old time -- done tasks fall into hardEvents (via !isReorderableTask) and used to keep occupying real time on the plan even after completion", () => {
+    const { advancedSchedulePlanner, setSchedulePreferences } = loadStudlinModule({ now: "2026-07-20T08:00:00" });
+    setSchedulePreferences({ ...DEFAULT_PREFS, workStartTime: "13:00", workEndTime: "14:00" });
+    const done = realTask({ id: "done-1", time: "13:00", duration: 60, status: "done" });
+    const timeless = dueDateMarker({ id: "flex-1", time: "", kind: "study block", duration: 60, priority: 500 });
+    const plan = advancedSchedulePlanner([done, timeless]);
+    const placed = plan.find((t) => t.id === "flex-1" || t.parentId === "flex-1");
+    assert.ok(placed && placed.time, "the timeless task should be able to land in the done task's now-free slot");
+  });
+
+  test("getDayOccupiedIntervals excludes a done task -- a friend's shared-study proposal shouldn't be told a finished task still blocks the time", () => {
+    const m = loadStudlinModule();
+    m.localStorage.setItem("studlin-events", JSON.stringify([realTask({ id: "done-1", time: "18:00", status: "done" })]));
+    const result = m.getDayOccupiedIntervals("2026-07-20");
+    assert.equal(result.length, 0);
+  });
+});
+
 describe("Lock-In timer checkpoint + recovery (regression: a real session was lost when the tab backgrounded mid-timer with no trace)", () => {
   test("checkpointTimerSession writes a record that getTimerCheckpoint reads back", () => {
     const { checkpointTimerSession, getTimerCheckpoint } = loadStudlinModule();

@@ -2118,7 +2118,11 @@ function computeOccupiedIntervals(events,routines,prefs,dateKey){
   // ~30min slot (and its own lead-in/trail-out guess on top) that could
   // nudge a REAL task away from a genuinely free morning for no real
   // reason. A confirmed, real time still occupies exactly as before.
-  return events.filter(e=>e.date===dateKey&&e.time&&!e.timeUnconfirmed)
+  // e.status!=="done" (2026-08-26) -- a task finished ahead of its own
+  // scheduled time (or via Begin, already retimed to when it was actually
+  // worked) has nothing left to protect at its old slot; that time is free
+  // for Studlin to use, not still reserved for work that's already done.
+  return events.filter(e=>e.date===dateKey&&e.time&&!e.timeUnconfirmed&&e.status!=="done")
     .concat(expandRoutineOccurrences(routines,dateKey,dateKey).filter(o=>o.kind!=="free period"))
     .map(e=>({start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)}));
 }
@@ -2263,7 +2267,7 @@ function findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,
     // Trailing breathing-room buffer scales with each existing block's own
     // duration, so gap-finding naturally leaves a proportional cooldown
     // after it rather than allowing zero-gap back-to-back placement.
-    const occupied=events.filter(e=>e.date===dk&&e.time&&!e.timeUnconfirmed)
+    const occupied=events.filter(e=>e.date===dk&&e.time&&!e.timeUnconfirmed&&e.status!=="done")
       .concat(expandRoutineOccurrences(routines,dk,dk).filter(o=>o.kind!=="free period"))
       .map(e=>({start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)}));
     let scanStart=dayOffset===0?Math.max(prefStartMins,timeToMinutes(desiredTime)):prefStartMins;
@@ -2319,7 +2323,7 @@ function findLegalSlotOrNull(events,routines,prefs,desiredDate,desiredTime,durat
   const effectiveEnd=Math.min(1440,slot.date===dayKey()?winEnd+CATCHUP_BUFFER_MINS:winEnd);
   const tMins=timeToMinutes(slot.time);
   if(tMins<winStart||tMins+duration>effectiveEnd)return null;
-  const occupied=events.filter(e=>e.date===slot.date&&e.time&&!e.timeUnconfirmed)
+  const occupied=events.filter(e=>e.date===slot.date&&e.time&&!e.timeUnconfirmed&&e.status!=="done")
     .concat(expandRoutineOccurrences(routines,slot.date,slot.date).filter(o=>o.kind!=="free period"))
     .map(e=>({start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)}));
   const conflict=occupied.some(o=>!(tMins+duration<=o.start||tMins>=o.end));
@@ -2344,7 +2348,7 @@ function dayHasRoomFor(events,routines,prefs,dateKey,duration,desiredTime){
   // findSlotWithEviction could evict an unrelated task instead of using
   // the real catch-up opening that findOpenSlotFor itself would have found.
   const prefEndMins=dateKey===dayKey()?Math.min(1440,dayWindow.end+CATCHUP_BUFFER_MINS):dayWindow.end;
-  const occupied=events.filter(e=>e.date===dateKey&&e.time&&!e.timeUnconfirmed)
+  const occupied=events.filter(e=>e.date===dateKey&&e.time&&!e.timeUnconfirmed&&e.status!=="done")
     .concat(expandRoutineOccurrences(routines,dateKey,dateKey).filter(o=>o.kind!=="free period"))
     .map(e=>({start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)}));
   for(let t=prefStartMins;t+duration<=prefEndMins;t+=15){
@@ -3374,7 +3378,7 @@ function undoTier0Move(taskId){
   const {date,time}=moved.movedFrom;
   const durationMins=moved.duration||30;
   const tMins=timeToMinutes(time);
-  const occupied=events.filter(e=>e.id!==taskId&&e.date===date&&e.time&&!e.timeUnconfirmed)
+  const occupied=events.filter(e=>e.id!==taskId&&e.date===date&&e.time&&!e.timeUnconfirmed&&e.status!=="done")
     .concat(expandRoutineOccurrences(getWeeklyRoutine(),date,date).filter(o=>o.kind!=="free period"))
     .map(e=>({start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)}));
   if(occupied.some(o=>!(tMins+durationMins<=o.start||tMins>=o.end)))return {events,blocked:true};
@@ -6616,7 +6620,7 @@ function rebalanceDay(dateKey,allEvents,routines,prefs){
 
   const rest=allEvents.filter(function(e){return !isFlexPending(e);});
 
-  const occupiedBase=rest.filter(function(e){return e.date===dateKey&&e.time&&!e.timeUnconfirmed;}).map(function(e){
+  const occupiedBase=rest.filter(function(e){return e.date===dateKey&&e.time&&!e.timeUnconfirmed&&e.status!=="done";}).map(function(e){
     return{start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)};
   });
   expandRoutineOccurrences(routines||[],dateKey,dateKey)
@@ -7375,8 +7379,14 @@ function advancedSchedulePlanner(baseEvents){
   // only, not from hardEvents/flexibleTimed themselves (those still drive
   // the visible plan list -- an exam still shows as due today, it just
   // never blocks a real timeless task from landing near its fake time).
+  // e.status!=="done" (2026-08-26) -- hardEvents is !isReorderableTask,
+  // which is true for a done task same as a fixed one (see
+  // isReorderableTask), so a finished task was still ending up in here and
+  // blocking new placements at a slot that's actually free now. Same
+  // surgical scope as timeUnconfirmed above: still shows on the plan list
+  // as completed, just stops occupying real time.
   const occupiedSlots=[
-    ...hardEvents.filter(e=>!e.timeUnconfirmed).map(e=>({start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)})),
+    ...hardEvents.filter(e=>!e.timeUnconfirmed&&e.status!=="done").map(e=>({start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)})),
     ...flexibleTimed.filter(e=>!e.timeUnconfirmed).map(e=>({start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)})),
     ...shieldOccurrences.map(r=>({start:timeToMinutes(r.time)-effectiveLeadIn(r),end:timeToMinutes(r.time)+(r.duration||30)+effectiveTrailOut(r)})),
   ];
@@ -14753,7 +14763,7 @@ function getDayOccupiedIntervals(dateKey){
   // !e.timeUnconfirmed (2026-08-26) -- a friend proposing a shared study
   // time shouldn't get told "conflicts with Chem Final, 9:00-9:15 AM" when
   // that time was never actually confirmed, only a placeholder.
-  return events.filter(e=>e.date===dateKey&&!e.timeUnconfirmed)
+  return events.filter(e=>e.date===dateKey&&!e.timeUnconfirmed&&e.status!=="done")
     .map(e=>{const realS=timeToMinutes(e.time||"0:00"),realE=realS+(e.duration||60);return{s:realS-effectiveLeadIn(e),e:realE+effectiveTrailOut(e),realS,realE,title:e.title||"Untitled"};})
     .concat(expandRoutineOccurrences(routines,dateKey,dateKey).filter(o=>o.kind!=="free period")
       .map(o=>{const realS=timeToMinutes(o.time),realE=realS+(o.duration||30);return{s:realS-effectiveLeadIn(o),e:realE+effectiveTrailOut(o),realS,realE,title:o.title||"Routine"};}))
@@ -23845,7 +23855,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // hand-typed time only gets blocked by a real literal overlap or real
     // declared commute time by default; manualBufferMode (Settings)
     // restores a guessed cushion at the student's chosen strength.
-    const occupied=events.filter(e=>e.date===date&&e.time&&!e.timeUnconfirmed)
+    const occupied=events.filter(e=>e.date===date&&e.time&&!e.timeUnconfirmed&&e.status!=="done")
       .map(e=>({start:timeToMinutes(e.time)-effectiveLeadInForManualPlacement(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOutForManualPlacement(e)}))
       .concat(expandRoutineOccurrences(routines,date,date).filter(o=>o.kind!=="free period")
         .map(o=>({start:timeToMinutes(o.time)-effectiveLeadInForManualPlacement(o),end:timeToMinutes(o.time)+(o.duration||30)+effectiveTrailOutForManualPlacement(o)})));
@@ -24195,7 +24205,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       // silently land directly on top of a class with zero pushback) so the
       // existing nearest-open-slot search below relocates around both
       // uniformly, instead of a separate reject-and-explain path.
-      const occupied=events.filter(e=>e.id!==id&&e.date===newDate&&e.time&&!e.timeUnconfirmed&&e.kind!=="free period").map(e=>({
+      const occupied=events.filter(e=>e.id!==id&&e.date===newDate&&e.time&&!e.timeUnconfirmed&&e.status!=="done"&&e.kind!=="free period").map(e=>({
         start:timeToMinutes(e.time)-effectiveLeadInForManualPlacement(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOutForManualPlacement(e)
       })).concat(expandRoutineOccurrences(routines,newDate,newDate).filter(o=>o.kind!=="free period").map(o=>({
         start:timeToMinutes(o.time)-effectiveLeadInForManualPlacement(o),
@@ -29471,7 +29481,10 @@ function App() {
     if(!target)return;
     if(!target.timeSpent)logSession(mins,"Task: "+target.title);
     if(evTime)logCompletionOutcome("done",evTime,difficultyTierOf(target),taskId);
-    const next=all.map(ev=>ev.id===taskId?{...ev,status:"done",timeSpent:mins,completedAt:Date.now()}:ev);
+    // duration:mins -- same reasoning as TaskTimerModal's own onComplete
+    // above: the block should span how long the session actually ran, not
+    // the original estimate.
+    const next=all.map(ev=>ev.id===taskId?{...ev,status:"done",timeSpent:mins,duration:mins,completedAt:Date.now()}:ev);
     setEvents(next);lsSet("events",next);
   };
   // Orphaned Lock-In session recovery — see checkpointTimerSession /
@@ -31185,7 +31198,15 @@ function App() {
         const actualStart=new Date(Date.now()-mins*60000);
         const actualStartTime=String(actualStart.getHours()).padStart(2,"0")+":"+String(actualStart.getMinutes()).padStart(2,"0");
         if(timerTask.time)logCompletionOutcome("done",actualStartTime,difficultyTierOf(timerTask),timerTask.id);
-        const next=lsGet("events",[]).map(ev=>ev.id===timerTask.id?{...ev,status:"done",timeSpent:mins,completedAt:Date.now()}:ev);
+        // duration:mins (2026-08-26) -- beginTaskNow already retimes `time`
+        // to when the session actually started; this closes the loop by
+        // setting `duration` to how long it actually ran, so the block on
+        // the calendar spans real start-to-end instead of the original
+        // estimate. Combined with the e.status!=="done" exclusion now in
+        // every occupied-interval builder, a task finished early no longer
+        // holds onto time it never used, and one that ran long doesn't
+        // under-report the time it actually took.
+        const next=lsGet("events",[]).map(ev=>ev.id===timerTask.id?{...ev,status:"done",timeSpent:mins,duration:mins,completedAt:Date.now()}:ev);
         lsSet("events",next);
         // Any flexible study block finished through the Lock-In Timer gets
         // one extra one-tap prompt once the XP screen above is dismissed —
