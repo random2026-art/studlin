@@ -2505,6 +2505,16 @@ function isFixedItem(ev){return isLeadInFixed(ev)||!!ev.userPinned;}
 function isReorderableTask(e){
   return !isLeadInFixed(e)&&!e.checklist&&e.status!=="done"&&!e.userPinned;
 }
+// A due-date FACT (an exam or deadline marker, or a reminder whose real
+// clock time was never actually confirmed -- see timeUnconfirmed) rather
+// than a genuinely time-anchored block. Hoisted out of WeeklyPlanner
+// (2026-08-25) so DayPlanner/DayPreviewModal can share the exact same
+// definition instead of drifting -- both used to render every fake
+// placeholder time (an exam or timeless reminder's internal "09:00", see
+// planBrainDumpTasks) as if it were a real, confirmed clock position,
+// exactly the "why does this say 9 AM" confusion this fixes. WeeklyPlanner
+// already excluded these correctly; Day view never did.
+function isDuePill(ev){return !ev.checklist&&!ev.duration&&!!(ev.kind==="deadline"||ev.kind==="exam"||(ev.kind==="reminder"&&ev.timeUnconfirmed));}
 function isTier0Missed(ev,todayKey){
   if(ev.status!=="pending")return false;
   if(ev.checklist)return false;
@@ -6212,13 +6222,19 @@ function regexScanDeadlines(text){
 // study duration here: without the AI actually reading the text, inventing
 // a number would be a worse failure mode than just asking the student to
 // schedule it themselves via the checklist.
+// confidence:"low" on every item -- same convention regexScanDeadlines (the
+// syllabus scan's own dumb fallback, above) already uses: a plain comma/
+// "and" split has no real understanding of what it's looking at, so every
+// item it produces is a guess, not just the ones parseBrainDump itself
+// flagged. Surfaced in the review screen as the same "Low confidence,
+// double-check" badge a syllabus scan's low-confidence items already get.
 function fallbackSplitBrainDump(text){
   return (text||"")
     .split(/[,\n]|(?:\s+and\s+)/i)
     .map(s=>s.trim().replace(/^[\s\-*•.]+/,""))
     .filter(s=>s.length>2)
     .slice(0,15)
-    .map(s=>({title:s.charAt(0).toUpperCase()+s.slice(1),kind:"todo",durationMin:null,dueDate:null,needsDuration:false}));
+    .map(s=>({title:s.charAt(0).toUpperCase()+s.slice(1),kind:"todo",durationMin:null,dueDate:null,needsDuration:false,confidence:"low"}));
 }
 // Levels map strictly to real Lock-In Timer minutes — no streak/login/task
 // bonuses, no penalty deductions, no starting offset. An honest sum of
@@ -13802,18 +13818,34 @@ function planBrainDumpTasks(items,events,routines,prefs){
     const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:it.dueDate||today,time:it.dueTime,subject:"",kind:"busy block",notes:"",priority:5,difficulty:5,deadline:null,duration,status:"pending",timeSpent:0,completedAt:null};
     eventTasks.push(task);working=working.concat([task]);
   });
+  // A real, typed reminder time commits as-is. When one was never given (a
+  // brain-dumped "grab dinner" or "call mom" -- most reminders don't come
+  // with a real clock time, unlike an event), the same placeholder-time-
+  // plus-timeUnconfirmed convention mergeImportedEvents already established
+  // for an all-day import with no real time is used here too, matching the
+  // exam branch right below -- isDuePill (see its own comment) then keeps
+  // this out of every calendar view's timed grid, instead of a bare,
+  // unflagged "09:00" rendering as if it were a real, chosen time.
   items.filter(it=>it.kind==="reminder").forEach(it=>{
-    const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:it.dueDate||today,time:it.dueTime||"09:00",subject:"",kind:"reminder",notes:"",priority:5,difficulty:5,deadline:null,duration:0,status:"pending",timeSpent:0,completedAt:null};
+    const hasRealTime=!!it.dueTime;
+    const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:it.dueDate||today,time:hasRealTime?it.dueTime:"09:00",subject:"",kind:"reminder",notes:"",priority:5,difficulty:5,deadline:null,duration:0,status:"pending",timeSpent:0,completedAt:null,...(hasRealTime?{}:{timeUnconfirmed:true})};
     reminderTasks.push(task);working=working.concat([task]);
   });
   // Exam items are a due-date fact, same shape as a syllabus-scanned exam
-  // marker (no real duration — see WeeklyPlanner's isDuePill), plus real
-  // spaced study sessions if the student kept "Schedule study sessions"
-  // checked in the review screen (buildExamSessionEvents, shared with
+  // marker (no real duration — see isDuePill). Real exam times are common
+  // (a final during a specific class period, say) but far from guaranteed,
+  // and the review screen now lets the student optionally set one -- same
+  // timeUnconfirmed treatment as the reminder branch above when they don't,
+  // rather than a bare "09:00" silently standing in as if it were real
+  // (this is also what makes the exam-prep header's own existing "time TBD"
+  // branch, see selectedExam.timeUnconfirmed, actually fire for a
+  // brain-dumped exam). Plus real spaced study sessions if the student kept
+  // "Schedule study sessions" checked (buildExamSessionEvents, shared with
   // commitSyllabusEvents).
   items.filter(it=>it.kind==="exam").forEach(it=>{
     const examDate=it.dueDate||today;
-    const examTask={id:String(Date.now()+Math.random()*1000),title:it.title,date:examDate,time:it.dueTime||"09:00",subject:"",kind:"exam",notes:"",priority:5,difficulty:it.difficulty??500,deadline:null,duration:null,status:"pending",timeSpent:0,completedAt:null,examWeight:it.examWeight||"major",confidenceLog:[]};
+    const examHasRealTime=!!it.dueTime;
+    const examTask={id:String(Date.now()+Math.random()*1000),title:it.title,date:examDate,time:examHasRealTime?it.dueTime:"09:00",subject:"",kind:"exam",notes:"",priority:5,difficulty:it.difficulty??500,deadline:null,duration:null,status:"pending",timeSpent:0,completedAt:null,examWeight:it.examWeight||"major",confidenceLog:[],...(examHasRealTime?{}:{timeUnconfirmed:true})};
     examTasks.push(examTask);working=working.concat([examTask]);
     if(it.proposeSessions){
       const sessions=buildExamSessionEvents(it.title,examDate,"",it.sessionCount||4,"bdexam-"+examTask.id,working,routines,prefs,{dueEventId:examTask.id},it.difficulty,undefined,examTask.examWeight,examTask.confidenceLog);
@@ -16508,10 +16540,10 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
   // sliver at the bottom of the day. These render as pills in the day
   // header instead (see weekDays.map below), same "untimed fact" treatment
   // Checklist items already get, just visible here rather than hidden.
-  // Scoped to deadline/exam specifically — a reminder is also duration:0
-  // but its time is the whole point (a nudge AT 6pm), so it stays a normal
-  // timed block rather than getting demoted to a date-only pill.
-  const isDuePill = (ev) => !ev.checklist && !ev.duration && (ev.kind==="deadline"||ev.kind==="exam");
+  // isDuePill itself is the shared top-level function now (see its own
+  // comment) -- a reminder with a real, confirmed time still stays a
+  // normal timed block; only one with no real time (timeUnconfirmed) gets
+  // demoted to a date-only pill alongside exams/deadlines.
 
   const handleDragOver = (e, dk) => {
     e.preventDefault();
@@ -19001,7 +19033,14 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
   const [whoInAnchor,setWhoInAnchor]=useState(null); // {id,rect}|null -- id, not the event object itself, so a refresh (see refreshPendingAcceptance below) that lands while this is open is picked up live off dayEvents instead of showing a stale captured snapshot.
   const stepDay=(n)=>{const d=new Date(selDay+"T12:00:00");d.setDate(d.getDate()+n);setSelDay(dayKey(d));};
   const niceDayLabel=(()=>{const p=selDay.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});})();
-  const visibleEvs=(dayEvents||[]).filter(ev=>ev.kind!=="free period"&&ev.time);
+  // isDuePill items (exams/deadlines, plus a reminder with no real
+  // confirmed time) never had a real clock position -- WeeklyPlanner
+  // already excluded them from its timed grid, but Day view never did,
+  // so a brain-dumped exam with an unknown time (internally a placeholder
+  // "09:00", see planBrainDumpTasks) rendered here as if that were a real,
+  // confirmed 9 AM. Pulled into their own row below instead (2026-08-25).
+  const duePills=(dayEvents||[]).filter(isDuePill);
+  const visibleEvs=(dayEvents||[]).filter(ev=>ev.kind!=="free period"&&ev.time&&!isDuePill(ev));
   const workWindow=getWorkWindowMinsFor(prefs,selDay);
   // User-driven zoom (Phase 10b's own drag handle, extended here) --
   // shares the exact same persisted value as WeeklyPlanner's handle (see
@@ -19065,6 +19104,20 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
         <BtnSm variant="subtle" onClick={()=>setDayPreviewOpen(true)}>Day Preview</BtnSm>
       </div>
     </div>
+    {/* Due-date facts (exams/deadlines, plus a reminder with no real
+        confirmed time) never had a real clock position to render at --
+        listed here instead of silently vanishing now that visibleEvs
+        excludes them (see its own comment). */}
+    {duePills.length>0&&(
+      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
+        {duePills.map(ev=>(
+          <div key={ev.id} onClick={()=>openEdit(ev)} title="Click to edit" style={{display:"flex",alignItems:"center",gap:5,fontSize:11,fontWeight:600,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"4px 9px",cursor:"pointer"}}>
+            <span style={{display:"flex",color:T.amber}}>{DAY_PREVIEW_ICON_BY_KIND[ev.kind]||Icon.dot}</span>
+            {ev.title}
+          </div>
+        ))}
+      </div>
+    )}
     <Card style={{padding:16}}>
       <div style={{height:"calc(100vh - 320px)",minHeight:360}}>
         <div ref={scrollRef} style={{height:"100%",overflowY:"auto",position:"relative"}}>
@@ -19217,7 +19270,11 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
 const DAY_PREVIEW_ICON_BY_KIND={"class":Icon.cal,"study block":Icon.brain,"exam":Icon.zap,"deadline":Icon.file,"reminder":Icon.clock};
 function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime,fmtTimeRange,catchUpPending,openNew}){
   if(!open)return null;
-  const visibleEvs=(dayEvents||[]).filter(ev=>ev.kind!=="free period"&&ev.time);
+  // Same isDuePill exclusion as DayPlanner's own timeline (see its
+  // comment) -- an exam/deadline/unconfirmed-time reminder never had a
+  // real clock position, so this modal shouldn't lay one out here either.
+  const duePills=(dayEvents||[]).filter(isDuePill);
+  const visibleEvs=(dayEvents||[]).filter(ev=>ev.kind!=="free period"&&ev.time&&!isDuePill(ev));
   const starts=visibleEvs.map(ev=>{const p=ev.time.split(":").map(Number);return p[0]*60+p[1];});
   const ends=visibleEvs.map((ev,i)=>starts[i]+(ev.duration||30));
   const spanStart=starts.length?Math.max(0,Math.floor(Math.min(...starts)/60)*60):8*60;
@@ -19246,13 +19303,23 @@ function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime
   if(spanEnd-cursor>=20)freeGaps.push({start:cursor,end:spanEnd});
   const iconFor=(kind)=>DAY_PREVIEW_ICON_BY_KIND[kind]||Icon.dot;
   return(
-    <Modal open={open} onClose={onClose} title={dayLabel} sub={visibleEvs.length+" scheduled item"+(visibleEvs.length!==1?"s":"")} width={520}
+    <Modal open={open} onClose={onClose} title={dayLabel} sub={(visibleEvs.length+duePills.length)+" scheduled item"+((visibleEvs.length+duePills.length)!==1?"s":"")} width={520}
       // Every sibling empty state (Dashboard, the day-detail modal) offers
       // "+ Add task" -- this was the one glance-and-close surface with no
       // next action at all when a day was empty.
-      footer={visibleEvs.length===0&&openNew?<Btn onClick={()=>{onClose();openNew(selDay);}} style={{flex:1,justifyContent:"center"}}>+ Add task</Btn>:undefined}>
+      footer={visibleEvs.length===0&&duePills.length===0&&openNew?<Btn onClick={()=>{onClose();openNew(selDay);}} style={{flex:1,justifyContent:"center"}}>+ Add task</Btn>:undefined}>
+      {duePills.length>0&&(
+        <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:visibleEvs.length>0?12:0}}>
+          {duePills.map(ev=>(
+            <div key={ev.id} style={{display:"flex",alignItems:"center",gap:5,fontSize:11,fontWeight:600,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"4px 9px"}}>
+              <span style={{display:"flex",color:T.amber}}>{iconFor(ev.kind)}</span>
+              {ev.title}
+            </div>
+          ))}
+        </div>
+      )}
       {visibleEvs.length===0
-        ?<div style={{textAlign:"center",padding:"24px 0",color:T.muted,fontSize:13}}>Nothing scheduled this day.</div>
+        ?(duePills.length===0&&<div style={{textAlign:"center",padding:"24px 0",color:T.muted,fontSize:13}}>Nothing scheduled this day.</div>)
         :<div style={{maxHeight:"62vh",overflowY:"auto"}}>
           <div style={{position:"relative",height:totalHeightPx,marginLeft:54}}>
             {/* Hour gridlines used to be dashed too, same as the free-time
@@ -22993,9 +23060,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         "\"examWeight\" (ONLY when kind is \"exam\": \"quiz\" for a quiz or short in-class test worth relatively little, \"major\" for a midterm, final, or unit exam worth significant grade weight — omit otherwise), "+
         "\"needsDuration\" (true ONLY if kind is \"study\" and you genuinely can't make a reasonable guess from context — be generous, most things can get a rough estimate), "+
         "\"recurring\" (ONLY for kind:\"event\" items describing something that happens on more than one distinct calendar day in a repeating weekly pattern, e.g. \"work 3-11pm Monday through Friday for the next 2 weeks\" or \"soccer practice every Tuesday and Thursday until October\" — an object {\"days\":[\"Mon\",\"Tue\",...],\"until\":\"YYYY-MM-DD\"} using 3-letter weekday abbreviations and the last date it repeats through, inclusive. dueDate stays the FIRST occurrence. A single one-time event, even a long one, is never recurring — null for those and everything else), "+
-        "\"clarify\" (a short, specific follow-up question ONLY if something essential is truly missing and you can't reasonably guess it — e.g. an \"event\", \"exam\", or \"reminder\" with no date/time at all mentioned, or a title too vague to act on. Never used for a recurring pattern — \"recurring\" above already covers that. null otherwise — most items should NOT have this). "+
+        "\"clarify\" (a short, specific follow-up question ONLY if something essential is truly missing and you can't reasonably guess it — e.g. an \"event\", \"exam\", or \"reminder\" with no date/time at all mentioned, or a title too vague to act on. Never used for a recurring pattern — \"recurring\" above already covers that. null otherwise — most items should NOT have this), "+
+        "\"confidence\" (\"low\" ONLY when you had to genuinely guess an important date, time, or duration because the student's wording was vague or ambiguous, e.g. \"sometime soon\" or \"in a few days\" or \"later\"; \"high\" for everything else, including the common case where nothing needed guessing at all). "+
         "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
-        "{\"items\":[{\"title\":\"Chem homework\",\"kind\":\"study\",\"durationMin\":45,\"immediate\":false,\"chained\":false,\"dueDate\":null,\"dueTime\":null,\"needsDuration\":false,\"recurring\":null,\"clarify\":null},{\"title\":\"Chem test\",\"kind\":\"exam\",\"dueDate\":\"2026-07-17\",\"examWeight\":\"major\",\"clarify\":null},{\"title\":\"Work shift\",\"kind\":\"event\",\"dueDate\":\"2026-07-27\",\"dueTime\":\"15:00\",\"durationMin\":480,\"recurring\":{\"days\":[\"Mon\",\"Tue\",\"Wed\",\"Thu\",\"Fri\"],\"until\":\"2026-08-07\"},\"clarify\":null}]}. "+
+        "{\"items\":[{\"title\":\"Chem homework\",\"kind\":\"study\",\"durationMin\":45,\"immediate\":false,\"chained\":false,\"dueDate\":null,\"dueTime\":null,\"needsDuration\":false,\"recurring\":null,\"clarify\":null,\"confidence\":\"high\"},{\"title\":\"Chem test\",\"kind\":\"exam\",\"dueDate\":\"2026-07-17\",\"examWeight\":\"major\",\"clarify\":null,\"confidence\":\"high\"},{\"title\":\"Work shift\",\"kind\":\"event\",\"dueDate\":\"2026-07-27\",\"dueTime\":\"15:00\",\"durationMin\":480,\"recurring\":{\"days\":[\"Mon\",\"Tue\",\"Wed\",\"Thu\",\"Fri\"],\"until\":\"2026-08-07\"},\"clarify\":null,\"confidence\":\"high\"}]}. "+
         "If nothing usable is in the text, respond {\"items\":[]}.\n\n"+text.slice(0,4000);
       const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard",format:"json"})});
       const data=await res.json().catch(()=>({}));
@@ -23087,7 +23155,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       // actually described, "just this one" is the opt-out, not the default.
       const recurringDays=(kind==="event"&&it.recurring&&Array.isArray(it.recurring.days))?it.recurring.days.filter(d=>WEEKDAY_ABBR_TO_JS_DOW[d]!==undefined):[];
       const recurring=(recurringDays.length>0&&it.recurring.until&&it.dueDate)?{days:recurringDays,until:it.recurring.until}:null;
-      return {id:"bd-"+i,title:it.title,kind,durationMin:it.durationMin||30,dueDate:it.dueDate||"",dueTime:it.dueTime||"",needsDuration:!!it.needsDuration,attackBlock:!!it.needsDuration,proposeSessions:false,sessionCount:defaultSessionCountFor(it.examWeight),examWeight:it.examWeight||"major",difficulty:500,moreOpen:false,clarify,recurring,recurringExpandAll:!!recurring,immediate:!!it.immediate,chained:!!it.chained,include:true,
+      return {id:"bd-"+i,title:it.title,kind,durationMin:it.durationMin||30,dueDate:it.dueDate||"",dueTime:it.dueTime||"",needsDuration:!!it.needsDuration,attackBlock:!!it.needsDuration,proposeSessions:false,sessionCount:defaultSessionCountFor(it.examWeight),examWeight:it.examWeight||"major",difficulty:500,moreOpen:false,clarify,confidence:it.confidence==="low"?"low":"high",recurring,recurringExpandAll:!!recurring,immediate:!!it.immediate,chained:!!it.chained,include:true,
         // Project-only fields -- same shape PhasesOutlineEditor/syllabus
         // review already use, harmless no-ops for every other kind.
         detail:"",detailOpen:false,phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false};
@@ -25126,17 +25194,65 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                         <span style={{fontSize:11.5,color:T.muted}}>min</span>
                       </div>
                     )}
-                    {(it.kind==="event"||it.kind==="reminder")&&(
+                    {/* A reminder rarely comes with a real clock time ("grab
+                        dinner," "call mom") -- showing a live TimeInput
+                        defaulting silently to 9:00 AM made every one of
+                        these look like a real, confirmed 9 AM reminder (the
+                        exact "why does this say 9 AM" bug). "+ Add a time"
+                        only mounts TimeInput once the student actually picks
+                        one -- a real, deliberate choice, same as any other
+                        form's own sensible starting point once opened. */}
+                    {it.kind==="reminder"&&(
                       <>
                         <Input type="date" value={it.dueDate} onChange={ev=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,dueDate:ev.target.value}:x)}))} style={{width:138}} />
-                        <TimeInput value={it.dueTime} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,dueTime:v}:x)}))} />
+                        {it.dueTime?(
+                          <>
+                            <TimeInput value={it.dueTime} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,dueTime:v}:x)}))} />
+                            <button type="button" title="Clear time" onClick={()=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,dueTime:""}:x)}))} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:13,fontFamily:T.font,padding:2}}>×</button>
+                          </>
+                        ):(
+                          <>
+                            <button type="button" onClick={()=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,dueTime:getSchedulePreferences().workStartTime||"09:00"}:x)}))}
+                              style={{fontSize:10.5,fontWeight:600,color:T.muted,background:T.card2,border:`1px solid ${T.border}`,borderRadius:6,padding:"3px 8px",cursor:"pointer",fontFamily:T.font}}>+ Add a time</button>
+                            <span style={{fontSize:10.5,color:T.faint}}>No time set</span>
+                          </>
+                        )}
                       </>
                     )}
+                    {/* Start + end time, matching how the rest of the app
+                        (Weekly Routine's class builders) already enters a
+                        timed block -- was a plain minutes-duration field.
+                        Same "+ Add a time" affordance as reminder above for
+                        a genuinely timeless event ("chill for a bit"),
+                        which Studlin places automatically instead. */}
                     {it.kind==="event"&&(
-                      <div style={{display:"flex",alignItems:"center",gap:6}}>
-                        <NumField min={5} max={480} fallback={30} value={it.durationMin} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,durationMin:v}:x)}))} />
-                        <span style={{fontSize:11.5,color:T.muted}}>min</span>
-                      </div>
+                      <>
+                        <Input type="date" value={it.dueDate} onChange={ev=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,dueDate:ev.target.value}:x)}))} style={{width:138}} />
+                        {it.dueTime?(
+                          <>
+                            <TimeInput value={it.dueTime} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,dueTime:v}:x)}))} />
+                            <span style={{fontSize:11,color:T.muted}}>–</span>
+                            <TimeInput value={minutesToTime(timeToMinutes(it.dueTime)+Math.max(5,it.durationMin||30))} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>{
+                              if(xi!==i)return x;
+                              const start=timeToMinutes(x.dueTime);
+                              let end=timeToMinutes(v);
+                              // Same floor as WizardCollegeBuilder/WizardHsBuilder's own
+                              // end-time field -- an end that isn't after start can't
+                              // produce a real duration, so it clamps to a 5-min minimum
+                              // rather than going negative.
+                              if(end<=start)end=start+5;
+                              return {...x,durationMin:end-start};
+                            })}))} />
+                            <button type="button" title="Clear time" onClick={()=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,dueTime:""}:x)}))} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:13,fontFamily:T.font,padding:2}}>×</button>
+                          </>
+                        ):(
+                          <>
+                            <button type="button" onClick={()=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,dueTime:getSchedulePreferences().workStartTime||"09:00"}:x)}))}
+                              style={{fontSize:10.5,fontWeight:600,color:T.muted,background:T.card2,border:`1px solid ${T.border}`,borderRadius:6,padding:"3px 8px",cursor:"pointer",fontFamily:T.font}}>+ Add a time</button>
+                            <span style={{fontSize:10.5,color:T.faint}}>Flexible — Studlin will place it</span>
+                          </>
+                        )}
+                      </>
                     )}
                     {it.kind==="study"&&it.needsDuration&&(
                       <button type="button" onClick={()=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,attackBlock:!x.attackBlock}:x)}))}
@@ -25144,10 +25260,36 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                         {it.attackBlock?"✓ Attack Block — probe session first":"Wasn't sure how long — start an Attack Block instead"}
                       </button>
                     )}
+                    {/* An exam's real time is genuinely optional -- often
+                        it's just "during 3rd period," not a fact the student
+                        necessarily knows or needs to pin down. Left blank,
+                        it commits as a due-date fact only (isDuePill), same
+                        as every other exam in the app; the exam-prep header
+                        also switches to "time TBD" instead of showing this
+                        as a fake, confirmed clock time. */}
                     {it.kind==="exam"&&(
-                      <Input type="date" value={it.dueDate} onChange={ev=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,dueDate:ev.target.value}:x)}))} style={{width:138}} />
+                      <>
+                        <Input type="date" value={it.dueDate} onChange={ev=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,dueDate:ev.target.value}:x)}))} style={{width:138}} />
+                        {it.dueTime?(
+                          <>
+                            <TimeInput value={it.dueTime} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,dueTime:v}:x)}))} />
+                            <button type="button" title="Clear time" onClick={()=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,dueTime:""}:x)}))} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:13,fontFamily:T.font,padding:2}}>×</button>
+                          </>
+                        ):(
+                          <button type="button" onClick={()=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,dueTime:"09:00"}:x)}))}
+                            style={{fontSize:10.5,fontWeight:600,color:T.muted,background:T.card2,border:`1px solid ${T.border}`,borderRadius:6,padding:"3px 8px",cursor:"pointer",fontFamily:T.font}}>+ Add a time (if you know it)</button>
+                        )}
+                      </>
                     )}
                     {it.clarify&&!it.recurring&&<span style={{fontSize:10.5,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 8px"}}>{it.clarify}</span>}
+                    {/* Same badge style/copy as the syllabus scan review's own
+                        low-confidence flag -- Brain Dump never had this at
+                        all, so a vague-wording guess ("sometime soon") looked
+                        exactly as certain as a clearly-stated one. Suppressed
+                        when clarify is already showing -- that's the more
+                        specific, actionable signal for the same underlying
+                        uncertainty. */}
+                    {it.confidence==="low"&&!it.clarify&&<span style={{fontSize:10.5,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 8px"}}>Low confidence, double-check</span>}
                   </div>
                   {/* A recurring pattern ("work Mon-Fri for 2 weeks") used
                       to get flagged with a plain sentence asking whether to

@@ -1423,6 +1423,87 @@ describe("planBrainDumpTasks (Brain Dump placement)", () => {
     const gap = minutesOf(second.time) - (minutesOf(first.time) + first.duration);
     assert.ok(gap >= 0 && gap <= MAX_CHAIN_GAP_MINS, `expected second to stay chained to first instead of jumping to the evening bucket, gap was ${gap}min`);
   });
+
+  // 2026-08-25 regression: a brain-dumped reminder or exam with no real
+  // stated clock time ("grab dinner", "chem final Friday") silently
+  // committed with a bare "09:00" and no way to tell it apart from a real,
+  // chosen 9 AM -- it then rendered as a real timed block in every calendar
+  // view (Day view especially, see isDuePill's own comment) and the
+  // exam-prep header showed a fake "9:00 AM" instead of "time TBD". Fix:
+  // timeUnconfirmed:true whenever no real dueTime was given, same
+  // convention mergeImportedEvents already established for an all-day
+  // calendar import with no real time.
+  test("a reminder with no stated time commits as timeUnconfirmed, not a bare fake time", () => {
+    const { planBrainDumpTasks } = loadStudlinModule();
+    const items = [{ kind: "reminder", title: "Grab dinner", dueTime: null, dueDate: null }];
+    const { tasks } = planBrainDumpTasks(items, [], [], DEFAULT_PREFS);
+    const reminder = tasks.find((t) => t.title === "Grab dinner");
+    assert.ok(reminder);
+    assert.equal(reminder.timeUnconfirmed, true);
+  });
+
+  test("a reminder with a real stated time commits as a normal, confirmed time -- no timeUnconfirmed flag", () => {
+    const { planBrainDumpTasks } = loadStudlinModule();
+    const items = [{ kind: "reminder", title: "Take meds", dueTime: "20:00", dueDate: null }];
+    const { tasks } = planBrainDumpTasks(items, [], [], DEFAULT_PREFS);
+    const reminder = tasks.find((t) => t.title === "Take meds");
+    assert.ok(reminder);
+    assert.equal(reminder.time, "20:00");
+    assert.ok(!reminder.timeUnconfirmed);
+  });
+
+  test("an exam with no stated time commits as timeUnconfirmed -- a real exam time is optional, not fabricated", () => {
+    const { planBrainDumpTasks } = loadStudlinModule();
+    const items = [{ kind: "exam", title: "Chem Final", dueTime: null, dueDate: null }];
+    const { tasks } = planBrainDumpTasks(items, [], [], DEFAULT_PREFS);
+    const exam = tasks.find((t) => t.title === "Chem Final");
+    assert.ok(exam);
+    assert.equal(exam.timeUnconfirmed, true);
+  });
+
+  test("an exam with a real stated time (e.g. during a known class period) commits as confirmed", () => {
+    const { planBrainDumpTasks } = loadStudlinModule();
+    const items = [{ kind: "exam", title: "Chem Final", dueTime: "09:40", dueDate: null }];
+    const { tasks } = planBrainDumpTasks(items, [], [], DEFAULT_PREFS);
+    const exam = tasks.find((t) => t.title === "Chem Final");
+    assert.ok(exam);
+    assert.equal(exam.time, "09:40");
+    assert.ok(!exam.timeUnconfirmed);
+  });
+});
+
+describe("isDuePill (regression: Day view/DayPreviewModal rendered an exam or unconfirmed-time reminder's fake placeholder time as if it were real)", () => {
+  test("an exam is always a due pill, confirmed time or not -- it never gets a real duration/clock block", () => {
+    const { isDuePill } = loadStudlinModule();
+    assert.equal(isDuePill({ kind: "exam", duration: null, time: "09:00" }), true);
+    assert.equal(isDuePill({ kind: "exam", duration: null, time: "09:40", timeUnconfirmed: undefined }), true);
+  });
+
+  test("a plain deadline marker is a due pill", () => {
+    const { isDuePill } = loadStudlinModule();
+    assert.equal(isDuePill({ kind: "deadline", duration: null }), true);
+  });
+
+  test("a reminder with a real confirmed time is NOT a due pill -- its time is the whole point", () => {
+    const { isDuePill } = loadStudlinModule();
+    assert.equal(isDuePill({ kind: "reminder", duration: 0, time: "18:00" }), false);
+  });
+
+  test("a reminder with no real time (timeUnconfirmed) IS a due pill -- no fake clock position to render", () => {
+    const { isDuePill } = loadStudlinModule();
+    assert.equal(isDuePill({ kind: "reminder", duration: 0, time: "09:00", timeUnconfirmed: true }), true);
+  });
+
+  test("a real study block or event is never a due pill", () => {
+    const { isDuePill } = loadStudlinModule();
+    assert.equal(isDuePill({ kind: "study block", duration: 30, time: "10:00" }), false);
+    assert.equal(isDuePill({ kind: "busy block", duration: 60, time: "15:00" }), false);
+  });
+
+  test("a checklist item is never a due pill even if it otherwise matches", () => {
+    const { isDuePill } = loadStudlinModule();
+    assert.equal(isDuePill({ kind: "exam", duration: null, checklist: true }), false);
+  });
 });
 
 describe("Lock-In timer checkpoint + recovery (regression: a real session was lost when the tab backgrounded mid-timer with no trace)", () => {
