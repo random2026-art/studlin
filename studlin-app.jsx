@@ -2472,20 +2472,40 @@ function isLeadInFixed(e){return (TIER0_FIXED_KINDS.has(e.kind)&&!e.movable)||is
 // fixed-kind lead-in -- additive, so any event with no `commuteBefore` set
 // (i.e. every event that existed before this field existed) behaves
 // exactly as it did before this function existed.
-function effectiveLeadIn(e){return (isLeadInFixed(e)?LEAD_IN_BUFFER_MINS:0)+(e.commuteBefore||0);}
+// automatedBufferEnabled (Settings, default true) -- OFF, even Studlin's
+// OWN automated scheduling (findOpenSlotFor/advancedSchedulePlanner/
+// rebalanceDay/Brain Dump/etc, everything that calls effectiveLeadIn)
+// drops the guessed LEAD_IN_BUFFER_MINS entirely, trusting only a real
+// literal overlap and real declared commuteBefore. Defaults to true
+// (today's original, unconditional behavior) since an algorithm placing
+// dozens of blocks a week has no eyes of its own to notice a schedule
+// packed second-to-second -- a human placing one task manually can see
+// that for themselves, which is the entire reason manualBufferMode
+// (below) defaults the other way. isLeadInFixed's own gate (a lead-in
+// only ever applies before a real fixed-kind neighbor to begin with) is
+// unchanged by this toggle -- it only zeroes out the MAGNITUDE for cases
+// where a lead-in would have applied anyway.
+function effectiveLeadIn(e){
+  const commute=e.commuteBefore||0;
+  if(!isLeadInFixed(e))return commute;
+  return (getSchedulePreferences().automatedBufferEnabled!==false?LEAD_IN_BUFFER_MINS:0)+commute;
+}
 // Extracted from the "+computeBreathingRoom(e.duration||30)" trailing-
 // buffer term, same reasoning as effectiveLeadIn above -- layers a
 // student-set, per-event `commuteAfter` on top of the existing proportional
-// breathing-room cushion, additive/backward-compatible the same way.
-function effectiveTrailOut(e){return computeBreathingRoom(e.duration||30)+(e.commuteAfter||0);}
-// Manual-placement variants of effectiveLeadIn/effectiveTrailOut, used
-// ONLY by a student's own explicit placement (moveEvent's drag/drop,
-// resolveManualSlot's hand-typed Add Task time) -- NOT by any automated
-// placement (findOpenSlotFor/findReliableSlotFor/advancedSchedulePlanner/
-// getDayOccupiedIntervals/rebalanceDay/etc, which all keep using
-// effectiveLeadIn/effectiveTrailOut unchanged regardless of this toggle:
-// Studlin choosing a slot on its own still avoids zero-gap scheduling by
-// default, the same way it always has).
+// breathing-room cushion, additive/backward-compatible the same way. Same
+// automatedBufferEnabled gate as effectiveLeadIn's own.
+function effectiveTrailOut(e){
+  const commute=e.commuteAfter||0;
+  return (getSchedulePreferences().automatedBufferEnabled!==false?computeBreathingRoom(e.duration||30):0)+commute;
+}
+// manualBufferMode (Settings, "off"/"short"/"medium"/"long", default
+// "off") -- governs ONLY a student's own explicit placement (moveEvent's
+// drag/drop, resolveManualSlot's hand-typed Add Task time), completely
+// independent of automatedBufferEnabled above (deliberately does NOT call
+// effectiveLeadIn/effectiveTrailOut -- if it did, the automated-only
+// toggle being off would silently zero out "medium"/"long" here too,
+// which would make two supposedly-independent settings secretly interact).
 //
 // History: this started (2026-08-25) as a narrower fix for one specific
 // bug -- computeBreathingRoom's cushion applying after EVERY event
@@ -2494,26 +2514,39 @@ function effectiveTrailOut(e){return computeBreathingRoom(e.duration||30)+(e.com
 // physically requiring a gap) silently got rejected and auto-relocated.
 // That fix kept the cushion active next to a real class, reasoning a real
 // class "deserves" a transition buffer. Confirmed live the next day
-// (2026-08-26) that this was still too conservative: a manually-placed
+// (2026-08-26) that this was still too conservative -- a manually-placed
 // task landing right after a real class was STILL getting bumped a few
-// minutes late by that same guessed cushion, and the 15-min
-// LEAD_IN_BUFFER_MINS before a class was never touched by the original
-// fix at all -- both are guesses, not a fact the student ever declared,
-// so a manual placement (the student's own deliberate choice) shouldn't
-// silently second-guess it with either one.
-//
-// manualBufferEnabled (Settings, default off) is the resolution: OFF, a
-// manual placement trusts only a real literal time overlap and real
-// declared commuteBefore/commuteAfter -- the one thing here that's an
-// actual fact instead of a guess. ON, it restores the exact same guessed
-// cushion automated placement always uses, for a student who'd rather
-// Studlin keep some breathing room automatically even on their own manual
-// placements.
+// minutes late, and the 15-min LEAD_IN_BUFFER_MINS before a class was
+// never touched by the original fix at all. A plain on/off followed,
+// then this: three named strengths instead of one flat guess, since a
+// cushion that already scales with the neighboring block's own duration
+// (computeBreathingRoom) is worth keeping for students who want it, just
+// tunable rather than one-size-fits-all. "medium" reuses today's original
+// numbers exactly (LEAD_IN_BUFFER_MINS, computeBreathingRoom) so nothing
+// about the underlying formula changed, only who's allowed to skip it and
+// by how much. Real declared commute time always applies underneath every
+// mode, "off" included -- that was never a guess to begin with.
 function effectiveLeadInForManualPlacement(e){
-  return getSchedulePreferences().manualBufferEnabled?effectiveLeadIn(e):(e.commuteBefore||0);
+  const commute=e.commuteBefore||0;
+  if(!isLeadInFixed(e))return commute;
+  const mode=getSchedulePreferences().manualBufferMode||"off";
+  if(mode==="off")return commute;
+  if(mode==="short")return 5+commute;
+  if(mode==="long")return 25+commute;
+  return LEAD_IN_BUFFER_MINS+commute; // "medium"
 }
 function effectiveTrailOutForManualPlacement(e){
-  return getSchedulePreferences().manualBufferEnabled?effectiveTrailOut(e):(e.commuteAfter||0);
+  const commute=e.commuteAfter||0;
+  const mode=getSchedulePreferences().manualBufferMode||"off";
+  if(mode==="off")return commute;
+  const dur=e.duration||30;
+  if(mode==="short")return 5+commute;
+  // Roughly double computeBreathingRoom's own 5-20min band at the same
+  // duration (a 30min block: medium 5, long 10; a 120min block: medium
+  // 20, long 30) -- same clamp-a-proportional-formula shape, just scaled
+  // up for a student who wants noticeably more room than "medium" gives.
+  if(mode==="long")return Math.max(10,Math.min(30,Math.round((dur*0.3)/5)*5))+commute;
+  return computeBreathingRoom(dur)+commute; // "medium"
 }
 // Canonical "this item can never be automatically relocated" check --
 // isLeadInFixed's own union (TIER0_FIXED_KINDS: exam/class/busy block/
@@ -6346,15 +6379,18 @@ function getSchedulePreferences(){
     // empty by default — Tier 0 only special-cases a bucket here if the
     // student explicitly added it; this is never inferred on its own.
     peakHourBuckets:[],
-    // 2026-08-26: off by default -- a manual placement (drag/drop, a
+    // "off"/"short"/"medium"/"long" -- see effectiveLeadInForManualPlacement/
+    // effectiveTrailOutForManualPlacement's own comment for the full
+    // reasoning. Defaults to "off": a manual placement (drag/drop, a
     // hand-typed Add Task time) trusts only a real literal time overlap
-    // and real declared commuteBefore/commuteAfter, never the guessed
-    // LEAD_IN_BUFFER_MINS/computeBreathingRoom cushion automated placement
-    // still always uses (see effectiveLeadInForManualPlacement/
-    // effectiveTrailOutForManualPlacement's own comments). Turning this on
-    // restores the guessed cushion for manual placement too, for a student
-    // who'd rather Studlin keep some breathing room automatically.
-    manualBufferEnabled:false,
+    // and real declared commuteBefore/commuteAfter unless a student
+    // deliberately opts into a guessed cushion here too.
+    manualBufferMode:"off",
+    // See effectiveLeadIn/effectiveTrailOut's own comment -- defaults to
+    // true (today's original, unconditional behavior) since automated
+    // scheduling has no eyes of its own to notice a schedule packed
+    // second-to-second the way a student placing one task manually can.
+    automatedBufferEnabled:true,
   };
   const stored=lsGet("schedulePrefs",def);
   return {...def,...stored};
@@ -7383,7 +7419,8 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
   const [weekendStart,setWeekendStart]=useState(prefs.weekendStartTime);
   const [weekendEnd,setWeekendEnd]=useState(prefs.weekendEndTime);
   const [peakBuckets,setPeakBuckets]=useState(prefs.peakHourBuckets||[]);
-  const [manualBufferEnabled,setManualBufferEnabled]=useState(!!prefs.manualBufferEnabled);
+  const [manualBufferMode,setManualBufferMode]=useState(prefs.manualBufferMode||"off");
+  const [automatedBufferEnabled,setAutomatedBufferEnabled]=useState(prefs.automatedBufferEnabled!==false);
   const togglePeakBucket=(id)=>setPeakBuckets(peakBuckets.includes(id)?peakBuckets.filter(b=>b!==id):[...peakBuckets,id]);
   const [saved,setSaved]=useState(false);
 
@@ -7448,7 +7485,8 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
       weekendStartTime:weekendStart,
       weekendEndTime:weekendEnd,
       peakHourBuckets:peakBuckets,
-      manualBufferEnabled,
+      manualBufferMode,
+      automatedBufferEnabled,
     };
     setSchedulePreferences(newPrefs);
     setSaved(true);
@@ -7518,18 +7556,58 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
             "breathing room" after it -- even though neither is a real fact
             you declared, just Studlin's own guess. Off by default now:
             only a real literal time overlap or real commute time you
-            typed in blocks a manual placement. Automated placement
-            (Today's Plan, Brain Dump, AI-scheduled sessions) is
-            unaffected either way -- this only ever governs YOUR OWN
-            deliberate placements. */}
+            typed in blocks a manual placement. "Short"/"Medium"/"Long"
+            restore that guessed cushion at three different strengths for
+            a student who wants some breathing room back -- "Medium" is
+            the exact original formula, unchanged. This only ever governs
+            YOUR OWN deliberate placements -- automated scheduling has its
+            own separate toggle just below. */}
         <div style={{marginBottom:22}}>
-          <div onClick={()=>setManualBufferEnabled(!manualBufferEnabled)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"pointer"}}>
-            <label style={{fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,cursor:"pointer"}}>Buffer On Manual Placements</label>
-            <div style={{width:34,height:19,borderRadius:99,background:manualBufferEnabled?T.lime:T.card2,border:"1px solid "+(manualBufferEnabled?T.lime:T.border),position:"relative",transition:"all 0.15s",flexShrink:0}}>
-              <div style={{position:"absolute",top:1,left:manualBufferEnabled?16:1,width:15,height:15,borderRadius:"50%",background:manualBufferEnabled?T.ink:T.muted,transition:"all 0.15s"}}/>
+          <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>Buffer On Your Own Placements</label>
+          <div style={{display:"flex",gap:8}}>
+            {[
+              {value:"off",label:"Off",desc:"Only real overlap/commute blocks it"},
+              {value:"short",label:"Short",desc:"A light, flat few-minute cushion"},
+              {value:"medium",label:"Medium",desc:"Studlin's original guessed cushion"},
+              {value:"long",label:"Long",desc:"A noticeably wider transition gap"},
+            ].map(opt=>(
+              <button
+                key={opt.value}
+                onClick={()=>setManualBufferMode(opt.value)}
+                style={{
+                  flex:1,padding:12,borderRadius:8,border:"1px solid "+(manualBufferMode===opt.value?T.lime+"66":T.border),
+                  background:manualBufferMode===opt.value?T.lime+"14":"transparent",
+                  color:manualBufferMode===opt.value?T.lime:T.muted,
+                  fontSize:12,fontWeight:manualBufferMode===opt.value?600:500,
+                  cursor:"pointer",
+                  transition:"all 0.15s",
+                  textAlign:"left",
+                }}
+              >
+                <div style={{fontWeight:600}}>{opt.label}</div>
+                <div style={{fontSize:10.5,opacity:0.8,marginTop:2}}>{opt.desc}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Separate from the mode picker above on purpose -- this governs
+            Studlin's OWN automated scheduling (Today's Plan, Brain Dump,
+            AI-arranged sessions), not anything you place yourself.
+            Defaults on: an algorithm placing dozens of blocks a week has
+            no eyes of its own to notice a schedule packed second-to-
+            second, unlike a student placing one task manually who can see
+            that for themselves. Turning this off means Studlin may pack
+            automated placements right up against a class's real end time,
+            with no cushion beyond real declared commute. */}
+        <div style={{marginBottom:22}}>
+          <div onClick={()=>setAutomatedBufferEnabled(!automatedBufferEnabled)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"pointer"}}>
+            <label style={{fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,cursor:"pointer"}}>Buffer On Automatic Scheduling</label>
+            <div style={{width:34,height:19,borderRadius:99,background:automatedBufferEnabled?T.lime:T.card2,border:"1px solid "+(automatedBufferEnabled?T.lime:T.border),position:"relative",transition:"all 0.15s",flexShrink:0}}>
+              <div style={{position:"absolute",top:1,left:automatedBufferEnabled?16:1,width:15,height:15,borderRadius:"50%",background:automatedBufferEnabled?T.ink:T.muted,transition:"all 0.15s"}}/>
             </div>
           </div>
-          <div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>{manualBufferEnabled?"On — dragging or typing a time near a class also respects a guessed transition cushion, not just real commute time.":"Off — when you place something yourself, only a real overlap or real commute time you've entered will block it."}</div>
+          <div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>{automatedBufferEnabled?"On — when Studlin places something for you (Today's Plan, Brain Dump, AI-scheduled sessions), it still leaves a guessed transition cushion next to your classes.":"Off — Studlin may pack automated placements right up against a class's real end time, with only real commute time (not a guess) as a cushion."}</div>
         </div>
 
         <div style={{marginBottom:22}}>
@@ -23376,8 +23454,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // effectiveLeadInForManualPlacement/effectiveTrailOutForManualPlacement
     // (not the plain automated versions) -- see their own comment. A
     // hand-typed time only gets blocked by a real literal overlap or real
-    // declared commute time by default; manualBufferEnabled (Settings)
-    // restores the guessed cushion for a student who wants it back.
+    // declared commute time by default; manualBufferMode (Settings)
+    // restores a guessed cushion at the student's chosen strength.
     const occupied=events.filter(e=>e.date===date&&e.time)
       .map(e=>({start:timeToMinutes(e.time)-effectiveLeadInForManualPlacement(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOutForManualPlacement(e)}))
       .concat(expandRoutineOccurrences(routines,date,date).filter(o=>o.kind!=="free period")

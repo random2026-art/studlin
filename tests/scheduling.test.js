@@ -221,59 +221,105 @@ describe("advancedSchedulePlanner / todaysPlan (Today's Plan, regression: isFlex
   });
 });
 
-describe("effectiveLeadInForManualPlacement / effectiveTrailOutForManualPlacement (2026-08-26: manualBufferEnabled toggle)", () => {
+describe("effectiveLeadInForManualPlacement / effectiveTrailOutForManualPlacement (2026-08-26: manualBufferMode, off/short/medium/long)", () => {
   // History: 2026-08-25's fix only stopped the trailing breathing-room
   // cushion from applying between two ordinary FLEXIBLE items -- it still
   // applied the cushion (and the untouched 15-min LEAD_IN_BUFFER_MINS
-  // before a class) whenever the neighbor was a real fixed class.
-  // Confirmed live the next day that this was still too conservative: a
-  // manual placement landing right after a real class was STILL getting
-  // bumped a few minutes late by the guessed cushion, and nothing had ever
-  // addressed the leading side at all. manualBufferEnabled (Settings,
-  // default false/off) is the actual resolution -- off, a manual
-  // placement trusts only a real literal overlap and real declared
-  // commuteBefore/commuteAfter, regardless of whether the neighbor is
-  // flexible or a real fixed class; on, it restores the exact guessed
-  // cushion automated placement (effectiveLeadIn/effectiveTrailOut) always
-  // uses, unconditionally, for every kind.
-  test("default (manualBufferEnabled off): a flexible neighbor gets zero cushion, both leading and trailing", () => {
+  // before a class) whenever the neighbor was a real fixed class. A plain
+  // on/off toggle followed, then this: three named strengths instead of
+  // one flat guess, since a cushion that already scales with the
+  // neighboring block's own duration is worth keeping for students who
+  // want it, just tunable. manualBufferMode defaults to "off" -- only a
+  // real literal overlap and real declared commuteBefore/commuteAfter
+  // block a manual placement unless a student opts into a guessed
+  // cushion. "medium" reuses today's original LEAD_IN_BUFFER_MINS/
+  // computeBreathingRoom numbers exactly, unchanged.
+  test('default ("off"): a flexible neighbor gets zero cushion, both leading and trailing', () => {
     const { effectiveLeadInForManualPlacement, effectiveTrailOutForManualPlacement } = loadStudlinModule();
     const flexTask = realTask({ kind: "study block", duration: 60, movable: true });
     assert.equal(effectiveLeadInForManualPlacement(flexTask), 0);
     assert.equal(effectiveTrailOutForManualPlacement(flexTask), 0);
   });
 
-  test("default (manualBufferEnabled off): a real fixed class ALSO gets zero cushion now -- only real overlap/commute blocks a manual placement", () => {
+  test('default ("off"): a real fixed class ALSO gets zero cushion -- only real overlap/commute blocks a manual placement', () => {
     const { effectiveLeadInForManualPlacement, effectiveTrailOutForManualPlacement } = loadStudlinModule();
     const fixedClass = realTask({ kind: "class", duration: 50, movable: false });
     assert.equal(effectiveLeadInForManualPlacement(fixedClass), 0);
     assert.equal(effectiveTrailOutForManualPlacement(fixedClass), 0);
   });
 
-  test("contrast: automated placement (effectiveLeadIn/effectiveTrailOut) is completely unaffected by the toggle -- still always guesses a cushion next to a fixed class", () => {
-    const { effectiveLeadIn, effectiveTrailOut } = loadStudlinModule();
-    const fixedClass = realTask({ kind: "class", duration: 50, movable: false });
-    assert.ok(effectiveLeadIn(fixedClass) > 0, "automated placement must still apply the lead-in buffer before a class");
-    assert.ok(effectiveTrailOut(fixedClass) > 0, "automated placement must still apply breathing room after a class");
-  });
-
-  test("a declared commuteBefore/commuteAfter still blocks a manual placement regardless of the toggle", () => {
+  test("a declared commuteBefore/commuteAfter still blocks a manual placement in every mode, including \"off\"", () => {
     const { effectiveLeadInForManualPlacement, effectiveTrailOutForManualPlacement } = loadStudlinModule();
     const fixedWithCommute = realTask({ kind: "class", duration: 50, movable: false, commuteBefore: 15, commuteAfter: 20 });
     assert.equal(effectiveLeadInForManualPlacement(fixedWithCommute), 15);
     assert.equal(effectiveTrailOutForManualPlacement(fixedWithCommute), 20);
   });
 
-  test("manualBufferEnabled ON restores the exact automated cushion for manual placement too, even next to a flexible neighbor", () => {
+  test('"short" mode gives a flat, small cushion regardless of the neighboring block\'s duration', () => {
     const m = loadStudlinModule();
-    m.lsSet("schedulePrefs", { manualBufferEnabled: true });
-    const flexTask = realTask({ kind: "study block", duration: 60, movable: true });
+    m.lsSet("schedulePrefs", { manualBufferMode: "short" });
+    const shortClass = realTask({ kind: "class", duration: 30, movable: false });
+    const longClass = realTask({ kind: "class", duration: 180, movable: false });
+    assert.equal(m.effectiveLeadInForManualPlacement(shortClass), 5);
+    assert.equal(m.effectiveTrailOutForManualPlacement(shortClass), 5);
+    assert.equal(m.effectiveTrailOutForManualPlacement(longClass), 5, "short stays flat even for a much longer block");
+  });
+
+  test('"medium" mode is byte-identical to today\'s original automated cushion formula', () => {
+    const m = loadStudlinModule();
+    m.lsSet("schedulePrefs", { manualBufferMode: "medium" });
     const fixedClass = realTask({ kind: "class", duration: 50, movable: false });
-    assert.equal(m.effectiveLeadInForManualPlacement(flexTask), m.effectiveLeadIn(flexTask));
-    assert.equal(m.effectiveTrailOutForManualPlacement(flexTask), m.effectiveTrailOut(flexTask));
     assert.equal(m.effectiveLeadInForManualPlacement(fixedClass), m.effectiveLeadIn(fixedClass));
-    assert.ok(m.effectiveLeadInForManualPlacement(fixedClass) > 0, "toggled on, the class's lead-in buffer should be real and positive");
     assert.equal(m.effectiveTrailOutForManualPlacement(fixedClass), m.effectiveTrailOut(fixedClass));
+    assert.ok(m.effectiveLeadInForManualPlacement(fixedClass) > 0);
+  });
+
+  test('"long" mode gives a bigger lead-in than medium, and roughly double medium\'s trailing cushion at the same duration', () => {
+    const m = loadStudlinModule();
+    const fixedClass = realTask({ kind: "class", duration: 60, movable: false });
+    m.lsSet("schedulePrefs", { manualBufferMode: "medium" });
+    const mediumLeadIn = m.effectiveLeadInForManualPlacement(fixedClass);
+    const mediumTrailOut = m.effectiveTrailOutForManualPlacement(fixedClass);
+    m.lsSet("schedulePrefs", { manualBufferMode: "long" });
+    const longLeadIn = m.effectiveLeadInForManualPlacement(fixedClass);
+    const longTrailOut = m.effectiveTrailOutForManualPlacement(fixedClass);
+    assert.ok(longLeadIn > mediumLeadIn, "long lead-in must exceed medium");
+    assert.ok(longTrailOut > mediumTrailOut, "long trail-out must exceed medium");
+    assert.equal(longTrailOut, mediumTrailOut * 2, "long is designed to land at roughly double medium at this duration");
+  });
+
+  test("a flexible neighbor still gets a real cushion once a mode other than off is chosen (unlike the old fix, which only ever applied this next to a real class)", () => {
+    const m = loadStudlinModule();
+    m.lsSet("schedulePrefs", { manualBufferMode: "medium" });
+    const flexTask = realTask({ kind: "study block", duration: 60, movable: true });
+    assert.ok(m.effectiveTrailOutForManualPlacement(flexTask) > 0, "trailing cushion applies regardless of neighbor kind once a mode is chosen");
+    assert.equal(m.effectiveLeadInForManualPlacement(flexTask), 0, "lead-in still only ever applies before a real fixed neighbor, same gate as automated placement");
+  });
+});
+
+describe("automatedBufferEnabled (2026-08-26: lets a student turn off Studlin's own guessed cushion for automated scheduling too)", () => {
+  test("default (true): automated placement (effectiveLeadIn/effectiveTrailOut) still always guesses a cushion next to a fixed class", () => {
+    const { effectiveLeadIn, effectiveTrailOut } = loadStudlinModule();
+    const fixedClass = realTask({ kind: "class", duration: 50, movable: false });
+    assert.ok(effectiveLeadIn(fixedClass) > 0, "automated placement must still apply the lead-in buffer before a class");
+    assert.ok(effectiveTrailOut(fixedClass) > 0, "automated placement must still apply breathing room after a class");
+  });
+
+  test("turned off: automated placement drops to real overlap + real commute only, same as manual placement's own off mode", () => {
+    const m = loadStudlinModule();
+    m.lsSet("schedulePrefs", { automatedBufferEnabled: false });
+    const fixedClass = realTask({ kind: "class", duration: 50, movable: false, commuteBefore: 10, commuteAfter: 10 });
+    assert.equal(m.effectiveLeadIn(fixedClass), 10, "only real commute remains, the guessed 15min lead-in is gone");
+    assert.equal(m.effectiveTrailOut(fixedClass), 10, "only real commute remains, the guessed breathing room is gone");
+  });
+
+  test("automatedBufferEnabled and manualBufferMode are fully independent -- turning automated off does not silently zero out a manual mode set to medium/long", () => {
+    const m = loadStudlinModule();
+    m.lsSet("schedulePrefs", { automatedBufferEnabled: false, manualBufferMode: "medium" });
+    const fixedClass = realTask({ kind: "class", duration: 60, movable: false });
+    assert.equal(m.effectiveLeadIn(fixedClass), 0, "automated is off, so the automated function itself gives zero");
+    assert.ok(m.effectiveLeadInForManualPlacement(fixedClass) > 0, "the manual-placement function must NOT be affected by the automated-only toggle");
+    assert.equal(m.effectiveLeadInForManualPlacement(fixedClass), 15, "manual mode 'medium' still gives its own full 15min lead-in, independent of automatedBufferEnabled");
   });
 });
 

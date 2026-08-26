@@ -1573,16 +1573,31 @@ function isLeadInFixed(e) {
   return TIER0_FIXED_KINDS.has(e.kind) && !e.movable || isCoopStudySession(e);
 }
 function effectiveLeadIn(e) {
-  return (isLeadInFixed(e) ? LEAD_IN_BUFFER_MINS : 0) + (e.commuteBefore || 0);
+  const commute = e.commuteBefore || 0;
+  if (!isLeadInFixed(e)) return commute;
+  return (getSchedulePreferences().automatedBufferEnabled !== false ? LEAD_IN_BUFFER_MINS : 0) + commute;
 }
 function effectiveTrailOut(e) {
-  return computeBreathingRoom(e.duration || 30) + (e.commuteAfter || 0);
+  const commute = e.commuteAfter || 0;
+  return (getSchedulePreferences().automatedBufferEnabled !== false ? computeBreathingRoom(e.duration || 30) : 0) + commute;
 }
 function effectiveLeadInForManualPlacement(e) {
-  return getSchedulePreferences().manualBufferEnabled ? effectiveLeadIn(e) : e.commuteBefore || 0;
+  const commute = e.commuteBefore || 0;
+  if (!isLeadInFixed(e)) return commute;
+  const mode = getSchedulePreferences().manualBufferMode || "off";
+  if (mode === "off") return commute;
+  if (mode === "short") return 5 + commute;
+  if (mode === "long") return 25 + commute;
+  return LEAD_IN_BUFFER_MINS + commute;
 }
 function effectiveTrailOutForManualPlacement(e) {
-  return getSchedulePreferences().manualBufferEnabled ? effectiveTrailOut(e) : e.commuteAfter || 0;
+  const commute = e.commuteAfter || 0;
+  const mode = getSchedulePreferences().manualBufferMode || "off";
+  if (mode === "off") return commute;
+  const dur = e.duration || 30;
+  if (mode === "short") return 5 + commute;
+  if (mode === "long") return Math.max(10, Math.min(30, Math.round(dur * 0.3 / 5) * 5)) + commute;
+  return computeBreathingRoom(dur) + commute;
 }
 function isFixedItem(ev) {
   return isLeadInFixed(ev) || !!ev.userPinned;
@@ -4084,15 +4099,18 @@ function getSchedulePreferences() {
     // empty by default — Tier 0 only special-cases a bucket here if the
     // student explicitly added it; this is never inferred on its own.
     peakHourBuckets: [],
-    // 2026-08-26: off by default -- a manual placement (drag/drop, a
+    // "off"/"short"/"medium"/"long" -- see effectiveLeadInForManualPlacement/
+    // effectiveTrailOutForManualPlacement's own comment for the full
+    // reasoning. Defaults to "off": a manual placement (drag/drop, a
     // hand-typed Add Task time) trusts only a real literal time overlap
-    // and real declared commuteBefore/commuteAfter, never the guessed
-    // LEAD_IN_BUFFER_MINS/computeBreathingRoom cushion automated placement
-    // still always uses (see effectiveLeadInForManualPlacement/
-    // effectiveTrailOutForManualPlacement's own comments). Turning this on
-    // restores the guessed cushion for manual placement too, for a student
-    // who'd rather Studlin keep some breathing room automatically.
-    manualBufferEnabled: false
+    // and real declared commuteBefore/commuteAfter unless a student
+    // deliberately opts into a guessed cushion here too.
+    manualBufferMode: "off",
+    // See effectiveLeadIn/effectiveTrailOut's own comment -- defaults to
+    // true (today's original, unconditional behavior) since automated
+    // scheduling has no eyes of its own to notice a schedule packed
+    // second-to-second the way a student placing one task manually can.
+    automatedBufferEnabled: true
   };
   const stored = lsGet("schedulePrefs", def);
   return { ...def, ...stored };
@@ -4720,7 +4738,8 @@ function ScheduleSettingsPanel({ open, onClose, onSave }) {
   const [weekendStart, setWeekendStart] = useState(prefs.weekendStartTime);
   const [weekendEnd, setWeekendEnd] = useState(prefs.weekendEndTime);
   const [peakBuckets, setPeakBuckets] = useState(prefs.peakHourBuckets || []);
-  const [manualBufferEnabled, setManualBufferEnabled] = useState(!!prefs.manualBufferEnabled);
+  const [manualBufferMode, setManualBufferMode] = useState(prefs.manualBufferMode || "off");
+  const [automatedBufferEnabled, setAutomatedBufferEnabled] = useState(prefs.automatedBufferEnabled !== false);
   const togglePeakBucket = (id) => setPeakBuckets(peakBuckets.includes(id) ? peakBuckets.filter((b) => b !== id) : [...peakBuckets, id]);
   const [saved, setSaved] = useState(false);
   const workHoursInvalid = timeToMinutes(workEnd) <= timeToMinutes(workStart);
@@ -4755,7 +4774,8 @@ function ScheduleSettingsPanel({ open, onClose, onSave }) {
       weekendStartTime: weekendStart,
       weekendEndTime: weekendEnd,
       peakHourBuckets: peakBuckets,
-      manualBufferEnabled
+      manualBufferMode,
+      automatedBufferEnabled
     };
     setSchedulePreferences(newPrefs);
     setSaved(true);
@@ -4763,7 +4783,33 @@ function ScheduleSettingsPanel({ open, onClose, onSave }) {
     if (onSave) onSave();
   };
   if (!open) return null;
-  return /* @__PURE__ */ React.createElement("div", { onClick: onClose, style: { position: "fixed", inset: 0, zIndex: 95, background: "rgba(8,12,10,0.72)", backdropFilter: "blur(7px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 } }, /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { width: 520, maxWidth: "100%", background: T.card, border: "1px solid " + T.border, borderRadius: 8, padding: 26, boxShadow: "0 40px 90px -30px rgba(0,0,0,0.65)", maxHeight: "90vh", overflowY: "auto" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 24 } }, /* @__PURE__ */ React.createElement("span", { style: { display: "inline-flex", width: 34, height: 34, borderRadius: 10, background: T.lime + "20", border: "1px solid " + T.lime + "44", alignItems: "center", justifyContent: "center", color: T.lime } }, Icon.settings), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 18, fontWeight: 700, color: T.white, letterSpacing: "-0.01em" } }, "Study Schedule Preferences")), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 22 } }, /* @__PURE__ */ React.createElement("label", { style: { display: "block", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, marginBottom: 8 } }, "Work Hours"), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { style: { fontSize: 12, color: T.text, marginBottom: 4, display: "block" } }, "Start time"), /* @__PURE__ */ React.createElement(TimeInput, { value: workStart, onChange: setWorkStart, style: { fontFamily: T.mono } })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { style: { fontSize: 12, color: T.text, marginBottom: 4, display: "block" } }, "End time"), /* @__PURE__ */ React.createElement(TimeInput, { value: workEnd, onChange: setWorkEnd, style: { fontFamily: T.mono } }))), workHoursInvalid ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.red, marginTop: 6 } }, "End time must be after start time.") : /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 6, lineHeight: 1.4 } }, "Tasks will be scheduled within this window. Your study schedule respects these hours."), classHeavyDays.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.amber, marginTop: 8, lineHeight: 1.4 } }, "Your classes take up almost all of this window on ", classHeavyDays.join(", "), " \u2014 Studlin will have little to no room to schedule anything those days. If Work Hours is meant to be your after-school study time, consider narrowing it to when class actually lets out.")), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 22 } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setWeekendEnabled(!weekendEnabled), style: { display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", marginBottom: weekendEnabled ? 12 : 0 } }, /* @__PURE__ */ React.createElement("label", { style: { fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, cursor: "pointer" } }, "Different Weekend Hours"), /* @__PURE__ */ React.createElement("div", { style: { width: 34, height: 19, borderRadius: 99, background: weekendEnabled ? T.lime : T.card2, border: "1px solid " + (weekendEnabled ? T.lime : T.border), position: "relative", transition: "all 0.15s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 1, left: weekendEnabled ? 16 : 1, width: 15, height: 15, borderRadius: "50%", background: weekendEnabled ? T.ink : T.muted, transition: "all 0.15s" } }))), weekendEnabled && /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { style: { fontSize: 12, color: T.text, marginBottom: 4, display: "block" } }, "Sat/Sun start"), /* @__PURE__ */ React.createElement(TimeInput, { value: weekendStart, onChange: setWeekendStart, style: { fontFamily: T.mono } })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { style: { fontSize: 12, color: T.text, marginBottom: 4, display: "block" } }, "Sat/Sun end"), /* @__PURE__ */ React.createElement(TimeInput, { value: weekendEnd, onChange: setWeekendEnd, style: { fontFamily: T.mono } }))), weekendHoursInvalid ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.red, marginTop: 6 } }, "End time must be after start time.") : /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 6, lineHeight: 1.4 } }, weekendEnabled ? "Weekends will use this window instead of your weekday hours." : "Off \u2014 weekends use the same hours as weekdays.")), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 22 } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setManualBufferEnabled(!manualBufferEnabled), style: { display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("label", { style: { fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, cursor: "pointer" } }, "Buffer On Manual Placements"), /* @__PURE__ */ React.createElement("div", { style: { width: 34, height: 19, borderRadius: 99, background: manualBufferEnabled ? T.lime : T.card2, border: "1px solid " + (manualBufferEnabled ? T.lime : T.border), position: "relative", transition: "all 0.15s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 1, left: manualBufferEnabled ? 16 : 1, width: 15, height: 15, borderRadius: "50%", background: manualBufferEnabled ? T.ink : T.muted, transition: "all 0.15s" } }))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 6, lineHeight: 1.4 } }, manualBufferEnabled ? "On \u2014 dragging or typing a time near a class also respects a guessed transition cushion, not just real commute time." : "Off \u2014 when you place something yourself, only a real overlap or real commute time you've entered will block it.")), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 22 } }, /* @__PURE__ */ React.createElement("label", { style: { display: "block", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, marginBottom: 8 } }, "Difficulty Preference"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, [
+  return /* @__PURE__ */ React.createElement("div", { onClick: onClose, style: { position: "fixed", inset: 0, zIndex: 95, background: "rgba(8,12,10,0.72)", backdropFilter: "blur(7px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 } }, /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { width: 520, maxWidth: "100%", background: T.card, border: "1px solid " + T.border, borderRadius: 8, padding: 26, boxShadow: "0 40px 90px -30px rgba(0,0,0,0.65)", maxHeight: "90vh", overflowY: "auto" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 24 } }, /* @__PURE__ */ React.createElement("span", { style: { display: "inline-flex", width: 34, height: 34, borderRadius: 10, background: T.lime + "20", border: "1px solid " + T.lime + "44", alignItems: "center", justifyContent: "center", color: T.lime } }, Icon.settings), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 18, fontWeight: 700, color: T.white, letterSpacing: "-0.01em" } }, "Study Schedule Preferences")), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 22 } }, /* @__PURE__ */ React.createElement("label", { style: { display: "block", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, marginBottom: 8 } }, "Work Hours"), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { style: { fontSize: 12, color: T.text, marginBottom: 4, display: "block" } }, "Start time"), /* @__PURE__ */ React.createElement(TimeInput, { value: workStart, onChange: setWorkStart, style: { fontFamily: T.mono } })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { style: { fontSize: 12, color: T.text, marginBottom: 4, display: "block" } }, "End time"), /* @__PURE__ */ React.createElement(TimeInput, { value: workEnd, onChange: setWorkEnd, style: { fontFamily: T.mono } }))), workHoursInvalid ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.red, marginTop: 6 } }, "End time must be after start time.") : /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 6, lineHeight: 1.4 } }, "Tasks will be scheduled within this window. Your study schedule respects these hours."), classHeavyDays.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.amber, marginTop: 8, lineHeight: 1.4 } }, "Your classes take up almost all of this window on ", classHeavyDays.join(", "), " \u2014 Studlin will have little to no room to schedule anything those days. If Work Hours is meant to be your after-school study time, consider narrowing it to when class actually lets out.")), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 22 } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setWeekendEnabled(!weekendEnabled), style: { display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", marginBottom: weekendEnabled ? 12 : 0 } }, /* @__PURE__ */ React.createElement("label", { style: { fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, cursor: "pointer" } }, "Different Weekend Hours"), /* @__PURE__ */ React.createElement("div", { style: { width: 34, height: 19, borderRadius: 99, background: weekendEnabled ? T.lime : T.card2, border: "1px solid " + (weekendEnabled ? T.lime : T.border), position: "relative", transition: "all 0.15s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 1, left: weekendEnabled ? 16 : 1, width: 15, height: 15, borderRadius: "50%", background: weekendEnabled ? T.ink : T.muted, transition: "all 0.15s" } }))), weekendEnabled && /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { style: { fontSize: 12, color: T.text, marginBottom: 4, display: "block" } }, "Sat/Sun start"), /* @__PURE__ */ React.createElement(TimeInput, { value: weekendStart, onChange: setWeekendStart, style: { fontFamily: T.mono } })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { style: { fontSize: 12, color: T.text, marginBottom: 4, display: "block" } }, "Sat/Sun end"), /* @__PURE__ */ React.createElement(TimeInput, { value: weekendEnd, onChange: setWeekendEnd, style: { fontFamily: T.mono } }))), weekendHoursInvalid ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.red, marginTop: 6 } }, "End time must be after start time.") : /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 6, lineHeight: 1.4 } }, weekendEnabled ? "Weekends will use this window instead of your weekday hours." : "Off \u2014 weekends use the same hours as weekdays.")), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 22 } }, /* @__PURE__ */ React.createElement("label", { style: { display: "block", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, marginBottom: 8 } }, "Buffer On Your Own Placements"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, [
+    { value: "off", label: "Off", desc: "Only real overlap/commute blocks it" },
+    { value: "short", label: "Short", desc: "A light, flat few-minute cushion" },
+    { value: "medium", label: "Medium", desc: "Studlin's original guessed cushion" },
+    { value: "long", label: "Long", desc: "A noticeably wider transition gap" }
+  ].map((opt) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: opt.value,
+      onClick: () => setManualBufferMode(opt.value),
+      style: {
+        flex: 1,
+        padding: 12,
+        borderRadius: 8,
+        border: "1px solid " + (manualBufferMode === opt.value ? T.lime + "66" : T.border),
+        background: manualBufferMode === opt.value ? T.lime + "14" : "transparent",
+        color: manualBufferMode === opt.value ? T.lime : T.muted,
+        fontSize: 12,
+        fontWeight: manualBufferMode === opt.value ? 600 : 500,
+        cursor: "pointer",
+        transition: "all 0.15s",
+        textAlign: "left"
+      }
+    },
+    /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600 } }, opt.label),
+    /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, opacity: 0.8, marginTop: 2 } }, opt.desc)
+  )))), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 22 } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setAutomatedBufferEnabled(!automatedBufferEnabled), style: { display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("label", { style: { fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, cursor: "pointer" } }, "Buffer On Automatic Scheduling"), /* @__PURE__ */ React.createElement("div", { style: { width: 34, height: 19, borderRadius: 99, background: automatedBufferEnabled ? T.lime : T.card2, border: "1px solid " + (automatedBufferEnabled ? T.lime : T.border), position: "relative", transition: "all 0.15s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 1, left: automatedBufferEnabled ? 16 : 1, width: 15, height: 15, borderRadius: "50%", background: automatedBufferEnabled ? T.ink : T.muted, transition: "all 0.15s" } }))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 6, lineHeight: 1.4 } }, automatedBufferEnabled ? "On \u2014 when Studlin places something for you (Today's Plan, Brain Dump, AI-scheduled sessions), it still leaves a guessed transition cushion next to your classes." : "Off \u2014 Studlin may pack automated placements right up against a class's real end time, with only real commute time (not a guess) as a cushion.")), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 22 } }, /* @__PURE__ */ React.createElement("label", { style: { display: "block", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, marginBottom: 8 } }, "Difficulty Preference"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, [
     { value: "easyFirst", label: "Easy First", desc: "Tackle quick wins before hard tasks" },
     { value: "balanced", label: "Balanced", desc: "Mix easy and hard throughout" },
     { value: "hardFirst", label: "Hard First", desc: "Hit hard tasks during peak focus" }
