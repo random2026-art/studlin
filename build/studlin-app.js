@@ -1386,7 +1386,7 @@ function getWorkWindowMinsFor(prefs, dk) {
 }
 const CATCHUP_BUFFER_MINS = 120;
 function computeOccupiedIntervals(events, routines, prefs, dateKey) {
-  return events.filter((e) => e.date === dateKey && e.time && !e.timeUnconfirmed).concat(expandRoutineOccurrences(routines, dateKey, dateKey).filter((o) => o.kind !== "free period")).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) }));
+  return events.filter((e) => e.date === dateKey && e.time && !e.timeUnconfirmed && e.status !== "done").concat(expandRoutineOccurrences(routines, dateKey, dateKey).filter((o) => o.kind !== "free period")).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) }));
 }
 const BUSY_WINDOW_DAYS_AHEAD = 21;
 function computeBusyWindowsPayload(events, routines, prefs, todayKey) {
@@ -1461,7 +1461,7 @@ function findOpenSlotFor(events, routines, prefs, desiredDate, desiredTime, dura
     if (deadlineKey && dk > deadlineKey) break;
     if (isHoliday(dk)) continue;
     const { start: prefStartMins, end: prefEndMins } = getWorkWindowMinsFor(prefs, dk);
-    const occupied = events.filter((e) => e.date === dk && e.time && !e.timeUnconfirmed).concat(expandRoutineOccurrences(routines, dk, dk).filter((o) => o.kind !== "free period")).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) }));
+    const occupied = events.filter((e) => e.date === dk && e.time && !e.timeUnconfirmed && e.status !== "done").concat(expandRoutineOccurrences(routines, dk, dk).filter((o) => o.kind !== "free period")).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) }));
     let scanStart = dayOffset === 0 ? Math.max(prefStartMins, timeToMinutes(desiredTime)) : prefStartMins;
     if (dk === todayKey) scanStart = Math.max(scanStart, nowFloorMins);
     if (scanStart + duration > prefEndMins) {
@@ -1488,7 +1488,7 @@ function findLegalSlotOrNull(events, routines, prefs, desiredDate, desiredTime, 
   const effectiveEnd = Math.min(1440, slot.date === dayKey() ? winEnd + CATCHUP_BUFFER_MINS : winEnd);
   const tMins = timeToMinutes(slot.time);
   if (tMins < winStart || tMins + duration > effectiveEnd) return null;
-  const occupied = events.filter((e) => e.date === slot.date && e.time && !e.timeUnconfirmed).concat(expandRoutineOccurrences(routines, slot.date, slot.date).filter((o) => o.kind !== "free period")).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) }));
+  const occupied = events.filter((e) => e.date === slot.date && e.time && !e.timeUnconfirmed && e.status !== "done").concat(expandRoutineOccurrences(routines, slot.date, slot.date).filter((o) => o.kind !== "free period")).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) }));
   const conflict = occupied.some((o) => !(tMins + duration <= o.start || tMins >= o.end));
   return conflict ? null : slot;
 }
@@ -1497,7 +1497,7 @@ function dayHasRoomFor(events, routines, prefs, dateKey, duration, desiredTime) 
   const dayWindow = getWorkWindowMinsFor(prefs, dateKey);
   const prefStartMins = desiredTime ? Math.max(dayWindow.start, timeToMinutes(desiredTime)) : dayWindow.start;
   const prefEndMins = dateKey === dayKey() ? Math.min(1440, dayWindow.end + CATCHUP_BUFFER_MINS) : dayWindow.end;
-  const occupied = events.filter((e) => e.date === dateKey && e.time && !e.timeUnconfirmed).concat(expandRoutineOccurrences(routines, dateKey, dateKey).filter((o) => o.kind !== "free period")).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) }));
+  const occupied = events.filter((e) => e.date === dateKey && e.time && !e.timeUnconfirmed && e.status !== "done").concat(expandRoutineOccurrences(routines, dateKey, dateKey).filter((o) => o.kind !== "free period")).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) }));
   for (let t = prefStartMins; t + duration <= prefEndMins; t += 15) {
     if (!occupied.some((o) => !(t + duration <= o.start || t >= o.end))) return true;
   }
@@ -2024,7 +2024,7 @@ function undoTier0Move(taskId) {
   const { date, time } = moved.movedFrom;
   const durationMins = moved.duration || 30;
   const tMins = timeToMinutes(time);
-  const occupied = events.filter((e) => e.id !== taskId && e.date === date && e.time && !e.timeUnconfirmed).concat(expandRoutineOccurrences(getWeeklyRoutine(), date, date).filter((o) => o.kind !== "free period")).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) }));
+  const occupied = events.filter((e) => e.id !== taskId && e.date === date && e.time && !e.timeUnconfirmed && e.status !== "done").concat(expandRoutineOccurrences(getWeeklyRoutine(), date, date).filter((o) => o.kind !== "free period")).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) }));
   if (occupied.some((o) => !(tMins + durationMins <= o.start || tMins >= o.end))) return { events, blocked: true };
   const next = events.map((e) => {
     if (e.id !== taskId) return e;
@@ -4181,7 +4181,7 @@ function rebalanceDay(dateKey, allEvents, routines, prefs) {
     return !isFlexPending(e);
   });
   const occupiedBase = rest.filter(function(e) {
-    return e.date === dateKey && e.time && !e.timeUnconfirmed;
+    return e.date === dateKey && e.time && !e.timeUnconfirmed && e.status !== "done";
   }).map(function(e) {
     return { start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) };
   });
@@ -4611,7 +4611,7 @@ function advancedSchedulePlanner(baseEvents) {
   const shieldOccurrences = routineToday.filter((r) => r.kind !== "free period");
   const freeWindows = routineToday.filter((r) => r.kind === "free period").map((r) => ({ start: timeToMinutes(r.time), end: timeToMinutes(r.time) + (r.duration || 30) }));
   const occupiedSlots = [
-    ...hardEvents.filter((e) => !e.timeUnconfirmed).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) })),
+    ...hardEvents.filter((e) => !e.timeUnconfirmed && e.status !== "done").map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) })),
     ...flexibleTimed.filter((e) => !e.timeUnconfirmed).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) })),
     ...shieldOccurrences.map((r) => ({ start: timeToMinutes(r.time) - effectiveLeadIn(r), end: timeToMinutes(r.time) + (r.duration || 30) + effectiveTrailOut(r) }))
   ];
@@ -9205,7 +9205,7 @@ function ChatBubble({ m, myUid, onRespond, onSchedule, onCounter }) {
 function getDayOccupiedIntervals(dateKey) {
   const events = lsGet("events", []);
   const routines = getWeeklyRoutine();
-  return events.filter((e) => e.date === dateKey && !e.timeUnconfirmed).map((e) => {
+  return events.filter((e) => e.date === dateKey && !e.timeUnconfirmed && e.status !== "done").map((e) => {
     const realS = timeToMinutes(e.time || "0:00"), realE = realS + (e.duration || 60);
     return { s: realS - effectiveLeadIn(e), e: realE + effectiveTrailOut(e), realS, realE, title: e.title || "Untitled" };
   }).concat(expandRoutineOccurrences(routines, dateKey, dateKey).filter((o) => o.kind !== "free period").map((o) => {
@@ -14684,7 +14684,7 @@ function CalendarTab({ setActive = () => {
   };
   const resolveManualSlot = (date, time, duration) => {
     if (evKind === "exam" || evKind === "class" || evKind === "busy block") return { date, time };
-    const occupied = events.filter((e) => e.date === date && e.time && !e.timeUnconfirmed).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadInForManualPlacement(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOutForManualPlacement(e) })).concat(expandRoutineOccurrences(routines, date, date).filter((o) => o.kind !== "free period").map((o) => ({ start: timeToMinutes(o.time) - effectiveLeadInForManualPlacement(o), end: timeToMinutes(o.time) + (o.duration || 30) + effectiveTrailOutForManualPlacement(o) })));
+    const occupied = events.filter((e) => e.date === date && e.time && !e.timeUnconfirmed && e.status !== "done").map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadInForManualPlacement(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOutForManualPlacement(e) })).concat(expandRoutineOccurrences(routines, date, date).filter((o) => o.kind !== "free period").map((o) => ({ start: timeToMinutes(o.time) - effectiveLeadInForManualPlacement(o), end: timeToMinutes(o.time) + (o.duration || 30) + effectiveTrailOutForManualPlacement(o) })));
     const tMins = timeToMinutes(time);
     const conflict = occupied.some((o) => !(tMins + duration <= o.start || tMins >= o.end));
     return conflict ? findReliableSlotFor(events, routines, getSchedulePreferences(), date, time, duration, void 0, evDifficulty) : { date, time, reason: null };
@@ -14971,7 +14971,7 @@ function CalendarTab({ setActive = () => {
     let finalTime = checkTime;
     if (checkTime) {
       const dur = ev.duration || 30;
-      const occupied = events.filter((e) => e.id !== id && e.date === newDate && e.time && !e.timeUnconfirmed && e.kind !== "free period").map((e) => ({
+      const occupied = events.filter((e) => e.id !== id && e.date === newDate && e.time && !e.timeUnconfirmed && e.status !== "done" && e.kind !== "free period").map((e) => ({
         start: timeToMinutes(e.time) - effectiveLeadInForManualPlacement(e),
         end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOutForManualPlacement(e)
       })).concat(expandRoutineOccurrences(routines, newDate, newDate).filter((o) => o.kind !== "free period").map((o) => ({
@@ -17921,7 +17921,7 @@ function App() {
     if (!target) return;
     if (!target.timeSpent) logSession(mins, "Task: " + target.title);
     if (evTime) logCompletionOutcome("done", evTime, difficultyTierOf(target), taskId);
-    const next = all.map((ev) => ev.id === taskId ? { ...ev, status: "done", timeSpent: mins, completedAt: Date.now() } : ev);
+    const next = all.map((ev) => ev.id === taskId ? { ...ev, status: "done", timeSpent: mins, duration: mins, completedAt: Date.now() } : ev);
     setEvents(next);
     lsSet("events", next);
   };
@@ -19000,7 +19000,7 @@ function App() {
         const actualStart = new Date(Date.now() - mins * 6e4);
         const actualStartTime = String(actualStart.getHours()).padStart(2, "0") + ":" + String(actualStart.getMinutes()).padStart(2, "0");
         if (timerTask.time) logCompletionOutcome("done", actualStartTime, difficultyTierOf(timerTask), timerTask.id);
-        const next = lsGet("events", []).map((ev) => ev.id === timerTask.id ? { ...ev, status: "done", timeSpent: mins, completedAt: Date.now() } : ev);
+        const next = lsGet("events", []).map((ev) => ev.id === timerTask.id ? { ...ev, status: "done", timeSpent: mins, duration: mins, completedAt: Date.now() } : ev);
         lsSet("events", next);
         if (timerTask.kind === "study block" && !timerTask.routineId) setExamCheckIn(timerTask);
       }

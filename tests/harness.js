@@ -70,7 +70,7 @@ function loadStudlinModule(options) {
   const epilogue = `
 ;(function(){
   var exportNames = ["dayKey","checklistItemVisible","lsGet","lsSet","findOpenSlotFor","findReliableSlotFor",
-    "findLegalSlotOrNull","rebalanceDay","isTier0Missed","computePausePlan",
+    "findLegalSlotOrNull","rebalanceDay","isTier0Missed","computePausePlan","computeOccupiedIntervals",
     "computeHolidayPlan",
     "computeReviewOffsets","computeReviewDates","weekPrepLoad",
     "evaluateExamPrepAdjustment","buildExamSessionEvents","scoreTask",
