@@ -221,43 +221,59 @@ describe("advancedSchedulePlanner / todaysPlan (Today's Plan, regression: isFlex
   });
 });
 
-describe("effectiveTrailOutForManualPlacement (2026-08-25 regression: manual drag/drop and hand-typed-time entry no longer get bounced by the generic breathing-room cushion)", () => {
-  // Screenshot report: dragging one flexible study block to sit immediately
-  // after another flexible study block (no class, no declared commute --
-  // nothing physically requiring a gap) got silently rejected and
-  // auto-relocated elsewhere. Root cause: effectiveTrailOut's
-  // computeBreathingRoom cushion applied unconditionally to every event
-  // regardless of kind. effectiveTrailOutForManualPlacement is the
-  // manual-placement-only variant now used by moveEvent (calendar drag/drop)
-  // and resolveManualSlot (hand-typed Add Task time) -- every automated
-  // placement path (findOpenSlotFor, findLegalSlotOrNull, dayHasRoomFor,
-  // rebalanceDay, advancedSchedulePlanner, computeOccupiedIntervals,
-  // getDayOccupiedIntervals, undoTier0Move) keeps using the original
-  // effectiveTrailOut unchanged.
-  test("an ordinary flexible study block gets zero trailing cushion for manual placement", () => {
-    const { effectiveTrailOutForManualPlacement } = loadStudlinModule();
+describe("effectiveLeadInForManualPlacement / effectiveTrailOutForManualPlacement (2026-08-26: manualBufferEnabled toggle)", () => {
+  // History: 2026-08-25's fix only stopped the trailing breathing-room
+  // cushion from applying between two ordinary FLEXIBLE items -- it still
+  // applied the cushion (and the untouched 15-min LEAD_IN_BUFFER_MINS
+  // before a class) whenever the neighbor was a real fixed class.
+  // Confirmed live the next day that this was still too conservative: a
+  // manual placement landing right after a real class was STILL getting
+  // bumped a few minutes late by the guessed cushion, and nothing had ever
+  // addressed the leading side at all. manualBufferEnabled (Settings,
+  // default false/off) is the actual resolution -- off, a manual
+  // placement trusts only a real literal overlap and real declared
+  // commuteBefore/commuteAfter, regardless of whether the neighbor is
+  // flexible or a real fixed class; on, it restores the exact guessed
+  // cushion automated placement (effectiveLeadIn/effectiveTrailOut) always
+  // uses, unconditionally, for every kind.
+  test("default (manualBufferEnabled off): a flexible neighbor gets zero cushion, both leading and trailing", () => {
+    const { effectiveLeadInForManualPlacement, effectiveTrailOutForManualPlacement } = loadStudlinModule();
     const flexTask = realTask({ kind: "study block", duration: 60, movable: true });
+    assert.equal(effectiveLeadInForManualPlacement(flexTask), 0);
     assert.equal(effectiveTrailOutForManualPlacement(flexTask), 0);
   });
 
-  test("contrast: the same flexible task still gets the full breathing-room cushion for automated placement (effectiveTrailOut unchanged)", () => {
-    const { effectiveTrailOut, effectiveTrailOutForManualPlacement } = loadStudlinModule();
-    const flexTask = realTask({ kind: "study block", duration: 60, movable: true });
-    assert.ok(effectiveTrailOut(flexTask) > 0, "effectiveTrailOut must still apply breathing room for automated placement");
-    assert.equal(effectiveTrailOutForManualPlacement(flexTask), 0, "the manual-placement variant must not");
-  });
-
-  test("a real fixed event (class, not movable) still gets its full breathing-room cushion under manual placement too", () => {
-    const { effectiveTrailOut, effectiveTrailOutForManualPlacement } = loadStudlinModule();
+  test("default (manualBufferEnabled off): a real fixed class ALSO gets zero cushion now -- only real overlap/commute blocks a manual placement", () => {
+    const { effectiveLeadInForManualPlacement, effectiveTrailOutForManualPlacement } = loadStudlinModule();
     const fixedClass = realTask({ kind: "class", duration: 50, movable: false });
-    assert.equal(effectiveTrailOutForManualPlacement(fixedClass), effectiveTrailOut(fixedClass));
-    assert.ok(effectiveTrailOutForManualPlacement(fixedClass) > 0);
+    assert.equal(effectiveLeadInForManualPlacement(fixedClass), 0);
+    assert.equal(effectiveTrailOutForManualPlacement(fixedClass), 0);
   });
 
-  test("a declared commuteAfter still blocks manual placement even on a flexible-kind event", () => {
-    const { effectiveTrailOutForManualPlacement } = loadStudlinModule();
-    const flexTaskWithCommute = realTask({ kind: "study block", duration: 60, movable: true, commuteAfter: 20 });
-    assert.equal(effectiveTrailOutForManualPlacement(flexTaskWithCommute), 20);
+  test("contrast: automated placement (effectiveLeadIn/effectiveTrailOut) is completely unaffected by the toggle -- still always guesses a cushion next to a fixed class", () => {
+    const { effectiveLeadIn, effectiveTrailOut } = loadStudlinModule();
+    const fixedClass = realTask({ kind: "class", duration: 50, movable: false });
+    assert.ok(effectiveLeadIn(fixedClass) > 0, "automated placement must still apply the lead-in buffer before a class");
+    assert.ok(effectiveTrailOut(fixedClass) > 0, "automated placement must still apply breathing room after a class");
+  });
+
+  test("a declared commuteBefore/commuteAfter still blocks a manual placement regardless of the toggle", () => {
+    const { effectiveLeadInForManualPlacement, effectiveTrailOutForManualPlacement } = loadStudlinModule();
+    const fixedWithCommute = realTask({ kind: "class", duration: 50, movable: false, commuteBefore: 15, commuteAfter: 20 });
+    assert.equal(effectiveLeadInForManualPlacement(fixedWithCommute), 15);
+    assert.equal(effectiveTrailOutForManualPlacement(fixedWithCommute), 20);
+  });
+
+  test("manualBufferEnabled ON restores the exact automated cushion for manual placement too, even next to a flexible neighbor", () => {
+    const m = loadStudlinModule();
+    m.lsSet("schedulePrefs", { manualBufferEnabled: true });
+    const flexTask = realTask({ kind: "study block", duration: 60, movable: true });
+    const fixedClass = realTask({ kind: "class", duration: 50, movable: false });
+    assert.equal(m.effectiveLeadInForManualPlacement(flexTask), m.effectiveLeadIn(flexTask));
+    assert.equal(m.effectiveTrailOutForManualPlacement(flexTask), m.effectiveTrailOut(flexTask));
+    assert.equal(m.effectiveLeadInForManualPlacement(fixedClass), m.effectiveLeadIn(fixedClass));
+    assert.ok(m.effectiveLeadInForManualPlacement(fixedClass) > 0, "toggled on, the class's lead-in buffer should be real and positive");
+    assert.equal(m.effectiveTrailOutForManualPlacement(fixedClass), m.effectiveTrailOut(fixedClass));
   });
 });
 
