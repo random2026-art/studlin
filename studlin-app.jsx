@@ -4808,14 +4808,22 @@ async function unpublishBusyWindows(){
 // missing doc (never opted in) both resolve to "no extra data for this
 // person" — findSharedStudyWindow degrades to its old own-calendar-only
 // behavior for that participant, never surfaces an error over a feature
-// that was always optional. Returns a Map date -> [{s,e}], merged across
-// every contributing participant.
+// that was always optional. Returns {byDate, sharedUids} -- byDate is a
+// Map date -> [{s,e}] merged across every contributing participant (same
+// shape this always returned); sharedUids is the subset of otherUids that
+// actually had a readable doc, so a caller that shows a per-person UI
+// (Schedule with Friends) can tell "this friend hasn't shared their
+// availability" apart from "this friend shared it and is just completely
+// free" -- those used to render identically (nothing), which looked
+// exactly like the feature not working at all.
 async function fetchFriendsBusyIntervals(otherUids){
   const byDate=new Map();
+  const sharedUids=new Set();
   await Promise.all(otherUids.map(async(uid)=>{
     try{
       const doc=await fsdb().collection('busyWindows').doc(uid).get();
       if(!doc.exists)return;
+      sharedUids.add(uid);
       const data=doc.data();
       (data.intervals||[]).forEach(iv=>{
         if(!byDate.has(iv.date))byDate.set(iv.date,[]);
@@ -4823,7 +4831,7 @@ async function fetchFriendsBusyIntervals(otherUids){
       });
     }catch(e){/* not shared with us, or offline -- degrade gracefully */}
   }));
-  return byDate;
+  return {byDate,sharedUids};
 }
 // ─── SHARED / GROUP PROJECTS ────────────────────────────────────────────────
 // One Firestore doc per shared project, same frozen-memberUids trust shape
@@ -4871,7 +4879,7 @@ async function acceptSharedProject(projectDoc,myUid){
   // no separate "couldn't find a match" branch needed here.
   const otherAcceptedUids=Object.entries(projectDoc.participants||{})
     .filter(([uid,p])=>uid!==myUid&&p&&p.state==="accepted").map(([uid])=>uid);
-  const busyByDate=otherAcceptedUids.length>0?await fetchFriendsBusyIntervals(otherAcceptedUids):new Map();
+  const busyByDate=otherAcceptedUids.length>0?(await fetchFriendsBusyIntervals(otherAcceptedUids)).byDate:new Map();
   const syntheticBusy=[];
   busyByDate.forEach((intervals,date)=>intervals.forEach(iv=>{
     syntheticBusy.push({id:"shproj-busy-"+date+"-"+iv.s,date,time:minutesToTime(iv.s),duration:iv.e-iv.s,kind:"busy block",status:"pending"});
@@ -14693,7 +14701,7 @@ async function findSharedStudyWindow(myUid,otherUids,params){
   const EVENING_START=18*60;
   const isFree=(occupied,start,end)=>!occupied.some(o=>!(end<=o.s||start>=o.e));
   const labelFor=(offset,d)=>offset===1?"tomorrow":d.toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"});
-  const friendsBusy=await fetchFriendsBusyIntervals(otherUids.filter(u=>u!==myUid));
+  const {byDate:friendsBusy}=await fetchFriendsBusyIntervals(otherUids.filter(u=>u!==myUid));
   const candidates=[];
   for(let offset=1;offset<=scanDays;offset++){
     const d=new Date(today);d.setDate(today.getDate()+offset);
@@ -21521,6 +21529,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // -- manual placement stays allowed on top of it, same reasoning as
   // findSharedStudyWindow's own honest degrade-gracefully behavior.
   const [gsBusyByDate,setGsBusyByDate]=useState({});
+  // Which of gsSelected actually have a readable busyWindows doc -- i.e.
+  // really did turn on "Share my free/busy time" and are still friends
+  // with us. Anyone selected but NOT in here gets an explicit "hasn't
+  // shared their availability" note instead of silently looking identical
+  // to "shared it and is just completely free" -- see
+  // fetchFriendsBusyIntervals's own comment.
+  const [gsSharedUids,setGsSharedUids]=useState(new Set());
   // Top-ranked findSharedStudyWindow option, rendered as a dashed
   // "Studlin recommends this time" ghost block -- suggestion only. Whichever
   // one of gsRecommendedOptions below the student currently has selected
@@ -22668,7 +22683,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // ── Schedule with Friends ────────────────────────────────────────────
   const openGroupSchedule=async()=>{
     setGsOpen(true);setGsStep("pick");setGsSelected([]);setGsLoading(true);setGsSearchQuery("");
-    setGsRoomId(null);setGsMemberUids([]);setGsMemberNames({});setGsBusyByDate({});setGsRecommended(null);setGsRecommendedOptions([]);setGsDraft(null);
+    setGsRoomId(null);setGsMemberUids([]);setGsMemberNames({});setGsBusyByDate({});setGsSharedUids(new Set());setGsRecommended(null);setGsRecommendedOptions([]);setGsDraft(null);
     const myUid=firebase.auth().currentUser?.uid;
     const uids=myUid?await getAcceptedFriendUids(myUid):[];
     const docs=await Promise.all(uids.map(uid=>fsdb().collection('profiles').doc(uid).get().catch(()=>null)));
@@ -22714,10 +22729,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // This user's own occupied time is computed per-day straight off
     // getDayOccupiedIntervals as the grid renders -- only friends' opted-in
     // busy time needs fetching up front here.
-    const friendsBusy=await fetchFriendsBusyIntervals(gsSelected);
+    const {byDate:friendsBusy,sharedUids}=await fetchFriendsBusyIntervals(gsSelected);
     const busyObj={};
     friendsBusy.forEach((intervals,date)=>{busyObj[date]=intervals;});
     setGsBusyByDate(busyObj);
+    setGsSharedUids(sharedUids);
     // Recommended ghost block -- a visual suggestion only (see gsRecommended
     // state comment); manual placement anywhere else stays fully available.
     const rec=await findSharedStudyWindow(myUid,gsSelected,{timeMode:"anytime",lookAheadDayRange:7,durationInMinutes:60});
@@ -24760,6 +24776,19 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           gsBusyByDate/gsRecommended props above). ── */}
       {gsOpen&&gsStep==="place"&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:70,background:T.card,border:`1px solid ${T.border}`,borderRadius:12,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",padding:"14px 18px",display:"flex",flexDirection:"column",gap:10,maxWidth:600}}>
+          {/* "Grayed-out time is when someone's busy" (below) used to be the
+              only explanation offered -- a friend who never turned on
+              "Share my free/busy time" just showed as a plain empty
+              calendar, indistinguishable from a friend who shared it and
+              happens to be totally free. This names exactly who hasn't
+              shared, so an empty-looking overlay reads as "waiting on
+              them" instead of "this doesn't work." */}
+          {gsSelected.filter(uid=>!gsSharedUids.has(uid)).length>0&&(
+            <div style={{fontSize:10.5,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:8,padding:"7px 10px",lineHeight:1.4}}>
+              {gsSelected.filter(uid=>!gsSharedUids.has(uid)).map(uid=>gsMemberNames[uid]||"This friend").join(", ")}
+              {gsSelected.filter(uid=>!gsSharedUids.has(uid)).length===1?" hasn't":" haven't"} turned on sharing their free/busy time yet, so their calendar can't show as busy here — you'll only see your own schedule for {gsSelected.filter(uid=>!gsSharedUids.has(uid)).length===1?"them":"those friends"}.
+            </div>
+          )}
           {/* Every window findSharedStudyWindow found (up to 3), not just the
               top pick -- same reference data ChatDrawer's own "Find Shared
               Study Window" flow already lists, adapted to this panel's

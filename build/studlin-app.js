@@ -3050,10 +3050,12 @@ async function unpublishBusyWindows() {
 }
 async function fetchFriendsBusyIntervals(otherUids) {
   const byDate = /* @__PURE__ */ new Map();
+  const sharedUids = /* @__PURE__ */ new Set();
   await Promise.all(otherUids.map(async (uid) => {
     try {
       const doc = await fsdb().collection("busyWindows").doc(uid).get();
       if (!doc.exists) return;
+      sharedUids.add(uid);
       const data = doc.data();
       (data.intervals || []).forEach((iv) => {
         if (!byDate.has(iv.date)) byDate.set(iv.date, []);
@@ -3062,7 +3064,7 @@ async function fetchFriendsBusyIntervals(otherUids) {
     } catch (e) {
     }
   }));
-  return byDate;
+  return { byDate, sharedUids };
 }
 async function createSharedProject(ownerUid, ownerName, collaboratorUids, collaboratorNames, project) {
   const memberUids = [ownerUid, ...collaboratorUids];
@@ -3092,7 +3094,7 @@ async function acceptSharedProject(projectDoc, myUid) {
   const routines = getWeeklyRoutine();
   const prefs = getSchedulePreferences();
   const otherAcceptedUids = Object.entries(projectDoc.participants || {}).filter(([uid, p]) => uid !== myUid && p && p.state === "accepted").map(([uid]) => uid);
-  const busyByDate = otherAcceptedUids.length > 0 ? await fetchFriendsBusyIntervals(otherAcceptedUids) : /* @__PURE__ */ new Map();
+  const busyByDate = otherAcceptedUids.length > 0 ? (await fetchFriendsBusyIntervals(otherAcceptedUids)).byDate : /* @__PURE__ */ new Map();
   const syntheticBusy = [];
   busyByDate.forEach((intervals, date) => intervals.forEach((iv) => {
     syntheticBusy.push({ id: "shproj-busy-" + date + "-" + iv.s, date, time: minutesToTime(iv.s), duration: iv.e - iv.s, kind: "busy block", status: "pending" });
@@ -9247,7 +9249,7 @@ async function findSharedStudyWindow(myUid, otherUids, params) {
   const EVENING_START = 18 * 60;
   const isFree = (occupied, start, end) => !occupied.some((o) => !(end <= o.s || start >= o.e));
   const labelFor = (offset, d) => offset === 1 ? "tomorrow" : d.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
-  const friendsBusy = await fetchFriendsBusyIntervals(otherUids.filter((u) => u !== myUid));
+  const { byDate: friendsBusy } = await fetchFriendsBusyIntervals(otherUids.filter((u) => u !== myUid));
   const candidates = [];
   for (let offset = 1; offset <= scanDays; offset++) {
     const d = new Date(today);
@@ -13241,6 +13243,7 @@ function CalendarTab({ setActive = () => {
   const [gsMemberUids, setGsMemberUids] = useState([]);
   const [gsMemberNames, setGsMemberNames] = useState({});
   const [gsBusyByDate, setGsBusyByDate] = useState({});
+  const [gsSharedUids, setGsSharedUids] = useState(/* @__PURE__ */ new Set());
   const [gsRecommended, setGsRecommended] = useState(null);
   const [gsRecommendedOptions, setGsRecommendedOptions] = useState([]);
   const [gsDraft, setGsDraft] = useState(null);
@@ -13977,6 +13980,7 @@ function CalendarTab({ setActive = () => {
     setGsMemberUids([]);
     setGsMemberNames({});
     setGsBusyByDate({});
+    setGsSharedUids(/* @__PURE__ */ new Set());
     setGsRecommended(null);
     setGsRecommendedOptions([]);
     setGsDraft(null);
@@ -14025,12 +14029,13 @@ function CalendarTab({ setActive = () => {
     setGsRoomId(roomId);
     setGsMemberUids(memberUids);
     setGsMemberNames(memberNames);
-    const friendsBusy = await fetchFriendsBusyIntervals(gsSelected);
+    const { byDate: friendsBusy, sharedUids } = await fetchFriendsBusyIntervals(gsSelected);
     const busyObj = {};
     friendsBusy.forEach((intervals, date) => {
       busyObj[date] = intervals;
     });
     setGsBusyByDate(busyObj);
+    setGsSharedUids(sharedUids);
     const rec = await findSharedStudyWindow(myUid, gsSelected, { timeMode: "anytime", lookAheadDayRange: 7, durationInMinutes: 60 });
     const opts = rec.noneFound ? [] : rec.options;
     setGsRecommendedOptions(opts);
@@ -15649,7 +15654,7 @@ Examples:
       footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeGroupSchedule }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: confirmGsPeople, disabled: gsSelected.length === 0 || gsLoading }, gsLoading ? "\u2026" : "Continue"))
     },
     gsLoading ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "Loading your friends\u2026") : gsCandidates.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "No friends yet -- add some in Studlin Network first.") : /* @__PURE__ */ React.createElement(React.Fragment, null, gsCandidates.length > 5 && /* @__PURE__ */ React.createElement(Input, { value: gsSearchQuery, onChange: (e) => setGsSearchQuery(e.target.value), placeholder: "Search friends", style: { marginBottom: 10, width: "100%" } }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, gsCandidates.filter((c) => c.name.toLowerCase().includes(gsSearchQuery.trim().toLowerCase())).map((c) => /* @__PURE__ */ React.createElement("label", { key: c.uid, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 8, border: `1px solid ${T.border}`, cursor: "pointer", background: gsSelected.includes(c.uid) ? T.card2 : "transparent" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: gsSelected.includes(c.uid), onChange: () => toggleGsSelected(c.uid), style: { cursor: "pointer" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text } }, c.name))), gsSearchQuery.trim() && gsCandidates.filter((c) => c.name.toLowerCase().includes(gsSearchQuery.trim().toLowerCase())).length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, 'No friends match "', gsSearchQuery.trim(), '".')))
-  ), gsOpen && gsStep === "place" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 70, background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10, maxWidth: 600 } }, gsRecommendedOptions.length > 1 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, whiteSpace: "nowrap" } }, "Found ", gsRecommendedOptions.length, " windows that work:"), gsRecommendedOptions.map((o, i) => {
+  ), gsOpen && gsStep === "place" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 70, background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10, maxWidth: 600 } }, gsSelected.filter((uid) => !gsSharedUids.has(uid)).length > 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.amber, background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 8, padding: "7px 10px", lineHeight: 1.4 } }, gsSelected.filter((uid) => !gsSharedUids.has(uid)).map((uid) => gsMemberNames[uid] || "This friend").join(", "), gsSelected.filter((uid) => !gsSharedUids.has(uid)).length === 1 ? " hasn't" : " haven't", " turned on sharing their free/busy time yet, so their calendar can't show as busy here \u2014 you'll only see your own schedule for ", gsSelected.filter((uid) => !gsSharedUids.has(uid)).length === 1 ? "them" : "those friends", "."), gsRecommendedOptions.length > 1 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, whiteSpace: "nowrap" } }, "Found ", gsRecommendedOptions.length, " windows that work:"), gsRecommendedOptions.map((o, i) => {
     const active = gsRecommended && gsRecommended.date === o.date && gsRecommended.time === o.time;
     return /* @__PURE__ */ React.createElement(
       "button",
