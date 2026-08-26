@@ -7859,7 +7859,7 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
 }
 
 // ─── NAV ICONS MAP ────────────────────────────────────────────────────────────
-const navIcon = {dashboard:Icon.grid,prep:Icon.brain,writestudio:Icon.pen,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,notepad:Icon.pen,calendar:Icon.cal,friends:Icon.users,lectures:Icon.mic,solve:Icon.zap,grammar:Icon.check,humanizer:Icon.scan,feedback:Icon.heart,settings:Icon.settings,profile:Icon.user};
+const navIcon = {dashboard:Icon.grid,prep:Icon.brain,writestudio:Icon.pen,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,calendar:Icon.cal,friends:Icon.users,lectures:Icon.mic,solve:Icon.zap,grammar:Icon.check,humanizer:Icon.scan,feedback:Icon.heart,settings:Icon.settings,profile:Icon.user};
 
 // ─── AI CHAT (removed -- see Phase 2 of the Magic-Calendar plan; Studlin AI
 // is no longer a standalone chat surface, AI now shows up embedded in the
@@ -21557,7 +21557,16 @@ function loadPlannerPages(){
   if(Array.isArray(pages)&&pages.length>0)return pages;
   return [newPlannerPage()];
 }
-function PlannerNotepad({setActive=()=>{}}){
+// Powers the quiet dot on the FAB (see App) -- true when anything written
+// anywhere in the notebook hasn't been sorted into the plan yet. Reads
+// straight from storage rather than component state since the FAB lives
+// outside PlannerNotepad and only mounts the drawer while it's open.
+function plannerNotebookHasUnsorted(){
+  const pages=lsGet("plannerNotepadPages",null);
+  if(!Array.isArray(pages))return false;
+  return pages.some(p=>p&&p.text&&p.text.slice(p.scannedLen||0).trim());
+}
+function PlannerNotepad({setActive=()=>{},onClose=()=>{}}){
   const [pages,setPages]=useState(loadPlannerPages);
   const [activeIdx,setActiveIdx]=useState(()=>Math.max(0,loadPlannerPages().length-1));
   const [showIntro,setShowIntro]=useState(()=>!lsGet(PLANNER_OPENED_KEY,false));
@@ -21569,6 +21578,7 @@ function PlannerNotepad({setActive=()=>{}}){
   const recRef=useRef(null);
   const trackRef=useRef(null);
   const splitTimer=useRef(null);
+  const textareaRef=useRef(null);
 
   useEffect(()=>{lsSet("plannerNotepadPages",pages);},[pages]);
   useEffect(()=>{
@@ -21577,6 +21587,24 @@ function PlannerNotepad({setActive=()=>{}}){
     return ()=>clearTimeout(t);
   },[showIntro]);
   useEffect(()=>()=>{if(recRef.current)recRef.current.stop();},[]);
+  // This only ever mounts as a just-opened drawer now (see App's FAB) --
+  // land the cursor in it immediately so opening it and typing is one
+  // motion, not open-then-click. Waits out the one-time intro animation
+  // first so focus doesn't fire on a textarea that isn't rendered yet.
+  useEffect(()=>{
+    if(showIntro)return;
+    const t=setTimeout(()=>textareaRef.current&&textareaRef.current.focus(),0);
+    return ()=>clearTimeout(t);
+  },[showIntro]);
+  useEffect(()=>{
+    // The delete-confirm Modal doesn't own Escape itself (the shared Modal
+    // component never does -- see its own file), so without this guard
+    // Escape would blow straight through the confirm dialog and close the
+    // whole drawer underneath it instead of just dismissing the confirm.
+    const onKey=(e)=>{if(e.key!=="Escape")return;if(deleteConfirm){setDeleteConfirm(false);return;}onClose();};
+    window.addEventListener("keydown",onKey);
+    return ()=>window.removeEventListener("keydown",onKey);
+  },[onClose,deleteConfirm]);
 
   const activeIdxSafe=Math.min(activeIdx,pages.length-1);
   const page=pages[activeIdxSafe];
@@ -21683,12 +21711,16 @@ function PlannerNotepad({setActive=()=>{}}){
   const shownIdx=dragIdx!=null?dragIdx:activeIdxSafe;
 
   return (
-    <div style={{maxWidth:640,margin:"0 auto",padding:"24px 20px 60px"}}>
-      <div style={{marginBottom:18}}>
-        <h2 style={{fontSize:20,fontWeight:700,color:T.text,margin:0}}>Notepad</h2>
-        <div style={{fontSize:12.5,color:T.muted,marginTop:3}}>Write it all down. Sort it into your plan whenever you're ready.</div>
+    <div style={{height:"100%",display:"flex",flexDirection:"column",padding:"18px 20px",boxSizing:"border-box"}}>
+      <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:18,flexShrink:0}}>
+        <div>
+          <h2 style={{fontSize:18,fontWeight:700,color:T.text,margin:0}}>Notepad</h2>
+          <div style={{fontSize:12.5,color:T.muted,marginTop:3}}>Write it all down. Sort it into your plan whenever you're ready.</div>
+        </div>
+        <button type="button" onClick={onClose} title="Close" style={{width:28,height:28,flexShrink:0,borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,lineHeight:1}}>×</button>
       </div>
 
+      <div style={{flex:1,overflowY:"auto",minHeight:0}}>
       {showIntro?(
         <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:12,padding:"60px 20px",textAlign:"center",animation:"plannerIntroOpen 0.9s cubic-bezier(.2,.8,.2,1)"}}>
           <div style={{width:16,height:16,margin:"0 auto"}}>{Icon.pen}</div>
@@ -21708,11 +21740,12 @@ function PlannerNotepad({setActive=()=>{}}){
                 </div>
               )}
               <div style={{position:"relative"}}>
-                <Textarea
+                <textarea
+                  ref={textareaRef}
                   placeholder="e.g. Chem homework due Friday, need to email my counselor, gym at 6..."
                   value={unscanned}
                   onChange={e=>setUnscannedText(e.target.value)}
-                  style={{minHeight:220,border:"none",background:"transparent",padding:0,paddingRight:36,fontSize:14,lineHeight:1.6}}
+                  style={{width:"100%",boxSizing:"border-box",color:T.text,fontFamily:T.font,outline:"none",resize:"vertical",minHeight:220,border:"none",background:"transparent",padding:0,paddingRight:36,fontSize:14,lineHeight:1.6}}
                 />
                 <button type="button" onClick={listening?stopRec:startRec} title={listening?"Stop listening":"Speak instead of typing"}
                   style={{position:"absolute",right:2,bottom:2,width:28,height:28,borderRadius:"50%",border:"none",background:listening?T.red:T.lime,color:listening?"#fff":T.ink,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center"}}>
@@ -21745,8 +21778,9 @@ function PlannerNotepad({setActive=()=>{}}){
           </div>
         </>
       )}
+      </div>
 
-      {toast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 16px",fontSize:12.5,color:T.text,boxShadow:"0 8px 24px -8px rgba(0,0,0,0.35)",zIndex:60}}>{toast}</div>}
+      {toast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 16px",fontSize:12.5,color:T.text,boxShadow:"0 8px 24px -8px rgba(0,0,0,0.35)",zIndex:80}}>{toast}</div>}
 
       <Modal open={deleteConfirm} onClose={()=>setDeleteConfirm(false)} title="Delete this page?" sub="This can't be undone." width={380}
         footer={<><Btn variant="subtle" onClick={()=>setDeleteConfirm(false)}>Cancel</Btn><Btn variant="danger" onClick={deleteActivePage} style={{flex:1,justifyContent:"center"}}>Delete page</Btn></>}>
@@ -30037,6 +30071,10 @@ function App() {
     setPendingBeginTask(null);
   };
   const [creditsOpen,setCreditsOpen]=useState(false);
+  // Planner Notepad is a floating quick-capture drawer, not a nav
+  // destination -- it never occupies `active`, it just overlays whatever
+  // tab is already open (see the FAB + drawer siblings of [data-page] below).
+  const [plannerOpen,setPlannerOpen]=useState(false);
   const [pricingOpen,setPricingOpenRaw]=useState(false);
   // checkout.html already has a working Monthly/Annual toggle with a
   // "Save 29%" badge -- this modal (PlanCards' billing prop was already
@@ -30665,7 +30703,6 @@ function App() {
     {label:"Home",items:[
       {id:"dashboard",label:"Dashboard"},
       {id:"calendar",label:"Calendar"},
-      {id:"notepad",label:"Notepad"},
     ]},
     {label:"Tools",items:[
       {id:"prep",label:"Studlin Prep"},
@@ -30678,7 +30715,7 @@ function App() {
     ]},
   ];
   const bottomItems=[];
-  const pages={prep:StudlinPrep,flashcards:Flashcards,notes:Notes,notepad:PlannerNotepad,calendar:CalendarTab,friends:FriendsChat,profile:Profile,feedback:FeedbackPage};
+  const pages={prep:StudlinPrep,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,profile:Profile,feedback:FeedbackPage};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
   const sidebarText=isLight?"#F6F1E6":T.text;
@@ -30844,7 +30881,6 @@ function App() {
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineCenter={openRoutineCenterOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} setActivePage={setActive} />:
            active==="calendar"?<CalendarTab setActive={setActive} onTaskSaved={handleTaskSaved} openRoutineCenterOnMount={pendingRoutineCenter} onRoutineCenterOpenedFromSettings={()=>setPendingRoutineCenter(false)} detailEventId={detailEventId} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} registerSkipSetEvents={(fn)=>{calendarSkipSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} onWizardOpenChange={setCalendarWizardOpen} jumpToSessionOnMount={pendingJumpSession} onJumpSessionConsumed={()=>setPendingJumpSession(null)} setPricingOpen={setPricingOpen} />:
            active==="notes"?<Notes setActive={setActive} />:
-           active==="notepad"?<PlannerNotepad setActive={setActive} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
            active==="profile"?<Profile setActive={setActive} seriousMode={seriousMode} />:
            active==="prep"?<StudlinPrep setActive={setActive} setDetailEventId={setDetailEventId} />:
@@ -30852,6 +30888,30 @@ function App() {
            ActivePage?<ActivePage />:null}
         </div>
       </div>
+
+      {/* PLANNER NOTEPAD — floating quick-capture, not a nav destination.
+          Sibling of [data-page] like everything else here, for the same
+          reason: position:fixed children need the real viewport as their
+          containing block, not a scrolled/animated tab container. */}
+      {!plannerOpen&&(
+        <button type="button" onClick={()=>setPlannerOpen(true)} title="Notepad"
+          style={{position:"fixed",right:24,bottom:24,width:52,height:52,borderRadius:"50%",background:T.lime,color:T.ink,border:"none",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 8px 24px -8px rgba(0,0,0,0.4)",cursor:"pointer",zIndex:55}}>
+          <span style={{width:20,height:20,display:"flex"}}>{Icon.pen}</span>
+          {plannerNotebookHasUnsorted()&&<span style={{position:"absolute",top:4,right:4,width:9,height:9,borderRadius:"50%",background:T.red,border:`2px solid ${T.bg}`}} />}
+        </button>
+      )}
+      {plannerOpen&&(
+        <>
+          <div onClick={()=>setPlannerOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",zIndex:70,animation:"plannerBackdropIn 0.18s ease"}} />
+          <div style={{position:"fixed",top:0,right:0,bottom:0,width:"min(480px,92vw)",background:T.bg,borderLeft:`1px solid ${T.border}`,zIndex:71,boxShadow:"-16px 0 32px -16px rgba(0,0,0,0.4)",animation:"plannerDrawerIn 0.22s cubic-bezier(.2,.8,.2,1)"}}>
+            <PlannerNotepad setActive={(id)=>{setPlannerOpen(false);setActive(id);}} onClose={()=>setPlannerOpen(false)} />
+          </div>
+          <style>{`
+            @keyframes plannerBackdropIn{0%{opacity:0}100%{opacity:1}}
+            @keyframes plannerDrawerIn{0%{transform:translateX(100%)}100%{transform:translateX(0)}}
+          `}</style>
+        </>
+      )}
 
       {/* DASHBOARD RESCHEDULE CONFIRM + TOAST — true sibling of [data-page],
           see the state declaration above for why. */}

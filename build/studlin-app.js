@@ -4898,7 +4898,7 @@ function UpgradeModal({ open, onClose, feature, detail, onUpgraded }) {
     document.body
   );
 }
-const navIcon = { dashboard: Icon.grid, prep: Icon.brain, writestudio: Icon.pen, essays: Icon.pen, flashcards: Icon.layers, notes: Icon.file, notepad: Icon.pen, calendar: Icon.cal, friends: Icon.users, lectures: Icon.mic, solve: Icon.zap, grammar: Icon.check, humanizer: Icon.scan, feedback: Icon.heart, settings: Icon.settings, profile: Icon.user };
+const navIcon = { dashboard: Icon.grid, prep: Icon.brain, writestudio: Icon.pen, essays: Icon.pen, flashcards: Icon.layers, notes: Icon.file, calendar: Icon.cal, friends: Icon.users, lectures: Icon.mic, solve: Icon.zap, grammar: Icon.check, humanizer: Icon.scan, feedback: Icon.heart, settings: Icon.settings, profile: Icon.user };
 async function generateFlashcardsFromText(content, context, count = 10, focus) {
   try {
     const countInstruction = count === "auto" ? "Create as many flashcards as needed to cover the key concepts in this " + context + " \u2014 typically 5 to 30. Don't pad with filler or skip real content just to hit a number." : "Create " + count + " flashcards from this " + context + ".";
@@ -13259,7 +13259,13 @@ function loadPlannerPages() {
   if (Array.isArray(pages) && pages.length > 0) return pages;
   return [newPlannerPage()];
 }
+function plannerNotebookHasUnsorted() {
+  const pages = lsGet("plannerNotepadPages", null);
+  if (!Array.isArray(pages)) return false;
+  return pages.some((p) => p && p.text && p.text.slice(p.scannedLen || 0).trim());
+}
 function PlannerNotepad({ setActive = () => {
+}, onClose = () => {
 } }) {
   const [pages, setPages] = useState(loadPlannerPages);
   const [activeIdx, setActiveIdx] = useState(() => Math.max(0, loadPlannerPages().length - 1));
@@ -13272,6 +13278,7 @@ function PlannerNotepad({ setActive = () => {
   const recRef = useRef(null);
   const trackRef = useRef(null);
   const splitTimer = useRef(null);
+  const textareaRef = useRef(null);
   useEffect(() => {
     lsSet("plannerNotepadPages", pages);
   }, [pages]);
@@ -13286,6 +13293,23 @@ function PlannerNotepad({ setActive = () => {
   useEffect(() => () => {
     if (recRef.current) recRef.current.stop();
   }, []);
+  useEffect(() => {
+    if (showIntro) return;
+    const t = setTimeout(() => textareaRef.current && textareaRef.current.focus(), 0);
+    return () => clearTimeout(t);
+  }, [showIntro]);
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== "Escape") return;
+      if (deleteConfirm) {
+        setDeleteConfirm(false);
+        return;
+      }
+      onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, deleteConfirm]);
   const activeIdxSafe = Math.min(activeIdx, pages.length - 1);
   const page = pages[activeIdxSafe];
   const isLastPage = activeIdxSafe === pages.length - 1;
@@ -13408,13 +13432,14 @@ function PlannerNotepad({ setActive = () => {
     window.addEventListener("pointerup", onUp);
   };
   const shownIdx = dragIdx != null ? dragIdx : activeIdxSafe;
-  return /* @__PURE__ */ React.createElement("div", { style: { maxWidth: 640, margin: "0 auto", padding: "24px 20px 60px" } }, /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 18 } }, /* @__PURE__ */ React.createElement("h2", { style: { fontSize: 20, fontWeight: 700, color: T.text, margin: 0 } }, "Notepad"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginTop: 3 } }, "Write it all down. Sort it into your plan whenever you're ready.")), showIntro ? /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, padding: "60px 20px", textAlign: "center", animation: "plannerIntroOpen 0.9s cubic-bezier(.2,.8,.2,1)" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 16, height: 16, margin: "0 auto" } }, Icon.pen)) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, boxShadow: "0 8px 24px -16px rgba(0,0,0,0.25)", overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { key: page.id, style: { padding: "18px 20px 14px", animation: "plannerPageFlip 0.22s ease" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: T.muted } }, fmtDateShort(page.dateKey)), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint } }, "Page ", activeIdxSafe + 1, " of ", pages.length)), scannedPrefix && /* @__PURE__ */ React.createElement("div", { style: { background: T.lime + "12", border: `1px solid ${T.lime}28`, borderRadius: 8, padding: "9px 11px", fontSize: 13.5, color: T.text, lineHeight: 1.55, whiteSpace: "pre-wrap", marginBottom: 8 } }, scannedPrefix, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: rescanPage, style: { display: "block", marginTop: 6, background: "none", border: "none", color: T.lime, fontSize: 10.5, fontWeight: 600, cursor: "pointer", fontFamily: T.font, padding: 0 } }, "Already sorted \u2014 rescan this page")), /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(
-    Textarea,
+  return /* @__PURE__ */ React.createElement("div", { style: { height: "100%", display: "flex", flexDirection: "column", padding: "18px 20px", boxSizing: "border-box" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 18, flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { style: { fontSize: 18, fontWeight: 700, color: T.text, margin: 0 } }, "Notepad"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginTop: 3 } }, "Write it all down. Sort it into your plan whenever you're ready.")), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onClose, title: "Close", style: { width: 28, height: 28, flexShrink: 0, borderRadius: 8, border: `1px solid ${T.border}`, background: T.card2, color: T.muted, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, lineHeight: 1 } }, "\xD7")), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, overflowY: "auto", minHeight: 0 } }, showIntro ? /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, padding: "60px 20px", textAlign: "center", animation: "plannerIntroOpen 0.9s cubic-bezier(.2,.8,.2,1)" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 16, height: 16, margin: "0 auto" } }, Icon.pen)) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, boxShadow: "0 8px 24px -16px rgba(0,0,0,0.25)", overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { key: page.id, style: { padding: "18px 20px 14px", animation: "plannerPageFlip 0.22s ease" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: T.muted } }, fmtDateShort(page.dateKey)), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint } }, "Page ", activeIdxSafe + 1, " of ", pages.length)), scannedPrefix && /* @__PURE__ */ React.createElement("div", { style: { background: T.lime + "12", border: `1px solid ${T.lime}28`, borderRadius: 8, padding: "9px 11px", fontSize: 13.5, color: T.text, lineHeight: 1.55, whiteSpace: "pre-wrap", marginBottom: 8 } }, scannedPrefix, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: rescanPage, style: { display: "block", marginTop: 6, background: "none", border: "none", color: T.lime, fontSize: 10.5, fontWeight: 600, cursor: "pointer", fontFamily: T.font, padding: 0 } }, "Already sorted \u2014 rescan this page")), /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(
+    "textarea",
     {
+      ref: textareaRef,
       placeholder: "e.g. Chem homework due Friday, need to email my counselor, gym at 6...",
       value: unscanned,
       onChange: (e) => setUnscannedText(e.target.value),
-      style: { minHeight: 220, border: "none", background: "transparent", padding: 0, paddingRight: 36, fontSize: 14, lineHeight: 1.6 }
+      style: { width: "100%", boxSizing: "border-box", color: T.text, fontFamily: T.font, outline: "none", resize: "vertical", minHeight: 220, border: "none", background: "transparent", padding: 0, paddingRight: 36, fontSize: 14, lineHeight: 1.6 }
     }
   ), /* @__PURE__ */ React.createElement(
     "button",
@@ -13445,7 +13470,7 @@ function PlannerNotepad({ setActive = () => {
       style: { width: 32, height: 32, borderRadius: 8, border: `1px solid ${T.border}`, background: T.card2, color: activeIdxSafe === pages.length - 1 ? T.faint : T.text, cursor: activeIdxSafe === pages.length - 1 ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }
     },
     "\u203A"
-  )), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 14 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addPage, style: { background: "none", border: "none", color: T.muted, fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: T.font, padding: 0 } }, "+ New page"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setDeleteConfirm(true), style: { background: "none", border: "none", color: T.muted, fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: T.font, padding: 0 } }, "Delete this page")), /* @__PURE__ */ React.createElement(Btn, { onClick: sortPage, disabled: !unscanned.trim(), style: { opacity: unscanned.trim() ? 1 : 0.45 } }, "Sort this page \u2192"))), toast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 16px", fontSize: 12.5, color: T.text, boxShadow: "0 8px 24px -8px rgba(0,0,0,0.35)", zIndex: 60 } }, toast), /* @__PURE__ */ React.createElement(
+  )), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 14 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addPage, style: { background: "none", border: "none", color: T.muted, fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: T.font, padding: 0 } }, "+ New page"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setDeleteConfirm(true), style: { background: "none", border: "none", color: T.muted, fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: T.font, padding: 0 } }, "Delete this page")), /* @__PURE__ */ React.createElement(Btn, { onClick: sortPage, disabled: !unscanned.trim(), style: { opacity: unscanned.trim() ? 1 : 0.45 } }, "Sort this page \u2192")))), toast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 16px", fontSize: 12.5, color: T.text, boxShadow: "0 8px 24px -8px rgba(0,0,0,0.35)", zIndex: 80 } }, toast), /* @__PURE__ */ React.createElement(
     Modal,
     {
       open: deleteConfirm,
@@ -18610,6 +18635,7 @@ function App() {
     setPendingBeginTask(null);
   };
   const [creditsOpen, setCreditsOpen] = useState(false);
+  const [plannerOpen, setPlannerOpen] = useState(false);
   const [pricingOpen, setPricingOpenRaw] = useState(false);
   const [pricingBilling, setPricingBilling] = useState("monthly");
   const [pricingReason, setPricingReason] = useState("");
@@ -19007,8 +19033,7 @@ function App() {
   const navSections = [
     { label: "Home", items: [
       { id: "dashboard", label: "Dashboard" },
-      { id: "calendar", label: "Calendar" },
-      { id: "notepad", label: "Notepad" }
+      { id: "calendar", label: "Calendar" }
     ] },
     { label: "Tools", items: [
       { id: "prep", label: "Studlin Prep" },
@@ -19021,7 +19046,7 @@ function App() {
     ] }
   ];
   const bottomItems = [];
-  const pages = { prep: StudlinPrep, flashcards: Flashcards, notes: Notes, notepad: PlannerNotepad, calendar: CalendarTab, friends: FriendsChat, profile: Profile, feedback: FeedbackPage };
+  const pages = { prep: StudlinPrep, flashcards: Flashcards, notes: Notes, calendar: CalendarTab, friends: FriendsChat, profile: Profile, feedback: FeedbackPage };
   const ActivePage = pages[active];
   const isLight = T.mode === "light";
   const sidebarText = isLight ? "#F6F1E6" : T.text;
@@ -19081,7 +19106,23 @@ function App() {
     calendarSetEventsRef.current = fn;
   }, registerSkipSetEvents: (fn) => {
     calendarSkipSetEventsRef.current = fn;
-  }, onTaskCompleted: handleTaskCompleted, catchUpPending: !!catchUpBanner, onWizardOpenChange: setCalendarWizardOpen, jumpToSessionOnMount: pendingJumpSession, onJumpSessionConsumed: () => setPendingJumpSession(null), setPricingOpen }) : active === "notes" ? /* @__PURE__ */ React.createElement(Notes, { setActive }) : active === "notepad" ? /* @__PURE__ */ React.createElement(PlannerNotepad, { setActive }) : active === "friends" ? /* @__PURE__ */ React.createElement(FriendsChat, { onFriendRequestSent: askNotifIfNeeded, onActiveChatChange: setOpenChatRoomId, initialTarget: pendingChatTarget, onInitialTargetConsumed: () => setPendingChatTarget(null) }) : active === "profile" ? /* @__PURE__ */ React.createElement(Profile, { setActive, seriousMode }) : active === "prep" ? /* @__PURE__ */ React.createElement(StudlinPrep, { setActive, setDetailEventId }) : active === "flashcards" ? /* @__PURE__ */ React.createElement(Flashcards, { setActive }) : ActivePage ? /* @__PURE__ */ React.createElement(ActivePage, null) : null)), rescheduleTask && /* @__PURE__ */ React.createElement(RescheduleModal, { task: rescheduleTask, events: lsGet("events", []), onClose: () => setRescheduleTask(null), onManual: () => {
+  }, onTaskCompleted: handleTaskCompleted, catchUpPending: !!catchUpBanner, onWizardOpenChange: setCalendarWizardOpen, jumpToSessionOnMount: pendingJumpSession, onJumpSessionConsumed: () => setPendingJumpSession(null), setPricingOpen }) : active === "notes" ? /* @__PURE__ */ React.createElement(Notes, { setActive }) : active === "friends" ? /* @__PURE__ */ React.createElement(FriendsChat, { onFriendRequestSent: askNotifIfNeeded, onActiveChatChange: setOpenChatRoomId, initialTarget: pendingChatTarget, onInitialTargetConsumed: () => setPendingChatTarget(null) }) : active === "profile" ? /* @__PURE__ */ React.createElement(Profile, { setActive, seriousMode }) : active === "prep" ? /* @__PURE__ */ React.createElement(StudlinPrep, { setActive, setDetailEventId }) : active === "flashcards" ? /* @__PURE__ */ React.createElement(Flashcards, { setActive }) : ActivePage ? /* @__PURE__ */ React.createElement(ActivePage, null) : null)), !plannerOpen && /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: () => setPlannerOpen(true),
+      title: "Notepad",
+      style: { position: "fixed", right: 24, bottom: 24, width: 52, height: 52, borderRadius: "50%", background: T.lime, color: T.ink, border: "none", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 8px 24px -8px rgba(0,0,0,0.4)", cursor: "pointer", zIndex: 55 }
+    },
+    /* @__PURE__ */ React.createElement("span", { style: { width: 20, height: 20, display: "flex" } }, Icon.pen),
+    plannerNotebookHasUnsorted() && /* @__PURE__ */ React.createElement("span", { style: { position: "absolute", top: 4, right: 4, width: 9, height: 9, borderRadius: "50%", background: T.red, border: `2px solid ${T.bg}` } })
+  ), plannerOpen && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: () => setPlannerOpen(false), style: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 70, animation: "plannerBackdropIn 0.18s ease" } }), /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 0, right: 0, bottom: 0, width: "min(480px,92vw)", background: T.bg, borderLeft: `1px solid ${T.border}`, zIndex: 71, boxShadow: "-16px 0 32px -16px rgba(0,0,0,0.4)", animation: "plannerDrawerIn 0.22s cubic-bezier(.2,.8,.2,1)" } }, /* @__PURE__ */ React.createElement(PlannerNotepad, { setActive: (id) => {
+    setPlannerOpen(false);
+    setActive(id);
+  }, onClose: () => setPlannerOpen(false) })), /* @__PURE__ */ React.createElement("style", null, `
+            @keyframes plannerBackdropIn{0%{opacity:0}100%{opacity:1}}
+            @keyframes plannerDrawerIn{0%{transform:translateX(100%)}100%{transform:translateX(0)}}
+          `)), rescheduleTask && /* @__PURE__ */ React.createElement(RescheduleModal, { task: rescheduleTask, events: lsGet("events", []), onClose: () => setRescheduleTask(null), onManual: () => {
     setActive("calendar");
     setPendingJumpSession(rescheduleTask);
   }, commit: (next, evictedCount) => {
