@@ -13125,7 +13125,7 @@ function resolveCalendarHighlightFlag(flag, nowMs) {
   return flag.ids;
 }
 function CalendarTab({ setActive = () => {
-}, onTaskSaved, openRoutineCenterOnMount, onRoutineCenterOpenedFromSettings, setDetailEventId, registerSetEvents, registerSkipSetEvents, onTaskCompleted, catchUpPending, onWizardOpenChange, jumpToSessionOnMount, onJumpSessionConsumed, setPricingOpen = () => {
+}, onTaskSaved, openRoutineCenterOnMount, onRoutineCenterOpenedFromSettings, detailEventId, setDetailEventId, registerSetEvents, registerSkipSetEvents, onTaskCompleted, catchUpPending, onWizardOpenChange, jumpToSessionOnMount, onJumpSessionConsumed, setPricingOpen = () => {
 } } = {}) {
   const [userSubjects, setUserSubjectsState] = useState(() => getSubjects());
   const SUBJ = [{ value: "None", label: "None", color: T.lime }, ...userSubjects.map((s) => ({ value: s.label, label: s.label, color: s.color })), { value: "Other", label: "Other", color: T.lime }];
@@ -13371,6 +13371,12 @@ function CalendarTab({ setActive = () => {
   const [brainDumpText, setBrainDumpText] = useState("");
   const [brainDumpLoading, setBrainDumpLoading] = useState(false);
   const [brainDumpReview, setBrainDumpReview] = useState(null);
+  const [bdExpanding, setBdExpanding] = useState(null);
+  useEffect(() => {
+    if (!bdExpanding || detailEventId !== null) return;
+    setBrainDumpReview((r) => r ? { ...r, items: r.items.filter((x) => x.id !== bdExpanding.reviewItemId) } : r);
+    setBdExpanding(null);
+  }, [detailEventId]);
   const [bdListening, setBdListening] = useState(false);
   const [bdMicError, setBdMicError] = useState("");
   const bdRecRef = useRef(null);
@@ -14559,6 +14565,14 @@ function CalendarTab({ setActive = () => {
       setDeadlineToast((unplaced.length === 1 ? "1 item" : unplaced.length + " items") + " didn't have room on the calendar \u2014 added as a to-do instead.");
       setTimeout(() => setDeadlineToast(""), 3200);
     }
+  };
+  const expandBrainDumpItem = (it) => {
+    const prefs = getSchedulePreferences();
+    const { tasks } = planBrainDumpTasks([it], events, routines, prefs);
+    if (tasks.length === 0) return;
+    commitTasks(tasks);
+    setBdExpanding({ reviewItemId: it.id, committedId: tasks[0].id });
+    setDetailEventId(tasks[0].id);
   };
   const saveToRoutineFromForm = () => {
     const d = /* @__PURE__ */ new Date(evDate + "T00:00:00");
@@ -15960,7 +15974,15 @@ Examples:
         placeholder: "A sentence or two on what this project actually involves...",
         style: { width: "100%", background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: "7px 9px", color: T.text, fontSize: 11.5, fontFamily: T.font, outline: "none", resize: "vertical", boxSizing: "border-box" }
       }
-    ), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setBrainDumpReview((r) => ({ ...r, items: r.items.map((x, xi) => xi === i ? { ...x, detailOpen: false } : x) })), style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline", alignSelf: "flex-start" } }, "Collapse")) : /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setBrainDumpReview((r) => ({ ...r, items: r.items.map((x, xi) => xi === i ? { ...x, detailOpen: true } : x) })), style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, it.detail ? "See detail" : "+ Add detail")))))))
+    ), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setBrainDumpReview((r) => ({ ...r, items: r.items.map((x, xi) => xi === i ? { ...x, detailOpen: false } : x) })), style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline", alignSelf: "flex-start" } }, "Collapse")) : /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setBrainDumpReview((r) => ({ ...r, items: r.items.map((x, xi) => xi === i ? { ...x, detailOpen: true } : x) })), style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, it.detail ? "See detail" : "+ Add detail")), (it.kind === "study" || it.kind === "exam" || it.kind === "project") && /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        type: "button",
+        onClick: () => expandBrainDumpItem(it),
+        style: { marginTop: 10, fontSize: 11, fontWeight: 600, color: T.text, background: "none", border: `1px solid ${T.border}`, borderRadius: 7, padding: "6px 11px", cursor: "pointer", fontFamily: T.font }
+      },
+      "Add details \u2192"
+    ))))))
   ), (() => {
     const moveTaskLaterToday = (ev) => {
       const nowMins = (() => {
@@ -18740,7 +18762,7 @@ function App() {
     }, title: "Settings", style: { width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: "none", color: sidebarMuted, cursor: "pointer", borderRadius: 6, flexShrink: 0 } }, /* @__PURE__ */ React.createElement("svg", { width: "13", height: "13", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("circle", { cx: "12", cy: "12", r: "3" }), /* @__PURE__ */ React.createElement("path", { d: "M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" }))))));
   })()), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: T.bg } }, /* @__PURE__ */ React.createElement("div", { key: active, "data-page": true, onAnimationEnd: (e) => {
     e.currentTarget.style.animation = "none";
-  }, style: { flex: 1, overflowY: "auto", padding: "24px 32px", animation: "studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both", background: active === "dashboard" ? T.bg : void 0 } }, active === "dashboard" ? /* @__PURE__ */ React.createElement(Dashboard, { setActive, seriousMode, rescheduleTask, setRescheduleTask, dashToast, setDashToast, setDetailEventId, onTaskCompleted: handleTaskCompleted }) : active === "settings" ? /* @__PURE__ */ React.createElement(SettingsTab, { theme, setTheme, accent, setAccent, density, setDensity, seriousMode, setSeriousMode, onOpenRoutineCenter: openRoutineCenterOnCalendar, setScheduleSettingsOpen, setPricingOpen, setActivePage: setActive }) : active === "calendar" ? /* @__PURE__ */ React.createElement(CalendarTab, { setActive, onTaskSaved: handleTaskSaved, openRoutineCenterOnMount: pendingRoutineCenter, onRoutineCenterOpenedFromSettings: () => setPendingRoutineCenter(false), setDetailEventId, registerSetEvents: (fn) => {
+  }, style: { flex: 1, overflowY: "auto", padding: "24px 32px", animation: "studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both", background: active === "dashboard" ? T.bg : void 0 } }, active === "dashboard" ? /* @__PURE__ */ React.createElement(Dashboard, { setActive, seriousMode, rescheduleTask, setRescheduleTask, dashToast, setDashToast, setDetailEventId, onTaskCompleted: handleTaskCompleted }) : active === "settings" ? /* @__PURE__ */ React.createElement(SettingsTab, { theme, setTheme, accent, setAccent, density, setDensity, seriousMode, setSeriousMode, onOpenRoutineCenter: openRoutineCenterOnCalendar, setScheduleSettingsOpen, setPricingOpen, setActivePage: setActive }) : active === "calendar" ? /* @__PURE__ */ React.createElement(CalendarTab, { setActive, onTaskSaved: handleTaskSaved, openRoutineCenterOnMount: pendingRoutineCenter, onRoutineCenterOpenedFromSettings: () => setPendingRoutineCenter(false), detailEventId, setDetailEventId, registerSetEvents: (fn) => {
     calendarSetEventsRef.current = fn;
   }, registerSkipSetEvents: (fn) => {
     calendarSkipSetEventsRef.current = fn;

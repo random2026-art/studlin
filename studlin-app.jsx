@@ -21263,7 +21263,7 @@ function resolveCalendarHighlightFlag(flag, nowMs){
 // setPricingOpen(true)) already merged into this function's BODY cleanly,
 // so dropping this prop would leave those calls throwing on an undefined
 // setPricingOpen.
-function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRoutineCenterOpenedFromSettings,setDetailEventId,registerSetEvents,registerSkipSetEvents,onTaskCompleted,catchUpPending,onWizardOpenChange,jumpToSessionOnMount,onJumpSessionConsumed,setPricingOpen=()=>{}}={}){
+function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRoutineCenterOpenedFromSettings,detailEventId,setDetailEventId,registerSetEvents,registerSkipSetEvents,onTaskCompleted,catchUpPending,onWizardOpenChange,jumpToSessionOnMount,onJumpSessionConsumed,setPricingOpen=()=>{}}={}){
   const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
   const SUBJ=[{value:"None",label:"None",color:T.lime},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
   // Accepts either a real course id or a label, same as StudlinPrep/Notes'
@@ -21793,6 +21793,25 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const [brainDumpText,setBrainDumpText]=useState("");
   const [brainDumpLoading,setBrainDumpLoading]=useState(false);
   const [brainDumpReview,setBrainDumpReview]=useState(null); // {items:[{id,title,kind,durationMin,dueDate,dueTime,needsDuration,clarify,include}]}
+  // "Add details" (2026-08-25) -- a compact review row can't fit the full
+  // depth Add Task/Edit Task already have (Attack Block probe sessions,
+  // exam material + auto-generated study sessions, project phases/
+  // outline). Rather than rebuilding any of that a second time inside
+  // Brain Dump, expanding an item provisionally commits it for real (the
+  // exact same planBrainDumpTasks placement every other item already
+  // gets) and opens the real, completely unmodified Edit Task page on it
+  // -- same App-level setDetailEventId/EventDetailModal every other edit
+  // in the app already uses. One-way by design: once expanded, that
+  // item's fate (kept, edited further, or deleted via Edit Task's own
+  // delete) is decided for real and it drops out of the review batch --
+  // no separate "committed but maybe still pending" state to reconcile
+  // when the main "Add N to your plan" button processes what's left.
+  const [bdExpanding,setBdExpanding]=useState(null); // {reviewItemId,committedId}|null
+  useEffect(()=>{
+    if(!bdExpanding||detailEventId!==null)return;
+    setBrainDumpReview(r=>r?{...r,items:r.items.filter(x=>x.id!==bdExpanding.reviewItemId)}:r);
+    setBdExpanding(null);
+  },[detailEventId]);
   // Voice input — same SpeechRecognition pattern as the lecture-recording
   // mic elsewhere in the app, but appends onto whatever's already typed
   // instead of replacing it, since a brain dump can mix typing and talking.
@@ -23243,6 +23262,22 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       setDeadlineToast((unplaced.length===1?"1 item":unplaced.length+" items")+" didn't have room on the calendar — added as a to-do instead.");
       setTimeout(()=>setDeadlineToast(""),3200);
     }
+  };
+  // "Add details" -- see bdExpanding's own comment above for why this
+  // provisionally commits (same planBrainDumpTasks placement + commitTasks
+  // every other Brain Dump item already gets) instead of building a
+  // second, parallel deep-editing UI. tasks[0] is always the right thing
+  // to open regardless of kind: planBrainDumpTasks pushes the primary
+  // marker first in every category (the exam/project itself, ahead of any
+  // auto-generated prep sessions or the project's attack-block task), and
+  // a single-item call only ever populates exactly one category.
+  const expandBrainDumpItem=(it)=>{
+    const prefs=getSchedulePreferences();
+    const {tasks}=planBrainDumpTasks([it],events,routines,prefs);
+    if(tasks.length===0)return;
+    commitTasks(tasks);
+    setBdExpanding({reviewItemId:it.id,committedId:tasks[0].id});
+    setDetailEventId(tasks[0].id);
   };
   // Turns the current form into a recurring routine rule instead of a
   // one-off event — used when "Save to my Weekly Routine" is checked. Only
@@ -25401,6 +25436,21 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                         </button>
                       )}
                     </div>
+                  )}
+                  {/* "Add details" (2026-08-25) -- a compact review row will
+                      never fit Attack Block probe sessions, exam material +
+                      auto-generated study sessions, or a project's full
+                      phase/outline builder. Opens the real, unmodified Edit
+                      Task page instead of rebuilding any of that a second
+                      time here -- see expandBrainDumpItem/bdExpanding's own
+                      comments for why this is a one-way step (the item is
+                      added for real right when you tap this, same as
+                      finishing the whole batch would have done for it). */}
+                  {(it.kind==="study"||it.kind==="exam"||it.kind==="project")&&(
+                    <button type="button" onClick={()=>expandBrainDumpItem(it)}
+                      style={{marginTop:10,fontSize:11,fontWeight:600,color:T.text,background:"none",border:`1px solid ${T.border}`,borderRadius:7,padding:"6px 11px",cursor:"pointer",fontFamily:T.font}}>
+                      Add details →
+                    </button>
                   )}
                 </div>
               </div>
@@ -30288,7 +30338,7 @@ function App() {
         <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?T.bg:undefined}}>
           {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} setDetailEventId={setDetailEventId} onTaskCompleted={handleTaskCompleted} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineCenter={openRoutineCenterOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} setActivePage={setActive} />:
-           active==="calendar"?<CalendarTab setActive={setActive} onTaskSaved={handleTaskSaved} openRoutineCenterOnMount={pendingRoutineCenter} onRoutineCenterOpenedFromSettings={()=>setPendingRoutineCenter(false)} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} registerSkipSetEvents={(fn)=>{calendarSkipSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} onWizardOpenChange={setCalendarWizardOpen} jumpToSessionOnMount={pendingJumpSession} onJumpSessionConsumed={()=>setPendingJumpSession(null)} setPricingOpen={setPricingOpen} />:
+           active==="calendar"?<CalendarTab setActive={setActive} onTaskSaved={handleTaskSaved} openRoutineCenterOnMount={pendingRoutineCenter} onRoutineCenterOpenedFromSettings={()=>setPendingRoutineCenter(false)} detailEventId={detailEventId} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} registerSkipSetEvents={(fn)=>{calendarSkipSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} onWizardOpenChange={setCalendarWizardOpen} jumpToSessionOnMount={pendingJumpSession} onJumpSessionConsumed={()=>setPendingJumpSession(null)} setPricingOpen={setPricingOpen} />:
            active==="notes"?<Notes setActive={setActive} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
            active==="profile"?<Profile setActive={setActive} seriousMode={seriousMode} />:
