@@ -21566,7 +21566,7 @@ function plannerNotebookHasUnsorted(){
   if(!Array.isArray(pages))return false;
   return pages.some(p=>p&&p.text&&p.text.slice(p.scannedLen||0).trim());
 }
-function PlannerNotepad({setActive=()=>{},onClose=()=>{}}){
+function PlannerNotepad({setActive=()=>{},onClose=()=>{},returnTab=null}){
   const [pages,setPages]=useState(loadPlannerPages);
   const [activeIdx,setActiveIdx]=useState(()=>Math.max(0,loadPlannerPages().length-1));
   const [showIntro,setShowIntro]=useState(()=>!lsGet(PLANNER_OPENED_KEY,false));
@@ -21666,6 +21666,11 @@ function PlannerNotepad({setActive=()=>{},onClose=()=>{}}){
     setPages(prev=>prev.map((p,i)=>i===activeIdxSafe?{...p,scannedLen:p.text.length}:p));
     lsSet("pendingBrainDumpText",unscanned.trim());
     lsSet("pendingBrainDump",true);
+    // So Calendar's Brain Dump flow can drop the student back on whatever
+    // tab they were actually on once they're done (or back out), instead
+    // of leaving them stranded on Calendar -- see closeBrainDumpModal/
+    // closeBrainDumpReview.
+    if(returnTab)lsSet("pendingBrainDumpReturnTab",returnTab);
     setActive("calendar");
   };
 
@@ -21814,7 +21819,7 @@ function resolveCalendarHighlightFlag(flag, nowMs){
 // setPricingOpen(true)) already merged into this function's BODY cleanly,
 // so dropping this prop would leave those calls throwing on an undefined
 // setPricingOpen.
-function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRoutineCenterOpenedFromSettings,detailEventId,setDetailEventId,registerSetEvents,registerSkipSetEvents,onTaskCompleted,catchUpPending,onWizardOpenChange,jumpToSessionOnMount,onJumpSessionConsumed,setPricingOpen=()=>{}}={}){
+function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRoutineCenterOpenedFromSettings,detailEventId,setDetailEventId,registerSetEvents,registerSkipSetEvents,onTaskCompleted,catchUpPending,onWizardOpenChange,jumpToSessionOnMount,onJumpSessionConsumed,setPricingOpen=()=>{},setGlobalToast=()=>{}}={}){
   const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
   const SUBJ=[{value:"None",label:"None",color:T.lime},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
   // Accepts either a real course id or a label, same as StudlinPrep/Notes'
@@ -22349,6 +22354,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // to-do instead of forcing a guessed time onto it.
   const [brainDumpOpen,setBrainDumpOpen]=useState(false);
   const [brainDumpText,setBrainDumpText]=useState("");
+  // Set only when this Brain Dump run was deep-linked in from the Planner
+  // Notepad's "Sort this page" -- the tab the student was actually on
+  // before they opened the notepad, so finishing (or backing out of)
+  // Brain Dump can drop them back there instead of stranding them on
+  // Calendar. Plain in-Calendar Brain Dump usage never sets this, and
+  // stays exactly as it was: no forced navigation, no toast.
+  const [bdReturnTab,setBdReturnTab]=useState(null);
   const [brainDumpLoading,setBrainDumpLoading]=useState(false);
   const [brainDumpReview,setBrainDumpReview]=useState(null); // {items:[{id,title,kind,durationMin,dueDate,dueTime,needsDuration,clarify,include}]}
   // "Add details" (2026-08-25) -- a compact review row can't fit the full
@@ -22405,6 +22417,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // unscanned text pre-filled -- same one-shot idiom, one extra key.
     const text=lsGet("pendingBrainDumpText","");
     if(text){try{localStorage.removeItem("studlin-pendingBrainDumpText");}catch(e){}setBrainDumpText(text);}
+    const returnTab=lsGet("pendingBrainDumpReturnTab",null);
+    if(returnTab){try{localStorage.removeItem("studlin-pendingBrainDumpReturnTab");}catch(e){}setBdReturnTab(returnTab);}
     setBrainDumpOpen(true);
   },[]);
   // Same one-shot deep-link pattern as pendingBrainDump above -- set by
@@ -23676,6 +23690,19 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // parseBrainDump hoisted to module scope 2026-08-26 -- see its own
   // comment (shared now with the Planner Notepad).
   const [bdError,setBdError]=useState("");
+  // Backing out entirely (Cancel, X, backdrop) still owes a deep-linked
+  // run the same trip home as finishing one -- otherwise a student who
+  // opens the notepad, taps Sort, then changes their mind is left
+  // stranded on Calendar instead of back where they actually were.
+  const closeBrainDumpModal=()=>{
+    if(bdListening)stopBdRec();
+    setBrainDumpOpen(false);setBrainDumpText("");setBdError("");setBdMicError("");
+    if(bdReturnTab){setActive(bdReturnTab);setBdReturnTab(null);}
+  };
+  const closeBrainDumpReview=()=>{
+    setBrainDumpReview(null);
+    if(bdReturnTab){setActive(bdReturnTab);setBdReturnTab(null);}
+  };
   const submitBrainDump=async()=>{
     if(!brainDumpText.trim()||brainDumpLoading)return;
     // Brain Dump calls /api/chat (real AI cost) and had no gate at all
@@ -25748,8 +25775,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       </Modal>
 
       {/* ── BRAIN DUMP — tell Studlin everything at once instead of one task at a time ── */}
-      <Modal open={brainDumpOpen} onClose={()=>{if(bdListening)stopBdRec();setBrainDumpOpen(false);setBrainDumpText("");setBdError("");setBdMicError("");}} title="Brain dump" sub="Tell Studlin everything you need to do. It'll sort out the rest." width={560}
-        footer={<><Btn variant="subtle" onClick={()=>{if(bdListening)stopBdRec();setBrainDumpOpen(false);setBrainDumpText("");setBdError("");setBdMicError("");}}>Cancel</Btn><Btn onClick={submitBrainDump} disabled={brainDumpLoading||!brainDumpText.trim()} style={{flex:1,justifyContent:"center",opacity:brainDumpLoading?1:(!brainDumpText.trim()?0.45:1)}}>{brainDumpLoading?"Sorting it out...":"Sort it out →"}</Btn></>}>
+      <Modal open={brainDumpOpen} onClose={closeBrainDumpModal} title="Brain dump" sub="Tell Studlin everything you need to do. It'll sort out the rest." width={560}
+        footer={<><Btn variant="subtle" onClick={closeBrainDumpModal}>Cancel</Btn><Btn onClick={submitBrainDump} disabled={brainDumpLoading||!brainDumpText.trim()} style={{flex:1,justifyContent:"center",opacity:brainDumpLoading?1:(!brainDumpText.trim()?0.45:1)}}>{brainDumpLoading?"Sorting it out...":"Sort it out →"}</Btn></>}>
         <div style={{position:"relative"}}>
           <Textarea placeholder="e.g. I have chem homework, need to email my counselor about my schedule, and my bio project is due Friday..." value={brainDumpText} onChange={e=>setBrainDumpText(e.target.value)} style={{minHeight:140,paddingRight:44}} autoFocus />
           {(window.SpeechRecognition||window.webkitSpeechRecognition)&&(
@@ -25763,13 +25790,28 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       </Modal>
 
       {/* ── BRAIN DUMP REVIEW — preview-then-commit, same discipline as the syllabus review in Notes ── */}
-      <Modal open={!!brainDumpReview} onClose={()=>setBrainDumpReview(null)} title="Review your plan" sub="Studlin sorted these out. Check them before they're added." width={620}
+      <Modal open={!!brainDumpReview} onClose={closeBrainDumpReview} title="Review your plan" sub="Studlin sorted these out. Check them before they're added." width={620}
         footer={<>
-          <Btn variant="subtle" onClick={()=>setBrainDumpReview(null)}>Cancel</Btn>
+          <Btn variant="subtle" onClick={closeBrainDumpReview}>Cancel</Btn>
           <Btn disabled={!brainDumpReview||brainDumpReview.items.filter(i=>i.include).length===0} onClick={()=>{
             const included=brainDumpReview.items.filter(i=>i.include);
+            const addedCount=expandBrainDumpReviewItems(included).length;
             commitBrainDump(expandBrainDumpReviewItems(included));
             setBrainDumpReview(null);
+            // Only a deep-linked run (from Planner Notepad) snaps back --
+            // plain in-Calendar Brain Dump usage leaves you exactly where
+            // you already were, same as it always has.
+            if(bdReturnTab){
+              const tab=bdReturnTab;
+              setBdReturnTab(null);
+              setActive(tab);
+              // CalendarTab is about to unmount along with this state change
+              // if tab!=="calendar" -- placementToast lives here and would
+              // vanish with it, so this confirmation goes through the
+              // App-level toast instead, which survives the tab switch.
+              setGlobalToast(addedCount+(addedCount===1?" item":" items")+" added to your calendar");
+              setTimeout(()=>setGlobalToast(""),3200);
+            }
           }}>{"Add "+(brainDumpReview?expandBrainDumpReviewItems(brainDumpReview.items.filter(i=>i.include)).length:0)+" to your plan →"}</Btn>
         </>}>
         {brainDumpReview&&brainDumpReview.items.length===0&&(
@@ -30075,6 +30117,11 @@ function App() {
   // destination -- it never occupies `active`, it just overlays whatever
   // tab is already open (see the FAB + drawer siblings of [data-page] below).
   const [plannerOpen,setPlannerOpen]=useState(false);
+  // A Brain Dump run deep-linked in from the notepad can snap the student
+  // back to a DIFFERENT tab than the one showing this confirmation --
+  // CalendarTab's own local toast state would just unmount along with it,
+  // so this one lives at the App level instead, alongside the tab switch.
+  const [globalToast,setGlobalToast]=useState("");
   const [pricingOpen,setPricingOpenRaw]=useState(false);
   // checkout.html already has a working Monthly/Annual toggle with a
   // "Save 29%" badge -- this modal (PlanCards' billing prop was already
@@ -30879,7 +30926,7 @@ function App() {
         <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?T.bg:undefined}}>
           {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} setDetailEventId={setDetailEventId} onTaskCompleted={handleTaskCompleted} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineCenter={openRoutineCenterOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} setActivePage={setActive} />:
-           active==="calendar"?<CalendarTab setActive={setActive} onTaskSaved={handleTaskSaved} openRoutineCenterOnMount={pendingRoutineCenter} onRoutineCenterOpenedFromSettings={()=>setPendingRoutineCenter(false)} detailEventId={detailEventId} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} registerSkipSetEvents={(fn)=>{calendarSkipSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} onWizardOpenChange={setCalendarWizardOpen} jumpToSessionOnMount={pendingJumpSession} onJumpSessionConsumed={()=>setPendingJumpSession(null)} setPricingOpen={setPricingOpen} />:
+           active==="calendar"?<CalendarTab setActive={setActive} onTaskSaved={handleTaskSaved} openRoutineCenterOnMount={pendingRoutineCenter} onRoutineCenterOpenedFromSettings={()=>setPendingRoutineCenter(false)} detailEventId={detailEventId} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} registerSkipSetEvents={(fn)=>{calendarSkipSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} onWizardOpenChange={setCalendarWizardOpen} jumpToSessionOnMount={pendingJumpSession} onJumpSessionConsumed={()=>setPendingJumpSession(null)} setPricingOpen={setPricingOpen} setGlobalToast={setGlobalToast} />:
            active==="notes"?<Notes setActive={setActive} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
            active==="profile"?<Profile setActive={setActive} seriousMode={seriousMode} />:
@@ -30904,13 +30951,16 @@ function App() {
         <>
           <div onClick={()=>setPlannerOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",zIndex:70,animation:"plannerBackdropIn 0.18s ease"}} />
           <div style={{position:"fixed",top:0,right:0,bottom:0,width:"min(480px,92vw)",background:T.bg,borderLeft:`1px solid ${T.border}`,zIndex:71,boxShadow:"-16px 0 32px -16px rgba(0,0,0,0.4)",animation:"plannerDrawerIn 0.22s cubic-bezier(.2,.8,.2,1)"}}>
-            <PlannerNotepad setActive={(id)=>{setPlannerOpen(false);setActive(id);}} onClose={()=>setPlannerOpen(false)} />
+            <PlannerNotepad setActive={(id)=>{setPlannerOpen(false);setActive(id);}} onClose={()=>setPlannerOpen(false)} returnTab={active} />
           </div>
           <style>{`
             @keyframes plannerBackdropIn{0%{opacity:0}100%{opacity:1}}
             @keyframes plannerDrawerIn{0%{transform:translateX(100%)}100%{transform:translateX(0)}}
           `}</style>
         </>
+      )}
+      {globalToast&&(
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {globalToast}</div>
       )}
 
       {/* DASHBOARD RESCHEDULE CONFIRM + TOAST — true sibling of [data-page],

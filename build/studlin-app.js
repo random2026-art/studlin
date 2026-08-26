@@ -13266,7 +13266,7 @@ function plannerNotebookHasUnsorted() {
 }
 function PlannerNotepad({ setActive = () => {
 }, onClose = () => {
-} }) {
+}, returnTab = null }) {
   const [pages, setPages] = useState(loadPlannerPages);
   const [activeIdx, setActiveIdx] = useState(() => Math.max(0, loadPlannerPages().length - 1));
   const [showIntro, setShowIntro] = useState(() => !lsGet(PLANNER_OPENED_KEY, false));
@@ -13370,6 +13370,7 @@ function PlannerNotepad({ setActive = () => {
     setPages((prev) => prev.map((p, i) => i === activeIdxSafe ? { ...p, scannedLen: p.text.length } : p));
     lsSet("pendingBrainDumpText", unscanned.trim());
     lsSet("pendingBrainDump", true);
+    if (returnTab) lsSet("pendingBrainDumpReturnTab", returnTab);
     setActive("calendar");
   };
   const startRec = async () => {
@@ -13494,6 +13495,7 @@ function resolveCalendarHighlightFlag(flag, nowMs) {
 }
 function CalendarTab({ setActive = () => {
 }, onTaskSaved, openRoutineCenterOnMount, onRoutineCenterOpenedFromSettings, detailEventId, setDetailEventId, registerSetEvents, registerSkipSetEvents, onTaskCompleted, catchUpPending, onWizardOpenChange, jumpToSessionOnMount, onJumpSessionConsumed, setPricingOpen = () => {
+}, setGlobalToast = () => {
 } } = {}) {
   const [userSubjects, setUserSubjectsState] = useState(() => getSubjects());
   const SUBJ = [{ value: "None", label: "None", color: T.lime }, ...userSubjects.map((s) => ({ value: s.label, label: s.label, color: s.color })), { value: "Other", label: "Other", color: T.lime }];
@@ -13738,6 +13740,7 @@ function CalendarTab({ setActive = () => {
   const [asChecklist, setAsChecklist] = useState(false);
   const [brainDumpOpen, setBrainDumpOpen] = useState(false);
   const [brainDumpText, setBrainDumpText] = useState("");
+  const [bdReturnTab, setBdReturnTab] = useState(null);
   const [brainDumpLoading, setBrainDumpLoading] = useState(false);
   const [brainDumpReview, setBrainDumpReview] = useState(null);
   const [bdExpanding, setBdExpanding] = useState(null);
@@ -13799,6 +13802,14 @@ function CalendarTab({ setActive = () => {
       } catch (e) {
       }
       setBrainDumpText(text);
+    }
+    const returnTab = lsGet("pendingBrainDumpReturnTab", null);
+    if (returnTab) {
+      try {
+        localStorage.removeItem("studlin-pendingBrainDumpReturnTab");
+      } catch (e) {
+      }
+      setBdReturnTab(returnTab);
     }
     setBrainDumpOpen(true);
   }, []);
@@ -14834,6 +14845,24 @@ function CalendarTab({ setActive = () => {
     commitTasks([item]);
   };
   const [bdError, setBdError] = useState("");
+  const closeBrainDumpModal = () => {
+    if (bdListening) stopBdRec();
+    setBrainDumpOpen(false);
+    setBrainDumpText("");
+    setBdError("");
+    setBdMicError("");
+    if (bdReturnTab) {
+      setActive(bdReturnTab);
+      setBdReturnTab(null);
+    }
+  };
+  const closeBrainDumpReview = () => {
+    setBrainDumpReview(null);
+    if (bdReturnTab) {
+      setActive(bdReturnTab);
+      setBdReturnTab(null);
+    }
+  };
   const submitBrainDump = async () => {
     if (!brainDumpText.trim() || brainDumpLoading) return;
     if (!canUseBrainDump()) {
@@ -16226,23 +16255,11 @@ Examples:
     Modal,
     {
       open: brainDumpOpen,
-      onClose: () => {
-        if (bdListening) stopBdRec();
-        setBrainDumpOpen(false);
-        setBrainDumpText("");
-        setBdError("");
-        setBdMicError("");
-      },
+      onClose: closeBrainDumpModal,
       title: "Brain dump",
       sub: "Tell Studlin everything you need to do. It'll sort out the rest.",
       width: 560,
-      footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => {
-        if (bdListening) stopBdRec();
-        setBrainDumpOpen(false);
-        setBrainDumpText("");
-        setBdError("");
-        setBdMicError("");
-      } }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: submitBrainDump, disabled: brainDumpLoading || !brainDumpText.trim(), style: { flex: 1, justifyContent: "center", opacity: brainDumpLoading ? 1 : !brainDumpText.trim() ? 0.45 : 1 } }, brainDumpLoading ? "Sorting it out..." : "Sort it out \u2192"))
+      footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeBrainDumpModal }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: submitBrainDump, disabled: brainDumpLoading || !brainDumpText.trim(), style: { flex: 1, justifyContent: "center", opacity: brainDumpLoading ? 1 : !brainDumpText.trim() ? 0.45 : 1 } }, brainDumpLoading ? "Sorting it out..." : "Sort it out \u2192"))
     },
     /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(Textarea, { placeholder: "e.g. I have chem homework, need to email my counselor about my schedule, and my bio project is due Friday...", value: brainDumpText, onChange: (e) => setBrainDumpText(e.target.value), style: { minHeight: 140, paddingRight: 44 }, autoFocus: true }), (window.SpeechRecognition || window.webkitSpeechRecognition) && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: bdListening ? stopBdRec : startBdRec, title: bdListening ? "Stop listening" : "Speak instead of typing", style: { position: "absolute", right: 8, bottom: 8, width: 30, height: 30, borderRadius: "50%", border: "none", background: bdListening ? T.red : T.lime, color: bdListening ? "#fff" : T.ink, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" } }, bdListening ? /* @__PURE__ */ React.createElement("span", { style: { width: 10, height: 10, background: "#fff", borderRadius: 2 } }) : Icon.mic)),
     bdListening && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.red, marginTop: 6 } }, "Listening... tap the mic to stop"),
@@ -16253,14 +16270,22 @@ Examples:
     Modal,
     {
       open: !!brainDumpReview,
-      onClose: () => setBrainDumpReview(null),
+      onClose: closeBrainDumpReview,
       title: "Review your plan",
       sub: "Studlin sorted these out. Check them before they're added.",
       width: 620,
-      footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setBrainDumpReview(null) }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { disabled: !brainDumpReview || brainDumpReview.items.filter((i) => i.include).length === 0, onClick: () => {
+      footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeBrainDumpReview }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { disabled: !brainDumpReview || brainDumpReview.items.filter((i) => i.include).length === 0, onClick: () => {
         const included = brainDumpReview.items.filter((i) => i.include);
+        const addedCount = expandBrainDumpReviewItems(included).length;
         commitBrainDump(expandBrainDumpReviewItems(included));
         setBrainDumpReview(null);
+        if (bdReturnTab) {
+          const tab = bdReturnTab;
+          setBdReturnTab(null);
+          setActive(tab);
+          setGlobalToast(addedCount + (addedCount === 1 ? " item" : " items") + " added to your calendar");
+          setTimeout(() => setGlobalToast(""), 3200);
+        }
       } }, "Add " + (brainDumpReview ? expandBrainDumpReviewItems(brainDumpReview.items.filter((i) => i.include)).length : 0) + " to your plan \u2192"))
     },
     brainDumpReview && brainDumpReview.items.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", padding: "24px 0", color: T.muted, fontSize: 13 } }, "Couldn't find anything in that. Try rephrasing."),
@@ -18636,6 +18661,7 @@ function App() {
   };
   const [creditsOpen, setCreditsOpen] = useState(false);
   const [plannerOpen, setPlannerOpen] = useState(false);
+  const [globalToast, setGlobalToast] = useState("");
   const [pricingOpen, setPricingOpenRaw] = useState(false);
   const [pricingBilling, setPricingBilling] = useState("monthly");
   const [pricingReason, setPricingReason] = useState("");
@@ -19106,7 +19132,7 @@ function App() {
     calendarSetEventsRef.current = fn;
   }, registerSkipSetEvents: (fn) => {
     calendarSkipSetEventsRef.current = fn;
-  }, onTaskCompleted: handleTaskCompleted, catchUpPending: !!catchUpBanner, onWizardOpenChange: setCalendarWizardOpen, jumpToSessionOnMount: pendingJumpSession, onJumpSessionConsumed: () => setPendingJumpSession(null), setPricingOpen }) : active === "notes" ? /* @__PURE__ */ React.createElement(Notes, { setActive }) : active === "friends" ? /* @__PURE__ */ React.createElement(FriendsChat, { onFriendRequestSent: askNotifIfNeeded, onActiveChatChange: setOpenChatRoomId, initialTarget: pendingChatTarget, onInitialTargetConsumed: () => setPendingChatTarget(null) }) : active === "profile" ? /* @__PURE__ */ React.createElement(Profile, { setActive, seriousMode }) : active === "prep" ? /* @__PURE__ */ React.createElement(StudlinPrep, { setActive, setDetailEventId }) : active === "flashcards" ? /* @__PURE__ */ React.createElement(Flashcards, { setActive }) : ActivePage ? /* @__PURE__ */ React.createElement(ActivePage, null) : null)), !plannerOpen && /* @__PURE__ */ React.createElement(
+  }, onTaskCompleted: handleTaskCompleted, catchUpPending: !!catchUpBanner, onWizardOpenChange: setCalendarWizardOpen, jumpToSessionOnMount: pendingJumpSession, onJumpSessionConsumed: () => setPendingJumpSession(null), setPricingOpen, setGlobalToast }) : active === "notes" ? /* @__PURE__ */ React.createElement(Notes, { setActive }) : active === "friends" ? /* @__PURE__ */ React.createElement(FriendsChat, { onFriendRequestSent: askNotifIfNeeded, onActiveChatChange: setOpenChatRoomId, initialTarget: pendingChatTarget, onInitialTargetConsumed: () => setPendingChatTarget(null) }) : active === "profile" ? /* @__PURE__ */ React.createElement(Profile, { setActive, seriousMode }) : active === "prep" ? /* @__PURE__ */ React.createElement(StudlinPrep, { setActive, setDetailEventId }) : active === "flashcards" ? /* @__PURE__ */ React.createElement(Flashcards, { setActive }) : ActivePage ? /* @__PURE__ */ React.createElement(ActivePage, null) : null)), !plannerOpen && /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -19119,10 +19145,10 @@ function App() {
   ), plannerOpen && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: () => setPlannerOpen(false), style: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 70, animation: "plannerBackdropIn 0.18s ease" } }), /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 0, right: 0, bottom: 0, width: "min(480px,92vw)", background: T.bg, borderLeft: `1px solid ${T.border}`, zIndex: 71, boxShadow: "-16px 0 32px -16px rgba(0,0,0,0.4)", animation: "plannerDrawerIn 0.22s cubic-bezier(.2,.8,.2,1)" } }, /* @__PURE__ */ React.createElement(PlannerNotepad, { setActive: (id) => {
     setPlannerOpen(false);
     setActive(id);
-  }, onClose: () => setPlannerOpen(false) })), /* @__PURE__ */ React.createElement("style", null, `
+  }, onClose: () => setPlannerOpen(false), returnTab: active })), /* @__PURE__ */ React.createElement("style", null, `
             @keyframes plannerBackdropIn{0%{opacity:0}100%{opacity:1}}
             @keyframes plannerDrawerIn{0%{transform:translateX(100%)}100%{transform:translateX(0)}}
-          `)), rescheduleTask && /* @__PURE__ */ React.createElement(RescheduleModal, { task: rescheduleTask, events: lsGet("events", []), onClose: () => setRescheduleTask(null), onManual: () => {
+          `)), globalToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.lime, color: T.ink, fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 8 } }, Icon.check, " ", globalToast), rescheduleTask && /* @__PURE__ */ React.createElement(RescheduleModal, { task: rescheduleTask, events: lsGet("events", []), onClose: () => setRescheduleTask(null), onManual: () => {
     setActive("calendar");
     setPendingJumpSession(rescheduleTask);
   }, commit: (next, evictedCount) => {
