@@ -1971,6 +1971,22 @@ function expandRoutineOccurrences(routines,startDateKey,endDateKey){
   return out;
 }
 const getRoutineOccurrencesForDate=(dateKey)=>expandRoutineOccurrences(getWeeklyRoutine(),dateKey,dateKey);
+// Real-world "something is physically happening" items on one date, each
+// reduced to its own "Title: start–end" range -- used to give Brain Dump's
+// AI prompt actual ground truth for "right after my engineering class"
+// instead of it having to guess (or, more often, just dropping the timing
+// entirely since nothing in the brain-dumped text itself states a clock
+// time). Deliberately scoped to class/busy block/exam -- never a Studlin-
+// placed study block or due-date marker, since a student would never
+// describe "finishing" one of those the way they would a real class.
+function formatRealWorldScheduleForDate(events,routines,dateKey){
+  const isRealWorldKind=k=>k==="class"||k==="busy block"||k==="exam";
+  const routineOccs=expandRoutineOccurrences(routines,dateKey,dateKey).filter(o=>isRealWorldKind(o.kind));
+  const realEvents=(events||[]).filter(e=>e.date===dateKey&&e.time&&isRealWorldKind(e.kind));
+  return [...routineOccs,...realEvents]
+    .sort((a,b)=>a.time<b.time?-1:a.time>b.time?1:0)
+    .map(e=>e.title+": "+fmtClock12(e.time)+"–"+fmtClock12(minutesToTime(timeToMinutes(e.time)+(e.duration||30))));
+}
 // Matches a free-text phrase (e.g. "gym", "track practice") against the
 // calendar items on one date — used by Tier 3's move_event/retime_event
 // intents to resolve a student's plain-English target into a real event or
@@ -23110,14 +23126,22 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     const item={id:String(Date.now()+Math.random()*1000),title:evTitle.trim(),date:evDeadline||"",time:"",subject:subj,kind:"deadline",notes:evNotes,checklist:true,deadline:evDeadline||null,priority:5,difficulty:5,duration:0,status:"pending",timeSpent:0,completedAt:null};
     commitTasks([item]);
   };
+  // "right after I finish my engineering class today" has a real answer
+  // sitting in this student's own calendar -- see
+  // formatRealWorldScheduleForDate's own comment.
+  const todaysScheduleForBrainDump=()=>formatRealWorldScheduleForDate(events,routines,dayKey());
   // 1 credit, same as every other /api/chat call site — splits the whole
   // brain dump into items in one shot rather than one call per task. Same
   // "AI attempt, then deterministic fallback" shape as extractSyllabusDeadlines.
   const parseBrainDump=async(text)=>{
     if(!text||!text.trim())return {items:[],error:""};
     try{
+      const todaysSchedule=todaysScheduleForBrainDump();
       const prompt="A student just brain-dumped everything they need to do, in their own words, in one go. Break it into separate individual items. "+
         "Today's date is "+dayKey()+" ("+new Date().toLocaleDateString("en-US",{weekday:"long"})+"). "+
+        (todaysSchedule.length>0
+          ?"The student's REAL schedule for today (already on their calendar): "+todaysSchedule.join("; ")+". If they describe something happening right after one of these by name (e.g. \"after my engineering class\", \"once school lets out\", \"after my shift\"), match it against this list and use that item's own listed END time above as dueTime (dueDate stays today) -- never guess a time or leave it null when a real match exists. Only match a class/activity actually on this list; if nothing here fits what they described, fall back to normal date/time extraction instead of guessing. "
+          :"")+
         "For each item return: \"title\" (short, e.g. \"Chem homework\" or \"Email counselor\"), "+
         "\"kind\", one of: "+
         "\"study\" — anything that takes real focused work time in a single sitting (homework, studying, reading) — Studlin finds an open slot for it; "+

@@ -1506,6 +1506,65 @@ describe("isDuePill (regression: Day view/DayPreviewModal rendered an exam or un
   });
 });
 
+describe("formatRealWorldScheduleForDate (regression: Brain Dump's AI prompt had no way to resolve 'right after my engineering class today' to a real time -- it only ever saw the brain-dumped text itself)", () => {
+  test("formats a routine class occurrence as a Title: start–end range", () => {
+    const { formatRealWorldScheduleForDate } = loadStudlinModule();
+    // 2026-08-26 is a Wednesday -- Monday-first index 2.
+    const routines = [
+      { id: "r1", title: "Applied Engineering Computer Methods", kind: "class", days: [2], startTime: "10:00", duration: 85 },
+    ];
+    const result = formatRealWorldScheduleForDate([], routines, "2026-08-26");
+    assert.equal(result.length, 1);
+    assert.equal(result[0], "Applied Engineering Computer Methods: 10:00AM–11:25AM");
+  });
+
+  test("includes a real (non-routine) exam or busy block with a time today", () => {
+    const { formatRealWorldScheduleForDate } = loadStudlinModule();
+    const events = [
+      { id: "e1", title: "Chem Final", kind: "exam", date: "2026-08-26", time: "13:00", duration: 90 },
+      { id: "e2", title: "Dentist", kind: "busy block", date: "2026-08-26", time: "08:00", duration: 30 },
+    ];
+    const result = formatRealWorldScheduleForDate(events, [], "2026-08-26");
+    assert.equal(result.length, 2);
+    // Sorted chronologically, not insertion order.
+    assert.equal(result[0], "Dentist: 8:00AM–8:30AM");
+    assert.equal(result[1], "Chem Final: 1:00PM–2:30PM");
+  });
+
+  test("excludes a Studlin-placed study block or due-date marker -- a student would never describe 'finishing' one of those", () => {
+    const { formatRealWorldScheduleForDate } = loadStudlinModule();
+    const events = [
+      { id: "e1", title: "Chem homework", kind: "study block", date: "2026-08-26", time: "10:00", duration: 30 },
+      { id: "e2", title: "Problem Set 3", kind: "deadline", date: "2026-08-26", time: "23:59", duration: null },
+    ];
+    const result = formatRealWorldScheduleForDate(events, [], "2026-08-26");
+    assert.equal(result.length, 0);
+  });
+
+  test("excludes a routine's free period -- an open window is never something to 'finish'", () => {
+    const { formatRealWorldScheduleForDate } = loadStudlinModule();
+    const routines = [
+      { id: "r1", title: "Free Period", kind: "free", days: [2], startTime: "12:00", duration: 45 },
+    ];
+    const result = formatRealWorldScheduleForDate([], routines, "2026-08-26");
+    assert.equal(result.length, 0);
+  });
+
+  test("ignores an event on a different date and a routine not meeting that day of week", () => {
+    const { formatRealWorldScheduleForDate } = loadStudlinModule();
+    const events = [{ id: "e1", title: "Tomorrow's exam", kind: "exam", date: "2026-08-27", time: "10:00", duration: 60 }];
+    const routines = [{ id: "r1", title: "Tuesday-only class", kind: "class", days: [1], startTime: "09:00", duration: 50 }];
+    const result = formatRealWorldScheduleForDate(events, routines, "2026-08-26");
+    assert.equal(result.length, 0);
+  });
+
+  test("an empty day (no real-world items) returns an empty list, not a throw", () => {
+    const { formatRealWorldScheduleForDate } = loadStudlinModule();
+    assert.doesNotThrow(() => formatRealWorldScheduleForDate([], [], "2026-08-26"));
+    assert.equal(formatRealWorldScheduleForDate([], [], "2026-08-26").length, 0);
+  });
+});
+
 describe("Lock-In timer checkpoint + recovery (regression: a real session was lost when the tab backgrounded mid-timer with no trace)", () => {
   test("checkpointTimerSession writes a record that getTimerCheckpoint reads back", () => {
     const { checkpointTimerSession, getTimerCheckpoint } = loadStudlinModule();
