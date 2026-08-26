@@ -4270,6 +4270,7 @@ function computeClassSkipPlan(skippedIds, date) {
   return { label, moved, couldntMove: [], skipRoutine: { date, routineIds: skippedIds } };
 }
 function computeFillSuggestions(freedDate, freedTime, freedDuration) {
+  if (freedDate < dayKey()) return [];
   const nowMins = (() => {
     const n = /* @__PURE__ */ new Date();
     return n.getHours() * 60 + n.getMinutes();

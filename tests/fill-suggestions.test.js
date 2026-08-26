@@ -52,4 +52,28 @@ describe("computeFillSuggestions", () => {
     const suggestions = m.computeFillSuggestions("2026-07-29", "08:00", 60);
     assert.equal(suggestions.length, 1);
   });
+
+  // 2026-08-25 regression: deleting a stale leftover task still sitting on
+  // an EARLIER day (not just an earlier time today) offered to fill that
+  // already-past day's freed slot -- "Freed up 1h 25m at 10:00 AM on Mon,
+  // Aug 24" while it was actually Tuesday the 25th. The elapsed-time check
+  // above only ever compared same-day clock time; it never considered
+  // freedDate could be an entirely past day to begin with.
+  test("suppresses a freed slot on a day that's already fully in the past, not just an elapsed time today", () => {
+    const m = loadStudlinModule({ now: "2026-08-25T21:00:00" });
+    seedQualifyingTask(m, "2026-08-25", "12:00", 30);
+    const suggestions = m.computeFillSuggestions("2026-08-24", "10:00", 60);
+    assert.equal(suggestions.length, 0);
+  });
+
+  test("still offers a freed slot on a genuinely past day's morning if today itself is that day (not literally in the past yet)", () => {
+    // Sanity check the new freedDate<today guard doesn't overreach: TODAY's
+    // own already-elapsed check is still what governs same-day, exactly as
+    // the tests above already cover -- this just confirms the new
+    // strictly-before-today guard doesn't also swallow today itself.
+    const m = loadStudlinModule({ now: "2026-08-25T08:00:00" });
+    seedQualifyingTask(m, "2026-08-25", "14:00", 30);
+    const suggestions = m.computeFillSuggestions("2026-08-25", "10:00", 60);
+    assert.equal(suggestions.length, 1);
+  });
 });

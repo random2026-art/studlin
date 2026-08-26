@@ -6723,9 +6723,18 @@ function computeClassSkipPlan(skippedIds,date){
 // sort, not a search. Pure/no side effects — the caller decides
 // whether/how to actually place one.
 function computeFillSuggestions(freedDate,freedTime,freedDuration){
+  // A freed slot on a day that's already fully in the past (deleting a
+  // stale, never-done task still sitting on an earlier day) isn't
+  // something to fill retroactively either -- 2026-08-25 regression: this
+  // used to only check "today, but the time already elapsed," silently
+  // assuming freedDate could never actually be BEFORE today. It very much
+  // can (a Backspace/Delete on any old leftover item), and prompting "Fill
+  // 10:00 AM on Mon, Aug 24?" while it's actually Tuesday the 25th read as
+  // Studlin not knowing what day it is.
+  if(freedDate<dayKey())return [];
   // A freed slot earlier today that's already elapsed isn't something to
   // fill retroactively -- deleting an 8am task while it's actually 6pm
-  // shouldn't prompt "Fill 8:00 AM?". Only suppress for TODAY; a freed slot
+  // shouldn't prompt "Fill 8:00 AM?". Only checked for TODAY; a freed slot
   // on a future date is always still fillable regardless of the current
   // clock.
   const nowMins=(()=>{const n=new Date();return n.getHours()*60+n.getMinutes();})();
