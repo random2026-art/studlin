@@ -221,6 +221,46 @@ describe("advancedSchedulePlanner / todaysPlan (Today's Plan, regression: isFlex
   });
 });
 
+describe("effectiveTrailOutForManualPlacement (2026-08-25 regression: manual drag/drop and hand-typed-time entry no longer get bounced by the generic breathing-room cushion)", () => {
+  // Screenshot report: dragging one flexible study block to sit immediately
+  // after another flexible study block (no class, no declared commute --
+  // nothing physically requiring a gap) got silently rejected and
+  // auto-relocated elsewhere. Root cause: effectiveTrailOut's
+  // computeBreathingRoom cushion applied unconditionally to every event
+  // regardless of kind. effectiveTrailOutForManualPlacement is the
+  // manual-placement-only variant now used by moveEvent (calendar drag/drop)
+  // and resolveManualSlot (hand-typed Add Task time) -- every automated
+  // placement path (findOpenSlotFor, findLegalSlotOrNull, dayHasRoomFor,
+  // rebalanceDay, advancedSchedulePlanner, computeOccupiedIntervals,
+  // getDayOccupiedIntervals, undoTier0Move) keeps using the original
+  // effectiveTrailOut unchanged.
+  test("an ordinary flexible study block gets zero trailing cushion for manual placement", () => {
+    const { effectiveTrailOutForManualPlacement } = loadStudlinModule();
+    const flexTask = realTask({ kind: "study block", duration: 60, movable: true });
+    assert.equal(effectiveTrailOutForManualPlacement(flexTask), 0);
+  });
+
+  test("contrast: the same flexible task still gets the full breathing-room cushion for automated placement (effectiveTrailOut unchanged)", () => {
+    const { effectiveTrailOut, effectiveTrailOutForManualPlacement } = loadStudlinModule();
+    const flexTask = realTask({ kind: "study block", duration: 60, movable: true });
+    assert.ok(effectiveTrailOut(flexTask) > 0, "effectiveTrailOut must still apply breathing room for automated placement");
+    assert.equal(effectiveTrailOutForManualPlacement(flexTask), 0, "the manual-placement variant must not");
+  });
+
+  test("a real fixed event (class, not movable) still gets its full breathing-room cushion under manual placement too", () => {
+    const { effectiveTrailOut, effectiveTrailOutForManualPlacement } = loadStudlinModule();
+    const fixedClass = realTask({ kind: "class", duration: 50, movable: false });
+    assert.equal(effectiveTrailOutForManualPlacement(fixedClass), effectiveTrailOut(fixedClass));
+    assert.ok(effectiveTrailOutForManualPlacement(fixedClass) > 0);
+  });
+
+  test("a declared commuteAfter still blocks manual placement even on a flexible-kind event", () => {
+    const { effectiveTrailOutForManualPlacement } = loadStudlinModule();
+    const flexTaskWithCommute = realTask({ kind: "study block", duration: 60, movable: true, commuteAfter: 20 });
+    assert.equal(effectiveTrailOutForManualPlacement(flexTaskWithCommute), 20);
+  });
+});
+
 describe("finalizeExtractedText (study-material size cap + empty-file detection)", () => {
   test("text under the cap passes through untouched", () => {
     const { finalizeExtractedText } = loadStudlinModule();

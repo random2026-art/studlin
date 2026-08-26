@@ -2462,6 +2462,28 @@ function effectiveLeadIn(e){return (isLeadInFixed(e)?LEAD_IN_BUFFER_MINS:0)+(e.c
 // student-set, per-event `commuteAfter` on top of the existing proportional
 // breathing-room cushion, additive/backward-compatible the same way.
 function effectiveTrailOut(e){return computeBreathingRoom(e.duration||30)+(e.commuteAfter||0);}
+// Manual-placement variant of effectiveTrailOut, used ONLY by a student's
+// own explicit drag/drop (moveEvent) -- NOT by any automated placement
+// (findOpenSlotFor/findReliableSlotFor/advancedSchedulePlanner/
+// getDayOccupiedIntervals/etc, which all keep using effectiveTrailOut
+// unchanged). Real bug this fixes: computeBreathingRoom's cushion was
+// being applied after EVERY event regardless of kind, so dragging one
+// ordinary flexible study block to sit immediately after another (no
+// class, no declared commute, nothing physically requiring a gap)
+// silently got rejected and auto-relocated elsewhere -- confirmed live,
+// a student trying to place "Physics homework" right after "Organize
+// laundry" got bounced to a different time with no way to actually drop
+// it where they wanted. effectiveLeadIn needs no equivalent variant: its
+// own LEAD_IN_BUFFER_MINS component is already gated to isLeadInFixed
+// only (see its own comment), and commuteBefore/commuteAfter can only
+// ever be set on a fixed-kind item in the first place (NewEventModal
+// only exposes those fields when isFixedKind), so effectiveLeadIn is
+// already exactly right for manual placement too -- only the trailing
+// breathing-room term needed this split. A real fixed event's lead-in,
+// a real declared commute, and a genuine literal time overlap all still
+// block a manual drag exactly as before -- this only stops a *flexible*
+// event's generic breathing-room cushion from doing the same.
+function effectiveTrailOutForManualPlacement(e){return (isLeadInFixed(e)?computeBreathingRoom(e.duration||30):0)+(e.commuteAfter||0);}
 // Canonical "this item can never be automatically relocated" check --
 // isLeadInFixed's own union (TIER0_FIXED_KINDS: exam/class/busy block/
 // reminder, plus co-op sessions) union'd with truly user-pinned items.
@@ -23123,10 +23145,17 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // every other auto-shuffle path in this file.
   const resolveManualSlot=(date,time,duration)=>{
     if(evKind==="exam"||evKind==="class"||evKind==="busy block")return {date,time};
+    // effectiveTrailOutForManualPlacement (not effectiveTrailOut) -- same fix
+    // as moveEvent's drag/drop check: a hand-typed time landing with zero gap
+    // after another ordinary flexible task has nothing real (no class, no
+    // declared commute) requiring a cushion, so it shouldn't get silently
+    // bumped by the generic proportional breathing-room cushion. A real
+    // fixed event's lead-in and a genuine declared commute still block it,
+    // same as before.
     const occupied=events.filter(e=>e.date===date&&e.time)
-      .map(e=>({start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)}))
+      .map(e=>({start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOutForManualPlacement(e)}))
       .concat(expandRoutineOccurrences(routines,date,date).filter(o=>o.kind!=="free period")
-        .map(o=>({start:timeToMinutes(o.time)-(TIER0_FIXED_KINDS.has(o.kind)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(o.time)+(o.duration||30)+effectiveTrailOut(o)})));
+        .map(o=>({start:timeToMinutes(o.time)-(TIER0_FIXED_KINDS.has(o.kind)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(o.time)+(o.duration||30)+effectiveTrailOutForManualPlacement(o)})));
     const tMins=timeToMinutes(time);
     const conflict=occupied.some(o=>!(tMins+duration<=o.start||tMins>=o.end));
     return conflict?findReliableSlotFor(events,routines,getSchedulePreferences(),date,time,duration,undefined,evDifficulty):{date,time,reason:null};
@@ -23474,10 +23503,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       // existing nearest-open-slot search below relocates around both
       // uniformly, instead of a separate reject-and-explain path.
       const occupied=events.filter(e=>e.id!==id&&e.date===newDate&&e.time&&e.kind!=="free period").map(e=>({
-        start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)
+        start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOutForManualPlacement(e)
       })).concat(expandRoutineOccurrences(routines,newDate,newDate).filter(o=>o.kind!=="free period").map(o=>({
         start:timeToMinutes(o.time)-(TIER0_FIXED_KINDS.has(o.kind)?LEAD_IN_BUFFER_MINS:0),
-        end:timeToMinutes(o.time)+(o.duration||30)+effectiveTrailOut(o)
+        end:timeToMinutes(o.time)+(o.duration||30)+effectiveTrailOutForManualPlacement(o)
       })));
       const checkMins=timeToMinutes(checkTime);
       const collides=occupied.some(o=>!(checkMins+dur<=o.start||checkMins>=o.end));

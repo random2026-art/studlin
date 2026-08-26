@@ -1572,6 +1572,9 @@ function effectiveLeadIn(e) {
 function effectiveTrailOut(e) {
   return computeBreathingRoom(e.duration || 30) + (e.commuteAfter || 0);
 }
+function effectiveTrailOutForManualPlacement(e) {
+  return (isLeadInFixed(e) ? computeBreathingRoom(e.duration || 30) : 0) + (e.commuteAfter || 0);
+}
 function isFixedItem(ev) {
   return isLeadInFixed(ev) || !!ev.userPinned;
 }
@@ -14541,7 +14544,7 @@ function CalendarTab({ setActive = () => {
   };
   const resolveManualSlot = (date, time, duration) => {
     if (evKind === "exam" || evKind === "class" || evKind === "busy block") return { date, time };
-    const occupied = events.filter((e) => e.date === date && e.time).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) })).concat(expandRoutineOccurrences(routines, date, date).filter((o) => o.kind !== "free period").map((o) => ({ start: timeToMinutes(o.time) - (TIER0_FIXED_KINDS.has(o.kind) ? LEAD_IN_BUFFER_MINS : 0), end: timeToMinutes(o.time) + (o.duration || 30) + effectiveTrailOut(o) })));
+    const occupied = events.filter((e) => e.date === date && e.time).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOutForManualPlacement(e) })).concat(expandRoutineOccurrences(routines, date, date).filter((o) => o.kind !== "free period").map((o) => ({ start: timeToMinutes(o.time) - (TIER0_FIXED_KINDS.has(o.kind) ? LEAD_IN_BUFFER_MINS : 0), end: timeToMinutes(o.time) + (o.duration || 30) + effectiveTrailOutForManualPlacement(o) })));
     const tMins = timeToMinutes(time);
     const conflict = occupied.some((o) => !(tMins + duration <= o.start || tMins >= o.end));
     return conflict ? findReliableSlotFor(events, routines, getSchedulePreferences(), date, time, duration, void 0, evDifficulty) : { date, time, reason: null };
@@ -14830,10 +14833,10 @@ function CalendarTab({ setActive = () => {
       const dur = ev.duration || 30;
       const occupied = events.filter((e) => e.id !== id && e.date === newDate && e.time && e.kind !== "free period").map((e) => ({
         start: timeToMinutes(e.time) - effectiveLeadIn(e),
-        end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e)
+        end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOutForManualPlacement(e)
       })).concat(expandRoutineOccurrences(routines, newDate, newDate).filter((o) => o.kind !== "free period").map((o) => ({
         start: timeToMinutes(o.time) - (TIER0_FIXED_KINDS.has(o.kind) ? LEAD_IN_BUFFER_MINS : 0),
-        end: timeToMinutes(o.time) + (o.duration || 30) + effectiveTrailOut(o)
+        end: timeToMinutes(o.time) + (o.duration || 30) + effectiveTrailOutForManualPlacement(o)
       })));
       const checkMins = timeToMinutes(checkTime);
       const collides = occupied.some((o) => !(checkMins + dur <= o.start || checkMins >= o.end));
