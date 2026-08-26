@@ -5686,7 +5686,13 @@ function studyPlanReasoning(confidenceLevel,importanceLevel,materialCharCount,ha
 // dragging the median below what's plausible.
 function suggestDurationFor(subject,kind,difficulty,minSamples){
   const minN=minSamples||TIER0_MIN_BUCKET_SAMPLE;
-  const events=lsGet("events",[]).filter(e=>e.status==="done"&&e.timeSpent&&e.subject===subject&&e.kind===kind);
+  // isGeneralTask excluded (2026-08-25) -- a Task ("do laundry") shares
+  // kind:"study block" with a real Study Session so it can reuse the same
+  // scheduling machinery, but its timeSpent has nothing to do with how
+  // long real academic work in this subject actually takes. Without this,
+  // a subject someone occasionally tags a chore under would have its
+  // duration-learning median quietly pulled toward that chore's length.
+  const events=lsGet("events",[]).filter(e=>e.status==="done"&&e.timeSpent&&e.subject===subject&&e.kind===kind&&!e.isGeneralTask);
   if(events.length<minN)return null;
   // Quality-weight each sample by whether its own post-session check-in
   // said the time actually worked, using completionCredit -- the exact
@@ -22888,18 +22894,27 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // never asked for on the newly-picked type.
     resetTypeExtras();
   };
-  // Assignment/Project are UI-level types only, never real wire kinds --
-  // this is where they resolve to the real kind that actually gets
+  // Assignment/Project/Task are UI-level types only, never real wire kinds
+  // -- this is where they resolve to the real kind that actually gets
   // written. Assignment: AI mode always implies a real due-date concept
   // distinct from wherever the AI ends up placing it, so it's a
   // "deadline" marker; Manual mode picks an exact date/time with no
   // separate due-date concept at all, so it's a plain "study block" --
   // exactly what "study block" already meant before this type existed.
-  // Project always writes "deadline" + phases and/or outline (matches
-  // Dashboard's masterProjects/isProjectMarker filter). Attack Block bypasses this entirely
-  // (see saveManual/aiArrange) -- startAttackBlockChain hardcodes its own
+  // Task (2026-08-25, "do laundry for 30 min" doesn't read as a "Study
+  // Session") reuses the exact same scheduling/placement machinery --
+  // it's stamped isGeneralTask:true in buildTask below instead of getting
+  // its own parallel kind, so it still gets a real duration, manual-time-
+  // or-AI-placed scheduling, drag/drop, and reflow for free. Only
+  // excluded from what actually assumes "study block" means academic work
+  // -- suggestDurationFor's per-subject duration learning, and the optional
+  // exam-link picker (gated on evKind==="assignment" specifically, so it
+  // never shows for Task at all). Project always writes "deadline" +
+  // phases and/or outline (matches Dashboard's masterProjects/
+  // isProjectMarker filter). Attack Block bypasses this entirely (see
+  // saveManual/aiArrange) -- startAttackBlockChain hardcodes its own
   // "study block" kind for the actual scheduled probe session.
-  const resolveAssignmentKind=()=>evKind==="assignment"?(taskMode==="ai"?"deadline":"study block"):(evKind==="project"?"deadline":evKind);
+  const resolveAssignmentKind=()=>(evKind==="assignment"||evKind==="task")?(taskMode==="ai"?"deadline":"study block"):(evKind==="project"?"deadline":evKind);
   const buildTask=(date,time,titleSuffix,splitInfo)=>{
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
     // Split session 2+ of a Project never gets its own copy of phases/
@@ -22929,8 +22944,15 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       ...(isFixedKind&&(+evCommuteBefore>0||+evCommuteAfter>0)?{commuteBefore:Math.max(0,+evCommuteBefore||0),commuteAfter:Math.max(0,+evCommuteAfter||0)}:{}),
       // Optional exam link, Study Session only (manual-mode assignment) --
       // see evLinkedExamId's own declaration for why this is the same
-      // dueEventId every other exam-linked session already uses.
+      // dueEventId every other exam-linked session already uses. Never
+      // reachable for evKind==="task" -- the picker itself only renders
+      // for evKind==="assignment" (see its own comment), so evLinkedExamId
+      // stays null for a Task regardless.
       ...(evLinkedExamId&&resolveAssignmentKind()==="study block"?{dueEventId:evLinkedExamId}:{}),
+      // See resolveAssignmentKind's own comment -- the one thing that
+      // actually distinguishes a Task from a real Study Session under the
+      // hood, since both otherwise share the exact same kind/scheduling.
+      ...(evKind==="task"?{isGeneralTask:true}:{}),
       ...(splitInfo||{})};
   };
   const commitTasks=(newTasks,opts)=>{
@@ -24864,8 +24886,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             answers "where's Study Session as a type" with Studlin's own
             existing vocabulary instead of introducing a second, competing
             type that would also need its own resolution logic. */}
-        <Field label="Type" hint={isFixedKind?"Won't be moved or rescheduled.":evKind==="assignment"?(taskMode==="manual"?"A study session at this exact time.":"Studlin finds the time before it's due."):undefined}>
-          <SelectChip options={[{value:"assignment",label:taskMode==="manual"?"Study Session":"Assignment"},{value:"project",label:"Project"},"exam","class",{value:"busy block",label:"Activity"},"reminder"]} value={evKind} onChange={onEvKindChange} />
+        <Field label="Type" hint={isFixedKind?"Won't be moved or rescheduled.":(evKind==="assignment"||evKind==="task")?(taskMode==="manual"?(evKind==="task"?"Happens at this exact time.":"A study session at this exact time."):"Studlin finds the time before it's due."):undefined}>
+          <SelectChip options={[{value:"assignment",label:taskMode==="manual"?"Study Session":"Assignment"},{value:"task",label:"Task"},{value:"project",label:"Project"},"exam","class",{value:"busy block",label:"Activity"},"reminder"]} value={evKind} onChange={onEvKindChange} />
         </Field>
         <Field label="Subject"><SelectChip options={SUBJ} value={evSubject} onChange={setEvSubject} /></Field>
         {evSubject==="Other"&&(
@@ -25051,8 +25073,14 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             when the other was on, with nothing explaining why -- a student
             enabling Split first had no way to know why "I don't know how
             long this takes" disappeared. Each side now leaves a short note
-            in its place instead of a bare gap. */}
-        {isTaskKind&&!isChecklistMode&&(evSplitEnabled?(
+            in its place instead of a bare gap. Attack Block itself is
+            excluded for Task (2026-08-25) -- saveManual's actual Attack
+            Block handling only ever checks evKind==="assignment"/"project",
+            so showing this toggle for Task would flip a switch that
+            silently does nothing on save; a probe-session/"figure out how
+            long this really takes" flow doesn't fit a known-length chore
+            like "laundry" anyway. */}
+        {isTaskKind&&!isChecklistMode&&evKind!=="task"&&(evSplitEnabled?(
           <div style={{fontSize:11,color:T.faint,marginBottom:14}}>"I don't know how long this takes" isn't available while Split into sessions is on — turn Split off below to use it instead.</div>
         ):(<>
           <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:14}}>
@@ -28116,7 +28144,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                         due-date row gets a color cue since it's the one
                         that actually needs to stand out (nothing to click
                         Reschedule on, it's the real deadline). */}
-                    <div style={{fontSize:11,color:t.kind==="deadline"?T.amber:T.muted,marginTop:1}}>{t.subject}{t.kind==="deadline"?" · Due":t.kind==="study block"?" · Your study session":t.kind?" · "+t.kind:""}</div>
+                    <div style={{fontSize:11,color:t.kind==="deadline"?T.amber:T.muted,marginTop:1}}>{t.subject}{t.kind==="deadline"?" · Due":t.kind==="study block"?(t.isGeneralTask?" · Your task":" · Your study session"):t.kind?" · "+t.kind:""}</div>
                   </div>
                   <span style={{fontFamily:T.mono,fontSize:10,color:T.faint}}>{fmtClock(t.time)}</span>
                   {!t.done&&isTimerEligible(t)&&(

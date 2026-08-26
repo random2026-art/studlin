@@ -220,6 +220,28 @@ describe("suggestDurationFor (historical duration learning)", () => {
     assert.equal(m.suggestDurationFor("Chemistry", "study block", 100), 15, "well-sampled easy bucket should win too");
   });
 
+  // 2026-08-25: the new "Task" type (Add Task) reuses kind:"study block" so
+  // it shares the same scheduling/reflow machinery as a real Study
+  // Session, but is stamped isGeneralTask:true so it never pollutes a real
+  // subject's duration-learning median -- a subject someone occasionally
+  // tags a chore under (e.g. "return library books" under Calculus II)
+  // shouldn't have its predicted study duration quietly pulled toward
+  // that chore's length.
+  test("isGeneralTask completions are excluded from a real subject's duration median", () => {
+    const m = loadStudlinModule();
+    const realStudySessions = Array.from({ length: 8 }, (_, i) => doneSession({ id: "real-" + i, timeSpent: 30 }));
+    const choreTasks = Array.from({ length: 8 }, (_, i) => doneSession({ id: "chore-" + i, timeSpent: 5, isGeneralTask: true }));
+    m.lsSet("events", [...realStudySessions, ...choreTasks]);
+    assert.equal(m.suggestDurationFor("Chemistry", "study block"), 30, "the 5-minute chore completions must not drag the median down");
+  });
+
+  test("isGeneralTask completions alone never produce a duration suggestion, even well past the sample floor", () => {
+    const m = loadStudlinModule();
+    const choreTasks = Array.from({ length: 8 }, (_, i) => doneSession({ id: "chore-" + i, timeSpent: 20, isGeneralTask: true }));
+    m.lsSet("events", choreTasks);
+    assert.equal(m.suggestDurationFor("Chemistry", "study block"), null);
+  });
+
   describe("2026-08-20: quality-weighted by whether the check-in afterward said the time actually worked", () => {
     test("with no completionLog data at all, behaves exactly as before (every sample full weight)", () => {
       const m = loadStudlinModule();
