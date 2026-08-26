@@ -1356,7 +1356,7 @@ const getRoutineOccurrencesForDate = (dateKey) => expandRoutineOccurrences(getWe
 function formatRealWorldScheduleForDate(events, routines, dateKey) {
   const isRealWorldKind = (k) => k === "class" || k === "busy block" || k === "exam";
   const routineOccs = expandRoutineOccurrences(routines, dateKey, dateKey).filter((o) => isRealWorldKind(o.kind));
-  const realEvents = (events || []).filter((e) => e.date === dateKey && e.time && isRealWorldKind(e.kind));
+  const realEvents = (events || []).filter((e) => e.date === dateKey && e.time && !e.timeUnconfirmed && isRealWorldKind(e.kind));
   return [...routineOccs, ...realEvents].sort((a, b) => a.time < b.time ? -1 : a.time > b.time ? 1 : 0).map((e) => e.title + ": " + fmtClock12(e.time) + "\u2013" + fmtClock12(minutesToTime(timeToMinutes(e.time) + (e.duration || 30))));
 }
 function matchEventByTitle(phrase, dateKey) {
@@ -1386,7 +1386,7 @@ function getWorkWindowMinsFor(prefs, dk) {
 }
 const CATCHUP_BUFFER_MINS = 120;
 function computeOccupiedIntervals(events, routines, prefs, dateKey) {
-  return events.filter((e) => e.date === dateKey && e.time).concat(expandRoutineOccurrences(routines, dateKey, dateKey).filter((o) => o.kind !== "free period")).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) }));
+  return events.filter((e) => e.date === dateKey && e.time && !e.timeUnconfirmed).concat(expandRoutineOccurrences(routines, dateKey, dateKey).filter((o) => o.kind !== "free period")).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) }));
 }
 const BUSY_WINDOW_DAYS_AHEAD = 21;
 function computeBusyWindowsPayload(events, routines, prefs, todayKey) {
@@ -1461,7 +1461,7 @@ function findOpenSlotFor(events, routines, prefs, desiredDate, desiredTime, dura
     if (deadlineKey && dk > deadlineKey) break;
     if (isHoliday(dk)) continue;
     const { start: prefStartMins, end: prefEndMins } = getWorkWindowMinsFor(prefs, dk);
-    const occupied = events.filter((e) => e.date === dk && e.time).concat(expandRoutineOccurrences(routines, dk, dk).filter((o) => o.kind !== "free period")).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) }));
+    const occupied = events.filter((e) => e.date === dk && e.time && !e.timeUnconfirmed).concat(expandRoutineOccurrences(routines, dk, dk).filter((o) => o.kind !== "free period")).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) }));
     let scanStart = dayOffset === 0 ? Math.max(prefStartMins, timeToMinutes(desiredTime)) : prefStartMins;
     if (dk === todayKey) scanStart = Math.max(scanStart, nowFloorMins);
     if (scanStart + duration > prefEndMins) {
@@ -1488,7 +1488,7 @@ function findLegalSlotOrNull(events, routines, prefs, desiredDate, desiredTime, 
   const effectiveEnd = Math.min(1440, slot.date === dayKey() ? winEnd + CATCHUP_BUFFER_MINS : winEnd);
   const tMins = timeToMinutes(slot.time);
   if (tMins < winStart || tMins + duration > effectiveEnd) return null;
-  const occupied = events.filter((e) => e.date === slot.date && e.time).concat(expandRoutineOccurrences(routines, slot.date, slot.date).filter((o) => o.kind !== "free period")).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) }));
+  const occupied = events.filter((e) => e.date === slot.date && e.time && !e.timeUnconfirmed).concat(expandRoutineOccurrences(routines, slot.date, slot.date).filter((o) => o.kind !== "free period")).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) }));
   const conflict = occupied.some((o) => !(tMins + duration <= o.start || tMins >= o.end));
   return conflict ? null : slot;
 }
@@ -1497,7 +1497,7 @@ function dayHasRoomFor(events, routines, prefs, dateKey, duration, desiredTime) 
   const dayWindow = getWorkWindowMinsFor(prefs, dateKey);
   const prefStartMins = desiredTime ? Math.max(dayWindow.start, timeToMinutes(desiredTime)) : dayWindow.start;
   const prefEndMins = dateKey === dayKey() ? Math.min(1440, dayWindow.end + CATCHUP_BUFFER_MINS) : dayWindow.end;
-  const occupied = events.filter((e) => e.date === dateKey && e.time).concat(expandRoutineOccurrences(routines, dateKey, dateKey).filter((o) => o.kind !== "free period")).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) }));
+  const occupied = events.filter((e) => e.date === dateKey && e.time && !e.timeUnconfirmed).concat(expandRoutineOccurrences(routines, dateKey, dateKey).filter((o) => o.kind !== "free period")).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) }));
   for (let t = prefStartMins; t + duration <= prefEndMins; t += 15) {
     if (!occupied.some((o) => !(t + duration <= o.start || t >= o.end))) return true;
   }
@@ -1604,7 +1604,7 @@ function findNowConflict(events, routines, prefs, dateKey, timeStr, duration, ex
   const overlaps = (o) => !(startMins + duration <= o.start || startMins >= o.end);
   const routineHit = expandRoutineOccurrences(routines, dateKey, dateKey).filter((o) => o.kind !== "free period").map((o) => ({ title: o.title, start: timeToMinutes(o.time) - effectiveLeadInForManualPlacement(o), end: timeToMinutes(o.time) + (o.duration || 30) + effectiveTrailOutForManualPlacement(o) })).find(overlaps);
   if (routineHit) return { kind: "fixed", title: routineHit.title };
-  const realEvents = events.filter((e) => e.id !== excludeId && e.date === dateKey && e.time && e.status !== "done" && e.kind !== "free period");
+  const realEvents = events.filter((e) => e.id !== excludeId && e.date === dateKey && e.time && !e.timeUnconfirmed && e.status !== "done" && e.kind !== "free period");
   const fixedHit = realEvents.filter((e) => TIER0_FIXED_KINDS.has(e.kind) && !e.movable).map((e) => ({ title: e.title, start: timeToMinutes(e.time) - effectiveLeadInForManualPlacement(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOutForManualPlacement(e) })).find(overlaps);
   if (fixedHit) return { kind: "fixed", title: fixedHit.title };
   const flexHit = realEvents.filter((e) => !(TIER0_FIXED_KINDS.has(e.kind) && !e.movable)).map((e) => ({ event: e, start: timeToMinutes(e.time) - effectiveLeadInForManualPlacement(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOutForManualPlacement(e) })).find(overlaps);
@@ -2024,7 +2024,7 @@ function undoTier0Move(taskId) {
   const { date, time } = moved.movedFrom;
   const durationMins = moved.duration || 30;
   const tMins = timeToMinutes(time);
-  const occupied = events.filter((e) => e.id !== taskId && e.date === date && e.time).concat(expandRoutineOccurrences(getWeeklyRoutine(), date, date).filter((o) => o.kind !== "free period")).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) }));
+  const occupied = events.filter((e) => e.id !== taskId && e.date === date && e.time && !e.timeUnconfirmed).concat(expandRoutineOccurrences(getWeeklyRoutine(), date, date).filter((o) => o.kind !== "free period")).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) }));
   if (occupied.some((o) => !(tMins + durationMins <= o.start || tMins >= o.end))) return { events, blocked: true };
   const next = events.map((e) => {
     if (e.id !== taskId) return e;
@@ -2302,7 +2302,7 @@ function checkTimeOffImpact(hours, opts) {
     const s = timeToMinutes(o.time);
     return overlapsWindow(s, s + (o.duration || 30));
   }).map((o) => ({ title: o.title, time: o.time, duration: o.duration || 30 }));
-  const affected = events.filter((e) => e.date === date && e.time && e.status === "pending" && e.kind !== "free period").filter((e) => {
+  const affected = events.filter((e) => e.date === date && e.time && !e.timeUnconfirmed && e.status === "pending" && e.kind !== "free period").filter((e) => {
     const s = timeToMinutes(e.time), en = s + (e.duration || 30);
     return overlapsWindow(s, en);
   });
@@ -4181,7 +4181,7 @@ function rebalanceDay(dateKey, allEvents, routines, prefs) {
     return !isFlexPending(e);
   });
   const occupiedBase = rest.filter(function(e) {
-    return e.date === dateKey && e.time;
+    return e.date === dateKey && e.time && !e.timeUnconfirmed;
   }).map(function(e) {
     return { start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) };
   });
@@ -4611,8 +4611,8 @@ function advancedSchedulePlanner(baseEvents) {
   const shieldOccurrences = routineToday.filter((r) => r.kind !== "free period");
   const freeWindows = routineToday.filter((r) => r.kind === "free period").map((r) => ({ start: timeToMinutes(r.time), end: timeToMinutes(r.time) + (r.duration || 30) }));
   const occupiedSlots = [
-    ...hardEvents.map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) })),
-    ...flexibleTimed.map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) })),
+    ...hardEvents.filter((e) => !e.timeUnconfirmed).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) })),
+    ...flexibleTimed.filter((e) => !e.timeUnconfirmed).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) })),
     ...shieldOccurrences.map((r) => ({ start: timeToMinutes(r.time) - effectiveLeadIn(r), end: timeToMinutes(r.time) + (r.duration || 30) + effectiveTrailOut(r) }))
   ];
   const placedTimeless = [];
@@ -9205,7 +9205,7 @@ function ChatBubble({ m, myUid, onRespond, onSchedule, onCounter }) {
 function getDayOccupiedIntervals(dateKey) {
   const events = lsGet("events", []);
   const routines = getWeeklyRoutine();
-  return events.filter((e) => e.date === dateKey).map((e) => {
+  return events.filter((e) => e.date === dateKey && !e.timeUnconfirmed).map((e) => {
     const realS = timeToMinutes(e.time || "0:00"), realE = realS + (e.duration || 60);
     return { s: realS - effectiveLeadIn(e), e: realE + effectiveTrailOut(e), realS, realE, title: e.title || "Untitled" };
   }).concat(expandRoutineOccurrences(routines, dateKey, dateKey).filter((o) => o.kind !== "free period").map((o) => {
@@ -12517,6 +12517,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
   const [kind, setKind] = useState("deadline");
   const [asProject, setAsProject] = useState(false);
   const [asChecklist, setAsChecklist] = useState(false);
+  const [asGeneralTask, setAsGeneralTask] = useState(false);
   const [notes, setNotes] = useState("");
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
   const [completeSessionPrompt, setCompleteSessionPrompt] = useState(false);
@@ -12555,6 +12556,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
     setNotes(ev.notes || "");
     setAsProject(isProjectMarker(ev));
     setAsChecklist(!!ev.checklist);
+    setAsGeneralTask(!!ev.isGeneralTask);
     setCancelConfirmOpen(false);
     setDetailErr("");
     setExamSwitchAwayConfirm(false);
@@ -12655,19 +12657,27 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
   const showsPhaseDetail = addAttackBlock && isPhaseCandidate;
   const isProject2 = isProjectMarker(ev);
   const droppedProject = isProject2 && !asProject;
-  const typeChoice = asChecklist ? "todo" : asProject ? "project" : kind;
+  const typeChoice = asChecklist ? "todo" : asProject ? "project" : asGeneralTask ? "task" : kind;
   const onTypeChange = (v) => {
     if (v === "project") {
       setAsProject(true);
       setAsChecklist(false);
+      setAsGeneralTask(false);
       setKind("deadline");
     } else if (v === "todo") {
       setAsChecklist(true);
       setAsProject(false);
+      setAsGeneralTask(false);
       setKind("deadline");
+    } else if (v === "task") {
+      setAsGeneralTask(true);
+      setAsProject(false);
+      setAsChecklist(false);
+      setKind("study block");
     } else {
       setAsProject(false);
       setAsChecklist(false);
+      setAsGeneralTask(false);
       setKind(v);
     }
   };
@@ -12733,6 +12743,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
         kind,
         notes,
         checklist: asChecklist,
+        isGeneralTask: asGeneralTask || void 0,
         ...timeChanged ? { userPinned: true } : {},
         ...kind === "exam" ? { sourceMaterials: examPlan.materialFiles, referenceLinks: examPlan.materialLinks } : {},
         ...projectFieldPatch,
@@ -12871,7 +12882,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
       } }, "Begin"), /* @__PURE__ */ React.createElement(Btn, { onClick: save, disabled: !title.trim(), style: { opacity: title.trim() ? 1 : 0.45 } }, "Save changes"))
     },
     /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement(Input, { value: title, onChange: (e) => setTitle(e.target.value), autoFocus: true })),
-    /* @__PURE__ */ React.createElement(Field, { label: "Type" }, /* @__PURE__ */ React.createElement(SelectChip, { options: [{ value: "study block", label: "Assignment (scheduled)" }, { value: "deadline", label: "Assignment (due date)" }, { value: "project", label: "Project" }, { value: "todo", label: "To-do" }, "exam", "class", "reminder", { value: "busy block", label: "Activity" }], value: typeChoice, onChange: onTypeChange })),
+    /* @__PURE__ */ React.createElement(Field, { label: "Type" }, /* @__PURE__ */ React.createElement(SelectChip, { options: [{ value: "study block", label: "Assignment (scheduled)" }, { value: "deadline", label: "Assignment (due date)" }, { value: "task", label: "Task" }, { value: "project", label: "Project" }, { value: "todo", label: "To-do" }, "exam", "class", "reminder", { value: "busy block", label: "Activity" }], value: typeChoice, onChange: onTypeChange })),
     /* @__PURE__ */ React.createElement(Field, { label: "Subject" }, /* @__PURE__ */ React.createElement(SelectChip, { options: SUBJ, value: subject, onChange: setSubject })),
     /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } }, /* @__PURE__ */ React.createElement(Field, { label: "Scheduled date" }, /* @__PURE__ */ React.createElement(Input, { type: "date", value: date, onChange: (e) => {
       setDate(e.target.value);
@@ -13030,7 +13041,7 @@ function findOverlapConflict(date, startTime, endTime, events, routines) {
   if (!date || !startTime || !endTime) return null;
   const startMin = timeToMinutes(startTime), endMin = timeToMinutes(endTime);
   if (endMin <= startMin) return null;
-  const dayEvents = (events || []).filter((e) => e.date === date && e.time && e.status !== "done" && !e.checklist);
+  const dayEvents = (events || []).filter((e) => e.date === date && e.time && !e.timeUnconfirmed && e.status !== "done" && !e.checklist);
   const dayRoutines = expandRoutineOccurrences(routines || [], date, date).filter((r) => r.kind !== "free period");
   const candidates = dayEvents.map((e) => ({ title: e.title, start: timeToMinutes(e.time), end: timeToMinutes(e.time) + (e.duration || 30) })).concat(dayRoutines.map((r) => ({ title: r.title, start: timeToMinutes(r.time), end: timeToMinutes(r.time) + (r.duration || 30) })));
   return candidates.find((c) => startMin < c.end && c.start < endMin) || null;
@@ -14673,7 +14684,7 @@ function CalendarTab({ setActive = () => {
   };
   const resolveManualSlot = (date, time, duration) => {
     if (evKind === "exam" || evKind === "class" || evKind === "busy block") return { date, time };
-    const occupied = events.filter((e) => e.date === date && e.time).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadInForManualPlacement(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOutForManualPlacement(e) })).concat(expandRoutineOccurrences(routines, date, date).filter((o) => o.kind !== "free period").map((o) => ({ start: timeToMinutes(o.time) - effectiveLeadInForManualPlacement(o), end: timeToMinutes(o.time) + (o.duration || 30) + effectiveTrailOutForManualPlacement(o) })));
+    const occupied = events.filter((e) => e.date === date && e.time && !e.timeUnconfirmed).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadInForManualPlacement(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOutForManualPlacement(e) })).concat(expandRoutineOccurrences(routines, date, date).filter((o) => o.kind !== "free period").map((o) => ({ start: timeToMinutes(o.time) - effectiveLeadInForManualPlacement(o), end: timeToMinutes(o.time) + (o.duration || 30) + effectiveTrailOutForManualPlacement(o) })));
     const tMins = timeToMinutes(time);
     const conflict = occupied.some((o) => !(tMins + duration <= o.start || tMins >= o.end));
     return conflict ? findReliableSlotFor(events, routines, getSchedulePreferences(), date, time, duration, void 0, evDifficulty) : { date, time, reason: null };
@@ -14960,7 +14971,7 @@ function CalendarTab({ setActive = () => {
     let finalTime = checkTime;
     if (checkTime) {
       const dur = ev.duration || 30;
-      const occupied = events.filter((e) => e.id !== id && e.date === newDate && e.time && e.kind !== "free period").map((e) => ({
+      const occupied = events.filter((e) => e.id !== id && e.date === newDate && e.time && !e.timeUnconfirmed && e.kind !== "free period").map((e) => ({
         start: timeToMinutes(e.time) - effectiveLeadInForManualPlacement(e),
         end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOutForManualPlacement(e)
       })).concat(expandRoutineOccurrences(routines, newDate, newDate).filter((o) => o.kind !== "free period").map((o) => ({
@@ -18610,70 +18621,6 @@ function App() {
     }
   }, []);
   const [notifSeen, setNotifSeen] = useState(false);
-  const [customDollars, setCustomDollars] = useState("");
-  const [boughtMsg, setBoughtMsg] = useState("");
-  const [creditCheckout, setCreditCheckout] = useState(null);
-  const [creditProcessing, setCreditProcessing] = useState(false);
-  const stripeCardRef = useRef(null);
-  const stripeRef = useRef(null);
-  const stripePk = "pk_live_51TLuXlFJjTMWMaWhX10200LKeE5JW0FHH2qp6evADegl2MIHuz26vUoBKyn7ug7Sb0akTI0MQHE34Ocyg2XeviKT00H9SklfJK";
-  const startCreditCheckout = async (credits, customAmount) => {
-    setBoughtMsg("Loading...");
-    try {
-      const body = customAmount ? { mode: "payment", customAmount } : { mode: "payment", credits };
-      const res = await authFetch("/api/create-intent", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      const data = await res.json();
-      if (data.error) {
-        setBoughtMsg(data.error);
-        return;
-      }
-      const label = customAmount ? (customAmount * 30).toLocaleString() + " credits" : credits.toLocaleString() + " credits";
-      const price = customAmount ? "$" + customAmount : { 150: "$4.99", 500: "$14.99", 1e3: "$24.99", 3e3: "$59.99" }[credits] || "$?.??";
-      setCreditCheckout({ clientSecret: data.clientSecret, label, price });
-      setBoughtMsg("");
-    } catch (e) {
-      setBoughtMsg("Something went wrong.");
-    }
-  };
-  useEffect(() => {
-    if (!creditCheckout) return;
-    const s = typeof Stripe !== "undefined" ? Stripe(stripePk) : null;
-    if (!s) return;
-    stripeRef.current = s;
-    const el = s.elements();
-    const cardEl = el.create("card", { style: { base: { fontSize: "15px", fontFamily: "'Geist',sans-serif", color: "#E8EEFF", "::placeholder": { color: "rgba(255,255,255,0.35)" } }, invalid: { color: "#D9806B" } } });
-    setTimeout(() => {
-      const node = document.getElementById("stripe-card-el");
-      if (node) cardEl.mount(node);
-    }, 50);
-    stripeCardRef.current = cardEl;
-    return () => {
-      cardEl.destroy();
-    };
-  }, [creditCheckout]);
-  const confirmCreditPurchase = async () => {
-    if (!stripeRef.current || !stripeCardRef.current || !creditCheckout) return;
-    setCreditProcessing(true);
-    setBoughtMsg("");
-    const prof = getProfile();
-    const { error } = await stripeRef.current.confirmCardPayment(creditCheckout.clientSecret, {
-      payment_method: { card: stripeCardRef.current, billing_details: { name: prof.name, email: prof.email } }
-    });
-    if (error) {
-      setBoughtMsg(error.message);
-      setCreditProcessing(false);
-    } else {
-      setCreditCheckout(null);
-      setCreditProcessing(false);
-      setBoughtMsg("\u2713 Credits added to your account!");
-    }
-  };
-  const buyPack = (_credits) => {
-    setBoughtMsg("Credit top-ups are temporarily unavailable. Upgrade to Pro for full AI access instead.");
-  };
-  const buyCustom = () => {
-    setBoughtMsg("Credit top-ups are temporarily unavailable. Upgrade to Pro for full AI access instead.");
-  };
   const notifs = (() => {
     const ev = lsGet("events", []);
     const tk = dayKey();
@@ -18940,27 +18887,16 @@ function App() {
     Modal,
     {
       open: creditsOpen,
-      onClose: () => {
-        setCreditsOpen(false);
-        setCreditCheckout(null);
-        setBoughtMsg("");
-      },
-      title: creditCheckout ? "Complete purchase" : "AI Credits",
-      sub: creditCheckout ? "Purchase " + creditCheckout.label + " for " + creditCheckout.price : "Upgrade to Pro for full AI access, or check your balance below.",
+      onClose: () => setCreditsOpen(false),
+      title: "AI Credits",
+      sub: "Upgrade to Pro for full AI access, or check your balance below.",
       width: 620,
-      footer: creditCheckout ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => {
-        setCreditCheckout(null);
-        setBoughtMsg("");
-      } }, "\u2190 Back"), /* @__PURE__ */ React.createElement(Btn, { onClick: confirmCreditPurchase, disabled: creditProcessing, style: { background: T.lime, color: T.ink } }, creditProcessing ? "Processing..." : "Pay " + creditCheckout.price)) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setCreditsOpen(false) }, "Close"))
+      footer: /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setCreditsOpen(false) }, "Close")
     },
-    creditCheckout ? /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { background: T.lime, borderRadius: 8, padding: "18px 20px", marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "center" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontFamily: T.mono, fontSize: 10, letterSpacing: "0.14em", fontWeight: 600, color: "rgba(8,12,40,0.6)" } }, "YOU'RE BUYING"), /* @__PURE__ */ React.createElement("div", { style: { fontFamily: T.hand, fontSize: 36, fontWeight: 700, color: T.ink, lineHeight: 0.9, marginTop: 4 } }, creditCheckout.label)), /* @__PURE__ */ React.createElement("div", { style: { fontFamily: T.hand, fontSize: 36, fontWeight: 700, color: T.ink } }, creditCheckout.price)), /* @__PURE__ */ React.createElement("div", { id: "stripe-card-el", style: { padding: "14px 16px", border: "1.5px solid " + T.border, borderRadius: 12, background: T.card, marginBottom: 12, minHeight: 22 } }), boughtMsg && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: boughtMsg.startsWith("\u2713") ? T.lime : T.red, fontWeight: 600, marginTop: 8 } }, boughtMsg), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 11, color: T.muted, marginTop: 12 } }, /* @__PURE__ */ React.createElement("svg", { width: "12", height: "12", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2" }, /* @__PURE__ */ React.createElement("rect", { x: "3", y: "11", width: "18", height: "11", rx: "2" }), /* @__PURE__ */ React.createElement("path", { d: "M7 11V7a5 5 0 0110 0v4" })), "Secured by Stripe \xB7 256-bit encryption")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { background: T.lime, borderRadius: 8, padding: "20px 22px", position: "relative", overflow: "hidden", marginBottom: 18 } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", right: -30, top: -30, width: 160, height: 160, background: "radial-gradient(circle,rgba(255,255,255,0.45),transparent 70%)", pointerEvents: "none" } }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", position: "relative" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontFamily: T.mono, fontSize: 10, letterSpacing: "0.14em", fontWeight: 600, color: "rgba(8,12,40,0.6)" } }, "CURRENT BALANCE"), /* @__PURE__ */ React.createElement("div", { style: { fontFamily: T.hand, fontSize: 54, fontWeight: 700, color: T.ink, lineHeight: 0.9, marginTop: 4 } }, getPlan() === "Pro" ? "Unlimited" : getCredits() + "", /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.font, fontSize: 18, fontWeight: 500, color: "rgba(8,12,40,0.55)", marginLeft: 4 } }, getPlan() === "Pro" ? "" : "/ " + getCreditLimit())), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: "rgba(8,12,40,0.65)", marginTop: 4 } }, getPlan() === "Pro" ? "No monthly cap" : "Resets in " + daysUntilReset() + " day" + (daysUntilReset() !== 1 ? "s" : "") + " \xB7 " + (getCreditLimit() - getCredits()) + " used this cycle")), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.mono, fontSize: 10, letterSpacing: "0.16em", fontWeight: 700, background: T.ink, color: T.lime, padding: "4px 8px", borderRadius: 5 } }, getPlan().toUpperCase())), /* @__PURE__ */ React.createElement("div", { style: { height: 5, background: "rgba(8,12,40,0.15)", borderRadius: 99, marginTop: 14, overflow: "hidden", position: "relative" } }, /* @__PURE__ */ React.createElement("div", { style: { height: "100%", width: Math.min(100, Math.round(getCredits() / getCreditLimit() * 100)) + "%", background: T.ink, borderRadius: 99 } }))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: T.muted, textTransform: "uppercase", marginBottom: 10 } }, "Quick top-up"), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, marginBottom: 18 } }, [
-      { n: 150, p: "$4.99", save: null },
-      { n: 500, p: "$14.99", save: "\u221217%" },
-      { n: 1e3, p: "$24.99", save: "\u221231%", featured: true },
-      { n: 3e3, p: "$59.99", save: "\u221245%" }
-    ].map((pk, i) => /* @__PURE__ */ React.createElement("div", { key: i, onClick: () => buyPack(pk.n), style: { background: pk.featured ? T.ink : T.card2, color: pk.featured ? T.cream : T.text, borderRadius: 10, padding: 14, border: `1px solid ${pk.featured ? T.ink : T.border}`, cursor: "pointer", position: "relative", transition: "transform 0.15s" } }, /* @__PURE__ */ React.createElement("div", { style: { fontFamily: T.hand, fontSize: 34, fontWeight: 700, color: pk.featured ? T.lime : T.text, lineHeight: 0.9, letterSpacing: "-0.01em" } }, pk.n.toLocaleString()), /* @__PURE__ */ React.createElement("div", { style: { fontFamily: T.mono, fontSize: 9, letterSpacing: "0.14em", color: pk.featured ? "rgba(246,241,230,0.5)" : T.muted, marginTop: 2 } }, "CREDITS"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 16, fontWeight: 600, marginTop: 6, letterSpacing: "-0.02em" } }, pk.p), pk.save && /* @__PURE__ */ React.createElement("div", { style: { fontFamily: T.mono, fontSize: 9, letterSpacing: "0.14em", fontWeight: 700, color: pk.featured ? T.lime : T.limeDk, marginTop: 4 } }, "SAVE ", pk.save)))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: T.muted, textTransform: "uppercase", marginBottom: 10 } }, "Buy a custom amount"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10, alignItems: "stretch", marginBottom: 8, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 220, display: "flex", alignItems: "center", gap: 8, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 10, padding: "6px 14px" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 20, color: T.muted, fontWeight: 600 } }, "$"), /* @__PURE__ */ React.createElement("input", { type: "number", min: "5", max: "100000", value: customDollars, onChange: (e) => setCustomDollars(e.target.value), onKeyDown: (e) => {
-      if (e.key === "Enter") buyCustom();
-    }, placeholder: "Enter any amount", style: { flex: 1, minWidth: 60, background: "none", border: "none", outline: "none", color: T.text, fontSize: 18, fontWeight: 600, fontFamily: T.font } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted, whiteSpace: "nowrap" } }, "\u2248 ", Math.round(Math.min(1e5, Math.max(0, +customDollars || 0)) * 30).toLocaleString(), " credits")), /* @__PURE__ */ React.createElement("button", { onClick: buyCustom, style: { background: T.lime, color: T.ink, border: "none", borderRadius: 10, padding: "0 24px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: T.font } }, "Buy now")), boughtMsg && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: boughtMsg.startsWith("\u2713") ? T.lime : T.red, fontWeight: 600, marginBottom: 8 } }, boughtMsg), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginBottom: 18 } }, "Buy any amount you want. $5 minimum, $100,000 max. Roughly 30 credits per $1."), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: T.muted, textTransform: "uppercase", marginBottom: 10 } }, "What costs what"), /* @__PURE__ */ React.createElement("div", { style: { background: T.card2, border: `1px solid ${T.border}`, borderRadius: 10, padding: "4px 14px" } }, [["AI chat \xB7 Standard / Flash", "1"], ["AI chat \xB7 Pro", "2"], ["AI chat \xB7 Reasoning", "3"], ["Citation generation", "1"], ["File upload + analysis", "2"], ["Plagiarism check", "2"], ["AI Humanizer run", "2"], ["Full essay analysis", "3"], ["Practice test generation", "4"]].map(([k, v], i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", justifyContent: "space-between", padding: "9px 0", borderBottom: i < 8 ? `1px solid ${T.border}` : "none", fontSize: 13 } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.text } }, k), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.mono, fontWeight: 600, color: T.lime } }, v)))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16, padding: "12px 14px", background: T.card2, borderRadius: 10, border: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, fontWeight: 600 } }, "Hit your cap often?"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginTop: 2 } }, "Pro plan gives you unlimited AI chat, no credits needed.")), /* @__PURE__ */ React.createElement("a", { href: "checkout.html?plan=pro&billing=monthly", style: { display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 7, fontSize: 12, fontWeight: 600, background: T.ink, color: T.lime, textDecoration: "none", fontFamily: T.font } }, "Upgrade to Pro")))
+    /* @__PURE__ */ React.createElement("div", { style: { background: T.lime, borderRadius: 8, padding: "20px 22px", position: "relative", overflow: "hidden", marginBottom: 18 } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", right: -30, top: -30, width: 160, height: 160, background: "radial-gradient(circle,rgba(255,255,255,0.45),transparent 70%)", pointerEvents: "none" } }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", position: "relative" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontFamily: T.mono, fontSize: 10, letterSpacing: "0.14em", fontWeight: 600, color: "rgba(8,12,40,0.6)" } }, "CURRENT BALANCE"), /* @__PURE__ */ React.createElement("div", { style: { fontFamily: T.hand, fontSize: 54, fontWeight: 700, color: T.ink, lineHeight: 0.9, marginTop: 4 } }, getPlan() === "Pro" ? "Unlimited" : getCredits() + "", /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.font, fontSize: 18, fontWeight: 500, color: "rgba(8,12,40,0.55)", marginLeft: 4 } }, getPlan() === "Pro" ? "" : "/ " + getCreditLimit())), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: "rgba(8,12,40,0.65)", marginTop: 4 } }, getPlan() === "Pro" ? "No monthly cap" : "Resets in " + daysUntilReset() + " day" + (daysUntilReset() !== 1 ? "s" : "") + " \xB7 " + (getCreditLimit() - getCredits()) + " used this cycle")), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.mono, fontSize: 10, letterSpacing: "0.16em", fontWeight: 700, background: T.ink, color: T.lime, padding: "4px 8px", borderRadius: 5 } }, getPlan().toUpperCase())), /* @__PURE__ */ React.createElement("div", { style: { height: 5, background: "rgba(8,12,40,0.15)", borderRadius: 99, marginTop: 14, overflow: "hidden", position: "relative" } }, /* @__PURE__ */ React.createElement("div", { style: { height: "100%", width: Math.min(100, Math.round(getCredits() / getCreditLimit() * 100)) + "%", background: T.ink, borderRadius: 99 } }))),
+    /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: T.muted, textTransform: "uppercase", marginBottom: 10 } }, "What costs what"),
+    /* @__PURE__ */ React.createElement("div", { style: { background: T.card2, border: `1px solid ${T.border}`, borderRadius: 10, padding: "4px 14px" } }, [["AI chat \xB7 Standard / Flash", "1"], ["AI chat \xB7 Pro", "2"], ["AI chat \xB7 Reasoning", "3"], ["Citation generation", "1"], ["File upload + analysis", "2"], ["Plagiarism check", "2"], ["AI Humanizer run", "2"], ["Full essay analysis", "3"], ["Practice test generation", "4"]].map(([k, v], i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", justifyContent: "space-between", padding: "9px 0", borderBottom: i < 8 ? `1px solid ${T.border}` : "none", fontSize: 13 } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.text } }, k), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.mono, fontWeight: 600, color: T.lime } }, v)))),
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16, padding: "12px 14px", background: T.card2, borderRadius: 10, border: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, fontWeight: 600 } }, "Hit your cap often?"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginTop: 2 } }, "Pro plan gives you unlimited AI chat, no credits needed.")), /* @__PURE__ */ React.createElement("a", { href: "checkout.html?plan=pro&billing=monthly", style: { display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 7, fontSize: 12, fontWeight: 600, background: T.ink, color: T.lime, textDecoration: "none", fontFamily: T.font } }, "Upgrade to Pro"))
   ), /* @__PURE__ */ React.createElement(
     Modal,
     {

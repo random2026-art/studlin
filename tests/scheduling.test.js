@@ -1695,6 +1695,61 @@ describe("findNowConflict (2026-08-26: the Lock-In Timer's Begin button needs to
     const result = m.findNowConflict(events, [], DEFAULT_PREFS, "2026-08-26", "13:30", 30, "task-1");
     assert.equal(result.kind, "flexible", "medium mode's own cushion should still make 13:30 (right at the edge) a conflict");
   });
+
+  test("an exam with a timeUnconfirmed placeholder never blocks Begin from retiming to that same fake slot", () => {
+    const { findNowConflict } = loadStudlinModule();
+    const events = [realTask({ id: "exam-1", kind: "exam", date: "2026-08-26", time: "09:00", duration: null, movable: false, timeUnconfirmed: true })];
+    const result = findNowConflict(events, [], DEFAULT_PREFS, "2026-08-26", "09:00", 30, "task-1");
+    assert.equal(result, null);
+  });
+});
+
+describe("timeUnconfirmed exclusion from occupied-interval math (2026-08-26: a fabricated placeholder time, e.g. a Brain Dump exam with no real stated time, was still silently occupying a fake ~30min slot in every automated scheduling path -- real overlap/commute time still block exactly as before, only the fake placeholder no longer does)", () => {
+  test("computeOccupiedIntervals excludes a timeUnconfirmed exam entirely", () => {
+    const { computeOccupiedIntervals } = loadStudlinModule();
+    const events = [realTask({ id: "exam-1", kind: "exam", date: "2026-08-26", time: "09:00", duration: null, movable: false, timeUnconfirmed: true })];
+    const result = computeOccupiedIntervals(events, [], DEFAULT_PREFS, "2026-08-26");
+    assert.equal(result.length, 0);
+  });
+
+  test("a confirmed (real) exam time still occupies exactly as before", () => {
+    const { computeOccupiedIntervals } = loadStudlinModule();
+    const events = [realTask({ id: "exam-1", kind: "exam", date: "2026-08-26", time: "09:00", duration: null, movable: false })];
+    const result = computeOccupiedIntervals(events, [], DEFAULT_PREFS, "2026-08-26");
+    assert.equal(result.length, 1);
+  });
+
+  test("findOpenSlotFor can now place a real task right at a timeUnconfirmed exam's fake placeholder time", () => {
+    // Frozen clock, same reason every other "now"-sensitive test in this
+    // file freezes it: findOpenSlotFor floors today's scan start at the
+    // real wall clock, which would otherwise push this later than 09:00
+    // depending purely on what time this test happens to run.
+    const { findOpenSlotFor } = loadStudlinModule({ now: "2026-08-26T08:00:00" });
+    const events = [realTask({ id: "exam-1", kind: "exam", date: "2026-08-26", time: "09:00", duration: null, movable: false, timeUnconfirmed: true })];
+    const slot = findOpenSlotFor(events, [], DEFAULT_PREFS, "2026-08-26", "09:00", 30);
+    assert.equal(slot.date, "2026-08-26");
+    assert.equal(slot.time, "09:00", "the fake exam placeholder must not have pushed this task later");
+  });
+
+  test("rebalanceDay's occupied-base excludes a timeUnconfirmed reminder", () => {
+    const { rebalanceDay } = loadStudlinModule();
+    const events = [
+      realTask({ id: "reminder-1", kind: "reminder", date: "2026-08-26", time: "09:00", duration: 0, timeUnconfirmed: true }),
+      realTask({ id: "task-1", time: "09:00", priority: 500 }),
+    ];
+    const next = rebalanceDay("2026-08-26", events, [], DEFAULT_PREFS);
+    const task1 = next.find(e => e.id === "task-1");
+    // The real task should be allowed to sit right at 09:00 -- no fake
+    // reminder buffer should have bumped it elsewhere.
+    assert.equal(task1.time, "09:00");
+  });
+
+  test("formatRealWorldScheduleForDate excludes a timeUnconfirmed real-world item -- Brain Dump's AI shouldn't be told a fabricated time is a real fact", () => {
+    const { formatRealWorldScheduleForDate } = loadStudlinModule();
+    const events = [{ id: "exam-1", title: "Chem Final", kind: "exam", date: "2026-08-26", time: "09:00", duration: null, timeUnconfirmed: true }];
+    const result = formatRealWorldScheduleForDate(events, [], "2026-08-26");
+    assert.equal(result.length, 0);
+  });
 });
 
 describe("Lock-In timer checkpoint + recovery (regression: a real session was lost when the tab backgrounded mid-timer with no trace)", () => {

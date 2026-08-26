@@ -1982,7 +1982,7 @@ const getRoutineOccurrencesForDate=(dateKey)=>expandRoutineOccurrences(getWeekly
 function formatRealWorldScheduleForDate(events,routines,dateKey){
   const isRealWorldKind=k=>k==="class"||k==="busy block"||k==="exam";
   const routineOccs=expandRoutineOccurrences(routines,dateKey,dateKey).filter(o=>isRealWorldKind(o.kind));
-  const realEvents=(events||[]).filter(e=>e.date===dateKey&&e.time&&isRealWorldKind(e.kind));
+  const realEvents=(events||[]).filter(e=>e.date===dateKey&&e.time&&!e.timeUnconfirmed&&isRealWorldKind(e.kind));
   return [...routineOccs,...realEvents]
     .sort((a,b)=>a.time<b.time?-1:a.time>b.time?1:0)
     .map(e=>e.title+": "+fmtClock12(e.time)+"–"+fmtClock12(minutesToTime(timeToMinutes(e.time)+(e.duration||30))));
@@ -2043,7 +2043,15 @@ const CATCHUP_BUFFER_MINS=120;
 // this shared version; the existing call sites are left as-is to avoid any
 // behavior risk from touching working code.
 function computeOccupiedIntervals(events,routines,prefs,dateKey){
-  return events.filter(e=>e.date===dateKey&&e.time)
+  // !e.timeUnconfirmed (2026-08-26) -- an exam/reminder whose real time was
+  // never actually known (Brain Dump/syllabus scan couldn't determine one)
+  // stores a placeholder clock time so sorting/display has something to
+  // read, flagged timeUnconfirmed precisely so nothing treats it as real --
+  // this was the one place still doing so, silently occupying a fake
+  // ~30min slot (and its own lead-in/trail-out guess on top) that could
+  // nudge a REAL task away from a genuinely free morning for no real
+  // reason. A confirmed, real time still occupies exactly as before.
+  return events.filter(e=>e.date===dateKey&&e.time&&!e.timeUnconfirmed)
     .concat(expandRoutineOccurrences(routines,dateKey,dateKey).filter(o=>o.kind!=="free period"))
     .map(e=>({start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)}));
 }
@@ -2188,7 +2196,7 @@ function findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,
     // Trailing breathing-room buffer scales with each existing block's own
     // duration, so gap-finding naturally leaves a proportional cooldown
     // after it rather than allowing zero-gap back-to-back placement.
-    const occupied=events.filter(e=>e.date===dk&&e.time)
+    const occupied=events.filter(e=>e.date===dk&&e.time&&!e.timeUnconfirmed)
       .concat(expandRoutineOccurrences(routines,dk,dk).filter(o=>o.kind!=="free period"))
       .map(e=>({start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)}));
     let scanStart=dayOffset===0?Math.max(prefStartMins,timeToMinutes(desiredTime)):prefStartMins;
@@ -2244,7 +2252,7 @@ function findLegalSlotOrNull(events,routines,prefs,desiredDate,desiredTime,durat
   const effectiveEnd=Math.min(1440,slot.date===dayKey()?winEnd+CATCHUP_BUFFER_MINS:winEnd);
   const tMins=timeToMinutes(slot.time);
   if(tMins<winStart||tMins+duration>effectiveEnd)return null;
-  const occupied=events.filter(e=>e.date===slot.date&&e.time)
+  const occupied=events.filter(e=>e.date===slot.date&&e.time&&!e.timeUnconfirmed)
     .concat(expandRoutineOccurrences(routines,slot.date,slot.date).filter(o=>o.kind!=="free period"))
     .map(e=>({start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)}));
   const conflict=occupied.some(o=>!(tMins+duration<=o.start||tMins>=o.end));
@@ -2269,7 +2277,7 @@ function dayHasRoomFor(events,routines,prefs,dateKey,duration,desiredTime){
   // findSlotWithEviction could evict an unrelated task instead of using
   // the real catch-up opening that findOpenSlotFor itself would have found.
   const prefEndMins=dateKey===dayKey()?Math.min(1440,dayWindow.end+CATCHUP_BUFFER_MINS):dayWindow.end;
-  const occupied=events.filter(e=>e.date===dateKey&&e.time)
+  const occupied=events.filter(e=>e.date===dateKey&&e.time&&!e.timeUnconfirmed)
     .concat(expandRoutineOccurrences(routines,dateKey,dateKey).filter(o=>o.kind!=="free period"))
     .map(e=>({start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)}));
   for(let t=prefStartMins;t+duration<=prefEndMins;t+=15){
@@ -2573,7 +2581,7 @@ function findNowConflict(events,routines,prefs,dateKey,timeStr,duration,excludeI
     .map(o=>({title:o.title,start:timeToMinutes(o.time)-effectiveLeadInForManualPlacement(o),end:timeToMinutes(o.time)+(o.duration||30)+effectiveTrailOutForManualPlacement(o)}))
     .find(overlaps);
   if(routineHit)return {kind:"fixed",title:routineHit.title};
-  const realEvents=events.filter(e=>e.id!==excludeId&&e.date===dateKey&&e.time&&e.status!=="done"&&e.kind!=="free period");
+  const realEvents=events.filter(e=>e.id!==excludeId&&e.date===dateKey&&e.time&&!e.timeUnconfirmed&&e.status!=="done"&&e.kind!=="free period");
   const fixedHit=realEvents.filter(e=>TIER0_FIXED_KINDS.has(e.kind)&&!e.movable)
     .map(e=>({title:e.title,start:timeToMinutes(e.time)-effectiveLeadInForManualPlacement(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOutForManualPlacement(e)}))
     .find(overlaps);
@@ -3299,7 +3307,7 @@ function undoTier0Move(taskId){
   const {date,time}=moved.movedFrom;
   const durationMins=moved.duration||30;
   const tMins=timeToMinutes(time);
-  const occupied=events.filter(e=>e.id!==taskId&&e.date===date&&e.time)
+  const occupied=events.filter(e=>e.id!==taskId&&e.date===date&&e.time&&!e.timeUnconfirmed)
     .concat(expandRoutineOccurrences(getWeeklyRoutine(),date,date).filter(o=>o.kind!=="free period"))
     .map(e=>({start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)}));
   if(occupied.some(o=>!(tMins+durationMins<=o.start||tMins>=o.end)))return {events,blocked:true};
@@ -3693,7 +3701,7 @@ function checkTimeOffImpact(hours,opts){
     .filter(o=>o.kind!=="free period")
     .filter(o=>{const s=timeToMinutes(o.time);return overlapsWindow(s,s+(o.duration||30));})
     .map(o=>({title:o.title,time:o.time,duration:o.duration||30}));
-  const affected=events.filter(e=>e.date===date&&e.time&&e.status==="pending"&&e.kind!=="free period").filter(e=>{
+  const affected=events.filter(e=>e.date===date&&e.time&&!e.timeUnconfirmed&&e.status==="pending"&&e.kind!=="free period").filter(e=>{
     const s=timeToMinutes(e.time),en=s+(e.duration||30);
     return overlapsWindow(s,en);
   });
@@ -6541,7 +6549,7 @@ function rebalanceDay(dateKey,allEvents,routines,prefs){
 
   const rest=allEvents.filter(function(e){return !isFlexPending(e);});
 
-  const occupiedBase=rest.filter(function(e){return e.date===dateKey&&e.time;}).map(function(e){
+  const occupiedBase=rest.filter(function(e){return e.date===dateKey&&e.time&&!e.timeUnconfirmed;}).map(function(e){
     return{start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)};
   });
   expandRoutineOccurrences(routines||[],dateKey,dateKey)
@@ -7296,9 +7304,13 @@ function advancedSchedulePlanner(baseEvents){
   // the start of a class/commute with zero gap. Now matches the same
   // effectiveLeadIn/effectiveTrailOut treatment every other occupied-
   // interval builder in this file already uses.
+  // !e.timeUnconfirmed (2026-08-26) -- excluded from the OCCUPIED-slot math
+  // only, not from hardEvents/flexibleTimed themselves (those still drive
+  // the visible plan list -- an exam still shows as due today, it just
+  // never blocks a real timeless task from landing near its fake time).
   const occupiedSlots=[
-    ...hardEvents.map(e=>({start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)})),
-    ...flexibleTimed.map(e=>({start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)})),
+    ...hardEvents.filter(e=>!e.timeUnconfirmed).map(e=>({start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)})),
+    ...flexibleTimed.filter(e=>!e.timeUnconfirmed).map(e=>({start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)})),
     ...shieldOccurrences.map(r=>({start:timeToMinutes(r.time)-effectiveLeadIn(r),end:timeToMinutes(r.time)+(r.duration||30)+effectiveTrailOut(r)})),
   ];
 
@@ -14671,7 +14683,10 @@ function ChatBubble({m,myUid,onRespond,onSchedule,onCounter}){
 function getDayOccupiedIntervals(dateKey){
   const events=lsGet("events",[]);
   const routines=getWeeklyRoutine();
-  return events.filter(e=>e.date===dateKey)
+  // !e.timeUnconfirmed (2026-08-26) -- a friend proposing a shared study
+  // time shouldn't get told "conflicts with Chem Final, 9:00-9:15 AM" when
+  // that time was never actually confirmed, only a placeholder.
+  return events.filter(e=>e.date===dateKey&&!e.timeUnconfirmed)
     .map(e=>{const realS=timeToMinutes(e.time||"0:00"),realE=realS+(e.duration||60);return{s:realS-effectiveLeadIn(e),e:realE+effectiveTrailOut(e),realS,realE,title:e.title||"Untitled"};})
     .concat(expandRoutineOccurrences(routines,dateKey,dateKey).filter(o=>o.kind!=="free period")
       .map(o=>{const realS=timeToMinutes(o.time),realE=realS+(o.duration||30);return{s:realS-effectiveLeadIn(o),e:realE+effectiveTrailOut(o),realS,realE,title:o.title||"Routine"};}))
@@ -20254,6 +20269,12 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   // moment you reopen it.
   const [asProject,setAsProject]=useState(false);
   const [asChecklist,setAsChecklist]=useState(false);
+  // Same UI-level-choice pattern as asProject/asChecklist above -- a Task
+  // (2026-08-26, Add Task's "do laundry" type) is also kind:"study block"
+  // under the hood, distinguished only by isGeneralTask:true, so without
+  // this an existing Task always reopened here as a plain "Assignment
+  // (scheduled)" with no way to tell it apart or switch back to it.
+  const [asGeneralTask,setAsGeneralTask]=useState(false);
   const [notes,setNotes]=useState("");
   const [cancelConfirmOpen,setCancelConfirmOpen]=useState(false);
   const [completeSessionPrompt,setCompleteSessionPrompt]=useState(false);
@@ -20322,7 +20343,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
     setPriority(toSliderVal(ev.priority,5));setDifficulty(toSliderVal(ev.difficulty,5));
     setMoreOpen(!!(ev.priority&&(ev.priority>10?ev.priority!==500:ev.priority!==5)));
     setSubject(ev.subject||"Chemistry");setKind(ev.kind||"deadline");setNotes(ev.notes||"");
-    setAsProject(isProjectMarker(ev));setAsChecklist(!!ev.checklist);
+    setAsProject(isProjectMarker(ev));setAsChecklist(!!ev.checklist);setAsGeneralTask(!!ev.isGeneralTask);
     setCancelConfirmOpen(false);setDetailErr("");
     setExamSwitchAwayConfirm(false);setProjectSwitchAwayConfirm(false);
     setAddAttackBlock(false);setAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);
@@ -20441,11 +20462,12 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   // saved state, asProject the current picker) -- an already-existing
   // project's phases/outline are edited via the display blocks above/below,
   // not regenerated on every save.
-  const typeChoice=asChecklist?"todo":asProject?"project":kind;
+  const typeChoice=asChecklist?"todo":asProject?"project":asGeneralTask?"task":kind;
   const onTypeChange=(v)=>{
-    if(v==="project"){setAsProject(true);setAsChecklist(false);setKind("deadline");}
-    else if(v==="todo"){setAsChecklist(true);setAsProject(false);setKind("deadline");}
-    else{setAsProject(false);setAsChecklist(false);setKind(v);}
+    if(v==="project"){setAsProject(true);setAsChecklist(false);setAsGeneralTask(false);setKind("deadline");}
+    else if(v==="todo"){setAsChecklist(true);setAsProject(false);setAsGeneralTask(false);setKind("deadline");}
+    else if(v==="task"){setAsGeneralTask(true);setAsProject(false);setAsChecklist(false);setKind("study block");}
+    else{setAsProject(false);setAsChecklist(false);setAsGeneralTask(false);setKind(v);}
   };
   const requiresProjectDetail=asProject&&!isProject;
   const openCollabPicker=async()=>{
@@ -20515,7 +20537,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
     const updated=allEvents.map(e=>{
       if(e.id!==ev.id)return e;
       if(attackPair)return attackPair.marker;
-      const merged={...e,title:title.trim(),date,time,duration,deadline:deadline||null,priority,difficulty,subject,courseId:courseIdForLabel(subject),kind,notes,checklist:asChecklist,...(timeChanged?{userPinned:true}:{}),
+      const merged={...e,title:title.trim(),date,time,duration,deadline:deadline||null,priority,difficulty,subject,courseId:courseIdForLabel(subject),kind,notes,checklist:asChecklist,isGeneralTask:asGeneralTask||undefined,...(timeChanged?{userPinned:true}:{}),
         ...(kind==="exam"?{sourceMaterials:examPlan.materialFiles,referenceLinks:examPlan.materialLinks}:{}),
         ...projectFieldPatch,
         ...examFieldPatch.patch,
@@ -20673,7 +20695,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
           stay two separate picks here (not one merged "Assignment" the
           way Add Task infers it) since this modal edits an existing
           real kind directly, not a type that resolves to one at save time. */}
-      <Field label="Type"><SelectChip options={[{value:"study block",label:"Assignment (scheduled)"},{value:"deadline",label:"Assignment (due date)"},{value:"project",label:"Project"},{value:"todo",label:"To-do"},"exam","class","reminder",{value:"busy block",label:"Activity"}]} value={typeChoice} onChange={onTypeChange} /></Field>
+      <Field label="Type"><SelectChip options={[{value:"study block",label:"Assignment (scheduled)"},{value:"deadline",label:"Assignment (due date)"},{value:"task",label:"Task"},{value:"project",label:"Project"},{value:"todo",label:"To-do"},"exam","class","reminder",{value:"busy block",label:"Activity"}]} value={typeChoice} onChange={onTypeChange} /></Field>
       <Field label="Subject"><SelectChip options={SUBJ} value={subject} onChange={setSubject} /></Field>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
         <Field label="Scheduled date"><Input type="date" value={date} onChange={e=>{setDate(e.target.value);setDeadlineErr("");}} /></Field>
@@ -21067,7 +21089,7 @@ function findOverlapConflict(date,startTime,endTime,events,routines){
   if(!date||!startTime||!endTime)return null;
   const startMin=timeToMinutes(startTime),endMin=timeToMinutes(endTime);
   if(endMin<=startMin)return null;
-  const dayEvents=(events||[]).filter(e=>e.date===date&&e.time&&e.status!=="done"&&!e.checklist);
+  const dayEvents=(events||[]).filter(e=>e.date===date&&e.time&&!e.timeUnconfirmed&&e.status!=="done"&&!e.checklist);
   const dayRoutines=expandRoutineOccurrences(routines||[],date,date).filter(r=>r.kind!=="free period");
   const candidates=dayEvents.map(e=>({title:e.title,start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)}))
     .concat(dayRoutines.map(r=>({title:r.title,start:timeToMinutes(r.time),end:timeToMinutes(r.time)+(r.duration||30)})));
@@ -23508,7 +23530,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // hand-typed time only gets blocked by a real literal overlap or real
     // declared commute time by default; manualBufferMode (Settings)
     // restores a guessed cushion at the student's chosen strength.
-    const occupied=events.filter(e=>e.date===date&&e.time)
+    const occupied=events.filter(e=>e.date===date&&e.time&&!e.timeUnconfirmed)
       .map(e=>({start:timeToMinutes(e.time)-effectiveLeadInForManualPlacement(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOutForManualPlacement(e)}))
       .concat(expandRoutineOccurrences(routines,date,date).filter(o=>o.kind!=="free period")
         .map(o=>({start:timeToMinutes(o.time)-effectiveLeadInForManualPlacement(o),end:timeToMinutes(o.time)+(o.duration||30)+effectiveTrailOutForManualPlacement(o)})));
@@ -23858,7 +23880,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       // silently land directly on top of a class with zero pushback) so the
       // existing nearest-open-slot search below relocates around both
       // uniformly, instead of a separate reject-and-explain path.
-      const occupied=events.filter(e=>e.id!==id&&e.date===newDate&&e.time&&e.kind!=="free period").map(e=>({
+      const occupied=events.filter(e=>e.id!==id&&e.date===newDate&&e.time&&!e.timeUnconfirmed&&e.kind!=="free period").map(e=>({
         start:timeToMinutes(e.time)-effectiveLeadInForManualPlacement(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOutForManualPlacement(e)
       })).concat(expandRoutineOccurrences(routines,newDate,newDate).filter(o=>o.kind!=="free period").map(o=>({
         start:timeToMinutes(o.time)-effectiveLeadInForManualPlacement(o),
@@ -30137,68 +30159,21 @@ function App() {
     }catch(e){}
   },[]);
   const [notifSeen,setNotifSeen]=useState(false);
-  const [customDollars,setCustomDollars]=useState("");
-  const [boughtMsg,setBoughtMsg]=useState("");
-  const [creditCheckout,setCreditCheckout]=useState(null);
-  const [creditProcessing,setCreditProcessing]=useState(false);
-  const stripeCardRef=useRef(null);
-  const stripeRef=useRef(null);
-  const stripePk='pk_live_51TLuXlFJjTMWMaWhX10200LKeE5JW0FHH2qp6evADegl2MIHuz26vUoBKyn7ug7Sb0akTI0MQHE34Ocyg2XeviKT00H9SklfJK';
-
-  const startCreditCheckout=async(credits,customAmount)=>{
-    setBoughtMsg("Loading...");
-    try{
-      const body=customAmount?{mode:"payment",customAmount}:{mode:"payment",credits};
-      const res=await authFetch("/api/create-intent",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-      const data=await res.json();
-      if(data.error){setBoughtMsg(data.error);return;}
-      const label=customAmount?(customAmount*30).toLocaleString()+" credits":credits.toLocaleString()+" credits";
-      const price=customAmount?"$"+customAmount:({150:"$4.99",500:"$14.99",1000:"$24.99",3000:"$59.99"}[credits]||"$?.??");
-      setCreditCheckout({clientSecret:data.clientSecret,label,price});
-      setBoughtMsg("");
-    }catch(e){setBoughtMsg("Something went wrong.");}
-  };
-
-  useEffect(()=>{
-    if(!creditCheckout)return;
-    const s=typeof Stripe!=="undefined"?Stripe(stripePk):null;
-    if(!s)return;
-    stripeRef.current=s;
-    const el=s.elements();
-    const cardEl=el.create("card",{style:{base:{fontSize:"15px",fontFamily:"'Geist',sans-serif",color:"#E8EEFF","::placeholder":{color:"rgba(255,255,255,0.35)"}},invalid:{color:"#D9806B"}}});
-    setTimeout(()=>{const node=document.getElementById("stripe-card-el");if(node)cardEl.mount(node);},50);
-    stripeCardRef.current=cardEl;
-    return()=>{cardEl.destroy();};
-  },[creditCheckout]);
-
-  const confirmCreditPurchase=async()=>{
-    if(!stripeRef.current||!stripeCardRef.current||!creditCheckout)return;
-    setCreditProcessing(true);
-    setBoughtMsg("");
-    const prof=getProfile();
-    const{error}=await stripeRef.current.confirmCardPayment(creditCheckout.clientSecret,{
-      payment_method:{card:stripeCardRef.current,billing_details:{name:prof.name,email:prof.email}}
-    });
-    if(error){setBoughtMsg(error.message);setCreditProcessing(false);}
-    else{setCreditCheckout(null);setCreditProcessing(false);setBoughtMsg("✓ Credits added to your account!");}
-  };
-
-  // Disabled 2026-08-19: this was a live, fully-functional Stripe charge
-  // (paymentIntents.create needs no Price ID, unlike the subscription
-  // flow, so this kept working even while Pro checkout was broken on
-  // null Price IDs) for a "credits" balance that the 2026-08-18 pricing
-  // pass made completely inert -- every canX() gate now checks
-  // getPlan()==="Pro" and returns false outright for Free regardless of
-  // credit balance, and Pro users already get a 100000-credit monthly
-  // grant (see api/stripe-webhook.js PLAN_CREDITS) they'll never
-  // approach. A Free user completing this purchase would have paid real
-  // money (up to $100,000 via the custom-amount path) for literally zero
-  // unlocked functionality. Flagged for the user rather than redesigned
-  // -- what replaces this surface (drop it, fold it into the Pro
-  // upsell, something else) is a product call, not one to make solo
-  // overnight. See feedback in the morning report.
-  const buyPack=(_credits)=>{setBoughtMsg("Credit top-ups are temporarily unavailable. Upgrade to Pro for full AI access instead.");};
-  const buyCustom=()=>{setBoughtMsg("Credit top-ups are temporarily unavailable. Upgrade to Pro for full AI access instead.");};
+  // Credit top-ups removed entirely 2026-08-26 -- disabled since
+  // 2026-08-19 once every AI gate started checking getPlan()==="Pro"
+  // outright regardless of credit balance, which made a completed
+  // purchase unlock literally nothing (a Free user could have paid real
+  // money, up to $100,000 via the old custom-amount path, for zero real
+  // effect). The buttons had degraded to just showing "temporarily
+  // unavailable, upgrade to Pro instead" while the whole pack grid/
+  // custom-amount/Stripe-card-checkout UI still looked like a real,
+  // working purchase flow -- see the AI Credits modal, which now only
+  // shows balance + cost breakdown + the one real upgrade path (Pro).
+  // startCreditCheckout/confirmCreditPurchase (the actual Stripe
+  // PaymentIntent card-entry flow) and buyPack/buyCustom (the wrappers
+  // that used to call them, later just showing the disabled message) are
+  // gone with it -- all fully unreachable once nothing called
+  // startCreditCheckout anymore.
   const notifs=(()=>{
     const ev=lsGet("events",[]); const tk=dayKey();
     const rel=(k)=>{const tomorrow=dayKey(new Date(Date.now()+86400000));if(k===tk)return"Today";if(k===tomorrow)return"Tomorrow";const p=k.split("-");return MON_SHORT[+p[1]-1]+" "+(+p[2]);};
@@ -30675,90 +30650,46 @@ function App() {
           <div style={{fontSize:12,color:T.muted}}>All plans include a 14-day money-back guarantee. No credit card needed for Free.</div>
         </div>
       </Modal>
-      <Modal open={creditsOpen} onClose={()=>{setCreditsOpen(false);setCreditCheckout(null);setBoughtMsg("");}} title={creditCheckout?"Complete purchase":"AI Credits"} sub={creditCheckout?("Purchase "+creditCheckout.label+" for "+creditCheckout.price):"Upgrade to Pro for full AI access, or check your balance below."} width={620}
-        footer={creditCheckout
-          ?<><Btn variant="subtle" onClick={()=>{setCreditCheckout(null);setBoughtMsg("");}}>← Back</Btn><Btn onClick={confirmCreditPurchase} disabled={creditProcessing} style={{background:T.lime,color:T.ink}}>{creditProcessing?"Processing...":"Pay "+creditCheckout.price}</Btn></>
-          :<><Btn variant="subtle" onClick={()=>setCreditsOpen(false)}>Close</Btn></>}>
-
-        {creditCheckout ? (
-          <div>
-            <div style={{background:T.lime,borderRadius:8,padding:"18px 20px",marginBottom:20,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div>
-                <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",fontWeight:600,color:"rgba(8,12,40,0.6)"}}>YOU'RE BUYING</div>
-                <div style={{fontFamily:T.hand,fontSize:36,fontWeight:700,color:T.ink,lineHeight:0.9,marginTop:4}}>{creditCheckout.label}</div>
-              </div>
-              <div style={{fontFamily:T.hand,fontSize:36,fontWeight:700,color:T.ink}}>{creditCheckout.price}</div>
+      <Modal open={creditsOpen} onClose={()=>setCreditsOpen(false)} title="AI Credits" sub="Upgrade to Pro for full AI access, or check your balance below." width={620}
+        footer={<Btn variant="subtle" onClick={()=>setCreditsOpen(false)}>Close</Btn>}>
+        <div style={{background:T.lime,borderRadius:8,padding:"20px 22px",position:"relative",overflow:"hidden",marginBottom:18}}>
+          <div style={{position:"absolute",right:-30,top:-30,width:160,height:160,background:"radial-gradient(circle,rgba(255,255,255,0.45),transparent 70%)",pointerEvents:"none"}} />
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",position:"relative"}}>
+            <div>
+              <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",fontWeight:600,color:"rgba(8,12,40,0.6)"}}>CURRENT BALANCE</div>
+              <div style={{fontFamily:T.hand,fontSize:54,fontWeight:700,color:T.ink,lineHeight:0.9,marginTop:4}}>{getPlan()==="Pro"?"Unlimited":getCredits()+""}<span style={{fontFamily:T.font,fontSize:18,fontWeight:500,color:"rgba(8,12,40,0.55)",marginLeft:4}}>{getPlan()==="Pro"?"":"/ "+getCreditLimit()}</span></div>
+              <div style={{fontSize:12,color:"rgba(8,12,40,0.65)",marginTop:4}}>{getPlan()==="Pro"?"No monthly cap":"Resets in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")+" · "+(getCreditLimit()-getCredits())+" used this cycle"}</div>
             </div>
-            <div id="stripe-card-el" style={{padding:"14px 16px",border:"1.5px solid "+T.border,borderRadius:12,background:T.card,marginBottom:12,minHeight:22}}></div>
-            {boughtMsg&&<div style={{fontSize:12.5,color:boughtMsg.startsWith("✓")?T.lime:T.red,fontWeight:600,marginTop:8}}>{boughtMsg}</div>}
-            <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,fontSize:11,color:T.muted,marginTop:12}}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
-              Secured by Stripe · 256-bit encryption
-            </div>
+            <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.16em",fontWeight:700,background:T.ink,color:T.lime,padding:"4px 8px",borderRadius:5}}>{getPlan().toUpperCase()}</span>
           </div>
-        ) : (
-          <>
-            <div style={{background:T.lime,borderRadius:8,padding:"20px 22px",position:"relative",overflow:"hidden",marginBottom:18}}>
-              <div style={{position:"absolute",right:-30,top:-30,width:160,height:160,background:"radial-gradient(circle,rgba(255,255,255,0.45),transparent 70%)",pointerEvents:"none"}} />
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",position:"relative"}}>
-                <div>
-                  <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",fontWeight:600,color:"rgba(8,12,40,0.6)"}}>CURRENT BALANCE</div>
-                  <div style={{fontFamily:T.hand,fontSize:54,fontWeight:700,color:T.ink,lineHeight:0.9,marginTop:4}}>{getPlan()==="Pro"?"Unlimited":getCredits()+""}<span style={{fontFamily:T.font,fontSize:18,fontWeight:500,color:"rgba(8,12,40,0.55)",marginLeft:4}}>{getPlan()==="Pro"?"":"/ "+getCreditLimit()}</span></div>
-                  <div style={{fontSize:12,color:"rgba(8,12,40,0.65)",marginTop:4}}>{getPlan()==="Pro"?"No monthly cap":"Resets in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")+" · "+(getCreditLimit()-getCredits())+" used this cycle"}</div>
-                </div>
-                <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.16em",fontWeight:700,background:T.ink,color:T.lime,padding:"4px 8px",borderRadius:5}}>{getPlan().toUpperCase()}</span>
-              </div>
-              <div style={{height:5,background:"rgba(8,12,40,0.15)",borderRadius:99,marginTop:14,overflow:"hidden",position:"relative"}}><div style={{height:"100%",width:Math.min(100,Math.round(getCredits()/getCreditLimit()*100))+"%",background:T.ink,borderRadius:99}} /></div>
-            </div>
+          <div style={{height:5,background:"rgba(8,12,40,0.15)",borderRadius:99,marginTop:14,overflow:"hidden",position:"relative"}}><div style={{height:"100%",width:Math.min(100,Math.round(getCredits()/getCreditLimit()*100))+"%",background:T.ink,borderRadius:99}} /></div>
+        </div>
 
-            <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.muted,textTransform:"uppercase",marginBottom:10}}>Quick top-up</div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:18}}>
-              {[
-                {n:150,p:"$4.99",save:null},
-                {n:500,p:"$14.99",save:"−17%"},
-                {n:1000,p:"$24.99",save:"−31%",featured:true},
-                {n:3000,p:"$59.99",save:"−45%"},
-              ].map((pk,i)=>(
-                <div key={i} onClick={()=>buyPack(pk.n)} style={{background:pk.featured?T.ink:T.card2,color:pk.featured?T.cream:T.text,borderRadius:10,padding:14,border:`1px solid ${pk.featured?T.ink:T.border}`,cursor:"pointer",position:"relative",transition:"transform 0.15s"}}>
-                  <div style={{fontFamily:T.hand,fontSize:34,fontWeight:700,color:pk.featured?T.lime:T.text,lineHeight:0.9,letterSpacing:"-0.01em"}}>{pk.n.toLocaleString()}</div>
-                  <div style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.14em",color:pk.featured?"rgba(246,241,230,0.5)":T.muted,marginTop:2}}>CREDITS</div>
-                  <div style={{fontSize:16,fontWeight:600,marginTop:6,letterSpacing:"-0.02em"}}>{pk.p}</div>
-                  {pk.save && <div style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.14em",fontWeight:700,color:pk.featured?T.lime:T.limeDk,marginTop:4}}>SAVE {pk.save}</div>}
-                </div>
-              ))}
+        {/* Credit top-ups (pack grid + custom amount + their whole Stripe
+            card-entry checkout step) removed 2026-08-26 -- disabled since
+            2026-08-19 once every AI gate started checking getPlan()==="Pro"
+            outright, so a completed purchase unlocked literally nothing.
+            The buttons had degraded to just showing "temporarily
+            unavailable, upgrade to Pro instead" while still looking like a
+            real, working purchase flow. Pro is the one real upgrade path
+            now (see the CTA below), so it's the only one shown. */}
+        <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.muted,textTransform:"uppercase",marginBottom:10}}>What costs what</div>
+        <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"4px 14px"}}>
+          {[["AI chat · Standard / Flash","1"],["AI chat · Pro","2"],["AI chat · Reasoning","3"],["Citation generation","1"],["File upload + analysis","2"],["Plagiarism check","2"],["AI Humanizer run","2"],["Full essay analysis","3"],["Practice test generation","4"]].map(([k,v],i)=>(
+            <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"9px 0",borderBottom:i<8?`1px solid ${T.border}`:"none",fontSize:13}}>
+              <span style={{color:T.text}}>{k}</span>
+              <span style={{fontFamily:T.mono,fontWeight:600,color:T.lime}}>{v}</span>
             </div>
+          ))}
+        </div>
 
-            <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.muted,textTransform:"uppercase",marginBottom:10}}>Buy a custom amount</div>
-            <div style={{display:"flex",gap:10,alignItems:"stretch",marginBottom:8,flexWrap:"wrap"}}>
-              <div style={{flex:1,minWidth:220,display:"flex",alignItems:"center",gap:8,background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"6px 14px"}}>
-                <span style={{fontSize:20,color:T.muted,fontWeight:600}}>$</span>
-                <input type="number" min="5" max="100000" value={customDollars} onChange={e=>setCustomDollars(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")buyCustom();}} placeholder="Enter any amount" style={{flex:1,minWidth:60,background:"none",border:"none",outline:"none",color:T.text,fontSize:18,fontWeight:600,fontFamily:T.font}} />
-                <span style={{fontSize:12,color:T.muted,whiteSpace:"nowrap"}}>≈ {Math.round(Math.min(100000,Math.max(0,+customDollars||0))*30).toLocaleString()} credits</span>
-              </div>
-              <button onClick={buyCustom} style={{background:T.lime,color:T.ink,border:"none",borderRadius:10,padding:"0 24px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Buy now</button>
-            </div>
-            {boughtMsg&&<div style={{fontSize:12.5,color:boughtMsg.startsWith("✓")?T.lime:T.red,fontWeight:600,marginBottom:8}}>{boughtMsg}</div>}
-            <div style={{fontSize:11,color:T.muted,marginBottom:18}}>Buy any amount you want. $5 minimum, $100,000 max. Roughly 30 credits per $1.</div>
-
-            <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.muted,textTransform:"uppercase",marginBottom:10}}>What costs what</div>
-            <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"4px 14px"}}>
-              {[["AI chat · Standard / Flash","1"],["AI chat · Pro","2"],["AI chat · Reasoning","3"],["Citation generation","1"],["File upload + analysis","2"],["Plagiarism check","2"],["AI Humanizer run","2"],["Full essay analysis","3"],["Practice test generation","4"]].map(([k,v],i)=>(
-                <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"9px 0",borderBottom:i<8?`1px solid ${T.border}`:"none",fontSize:13}}>
-                  <span style={{color:T.text}}>{k}</span>
-                  <span style={{fontFamily:T.mono,fontWeight:600,color:T.lime}}>{v}</span>
-                </div>
-              ))}
-            </div>
-
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:16,padding:"12px 14px",background:T.card2,borderRadius:10,border:`1px solid ${T.border}`}}>
-              <div>
-                <div style={{fontSize:12.5,color:T.text,fontWeight:600}}>Hit your cap often?</div>
-                <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>Pro plan gives you unlimited AI chat, no credits needed.</div>
-              </div>
-              <a href="checkout.html?plan=pro&billing=monthly" style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:7,fontSize:12,fontWeight:600,background:T.ink,color:T.lime,textDecoration:"none",fontFamily:T.font}}>Upgrade to Pro</a>
-            </div>
-          </>
-        )}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:16,padding:"12px 14px",background:T.card2,borderRadius:10,border:`1px solid ${T.border}`}}>
+          <div>
+            <div style={{fontSize:12.5,color:T.text,fontWeight:600}}>Hit your cap often?</div>
+            <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>Pro plan gives you unlimited AI chat, no credits needed.</div>
+          </div>
+          <a href="checkout.html?plan=pro&billing=monthly" style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:7,fontSize:12,fontWeight:600,background:T.ink,color:T.lime,textDecoration:"none",fontFamily:T.font}}>Upgrade to Pro</a>
+        </div>
       </Modal>
 
       <Modal open={!!pendingBeginTask} onClose={cancelPendingBegin} title="Still working on something else"
