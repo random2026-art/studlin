@@ -13125,7 +13125,7 @@ function resolveCalendarHighlightFlag(flag, nowMs) {
   return flag.ids;
 }
 function CalendarTab({ setActive = () => {
-}, onTaskSaved, openRoutineCenterOnMount, onRoutineCenterOpenedFromSettings, setDetailEventId, registerSetEvents, onTaskCompleted, catchUpPending, onWizardOpenChange, jumpToSessionOnMount, onJumpSessionConsumed, setPricingOpen = () => {
+}, onTaskSaved, openRoutineCenterOnMount, onRoutineCenterOpenedFromSettings, setDetailEventId, registerSetEvents, registerSkipSetEvents, onTaskCompleted, catchUpPending, onWizardOpenChange, jumpToSessionOnMount, onJumpSessionConsumed, setPricingOpen = () => {
 } } = {}) {
   const [userSubjects, setUserSubjectsState] = useState(() => getSubjects());
   const SUBJ = [{ value: "None", label: "None", color: T.lime }, ...userSubjects.map((s) => ({ value: s.label, label: s.label, color: s.color })), { value: "Other", label: "Other", color: T.lime }];
@@ -13306,7 +13306,10 @@ function CalendarTab({ setActive = () => {
   }, []);
   useEffect(() => {
     refreshPendingAcceptance(lsGet("events", [])).then((next) => {
-      if (next) setEvents2(next);
+      if (next) {
+        calHistorySkip.current = true;
+        setEvents2(next);
+      }
     });
   }, []);
   const now = /* @__PURE__ */ new Date();
@@ -13652,6 +13655,17 @@ function CalendarTab({ setActive = () => {
       setCalHistoryTick((t) => t + 1);
     }
   }, [events]);
+  useEffect(() => {
+    if (!registerSkipSetEvents) return;
+    const applyExternalSync = (next) => {
+      calHistorySkip.current = true;
+      setEvents2(next);
+    };
+    registerSkipSetEvents(applyExternalSync);
+    return () => {
+      registerSkipSetEvents(null);
+    };
+  }, [registerSkipSetEvents]);
   const undoCal = () => {
     if (calHistoryUndo.current.length === 0) return;
     const prev = calHistoryUndo.current[calHistoryUndo.current.length - 1];
@@ -18226,10 +18240,11 @@ function App() {
   const [dashToast, setDashToast] = useState("");
   const [detailEventId, setDetailEventId] = useState(null);
   const calendarSetEventsRef = useRef(null);
+  const calendarSkipSetEventsRef = useRef(null);
   useEffect(() => {
     pullGoogleCalendarIfConnected().then((result) => {
       if (!result) return;
-      if (calendarSetEventsRef.current) calendarSetEventsRef.current(lsGet("events", []));
+      if (calendarSkipSetEventsRef.current) calendarSkipSetEventsRef.current(lsGet("events", []));
     });
   }, []);
   const [notifOpen, setNotifOpen] = useState(false);
@@ -18727,6 +18742,8 @@ function App() {
     e.currentTarget.style.animation = "none";
   }, style: { flex: 1, overflowY: "auto", padding: "24px 32px", animation: "studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both", background: active === "dashboard" ? T.bg : void 0 } }, active === "dashboard" ? /* @__PURE__ */ React.createElement(Dashboard, { setActive, seriousMode, rescheduleTask, setRescheduleTask, dashToast, setDashToast, setDetailEventId, onTaskCompleted: handleTaskCompleted }) : active === "settings" ? /* @__PURE__ */ React.createElement(SettingsTab, { theme, setTheme, accent, setAccent, density, setDensity, seriousMode, setSeriousMode, onOpenRoutineCenter: openRoutineCenterOnCalendar, setScheduleSettingsOpen, setPricingOpen, setActivePage: setActive }) : active === "calendar" ? /* @__PURE__ */ React.createElement(CalendarTab, { setActive, onTaskSaved: handleTaskSaved, openRoutineCenterOnMount: pendingRoutineCenter, onRoutineCenterOpenedFromSettings: () => setPendingRoutineCenter(false), setDetailEventId, registerSetEvents: (fn) => {
     calendarSetEventsRef.current = fn;
+  }, registerSkipSetEvents: (fn) => {
+    calendarSkipSetEventsRef.current = fn;
   }, onTaskCompleted: handleTaskCompleted, catchUpPending: !!catchUpBanner, onWizardOpenChange: setCalendarWizardOpen, jumpToSessionOnMount: pendingJumpSession, onJumpSessionConsumed: () => setPendingJumpSession(null), setPricingOpen }) : active === "notes" ? /* @__PURE__ */ React.createElement(Notes, { setActive }) : active === "friends" ? /* @__PURE__ */ React.createElement(FriendsChat, { onFriendRequestSent: askNotifIfNeeded, onActiveChatChange: setOpenChatRoomId, initialTarget: pendingChatTarget, onInitialTargetConsumed: () => setPendingChatTarget(null) }) : active === "profile" ? /* @__PURE__ */ React.createElement(Profile, { setActive, seriousMode }) : active === "prep" ? /* @__PURE__ */ React.createElement(StudlinPrep, { setActive, setDetailEventId }) : active === "flashcards" ? /* @__PURE__ */ React.createElement(Flashcards, { setActive }) : ActivePage ? /* @__PURE__ */ React.createElement(ActivePage, null) : null)), rescheduleTask && /* @__PURE__ */ React.createElement(RescheduleModal, { task: rescheduleTask, events: lsGet("events", []), onClose: () => setRescheduleTask(null), onManual: () => {
     setActive("calendar");
     setPendingJumpSession(rescheduleTask);

@@ -21263,7 +21263,7 @@ function resolveCalendarHighlightFlag(flag, nowMs){
 // setPricingOpen(true)) already merged into this function's BODY cleanly,
 // so dropping this prop would leave those calls throwing on an undefined
 // setPricingOpen.
-function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRoutineCenterOpenedFromSettings,setDetailEventId,registerSetEvents,onTaskCompleted,catchUpPending,onWizardOpenChange,jumpToSessionOnMount,onJumpSessionConsumed,setPricingOpen=()=>{}}={}){
+function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRoutineCenterOpenedFromSettings,setDetailEventId,registerSetEvents,registerSkipSetEvents,onTaskCompleted,catchUpPending,onWizardOpenChange,jumpToSessionOnMount,onJumpSessionConsumed,setPricingOpen=()=>{}}={}){
   const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
   const SUBJ=[{value:"None",label:"None",color:T.lime},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
   // Accepts either a real course id or a label, same as StudlinPrep/Notes'
@@ -21680,8 +21680,14 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // popover opening refreshes just that one event too (see WeeklyPlanner/
   // DayPlanner) so acceptance mid-visit still shows up without waiting for
   // a full tab remount.
+  // 2026-08-25: same calHistorySkip guard as the Google Calendar pull
+  // below -- this mount-time refresh isn't a user edit, and CalendarTab
+  // remounts on every tab switch (see its own comment elsewhere), so
+  // without this, simply switching away and back to Calendar could
+  // silently wipe the undo/redo history the moment any pending group-
+  // schedule proposal happened to need refreshing.
   useEffect(()=>{
-    refreshPendingAcceptance(lsGet("events",[])).then(next=>{ if(next)setEvents(next); });
+    refreshPendingAcceptance(lsGet("events",[])).then(next=>{ if(next){calHistorySkip.current=true;setEvents(next);} });
   },[]);
 
   const now=new Date();
@@ -22193,6 +22199,24 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       setCalHistoryTick(t=>t+1);
     }
   },[events]);
+  // 2026-08-25 regression: the one-time Google Calendar pull (see its own
+  // effect in App) pushes a fresh events array straight into this
+  // component's state through the calendarSetEventsRef bridge -- same as
+  // any other external setEvents call, the tracking effect above had no
+  // way to tell that apart from a real, undo-worthy user action. Landing
+  // moments after a genuine edit, it silently wiped the entire Redo stack
+  // (the effect's own calHistoryRedo.current=[] line) and stacked a bogus
+  // "undo" entry the student never actually did -- exactly what "undo and
+  // redo aren't working" looks like from the outside. registerSkipSetEvents
+  // hands App a version of setEvents that flags the update as skip-worthy
+  // first, the same calHistorySkip guard undoCal/redoCal themselves
+  // already use so restoring history doesn't recursively rewrite itself.
+  useEffect(()=>{
+    if(!registerSkipSetEvents)return;
+    const applyExternalSync=(next)=>{calHistorySkip.current=true;setEvents(next);};
+    registerSkipSetEvents(applyExternalSync);
+    return ()=>{registerSkipSetEvents(null);};
+  },[registerSkipSetEvents]);
   const undoCal=()=>{
     if(calHistoryUndo.current.length===0)return;
     const prev=calHistoryUndo.current[calHistoryUndo.current.length-1];
@@ -29471,19 +29495,29 @@ function App() {
   // CalendarTab's own mount/unmount effect.
   const [detailEventId,setDetailEventId]=useState(null);
   const calendarSetEventsRef=useRef(null);
+  // Separate bridge from calendarSetEventsRef above -- this one flags the
+  // update as skip-worthy in CalendarTab's own undo/redo history (see its
+  // registerSkipSetEvents comment) for a silent external sync the student
+  // never asked for in the moment, as opposed to calendarSetEventsRef's
+  // real, deliberate user edits (App-level Edit Task) that SHOULD register
+  // normally.
+  const calendarSkipSetEventsRef=useRef(null);
   // Google Calendar used to only ever re-pull the server's cached copy
   // when Settings happened to be open (SettingsTab's own mount effect) --
   // a connected student who never revisited Settings would never see an
   // event added on Google's side, no matter how long they waited. This
   // runs the same pull once per app load regardless of which tab is
   // active, and pushes the result straight into CalendarTab's live state
-  // via the same calendarSetEventsRef bridge already used for App-level
-  // modal commits above, so it's reflected immediately rather than only
-  // on CalendarTab's next full remount.
+  // via calendarSkipSetEventsRef (2026-08-25: was calendarSetEventsRef,
+  // see its own comment -- this silent background sync landing moments
+  // after a real edit was wiping the entire Redo stack and stacking a
+  // bogus "undo" entry, exactly what "undo and redo aren't working"
+  // looks like from the outside), so it's reflected immediately rather
+  // than only on CalendarTab's next full remount.
   useEffect(()=>{
     pullGoogleCalendarIfConnected().then(result=>{
       if(!result)return;
-      if(calendarSetEventsRef.current)calendarSetEventsRef.current(lsGet("events",[]));
+      if(calendarSkipSetEventsRef.current)calendarSkipSetEventsRef.current(lsGet("events",[]));
     });
   },[]);
   const [notifOpen,setNotifOpen]=useState(false);
@@ -30254,7 +30288,7 @@ function App() {
         <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?T.bg:undefined}}>
           {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} setDetailEventId={setDetailEventId} onTaskCompleted={handleTaskCompleted} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineCenter={openRoutineCenterOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} setActivePage={setActive} />:
-           active==="calendar"?<CalendarTab setActive={setActive} onTaskSaved={handleTaskSaved} openRoutineCenterOnMount={pendingRoutineCenter} onRoutineCenterOpenedFromSettings={()=>setPendingRoutineCenter(false)} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} onWizardOpenChange={setCalendarWizardOpen} jumpToSessionOnMount={pendingJumpSession} onJumpSessionConsumed={()=>setPendingJumpSession(null)} setPricingOpen={setPricingOpen} />:
+           active==="calendar"?<CalendarTab setActive={setActive} onTaskSaved={handleTaskSaved} openRoutineCenterOnMount={pendingRoutineCenter} onRoutineCenterOpenedFromSettings={()=>setPendingRoutineCenter(false)} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} registerSkipSetEvents={(fn)=>{calendarSkipSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} onWizardOpenChange={setCalendarWizardOpen} jumpToSessionOnMount={pendingJumpSession} onJumpSessionConsumed={()=>setPendingJumpSession(null)} setPricingOpen={setPricingOpen} />:
            active==="notes"?<Notes setActive={setActive} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
            active==="profile"?<Profile setActive={setActive} seriousMode={seriousMode} />:
