@@ -17920,16 +17920,24 @@ function PhasesOutlineEditor({item,onChange,subject,onGateBlocked=()=>{},onNeeds
 // with no school-hours context to sanity-check against yet -- status now
 // comes first, so a future "that overlaps your school day" check has
 // something real to compare against instead of nothing.
-const WIZARD_STEP_ORDER=["term","holidays","status","awake","classes","activities","calendarSync","finalReview"];
-// Phase 8: the 6 named steps a fresh account walks through, shown as a
+// "holidays" removed (2026-08-26) -- Settings already has a full, better
+// editor for this (RoutineControlCenterModal's own Holidays section, same
+// getHolidays/saveHolidays data), one that can actually preview what's on
+// the calendar during a break and offer to reschedule it. The wizard's
+// own version couldn't do that (nothing exists yet to conflict with this
+// early), and most students don't even know their break dates on day one
+// anyway. Same reasoning that already got peak-hours/difficulty cut from
+// the old InitWizard: inferred/deferred, still reachable in Settings for
+// anyone who wants it, one fewer screen for everyone else.
+const WIZARD_STEP_ORDER=["term","status","awake","classes","activities","calendarSync","finalReview"];
+// Phase 8: the named steps a fresh account walks through, shown as a
 // top progress stepper. "status" (HS/college fork) isn't its own labeled
 // step -- Shovel doesn't show one either -- it's the entry to "Courses",
-// same as "classes" itself. calendarSync/finalReview come after the 6
+// same as "classes" itself. calendarSync/finalReview come after the
 // named steps but aren't part of the stepper (same as "window" wasn't,
 // before it got merged into "awake").
 const WIZARD_STEPPER=[
   {key:"term",label:"End of Term"},
-  {key:"holidays",label:"Holidays"},
   {key:"awake",label:"Awake time"},
   {key:"status",label:"Courses"},
   {key:"classes",label:"Courses"},
@@ -17956,7 +17964,7 @@ const WizardStepper=({step})=>{
 };
 
 function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCourseId,onPartialSync,setPricingOpen=()=>{},setActivePage=()=>{}}){
-  const [step,setStep]=useState("status"); // timezone | term | holidays | awake | status | classes | activities | calendarSync | window | finalReview
+  const [step,setStep]=useState("status"); // timezone | term | awake | status | classes | activities | calendarSync | window | finalReview
   const [status,setStatus]=useState(initialStatus||"");
   // Classes fully reviewed this session, staged -- nothing in here touches
   // the real calendar until "Add to Calendar" on the final review step.
@@ -17966,8 +17974,6 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   const [timezone,setTimezone]=useState("");
   const [termStart,setTermStart]=useState("");
   const [termEnd,setTermEnd]=useState("");
-  const [holidays,setHolidays]=useState([]); // [{id,start,end,label}]
-  const [holidayDraft,setHolidayDraft]=useState({start:"",end:"",label:""});
   const [wakeTime,setWakeTime]=useState("07:00");
   const [sleepTime,setSleepTime]=useState("23:00");
   const [addMode,setAddMode]=useState(null); // null (list) | choose | scan | review | hsSchedule | hsReview
@@ -18061,7 +18067,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   // regardless of initialStatus (which was only ever used to pre-highlight
   // a chip, never to skip the screen). Filtering "status" out of the
   // effective step order when it's already known removes the screen from
-  // both forward navigation (holidays' Continue/Skip below) and Back
+  // both forward navigation (term's Continue/Skip below) and Back
   // navigation in one place, instead of two separate special cases that
   // could drift out of sync. A legacy account with no status on file
   // (falsy initialStatus) still gets asked, same as before.
@@ -18098,7 +18104,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     // quickScan (Import syllabus from a course's 3-dot menu) skips
     // straight to "classes" -- same shortcut this wizard already had, a
     // narrower "just add one more class" action that shouldn't re-ask
-    // term/holidays. Otherwise, whether to skip depends on whether THIS
+    // term. Otherwise, whether to skip depends on whether THIS
     // account has actually configured a term before (a real saved
     // schoolTerm) -- NOT on `initialStatus` as it used to. initialStatus
     // (getProfile().status) is set by onboarding's own Profile step for
@@ -18115,8 +18121,6 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     setTimezone(detectTz());
     setTermStart((term&&term.start)||"");
     setTermEnd((term&&term.end)||"");
-    setHolidays(getHolidays());
-    setHolidayDraft({start:"",end:"",label:""});
     const wakeSleep=getWakeSleep();
     setWakeTime((wakeSleep&&wakeSleep.wakeTime)||"07:00");
     setSleepTime((wakeSleep&&wakeSleep.sleepTime)||"23:00");
@@ -18550,11 +18554,6 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     // persisting it via saveSchoolTerm -- an HS account's answer to that
     // step was silently discarded.
     if(termStart&&termEnd)saveSchoolTerm({start:termStart,end:termEnd});
-    // Same gap as termStart/termEnd above -- holidays is collected by the
-    // shared "holidays" wizard step for every account, but only
-    // commitAllToCalendar ever persisted it. An HS account whole-schedule
-    // committing here had its holiday answer silently discarded.
-    if(holidays.length>0)saveHolidays(holidays);
     if(status)saveProfile({...getProfile(),status});
     // Whole-schedule photo/paste import has no deadlines to review, so
     // there's nothing to stage -- it commits immediately, same as it always has.
@@ -18600,8 +18599,8 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     // so finishing here has to actually honor that, not silently no-op.
     // Everything below is already a safe no-op on an empty pendingClasses
     // (subjects/routine just get re-saved unchanged) -- this just lets the
-    // shared finish housekeeping (schedule prefs, term, holidays,
-    // wake/sleep, onFinish) run unconditionally.
+    // shared finish housekeeping (schedule prefs, term, wake/sleep,
+    // onFinish) run unconditionally.
     let subjects=getSubjects();
     // Opened from an existing course's own "Import syllabus" action
     // (targetCourseId set) -- attach to that exact course instead of
@@ -18657,15 +18656,15 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     // never actually written to the real profile, so Settings' own
     // StatusChip (:19049) would show blank even after finishing here.
     if(status)saveProfile({...getProfile(),status});
-    // Phase 8: the 3 new preamble steps that actually persist something
+    // Phase 8: the preamble steps that actually persist something
     // (Timezone doesn't -- getProfile() always recomputes tz live via
     // detectTz() on every read, by design, so it auto-updates if a
     // student travels instead of going stale; that step is read-only
-    // information, not a setting, so there's nothing to save here). All
-    // 3 below quietly no-op if a returning user skipped straight to
-    // "classes" and never touched them.
+    // information, not a setting, so there's nothing to save here.
+    // Holidays no longer lives here at all -- see WIZARD_STEP_ORDER's own
+    // comment). Both below quietly no-op if a returning user skipped
+    // straight to "classes" and never touched them.
     if(termStart&&termEnd)saveSchoolTerm({start:termStart,end:termEnd});
-    saveHolidays(holidays);
     saveWakeSleep({wakeTime,sleepTime});
     lsSet("classSetupPending",[]);
     setPendingClasses([]);
@@ -18714,7 +18713,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
               (the first attempt) gave short steps like End of Term/status
               a huge dead void instead, which read just as unnatural as the
               original cut-off. This floor doesn't affect longer steps
-              (Awake time, Holidays, Classes, etc.), which already exceed
+              (Awake time, Classes, etc.), which already exceed
               it and scroll normally within the parent's own
               maxHeight:88vh cap. */}
           <div style={{minHeight:210}}>
@@ -18725,30 +18724,6 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
               <DateField label="Term starts" value={termStart} onChange={setTermStart} />
               <DateField label="Term ends" value={termEnd} onChange={setTermEnd} />
             </div>
-          </>)}
-
-          {step==="holidays"&&(<>
-            <TitleSub title="Any breaks this term?" sub="Spring break, a long weekend -- Studlin won't plan study sessions during these. Optional." />
-            {holidays.length>0&&(
-              <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
-                {holidays.map(h=>(
-                  <div key={h.id} style={{...subjectRowStyle(T.muted),justifyContent:"space-between"}}>
-                    <span style={{fontSize:12.5,color:T.text,fontWeight:600}}>{h.label||"Break"}</span>
-                    <span style={{fontSize:11,color:T.muted}}>{h.start} – {h.end}</span>
-                    <button type="button" onClick={()=>setHolidays(hs=>hs.filter(x=>x.id!==h.id))} title="Remove" style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:15,padding:"0 2px"}}>×</button>
-                  </div>
-                ))}
-              </div>
-            )}
-            <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:10}}>
-              <Input value={holidayDraft.label} onChange={e=>setHolidayDraft(d=>({...d,label:e.target.value}))} placeholder="e.g. Spring Break" />
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-                <DateField label="Starts" value={holidayDraft.start} onChange={v=>setHolidayDraft(d=>({...d,start:v}))} />
-                <DateField label="Ends" value={holidayDraft.end} onChange={v=>setHolidayDraft(d=>({...d,end:v}))} />
-              </div>
-            </div>
-            <button type="button" disabled={!holidayDraft.start||!holidayDraft.end} onClick={()=>{setHolidays(hs=>[...hs,{id:"hol-"+Date.now(),...holidayDraft}]);setHolidayDraft({start:"",end:"",label:""});}}
-              style={{width:"100%",padding:"12px",borderRadius:6,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.text,cursor:holidayDraft.start&&holidayDraft.end?"pointer":"not-allowed",fontFamily:T.font,fontSize:13,fontWeight:600,opacity:holidayDraft.start&&holidayDraft.end?1:0.45}}>+ Add a break</button>
           </>)}
 
           {step==="awake"&&(<>
@@ -19279,10 +19254,6 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
           </div>
           <div style={{display:"flex",gap:10}}>
             {step==="term"&&(<>
-              <Btn variant="subtle" onClick={()=>setStep("holidays")}>Skip</Btn>
-              <Btn onClick={()=>setStep("holidays")}>Continue</Btn>
-            </>)}
-            {step==="holidays"&&(<>
               <Btn variant="subtle" onClick={()=>setStep(knowsStatus?"awake":"status")}>Skip</Btn>
               <Btn onClick={()=>setStep(knowsStatus?"awake":"status")}>Continue</Btn>
             </>)}
