@@ -161,6 +161,38 @@ describe("Fix 3: Pro users hitting a usage cap see honest copy, not \"upgrade to
   });
 });
 
+describe("One free syllabus scan for Free-plan accounts (2026-08-26: syllabus scan used to block every Free user outright with zero access ever; the very first scan is free now, tracked as a lifetime flag rather than a monthly allowance since -- unlike a flat-cost schedule/grid scan -- a syllabus scan is per-class and shouldn't scale free access with course load)", () => {
+  test("a fresh Free account can scan once", () => {
+    const m = loadStudlinModule();
+    m.setPlanLS("Free");
+    assert.equal(m.canScanSyllabus(), true);
+  });
+
+  test("recordSyllabusScan on a Free account spends the one-time flag, not the Pro monthly counter", () => {
+    const m = loadStudlinModule();
+    m.setPlanLS("Free");
+    m.recordSyllabusScan();
+    assert.equal(m.canScanSyllabus(), false, "the free scan is spent");
+    assert.equal(m.getSyllabusScanUsage().count, 0, "a Free account's free scan must never consume the Pro monthly pool");
+  });
+
+  test("a Free account that's used its free scan still reports free-tier as the block reason -- same upgrade copy as before this change", () => {
+    const m = loadStudlinModule();
+    m.setPlanLS("Free");
+    m.recordSyllabusScan();
+    assert.equal(m.canScanSyllabusReason(), "free-tier");
+  });
+
+  test("upgrading to Pro after spending the free scan grants the full, untouched Pro monthly allowance", () => {
+    const m = loadStudlinModule();
+    m.setPlanLS("Free");
+    m.recordSyllabusScan();
+    m.setPlanLS("Pro");
+    assert.equal(m.canScanSyllabus(), true);
+    assert.equal(m.getSyllabusScanUsage().count, 0, "the Free lifetime flag and the Pro monthly counter must be entirely separate pools");
+  });
+});
+
 describe("Fix 4: editing an exam's gradeWeightPercent alone now re-scores its already-scheduled sessions", () => {
   test("patchExam's restamp-trigger field list includes gradeWeightPercent (source-level regression guard -- this literal lives inside a component closure the harness can't call directly)", () => {
     const match = SOURCE.match(/if\(\[([^\]]*)\]\.some\(k=>k in patch\)\)restampSessionPriorities\(examId\);/);

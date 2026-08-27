@@ -3823,11 +3823,16 @@ function underAiSpendCeiling() {
 const PRO_SYLLABUS_SCAN_LIMIT = 40;
 const getSyllabusScanUsage = makeMonthlyUsage("syllabusScans");
 function canScanSyllabus() {
-  if (getPlan() === "Free") return false;
+  if (getPlan() === "Free") return !lsGet("freeSyllabusScanUsed", false);
   if (!underAiSpendCeiling()) return false;
   return getSyllabusScanUsage().count < PRO_SYLLABUS_SCAN_LIMIT;
 }
 function recordSyllabusScan() {
+  if (getPlan() === "Free") {
+    lsSet("freeSyllabusScanUsed", true);
+    chargeAiSpend("syllabusScan");
+    return;
+  }
   const u = getSyllabusScanUsage();
   lsSet("syllabusScans", { month: u.month, count: u.count + 1 });
   chargeAiSpend("syllabusScan");
