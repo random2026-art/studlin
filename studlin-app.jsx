@@ -7995,6 +7995,28 @@ function finalizeExtractedText(raw){
     empty:trimmed.length<20,
   };
 }
+// A photo or screenshot of study material (a page of notes, a textbook
+// page, lecture slides) has no text layer to just read off -- unlike
+// PDF/docx, this genuinely needs a vision call. Deliberately separate from
+// extractSyllabusDeadlinesFromImage (that one extracts structured
+// due-dates for the calendar; this one transcribes general academic
+// content as plain text for flashcard/practice-exam/study-plan generation
+// to consume, same as any other uploaded file's text). Real cost, gated by
+// the caller via the same canScanScreenshot/recordScreenshotScan pair
+// every other image-reading feature in this file already uses.
+async function extractStudyTextFromImage(base64Data,mediaType){
+  try{
+    const prompt="This image is a photo or screenshot of a student's study material -- a page of handwritten or printed notes, a textbook page, or lecture slides. Transcribe the readable academic content as clean plain text: concepts, definitions, facts, examples, and any visible structure (headings, bullet points). Don't invent content that isn't actually visible, and skip anything genuinely illegible rather than guessing at it. If the image has no usable academic content at all, respond with exactly: NO_CONTENT_FOUND";
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt,image:{mediaType,data:base64Data}}],model:"standard"})});
+    const data=await res.json().catch(()=>({}));
+    if(!res.ok)return {text:"",error:data.error||"Couldn't read that image. Try again."};
+    const reply=(data.reply||"").trim();
+    if(!reply||reply==="NO_CONTENT_FOUND")return {text:"",error:"Studlin couldn't find any readable study content in that image."};
+    return {text:reply,error:null};
+  }catch(e){
+    return {text:"",error:"Something went wrong reading that image. Check your connection and try again."};
+  }
+}
 // Shown in place of the upload dropzone while extractFileText (below) is
 // working through a file -- reuses the same thin lime progress-bar
 // language as Dashboard's plan-completion bar (the only other percentage
@@ -8040,8 +8062,42 @@ function ExtractionProgress({fileName,pct,index,total,stage,analyzeLabel}){
 // those paths just report 1 right before resolving rather than faking
 // intermediate steps. Callers that don't pass onProgress see no behavior
 // change at all.
+// Same media-type map every other image-reading feature in this file
+// already uses (Notes' syllabus scan, ClassSetupWizard's schedule scans,
+// the work-schedule scanner) -- kept as its own top-level const rather
+// than yet another component-local copy of the same five extensions.
+const EXTRACT_FILE_TEXT_IMAGE_MEDIA_TYPES={png:"image/png",jpg:"image/jpeg",jpeg:"image/jpeg",webp:"image/webp",gif:"image/gif"};
+const EXTRACT_FILE_TEXT_MAX_IMAGE_BYTES=2.5*1024*1024;
 async function extractFileText(file,onProgress){
   const ext=file.name.split(".").pop().toLowerCase();
+  const imageMediaType=EXTRACT_FILE_TEXT_IMAGE_MEDIA_TYPES[ext];
+  if(imageMediaType){
+    // Real bug fix (2026-08-27): every caller of this function (Flashcards,
+    // Studlin Prep's exam-material and practice-exam uploads) could only
+    // ever accept text/PDF/Word files -- a student whose "notes" are a
+    // photographed textbook page or a screenshot had no way in at all, and
+    // depending on the browser, a photo sitting right there in their
+    // Downloads folder wouldn't even show up in the file picker once the
+    // accept list didn't include it. Gated and recorded centrally here
+    // (not per call site) so every current AND future caller of
+    // extractFileText gets correct Pro-gating automatically, with no
+    // chance of a new call site forgetting to add it.
+    if(file.size>EXTRACT_FILE_TEXT_MAX_IMAGE_BYTES){
+      return {text:"This image is too large ("+Math.round(file.size/1024/1024*10)/10+"MB). Try a smaller photo or crop it down.",truncated:false,empty:true};
+    }
+    if(!canScanScreenshot()){
+      const reason=canScanScreenshotReason();
+      return {text:reason==="free-tier"?"Reading a photo or screenshot is a Pro feature. Upgrade to use it, or upload a text/PDF/Word file instead.":AI_USAGE_CAP_MESSAGE,truncated:false,empty:true};
+    }
+    const dataUrl=await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.readAsDataURL(file);});
+    const base64=(dataUrl.split(",")[1])||"";
+    if(onProgress)onProgress(0.4);
+    const {text,error}=await extractStudyTextFromImage(base64,imageMediaType);
+    if(onProgress)onProgress(1);
+    if(error)return {text:error,truncated:false,empty:true};
+    recordScreenshotScan();
+    return finalizeExtractedText(text);
+  }
   if(ext==="pdf"){
     try{
       const pdfjsLib=await window._pdfjs;
@@ -10248,7 +10304,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                 </div>
               ):(
                 <div>
-                  <input type="file" ref={fileInputRef} onChange={handlePrepFile} accept=".txt,.md,.pdf,.docx" style={{display:"none"}} multiple />
+                  <input type="file" ref={fileInputRef} onChange={handlePrepFile} accept=".txt,.md,.pdf,.docx,.png,.jpg,.jpeg,.webp,.gif" style={{display:"none"}} multiple />
                   {extractProgress?(
                     <div style={{marginBottom:8}}><ExtractionProgress {...extractProgress} /></div>
                   ):(
@@ -10507,7 +10563,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
           {peSubject==="Other"&&<Input placeholder="Subject name" value={peCustomSubject} onChange={e=>setPeCustomSubject(e.target.value)} style={{marginTop:8}} />}
         </Field>
         <Field label="Material" hint="Upload files or paste text — the more real content, the better the questions.">
-          <input type="file" ref={peFileRef} onChange={handlePeFile} accept=".txt,.md,.pdf,.docx" style={{display:"none"}} multiple />
+          <input type="file" ref={peFileRef} onChange={handlePeFile} accept=".txt,.md,.pdf,.docx,.png,.jpg,.jpeg,.webp,.gif" style={{display:"none"}} multiple />
           {extractProgress?(
             <div style={{marginBottom:10}}><ExtractionProgress {...extractProgress} /></div>
           ):(
@@ -10838,38 +10894,18 @@ function Flashcards({setActive=()=>{}}={}) {
   const startRec=()=>{const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!SR)return;const r=new SR();r.continuous=true;r.interimResults=true;r.lang="en-US";r.onresult=(e)=>{let t="";for(let i=0;i<e.results.length;i++)t+=e.results[i][0].transcript;setRecText(t);};r.onend=()=>setRecOn(false);recRef.current=r;r.start();setRecOn(true);setRecSecs(0);setRecText("");};
   const stopRec=()=>{if(recRef.current)recRef.current.stop();setRecOn(false);};
 
-  // Extracts one file's text — pdf.js for PDF, mammoth.js for .docx (same
-  // CDN-script pattern as the syllabus scanner; .doc, the old binary
-  // format, isn't supported by mammoth either, so it gets an honest
-  // message instead of silently mis-parsed garbage), plain FileReader for
-  // genuinely-plain formats.
-  const extractFileText=async(file)=>{
-    const ext=file.name.split(".").pop().toLowerCase();
-    if(ext==="pdf"){
-      try{
-        const pdfjsLib=await window._pdfjs;
-        const buf=await file.arrayBuffer();
-        const pdf=await pdfjsLib.getDocument({data:buf}).promise;
-        let text="";
-        for(let i=1;i<=pdf.numPages;i++){const pg=await pdf.getPage(i);const tc=await pg.getTextContent();text+=tc.items.map(it=>it.str).join(" ")+"\n\n";}
-        return text;
-      }catch(err){return "Could not read PDF: "+err.message;}
-    }
-    if(ext==="docx"){
-      try{
-        if(!window.mammoth)throw new Error("Document reader still loading — try again in a moment.");
-        const buf=await file.arrayBuffer();
-        const result=await window.mammoth.extractRawText({arrayBuffer:buf});
-        return result.value;
-      }catch(err){return "Could not read this document: "+err.message;}
-    }
-    if(ext==="doc")return "This is an older .doc file — Studlin can only read .docx. Try re-saving it as .docx or PDF.";
-    return await new Promise(resolve=>{
-      const reader=new FileReader();
-      reader.onload=()=>resolve(reader.result);
-      reader.readAsText(file);
-    });
-  };
+  // 2026-08-27 fix: this used to shadow a component-local, out-of-date copy
+  // of extractFileText -- a plain string-returning function that predated
+  // the {text,truncated,empty} object shape the shared top-level
+  // extractFileText (used correctly by Studlin Prep's own two upload call
+  // sites) has returned for a while. handleFile below destructured
+  // {text,truncated,empty} from it regardless, meaning f.text was silently
+  // `undefined` for EVERY file ever uploaded through Flashcards' deck
+  // creation -- the AI was receiving the literal string "undefined" as
+  // material, not the real file content, for every deck built this way.
+  // Removing the local shadow lets handleFile correctly resolve to the
+  // real, working, already-shared function (which also now handles
+  // images -- see its own comment).
   // Multi-file: each upload appends rather than replaces, so cards can be
   // generated from several files (e.g. multiple lecture chapters) at once.
   const handleFile=async(e)=>{
@@ -10880,11 +10916,6 @@ function Flashcards({setActive=()=>{}}={}) {
     for(let i=0;i<files.length;i++){
       const file=files[i];
       setExtractProgress({name:file.name,pct:0,index:i+1,total:files.length});
-      // Was storing extractFileText's whole {text,truncated,empty} return
-      // object as f.text instead of destructuring it -- createDeck's own
-      // prompt-building ("--- "+f.name+" ---\n"+f.text) then string-coerced
-      // that object to literally "[object Object]", so the AI never saw
-      // real material through this upload path at all.
       const {text,truncated,empty}=await extractFileText(file,pct=>setExtractProgress(p=>p?{...p,pct}:p));
       setFileTexts(prev=>[...prev,{name:file.name,text,truncated,empty}]);
     }
@@ -11216,7 +11247,7 @@ function Flashcards({setActive=()=>{}}={}) {
         <Field label="Deck name"><Input placeholder="e.g. Bio chapter 4 cards" value={dName} onChange={e=>setDName(e.target.value)} autoFocus /></Field>
         <Field label="Source">
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-            {[{id:"manual",label:"Build manually",desc:"Type Q&A cards yourself",icon:Icon.pen},{id:"file",label:"From file",desc:"AI generates cards from your PDF or notes",icon:Icon.file},{id:"record",label:"From lecture",desc:"AI generates cards from recorded audio",icon:MicIcon}].map(o=>(
+            {[{id:"manual",label:"Build manually",desc:"Type Q&A cards yourself",icon:Icon.pen},{id:"file",label:"From file",desc:"AI generates cards from a PDF, doc, or photo of your notes",icon:Icon.file},{id:"record",label:"From lecture",desc:"AI generates cards from recorded audio",icon:MicIcon}].map(o=>(
               <button key={o.id} type="button" onClick={()=>{setDSource(o.id);setCreateDeckError("");}} style={{padding:12,borderRadius:10,border:"1px solid "+(dSource===o.id?T.lime+"66":T.border),background:dSource===o.id?T.lime+"10":T.card2,color:T.text,cursor:"pointer",textAlign:"left",fontFamily:T.font}}>
                 <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3}}><span style={{color:dSource===o.id?T.lime:T.muted,display:"flex"}}>{o.icon}</span><span style={{fontSize:12.5,fontWeight:600}}>{o.label}</span></div>
                 <div style={{fontSize:11,color:T.muted}}>{o.desc}</div>
@@ -11243,7 +11274,7 @@ function Flashcards({setActive=()=>{}}={}) {
         </>)}
         {dSource==="file"&&(
           <Field label="Upload files" hint="AI reads the content and generates Q&A flashcards. Add as many files as you need — e.g. several chapters or lecture sets.">
-            <input type="file" multiple ref={fileRef} onChange={handleFile} accept=".txt,.md,.csv,.pdf,.doc,.docx,.rtf" style={{display:"none"}} />
+            <input type="file" multiple ref={fileRef} onChange={handleFile} accept=".txt,.md,.csv,.pdf,.doc,.docx,.rtf,.png,.jpg,.jpeg,.webp,.gif" style={{display:"none"}} />
             {extractProgress?<ExtractionProgress {...extractProgress} />:(
             <div onClick={()=>fileRef.current&&fileRef.current.click()} style={{border:"1px dashed "+T.borderHover,borderRadius:10,padding:22,textAlign:"center",background:T.card2,cursor:"pointer"}}>
               <div style={{color:T.muted,marginBottom:6,display:"flex",justifyContent:"center"}}>{Icon.file}</div>
@@ -17652,7 +17683,7 @@ function MaterialEditor({item,onChange,label,idPrefix}){
       </div>
       {item.materialOpen&&(
         <div style={{padding:"10px 12px",display:"flex",flexDirection:"column",gap:8}}>
-          <input type="file" id={fileInputId} onChange={e=>{handleFiles(e.target.files);e.target.value="";}} accept=".txt,.md,.pdf,.docx" style={{display:"none"}} multiple />
+          <input type="file" id={fileInputId} onChange={e=>{handleFiles(e.target.files);e.target.value="";}} accept=".txt,.md,.pdf,.docx,.png,.jpg,.jpeg,.webp,.gif" style={{display:"none"}} multiple />
           {extractProgress?(
             <ExtractionProgress {...extractProgress} />
           ):(
