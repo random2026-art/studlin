@@ -18037,12 +18037,26 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   const togglePeakBucket=(id)=>setPeakBuckets(prev=>prev.includes(id)?prev.filter(b=>b!==id):[...prev,id]);
 
   const persistPending=(next)=>{setPendingClasses(next);lsSet("classSetupPending",next);};
+  // 2026-08-26 fix: onboarding's own Profile step already requires
+  // status before an account can even finish signing up (see its own
+  // canContinue gate), so initialStatus is truthy for every normal
+  // account by the time they ever reach this wizard -- the "status" step
+  // here was asking the exact same question a second time, unconditionally,
+  // regardless of initialStatus (which was only ever used to pre-highlight
+  // a chip, never to skip the screen). Filtering "status" out of the
+  // effective step order when it's already known removes the screen from
+  // both forward navigation (holidays' Continue/Skip below) and Back
+  // navigation in one place, instead of two separate special cases that
+  // could drift out of sync. A legacy account with no status on file
+  // (falsy initialStatus) still gets asked, same as before.
+  const knowsStatus=!!initialStatus;
+  const effectiveWizardStepOrder=knowsStatus?WIZARD_STEP_ORDER.filter(s=>s!=="status"):WIZARD_STEP_ORDER;
   // Real Back navigation (2026-07-29 fix) -- null in quickScan mode (that
   // session intentionally starts mid-flow with no earlier step to return
   // to) and on the very first step of a normal session.
   const prevWizardStep=quickScan?null:(()=>{
-    const idx=WIZARD_STEP_ORDER.indexOf(step);
-    return idx>0?WIZARD_STEP_ORDER[idx-1]:null;
+    const idx=effectiveWizardStepOrder.indexOf(step);
+    return idx>0?effectiveWizardStepOrder[idx-1]:null;
   })();
   // classes' own addMode sub-navigation ("choose"/"scan"/"hsSchedule")
   // used to render its own separate inline "← Back" link inside each
@@ -19253,8 +19267,8 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
               <Btn onClick={()=>setStep("holidays")}>Continue</Btn>
             </>)}
             {step==="holidays"&&(<>
-              <Btn variant="subtle" onClick={()=>setStep("status")}>Skip</Btn>
-              <Btn onClick={()=>setStep("status")}>Continue</Btn>
+              <Btn variant="subtle" onClick={()=>setStep(knowsStatus?"awake":"status")}>Skip</Btn>
+              <Btn onClick={()=>setStep(knowsStatus?"awake":"status")}>Continue</Btn>
             </>)}
             {step==="awake"&&(<Btn onClick={()=>setStep("classes")} disabled={windowInvalid} style={{opacity:windowInvalid?0.45:1}}>Continue</Btn>)}
             {step==="classes"&&addMode===null&&(
