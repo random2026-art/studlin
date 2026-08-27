@@ -30182,6 +30182,22 @@ function App() {
     return unsub;
   },[myUid]);
 
+  // Pending incoming friend requests, folded into the same sidebar badge as
+  // unreadCount above -- same reasoning, mounted here rather than inside
+  // FriendsChat so a new friend request is visible from the sidebar the
+  // instant it arrives, not only after actually opening Studlin Network and
+  // finding it buried under "Incoming Requests." Real bug this fixes: there
+  // was previously NO notification anywhere in the app for a new friend
+  // request -- FriendsChat's own incomingReqs is real-time too, but it's
+  // local component state that only exists while that tab is mounted.
+  const [pendingFriendRequestCount,setPendingFriendRequestCount]=useState(0);
+  useEffect(()=>{
+    if(!myUid){setPendingFriendRequestCount(0);return;}
+    const unsub=fsdb().collection('friendships').where('receiverId','==',myUid).where('status','==','pending')
+      .onSnapshot(snap=>setPendingFriendRequestCount(snap.size),()=>{});
+    return unsub;
+  },[myUid]);
+
   // Real-time "someone just went live" invite banner — FriendsChat (where
   // the inbox's own liveSessions listener lives) unmounts on tab switch, so
   // this is the same long-lived-listener problem the unread-count router
@@ -30595,7 +30611,7 @@ function App() {
     ]},
     {label:"Tools",items:[
       {id:"prep",label:"Studlin Prep"},
-      {id:"friends",label:"Studlin Network",badge:String(unreadCount||"")},
+      {id:"friends",label:"Studlin Network",badge:String((unreadCount+pendingFriendRequestCount)||"")},
     ]},
     {label:"Account",items:[
       {id:"feedback",label:"Feedback"},
@@ -30615,8 +30631,17 @@ function App() {
   const NavItem=({item})=>{
     const act=active===item.id;
     return (
-      <div onClick={()=>setActive(item.id)} title={navExpanded?undefined:item.label} style={{display:"flex",alignItems:"center",gap:10,padding:navExpanded?"9px 11px":"9px 0",justifyContent:navExpanded?"flex-start":"center",borderRadius:9,cursor:"pointer",fontSize:12.5,background:act?(isLight?"rgba(246,241,230,0.95)":`linear-gradient(100deg, ${T.lime}1c, ${T.lime}08)`):"transparent",color:act?(isLight?T.ink:T.lime):sidebarMuted,fontWeight:act?600:400,marginBottom:2,border:`1px solid ${act?(isLight?"transparent":T.lime+"30"):"transparent"}`,boxShadow:act&&!isLight?`0 4px 14px -8px ${T.lime}70`:"none",transition:"all 0.18s cubic-bezier(.2,.8,.2,1)"}}>
-        <span style={{width:16,height:16,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:act?(isLight?T.ink:T.lime):sidebarFaint}}>{navIcon[item.id]}</span>
+      <div onClick={()=>setActive(item.id)} title={navExpanded?undefined:(item.badge?item.label+" ("+item.badge+")":item.label)} style={{display:"flex",alignItems:"center",gap:10,padding:navExpanded?"9px 11px":"9px 0",justifyContent:navExpanded?"flex-start":"center",borderRadius:9,cursor:"pointer",fontSize:12.5,background:act?(isLight?"rgba(246,241,230,0.95)":`linear-gradient(100deg, ${T.lime}1c, ${T.lime}08)`):"transparent",color:act?(isLight?T.ink:T.lime):sidebarMuted,fontWeight:act?600:400,marginBottom:2,border:`1px solid ${act?(isLight?"transparent":T.lime+"30"):"transparent"}`,boxShadow:act&&!isLight?`0 4px 14px -8px ${T.lime}70`:"none",transition:"all 0.18s cubic-bezier(.2,.8,.2,1)"}}>
+        <span style={{width:16,height:16,position:"relative",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:act?(isLight?T.ink:T.lime):sidebarFaint}}>
+          {navIcon[item.id]}
+          {/* Collapsed rail has no room for the label-row pill below --
+              navCollapsed is the default for every user (lsGet default
+              true), so without this a new friend request (or any other
+              badge) was invisible unless the sidebar happened to already be
+              expanded. Same small-corner-pill language as the streak badge
+              on the profile avatar elsewhere in this sidebar. */}
+          {!navExpanded&&item.badge&&<span style={{position:"absolute",top:-5,right:-7,background:T.lime,color:T.ink,borderRadius:8,padding:"1px 4px",fontSize:8,fontWeight:700,lineHeight:1,minWidth:12,textAlign:"center"}}>{item.badge}</span>}
+        </span>
         {navExpanded&&<span style={{flex:1,letterSpacing:"0.01em",whiteSpace:"nowrap"}}>{item.label}</span>}
         {navExpanded&&item.badge&&<span style={{background:T.lime+(act?"":"18"),color:act?T.ink:T.lime,fontSize:9,fontWeight:700,padding:"2px 6px",borderRadius:4,letterSpacing:"0.03em"}}>{item.badge}</span>}
       </div>
