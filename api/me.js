@@ -25,6 +25,7 @@ const DELETED_USER_NAME = 'Deleted user';
 const BETA_TESTER_EMAILS = [
   'shenouday7@gmail.com',
   'ymehraeil779@gmail.com',
+  'owentyler10@icloud.com',
 ];
 const BETA_CODE = 'betatesters';
 const BETA_TRIAL_DAYS = 30;
