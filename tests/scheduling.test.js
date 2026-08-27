@@ -1852,16 +1852,37 @@ describe("findAllOverlaps (toolbar overlap-warning badge, 2026-08-26)", () => {
     assert.equal(findAllOverlaps(events, "2026-07-20").length, 0);
   });
 
-  test("an overlap on a day outside the scan window doesn't count", () => {
-    const { findAllOverlaps, CALENDAR_OVERLAP_SCAN_DAYS } = loadStudlinModule();
+  test("an overlap too far in the future is outside the scan window and doesn't count", () => {
+    const { findAllOverlaps, CALENDAR_OVERLAP_SCAN_DAYS_AHEAD } = loadStudlinModule();
     const d = new Date("2026-07-20T12:00:00");
-    d.setDate(d.getDate() + CALENDAR_OVERLAP_SCAN_DAYS + 5);
+    d.setDate(d.getDate() + CALENDAR_OVERLAP_SCAN_DAYS_AHEAD + 5);
     const farDate = d.toISOString().slice(0, 10);
     const events = [
       realTask({ id: "a", date: farDate, time: "10:00", duration: 60 }),
       realTask({ id: "b", date: farDate, time: "10:30", duration: 30 }),
     ];
     assert.equal(findAllOverlaps(events, "2026-07-20").length, 0);
+  });
+
+  test("an overlap too far in the past is outside the scan window and doesn't count", () => {
+    const { findAllOverlaps, CALENDAR_OVERLAP_SCAN_DAYS_BEHIND } = loadStudlinModule();
+    const d = new Date("2026-07-20T12:00:00");
+    d.setDate(d.getDate() - CALENDAR_OVERLAP_SCAN_DAYS_BEHIND - 5);
+    const pastDate = d.toISOString().slice(0, 10);
+    const events = [
+      realTask({ id: "a", date: pastDate, time: "10:00", duration: 60 }),
+      realTask({ id: "b", date: pastDate, time: "10:30", duration: 30 }),
+    ];
+    assert.equal(findAllOverlaps(events, "2026-07-20").length, 0);
+  });
+
+  test("regression: an overlap on YESTERDAY still counts -- a real, currently-visible overlap in the Week view (e.g. today is Wednesday, the overlap is Tuesday) must not be silently invisible to the badge just because that day has technically passed", () => {
+    const { findAllOverlaps } = loadStudlinModule();
+    const events = [
+      realTask({ id: "a", date: "2026-07-19", time: "18:15", duration: 40 }),
+      realTask({ id: "b", date: "2026-07-19", time: "18:15", duration: 40 }),
+    ];
+    assert.equal(findAllOverlaps(events, "2026-07-20").length, 1);
   });
 
   test("overlaps on different days are each counted separately", () => {

@@ -13061,10 +13061,11 @@ function findOverlapConflict(date, startTime, endTime, events, routines) {
   const candidates = dayEvents.map((e) => ({ title: e.title, start: timeToMinutes(e.time), end: timeToMinutes(e.time) + (e.duration || 30) })).concat(dayRoutines.map((r) => ({ title: r.title, start: timeToMinutes(r.time), end: timeToMinutes(r.time) + (r.duration || 30) })));
   return candidates.find((c) => startMin < c.end && c.start < endMin) || null;
 }
-const CALENDAR_OVERLAP_SCAN_DAYS = 21;
+const CALENDAR_OVERLAP_SCAN_DAYS_AHEAD = 21;
+const CALENDAR_OVERLAP_SCAN_DAYS_BEHIND = 7;
 function findAllOverlaps(events, todayKey) {
   const pairs = [];
-  for (let i = 0; i < CALENDAR_OVERLAP_SCAN_DAYS; i++) {
+  for (let i = -CALENDAR_OVERLAP_SCAN_DAYS_BEHIND; i < CALENDAR_OVERLAP_SCAN_DAYS_AHEAD; i++) {
     const d = /* @__PURE__ */ new Date(todayKey + "T12:00:00");
     d.setDate(d.getDate() + i);
     const dk = dayKey(d);

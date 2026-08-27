@@ -21179,17 +21179,24 @@ function findOverlapConflict(date,startTime,endTime,events,routines){
 // each other looking for existing double-bookings, for the toolbar's
 // warning badge. Real events only, not routines: routines are the fixed
 // backdrop everything else gets placed around, and a routine occurrence
-// has no stable id jumpToSession could highlight anyway. Bounded to the
-// next CALENDAR_OVERLAP_SCAN_DAYS days -- same look-ahead horizon
-// findOpenSlotFor/computeBusyWindowsPayload already use elsewhere, and a
-// stale overlap from a day that's already passed isn't actionable. Literal
+// has no stable id jumpToSession could highlight anyway. Bounded to
+// CALENDAR_OVERLAP_SCAN_DAYS_AHEAD days ahead, same look-ahead horizon
+// findOpenSlotFor/computeBusyWindowsPayload already use elsewhere.
+// Also looks CALENDAR_OVERLAP_SCAN_DAYS_BEHIND days into the past
+// (2026-08-26 fix, live bug: a real, visible overlap sitting on-screen in
+// the current Week view -- one day earlier than "today" -- silently never
+// triggered the badge, since the scan only ever looked forward. A
+// forward-only "not actionable" cutoff makes sense for automated
+// placement logic elsewhere, but not for a warning about something the
+// student can already see with their own eyes right now). Literal
 // time-range overlap only, no lead-in/trail-out buffer -- this is "these
 // two things claim the same clock-time," a stricter, more visceral bar
 // than a buffer encroachment.
-const CALENDAR_OVERLAP_SCAN_DAYS=21;
+const CALENDAR_OVERLAP_SCAN_DAYS_AHEAD=21;
+const CALENDAR_OVERLAP_SCAN_DAYS_BEHIND=7;
 function findAllOverlaps(events,todayKey){
   const pairs=[];
-  for(let i=0;i<CALENDAR_OVERLAP_SCAN_DAYS;i++){
+  for(let i=-CALENDAR_OVERLAP_SCAN_DAYS_BEHIND;i<CALENDAR_OVERLAP_SCAN_DAYS_AHEAD;i++){
     const d=new Date(todayKey+"T12:00:00");d.setDate(d.getDate()+i);
     const dk=dayKey(d);
     const dayEvents=(events||[]).filter(e=>e.date===dk&&e.time&&!e.timeUnconfirmed&&e.status!=="done"&&!e.checklist&&e.kind!=="free period")
