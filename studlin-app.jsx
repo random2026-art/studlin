@@ -6202,8 +6202,24 @@ function underAiSpendCeiling(){return getMonthlyAiSpend().count<PRO_MONTHLY_AI_S
 // instructions, ~1.2k output). Cap sized for ~$1/mo worst case.
 const PRO_SYLLABUS_SCAN_LIMIT=40;
 const getSyllabusScanUsage=makeMonthlyUsage("syllabusScans");
-function canScanSyllabus(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getSyllabusScanUsage().count<PRO_SYLLABUS_SCAN_LIMIT;}
-function recordSyllabusScan(){const u=getSyllabusScanUsage();lsSet("syllabusScans",{month:u.month,count:u.count+1});chargeAiSpend("syllabusScan");}
+// Exactly one free syllabus scan, ever -- not a monthly allowance like
+// Pro's, a single lifetime flag. The aha moment (Studlin reading a real
+// syllabus and building a real class from it) is worth giving away once;
+// unlike a schedule/grid scan (one document, flat cost regardless of
+// course load) a syllabus scan is per-class, so "free" here stays a fixed,
+// bounded cost per account instead of scaling with however many classes a
+// student has. Every class after the first free one is the natural,
+// already-earned upgrade moment -- reinforced by needsSyllabus/
+// shouldShowSyllabusNudge already pointing back at exactly what's missing.
+function canScanSyllabus(){
+  if(getPlan()==="Free")return !lsGet("freeSyllabusScanUsed",false);
+  if(!underAiSpendCeiling())return false;
+  return getSyllabusScanUsage().count<PRO_SYLLABUS_SCAN_LIMIT;
+}
+function recordSyllabusScan(){
+  if(getPlan()==="Free"){lsSet("freeSyllabusScanUsed",true);chargeAiSpend("syllabusScan");return;}
+  const u=getSyllabusScanUsage();lsSet("syllabusScans",{month:u.month,count:u.count+1});chargeAiSpend("syllabusScan");
+}
 // 2026-08-22 intelligence audit fix: every canXxx() gate in this section
 // collapses three different block reasons -- not on Pro at all, the
 // shared AI-spend ceiling, or this one feature's own monthly cap -- down

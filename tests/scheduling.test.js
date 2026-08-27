@@ -2428,17 +2428,24 @@ describe("computeCapacitySlack (shared 'is there realistically enough time left'
 });
 
 // 2026-08-18 pricing pass, part 2: Free stays zero free access at all
-// (part 1, unchanged). Pro is marketed flatly as "Unlimited," but each
-// tool now has a real, generous PRO_*_LIMIT ceiling underneath as a
-// fair-use backstop -- see the sizing-rationale comment above
-// canScanSyllabus for the cost math behind each number.
+// (part 1, unchanged) -- except canScanSyllabus, carved out below on
+// 2026-08-26 to give Free exactly one lifetime scan. Pro is marketed
+// flatly as "Unlimited," but each tool now has a real, generous
+// PRO_*_LIMIT ceiling underneath as a fair-use backstop -- see the
+// sizing-rationale comment above canScanSyllabus for the cost math
+// behind each number.
 describe("2026-08-18 pricing pass, part 2: Pro gets a real (generous, unadvertised) monthly cap per tool", () => {
   const GATES = [
     ["canGenQuiz", "recordQuizGen", "PRO_QUIZ_GEN_LIMIT"],
     ["canBuildExamPlan", "recordExamPlanBuild", "PRO_EXAM_PLAN_LIMIT"],
     ["canBreakDownProject", "recordProjectBreakdown", "PRO_PROJECT_BREAKDOWN_LIMIT"],
     ["canGenFlashcards", "recordFlashcardGen", "PRO_FLASHCARD_GEN_LIMIT"],
-    ["canScanSyllabus", "recordSyllabusScan", "PRO_SYLLABUS_SCAN_LIMIT"],
+    // canScanSyllabus deliberately excluded from this list (2026-08-26) --
+    // it's the one gate that no longer follows the "zero free taste at
+    // all" contract every other row here still does: Free now gets exactly
+    // one lifetime scan (see canScanSyllabus's own comment for why). Its
+    // own dedicated describe block in intelligence-audit-batch1.test.js
+    // covers that behavior directly.
     ["canScanScreenshot", "recordScreenshotScan", "PRO_SCREENSHOT_SCAN_LIMIT"],
     ["canScanNote", "recordNoteScan", "PRO_NOTE_SCAN_LIMIT"],
     ["canUseSmartReschedule", "recordSmartReschedule", "PRO_SMART_RESCHEDULE_LIMIT"],
