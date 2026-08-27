@@ -11131,7 +11131,7 @@ function Flashcards({setActive=()=>{}}={}) {
                         : sendDeckResults.length>0
                           ? sendDeckResults.map(u=>(
                               <div key={u.uid} onMouseDown={e=>e.preventDefault()} onClick={()=>{setSendDeckTarget("@"+(u.username||u.uid));setSendDeckSelectedUid(u.uid);setSendDeckDropdownOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",cursor:"pointer",borderBottom:`1px solid ${T.border}`}}>
-                                <Av initials={(u.name||"S").split(" ").map(x=>x[0]).join("")} color={T.lime} size={26} picUrl="" />
+                                <Av initials={(u.name||"S").split(" ").map(x=>x[0]).join("")} color={T.lime} size={26} picUrl={u.picUrl||""} />
                                 <div style={{minWidth:0}}>
                                   <div style={{fontSize:12.5,fontWeight:600,color:T.white}}>{u.name||"Studlin User"}</div>
                                   <div style={{fontSize:10.5,color:T.muted}}>@{u.username}{u.school?" · "+u.school:""}</div>
@@ -12503,8 +12503,8 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
   },[chatTarget,myUid]);
 
   // ── Live friend graph (Firestore `friendships` + `profiles`) ──────────────
-  const [friends,setFriends]=useState([]); // accepted, either direction — {uid,n,h,s,online,presence}
-  const [incomingReqs,setIncomingReqs]=useState([]); // pending, received by me — {id,senderId,n,h,s}
+  const [friends,setFriends]=useState([]); // accepted, either direction — {uid,n,h,s,p,online,presence}
+  const [incomingReqs,setIncomingReqs]=useState([]); // pending, received by me — {id,senderId,n,h,s,p}
   const [outgoingReqIds,setOutgoingReqIds]=useState(()=>new Set()); // uids I've already sent a pending request to
   // Shared-project invites still awaiting my response — real-time, same
   // shape/reasoning as incomingReqs above. Nothing about a shared project
@@ -12529,6 +12529,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
     n:(d&&d.name)||"Studlin User",
     h:"@"+((d&&d.username)||uid.slice(0,6)),
     s:(d&&d.school)||"",
+    p:(d&&d.picUrl)||"",
     online:false,
     presence:{state:"idle"},
   });
@@ -12590,8 +12591,8 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
           try{
             const p=await fsdb().collection('profiles').doc(d.senderId).get();
             const f=profileToFriend(d.senderId,p.exists?p.data():null);
-            return {id:d.id,senderId:d.senderId,n:f.n,h:f.h,s:f.s};
-          }catch(e){return {id:d.id,senderId:d.senderId,n:"Studlin User",h:"@"+d.senderId.slice(0,6),s:""};}
+            return {id:d.id,senderId:d.senderId,n:f.n,h:f.h,s:f.s,p:f.p};
+          }catch(e){return {id:d.id,senderId:d.senderId,n:"Studlin User",h:"@"+d.senderId.slice(0,6),s:"",p:""};}
         }));
         setIncomingReqs(withProfiles);
       },()=>{});
@@ -12878,7 +12879,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
           <Card style={{padding:0,overflow:"hidden"}}>
             {incomingReqs.map((req,i)=>(
               <div key={req.id} style={{display:"flex",alignItems:"center",gap:12,padding:"13px 16px",borderBottom:i<incomingReqs.length-1?`1px solid ${T.border}`:"none",transition:"background 0.15s"}}>
-                <Av initials={req.n.split(" ").map(x=>x[0]).join("")} color={T.amber} size={36} picUrl="" />
+                <Av initials={req.n.split(" ").map(x=>x[0]).join("")} color={T.amber} size={36} picUrl={req.p||""} />
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontSize:13,fontWeight:600,color:T.white}}>{req.n}</div>
                   <div style={{fontSize:11,color:T.muted}}>{req.h} · <span style={{color:T.blue}}>{req.s}</span></div>
@@ -12966,7 +12967,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
                 return (
                   <div key={row.key} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<inboxShown.length-1?`1px solid ${T.border}`:"none"}}>
                     <div onClick={()=>setChatTarget({kind:"dm",user:u})} style={{position:"relative",flexShrink:0,cursor:"pointer"}}>
-                      <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={34} picUrl="" />
+                      <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={34} picUrl={u.p||""} />
                       <div style={{position:"absolute",bottom:0,right:0,width:9,height:9,borderRadius:"50%",background:pr.color,border:`2px solid ${T.card}`}} />
                     </div>
                     <div onClick={()=>setChatTarget({kind:"dm",user:u})} style={{flex:1,minWidth:0,cursor:"pointer"}}>
@@ -13005,7 +13006,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
                     const onClickBtn=isFriend?undefined:isPendingOut?()=>cancelOutgoingRequest(u.uid):incomingFromThem?()=>acceptReq(incomingFromThem.id):()=>sendFriendRequest(u.uid);
                     return (
                       <div key={u.uid} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
-                        <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={34} picUrl="" />
+                        <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={34} picUrl={u.p||""} />
                         <div style={{flex:1,minWidth:0}}>
                           <div style={{fontSize:13,fontWeight:600,color:T.white}}>{u.n}</div>
                           <div style={{fontSize:11,color:T.muted}}>{u.h}</div>
@@ -13084,7 +13085,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
                     return (
                       <div key={u.uid} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
                         <div style={{position:"relative",flexShrink:0}}>
-                          <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={34} picUrl="" />
+                          <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={34} picUrl={u.p||""} />
                         </div>
                         <div style={{flex:1,minWidth:0}}>
                           <div style={{fontSize:13,fontWeight:600,color:T.white}}>{u.n}</div>
@@ -13151,7 +13152,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
               const sel=cgMembers.includes(u.uid);
               return (
                 <div key={u.uid} onClick={()=>toggleCgMember(u.uid)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderRadius:8,cursor:"pointer",background:sel?T.lime+"10":T.card2,border:`1px solid ${sel?T.lime+"44":T.border}`}}>
-                  <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={26} picUrl="" />
+                  <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={26} picUrl={u.p||""} />
                   <div style={{flex:1,fontSize:12.5,color:T.text,fontWeight:600}}>{u.n}</div>
                   <div style={{width:16,height:16,borderRadius:5,border:`1.5px solid ${sel?T.lime:T.border}`,background:sel?T.lime:"transparent",display:"flex",alignItems:"center",justifyContent:"center"}}>
                     {sel&&<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke={T.bg} strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
@@ -15127,7 +15128,7 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
           <div style={{padding:"18px 18px 14px",borderBottom:`1px solid ${pp.border}`,display:"flex",alignItems:"center",gap:12}}>
             {isGroup
               ?<div style={{width:40,height:40,borderRadius:12,background:T.purple+"18",border:`1px solid ${T.purple}33`,display:"flex",alignItems:"center",justifyContent:"center",color:T.purple,flexShrink:0}}>{Icon.users}</div>
-              :<div style={{position:"relative",flexShrink:0}}><Av initials={target.user.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={40} picUrl="" /><div style={{position:"absolute",bottom:0,right:0,width:10,height:10,borderRadius:"50%",background:target.user.online?T.teal:pp.faint,border:`2px solid ${T.surface}`}} /></div>
+              :<div style={{position:"relative",flexShrink:0}}><Av initials={target.user.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={40} picUrl={target.user.p||""} /><div style={{position:"absolute",bottom:0,right:0,width:10,height:10,borderRadius:"50%",background:target.user.online?T.teal:pp.faint,border:`2px solid ${T.surface}`}} /></div>
             }
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontSize:14,fontWeight:700,color:pp.text,letterSpacing:"-0.01em"}}>{title}</div>
@@ -15202,7 +15203,7 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
           <Label>Members</Label>
           <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:18}}>
             <div style={{display:"flex",alignItems:"center",gap:9}}>
-              <Av initials="ME" color={T.lime} size={28} picUrl="" />
+              <Av initials="ME" color={T.lime} size={28} />
               <div style={{fontSize:12.5,color:T.text,fontWeight:600}}>You</div>
               <div style={{width:7,height:7,borderRadius:"50%",background:isOnlineStatusOn()&&!isIncognitoOn()?T.teal:T.faint,marginLeft:"auto"}} />
             </div>
@@ -27922,6 +27923,49 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
 }
 
 
+// Resizes/recompresses a profile-picture upload before it's ever stored --
+// the picture now syncs to this account's public `profiles/{uid}` doc (see
+// handlePicFile below and profileToFriend) so friends can actually see it,
+// which means a full-resolution phone photo as a raw base64 data URL isn't
+// just a local-device concern anymore: it could blow past Firestore's 1MB
+// document cap outright, and even a photo that fits would get downloaded
+// in full by every friend on every friends-list/search/DM-inbox render.
+// Scaled to fit within AVATAR_MAX_DIM on the longest side (the largest an
+// avatar ever actually renders today is Profile's own 96px picture) and
+// re-encoded as JPEG -- Av's own objectFit:"cover" already handles cropping
+// a non-square source to a circle, so no manual crop step is needed here.
+const AVATAR_MAX_DIM=200;
+const AVATAR_JPEG_QUALITY=0.82;
+// Pure sizing math pulled out of resizeImageForAvatar below specifically so
+// it's unit-testable -- the rest of that function is Image/canvas/FileReader
+// browser APIs the Node test harness has no stubs for (document is
+// explicitly undefined there), but there's no reason the actual scale-to-fit
+// arithmetic has to live inside that untestable wrapper too. Never upscales
+// a smaller source image (scale is capped at 1) -- a small photo/avatar
+// stays exactly its own size rather than getting blown up and blurry.
+function computeAvatarScaledSize(width,height){
+  const scale=Math.min(1,AVATAR_MAX_DIM/Math.max(width,height));
+  return {w:Math.max(1,Math.round(width*scale)),h:Math.max(1,Math.round(height*scale))};
+}
+function resizeImageForAvatar(file){
+  return new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onerror=()=>reject(new Error("Couldn't read that file."));
+    reader.onload=()=>{
+      const img=new Image();
+      img.onerror=()=>reject(new Error("That doesn't look like a valid image."));
+      img.onload=()=>{
+        const {w,h}=computeAvatarScaledSize(img.width,img.height);
+        const canvas=document.createElement("canvas");
+        canvas.width=w;canvas.height=h;
+        canvas.getContext("2d").drawImage(img,0,0,w,h);
+        resolve(canvas.toDataURL("image/jpeg",AVATAR_JPEG_QUALITY));
+      };
+      img.src=reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
 // ─── PROFILE ──────────────────────────────────────────────────────────────────
 function Profile({setActive,seriousMode=false}={}) {
   const [prof,setProfState]=useState(()=>getProfile());
@@ -27929,6 +27973,7 @@ function Profile({setActive,seriousMode=false}={}) {
   const [status,setStatus]=useState(prof.status||"");
   const [affiliation,setAffiliation]=useState(prof.affiliation||prof.school||"");
   const [picSaved,setPicSaved]=useState(false);
+  const [picError,setPicError]=useState("");
   const fileInputRef=useRef(null);
   const camInputRef=useRef(null);
   const [prefSaved,setPrefSaved]=useState(false);
@@ -27941,18 +27986,32 @@ function Profile({setActive,seriousMode=false}={}) {
   const [levelRoadmapOpen,setLevelRoadmapOpen]=useState(false);
   const [streakModalOpen,setStreakModalOpen]=useState(false);
 
-  const handlePicFile=(e)=>{
+  const handlePicFile=async(e)=>{
     const file=e.target.files&&e.target.files[0];
+    e.target.value=""; // lets picking the exact same file again re-fire onChange
     if(!file)return;
-    const reader=new FileReader();
-    reader.onload=(ev)=>{
-      const url=ev.target.result;
+    setPicError("");
+    try{
+      const url=await resizeImageForAvatar(file);
       lsSet("profilePic",url);
       setPicUrl(url);
       setPicSaved(true);
       setTimeout(()=>setPicSaved(false),2200);
-    };
-    reader.readAsDataURL(file);
+      // The actual fix: profilePic used to live ONLY in this browser's
+      // localStorage, so no friend, on any device, could ever see a
+      // profile picture no matter which screen rendered them (every
+      // friend-facing <Av> in FriendsChat was hardcoded picUrl="" for
+      // exactly this reason). Syncing it onto the same public profiles/{uid}
+      // doc profileToFriend already reads for name/username/school makes
+      // it show up everywhere that mapper already feeds, with no other
+      // call site needing a new fetch.
+      const u=firebase.auth().currentUser;
+      if(u){
+        fsdb().collection('profiles').doc(u.uid).set({picUrl:url,updatedAt:new Date().toISOString()},{merge:true}).catch(reportError("profilePicSync"));
+      }
+    }catch(err){
+      setPicError((err&&err.message)||"Couldn't process that image. Try a different one.");
+    }
   };
 
   const saveOnboarding=()=>{
@@ -28018,6 +28077,7 @@ function Profile({setActive,seriousMode=false}={}) {
             {status&&<Badge color={T.teal}>{status==="highschool"?"High School":"College"}</Badge>}
           </div>
           {picSaved&&<div style={{marginTop:8,fontSize:11.5,color:T.lime,fontWeight:600}}>Profile picture updated.</div>}
+          {picError&&<div style={{marginTop:8,fontSize:11.5,color:T.red,fontWeight:600}}>{picError}</div>}
         </div>
         {!seriousMode&&(
           <div onClick={()=>setLevelRoadmapOpen(true)} title="See level roadmap" style={{textAlign:"right",cursor:"pointer"}}>
