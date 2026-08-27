@@ -127,6 +127,7 @@ const Icon = {
   refresh:   ic(<><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.51"/></>),
   undo:      ic(<><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></>),
   redo:      ic(<><polyline points="15 14 20 9 15 4"/><path d="M4 20v-7a4 4 0 0 1 4-4h12"/></>),
+  warning:   ic(<><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></>),
   music:     ic(<><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></>),
   mic:       ic(<><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></>),
   users:     ic(<><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></>),
@@ -21106,6 +21107,37 @@ function findOverlapConflict(date,startTime,endTime,events,routines){
     .concat(dayRoutines.map(r=>({title:r.title,start:timeToMinutes(r.time),end:timeToMinutes(r.time)+(r.duration||30)})));
   return candidates.find(c=>startMin<c.end&&c.start<endMin)||null;
 }
+// Whole-schedule overlap audit -- unlike findOverlapConflict above (one
+// candidate slot vs. what's already there), this scans real events against
+// each other looking for existing double-bookings, for the toolbar's
+// warning badge. Real events only, not routines: routines are the fixed
+// backdrop everything else gets placed around, and a routine occurrence
+// has no stable id jumpToSession could highlight anyway. Bounded to the
+// next CALENDAR_OVERLAP_SCAN_DAYS days -- same look-ahead horizon
+// findOpenSlotFor/computeBusyWindowsPayload already use elsewhere, and a
+// stale overlap from a day that's already passed isn't actionable. Literal
+// time-range overlap only, no lead-in/trail-out buffer -- this is "these
+// two things claim the same clock-time," a stricter, more visceral bar
+// than a buffer encroachment.
+const CALENDAR_OVERLAP_SCAN_DAYS=21;
+function findAllOverlaps(events,todayKey){
+  const pairs=[];
+  for(let i=0;i<CALENDAR_OVERLAP_SCAN_DAYS;i++){
+    const d=new Date(todayKey+"T12:00:00");d.setDate(d.getDate()+i);
+    const dk=dayKey(d);
+    const dayEvents=(events||[]).filter(e=>e.date===dk&&e.time&&!e.timeUnconfirmed&&e.status!=="done"&&!e.checklist&&e.kind!=="free period")
+      .map(e=>({item:e,start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)}))
+      .sort((x,y)=>x.start-y.start);
+    for(let a=0;a<dayEvents.length;a++){
+      for(let b=a+1;b<dayEvents.length;b++){
+        if(dayEvents[a].start<dayEvents[b].end&&dayEvents[b].start<dayEvents[a].end){
+          pairs.push({date:dk,a:dayEvents[a].item,b:dayEvents[b].item});
+        }
+      }
+    }
+  }
+  return pairs;
+}
 // Unified with what used to be the separate "Edit routine block" modal --
 // same form now handles creating a one-off event, creating a recurring
 // one, and editing an existing routine, instead of three different field
@@ -22153,6 +22185,34 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     const next=[...lsGet("events",[]),deleteUndoSnapshot];
     setEvents(next);lsSet("events",next);
     setDeleteUndoSnapshot(null);setDeleteUndoToast("");
+  };
+  // Same snapshot-and-toast shape as delete above, for moveEvent (drag to a
+  // new day/time). Restoring the whole prior event rather than diffing
+  // fields back also means a stale click (after the 5s window, or after
+  // the event was deleted in between) just safely no-ops instead of
+  // resurrecting a half-right guess.
+  const [moveUndoSnapshot,setMoveUndoSnapshot]=useState(null);
+  const [moveUndoToast,setMoveUndoToast]=useState("");
+  const undoMove=()=>{
+    if(!moveUndoSnapshot)return;
+    const next=lsGet("events",[]).map(e=>e.id===moveUndoSnapshot.id?moveUndoSnapshot:e);
+    setEvents(next);lsSet("events",next);
+    setMoveUndoSnapshot(null);setMoveUndoToast("");
+  };
+  // Toolbar overlap-warning badge -- recomputed whenever events actually
+  // change, not on every render (findAllOverlaps is an O(days * n^2 per
+  // day) scan, cheap for a normal course load but no reason to redo it on
+  // unrelated re-renders). Cycling index is deliberately NOT reset when
+  // the list shrinks (fixing one overlap) -- modulo below keeps it in
+  // bounds either way, and resetting to 0 every time would make "click
+  // again" occasionally jump backward instead of always advancing.
+  const overlapPairs=useMemo(()=>findAllOverlaps(events,todayK),[events,todayK]);
+  const overlapCycleIdx=useRef(0);
+  const cycleToNextOverlap=()=>{
+    if(overlapPairs.length===0)return;
+    const idx=overlapCycleIdx.current%overlapPairs.length;
+    jumpToSession(overlapPairs[idx].a);
+    overlapCycleIdx.current=idx+1;
   };
   const acceptFillSuggestion=(candidateId)=>{
     if(!fillPrompt)return;
@@ -23884,6 +23944,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // pin, since no specific time was actually chosen.
     const checkTime=newTime||ev.time;
     let finalTime=checkTime;
+    let wasBumped=false;
     if(checkTime){
       const dur=ev.duration||30;
       // Routine/class occurrences are folded into the same occupied array as
@@ -23911,13 +23972,17 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             if(!occupied.some(o=>!(cand+dur<=o.start||cand>=o.end))){found=cand;break;}
           }
         }
-        if(found!=null&&found!==checkMins){
-          finalTime=minutesToTime(found);
-          setDeadlineToast("That time was already taken — moved to "+fmtTime(finalTime)+" instead.");
-          setTimeout(()=>setDeadlineToast(""),2800);
-        }
+        if(found!=null&&found!==checkMins){finalTime=minutesToTime(found);wasBumped=true;}
       }
     }
+    // Dropped back exactly where it started (a drag that ends up going
+    // nowhere) -- nothing actually changed, so no toast, no undo entry,
+    // no history push. Without this guard every no-op drag would still
+    // show "Moved to..." and let the following real move's Undo silently
+    // restore the WRONG snapshot once this one's 5s window overlapped it.
+    const dateChanged=newDate!==ev.date;
+    const timeChanged=!!checkTime&&finalTime!==ev.time;
+    if(!dateChanged&&!timeChanged)return;
     const next=events.map(e=>{
       if(e.id!==id)return e;
       const merged={...e,date:newDate,...(checkTime?{time:finalTime,userPinned:true}:{})};
@@ -23929,6 +23994,16 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       return merged;
     });
     setEvents(next);lsSet("events",next);
+    // Same visible, no-keyboard-required Undo affordance deleteEventWithUndo
+    // already gives a delete -- a drag-move used to be silent (nothing on
+    // screen confirmed it happened, and the only way to undo it was a
+    // Ctrl+Z nobody would think to try). Snapshotting the whole prior event
+    // (not just the changed fields) mirrors deleteUndoSnapshot's own
+    // "restore it exactly, don't try to selectively re-diff" approach.
+    const where=checkTime?(dateChanged?fmtDateShort(newDate)+" at "+fmtTime(finalTime):fmtTime(finalTime)):fmtDateShort(newDate);
+    setMoveUndoSnapshot(ev);
+    setMoveUndoToast(`Moved "${ev.title}" to ${where}`+(wasBumped?" — that time was taken":""));
+    setTimeout(()=>{setMoveUndoToast("");setMoveUndoSnapshot(null);},5000);
   };
   // Thin wrappers around the standalone markEventDone/uncrossEventDone
   // (module scope, near advancedSchedulePlanner) -- shared with Dashboard's
@@ -24570,6 +24645,18 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           <button onClick={undoCal} disabled={calHistoryUndo.current.length===0} title="Undo (Ctrl+Z)" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:calHistoryUndo.current.length===0?T.faint:T.muted,cursor:calHistoryUndo.current.length===0?"default":"pointer",opacity:calHistoryUndo.current.length===0?0.5:1}}>{Icon.undo}</button>
           <button onClick={redoCal} disabled={calHistoryRedo.current.length===0} title="Redo (Ctrl+Shift+Z)" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:calHistoryRedo.current.length===0?T.faint:T.muted,cursor:calHistoryRedo.current.length===0?"default":"pointer",opacity:calHistoryRedo.current.length===0?0.5:1}}>{Icon.redo}</button>
         </div>
+        {/* Only appears when something's actually wrong -- unlike Undo/Redo
+            (an always-available capability, shown dimmed at rest) a warning
+            with nothing to warn about has no reason to sit in the toolbar
+            permanently. Click cycles to the next double-booking, wrapping
+            back to the first once you've seen them all. */}
+        {overlapPairs.length>0&&(
+          <button onClick={cycleToNextOverlap} title={overlapPairs.length===1?"1 overlap in your schedule -- click to jump to it":overlapPairs.length+" overlaps in your schedule -- click to jump to the next one"}
+            style={{display:"flex",alignItems:"center",gap:4,height:22,padding:"0 7px",background:T.red+"14",border:`1px solid ${T.red}44`,borderRadius:4,color:T.red,cursor:"pointer",fontSize:11,fontWeight:700,fontFamily:T.font}}>
+            <span style={{width:13,height:13,display:"flex"}}>{Icon.warning}</span>
+            {overlapPairs.length}
+          </button>
+        )}
         <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:6}}>
           <div style={{display:"flex",gap:2,background:T.card2,padding:2,borderRadius:4}}>
             {[{id:"daily",label:"Day"},{id:"weekly",label:"Week"},{id:"monthly",label:"Month"}].map(v=>(
@@ -25073,6 +25160,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.card,border:`1px solid ${T.border}`,color:T.white,fontSize:12.5,fontWeight:600,padding:"10px 16px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:12}}>
           <span>{deleteUndoToast}</span>
           <button onClick={undoDelete} style={{background:"none",border:"none",color:T.lime,fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:T.font,textDecoration:"underline",padding:0}}>Undo</button>
+        </div>
+      )}
+      {moveUndoToast&&(
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.card,border:`1px solid ${T.border}`,color:T.white,fontSize:12.5,fontWeight:600,padding:"10px 16px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:12}}>
+          <span>{moveUndoToast}</span>
+          <button onClick={undoMove} style={{background:"none",border:"none",color:T.lime,fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:T.font,textDecoration:"underline",padding:0}}>Undo</button>
         </div>
       )}
       {fillPrompt&&(

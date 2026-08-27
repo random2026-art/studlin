@@ -1793,6 +1793,89 @@ describe("done-task exclusion from occupied-interval math (2026-08-26: finishing
   });
 });
 
+describe("findAllOverlaps (toolbar overlap-warning badge, 2026-08-26)", () => {
+  test("two events with genuinely overlapping times on the same day produce one pair", () => {
+    const { findAllOverlaps } = loadStudlinModule();
+    const events = [
+      realTask({ id: "a", date: "2026-07-20", time: "10:00", duration: 60 }),
+      realTask({ id: "b", date: "2026-07-20", time: "10:30", duration: 30 }),
+    ];
+    const pairs = findAllOverlaps(events, "2026-07-20");
+    assert.equal(pairs.length, 1);
+    assert.equal(pairs[0].date, "2026-07-20");
+  });
+
+  test("back-to-back events with no actual overlap produce zero pairs", () => {
+    const { findAllOverlaps } = loadStudlinModule();
+    const events = [
+      realTask({ id: "a", date: "2026-07-20", time: "10:00", duration: 30 }),
+      realTask({ id: "b", date: "2026-07-20", time: "10:30", duration: 30 }),
+    ];
+    assert.equal(findAllOverlaps(events, "2026-07-20").length, 0);
+  });
+
+  test("three mutually-overlapping events produce three pairs (every combination)", () => {
+    const { findAllOverlaps } = loadStudlinModule();
+    const events = [
+      realTask({ id: "a", date: "2026-07-20", time: "10:00", duration: 90 }),
+      realTask({ id: "b", date: "2026-07-20", time: "10:30", duration: 90 }),
+      realTask({ id: "c", date: "2026-07-20", time: "11:00", duration: 90 }),
+    ];
+    assert.equal(findAllOverlaps(events, "2026-07-20").length, 3);
+  });
+
+  test("a done task is never counted -- it's not really claiming that time anymore", () => {
+    const { findAllOverlaps } = loadStudlinModule();
+    const events = [
+      realTask({ id: "a", date: "2026-07-20", time: "10:00", duration: 60, status: "done" }),
+      realTask({ id: "b", date: "2026-07-20", time: "10:30", duration: 30 }),
+    ];
+    assert.equal(findAllOverlaps(events, "2026-07-20").length, 0);
+  });
+
+  test("a timeUnconfirmed placeholder time is never counted -- it was never a real commitment", () => {
+    const { findAllOverlaps } = loadStudlinModule();
+    const events = [
+      realTask({ id: "a", date: "2026-07-20", time: "10:00", duration: 60, timeUnconfirmed: true }),
+      realTask({ id: "b", date: "2026-07-20", time: "10:30", duration: 30 }),
+    ];
+    assert.equal(findAllOverlaps(events, "2026-07-20").length, 0);
+  });
+
+  test("a checklist item and a free-period kind are both excluded, same as findOverlapConflict's own scope", () => {
+    const { findAllOverlaps } = loadStudlinModule();
+    const events = [
+      realTask({ id: "a", date: "2026-07-20", time: "10:00", duration: 60, checklist: true }),
+      realTask({ id: "b", date: "2026-07-20", time: "10:15", duration: 30, kind: "free period" }),
+      realTask({ id: "c", date: "2026-07-20", time: "10:20", duration: 30 }),
+    ];
+    assert.equal(findAllOverlaps(events, "2026-07-20").length, 0);
+  });
+
+  test("an overlap on a day outside the scan window doesn't count", () => {
+    const { findAllOverlaps, CALENDAR_OVERLAP_SCAN_DAYS } = loadStudlinModule();
+    const d = new Date("2026-07-20T12:00:00");
+    d.setDate(d.getDate() + CALENDAR_OVERLAP_SCAN_DAYS + 5);
+    const farDate = d.toISOString().slice(0, 10);
+    const events = [
+      realTask({ id: "a", date: farDate, time: "10:00", duration: 60 }),
+      realTask({ id: "b", date: farDate, time: "10:30", duration: 30 }),
+    ];
+    assert.equal(findAllOverlaps(events, "2026-07-20").length, 0);
+  });
+
+  test("overlaps on different days are each counted separately", () => {
+    const { findAllOverlaps } = loadStudlinModule();
+    const events = [
+      realTask({ id: "a", date: "2026-07-20", time: "10:00", duration: 60 }),
+      realTask({ id: "b", date: "2026-07-20", time: "10:30", duration: 30 }),
+      realTask({ id: "c", date: "2026-07-21", time: "14:00", duration: 60 }),
+      realTask({ id: "d", date: "2026-07-21", time: "14:15", duration: 30 }),
+    ];
+    assert.equal(findAllOverlaps(events, "2026-07-20").length, 2);
+  });
+});
+
 describe("Lock-In timer checkpoint + recovery (regression: a real session was lost when the tab backgrounded mid-timer with no trace)", () => {
   test("checkpointTimerSession writes a record that getTimerCheckpoint reads back", () => {
     const { checkpointTimerSession, getTimerCheckpoint } = loadStudlinModule();
