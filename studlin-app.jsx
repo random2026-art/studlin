@@ -23434,18 +23434,20 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         "\"event\" — something the student personally attends or is present for at a specific real-world time that Studlin should never move, like an appointment, a class, a shift, or a meeting — never taking an exam/test/quiz itself (that's its own kind below), and never an action ABOUT an exam or class, like sending, submitting, or emailing something related to one; "+
         "\"exam\" — the student is taking a quiz, test, midterm, or final at a specific date (e.g. \"I have a chem test Friday\", \"my bio midterm is the 12th\") — never an action about an exam like submitting or sending something; "+
         "\"reminder\" — a quick nudge at a specific time, e.g. \"remind me to...\" or \"don't forget to... at...\". "+
+        "\"unavailable\" — the student describes a whole period where they will NOT be doing any schoolwork at all — a vacation, a trip, being sick, a family event spanning multiple days, or similar (e.g. \"I'm going on vacation next week, don't schedule anything\", \"I'll be out of town the 10th through 15th\", \"I'm sick, clear my week\") — Studlin will avoid placing anything new during this range and relocate anything already scheduled there. Never use this for a single scheduled commitment on one day like a class, shift, or appointment (that's \"event\"). "+
         "\"durationMin\" (your best-guess minutes needed, for kind:\"study\" or kind:\"event\" — null otherwise), "+
         "\"immediate\" (true ONLY for kind:\"study\" when the student explicitly said \"now\"/\"right now\"/\"immediately\" — meaning start this the moment it's added, not just sometime today; false for everything else, including generic same-day urgency like \"today\" or \"tonight\" with no explicit \"now\"), "+
         "\"chained\" (true ONLY for kind:\"study\" or a timeless kind:\"event\" when the student described it as coming right after the PREVIOUS item in this same dump — words like \"then\", \"after that\", \"next\", \"once I'm done with that\" — meaning it should start the moment the previous item ends, back-to-back in the order given, not get independently slotted wherever's smartest. The first item of a sequence has nothing before it, so it's \"chained\":false even if it kicks off an ordered plan — only items 2 and onward in that same plan are \"chained\":true. A plain list of separate homeworks with their own due dates and no \"then\"/sequence language is \"chained\":false throughout), "+
-        "\"dueDate\" (YYYY-MM-DD. For \"study\"/\"todo\"/\"project\" this is the deadline; for \"event\"/\"exam\"/\"reminder\" this is the day it happens. \"today\"/\"tonight\" means the date given above, \"Friday\" means the next occurrence of that weekday. Be literal: if the student named a specific day, always return it, even if it's today. Only use null when truly no timing was mentioned at all), "+
+        "\"dueDate\" (YYYY-MM-DD. For \"study\"/\"todo\"/\"project\" this is the deadline; for \"event\"/\"exam\"/\"reminder\" this is the day it happens; for \"unavailable\" this is the FIRST day of the period. \"today\"/\"tonight\" means the date given above, \"Friday\" means the next occurrence of that weekday. Be literal: if the student named a specific day, always return it, even if it's today. Only use null when truly no timing was mentioned at all), "+
+        "\"endDate\" (YYYY-MM-DD, ONLY for kind:\"unavailable\" — the LAST day of the period, inclusive. If only a single day was described, same as dueDate. Omit for every other kind), "+
         "\"dueTime\" (HH:MM 24-hour — ONLY for kind:\"event\" or kind:\"reminder\", when a specific time was stated or clearly implied like \"tonight\"=20:00 or \"this morning\"=9:00; null if genuinely no time was said), "+
         "\"examWeight\" (ONLY when kind is \"exam\": \"quiz\" for a quiz or short in-class test worth relatively little, \"major\" for a midterm, final, or unit exam worth significant grade weight — omit otherwise), "+
         "\"needsDuration\" (true ONLY if kind is \"study\" and you genuinely can't make a reasonable guess from context — be generous, most things can get a rough estimate), "+
         "\"recurring\" (ONLY for kind:\"event\" items describing something that happens on more than one distinct calendar day in a repeating weekly pattern, e.g. \"work 3-11pm Monday through Friday for the next 2 weeks\" or \"soccer practice every Tuesday and Thursday until October\" — an object {\"days\":[\"Mon\",\"Tue\",...],\"until\":\"YYYY-MM-DD\"} using 3-letter weekday abbreviations and the last date it repeats through, inclusive. dueDate stays the FIRST occurrence. A single one-time event, even a long one, is never recurring — null for those and everything else), "+
-        "\"clarify\" (a short, specific follow-up question ONLY if something essential is truly missing and you can't reasonably guess it — e.g. an \"event\", \"exam\", or \"reminder\" with no date/time at all mentioned, or a title too vague to act on. Never used for a recurring pattern — \"recurring\" above already covers that. null otherwise — most items should NOT have this), "+
+        "\"clarify\" (a short, specific follow-up question ONLY if something essential is truly missing and you can't reasonably guess it — e.g. an \"event\", \"exam\", or \"reminder\" with no date/time at all mentioned, an \"unavailable\" with no date range at all mentioned, or a title too vague to act on. Never used for a recurring pattern — \"recurring\" above already covers that. null otherwise — most items should NOT have this), "+
         "\"confidence\" (\"low\" ONLY when you had to genuinely guess an important date, time, or duration because the student's wording was vague or ambiguous, e.g. \"sometime soon\" or \"in a few days\" or \"later\"; \"high\" for everything else, including the common case where nothing needed guessing at all). "+
         "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
-        "{\"items\":[{\"title\":\"Chem homework\",\"kind\":\"study\",\"durationMin\":45,\"immediate\":false,\"chained\":false,\"dueDate\":null,\"dueTime\":null,\"needsDuration\":false,\"recurring\":null,\"clarify\":null,\"confidence\":\"high\"},{\"title\":\"Chem test\",\"kind\":\"exam\",\"dueDate\":\"2026-07-17\",\"examWeight\":\"major\",\"clarify\":null,\"confidence\":\"high\"},{\"title\":\"Work shift\",\"kind\":\"event\",\"dueDate\":\"2026-07-27\",\"dueTime\":\"15:00\",\"durationMin\":480,\"recurring\":{\"days\":[\"Mon\",\"Tue\",\"Wed\",\"Thu\",\"Fri\"],\"until\":\"2026-08-07\"},\"clarify\":null,\"confidence\":\"high\"}]}. "+
+        "{\"items\":[{\"title\":\"Chem homework\",\"kind\":\"study\",\"durationMin\":45,\"immediate\":false,\"chained\":false,\"dueDate\":null,\"dueTime\":null,\"needsDuration\":false,\"recurring\":null,\"clarify\":null,\"confidence\":\"high\"},{\"title\":\"Chem test\",\"kind\":\"exam\",\"dueDate\":\"2026-07-17\",\"examWeight\":\"major\",\"clarify\":null,\"confidence\":\"high\"},{\"title\":\"Work shift\",\"kind\":\"event\",\"dueDate\":\"2026-07-27\",\"dueTime\":\"15:00\",\"durationMin\":480,\"recurring\":{\"days\":[\"Mon\",\"Tue\",\"Wed\",\"Thu\",\"Fri\"],\"until\":\"2026-08-07\"},\"clarify\":null,\"confidence\":\"high\"},{\"title\":\"Family vacation\",\"kind\":\"unavailable\",\"dueDate\":\"2026-07-20\",\"endDate\":\"2026-07-25\",\"clarify\":null,\"confidence\":\"high\"}]}. "+
         "If nothing usable is in the text, respond {\"items\":[]}.\n\n"+text.slice(0,4000);
       const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard",format:"json"})});
       const data=await res.json().catch(()=>({}));
@@ -23494,12 +23496,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       return;
     }
     setBrainDumpOpen(false);
-    // The text has already been consumed by parseBrainDump above — clear it
-    // now so the next time Brain Dump is opened (any entry point) it starts
-    // blank instead of showing this submission's leftover prompt.
-    setBrainDumpText("");
+    // brainDumpText is deliberately NOT cleared here anymore -- the Review
+    // screen's new "Back" button needs the original prompt still sitting in
+    // the textarea to return to. It gets cleared for real once the review
+    // is actually resolved: either committed (the Add button) or fully
+    // abandoned (Review's own Cancel) -- see both below.
     setBdError("");
-    const validKinds=["study","todo","event","exam","project","reminder"];
+    const validKinds=["study","todo","event","exam","project","reminder","unavailable"];
     const prefs=getSchedulePreferences();
     const todayKeyNow=dayKey();
     const nowMins=(()=>{const n=new Date();return n.getHours()*60+n.getMinutes();})();
@@ -23537,7 +23540,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       // actually described, "just this one" is the opt-out, not the default.
       const recurringDays=(kind==="event"&&it.recurring&&Array.isArray(it.recurring.days))?it.recurring.days.filter(d=>WEEKDAY_ABBR_TO_JS_DOW[d]!==undefined):[];
       const recurring=(recurringDays.length>0&&it.recurring.until&&it.dueDate)?{days:recurringDays,until:it.recurring.until}:null;
-      return {id:"bd-"+i,title:it.title,kind,durationMin:it.durationMin||30,dueDate:it.dueDate||"",dueTime:it.dueTime||"",needsDuration:!!it.needsDuration,attackBlock:!!it.needsDuration,proposeSessions:false,sessionCount:defaultSessionCountFor(it.examWeight),examWeight:it.examWeight||"major",difficulty:500,moreOpen:false,clarify,confidence:it.confidence==="low"?"low":"high",recurring,recurringExpandAll:!!recurring,immediate:!!it.immediate,chained:!!it.chained,include:true,
+      return {id:"bd-"+i,title:it.title,kind,durationMin:it.durationMin||30,dueDate:it.dueDate||"",endDate:it.endDate||it.dueDate||"",dueTime:it.dueTime||"",needsDuration:!!it.needsDuration,attackBlock:!!it.needsDuration,proposeSessions:false,sessionCount:defaultSessionCountFor(it.examWeight),examWeight:it.examWeight||"major",difficulty:500,moreOpen:false,clarify,confidence:it.confidence==="low"?"low":"high",recurring,recurringExpandAll:!!recurring,immediate:!!it.immediate,chained:!!it.chained,include:true,
         // Project-only fields -- same shape PhasesOutlineEditor/syllabus
         // review already use, harmless no-ops for every other kind.
         detail:"",detailOpen:false,phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false};
@@ -23564,11 +23567,45 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // the component-state wiring around it.
   const commitBrainDump=(items)=>{
     const prefs=getSchedulePreferences();
-    const {tasks:newTasks,unplaced}=planBrainDumpTasks(items,events,routines,prefs);
-    commitTasks(newTasks);
-    if(unplaced.length>0){
-      setDeadlineToast((unplaced.length===1?"1 item":unplaced.length+" items")+" didn't have room on the calendar — added as a to-do instead.");
-      setTimeout(()=>setDeadlineToast(""),3200);
+    // "unavailable" items (a vacation, trip, being sick -- see
+    // parseBrainDump's own comment) don't create a task at all; they
+    // become a Holiday, the exact same start/end-range mechanism Settings'
+    // own Holidays section already writes to (getHolidays/saveHolidays/
+    // isHoliday), so every scheduling path that already respects a holiday
+    // respects this too with zero new plumbing. Kept out of
+    // planBrainDumpTasks entirely -- that function creates tasks, and a
+    // break isn't one.
+    const unavailableItems=items.filter(it=>it.kind==="unavailable");
+    const taskItems=items.filter(it=>it.kind!=="unavailable");
+    if(unavailableItems.length>0){
+      const newHolidays=unavailableItems.map((it,i)=>({id:"hol-bd-"+Date.now()+"-"+i,start:it.dueDate,end:it.endDate||it.dueDate,label:it.title||"Break"}));
+      saveHolidays([...getHolidays(),...newHolidays]);
+      // Same reschedule-preview surface a manually-added Settings holiday
+      // already offers (RoutineControlCenterModal's own onHolidayImpact) --
+      // reused directly via this component's own pausePreview/pauseOpen
+      // state rather than building a second preview UI. Multiple vacations
+      // named in one dump (rare) have their impacts simply combined into
+      // one preview rather than one dialog per holiday; each
+      // computeHolidayPlan call still only ever sees real one-off events
+      // (never a virtual routine occurrence, since it reads straight from
+      // lsGet("events") -- see its own comment), so confirmPausePlan's
+      // existing one-off-move branch applies cleanly to every entry here.
+      const plans=newHolidays.map(h=>computeHolidayPlan(h.start,h.end,h.label));
+      const moved=plans.flatMap(p=>p.moved);
+      const couldntMove=plans.flatMap(p=>p.couldntMove);
+      if(moved.length>0||couldntMove.length>0){
+        setPauseLastIntent(null);
+        setPausePreview({label:newHolidays.length===1?newHolidays[0].label:newHolidays.length+" breaks added",moved,couldntMove});
+        setPauseOpen(true);
+      }
+    }
+    if(taskItems.length>0){
+      const {tasks:newTasks,unplaced}=planBrainDumpTasks(taskItems,events,routines,prefs);
+      commitTasks(newTasks);
+      if(unplaced.length>0){
+        setDeadlineToast((unplaced.length===1?"1 item":unplaced.length+" items")+" didn't have room on the calendar — added as a to-do instead.");
+        setTimeout(()=>setDeadlineToast(""),3200);
+      }
     }
   };
   // "Add details" -- see bdExpanding's own comment above for why this
@@ -25594,13 +25631,21 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       </Modal>
 
       {/* ── BRAIN DUMP REVIEW — preview-then-commit, same discipline as the syllabus review in Notes ── */}
-      <Modal open={!!brainDumpReview} onClose={()=>setBrainDumpReview(null)} title="Review your plan" sub="Studlin sorted these out. Check them before they're added." width={620}
+      <Modal open={!!brainDumpReview} onClose={()=>{setBrainDumpReview(null);setBrainDumpText("");}} title="Review your plan" sub="Studlin sorted these out. Check them before they're added." width={620}
         footer={<>
-          <Btn variant="subtle" onClick={()=>setBrainDumpReview(null)}>Cancel</Btn>
+          <Btn variant="subtle" onClick={()=>{setBrainDumpReview(null);setBrainDumpText("");}}>Cancel</Btn>
+          {/* Reopens the original text entry with the prompt still intact --
+              editing individual parsed fields below already covers small
+              corrections, but a structurally wrong read (the AI split
+              things up wrong, or missed something entirely) is often
+              faster to fix by just rewording the sentence and letting
+              Studlin re-parse it, not hand-editing five separate fields. */}
+          <Btn variant="subtle" onClick={()=>{setBrainDumpReview(null);setBrainDumpOpen(true);}}>← Back</Btn>
           <Btn disabled={!brainDumpReview||brainDumpReview.items.filter(i=>i.include).length===0} onClick={()=>{
             const included=brainDumpReview.items.filter(i=>i.include);
             commitBrainDump(expandBrainDumpReviewItems(included));
             setBrainDumpReview(null);
+            setBrainDumpText("");
           }}>{"Add "+(brainDumpReview?expandBrainDumpReviewItems(brainDumpReview.items.filter(i=>i.include)).length:0)+" to your plan →"}</Btn>
         </>}>
         {brainDumpReview&&brainDumpReview.items.length===0&&(
@@ -25632,7 +25677,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                     <Input value={it.title} onChange={ev=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,title:ev.target.value}:x)}))} style={{flex:1}} />
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                    <SelectChip options={[{value:"study",label:"Study Session"},{value:"todo",label:"To-Do"},{value:"event",label:"Event"},{value:"exam",label:"Exam"},{value:"project",label:"Project"},{value:"reminder",label:"Reminder"}]} value={it.kind} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v,proposeSessions:false,sessionCount:x.sessionCount||4}:x)}))} />
+                    <SelectChip options={[{value:"study",label:"Study Session"},{value:"todo",label:"To-Do"},{value:"event",label:"Event"},{value:"exam",label:"Exam"},{value:"project",label:"Project"},{value:"reminder",label:"Reminder"},{value:"unavailable",label:"Vacation/Break"}]} value={it.kind} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v,proposeSessions:false,sessionCount:x.sessionCount||4}:x)}))} />
                     {it.kind==="project"&&(
                       <Input type="date" value={it.dueDate} onChange={ev=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,dueDate:ev.target.value}:x)}))} style={{width:138}} />
                     )}
@@ -25727,6 +25772,19 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                           <button type="button" onClick={()=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,dueTime:"09:00"}:x)}))}
                             style={{fontSize:10.5,fontWeight:600,color:T.muted,background:T.card2,border:`1px solid ${T.border}`,borderRadius:6,padding:"3px 8px",cursor:"pointer",fontFamily:T.font}}>+ Add a time (if you know it)</button>
                         )}
+                      </>
+                    )}
+                    {/* Vacation/Break -- doesn't create a task at all, it
+                        becomes a Holiday (see commitBrainDump), the exact
+                        same start/end-range mechanism Settings' own
+                        Holidays section already writes to. No time field --
+                        a break is a whole-day-or-more concept, never a
+                        clock-time one. */}
+                    {it.kind==="unavailable"&&(
+                      <>
+                        <Input type="date" value={it.dueDate} onChange={ev=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,dueDate:ev.target.value,endDate:x.endDate&&x.endDate>=ev.target.value?x.endDate:ev.target.value}:x)}))} style={{width:138}} />
+                        <span style={{fontSize:11,color:T.muted}}>–</span>
+                        <Input type="date" value={it.endDate||it.dueDate} min={it.dueDate||undefined} onChange={ev=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,endDate:ev.target.value}:x)}))} style={{width:138}} />
                       </>
                     )}
                     {it.clarify&&!it.recurring&&<span style={{fontSize:10.5,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 8px"}}>{it.clarify}</span>}
