@@ -21645,6 +21645,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // to "shared it and is just completely free" -- see
   // fetchFriendsBusyIntervals's own comment.
   const [gsSharedUids,setGsSharedUids]=useState(new Set());
+  // Which non-sharing friends have already been asked to turn on sharing
+  // THIS session -- purely UI state (swaps the button to "Asked" so a
+  // student doesn't fire the same push five times in a row), not a real
+  // rate limit or a durable "already asked" record anywhere.
+  const [shareAskSentUids,setShareAskSentUids]=useState(new Set());
   // Top-ranked findSharedStudyWindow option, rendered as a dashed
   // "Studlin recommends this time" ghost block -- suggestion only. Whichever
   // one of gsRecommendedOptions below the student currently has selected
@@ -22827,7 +22832,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // ── Schedule with Friends ────────────────────────────────────────────
   const openGroupSchedule=async()=>{
     setGsOpen(true);setGsStep("pick");setGsSelected([]);setGsLoading(true);setGsSearchQuery("");
-    setGsRoomId(null);setGsMemberUids([]);setGsMemberNames({});setGsBusyByDate({});setGsSharedUids(new Set());setGsRecommended(null);setGsRecommendedOptions([]);setGsDraft(null);
+    setGsRoomId(null);setGsMemberUids([]);setGsMemberNames({});setGsBusyByDate({});setGsSharedUids(new Set());setShareAskSentUids(new Set());setGsRecommended(null);setGsRecommendedOptions([]);setGsDraft(null);
     const myUid=firebase.auth().currentUser?.uid;
     const uids=myUid?await getAcceptedFriendUids(myUid):[];
     const docs=await Promise.all(uids.map(uid=>fsdb().collection('profiles').doc(uid).get().catch(()=>null)));
@@ -22840,6 +22845,22 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // Soft cap at 8 -- past that a row-per-person busy overlay gets visually
   // dense fast; silently ignores further picks rather than erroring.
   const toggleGsSelected=(uid)=>setGsSelected(s=>s.includes(uid)?s.filter(x=>x!==uid):(s.length>=8?s:[...s,uid]));
+  // "Ask them to turn it on" -- the amber non-sharing warning used to just
+  // name who hasn't shared with no way to actually do anything about it
+  // from here. Pushes a real notification (server-authorized: api/notify.js
+  // checks they're an actual accepted friend before sending) that deep-links
+  // straight to the Privacy toggle itself (Settings > Privacy > "Share my
+  // free/busy time") -- one tap to get there, not "go dig through Settings."
+  const askFriendsToShareAvailability=async()=>{
+    const nonSharing=gsSelected.filter(uid=>!gsSharedUids.has(uid)&&!shareAskSentUids.has(uid));
+    if(nonSharing.length===0)return;
+    setShareAskSentUids(prev=>new Set([...prev,...nonSharing]));
+    await Promise.all(nonSharing.map(uid=>
+      authFetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"shareAvailabilityRequest",recipientUid:uid})}).catch(()=>{})
+    ));
+    setPlacementToast("Asked "+(nonSharing.length===1?"them":nonSharing.length+" friends")+" to turn on sharing their busy time.");
+    setTimeout(()=>setPlacementToast(""),3200);
+  };
   // Resolves (or creates) the chat room to post the proposal into -- a
   // single friend reuses the existing deterministic-id DM pattern, 2+
   // friends get a fresh group room. Same shapes chatRooms already uses
@@ -24991,12 +25012,22 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
               happens to be totally free. This names exactly who hasn't
               shared, so an empty-looking overlay reads as "waiting on
               them" instead of "this doesn't work." */}
-          {gsSelected.filter(uid=>!gsSharedUids.has(uid)).length>0&&(
-            <div style={{fontSize:10.5,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:8,padding:"7px 10px",lineHeight:1.4}}>
-              {gsSelected.filter(uid=>!gsSharedUids.has(uid)).map(uid=>gsMemberNames[uid]||"This friend").join(", ")}
-              {gsSelected.filter(uid=>!gsSharedUids.has(uid)).length===1?" hasn't":" haven't"} turned on sharing their free/busy time yet, so their calendar can't show as busy here — you'll only see your own schedule for {gsSelected.filter(uid=>!gsSharedUids.has(uid)).length===1?"them":"those friends"}.
-            </div>
-          )}
+          {gsSelected.filter(uid=>!gsSharedUids.has(uid)).length>0&&(()=>{
+            const nonSharing=gsSelected.filter(uid=>!gsSharedUids.has(uid));
+            const stillToAsk=nonSharing.filter(uid=>!shareAskSentUids.has(uid));
+            return (
+              <div style={{display:"flex",alignItems:"center",gap:10,fontSize:10.5,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:8,padding:"7px 10px",lineHeight:1.4}}>
+                <div style={{flex:1}}>
+                  {nonSharing.map(uid=>gsMemberNames[uid]||"This friend").join(", ")}
+                  {nonSharing.length===1?" hasn't":" haven't"} turned on sharing their free/busy time yet, so their calendar can't show as busy here — you'll only see your own schedule for {nonSharing.length===1?"them":"those friends"}.
+                </div>
+                <button type="button" onClick={askFriendsToShareAvailability} disabled={stillToAsk.length===0}
+                  style={{flexShrink:0,fontSize:10,fontWeight:700,color:stillToAsk.length===0?T.muted:T.amber,background:"none",border:`1px solid ${stillToAsk.length===0?T.border:T.amber+"55"}`,borderRadius:6,padding:"5px 9px",cursor:stillToAsk.length===0?"default":"pointer",fontFamily:T.font,whiteSpace:"nowrap"}}>
+                  {stillToAsk.length===0?"Asked ✓":"Ask them to turn it on"}
+                </button>
+              </div>
+            );
+          })()}
           {/* Every window findSharedStudyWindow found (up to 3), not just the
               top pick -- same reference data ChatDrawer's own "Find Shared
               Study Window" flow already lists, adapted to this panel's
@@ -26181,8 +26212,21 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
 // Appearance/Notifications/etc, and shadowing that with a same-named prop
 // would be a silent, easy-to-miss bug (or a hard compile error, since both
 // are declared with const in the same scope).
-function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}, onOpenRoutineCenter=()=>{}, setScheduleSettingsOpen=()=>{}, setPricingOpen=()=>{}, setActivePage=()=>{}}) {
-  const [active,setActive]=useState("General");
+function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}, onOpenRoutineCenter=()=>{}, setScheduleSettingsOpen=()=>{}, setPricingOpen=()=>{}, setActivePage=()=>{}, pendingOpenSetting=null, onSettingOpened=()=>{}}) {
+  const [active,setActive]=useState(pendingOpenSetting==="shareAvailability"?"Privacy":"General");
+  // Deep-link landing from a push notification (see App's own
+  // pendingOpenSetting/askFriendsToShareAvailability) -- jumps to the
+  // right sub-tab (handled by the useState initializer above, since this
+  // only ever needs to happen once, on the very first render) and briefly
+  // highlights the specific toggle so it's not just "somewhere on this
+  // page," it's obviously THE thing the notification was about.
+  const [highlightSetting,setHighlightSetting]=useState(pendingOpenSetting);
+  useEffect(()=>{
+    if(!pendingOpenSetting)return;
+    onSettingOpened();
+    const t=setTimeout(()=>setHighlightSetting(null),4000);
+    return ()=>clearTimeout(t);
+  },[]);
   const [prepScheduleMode,setPrepScheduleMode]=useState(()=>getPrepScheduleMode());
   // One-time cleanup surface for courses that duplicated before the
   // name-matching fix existed -- recomputed on mount only (a merge
@@ -26973,15 +27017,21 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
       <div style={{width:14,height:14,borderRadius:"50%",background:toggles[k]?T.bg:"#fff",position:"absolute",top:2,left:toggles[k]?21:2,transition:"left 0.2s"}} />
     </div>
   );
-  const Row = ({label,sub,k,right}) => (
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"13px 0",borderBottom:`1px solid ${T.border}`}}>
-      <div style={{flex:1,marginRight:14}}>
-        <div style={{fontSize:13,color:T.text,fontWeight:500}}>{label}</div>
-        {sub && <div style={{fontSize:11.5,color:T.muted,marginTop:2,lineHeight:1.45}}>{sub}</div>}
+  const Row = ({label,sub,k,right,highlight}) => {
+    const rowRef=useRef(null);
+    useEffect(()=>{
+      if(highlight&&rowRef.current)rowRef.current.scrollIntoView({behavior:"smooth",block:"center"});
+    },[highlight]);
+    return (
+      <div ref={rowRef} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"13px 10px",margin:"0 -10px",borderRadius:8,borderBottom:`1px solid ${T.border}`,background:highlight?T.lime+"14":"transparent",boxShadow:highlight?`0 0 0 1.5px ${T.lime}`:"none",transition:"background 0.4s ease, box-shadow 0.4s ease"}}>
+        <div style={{flex:1,marginRight:14}}>
+          <div style={{fontSize:13,color:T.text,fontWeight:500}}>{label}</div>
+          {sub && <div style={{fontSize:11.5,color:T.muted,marginTop:2,lineHeight:1.45}}>{sub}</div>}
+        </div>
+        {right || <Toggle k={k} />}
       </div>
-      {right || <Toggle k={k} />}
-    </div>
-  );
+    );
+  };
   // Theme preview card
   const ThemeCard = ({mode,label,sub}) => {
     const sel=theme===mode;
@@ -27343,7 +27393,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <Row label="Share Weekly Wrapped" sub="Allow sharing your stats card on social." k="share" />
               <Row label="Show Online Status" sub="When off, your presence dot is hidden from friends and you'll appear offline in the Studlin Network." k="onlineStatus" />
               <Row label="Incognito Mode" sub="Completely masks your live study status. You'll appear offline everywhere and won't receive Join Lock-In requests." k="incognito" />
-              <Row label="Share my free/busy time" sub="Lets accepted friends' 'Find Shared Study Window' searches see your busy times too — never event titles or subjects, and only current friends. Off by default." k="shareAvailability" right={
+              <Row label="Share my free/busy time" sub="Lets accepted friends' 'Find Shared Study Window' searches see your busy times too — never event titles or subjects, and only current friends. Off by default." k="shareAvailability" highlight={highlightSetting==="shareAvailability"} right={
                 <div onClick={()=>{
                   const next=!toggles.shareAvailability;
                   tog("shareAvailability");
@@ -29323,6 +29373,20 @@ function App() {
     window.history.replaceState({},"",url.pathname+url.search);
     return dm?{kind:"dm",uid:dm}:{kind:"group",id:group};
   });
+  // Same deep-link idiom as pendingChatTarget above, for a "so-and-so wants
+  // to find shared study time -- turn on sharing" push (see api/notify.js's
+  // sendShareAvailabilityRequest and CalendarTab's askFriendsToShareAvailability).
+  // Lands as /app?openSetting=shareAvailability; SettingsTab consumes it to
+  // jump to Privacy and highlight the exact toggle.
+  const [pendingOpenSetting,setPendingOpenSetting]=useState(()=>{
+    const params=new URLSearchParams(window.location.search);
+    const setting=params.get("openSetting");
+    if(!setting)return null;
+    const url=new URL(window.location.href);
+    url.searchParams.delete("openSetting");
+    window.history.replaceState({},"",url.pathname+url.search);
+    return setting;
+  });
   // Same deep link, arriving later — a notification clicked while this tab
   // was already open and running. The service worker can't drive an
   // already-loaded SPA's navigation itself (it never changed its pathname
@@ -29333,7 +29397,8 @@ function App() {
     const onMessage=(event)=>{
       if(!event.data||event.data.type!=="studlin-notification-click")return;
       const params=new URL(event.data.url,window.location.origin).searchParams;
-      const dm=params.get("dm"),group=params.get("group");
+      const dm=params.get("dm"),group=params.get("group"),setting=params.get("openSetting");
+      if(setting){setPendingOpenSetting(setting);setActive("settings");return;}
       if(!dm&&!group)return;
       setPendingChatTarget(dm?{kind:"dm",uid:dm}:{kind:"group",id:group});
       setActive("friends");
@@ -29346,6 +29411,7 @@ function App() {
   // instead of the default dashboard — consumed once, then cleared.
   const [active,setActive]=useState(()=>{
     if(pendingChatTarget)return "friends";
+    if(pendingOpenSetting)return "settings";
     const pending=lsGet("pendingTour",null);
     if(pending){try{localStorage.removeItem("studlin-pendingTour");}catch(e){}return pending;}
     // Calendar is home — every fresh page load lands here regardless of
@@ -30850,7 +30916,7 @@ function App() {
             keeps the entrance animation but stops that side effect. */}
         <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?T.bg:undefined}}>
           {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} setDetailEventId={setDetailEventId} onTaskCompleted={handleTaskCompleted} />:
-           active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineCenter={openRoutineCenterOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} setActivePage={setActive} />:
+           active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineCenter={openRoutineCenterOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} setActivePage={setActive} pendingOpenSetting={pendingOpenSetting} onSettingOpened={()=>setPendingOpenSetting(null)} />:
            active==="calendar"?<CalendarTab setActive={setActive} onTaskSaved={handleTaskSaved} openRoutineCenterOnMount={pendingRoutineCenter} onRoutineCenterOpenedFromSettings={()=>setPendingRoutineCenter(false)} detailEventId={detailEventId} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} registerSkipSetEvents={(fn)=>{calendarSkipSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} onWizardOpenChange={setCalendarWizardOpen} jumpToSessionOnMount={pendingJumpSession} onJumpSessionConsumed={()=>setPendingJumpSession(null)} setPricingOpen={setPricingOpen} />:
            active==="notes"?<Notes setActive={setActive} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:

@@ -19,6 +19,7 @@ module.exports = withSentry(async (req, res) => {
   const { type } = req.body || {};
   if (type === 'push') return sendPush(user, req, res);
   if (type === 'welcome') return sendWelcome(user, req, res);
+  if (type === 'shareAvailabilityRequest') return sendShareAvailabilityRequest(user, req, res);
   return sendNote(user, req, res);
 });
 
@@ -382,6 +383,78 @@ async function sendPush(user, req, res) {
     return res.status(200).json({ ok: true, sent });
   } catch (e) {
     console.error('[notify:push] Unexpected error:', e.message);
+    return res.status(500).json({ error: 'Server error' });
+  }
+}
+
+// "Find Shared Study Window" (CalendarTab's own group-scheduling panel)
+// names any selected friend who hasn't turned on "Share my free/busy time"
+// yet, but had no way to actually do anything about it -- this is that
+// action. Deep-links straight to the Privacy toggle itself so accepting the
+// nudge is one tap, not "go dig through Settings and hope you find it."
+async function sendShareAvailabilityRequest(user, req, res) {
+  if (!db) {
+    return res.status(200).json({ ok: false, reason: 'admin_unconfigured' });
+  }
+
+  const { recipientUid } = req.body || {};
+  if (!recipientUid) return res.status(400).json({ error: 'recipientUid is required' });
+  if (recipientUid === user.uid) return res.status(400).json({ error: 'Cannot request yourself' });
+
+  try {
+    // Only an actual accepted friend can trigger this -- otherwise any
+    // signed-in user could nudge a stranger into changing a privacy
+    // setting, or use this as an anonymous push-notification vector.
+    // Friendship is undirected (either side could be senderId), so both
+    // directions are checked.
+    const [asSender, asReceiver] = await Promise.all([
+      db.collection('friendships').where('senderId', '==', user.uid).where('receiverId', '==', recipientUid).where('status', '==', 'accepted').limit(1).get(),
+      db.collection('friendships').where('senderId', '==', recipientUid).where('receiverId', '==', user.uid).where('status', '==', 'accepted').limit(1).get(),
+    ]);
+    if (asSender.empty && asReceiver.empty) return res.status(403).json({ error: 'Not friends with this user' });
+
+    const recipSnap = await db.collection('users').doc(recipientUid).get();
+    if (!recipSnap.exists) return res.status(200).json({ ok: true, sent: 0 });
+    const recip = recipSnap.data();
+    if (!recip.preferences || recip.preferences.pushNotificationsEnabled !== true) return res.status(200).json({ ok: true, sent: 0 });
+    const tokens = recip.fcmTokens || [];
+    if (tokens.length === 0) return res.status(200).json({ ok: true, sent: 0 });
+
+    let senderName = 'A friend';
+    try {
+      const profileSnap = await db.collection('profiles').doc(user.uid).get();
+      if (profileSnap.exists) senderName = profileSnap.data().name || senderName;
+    } catch (e) {}
+
+    const deepLinkUrl = '/app?openSetting=shareAvailability';
+    let sent = 0;
+    const staleTokens = [];
+    for (const token of tokens) {
+      try {
+        await admin.messaging().send({
+          token,
+          notification: {
+            title: senderName,
+            body: senderName + ' wants to find a shared study time — turn on sharing your busy times to help.',
+          },
+          data: { url: deepLinkUrl },
+        });
+        sent++;
+      } catch (e) {
+        if (e.code === 'messaging/invalid-registration-token' || e.code === 'messaging/registration-token-not-registered') {
+          staleTokens.push(token);
+        }
+      }
+    }
+    if (staleTokens.length > 0) {
+      await db.collection('users').doc(recipientUid).update({
+        fcmTokens: admin.firestore.FieldValue.arrayRemove(...staleTokens),
+      }).catch(() => {});
+    }
+
+    return res.status(200).json({ ok: true, sent });
+  } catch (e) {
+    console.error('[notify:shareAvailabilityRequest] Unexpected error:', e.message);
     return res.status(500).json({ error: 'Server error' });
   }
 }

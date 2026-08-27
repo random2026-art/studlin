@@ -13276,6 +13276,7 @@ function CalendarTab({ setActive = () => {
   const [gsMemberNames, setGsMemberNames] = useState({});
   const [gsBusyByDate, setGsBusyByDate] = useState({});
   const [gsSharedUids, setGsSharedUids] = useState(/* @__PURE__ */ new Set());
+  const [shareAskSentUids, setShareAskSentUids] = useState(/* @__PURE__ */ new Set());
   const [gsRecommended, setGsRecommended] = useState(null);
   const [gsRecommendedOptions, setGsRecommendedOptions] = useState([]);
   const [gsDraft, setGsDraft] = useState(null);
@@ -14032,6 +14033,7 @@ function CalendarTab({ setActive = () => {
     setGsMemberNames({});
     setGsBusyByDate({});
     setGsSharedUids(/* @__PURE__ */ new Set());
+    setShareAskSentUids(/* @__PURE__ */ new Set());
     setGsRecommended(null);
     setGsRecommendedOptions([]);
     setGsDraft(null);
@@ -14045,6 +14047,17 @@ function CalendarTab({ setActive = () => {
     setGsLoading(false);
   };
   const toggleGsSelected = (uid) => setGsSelected((s) => s.includes(uid) ? s.filter((x) => x !== uid) : s.length >= 8 ? s : [...s, uid]);
+  const askFriendsToShareAvailability = async () => {
+    const nonSharing = gsSelected.filter((uid) => !gsSharedUids.has(uid) && !shareAskSentUids.has(uid));
+    if (nonSharing.length === 0) return;
+    setShareAskSentUids((prev) => /* @__PURE__ */ new Set([...prev, ...nonSharing]));
+    await Promise.all(nonSharing.map(
+      (uid) => authFetch("/api/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "shareAvailabilityRequest", recipientUid: uid }) }).catch(() => {
+      })
+    ));
+    setPlacementToast("Asked " + (nonSharing.length === 1 ? "them" : nonSharing.length + " friends") + " to turn on sharing their busy time.");
+    setTimeout(() => setPlacementToast(""), 3200);
+  };
   const confirmGsPeople = async () => {
     const myUid = firebase.auth().currentUser?.uid;
     if (!myUid || gsSelected.length === 0) return;
@@ -15740,7 +15753,20 @@ Examples:
       footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeGroupSchedule }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: confirmGsPeople, disabled: gsSelected.length === 0 || gsLoading }, gsLoading ? "\u2026" : "Continue"))
     },
     gsLoading ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "Loading your friends\u2026") : gsCandidates.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "No friends yet -- add some in Studlin Network first.") : /* @__PURE__ */ React.createElement(React.Fragment, null, gsCandidates.length > 5 && /* @__PURE__ */ React.createElement(Input, { value: gsSearchQuery, onChange: (e) => setGsSearchQuery(e.target.value), placeholder: "Search friends", style: { marginBottom: 10, width: "100%" } }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, gsCandidates.filter((c) => c.name.toLowerCase().includes(gsSearchQuery.trim().toLowerCase())).map((c) => /* @__PURE__ */ React.createElement("label", { key: c.uid, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 8, border: `1px solid ${T.border}`, cursor: "pointer", background: gsSelected.includes(c.uid) ? T.card2 : "transparent" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: gsSelected.includes(c.uid), onChange: () => toggleGsSelected(c.uid), style: { cursor: "pointer" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text } }, c.name))), gsSearchQuery.trim() && gsCandidates.filter((c) => c.name.toLowerCase().includes(gsSearchQuery.trim().toLowerCase())).length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, 'No friends match "', gsSearchQuery.trim(), '".')))
-  ), gsOpen && gsStep === "place" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 70, background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10, maxWidth: 600 } }, gsSelected.filter((uid) => !gsSharedUids.has(uid)).length > 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.amber, background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 8, padding: "7px 10px", lineHeight: 1.4 } }, gsSelected.filter((uid) => !gsSharedUids.has(uid)).map((uid) => gsMemberNames[uid] || "This friend").join(", "), gsSelected.filter((uid) => !gsSharedUids.has(uid)).length === 1 ? " hasn't" : " haven't", " turned on sharing their free/busy time yet, so their calendar can't show as busy here \u2014 you'll only see your own schedule for ", gsSelected.filter((uid) => !gsSharedUids.has(uid)).length === 1 ? "them" : "those friends", "."), gsRecommendedOptions.length > 1 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, whiteSpace: "nowrap" } }, "Found ", gsRecommendedOptions.length, " windows that work:"), gsRecommendedOptions.map((o, i) => {
+  ), gsOpen && gsStep === "place" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 70, background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10, maxWidth: 600 } }, gsSelected.filter((uid) => !gsSharedUids.has(uid)).length > 0 && (() => {
+    const nonSharing = gsSelected.filter((uid) => !gsSharedUids.has(uid));
+    const stillToAsk = nonSharing.filter((uid) => !shareAskSentUids.has(uid));
+    return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, fontSize: 10.5, color: T.amber, background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 8, padding: "7px 10px", lineHeight: 1.4 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1 } }, nonSharing.map((uid) => gsMemberNames[uid] || "This friend").join(", "), nonSharing.length === 1 ? " hasn't" : " haven't", " turned on sharing their free/busy time yet, so their calendar can't show as busy here \u2014 you'll only see your own schedule for ", nonSharing.length === 1 ? "them" : "those friends", "."), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        type: "button",
+        onClick: askFriendsToShareAvailability,
+        disabled: stillToAsk.length === 0,
+        style: { flexShrink: 0, fontSize: 10, fontWeight: 700, color: stillToAsk.length === 0 ? T.muted : T.amber, background: "none", border: `1px solid ${stillToAsk.length === 0 ? T.border : T.amber + "55"}`, borderRadius: 6, padding: "5px 9px", cursor: stillToAsk.length === 0 ? "default" : "pointer", fontFamily: T.font, whiteSpace: "nowrap" }
+      },
+      stillToAsk.length === 0 ? "Asked \u2713" : "Ask them to turn it on"
+    ));
+  })(), gsRecommendedOptions.length > 1 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, whiteSpace: "nowrap" } }, "Found ", gsRecommendedOptions.length, " windows that work:"), gsRecommendedOptions.map((o, i) => {
     const active = gsRecommended && gsRecommended.date === o.date && gsRecommended.time === o.time;
     return /* @__PURE__ */ React.createElement(
       "button",
@@ -16342,8 +16368,16 @@ function SettingsTab({ theme = "dark", setTheme = () => {
 }, setScheduleSettingsOpen = () => {
 }, setPricingOpen = () => {
 }, setActivePage = () => {
+}, pendingOpenSetting = null, onSettingOpened = () => {
 } }) {
-  const [active, setActive] = useState("General");
+  const [active, setActive] = useState(pendingOpenSetting === "shareAvailability" ? "Privacy" : "General");
+  const [highlightSetting, setHighlightSetting] = useState(pendingOpenSetting);
+  useEffect(() => {
+    if (!pendingOpenSetting) return;
+    onSettingOpened();
+    const t = setTimeout(() => setHighlightSetting(null), 4e3);
+    return () => clearTimeout(t);
+  }, []);
   const [prepScheduleMode, setPrepScheduleMode] = useState(() => getPrepScheduleMode());
   const [dupGroups, setDupGroups] = useState(() => findDuplicateCourseGroups());
   const [mergeConfirm, setMergeConfirm] = useState(null);
@@ -17001,7 +17035,13 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     { id: "Subscription", icon: Icon.layers }
   ];
   const Toggle = ({ k }) => /* @__PURE__ */ React.createElement("div", { onClick: () => tog(k), style: { width: 38, height: 20, borderRadius: 10, background: toggles[k] ? T.lime : T.card2, border: `1px solid ${toggles[k] ? T.lime : T.border}`, position: "relative", cursor: "pointer", transition: "all 0.2s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 14, borderRadius: "50%", background: toggles[k] ? T.bg : "#fff", position: "absolute", top: 2, left: toggles[k] ? 21 : 2, transition: "left 0.2s" } }));
-  const Row = ({ label, sub, k, right }) => /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "13px 0", borderBottom: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, marginRight: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, fontWeight: 500 } }, label), sub && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginTop: 2, lineHeight: 1.45 } }, sub)), right || /* @__PURE__ */ React.createElement(Toggle, { k }));
+  const Row = ({ label, sub, k, right, highlight }) => {
+    const rowRef = useRef(null);
+    useEffect(() => {
+      if (highlight && rowRef.current) rowRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, [highlight]);
+    return /* @__PURE__ */ React.createElement("div", { ref: rowRef, style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "13px 10px", margin: "0 -10px", borderRadius: 8, borderBottom: `1px solid ${T.border}`, background: highlight ? T.lime + "14" : "transparent", boxShadow: highlight ? `0 0 0 1.5px ${T.lime}` : "none", transition: "background 0.4s ease, box-shadow 0.4s ease" } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, marginRight: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, fontWeight: 500 } }, label), sub && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginTop: 2, lineHeight: 1.45 } }, sub)), right || /* @__PURE__ */ React.createElement(Toggle, { k }));
+  };
   const ThemeCard = ({ mode, label, sub }) => {
     const sel = theme === mode;
     const isLight = mode === "light";
@@ -17112,7 +17152,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     setSeriousMode(next);
     const s = lsGet("settings", {});
     lsSet("settings", { ...s, seriousMode: next });
-  }, style: { width: 38, height: 20, borderRadius: 10, background: seriousMode ? T.purple : T.card2, border: `1px solid ${seriousMode ? T.purple : T.border}`, position: "relative", cursor: "pointer", transition: "all 0.2s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 14, borderRadius: "50%", background: seriousMode ? T.bg : "#fff", position: "absolute", top: 2, left: seriousMode ? 21 : 2, transition: "left 0.2s" } })) })), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "Visibility"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "Control what others can see."), /* @__PURE__ */ React.createElement(Row, { label: "Public profile", sub: "Let others find you by name or handle.", k: "profile" }), /* @__PURE__ */ React.createElement(Row, { label: "Share Weekly Wrapped", sub: "Allow sharing your stats card on social.", k: "share" }), /* @__PURE__ */ React.createElement(Row, { label: "Show Online Status", sub: "When off, your presence dot is hidden from friends and you'll appear offline in the Studlin Network.", k: "onlineStatus" }), /* @__PURE__ */ React.createElement(Row, { label: "Incognito Mode", sub: "Completely masks your live study status. You'll appear offline everywhere and won't receive Join Lock-In requests.", k: "incognito" }), /* @__PURE__ */ React.createElement(Row, { label: "Share my free/busy time", sub: "Lets accepted friends' 'Find Shared Study Window' searches see your busy times too \u2014 never event titles or subjects, and only current friends. Off by default.", k: "shareAvailability", right: /* @__PURE__ */ React.createElement("div", { onClick: () => {
+  }, style: { width: 38, height: 20, borderRadius: 10, background: seriousMode ? T.purple : T.card2, border: `1px solid ${seriousMode ? T.purple : T.border}`, position: "relative", cursor: "pointer", transition: "all 0.2s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 14, borderRadius: "50%", background: seriousMode ? T.bg : "#fff", position: "absolute", top: 2, left: seriousMode ? 21 : 2, transition: "left 0.2s" } })) })), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "Visibility"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "Control what others can see."), /* @__PURE__ */ React.createElement(Row, { label: "Public profile", sub: "Let others find you by name or handle.", k: "profile" }), /* @__PURE__ */ React.createElement(Row, { label: "Share Weekly Wrapped", sub: "Allow sharing your stats card on social.", k: "share" }), /* @__PURE__ */ React.createElement(Row, { label: "Show Online Status", sub: "When off, your presence dot is hidden from friends and you'll appear offline in the Studlin Network.", k: "onlineStatus" }), /* @__PURE__ */ React.createElement(Row, { label: "Incognito Mode", sub: "Completely masks your live study status. You'll appear offline everywhere and won't receive Join Lock-In requests.", k: "incognito" }), /* @__PURE__ */ React.createElement(Row, { label: "Share my free/busy time", sub: "Lets accepted friends' 'Find Shared Study Window' searches see your busy times too \u2014 never event titles or subjects, and only current friends. Off by default.", k: "shareAvailability", highlight: highlightSetting === "shareAvailability", right: /* @__PURE__ */ React.createElement("div", { onClick: () => {
     const next = !toggles.shareAvailability;
     tog("shareAvailability");
     if (next) publishBusyWindows();
@@ -17971,12 +18011,26 @@ function App() {
     window.history.replaceState({}, "", url.pathname + url.search);
     return dm ? { kind: "dm", uid: dm } : { kind: "group", id: group };
   });
+  const [pendingOpenSetting, setPendingOpenSetting] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const setting = params.get("openSetting");
+    if (!setting) return null;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("openSetting");
+    window.history.replaceState({}, "", url.pathname + url.search);
+    return setting;
+  });
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
     const onMessage = (event) => {
       if (!event.data || event.data.type !== "studlin-notification-click") return;
       const params = new URL(event.data.url, window.location.origin).searchParams;
-      const dm = params.get("dm"), group = params.get("group");
+      const dm = params.get("dm"), group = params.get("group"), setting = params.get("openSetting");
+      if (setting) {
+        setPendingOpenSetting(setting);
+        setActive("settings");
+        return;
+      }
       if (!dm && !group) return;
       setPendingChatTarget(dm ? { kind: "dm", uid: dm } : { kind: "group", id: group });
       setActive("friends");
@@ -17986,6 +18040,7 @@ function App() {
   }, []);
   const [active, setActive] = useState(() => {
     if (pendingChatTarget) return "friends";
+    if (pendingOpenSetting) return "settings";
     const pending = lsGet("pendingTour", null);
     if (pending) {
       try {
@@ -18959,7 +19014,7 @@ function App() {
     }, title: "Settings", style: { width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: "none", color: sidebarMuted, cursor: "pointer", borderRadius: 6, flexShrink: 0 } }, /* @__PURE__ */ React.createElement("svg", { width: "13", height: "13", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("circle", { cx: "12", cy: "12", r: "3" }), /* @__PURE__ */ React.createElement("path", { d: "M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" }))))));
   })()), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: T.bg } }, /* @__PURE__ */ React.createElement("div", { key: active, "data-page": true, onAnimationEnd: (e) => {
     e.currentTarget.style.animation = "none";
-  }, style: { flex: 1, overflowY: "auto", padding: "24px 32px", animation: "studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both", background: active === "dashboard" ? T.bg : void 0 } }, active === "dashboard" ? /* @__PURE__ */ React.createElement(Dashboard, { setActive, seriousMode, rescheduleTask, setRescheduleTask, dashToast, setDashToast, setDetailEventId, onTaskCompleted: handleTaskCompleted }) : active === "settings" ? /* @__PURE__ */ React.createElement(SettingsTab, { theme, setTheme, accent, setAccent, density, setDensity, seriousMode, setSeriousMode, onOpenRoutineCenter: openRoutineCenterOnCalendar, setScheduleSettingsOpen, setPricingOpen, setActivePage: setActive }) : active === "calendar" ? /* @__PURE__ */ React.createElement(CalendarTab, { setActive, onTaskSaved: handleTaskSaved, openRoutineCenterOnMount: pendingRoutineCenter, onRoutineCenterOpenedFromSettings: () => setPendingRoutineCenter(false), detailEventId, setDetailEventId, registerSetEvents: (fn) => {
+  }, style: { flex: 1, overflowY: "auto", padding: "24px 32px", animation: "studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both", background: active === "dashboard" ? T.bg : void 0 } }, active === "dashboard" ? /* @__PURE__ */ React.createElement(Dashboard, { setActive, seriousMode, rescheduleTask, setRescheduleTask, dashToast, setDashToast, setDetailEventId, onTaskCompleted: handleTaskCompleted }) : active === "settings" ? /* @__PURE__ */ React.createElement(SettingsTab, { theme, setTheme, accent, setAccent, density, setDensity, seriousMode, setSeriousMode, onOpenRoutineCenter: openRoutineCenterOnCalendar, setScheduleSettingsOpen, setPricingOpen, setActivePage: setActive, pendingOpenSetting, onSettingOpened: () => setPendingOpenSetting(null) }) : active === "calendar" ? /* @__PURE__ */ React.createElement(CalendarTab, { setActive, onTaskSaved: handleTaskSaved, openRoutineCenterOnMount: pendingRoutineCenter, onRoutineCenterOpenedFromSettings: () => setPendingRoutineCenter(false), detailEventId, setDetailEventId, registerSetEvents: (fn) => {
     calendarSetEventsRef.current = fn;
   }, registerSkipSetEvents: (fn) => {
     calendarSkipSetEventsRef.current = fn;
