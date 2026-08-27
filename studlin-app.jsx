@@ -22206,7 +22206,14 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // the list shrinks (fixing one overlap) -- modulo below keeps it in
   // bounds either way, and resetting to 0 every time would make "click
   // again" occasionally jump backward instead of always advancing.
-  const overlapPairs=useMemo(()=>findAllOverlaps(events,todayK),[events,todayK]);
+  // dayKey() called directly here, not the component's own `todayK` const --
+  // that's declared much further down in this same function, and this memo
+  // sits above it. Referencing it in a dependency array (evaluated eagerly,
+  // unlike the memo callback's own deferred body) threw "Cannot access
+  // 'todayK' before initialization" on every render -- the exact live
+  // production crash this fixes.
+  const overlapScanTodayKey=dayKey();
+  const overlapPairs=useMemo(()=>findAllOverlaps(events,overlapScanTodayKey),[events,overlapScanTodayKey]);
   const overlapCycleIdx=useRef(0);
   const cycleToNextOverlap=()=>{
     if(overlapPairs.length===0)return;

@@ -13589,7 +13589,8 @@ function CalendarTab({ setActive = () => {
     setMoveUndoSnapshot(null);
     setMoveUndoToast("");
   };
-  const overlapPairs = useMemo(() => findAllOverlaps(events, todayK), [events, todayK]);
+  const overlapScanTodayKey = dayKey();
+  const overlapPairs = useMemo(() => findAllOverlaps(events, overlapScanTodayKey), [events, overlapScanTodayKey]);
   const overlapCycleIdx = useRef(0);
   const cycleToNextOverlap = () => {
     if (overlapPairs.length === 0) return;
