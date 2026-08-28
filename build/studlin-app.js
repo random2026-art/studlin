@@ -10497,6 +10497,11 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
   const [wkDragRoutineOccurrence, setWkDragRoutineOccurrence] = useState(null);
   const wkResizeInfo = useRef(null);
   const [wkResize, setWkResize] = useState(null);
+  const [previewDayKey, setPreviewDayKey] = useState(null);
+  const fmtWeekDueLabel = (k) => {
+    const p = k.split("-");
+    return new Date(+p[0], +p[1] - 1, +p[2]).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+  };
   const eventsRef = useRef(events);
   eventsRef.current = events;
   useEffect(() => {
@@ -10621,7 +10626,7 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
     if (onRoutineDragStateChange) onRoutineDragStateChange(false);
   };
   const DAY_NAMES = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
-  return /* @__PURE__ */ React.createElement(Card, { style: { padding: 0, overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "52px repeat(7,1fr)", borderBottom: `1px solid ${T.border}`, background: T.card } }, /* @__PURE__ */ React.createElement("div", { style: { height: 48 } }), weekDays.map((d, i) => {
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, { style: { padding: 0, overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "52px repeat(7,1fr)", borderBottom: `1px solid ${T.border}`, background: T.card } }, /* @__PURE__ */ React.createElement("div", { style: { height: 48 } }), weekDays.map((d, i) => {
     const dk = dayKey(d);
     const isToday = dk === todayK;
     const isSel = selDay != null && dk === selDay;
@@ -10637,7 +10642,9 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
         onClick: (e) => {
           e.stopPropagation();
           if (setSelDay) setSelDay(dk);
+          setPreviewDayKey(dk);
         },
+        title: "See everything due " + fmtWeekDueLabel(dk),
         style: { marginTop: 5, fontSize: 9, fontWeight: 700, color: T.lime, background: T.lime + "18", border: `1px solid ${T.lime}33`, borderRadius: 4, padding: "2px 6px", cursor: "pointer", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }
       },
       duePills.length,
@@ -10905,7 +10912,7 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
     // render inside.
     exitGhosts.map((g) => /* @__PURE__ */ React.createElement("div", { key: "exit-" + g.id, style: { position: "fixed", left: g.rect.left, top: g.rect.top, width: g.rect.width, height: g.rect.height, borderRadius: 5, background: T.lime + "1c", border: `1.5px dashed ${T.lime}`, pointerEvents: "none", zIndex: 200, boxSizing: "border-box", animation: "studlinDissolve 0.4s ease-out forwards" } })),
     document.body
-  ));
+  )), /* @__PURE__ */ React.createElement(DayPreviewModal, { open: !!previewDayKey, onClose: () => setPreviewDayKey(null), dayEvents: previewDayKey ? byDay[previewDayKey] || [] : [], selDay: previewDayKey, dayLabel: previewDayKey ? fmtWeekDueLabel(previewDayKey) : "", colorOf, fmtTime, fmtTimeRange, catchUpPending, openNew }));
 }
 const ROUTINE_DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const fmtTimeShort = (t) => {
@@ -13245,7 +13252,7 @@ function CalendarTab({ setActive = () => {
     lsSet("calRightColCollapsed", !v);
     return !v;
   });
-  const [recentlyCreatedOpen, setRecentlyCreatedOpen] = useState(false);
+  const [dueTodayOpen, setDueTodayOpen] = useState(true);
   const [overdueSectionOpen, setOverdueSectionOpen] = useState(false);
   const [expandedSidebarItemId, setExpandedSidebarItemId] = useState(null);
   const [pastCoursesOpen, setPastCoursesOpen] = useState(false);
@@ -15216,23 +15223,16 @@ Examples:
     return (/* @__PURE__ */ new Date(dateKey + "T12:00:00")).toLocaleDateString("en-US", { month: "short", day: "numeric" });
   };
   const sidebarOverdueItems = sidebarUpcomingItems.filter((item) => item.date < todayK);
+  const sidebarDueTodayItems = sidebarUpcomingItems.filter((item) => item.date === todayK);
   const sidebarUpcomingGroups = (() => {
     const groups = [];
-    sidebarUpcomingItems.filter((item) => item.date >= todayK).forEach((item) => {
+    sidebarUpcomingItems.filter((item) => item.date > todayK).forEach((item) => {
       const label = dueDateLabel(item.date);
       const last = groups[groups.length - 1];
       if (last && last.label === label) last.items.push(item);
       else groups.push({ label, items: [item] });
     });
     return groups;
-  })();
-  const idTimestamp = (id) => {
-    const m = /-(\d{10,})-/.exec(id) || /-(\d{10,})$/.exec(id);
-    return m ? +m[1] : 0;
-  };
-  const sidebarRecentItems = (() => {
-    const matches = selectedCourse ? (item) => item.courseId === selectedCourse.id || item.subject === selectedCourse.label : () => true;
-    return events.filter((e) => !e.checklist && matches(e)).sort((a, b) => idTimestamp(b.id) - idTimestamp(a.id)).slice(0, 5);
   })();
   const currentTerm = getSchoolTerm();
   const currentTermSubjects = userSubjects.filter((s) => !s.termEnd || !currentTerm || s.termEnd === currentTerm.end);
@@ -15706,7 +15706,7 @@ Examples:
       gsBusyByDate: gsOpen && gsStep === "place" ? gsBusyByDate : null,
       gsRecommended: gsOpen && gsStep === "place" ? gsRecommended : null
     }
-  ), calView === "daily" && /* @__PURE__ */ React.createElement(DayPlanner, { dayEvents, setEvents: setEvents2, selDay, todayK, colorOf, fmtTime, fmtTimeRange, openEdit, markDone, uncrossDone, prefs: getSchedulePreferences(), setSelDay, catchUpPending, openNew, newItemHighlightIds: newItemHighlightSet })), /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, display: "flex", position: "relative", height: "calc(100vh - 150px)" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 0, bottom: 0, left: calRightColCollapsed ? 0 : 14, width: 1, background: T.border, boxShadow: `-1px 0 3px rgba(0,0,0,0.12)` } }), !calRightColCollapsed && /* @__PURE__ */ React.createElement("div", { style: { width: 220, marginLeft: 34, maxHeight: "100%", overflowY: "auto" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontWeight: 700, color: T.white } }, selectedCourse ? selectedCourse.label : "Upcoming"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: toggleCalRightColCollapsed, style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontWeight: 600, fontFamily: T.font, cursor: "pointer", padding: 0 } }, "Close \u203A")), sidebarRecentItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 10, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setRecentlyCreatedOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.faint, transform: recentlyCreatedOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.text } }, "Recently created")), recentlyCreatedOpen && sidebarRecentItems.map(renderSidebarItem)), sidebarOverdueItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setOverdueSectionOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.red, transform: overdueSectionOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.red } }, "Overdue (", sidebarOverdueItems.length, ")")), overdueSectionOpen && sidebarOverdueItems.map(renderSidebarItem)), sidebarUpcomingItems.length === 0 && sidebarRecentItems.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.faint } }, "Nothing upcoming."), sidebarUpcomingGroups.map((group) => /* @__PURE__ */ React.createElement("div", { key: group.label, style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, color: group.label === "Overdue" ? T.red : T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 } }, "Due: ", group.label), group.items.map(renderSidebarItem)))), calRightColCollapsed && /* @__PURE__ */ React.createElement(
+  ), calView === "daily" && /* @__PURE__ */ React.createElement(DayPlanner, { dayEvents, setEvents: setEvents2, selDay, todayK, colorOf, fmtTime, fmtTimeRange, openEdit, markDone, uncrossDone, prefs: getSchedulePreferences(), setSelDay, catchUpPending, openNew, newItemHighlightIds: newItemHighlightSet })), /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, display: "flex", position: "relative", height: "calc(100vh - 150px)" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 0, bottom: 0, left: calRightColCollapsed ? 0 : 14, width: 1, background: T.border, boxShadow: `-1px 0 3px rgba(0,0,0,0.12)` } }), !calRightColCollapsed && /* @__PURE__ */ React.createElement("div", { style: { width: 220, marginLeft: 34, maxHeight: "100%", overflowY: "auto" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontWeight: 700, color: T.white } }, selectedCourse ? selectedCourse.label : "Upcoming"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: toggleCalRightColCollapsed, style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontWeight: 600, fontFamily: T.font, cursor: "pointer", padding: 0 } }, "Close \u203A")), sidebarDueTodayItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 10, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setDueTodayOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.lime, transform: dueTodayOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.lime } }, "Due Today (", sidebarDueTodayItems.length, ")")), dueTodayOpen && sidebarDueTodayItems.map(renderSidebarItem)), sidebarOverdueItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setOverdueSectionOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.red, transform: overdueSectionOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.red } }, "Overdue (", sidebarOverdueItems.length, ")")), overdueSectionOpen && sidebarOverdueItems.map(renderSidebarItem)), sidebarUpcomingItems.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.faint } }, "Nothing upcoming."), sidebarUpcomingGroups.map((group) => /* @__PURE__ */ React.createElement("div", { key: group.label, style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, color: group.label === "Overdue" ? T.red : T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 } }, "Due: ", group.label), group.items.map(renderSidebarItem)))), calRightColCollapsed && /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",

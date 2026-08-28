@@ -16710,6 +16710,13 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
   // today, not a duration; extending that is its own follow-up.
   const wkResizeInfo = useRef(null); // {id,edge,startClientY,origStartMin,origDuration}|null, stable for one drag
   const [wkResize, setWkResize] = useState(null); // {id,edge,liveStartMin,liveDuration}|null, render-facing
+  // Which day's "N due" header badge was clicked -- null when closed.
+  // Reuses DayPreviewModal as-is (the exact same read-only glance-and-close
+  // day summary DayPlanner's own "Day Preview" button already opens) rather
+  // than building a second one; the badge used to only call setSelDay,
+  // which just highlighted the column without actually showing what's due.
+  const [previewDayKey, setPreviewDayKey] = useState(null);
+  const fmtWeekDueLabel=(k)=>{const p=k.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});};
   const eventsRef = useRef(events);
   eventsRef.current = events;
   useEffect(()=>{
@@ -16875,6 +16882,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
   // live once, in CalendarTab's own toolbar above every view (Month/Week/
   // Day alike), rather than duplicated inside each grid component.
   return (
+    <>
     <Card style={{padding:0,overflow:"hidden"}}>
       <div style={{display:"grid",gridTemplateColumns:"52px repeat(7,1fr)",borderBottom:`1px solid ${T.border}`,background:T.card}}>
         <div style={{height:48}} />
@@ -16891,7 +16899,8 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   due-marker title, matching the monthly grid's same
                   change and Shovel's own header row. */}
               {duePills.length>0&&(
-                <div onClick={(e)=>{e.stopPropagation();if(setSelDay)setSelDay(dk);}}
+                <div onClick={(e)=>{e.stopPropagation();if(setSelDay)setSelDay(dk);setPreviewDayKey(dk);}}
+                  title={"See everything due "+fmtWeekDueLabel(dk)}
                   style={{marginTop:5,fontSize:9,fontWeight:700,color:T.lime,background:T.lime+"18",border:`1px solid ${T.lime}33`,borderRadius:4,padding:"2px 6px",cursor:"pointer",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
                   {duePills.length} due
                 </div>
@@ -17377,6 +17386,8 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
         document.body
       )}
     </Card>
+    <DayPreviewModal open={!!previewDayKey} onClose={()=>setPreviewDayKey(null)} dayEvents={previewDayKey?(byDay[previewDayKey]||[]):[]} selDay={previewDayKey} dayLabel={previewDayKey?fmtWeekDueLabel(previewDayKey):""} colorOf={colorOf} fmtTime={fmtTime} fmtTimeRange={fmtTimeRange} catchUpPending={catchUpPending} openNew={openNew} />
+    </>
   );
 }
 
@@ -21568,11 +21579,15 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const [calRightColCollapsed,setCalRightColCollapsedState]=useState(()=>lsGet("calRightColCollapsed",false));
   const toggleCalRightColCollapsed=()=>setCalRightColCollapsedState(v=>{lsSet("calRightColCollapsed",!v);return !v;});
   // Phase 10b: Shovel's right column also shows two collapsible sections
-  // above the due-date groups -- "Recently created" and "Overdue (N)"
-  // (101410 reference). Collapsed by default (matches the reference
-  // screenshot), session-only state -- not worth persisting across visits
-  // like the column's own show/hide toggle above.
-  const [recentlyCreatedOpen,setRecentlyCreatedOpen]=useState(false);
+  // above the due-date groups -- "Due Today" and "Overdue (N)" (101410
+  // reference; this one used to be "Recently created," a newest-few-by-
+  // creation-order list that wasn't actually the most useful thing to lead
+  // with -- what's due today is). Due Today defaults OPEN (unlike Overdue)
+  // since it's the single most actionable thing in this panel and
+  // shouldn't need an extra click to see. Session-only state either way --
+  // not worth persisting across visits like the column's own show/hide
+  // toggle above.
+  const [dueTodayOpen,setDueTodayOpen]=useState(true);
   const [overdueSectionOpen,setOverdueSectionOpen]=useState(false);
   // Per-item expand, one at a time (same convention as everywhere else in
   // this file that expands a list row -- e.g. StudlinPrep's own
@@ -24297,32 +24312,24 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     if(days>1&&days<7)return dayOfWeekLabel(dateKey);
     return new Date(dateKey+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"});
   };
-  // Overdue items get pulled into their own collapsible section below
-  // (matching Shovel's separate "Overdue (N)" row) instead of showing as
-  // just another "Due:" group inline with the future ones.
+  // Overdue and today's items both get pulled into their own collapsible
+  // sections above the date-grouped list (matching Shovel's separate
+  // "Overdue (N)" row) instead of showing as just another "Due:" group
+  // inline with the future ones -- Due Today used to be a separate
+  // "Recently created" section (newest-by-creation-order, not actually
+  // date-relevant); replaced since what's due today is a far more useful
+  // thing to lead with than when something happened to be added.
   const sidebarOverdueItems=sidebarUpcomingItems.filter(item=>item.date<todayK);
+  const sidebarDueTodayItems=sidebarUpcomingItems.filter(item=>item.date===todayK);
   const sidebarUpcomingGroups=(()=>{
     const groups=[];
-    sidebarUpcomingItems.filter(item=>item.date>=todayK).forEach(item=>{
+    sidebarUpcomingItems.filter(item=>item.date>todayK).forEach(item=>{
       const label=dueDateLabel(item.date);
       const last=groups[groups.length-1];
       if(last&&last.label===label)last.items.push(item);
       else groups.push({label,items:[item]});
     });
     return groups;
-  })();
-  // "Recently created" -- newest few events by creation order. The id
-  // already encodes a real timestamp ("ev-"+Date.now()+"-"+rand, see every
-  // event-creation call site in this file), so no new field is needed --
-  // just parse it back out and sort. Falls back to 0 (sorts last) for the
-  // rare id shape that doesn't match, rather than throwing.
-  const idTimestamp=(id)=>{ const m=/-(\d{10,})-/.exec(id)||/-(\d{10,})$/.exec(id); return m?+m[1]:0; };
-  const sidebarRecentItems=(()=>{
-    const matches=selectedCourse?(item)=>item.courseId===selectedCourse.id||item.subject===selectedCourse.label:()=>true;
-    return events
-      .filter(e=>!e.checklist&&matches(e))
-      .sort((a,b)=>idTimestamp(b.id)-idTimestamp(a.id))
-      .slice(0,5);
   })();
   // Term rollover follow-up (Phase 8): courses tagged with a termEnd that
   // doesn't match the currently configured term are "past" -- collapsed
@@ -24947,13 +24954,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             <span style={{fontSize:12.5,fontWeight:700,color:T.white}}>{selectedCourse?selectedCourse.label:"Upcoming"}</span>
             <button type="button" onClick={toggleCalRightColCollapsed} style={{background:"none",border:"none",color:T.lime,fontSize:11,fontWeight:600,fontFamily:T.font,cursor:"pointer",padding:0}}>Close ›</button>
           </div>
-          {sidebarRecentItems.length>0&&(
+          {sidebarDueTodayItems.length>0&&(
             <div style={{marginBottom:10,borderBottom:`1px solid ${T.border}`,paddingBottom:10}}>
-              <button type="button" onClick={()=>setRecentlyCreatedOpen(v=>!v)} style={{display:"flex",alignItems:"center",gap:5,width:"100%",background:"none",border:"none",cursor:"pointer",padding:0,fontFamily:T.font}}>
-                <span style={{fontSize:9,color:T.faint,transform:recentlyCreatedOpen?"rotate(90deg)":"none",transition:"transform 0.15s"}}>›</span>
-                <span style={{fontSize:11,fontWeight:600,color:T.text}}>Recently created</span>
+              <button type="button" onClick={()=>setDueTodayOpen(v=>!v)} style={{display:"flex",alignItems:"center",gap:5,width:"100%",background:"none",border:"none",cursor:"pointer",padding:0,fontFamily:T.font}}>
+                <span style={{fontSize:9,color:T.lime,transform:dueTodayOpen?"rotate(90deg)":"none",transition:"transform 0.15s"}}>›</span>
+                <span style={{fontSize:11,fontWeight:600,color:T.lime}}>Due Today ({sidebarDueTodayItems.length})</span>
               </button>
-              {recentlyCreatedOpen&&sidebarRecentItems.map(renderSidebarItem)}
+              {dueTodayOpen&&sidebarDueTodayItems.map(renderSidebarItem)}
             </div>
           )}
           {sidebarOverdueItems.length>0&&(
@@ -24965,7 +24972,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
               {overdueSectionOpen&&sidebarOverdueItems.map(renderSidebarItem)}
             </div>
           )}
-          {sidebarUpcomingItems.length===0&&sidebarRecentItems.length===0&&<div style={{fontSize:11.5,color:T.faint}}>Nothing upcoming.</div>}
+          {sidebarUpcomingItems.length===0&&<div style={{fontSize:11.5,color:T.faint}}>Nothing upcoming.</div>}
           {sidebarUpcomingGroups.map(group=>(
             <div key={group.label} style={{marginBottom:14}}>
               <div style={{fontSize:10,fontWeight:700,color:group.label==="Overdue"?T.red:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>Due: {group.label}</div>
