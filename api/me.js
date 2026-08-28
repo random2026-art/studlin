@@ -31,6 +31,21 @@ const BETA_TESTER_EMAILS = [
 const BETA_CODE = 'betatesters';
 const BETA_TRIAL_DAYS = 30;
 
+// Referral trial (2026-08-27) -- replaces an earlier "50 bonus AI
+// credits" promise on the growth banner that, on inspection, had no
+// backing implementation anywhere: the invite link only ever created a
+// pending friendship, nothing granted anything when it was accepted. This
+// is the real thing: accepting a friend request that came in via someone
+// else's invite link (see AuthGate's onAuthStateChanged in
+// studlin-app.jsx, which is the only place a friendship doc gets
+// source:'invite_link') gives BOTH people a short, deliberately-capped
+// Pro trial -- its own plan value ('Pro-Limited', see studlin-app.jsx's
+// effectiveProLimit) rather than real 'Pro' with a shorter clock, so
+// every per-feature AI cap stays well under real Pro's for the whole
+// trial. Short (3 days) and capped specifically so it's cheap even if
+// two throwaway accounts referred each other purely to farm it.
+const REFERRAL_TRIAL_DAYS = 3;
+
 function isoFromStripeSeconds(value) {
   return value ? new Date(value * 1000).toISOString() : null;
 }
@@ -172,6 +187,70 @@ async function handleRedeemBeta(user, req, res) {
   } catch (err) {
     console.error('beta redeem error:', err);
     return res.status(500).json({ error: 'Could not redeem code. Please try again.' });
+  }
+}
+
+// Grants the referral trial to both parties of a friendship, once, only
+// when it's real: status is genuinely 'accepted' (not just "a pending
+// request exists" -- a stranger sending a request and immediately calling
+// this must not pay out), it actually came from an invite link (source
+// check -- an ordinary organic friend request grants nothing), the
+// caller is really one of the two people on it, and it hasn't already
+// been granted for this exact friendship (referralTrialGranted flag on
+// the friendship doc itself, not on either user, so it's a single shared
+// gate regardless of which of the two people's client happens to call
+// this first). Never overwrites a real paying subscriber, and never
+// shortens an already-longer-lived active trial (this account's own
+// existing beta trial, or an earlier still-active referral trial) --
+// growth perks are additive, never a downgrade.
+async function handleReferralTrialGrant(user, req, res) {
+  if (!db) return res.status(200).json({ ok: false, reason: 'admin_unconfigured' });
+  const { friendshipId } = req.body || {};
+  if (!friendshipId) return res.status(400).json({ error: 'friendshipId is required' });
+
+  try {
+    const ref = db.collection('friendships').doc(friendshipId);
+    const snap = await ref.get();
+    if (!snap.exists) return res.status(404).json({ error: 'Friendship not found' });
+    const data = snap.data();
+
+    if (data.senderId !== user.uid && data.receiverId !== user.uid) {
+      return res.status(403).json({ error: 'Not a party to this friendship' });
+    }
+    if (data.status !== 'accepted') return res.status(200).json({ ok: true, granted: false, reason: 'not_accepted' });
+    if (data.source !== 'invite_link') return res.status(200).json({ ok: true, granted: false, reason: 'not_a_referral' });
+    if (data.referralTrialGranted) return res.status(200).json({ ok: true, granted: false, reason: 'already_granted' });
+
+    // Marked before the per-user grants below (not a transaction -- both
+    // parties' clients calling this within moments of each other double-
+    // granting themselves a few extra days of a deliberately cheap,
+    // capped trial is a low-stakes, self-correcting race, not a real
+    // security boundary worth the extra complexity here).
+    await ref.set({ referralTrialGranted: true, referralTrialGrantedAt: new Date().toISOString() }, { merge: true });
+
+    const expiresAt = new Date(Date.now() + REFERRAL_TRIAL_DAYS * 86400000).toISOString();
+    const grantTo = async (uid) => {
+      const userRef = db.collection('users').doc(uid);
+      const udoc = await userRef.get();
+      const udata = udoc.exists ? udoc.data() : {};
+      if (udata.stripeSubscriptionId && udata.subscriptionStatus === 'active') return;
+      if (udata.plan === 'Pro' && udata.betaTrialExpiresAt && new Date(udata.betaTrialExpiresAt) > new Date()) return;
+      if (udata.plan === 'Pro-Limited' && udata.referralTrialExpiresAt && new Date(udata.referralTrialExpiresAt) > new Date(expiresAt)) return;
+      // api/chat.js deducts against this account's real, already-stored
+      // `credits` field on every message regardless of plan -- the
+      // client's own Pro-Limited cap (see studlin-app.jsx's
+      // getCreditLimit) means nothing if the real balance underneath is
+      // still whatever was left of the Free 120. Topped up, never down,
+      // so an account sitting on unused credits doesn't lose them.
+      const credits = Math.max(udata.credits ?? DEFAULT_CREDITS, 300);
+      await userRef.set({ plan: 'Pro-Limited', referralTrialExpiresAt: expiresAt, credits, updatedAt: new Date().toISOString() }, { merge: true });
+    };
+    await Promise.all([grantTo(data.senderId), grantTo(data.receiverId)]);
+
+    return res.status(200).json({ ok: true, granted: true, expiresAt });
+  } catch (err) {
+    console.error('referral trial grant error:', err);
+    return res.status(500).json({ error: 'Could not grant referral trial.' });
   }
 }
 
@@ -699,6 +778,7 @@ module.exports = withSentry(async (req, res) => {
     if (action === 'canvas-pull') return handleCanvasPull(user, res);
     if (action === 'canvas-disconnect') return handleCanvasDisconnect(user, res);
     if (action === 'redeem-beta') return handleRedeemBeta(user, req, res);
+    if (action === 'accept-friend-referral') return handleReferralTrialGrant(user, req, res);
     if (action === 'billing-info') return handleBillingInfo(user, res);
     return handleSubscriptionAction(user, req, res);
   }
@@ -734,11 +814,21 @@ module.exports = withSentry(async (req, res) => {
       plan = 'Free';
       await ref.set({ plan: 'Free' }, { merge: true });
     }
+    // Self-expiring referral trial -- same "compute on read" pattern as
+    // the beta trial just above, checked independently since a user could
+    // in principle have redeemed a beta code before their referral trial
+    // (already handled -- grantTo above never touches an active beta
+    // trial) or after it expired (this is the only remaining path).
+    if (plan === 'Pro-Limited' && data.referralTrialExpiresAt && new Date(data.referralTrialExpiresAt) <= new Date()) {
+      plan = 'Free';
+      await ref.set({ plan: 'Free' }, { merge: true });
+    }
     return res.status(200).json({
       plan,
       credits: data.credits ?? DEFAULT_CREDITS,
       email: data.email || user.email || null,
       betaTrialExpiresAt: data.betaTrialExpiresAt || null,
+      referralTrialExpiresAt: data.referralTrialExpiresAt || null,
       stripeSubscriptionId: data.stripeSubscriptionId || null,
       subscriptionStatus: data.subscriptionStatus || null,
       subscriptionInterval: data.subscriptionInterval || null,

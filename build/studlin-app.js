@@ -3029,7 +3029,7 @@ async function fetchUserProfile() {
     const d = await res.json();
     lsSet("credits", d.credits);
     lsSet("plan", d.plan || "Free");
-    ["stripeSubscriptionId", "subscriptionStatus", "subscriptionInterval", "subscriptionCancelAtPeriodEnd", "subscriptionCurrentPeriodEnd", "subscriptionEndsAt", "betaTrialExpiresAt"].forEach((k) => lsSet(k, d[k] === void 0 ? null : d[k]));
+    ["stripeSubscriptionId", "subscriptionStatus", "subscriptionInterval", "subscriptionCancelAtPeriodEnd", "subscriptionCurrentPeriodEnd", "subscriptionEndsAt", "betaTrialExpiresAt", "referralTrialExpiresAt"].forEach((k) => lsSet(k, d[k] === void 0 ? null : d[k]));
     if (d.onboarded) lsSet("onboarded", true);
     return d;
   } catch (e) {
@@ -3780,8 +3780,18 @@ function getPlan() {
 function setPlanLS(p) {
   lsSet("plan", p);
 }
+const REFERRAL_TRIAL_DAYS = 3;
+const isReferralTrial = () => getPlan() === "Pro-Limited";
+const hasProAccess = () => {
+  const p = getPlan();
+  return p === "Pro" || p === "Pro-Limited";
+};
+const effectiveProLimit = (fullLimit) => isReferralTrial() ? Math.max(2, Math.round(fullLimit / 20)) : fullLimit;
 function getCreditLimit() {
-  return getPlan() === "Pro" ? 1e5 : 120;
+  const p = getPlan();
+  if (p === "Pro") return 1e5;
+  if (p === "Pro-Limited") return 300;
+  return 120;
 }
 function getCredits() {
   return lsGet("credits", getCreditLimit());
@@ -3829,12 +3839,12 @@ function underAiSpendCeiling() {
 const PRO_SYLLABUS_SCAN_LIMIT = 40;
 const getSyllabusScanUsage = makeMonthlyUsage("syllabusScans");
 function canScanSyllabus() {
-  if (getPlan() === "Free") return !lsGet("freeSyllabusScanUsed", false);
+  if (!hasProAccess()) return !lsGet("freeSyllabusScanUsed", false);
   if (!underAiSpendCeiling()) return false;
-  return getSyllabusScanUsage().count < PRO_SYLLABUS_SCAN_LIMIT;
+  return getSyllabusScanUsage().count < effectiveProLimit(PRO_SYLLABUS_SCAN_LIMIT);
 }
 function recordSyllabusScan() {
-  if (getPlan() === "Free") {
+  if (!hasProAccess()) {
     lsSet("freeSyllabusScanUsed", true);
     chargeAiSpend("syllabusScan");
     return;
@@ -3845,9 +3855,9 @@ function recordSyllabusScan() {
 }
 const AI_USAGE_CAP_MESSAGE = "You've hit this month's AI usage limit. Resets on the 1st.";
 function aiGateBlockReason(usage, limit) {
-  if (getPlan() === "Free") return "free-tier";
+  if (!hasProAccess()) return "free-tier";
   if (!underAiSpendCeiling()) return "spend-ceiling";
-  return usage.count < limit ? null : "feature-cap";
+  return usage.count < effectiveProLimit(limit) ? null : "feature-cap";
 }
 function canScanSyllabusReason() {
   return aiGateBlockReason(getSyllabusScanUsage(), PRO_SYLLABUS_SCAN_LIMIT);
@@ -3855,9 +3865,9 @@ function canScanSyllabusReason() {
 const PRO_SCREENSHOT_SCAN_LIMIT = 40;
 const getScreenshotScanUsage = makeMonthlyUsage("screenshotScans");
 function canScanScreenshot() {
-  if (getPlan() === "Free") return false;
+  if (!hasProAccess()) return false;
   if (!underAiSpendCeiling()) return false;
-  return getScreenshotScanUsage().count < PRO_SCREENSHOT_SCAN_LIMIT;
+  return getScreenshotScanUsage().count < effectiveProLimit(PRO_SCREENSHOT_SCAN_LIMIT);
 }
 function recordScreenshotScan() {
   const u = getScreenshotScanUsage();
@@ -3870,9 +3880,9 @@ function canScanScreenshotReason() {
 const PRO_NOTE_SCAN_LIMIT = 150;
 const getNoteScanUsage = makeMonthlyUsage("noteScans");
 function canScanNote() {
-  if (getPlan() === "Free") return false;
+  if (!hasProAccess()) return false;
   if (!underAiSpendCeiling()) return false;
-  return getNoteScanUsage().count < PRO_NOTE_SCAN_LIMIT;
+  return getNoteScanUsage().count < effectiveProLimit(PRO_NOTE_SCAN_LIMIT);
 }
 function recordNoteScan() {
   const u = getNoteScanUsage();
@@ -3885,9 +3895,9 @@ function canScanNoteReason() {
 const PRO_FLASHCARD_GEN_LIMIT = 60;
 const getFlashcardGenUsage = makeMonthlyUsage("flashcardGens");
 function canGenFlashcards() {
-  if (getPlan() === "Free") return false;
+  if (!hasProAccess()) return false;
   if (!underAiSpendCeiling()) return false;
-  return getFlashcardGenUsage().count < PRO_FLASHCARD_GEN_LIMIT;
+  return getFlashcardGenUsage().count < effectiveProLimit(PRO_FLASHCARD_GEN_LIMIT);
 }
 function recordFlashcardGen() {
   const u = getFlashcardGenUsage();
@@ -3900,9 +3910,9 @@ function canGenFlashcardsReason() {
 const PRO_EXAM_PLAN_LIMIT = 40;
 const getExamPlanUsage = makeMonthlyUsage("examPlanBuilds");
 function canBuildExamPlan() {
-  if (getPlan() === "Free") return false;
+  if (!hasProAccess()) return false;
   if (!underAiSpendCeiling()) return false;
-  return getExamPlanUsage().count < PRO_EXAM_PLAN_LIMIT;
+  return getExamPlanUsage().count < effectiveProLimit(PRO_EXAM_PLAN_LIMIT);
 }
 function recordExamPlanBuild() {
   const u = getExamPlanUsage();
@@ -3915,9 +3925,9 @@ function canBuildExamPlanReason() {
 const PRO_SESSION_FOCUS_LIMIT = 100;
 const getSessionFocusUsage = makeMonthlyUsage("sessionFocuses");
 function canAddSessionFocus() {
-  if (getPlan() === "Free") return false;
+  if (!hasProAccess()) return false;
   if (!underAiSpendCeiling()) return false;
-  return getSessionFocusUsage().count < PRO_SESSION_FOCUS_LIMIT;
+  return getSessionFocusUsage().count < effectiveProLimit(PRO_SESSION_FOCUS_LIMIT);
 }
 function recordSessionFocus() {
   const u = getSessionFocusUsage();
@@ -3930,9 +3940,9 @@ function canAddSessionFocusReason() {
 const PRO_PROJECT_BREAKDOWN_LIMIT = 30;
 const getProjectBreakdownUsage = makeMonthlyUsage("projectBreakdowns");
 function canBreakDownProject() {
-  if (getPlan() === "Free") return false;
+  if (!hasProAccess()) return false;
   if (!underAiSpendCeiling()) return false;
-  return getProjectBreakdownUsage().count < PRO_PROJECT_BREAKDOWN_LIMIT;
+  return getProjectBreakdownUsage().count < effectiveProLimit(PRO_PROJECT_BREAKDOWN_LIMIT);
 }
 function recordProjectBreakdown() {
   const u = getProjectBreakdownUsage();
@@ -3945,9 +3955,9 @@ function canBreakDownProjectReason() {
 const PRO_SMART_RESCHEDULE_LIMIT = 200;
 const getSmartRescheduleUsage = makeMonthlyUsage("smartReschedules");
 function canUseSmartReschedule() {
-  if (getPlan() === "Free") return false;
+  if (!hasProAccess()) return false;
   if (!underAiSpendCeiling()) return false;
-  return getSmartRescheduleUsage().count < PRO_SMART_RESCHEDULE_LIMIT;
+  return getSmartRescheduleUsage().count < effectiveProLimit(PRO_SMART_RESCHEDULE_LIMIT);
 }
 function recordSmartReschedule() {
   const u = getSmartRescheduleUsage();
@@ -3960,9 +3970,9 @@ function canUseSmartRescheduleReason() {
 const PRO_BRAIN_DUMP_LIMIT = 100;
 const getBrainDumpUsage = makeMonthlyUsage("brainDumps");
 function canUseBrainDump() {
-  if (getPlan() === "Free") return false;
+  if (!hasProAccess()) return false;
   if (!underAiSpendCeiling()) return false;
-  return getBrainDumpUsage().count < PRO_BRAIN_DUMP_LIMIT;
+  return getBrainDumpUsage().count < effectiveProLimit(PRO_BRAIN_DUMP_LIMIT);
 }
 function recordBrainDump() {
   const u = getBrainDumpUsage();
@@ -3975,9 +3985,9 @@ function canUseBrainDumpReason() {
 const PRO_AI_ARRANGE_LIMIT = 400;
 const getAiArrangeUsage = makeMonthlyUsage("aiArranges");
 function canUseAiArrange() {
-  if (getPlan() === "Free") return false;
+  if (!hasProAccess()) return false;
   if (!underAiSpendCeiling()) return false;
-  return getAiArrangeUsage().count < PRO_AI_ARRANGE_LIMIT;
+  return getAiArrangeUsage().count < effectiveProLimit(PRO_AI_ARRANGE_LIMIT);
 }
 function canUseAiArrangeReason() {
   return aiGateBlockReason(getAiArrangeUsage(), PRO_AI_ARRANGE_LIMIT);
@@ -3985,9 +3995,9 @@ function canUseAiArrangeReason() {
 const PRO_CALENDAR_CLASSIFY_LIMIT = 60;
 const getCalendarClassifyUsage = makeMonthlyUsage("calendarClassifies");
 function canClassifyCalendarImport() {
-  if (getPlan() === "Free") return false;
+  if (!hasProAccess()) return false;
   if (!underAiSpendCeiling()) return false;
-  return getCalendarClassifyUsage().count < PRO_CALENDAR_CLASSIFY_LIMIT;
+  return getCalendarClassifyUsage().count < effectiveProLimit(PRO_CALENDAR_CLASSIFY_LIMIT);
 }
 function recordCalendarClassify() {
   const u = getCalendarClassifyUsage();
@@ -4976,9 +4986,9 @@ function latestWrongTopicsForExam(examId) {
 const PRO_QUIZ_GEN_LIMIT = 60;
 const getQuizGenUsage = makeMonthlyUsage("quizGens");
 function canGenQuiz() {
-  if (getPlan() === "Free") return false;
+  if (!hasProAccess()) return false;
   if (!underAiSpendCeiling()) return false;
-  return getQuizGenUsage().count < PRO_QUIZ_GEN_LIMIT;
+  return getQuizGenUsage().count < effectiveProLimit(PRO_QUIZ_GEN_LIMIT);
 }
 function recordQuizGen() {
   const u = getQuizGenUsage();
@@ -7219,7 +7229,7 @@ function Notes({ setActive = () => {
       setTimeout(() => setSyllabusToast2(""), 3200);
     }
   };
-  const noteScanBadge = getPlan() === "Free" ? "Pro" : null;
+  const noteScanBadge = hasProAccess() ? null : "Pro";
   const sources = [
     { id: "write", label: "Write", desc: "Type directly on the canvas", icon: Icon.pen, cost: null },
     { id: "file", label: "Scan a file", desc: "PDF, slides, or photos of the board", icon: Icon.file, cost: noteScanBadge }
@@ -7787,7 +7797,7 @@ function Notes({ setActive = () => {
         style: { minHeight: 380, padding: "20px 28px 40px", fontSize: 14.5, lineHeight: 1.85, color: T.text, outline: "none", fontFamily: T.font, boxSizing: "border-box" }
       }
     )
-  ), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, padding: "12px 20px", borderTop: `1px solid ${T.border}`, background: T.card2, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.faint, marginRight: 2 } }, "Turn into"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: genFlashcardsFromNote, disabled: panelLoading !== null }, panelLoading === "cards" ? "Generating\u2026" : /* @__PURE__ */ React.createElement(React.Fragment, null, Icon.layers, " Create Flashcards", getPlan() === "Free" && " (Pro)")), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: genQuizFromNote, disabled: panelLoading !== null }, panelLoading === "quiz" ? "Generating\u2026" : /* @__PURE__ */ React.createElement(React.Fragment, null, Icon.check, " Create Practice Quiz", getPlan() === "Free" && " (Pro)")), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: genSummaryFromNote, disabled: panelLoading !== null }, panelLoading === "summary" ? "Generating\u2026" : /* @__PURE__ */ React.createElement(React.Fragment, null, Icon.file, " Generate Summary", getPlan() === "Free" && " (Pro)")), panelMsg && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: panelMsg.startsWith("\u2713") ? T.teal : T.red, marginLeft: 4 } }, panelMsg))) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: 380, gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { color: T.faint, opacity: 0.4 } }, Icon.file), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, textAlign: "center" } }, "Select a note from the sidebar", /* @__PURE__ */ React.createElement("br", null), "or create a new one to start writing."), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setNewOpen(true) }, Icon.plus, " New note"))), hasMargin && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: T.faint, marginBottom: 2 } }, "Annotations"), activeComments.map((c) => /* @__PURE__ */ React.createElement("div", { key: c.id, style: { background: T.card, border: `1px solid ${T.blue}33`, borderLeft: `3px solid ${T.blue}`, borderRadius: 8, padding: "10px 12px", position: "relative" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.blue, fontWeight: 600, marginBottom: 4, lineHeight: 1.4 } }, c.selectedText ? `"${c.selectedText.slice(0, 48)}${c.selectedText.length > 48 ? "\u2026" : ""}"` : /* @__PURE__ */ React.createElement("span", { style: { textTransform: "uppercase", letterSpacing: "0.05em" } }, "Document note")), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.text, lineHeight: 1.5 } }, c.text), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.faint, marginTop: 6 } }, c.date), /* @__PURE__ */ React.createElement("button", { onClick: () => removeComment(nid, c.id), style: { position: "absolute", top: 6, right: 6, background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 13, lineHeight: 1, padding: 2 } }, "\xD7")))))));
+  ), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, padding: "12px 20px", borderTop: `1px solid ${T.border}`, background: T.card2, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.faint, marginRight: 2 } }, "Turn into"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: genFlashcardsFromNote, disabled: panelLoading !== null }, panelLoading === "cards" ? "Generating\u2026" : /* @__PURE__ */ React.createElement(React.Fragment, null, Icon.layers, " Create Flashcards", !hasProAccess() && " (Pro)")), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: genQuizFromNote, disabled: panelLoading !== null }, panelLoading === "quiz" ? "Generating\u2026" : /* @__PURE__ */ React.createElement(React.Fragment, null, Icon.check, " Create Practice Quiz", !hasProAccess() && " (Pro)")), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: genSummaryFromNote, disabled: panelLoading !== null }, panelLoading === "summary" ? "Generating\u2026" : /* @__PURE__ */ React.createElement(React.Fragment, null, Icon.file, " Generate Summary", !hasProAccess() && " (Pro)")), panelMsg && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: panelMsg.startsWith("\u2713") ? T.teal : T.red, marginLeft: 4 } }, panelMsg))) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: 380, gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { color: T.faint, opacity: 0.4 } }, Icon.file), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, textAlign: "center" } }, "Select a note from the sidebar", /* @__PURE__ */ React.createElement("br", null), "or create a new one to start writing."), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setNewOpen(true) }, Icon.plus, " New note"))), hasMargin && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: T.faint, marginBottom: 2 } }, "Annotations"), activeComments.map((c) => /* @__PURE__ */ React.createElement("div", { key: c.id, style: { background: T.card, border: `1px solid ${T.blue}33`, borderLeft: `3px solid ${T.blue}`, borderRadius: 8, padding: "10px 12px", position: "relative" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.blue, fontWeight: 600, marginBottom: 4, lineHeight: 1.4 } }, c.selectedText ? `"${c.selectedText.slice(0, 48)}${c.selectedText.length > 48 ? "\u2026" : ""}"` : /* @__PURE__ */ React.createElement("span", { style: { textTransform: "uppercase", letterSpacing: "0.05em" } }, "Document note")), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.text, lineHeight: 1.5 } }, c.text), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.faint, marginTop: 6 } }, c.date), /* @__PURE__ */ React.createElement("button", { onClick: () => removeComment(nid, c.id), style: { position: "absolute", top: 6, right: 6, background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 13, lineHeight: 1, padding: 2 } }, "\xD7")))))));
 }
 const GROUP_DURATIONS = [{ label: "1 week", days: 7 }, { label: "2 weeks", days: 14 }, { label: "1 month", days: 30 }, { label: "2 months", days: 60 }, { label: "3 months", days: 90 }];
 const dmRoomId = (a, b) => "dm_" + [a, b].sort().join("_");
@@ -8165,6 +8175,8 @@ function FriendsChat({ onFriendRequestSent, onActiveChatChange, initialTarget, o
   const acceptReq = async (id) => {
     try {
       await fsdb().collection("friendships").doc(id).update({ status: "accepted", updatedAt: (/* @__PURE__ */ new Date()).toISOString() });
+      authFetch("/api/me", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "accept-friend-referral", friendshipId: id }) }).then(() => fetchUserProfile()).catch(() => {
+      });
     } catch (e) {
     }
   };
@@ -8332,7 +8344,7 @@ function FriendsChat({ onFriendRequestSent, onActiveChatChange, initialTarget, o
     const label = isFriend ? "Following" : incomingFromThem ? "Accept" : isPendingOut ? "Pending" : "Add";
     const onClickBtn = isFriend ? void 0 : isPendingOut ? () => cancelOutgoingRequest(u.uid) : incomingFromThem ? () => acceptReq(incomingFromThem.id) : () => sendFriendRequest(u.uid);
     return /* @__PURE__ */ React.createElement("div", { key: u.uid, style: { display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderBottom: i < arr.length - 1 ? `1px solid ${T.border}` : "none" } }, /* @__PURE__ */ React.createElement(Av, { initials: u.n.split(" ").map((x) => x[0]).join(""), color: T.lime, size: 34, picUrl: u.p || "" }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white } }, u.n), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted } }, u.h)), /* @__PURE__ */ React.createElement(BtnSm, { variant: label === "Add" || label === "Accept" ? "lime" : "subtle", onClick: onClickBtn, title: isPendingOut ? "Click to cancel this request" : void 0, style: { flexShrink: 0, opacity: onClickBtn ? 1 : 0.7 } }, label));
-  }) : /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 34, height: 34, borderRadius: 9, background: T.lime + "18", border: `1px solid ${T.lime}30`, display: "flex", alignItems: "center", justifyContent: "center", color: T.lime, flexShrink: 0 } }, Icon.zap), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: T.white } }, "Be the pioneer on your campus."), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted } }, "Invite classmates to auto-sync routines and study together."))), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setInviteOpen(true), style: { width: "100%", justifyContent: "center" } }, Icon.mail, " Invite classmates")))), !mySchool && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 24, padding: "16px 18px", borderRadius: 10, background: T.card, border: `1px solid ${T.border}`, fontSize: 12, color: T.muted, lineHeight: 1.6 } }, "Add your school in Profile to find and connect with classmates automatically."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderRadius: 10, background: T.lime + "0C", border: `1px solid ${T.lime}22`, marginBottom: 24 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 28, height: 28, borderRadius: 8, background: T.lime + "1A", border: `1px solid ${T.lime}30`, display: "flex", alignItems: "center", justifyContent: "center", color: T.lime, flexShrink: 0 } }, Icon.zap), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: 12.5, color: T.muted, lineHeight: 1.5 } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.text, fontWeight: 600 } }, "Invite classmates to unlock collective scheduling."), " ", "For every friend who joins, you ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, "both"), " get ", /* @__PURE__ */ React.createElement("span", { style: { color: T.lime, fontWeight: 600 } }, "50 bonus AI credits"), "."), /* @__PURE__ */ React.createElement("button", { onClick: () => setInviteOpen(true), style: { flexShrink: 0, padding: "7px 16px", borderRadius: 7, background: T.lime, color: T.ink, border: "none", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: T.font, whiteSpace: "nowrap" } }, "Invite friends")), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 24 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: T.faint, marginBottom: 8 } }, "Add Friends"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 10 } }, ["All", "@username", "Name", "School"].map((f) => /* @__PURE__ */ React.createElement("button", { key: f, onClick: () => setSearchFilter(f), style: { padding: "5px 11px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, border: `1px solid ${searchFilter === f ? T.lime + "44" : T.border}`, background: searchFilter === f ? T.lime + "14" : "transparent", color: searchFilter === f ? T.lime : T.muted, transition: "all 0.12s" } }, f))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 13px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 9, marginBottom: 12 } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, display: "flex", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("svg", { width: "15", height: "15", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("circle", { cx: "11", cy: "11", r: "8" }), /* @__PURE__ */ React.createElement("line", { x1: "21", y1: "21", x2: "16.65", y2: "16.65" }))), /* @__PURE__ */ React.createElement("input", { value: searchQ, onChange: (e) => {
+  }) : /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 34, height: 34, borderRadius: 9, background: T.lime + "18", border: `1px solid ${T.lime}30`, display: "flex", alignItems: "center", justifyContent: "center", color: T.lime, flexShrink: 0 } }, Icon.zap), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: T.white } }, "Be the pioneer on your campus."), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted } }, "Invite classmates to auto-sync routines and study together."))), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setInviteOpen(true), style: { width: "100%", justifyContent: "center" } }, Icon.mail, " Invite classmates")))), !mySchool && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 24, padding: "16px 18px", borderRadius: 10, background: T.card, border: `1px solid ${T.border}`, fontSize: 12, color: T.muted, lineHeight: 1.6 } }, "Add your school in Profile to find and connect with classmates automatically."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderRadius: 10, background: T.lime + "0C", border: `1px solid ${T.lime}22`, marginBottom: 24 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 28, height: 28, borderRadius: 8, background: T.lime + "1A", border: `1px solid ${T.lime}30`, display: "flex", alignItems: "center", justifyContent: "center", color: T.lime, flexShrink: 0 } }, Icon.zap), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: 12.5, color: T.muted, lineHeight: 1.5 } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.text, fontWeight: 600 } }, "Invite classmates to unlock collective scheduling."), " ", "For every friend who joins, you ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, "both"), " get ", /* @__PURE__ */ React.createElement("span", { style: { color: T.lime, fontWeight: 600 } }, REFERRAL_TRIAL_DAYS, " days of Pro-Limited"), ", free."), /* @__PURE__ */ React.createElement("button", { onClick: () => setInviteOpen(true), style: { flexShrink: 0, padding: "7px 16px", borderRadius: 7, background: T.lime, color: T.ink, border: "none", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: T.font, whiteSpace: "nowrap" } }, "Invite friends")), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 24 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: T.faint, marginBottom: 8 } }, "Add Friends"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 10 } }, ["All", "@username", "Name", "School"].map((f) => /* @__PURE__ */ React.createElement("button", { key: f, onClick: () => setSearchFilter(f), style: { padding: "5px 11px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, border: `1px solid ${searchFilter === f ? T.lime + "44" : T.border}`, background: searchFilter === f ? T.lime + "14" : "transparent", color: searchFilter === f ? T.lime : T.muted, transition: "all 0.12s" } }, f))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 13px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 9, marginBottom: 12 } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, display: "flex", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("svg", { width: "15", height: "15", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("circle", { cx: "11", cy: "11", r: "8" }), /* @__PURE__ */ React.createElement("line", { x1: "21", y1: "21", x2: "16.65", y2: "16.65" }))), /* @__PURE__ */ React.createElement("input", { value: searchQ, onChange: (e) => {
     setSearchQ(e.target.value);
     setEmailSent(false);
   }, placeholder: searchFilter === "@username" ? "Search by @username\u2026" : searchFilter === "School" ? "Search by university or college\u2026" : searchFilter === "Name" ? "Search by first or last name\u2026" : "Search by name, @username, or school\u2026", style: { flex: 1, background: "none", border: "none", outline: "none", color: T.text, fontSize: 13, fontFamily: T.font } }), searchQ && /* @__PURE__ */ React.createElement("button", { onClick: () => setSearchQ(""), style: { background: "none", border: "none", color: T.muted, cursor: "pointer", padding: 0, display: "flex", lineHeight: 1, flexShrink: 0 } }, Icon.xmark)), /* @__PURE__ */ React.createElement(Card, { style: { padding: 0, overflow: "hidden" } }, !searchQ.trim() ? /* @__PURE__ */ React.createElement("div", { style: { padding: 24, textAlign: "center", fontSize: 12.5, color: T.muted, lineHeight: 1.6 } }, "Search by username, name, or school to find classmates already on Studlin.") : searching ? /* @__PURE__ */ React.createElement("div", { style: { padding: 24, textAlign: "center", fontSize: 12.5, color: T.muted } }, "Searching\u2026") : !noResults ? searchResults.map((u, i, arr) => {
@@ -8344,7 +8356,7 @@ function FriendsChat({ onFriendRequestSent, onActiveChatChange, initialTarget, o
     return /* @__PURE__ */ React.createElement("div", { key: u.uid, style: { display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderBottom: i < arr.length - 1 ? `1px solid ${T.border}` : "none" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative", flexShrink: 0 } }, /* @__PURE__ */ React.createElement(Av, { initials: u.n.split(" ").map((x) => x[0]).join(""), color: T.lime, size: 34, picUrl: u.p || "" })), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white } }, u.n), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted } }, u.h, u.s && /* @__PURE__ */ React.createElement(React.Fragment, null, " \xB7 ", /* @__PURE__ */ React.createElement("span", { style: { color: T.blue } }, u.s)))), /* @__PURE__ */ React.createElement(BtnSm, { variant: label === "Add" || label === "Accept" ? "lime" : "subtle", onClick: onClickBtn, title: isPendingOut ? "Click to cancel this request" : void 0, style: { flexShrink: 0, opacity: onClickBtn ? 1 : 0.7 } }, label));
   }) : /* @__PURE__ */ React.createElement("div", { style: { padding: 20 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 34, height: 34, borderRadius: 9, background: T.blue + "18", border: `1px solid ${T.blue}30`, display: "flex", alignItems: "center", justifyContent: "center", color: T.blue, flexShrink: 0 } }, Icon.mail), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: T.white } }, 'No one found for "', searchQ, '"'), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted } }, "Invite them to join Studlin via email."))), /* @__PURE__ */ React.createElement("input", { value: inviteEmail, onChange: (e) => setInviteEmail(e.target.value), onKeyDown: (e) => {
     if (e.key === "Enter") sendEmailInvite();
-  }, placeholder: "friend@university.edu", style: { width: "100%", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "9px 12px", color: T.text, fontSize: 13, fontFamily: T.font, outline: "none", boxSizing: "border-box", marginBottom: 10 } }), emailSent && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.teal, marginBottom: 8 } }, "Invite sent!"), /* @__PURE__ */ React.createElement(Btn, { onClick: sendEmailInvite, style: { width: "100%", justifyContent: "center", opacity: inviteEmail.trim() ? 1 : 0.45 } }, Icon.mail, " Send invite")))), inviteOpen && /* @__PURE__ */ React.createElement("div", { onClick: () => setInviteOpen(false), style: { position: "fixed", inset: 0, zIndex: 90, background: "rgba(8,12,10,0.78)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center" } }, /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { width: 460, maxWidth: "92vw", background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, padding: 28, boxShadow: "0 40px 90px -30px rgba(0,0,0,0.65)" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 42, height: 42, borderRadius: 12, background: T.lime + "18", border: `1px solid ${T.lime}33`, display: "flex", alignItems: "center", justifyContent: "center", color: T.lime, flexShrink: 0 } }, Icon.users), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 18, fontWeight: 700, color: T.white, letterSpacing: "-0.02em" } }, "Invite your classmates"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Unlock collective calendar syncing."))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, lineHeight: 1.7, marginBottom: 20 } }, "When your whole class is on Studlin, syncing calendars can automatically find when ", /* @__PURE__ */ React.createElement("em", null, "everyone"), ' is free \u2014 no more "when can everyone meet?" texts.'), /* @__PURE__ */ React.createElement("div", { style: { padding: "11px 14px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 10, marginBottom: 14, display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: 12, color: T.text, fontFamily: T.mono, wordBreak: "break-all" } }, inviteLink), /* @__PURE__ */ React.createElement("button", { onClick: copyLink, style: { flexShrink: 0, padding: "7px 13px", borderRadius: 7, background: copied ? T.teal : T.lime, color: T.ink, border: "none", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: T.font, transition: "background 0.2s", whiteSpace: "nowrap" } }, copied ? "\u2713 Copied!" : "Copy")), /* @__PURE__ */ React.createElement("div", { style: { padding: "10px 14px", background: T.lime + "0A", border: `1px solid ${T.lime}22`, borderRadius: 8, fontSize: 12, color: T.text, marginBottom: 20, lineHeight: 1.6 } }, "For every friend who joins via your link, you ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, "both"), " unlock ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, "50 bonus AI scheduling credits"), "."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: () => setInviteOpen(false), variant: "subtle", style: { flex: 1, justifyContent: "center" } }, "Close"), /* @__PURE__ */ React.createElement(Btn, { onClick: copyLink, style: { flex: 1, justifyContent: "center" } }, copied ? /* @__PURE__ */ React.createElement(React.Fragment, null, Icon.check, " Copied!") : /* @__PURE__ */ React.createElement(React.Fragment, null, Icon.copy, " Copy link"))))), /* @__PURE__ */ React.createElement(
+  }, placeholder: "friend@university.edu", style: { width: "100%", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "9px 12px", color: T.text, fontSize: 13, fontFamily: T.font, outline: "none", boxSizing: "border-box", marginBottom: 10 } }), emailSent && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.teal, marginBottom: 8 } }, "Invite sent!"), /* @__PURE__ */ React.createElement(Btn, { onClick: sendEmailInvite, style: { width: "100%", justifyContent: "center", opacity: inviteEmail.trim() ? 1 : 0.45 } }, Icon.mail, " Send invite")))), inviteOpen && /* @__PURE__ */ React.createElement("div", { onClick: () => setInviteOpen(false), style: { position: "fixed", inset: 0, zIndex: 90, background: "rgba(8,12,10,0.78)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center" } }, /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { width: 460, maxWidth: "92vw", background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, padding: 28, boxShadow: "0 40px 90px -30px rgba(0,0,0,0.65)" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 42, height: 42, borderRadius: 12, background: T.lime + "18", border: `1px solid ${T.lime}33`, display: "flex", alignItems: "center", justifyContent: "center", color: T.lime, flexShrink: 0 } }, Icon.users), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 18, fontWeight: 700, color: T.white, letterSpacing: "-0.02em" } }, "Invite your classmates"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Unlock collective calendar syncing."))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, lineHeight: 1.7, marginBottom: 20 } }, "When your whole class is on Studlin, syncing calendars can automatically find when ", /* @__PURE__ */ React.createElement("em", null, "everyone"), ' is free \u2014 no more "when can everyone meet?" texts.'), /* @__PURE__ */ React.createElement("div", { style: { padding: "11px 14px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 10, marginBottom: 14, display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: 12, color: T.text, fontFamily: T.mono, wordBreak: "break-all" } }, inviteLink), /* @__PURE__ */ React.createElement("button", { onClick: copyLink, style: { flexShrink: 0, padding: "7px 13px", borderRadius: 7, background: copied ? T.teal : T.lime, color: T.ink, border: "none", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: T.font, transition: "background 0.2s", whiteSpace: "nowrap" } }, copied ? "\u2713 Copied!" : "Copy")), /* @__PURE__ */ React.createElement("div", { style: { padding: "10px 14px", background: T.lime + "0A", border: `1px solid ${T.lime}22`, borderRadius: 8, fontSize: 12, color: T.text, marginBottom: 20, lineHeight: 1.6 } }, "For every friend who joins via your link, you ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, "both"), " unlock ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, REFERRAL_TRIAL_DAYS, " days of Pro-Limited"), ", free."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: () => setInviteOpen(false), variant: "subtle", style: { flex: 1, justifyContent: "center" } }, "Close"), /* @__PURE__ */ React.createElement(Btn, { onClick: copyLink, style: { flex: 1, justifyContent: "center" } }, copied ? /* @__PURE__ */ React.createElement(React.Fragment, null, Icon.check, " Copied!") : /* @__PURE__ */ React.createElement(React.Fragment, null, Icon.copy, " Copy link"))))), /* @__PURE__ */ React.createElement(
     Modal,
     {
       open: createGroupOpen,
@@ -16497,7 +16509,8 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     subscriptionCancelAtPeriodEnd: !!lsGet("subscriptionCancelAtPeriodEnd", false),
     subscriptionCurrentPeriodEnd: lsGet("subscriptionCurrentPeriodEnd", null),
     subscriptionEndsAt: lsGet("subscriptionEndsAt", null),
-    betaTrialExpiresAt: lsGet("betaTrialExpiresAt", null)
+    betaTrialExpiresAt: lsGet("betaTrialExpiresAt", null),
+    referralTrialExpiresAt: lsGet("referralTrialExpiresAt", null)
   }));
   useEffect(() => {
     let alive = true;
@@ -16535,6 +16548,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
   const subscriptionPlanLine = () => {
     const plan = account.plan || getPlan();
     if (plan === "Free") return "Free plan";
+    if (plan === "Pro-Limited" && account.referralTrialExpiresAt) return "Pro-Limited trial - ends " + fmtBillingDate(account.referralTrialExpiresAt);
     if (!account.stripeSubscriptionId && account.betaTrialExpiresAt) return "Beta trial - Pro until " + fmtBillingDate(account.betaTrialExpiresAt);
     const end = account.subscriptionCurrentPeriodEnd || account.subscriptionEndsAt;
     return account.subscriptionCancelAtPeriodEnd ? "Active until " + fmtBillingDate(end) : planPriceText(plan, account.subscriptionInterval) + " - renews " + fmtBillingDate(end);
@@ -17278,18 +17292,18 @@ function SettingsTab({ theme = "dark", setTheme = () => {
       return Math.ceil((e - n) / 864e5);
     })();
     return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 2 } }, "AI chat messages"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 18 } }, "Resets in ", daysLeft, " day", daysLeft !== 1 ? "s" : "", " \xB7 ", plan, " plan"), plan === "Pro" ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.lime, fontWeight: 600 } }, "Unlimited") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, plan, " plan"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: pct >= 80 ? "#E05252" : T.text, fontWeight: 600 } }, pct, "% used")), /* @__PURE__ */ React.createElement("div", { style: { height: 6, background: T.card2, borderRadius: 99, overflow: "hidden", marginBottom: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { height: "100%", width: pct + "%", background: barColor, borderRadius: 99, transition: "width 0.4s" } })), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 11.5, color: T.muted } }, /* @__PURE__ */ React.createElement("span", null, used, " used"), /* @__PURE__ */ React.createElement("span", null, cr, " remaining / ", lim)))), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 16 } }, "Your AI features"), [
-      ["Syllabus & schedule imports", plan === "Free" ? "Pro only" : "Included"],
-      ["AI note scans (files, lectures & YouTube)", plan === "Free" ? "Pro only" : "Included"],
-      ["AI flashcard generations", plan === "Free" ? "Pro only" : "Included"],
-      ["AI practice exams", plan === "Free" ? "Pro only" : "Included"],
-      ["AI study plans", plan === "Free" ? "Pro only" : "Included"],
-      ["Brain dump", plan === "Free" ? "Pro only" : "Included"],
-      ["Add Task with AI", plan === "Free" ? "Pro only" : "Included"],
+      ["Syllabus & schedule imports", plan === "Free" ? "Pro only" : plan === "Pro-Limited" ? "Limited" : "Included"],
+      ["AI note scans (files, lectures & YouTube)", plan === "Free" ? "Pro only" : plan === "Pro-Limited" ? "Limited" : "Included"],
+      ["AI flashcard generations", plan === "Free" ? "Pro only" : plan === "Pro-Limited" ? "Limited" : "Included"],
+      ["AI practice exams", plan === "Free" ? "Pro only" : plan === "Pro-Limited" ? "Limited" : "Included"],
+      ["AI study plans", plan === "Free" ? "Pro only" : plan === "Pro-Limited" ? "Limited" : "Included"],
+      ["Brain dump", plan === "Free" ? "Pro only" : plan === "Pro-Limited" ? "Limited" : "Included"],
+      ["Add Task with AI", plan === "Free" ? "Pro only" : plan === "Pro-Limited" ? "Limited" : "Included"],
       ["Attack sessions", "Unlimited"],
-      ["Project breakdowns", plan === "Free" ? "Pro only" : "Included"],
-      ["Smart Reschedule", plan === "Free" ? "Pro only" : "Included"],
+      ["Project breakdowns", plan === "Free" ? "Pro only" : plan === "Pro-Limited" ? "Limited" : "Included"],
+      ["Smart Reschedule", plan === "Free" ? "Pro only" : plan === "Pro-Limited" ? "Limited" : "Included"],
       ["Manual classes, tasks & calendar", "Unlimited"]
-    ].map(([action, status], i, arr) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: i < arr.length - 1 ? `1px solid ${T.border}` : "none" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, action), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted, fontFamily: T.mono } }, status)))), plan === "Free" && /* @__PURE__ */ React.createElement(Card, { style: { background: T.lime, border: "none" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: T.ink, marginBottom: 4 } }, "Unlock Studlin's AI"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.ink, opacity: 0.75, marginBottom: 14 } }, "Upgrade to Pro for AI chat, scans, flashcard generation, and everything else Studlin's AI can do."), /* @__PURE__ */ React.createElement("button", { onClick: () => setPricingOpen(true), style: { background: T.ink, color: T.lime, border: "none", padding: "8px 18px", borderRadius: 8, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: T.font } }, "Upgrade to Pro")));
+    ].map(([action, status], i, arr) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: i < arr.length - 1 ? `1px solid ${T.border}` : "none" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, action), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted, fontFamily: T.mono } }, status)))), !hasProAccess() && /* @__PURE__ */ React.createElement(Card, { style: { background: T.lime, border: "none" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: T.ink, marginBottom: 4 } }, "Unlock Studlin's AI"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.ink, opacity: 0.75, marginBottom: 14 } }, "Upgrade to Pro for AI chat, scans, flashcard generation, and everything else Studlin's AI can do."), /* @__PURE__ */ React.createElement("button", { onClick: () => setPricingOpen(true), style: { background: T.ink, color: T.lime, border: "none", padding: "8px 18px", borderRadius: 8, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: T.font } }, "Upgrade to Pro")));
   })(), active === "Subscription" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12, background: T.lime, border: "none" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: T.bg, opacity: 0.6 } }, "CURRENT PLAN"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 26, fontWeight: 700, color: T.bg, letterSpacing: "-0.02em", marginTop: 4 } }, account.plan || getPlan()), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.bg, opacity: 0.75, marginTop: 4 } }, subscriptionPlanLine())), /* @__PURE__ */ React.createElement("div", { style: { textAlign: "right" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: T.bg, opacity: 0.6 } }, "AI CHAT MESSAGES"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 26, fontWeight: 700, color: T.bg, letterSpacing: "-0.02em", marginTop: 4 } }, getPlan() === "Pro" ? "Unlimited" : getCredits() + " / " + getCreditLimit()), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.bg, opacity: 0.75, marginTop: 4 } }, getPlan() === "Pro" ? "No monthly cap" : "Resets in " + daysUntilReset() + " day" + (daysUntilReset() !== 1 ? "s" : "")))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 18, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("a", { href: "checkout.html?credits=500", style: { background: T.bg, color: T.lime, padding: "8px 16px", borderRadius: 7, fontSize: 12.5, fontWeight: 600, textDecoration: "none" } }, "Buy credit packs"), getPlan() !== "Pro" && /* @__PURE__ */ React.createElement("a", { href: "checkout.html?plan=pro&billing=monthly", style: { background: "transparent", border: `1px solid ${T.bg}55`, color: T.bg, padding: "8px 16px", borderRadius: 7, fontSize: 12.5, fontWeight: 600, textDecoration: "none" } }, "Upgrade to Pro"))), account.stripeSubscriptionId && /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "Manage subscription"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, lineHeight: 1.55 } }, account.subscriptionCancelAtPeriodEnd ? "Your subscription is canceled. You'll keep " + (account.plan || getPlan()) + " perks until " + fmtBillingDate(account.subscriptionCurrentPeriodEnd || account.subscriptionEndsAt) + "." : "Cancel future payments and keep " + (account.plan || getPlan()) + " through " + fmtBillingDate(account.subscriptionCurrentPeriodEnd || account.subscriptionEndsAt) + ".")), account.subscriptionCancelAtPeriodEnd ? /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => {
     setSubscriptionError("");
     setSubscriptionAction("resume");

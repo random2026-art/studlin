@@ -173,6 +173,12 @@ function loadStudlinModule(options) {
     // only indirectly through a component closure.
     "markEventDone",
     "aiGateBlockReason","AI_USAGE_CAP_MESSAGE",
+    "getPlan","setPlanLS","getCreditLimit","hasProAccess","isReferralTrial","effectiveProLimit","REFERRAL_TRIAL_DAYS",
+    "canScanScreenshot","canScanNote","canBuildExamPlan","canAddSessionFocus","canBreakDownProject",
+    "canUseSmartReschedule","canUseBrainDump","canUseAiArrange","canClassifyCalendarImport","canGenQuiz",
+    "PRO_SCREENSHOT_SCAN_LIMIT","PRO_NOTE_SCAN_LIMIT","PRO_EXAM_PLAN_LIMIT","PRO_SESSION_FOCUS_LIMIT",
+    "PRO_PROJECT_BREAKDOWN_LIMIT","PRO_SMART_RESCHEDULE_LIMIT","PRO_BRAIN_DUMP_LIMIT","PRO_AI_ARRANGE_LIMIT",
+    "PRO_CALENDAR_CLASSIFY_LIMIT","PRO_QUIZ_GEN_LIMIT",
     "canGenQuizReason","canScanSyllabusReason","canScanScreenshotReason","canScanNoteReason",
     "canGenFlashcardsReason","canBuildExamPlanReason","canAddSessionFocusReason",
     "canBreakDownProjectReason","canUseSmartRescheduleReason","canUseBrainDumpReason","canUseAiArrangeReason",

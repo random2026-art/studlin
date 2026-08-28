@@ -4811,7 +4811,7 @@ const prioLabel=(v)=>{const p=v/10;return p<=20?"Low":p<=40?"Low–Medium":p<=60
 const diffLabel=(v)=>{const p=v/10;return p<=20?"Very Easy":p<=40?"Easy":p<=60?"Medium":p<=80?"Hard":"Very Hard";};
 async function getAuthToken(){try{const u=firebase.auth().currentUser;if(!u)return null;return await u.getIdToken();}catch(e){return null;}}
 async function authFetch(url,opts={}){try{const token=await getAuthToken();const h=Object.assign({},opts.headers||{});if(token)h["Authorization"]="Bearer "+token;return fetch(url,Object.assign({},opts,{headers:h}));}catch(e){return fetch(url,opts);}}
-async function fetchUserProfile(){try{const res=await authFetch("/api/me");if(!res.ok)return null;const d=await res.json();lsSet("credits",d.credits);lsSet("plan",d.plan||"Free");["stripeSubscriptionId","subscriptionStatus","subscriptionInterval","subscriptionCancelAtPeriodEnd","subscriptionCurrentPeriodEnd","subscriptionEndsAt","betaTrialExpiresAt"].forEach(k=>lsSet(k,d[k]===undefined?null:d[k]));
+async function fetchUserProfile(){try{const res=await authFetch("/api/me");if(!res.ok)return null;const d=await res.json();lsSet("credits",d.credits);lsSet("plan",d.plan||"Free");["stripeSubscriptionId","subscriptionStatus","subscriptionInterval","subscriptionCancelAtPeriodEnd","subscriptionCurrentPeriodEnd","subscriptionEndsAt","betaTrialExpiresAt","referralTrialExpiresAt"].forEach(k=>lsSet(k,d[k]===undefined?null:d[k]));
   // "onboarded" otherwise lives only in this browser's localStorage, so a
   // fresh browser/Incognito window/device makes an already-onboarded account
   // repeat the wizard. Only ever upgrades false->true here, never the
@@ -6072,7 +6072,21 @@ function sessionStats(){
 const fmtH=(m)=>m>=60?Math.floor(m/60)+"h "+(m%60)+"m":m+"m";
 function getPlan(){return lsGet("plan","Free");}
 function setPlanLS(p){lsSet("plan",p);}
-function getCreditLimit(){return getPlan()==="Pro"?100000:120;}
+// A time-boxed, capped-usage Pro trial granted when a referred friend's
+// request gets accepted (see acceptReq below + api/me.js's referral-trial
+// grant). Deliberately its own plan value, not just "Pro" with a shorter
+// clock (that's what the beta trial already is) -- every per-feature cap
+// below stays visibly well under real Pro's limits for the whole trial,
+// rather than opening the exact same doors Pro does.
+const REFERRAL_TRIAL_DAYS=3;
+const isReferralTrial=()=>getPlan()==="Pro-Limited";
+const hasProAccess=()=>{const p=getPlan();return p==="Pro"||p==="Pro-Limited";};
+// Roughly a twentieth of Pro's own monthly allowance, floored at 2 --
+// meaningfully stricter than just prorating Pro's monthly cap down to 3
+// days (that would land close to Pro's own daily rate), while still
+// being a genuinely usable, non-zero taste of every feature.
+const effectiveProLimit=(fullLimit)=>isReferralTrial()?Math.max(2,Math.round(fullLimit/20)):fullLimit;
+function getCreditLimit(){const p=getPlan();if(p==="Pro")return 100000;if(p==="Pro-Limited")return 300;return 120;}
 function getCredits(){return lsGet("credits",getCreditLimit());}
 function setCreditsLS(n){lsSet("credits",Math.max(0,n));}
 const CREDIT_COST={standard:1,flash:1};
@@ -6161,12 +6175,12 @@ const getSyllabusScanUsage=makeMonthlyUsage("syllabusScans");
 // already-earned upgrade moment -- reinforced by needsSyllabus/
 // shouldShowSyllabusNudge already pointing back at exactly what's missing.
 function canScanSyllabus(){
-  if(getPlan()==="Free")return !lsGet("freeSyllabusScanUsed",false);
+  if(!hasProAccess())return !lsGet("freeSyllabusScanUsed",false);
   if(!underAiSpendCeiling())return false;
-  return getSyllabusScanUsage().count<PRO_SYLLABUS_SCAN_LIMIT;
+  return getSyllabusScanUsage().count<effectiveProLimit(PRO_SYLLABUS_SCAN_LIMIT);
 }
 function recordSyllabusScan(){
-  if(getPlan()==="Free"){lsSet("freeSyllabusScanUsed",true);chargeAiSpend("syllabusScan");return;}
+  if(!hasProAccess()){lsSet("freeSyllabusScanUsed",true);chargeAiSpend("syllabusScan");return;}
   const u=getSyllabusScanUsage();lsSet("syllabusScans",{month:u.month,count:u.count+1});chargeAiSpend("syllabusScan");
 }
 // 2026-08-22 intelligence audit fix: every canXxx() gate in this section
@@ -6183,9 +6197,9 @@ function recordSyllabusScan(){
 // check to choose honest wording instead.
 const AI_USAGE_CAP_MESSAGE="You've hit this month's AI usage limit. Resets on the 1st.";
 function aiGateBlockReason(usage,limit){
-  if(getPlan()==="Free")return "free-tier";
+  if(!hasProAccess())return "free-tier";
   if(!underAiSpendCeiling())return "spend-ceiling";
-  return usage.count<limit?null:"feature-cap";
+  return usage.count<effectiveProLimit(limit)?null:"feature-cap";
 }
 function canScanSyllabusReason(){return aiGateBlockReason(getSyllabusScanUsage(),PRO_SYLLABUS_SCAN_LIMIT);}
 
@@ -6197,7 +6211,7 @@ function canScanSyllabusReason(){return aiGateBlockReason(getSyllabusScanUsage()
 // json extraction). Cap sized for ~$0.85/mo worst case.
 const PRO_SCREENSHOT_SCAN_LIMIT=40;
 const getScreenshotScanUsage=makeMonthlyUsage("screenshotScans");
-function canScanScreenshot(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getScreenshotScanUsage().count<PRO_SCREENSHOT_SCAN_LIMIT;}
+function canScanScreenshot(){if(!hasProAccess())return false;if(!underAiSpendCeiling())return false;return getScreenshotScanUsage().count<effectiveProLimit(PRO_SCREENSHOT_SCAN_LIMIT);}
 function recordScreenshotScan(){const u=getScreenshotScanUsage();lsSet("screenshotScans",{month:u.month,count:u.count+1});chargeAiSpend("screenshotScan");}
 function canScanScreenshotReason(){return aiGateBlockReason(getScreenshotScanUsage(),PRO_SCREENSHOT_SCAN_LIMIT);}
 
@@ -6210,7 +6224,7 @@ function canScanScreenshotReason(){return aiGateBlockReason(getScreenshotScanUsa
 // dollars, is the real ceiling here.
 const PRO_NOTE_SCAN_LIMIT=150;
 const getNoteScanUsage=makeMonthlyUsage("noteScans");
-function canScanNote(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getNoteScanUsage().count<PRO_NOTE_SCAN_LIMIT;}
+function canScanNote(){if(!hasProAccess())return false;if(!underAiSpendCeiling())return false;return getNoteScanUsage().count<effectiveProLimit(PRO_NOTE_SCAN_LIMIT);}
 function recordNoteScan(){const u=getNoteScanUsage();lsSet("noteScans",{month:u.month,count:u.count+1});chargeAiSpend("noteScan");}
 function canScanNoteReason(){return aiGateBlockReason(getNoteScanUsage(),PRO_NOTE_SCAN_LIMIT);}
 
@@ -6220,7 +6234,7 @@ function canScanNoteReason(){return aiGateBlockReason(getNoteScanUsage(),PRO_NOT
 // Cap sized for ~$2/mo worst case.
 const PRO_FLASHCARD_GEN_LIMIT=60;
 const getFlashcardGenUsage=makeMonthlyUsage("flashcardGens");
-function canGenFlashcards(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getFlashcardGenUsage().count<PRO_FLASHCARD_GEN_LIMIT;}
+function canGenFlashcards(){if(!hasProAccess())return false;if(!underAiSpendCeiling())return false;return getFlashcardGenUsage().count<effectiveProLimit(PRO_FLASHCARD_GEN_LIMIT);}
 function recordFlashcardGen(){const u=getFlashcardGenUsage();lsSet("flashcardGens",{month:u.month,count:u.count+1});chargeAiSpend("flashcardGen");}
 function canGenFlashcardsReason(){return aiGateBlockReason(getFlashcardGenUsage(),PRO_FLASHCARD_GEN_LIMIT);}
 
@@ -6229,7 +6243,7 @@ function canGenFlashcardsReason(){return aiGateBlockReason(getFlashcardGenUsage(
 // generously -- more than one study plan build per day.
 const PRO_EXAM_PLAN_LIMIT=40;
 const getExamPlanUsage=makeMonthlyUsage("examPlanBuilds");
-function canBuildExamPlan(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getExamPlanUsage().count<PRO_EXAM_PLAN_LIMIT;}
+function canBuildExamPlan(){if(!hasProAccess())return false;if(!underAiSpendCeiling())return false;return getExamPlanUsage().count<effectiveProLimit(PRO_EXAM_PLAN_LIMIT);}
 function recordExamPlanBuild(){const u=getExamPlanUsage();lsSet("examPlanBuilds",{month:u.month,count:u.count+1});chargeAiSpend("examPlanBuild");}
 function canBuildExamPlanReason(){return aiGateBlockReason(getExamPlanUsage(),PRO_EXAM_PLAN_LIMIT);}
 
@@ -6250,7 +6264,7 @@ function canBuildExamPlanReason(){return aiGateBlockReason(getExamPlanUsage(),PR
 // material input, same shape costed under examPlanBuild above).
 const PRO_SESSION_FOCUS_LIMIT=100;
 const getSessionFocusUsage=makeMonthlyUsage("sessionFocuses");
-function canAddSessionFocus(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getSessionFocusUsage().count<PRO_SESSION_FOCUS_LIMIT;}
+function canAddSessionFocus(){if(!hasProAccess())return false;if(!underAiSpendCeiling())return false;return getSessionFocusUsage().count<effectiveProLimit(PRO_SESSION_FOCUS_LIMIT);}
 function recordSessionFocus(){const u=getSessionFocusUsage();lsSet("sessionFocuses",{month:u.month,count:u.count+1});chargeAiSpend("sessionFocus");}
 function canAddSessionFocusReason(){return aiGateBlockReason(getSessionFocusUsage(),PRO_SESSION_FOCUS_LIMIT);}
 
@@ -6262,7 +6276,7 @@ function canAddSessionFocusReason(){return aiGateBlockReason(getSessionFocusUsag
 // worst case -- genuinely rare in real use (a handful of projects/month).
 const PRO_PROJECT_BREAKDOWN_LIMIT=30;
 const getProjectBreakdownUsage=makeMonthlyUsage("projectBreakdowns");
-function canBreakDownProject(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getProjectBreakdownUsage().count<PRO_PROJECT_BREAKDOWN_LIMIT;}
+function canBreakDownProject(){if(!hasProAccess())return false;if(!underAiSpendCeiling())return false;return getProjectBreakdownUsage().count<effectiveProLimit(PRO_PROJECT_BREAKDOWN_LIMIT);}
 function recordProjectBreakdown(){const u=getProjectBreakdownUsage();lsSet("projectBreakdowns",{month:u.month,count:u.count+1});chargeAiSpend("projectBreakdown");}
 function canBreakDownProjectReason(){return aiGateBlockReason(getProjectBreakdownUsage(),PRO_PROJECT_BREAKDOWN_LIMIT);}
 
@@ -6274,7 +6288,7 @@ function canBreakDownProjectReason(){return aiGateBlockReason(getProjectBreakdow
 // ceiling, not a real cost concern.
 const PRO_SMART_RESCHEDULE_LIMIT=200;
 const getSmartRescheduleUsage=makeMonthlyUsage("smartReschedules");
-function canUseSmartReschedule(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getSmartRescheduleUsage().count<PRO_SMART_RESCHEDULE_LIMIT;}
+function canUseSmartReschedule(){if(!hasProAccess())return false;if(!underAiSpendCeiling())return false;return getSmartRescheduleUsage().count<effectiveProLimit(PRO_SMART_RESCHEDULE_LIMIT);}
 function recordSmartReschedule(){const u=getSmartRescheduleUsage();lsSet("smartReschedules",{month:u.month,count:u.count+1});chargeAiSpend("smartReschedule");}
 function canUseSmartRescheduleReason(){return aiGateBlockReason(getSmartRescheduleUsage(),PRO_SMART_RESCHEDULE_LIMIT);}
 
@@ -6284,7 +6298,7 @@ function canUseSmartRescheduleReason(){return aiGateBlockReason(getSmartReschedu
 // for ~$1.35/mo worst case -- more than 3/day.
 const PRO_BRAIN_DUMP_LIMIT=100;
 const getBrainDumpUsage=makeMonthlyUsage("brainDumps");
-function canUseBrainDump(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getBrainDumpUsage().count<PRO_BRAIN_DUMP_LIMIT;}
+function canUseBrainDump(){if(!hasProAccess())return false;if(!underAiSpendCeiling())return false;return getBrainDumpUsage().count<effectiveProLimit(PRO_BRAIN_DUMP_LIMIT);}
 function recordBrainDump(){const u=getBrainDumpUsage();lsSet("brainDumps",{month:u.month,count:u.count+1});chargeAiSpend("brainDump");}
 function canUseBrainDumpReason(){return aiGateBlockReason(getBrainDumpUsage(),PRO_BRAIN_DUMP_LIMIT);}
 
@@ -6301,7 +6315,7 @@ function canUseBrainDumpReason(){return aiGateBlockReason(getBrainDumpUsage(),PR
 // (13+/day) rather than off dollars alone.
 const PRO_AI_ARRANGE_LIMIT=400;
 const getAiArrangeUsage=makeMonthlyUsage("aiArranges");
-function canUseAiArrange(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getAiArrangeUsage().count<PRO_AI_ARRANGE_LIMIT;}
+function canUseAiArrange(){if(!hasProAccess())return false;if(!underAiSpendCeiling())return false;return getAiArrangeUsage().count<effectiveProLimit(PRO_AI_ARRANGE_LIMIT);}
 function canUseAiArrangeReason(){return aiGateBlockReason(getAiArrangeUsage(),PRO_AI_ARRANGE_LIMIT);}
 
 // Canvas/Schoology/Blackboard calendar-connect classification
@@ -6325,7 +6339,7 @@ function canUseAiArrangeReason(){return aiGateBlockReason(getAiArrangeUsage(),PR
 // new items). Cap sized for ~$1.80/mo worst case.
 const PRO_CALENDAR_CLASSIFY_LIMIT=60;
 const getCalendarClassifyUsage=makeMonthlyUsage("calendarClassifies");
-function canClassifyCalendarImport(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getCalendarClassifyUsage().count<PRO_CALENDAR_CLASSIFY_LIMIT;}
+function canClassifyCalendarImport(){if(!hasProAccess())return false;if(!underAiSpendCeiling())return false;return getCalendarClassifyUsage().count<effectiveProLimit(PRO_CALENDAR_CLASSIFY_LIMIT);}
 function recordCalendarClassify(){const u=getCalendarClassifyUsage();lsSet("calendarClassifies",{month:u.month,count:u.count+1});chargeAiSpend("calendarClassify");}
 function recordAiArrange(){const u=getAiArrangeUsage();lsSet("aiArranges",{month:u.month,count:u.count+1});chargeAiSpend("aiArrange");}
 
@@ -7986,7 +8000,7 @@ function latestWrongTopicsForExam(examId){
 // Cap sized for ~$2.25/mo worst case.
 const PRO_QUIZ_GEN_LIMIT=60;
 const getQuizGenUsage=makeMonthlyUsage("quizGens");
-function canGenQuiz(){if(getPlan()==="Free")return false;if(!underAiSpendCeiling())return false;return getQuizGenUsage().count<PRO_QUIZ_GEN_LIMIT;}
+function canGenQuiz(){if(!hasProAccess())return false;if(!underAiSpendCeiling())return false;return getQuizGenUsage().count<effectiveProLimit(PRO_QUIZ_GEN_LIMIT);}
 function recordQuizGen(){const u=getQuizGenUsage();lsSet("quizGens",{month:u.month,count:u.count+1});chargeAiSpend("quizGen");}
 function canGenQuizReason(){return aiGateBlockReason(getQuizGenUsage(),PRO_QUIZ_GEN_LIMIT);}
 
@@ -11630,7 +11644,7 @@ function Notes({setActive=()=>{}}){
   // Was "N scans left" counting down NOTE_SCAN_LIMIT -- with zero free
   // scans now (2026-08-18 pricing pass), that would show "0 scans left,"
   // reading like a depleted quota rather than a Pro-only feature.
-  const noteScanBadge=getPlan()==="Free"?"Pro":null;
+  const noteScanBadge=hasProAccess()?null:"Pro";
   const sources=[
     {id:"write",label:"Write",desc:"Type directly on the canvas",icon:Icon.pen,cost:null},
     {id:"file",label:"Scan a file",desc:"PDF, slides, or photos of the board",icon:Icon.file,cost:noteScanBadge},
@@ -12392,9 +12406,9 @@ function Notes({setActive=()=>{}}){
                       left)", a depleted-looking state rather than "this
                       is Pro." "(Pro)" instead, same convention as
                       noteScanBadge above. */}
-                  <BtnSm variant="subtle" onClick={genFlashcardsFromNote} disabled={panelLoading!==null}>{panelLoading==="cards"?"Generating…":<>{Icon.layers} Create Flashcards{getPlan()==="Free"&&" (Pro)"}</>}</BtnSm>
-                  <BtnSm variant="subtle" onClick={genQuizFromNote} disabled={panelLoading!==null}>{panelLoading==="quiz"?"Generating…":<>{Icon.check} Create Practice Quiz{getPlan()==="Free"&&" (Pro)"}</>}</BtnSm>
-                  <BtnSm variant="subtle" onClick={genSummaryFromNote} disabled={panelLoading!==null}>{panelLoading==="summary"?"Generating…":<>{Icon.file} Generate Summary{getPlan()==="Free"&&" (Pro)"}</>}</BtnSm>
+                  <BtnSm variant="subtle" onClick={genFlashcardsFromNote} disabled={panelLoading!==null}>{panelLoading==="cards"?"Generating…":<>{Icon.layers} Create Flashcards{!hasProAccess()&&" (Pro)"}</>}</BtnSm>
+                  <BtnSm variant="subtle" onClick={genQuizFromNote} disabled={panelLoading!==null}>{panelLoading==="quiz"?"Generating…":<>{Icon.check} Create Practice Quiz{!hasProAccess()&&" (Pro)"}</>}</BtnSm>
+                  <BtnSm variant="subtle" onClick={genSummaryFromNote} disabled={panelLoading!==null}>{panelLoading==="summary"?"Generating…":<>{Icon.file} Generate Summary{!hasProAccess()&&" (Pro)"}</>}</BtnSm>
                   {panelMsg&&<span style={{fontSize:11,color:panelMsg.startsWith("✓")?T.teal:T.red,marginLeft:4}}>{panelMsg}</span>}
                 </div>
               </>
@@ -12799,7 +12813,23 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
     if(theirs){await acceptReq(theirs.id);return;}
     try{await fsdb().collection('friendships').add({senderId:myUid,receiverId:targetUid,status:'pending',createdAt:new Date().toISOString()});if(onFriendRequestSent)onFriendRequestSent();}catch(e){}
   };
-  const acceptReq=async(id)=>{try{await fsdb().collection('friendships').doc(id).update({status:'accepted',updatedAt:new Date().toISOString()});}catch(e){}};
+  // Referral trial grant (see api/me.js's handleReferralTrialGrant) only
+  // ever fires for a friendship whose own `source` is "invite_link" (see
+  // AuthGate's onAuthStateChanged, which is the only place that stamps
+  // that) -- an ordinary "Add Friends" search-and-request has no source
+  // field at all, so it's a no-op there, same server-side check either
+  // way. Fire-and-forget: this is a bonus on top of a friend request that
+  // already succeeded, so a failure here must never surface as an error
+  // on the accept action itself. fetchUserProfile() re-syncs plan/credits
+  // into localStorage afterward so this device reflects the grant without
+  // waiting for the next natural profile poll.
+  const acceptReq=async(id)=>{
+    try{
+      await fsdb().collection('friendships').doc(id).update({status:'accepted',updatedAt:new Date().toISOString()});
+      authFetch("/api/me",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"accept-friend-referral",friendshipId:id})})
+        .then(()=>fetchUserProfile()).catch(()=>{});
+    }catch(e){}
+  };
   const declineReq=async(id)=>{try{await fsdb().collection('friendships').doc(id).delete();}catch(e){}};
   const [projectInviteBusyId,setProjectInviteBusyId]=useState(null);
   const acceptProjectInvite=async(proj)=>{
@@ -13094,7 +13124,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
       <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderRadius:10,background:T.lime+"0C",border:`1px solid ${T.lime}22`,marginBottom:24}}>
         <div style={{width:28,height:28,borderRadius:8,background:T.lime+"1A",border:`1px solid ${T.lime}30`,display:"flex",alignItems:"center",justifyContent:"center",color:T.lime,flexShrink:0}}>{Icon.zap}</div>
         <div style={{flex:1,fontSize:12.5,color:T.muted,lineHeight:1.5}}>
-          <span style={{color:T.text,fontWeight:600}}>Invite classmates to unlock collective scheduling.</span>{" "}For every friend who joins, you <strong style={{color:T.lime}}>both</strong> get <span style={{color:T.lime,fontWeight:600}}>50 bonus AI credits</span>.
+          <span style={{color:T.text,fontWeight:600}}>Invite classmates to unlock collective scheduling.</span>{" "}For every friend who joins, you <strong style={{color:T.lime}}>both</strong> get <span style={{color:T.lime,fontWeight:600}}>{REFERRAL_TRIAL_DAYS} days of Pro-Limited</span>, free.
         </div>
         <button onClick={()=>setInviteOpen(true)} style={{flexShrink:0,padding:"7px 16px",borderRadius:7,background:T.lime,color:T.ink,border:"none",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:T.font,whiteSpace:"nowrap"}}>
           Invite friends
@@ -13178,7 +13208,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
               </button>
             </div>
             <div style={{padding:"10px 14px",background:T.lime+"0A",border:`1px solid ${T.lime}22`,borderRadius:8,fontSize:12,color:T.text,marginBottom:20,lineHeight:1.6}}>
-              For every friend who joins via your link, you <strong style={{color:T.lime}}>both</strong> unlock <strong style={{color:T.lime}}>50 bonus AI scheduling credits</strong>.
+              For every friend who joins via your link, you <strong style={{color:T.lime}}>both</strong> unlock <strong style={{color:T.lime}}>{REFERRAL_TRIAL_DAYS} days of Pro-Limited</strong>, free.
             </div>
             <div style={{display:"flex",gap:10}}>
               <Btn onClick={()=>setInviteOpen(false)} variant="subtle" style={{flex:1,justifyContent:"center"}}>Close</Btn>
@@ -26396,6 +26426,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     subscriptionCurrentPeriodEnd:lsGet("subscriptionCurrentPeriodEnd",null),
     subscriptionEndsAt:lsGet("subscriptionEndsAt",null),
     betaTrialExpiresAt:lsGet("betaTrialExpiresAt",null),
+    referralTrialExpiresAt:lsGet("referralTrialExpiresAt",null),
   }));
   useEffect(()=>{
     let alive=true;
@@ -26429,6 +26460,12 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   const subscriptionPlanLine=()=>{
     const plan=account.plan||getPlan();
     if(plan==="Free")return "Free plan";
+    // Referral trial (accept a friend request that came in via someone's
+    // invite link) -- its own real state, same reasoning as the beta
+    // trial line right below: a set referralTrialExpiresAt with no real
+    // subscription unambiguously means "on the limited trial," not "Pro
+    // with unknown billing."
+    if(plan==="Pro-Limited"&&account.referralTrialExpiresAt)return "Pro-Limited trial - ends "+fmtBillingDate(account.referralTrialExpiresAt);
     // Beta trial reads as its own real state, not a fake subscription
     // renewal date -- account.stripeSubscriptionId is only ever set for
     // an actual paid subscription (see handleRedeemBeta's own comment on
@@ -27967,18 +28004,23 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                     entry keep "Unlimited" -- those two are genuinely,
                     permanently uncapped (zero AI cost), so the word is
                     still accurate there. "Pro only" on Free makes no
-                    quantity claim either way, just states who has access. */}
+                    quantity claim either way, just states who has access.
+                    2026-08-27: Pro-Limited (the referral trial) gets its
+                    own "Limited" label rather than silently reading as
+                    "Included" -- showing the exact same word real Pro
+                    gets would hide that every one of these caps is a
+                    twentieth the size for the length of the trial. */}
                 {[
-                  ["Syllabus & schedule imports",plan==="Free"?"Pro only":"Included"],
-                  ["AI note scans (files, lectures & YouTube)",plan==="Free"?"Pro only":"Included"],
-                  ["AI flashcard generations",plan==="Free"?"Pro only":"Included"],
-                  ["AI practice exams",plan==="Free"?"Pro only":"Included"],
-                  ["AI study plans",plan==="Free"?"Pro only":"Included"],
-                  ["Brain dump",plan==="Free"?"Pro only":"Included"],
-                  ["Add Task with AI",plan==="Free"?"Pro only":"Included"],
+                  ["Syllabus & schedule imports",plan==="Free"?"Pro only":plan==="Pro-Limited"?"Limited":"Included"],
+                  ["AI note scans (files, lectures & YouTube)",plan==="Free"?"Pro only":plan==="Pro-Limited"?"Limited":"Included"],
+                  ["AI flashcard generations",plan==="Free"?"Pro only":plan==="Pro-Limited"?"Limited":"Included"],
+                  ["AI practice exams",plan==="Free"?"Pro only":plan==="Pro-Limited"?"Limited":"Included"],
+                  ["AI study plans",plan==="Free"?"Pro only":plan==="Pro-Limited"?"Limited":"Included"],
+                  ["Brain dump",plan==="Free"?"Pro only":plan==="Pro-Limited"?"Limited":"Included"],
+                  ["Add Task with AI",plan==="Free"?"Pro only":plan==="Pro-Limited"?"Limited":"Included"],
                   ["Attack sessions","Unlimited"],
-                  ["Project breakdowns",plan==="Free"?"Pro only":"Included"],
-                  ["Smart Reschedule",plan==="Free"?"Pro only":"Included"],
+                  ["Project breakdowns",plan==="Free"?"Pro only":plan==="Pro-Limited"?"Limited":"Included"],
+                  ["Smart Reschedule",plan==="Free"?"Pro only":plan==="Pro-Limited"?"Limited":"Included"],
                   ["Manual classes, tasks & calendar","Unlimited"],
                 ].map(([action,status],i,arr)=>(
                   <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
@@ -27987,7 +28029,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                   </div>
                 ))}
               </Card>
-              {plan==="Free"&&<Card style={{background:T.lime,border:"none"}}>
+              {!hasProAccess()&&<Card style={{background:T.lime,border:"none"}}>
                 <div style={{fontSize:13,fontWeight:700,color:T.ink,marginBottom:4}}>Unlock Studlin's AI</div>
                 <div style={{fontSize:12,color:T.ink,opacity:0.75,marginBottom:14}}>Upgrade to Pro for AI chat, scans, flashcard generation, and everything else Studlin's AI can do.</div>
                 <button onClick={()=>setPricingOpen(true)} style={{background:T.ink,color:T.lime,border:"none",padding:"8px 18px",borderRadius:8,fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Upgrade to Pro</button>
