@@ -20019,24 +20019,44 @@ function computeRescheduleCandidates(task,events,routines,prefs){
       const orig=events.find(o=>o.id===e.id);
       return orig&&orig.date===d&&e.date!==d;
     }).length;
+    // findSlotWithEviction's own returned `events` relocates any EVICTED
+    // items but deliberately leaves the task itself at its original spot
+    // (see its own doc comment -- applying the task's own move is left to
+    // the caller, which RescheduleModal's confirm() does separately). Both
+    // "after" metrics below need the task actually sitting at `d` to mean
+    // anything, so it's applied here, once, for internal use only -- the
+    // candidate object still hands back `relocated` (not this), unchanged
+    // from before, since confirm() already does its own equivalent move.
+    const placedEvents=relocated.map(e=>e.id===task.id?{...e,date:placement.date,time:placement.time}:e);
     // Same weekPrepLoad the exam-prep pressure warnings already use
     // elsewhere (see :8739, :11849, :11863, :21887), reusing the
     // {id:"__preview__"}-style throwaway-object pattern for a task that
     // isn't itself an exam -- this is "how loaded does the week get if I
-    // land this task on day d," computed against `relocated` so it
+    // land this task on day d," computed against `placedEvents` so it
     // reflects the candidate's own placement, not the pre-move state.
-    const weekPressure=weekPrepLoad(d,{id:task.id},relocated,prefs);
-    candidates.push({date:d,dayOffset:i,placement,events:relocated,reason,taskMins,baseMins,rawBaseMins,pct,isHigh:pct>=15,evictedCount,isEmpty:rawBaseMins<=0,weekPressure});
+    const weekPressure=weekPrepLoad(d,{id:task.id},placedEvents,prefs);
+    // weekPressureBefore is the SAME week (Monday-Sunday of d), computed
+    // against the untouched `events` array -- since weekPrepLoad windows
+    // by d's own week regardless of which array it's given, this is an
+    // honest "what would this week's load be without this move" baseline,
+    // not an apples-to-oranges comparison against today's week.
+    const weekPressureBefore=weekPrepLoad(d,{id:task.id},events,prefs);
+    // Real breathing-room accounting, not a guess -- the same two
+    // primitives the scheduler itself trusts (getWorkWindowMinsFor for the
+    // day's actual work-hour capacity, computeOccupiedIntervals for what's
+    // really blocked off, lead-in/trail-out included) run once against the
+    // day as it stands today and once against the candidate placement, so
+    // "how much open time does this eat" is measured, not estimated from
+    // a duration alone.
+    const dayWindow=getWorkWindowMinsFor(prefs,d);
+    const windowMins=Math.max(0,dayWindow.end-dayWindow.start);
+    const occupiedMinsOf=(evs)=>computeOccupiedIntervals(evs,routines,prefs,d).reduce((sum,iv)=>sum+Math.max(0,iv.end-iv.start),0);
+    const bufferBeforeMins=Math.max(0,windowMins-occupiedMinsOf(events));
+    const bufferAfterMins=Math.max(0,windowMins-occupiedMinsOf(placedEvents));
+    candidates.push({date:d,dayOffset:i,placement,events:relocated,reason,taskMins,baseMins,rawBaseMins,pct,isHigh:pct>=15,evictedCount,isEmpty:rawBaseMins<=0,weekPressure,weekPressureBefore,bufferBeforeMins,bufferAfterMins});
   }
   candidates.sort((a,b)=>a.rawBaseMins-b.rawBaseMins||a.evictedCount-b.evictedCount||a.dayOffset-b.dayOffset);
-  // freeDaysTotal counts every genuinely open day found across the WHOLE
-  // scan window, not just the top 3 shown -- the actual tradeoff of picking
-  // one candidate over another isn't just "how full is this one day," it's
-  // "how many other truly free days do I still have if I use this one up."
-  // Computed before slicing so a free day that didn't make the top 3 (e.g.
-  // it had more evictions than a busier-but-cleaner day) still counts.
-  const freeDaysTotal=candidates.filter(c=>c.isEmpty).length;
-  return {candidates:candidates.slice(0,RESCHEDULE_MAX_CANDIDATES),freeDaysTotal};
+  return {candidates:candidates.slice(0,RESCHEDULE_MAX_CANDIDATES)};
 }
 
 // Same "scan forward, rank the real distinct options, keep the top few"
@@ -20180,7 +20200,7 @@ function ProjectCheckInModal({taskId,onClose,onToast}){
 function RescheduleModal({task,events,commit,onClose,onManual}){
   const prefs=getSchedulePreferences();
   const routines=getWeeklyRoutine();
-  const {candidates,freeDaysTotal}=useMemo(()=>computeRescheduleCandidates(task,events,routines,prefs),[task.id]);
+  const {candidates}=useMemo(()=>computeRescheduleCandidates(task,events,routines,prefs),[task.id]);
   const [selectedIdx,setSelectedIdx]=useState(0);
   const selected=candidates[selectedIdx];
   const taskMins=task.duration||30;
@@ -20217,38 +20237,43 @@ function RescheduleModal({task,events,commit,onClose,onManual}){
                       :<>Adds <strong style={{color:c.isHigh?T.amber:T.muted}}>{c.pct}%</strong> to that day's workload</>}
                     {c.evictedCount>0?` · bumps ${c.evictedCount} other${c.evictedCount!==1?"s":""}`:""}
                   </div>
-                  {/* The tradeoff isn't just "how full is this one day" --
-                      picking a free day is the lightest option today, but it
-                      spends one of a limited number of genuinely open days
-                      you have coming up. Picking a busier day costs more
-                      right now but keeps every free day untouched for
-                      whatever actually needs one later (a real deadline
-                      crunch, wanting a night off). Both are legitimate
-                      choices; the point is making that visible instead of
-                      just ranking by "lightest." */}
+                  {/* Two real, measured numbers instead of a generic "leaves
+                      N other free days" line that read identically for
+                      every empty-day candidate -- exactly the feedback that
+                      prompted this. Both reuse the same primitives the
+                      scheduler itself already trusts (getWorkWindowMinsFor,
+                      computeOccupiedIntervals, weekPrepLoad), computed once
+                      against the day/week as it stands today and once
+                      against this specific candidate's placement, so the
+                      shrink/increase shown is measured, not estimated from
+                      duration alone. This is the actual tradeoff: how much
+                      breathing room this day loses, and how much this
+                      pushes the whole week's workload up. */}
                   <div style={{fontSize:11,color:T.faint,marginTop:3}}>
-                    {c.isEmpty
-                      ?(freeDaysTotal<=1
-                        ?"This is your only fully free day coming up"
-                        :`Leaves ${freeDaysTotal-1} other fully free day${freeDaysTotal-1!==1?"s":""} coming up`)
-                      :(freeDaysTotal>0
-                        ?`Keeps all ${freeDaysTotal} of your free day${freeDaysTotal!==1?"s":""} open for something else`
-                        :"No fully free days coming up either way")}
+                    {c.bufferAfterMins<=0
+                      ?"Fills the rest of that day's open hours"
+                      :<>Leaves <strong style={{color:T.text}}>{fmtMinsDur(c.bufferAfterMins)}</strong> of open time that day{c.bufferBeforeMins>c.bufferAfterMins?<> (down from {fmtMinsDur(c.bufferBeforeMins)})</>:""}</>}
                   </div>
-                  {/* Same two signals the rest of the app already trusts for
-                      "why here": the reliability engine's time-of-day pick
+                  {(()=>{
+                    const beforePct=Math.round(c.weekPressureBefore.ratio*100);
+                    const afterPct=Math.round(c.weekPressure.ratio*100);
+                    const deltaPts=afterPct-beforePct;
+                    return (
+                      <div style={{fontSize:11,color:c.weekPressure.isPressured?T.amber:T.faint,marginTop:3}}>
+                        Pushes that week to <strong>{afterPct}%</strong> booked{deltaPts>0?` (+${deltaPts} pt${deltaPts!==1?"s":""})`:""}
+                        {c.weekPressure.isPressured&&(c.weekPressure.competingTitle?` — already busy with ${c.weekPressure.competingTitle}`:" — already a busy week")}
+                      </div>
+                    );
+                  })()}
+                  {/* Same signal the rest of the app already trusts for "why
+                      here": the reliability engine's time-of-day pick
                       (findReliableSlotFor, surfaced everywhere else via
-                      fmtPlacementReason) and weekPrepLoad's week-wide
-                      pressure check. Only shown when there's a real signal --
-                      never fabricated for a candidate that's just a plain
-                      open slot with an unremarkable week around it. */}
+                      fmtPlacementReason). Only shown when there's a real
+                      signal -- never fabricated for a candidate that's just
+                      a plain open slot with no particular reason behind the
+                      time chosen. */}
                   {c.reason&&(
                     <div style={{fontSize:11,color:T.muted,marginTop:3}}>🕒 {fmtPlacementReason(c.reason,c.placement.time)}</div>
-                  )}
-                  {c.weekPressure.isPressured&&(
-                    <div style={{fontSize:11,color:T.amber,marginTop:3}}>
-                      {c.weekPressure.competingTitle?`That week's already busy with ${c.weekPressure.competingTitle}.`:"That week's already busy."}
-                    </div>
                   )}
                 </div>
               ))}
