@@ -4,6 +4,7 @@ const { setCors, verifyAuth } = require('./_lib/auth');
 const { withSentry } = require('./_lib/sentry');
 const { exchangeCodeForTokens, refreshAccessToken, fetchGoogleCalendarEvents, registerCalendarWatch, stopCalendarWatch } = require('./_lib/google-calendar');
 const { resolveCanvasDomain, fetchAllCanvasData } = require('./_lib/canvas');
+const { fetchCalendarRevalidated, parseICS } = require('./cal-proxy');
 
 // Source of truth for the Free plan's monthly AI chat allowance — this is
 // what actually creates the user doc on first load. Must match
@@ -447,6 +448,7 @@ async function handleCanvasDisconnect(user, res) {
       canvasAccessToken: admin.firestore.FieldValue.delete(),
       canvasConnectedAt: admin.firestore.FieldValue.delete(),
       canvasSyncedEvents: admin.firestore.FieldValue.delete(),
+      canvasFingerprints: admin.firestore.FieldValue.delete(),
       canvasLastSyncedAt: admin.firestore.FieldValue.delete(),
       canvasLastSyncError: admin.firestore.FieldValue.delete(),
     });
@@ -454,6 +456,34 @@ async function handleCanvasDisconnect(user, res) {
   } catch (err) {
     console.error('canvas disconnect error:', err);
     return res.status(500).json({ error: 'Could not disconnect Canvas.' });
+  }
+}
+
+// Persists the client's own importedCalendars list (Schoology/Moodle/
+// Blackboard links, plus any plain personal one) so handleAcademicCalendarCron
+// has something to check server-side -- this list otherwise lives only in
+// the browser's localStorage, invisible to any background job. Called
+// after every add/remove/edit (see studlin-app.jsx's saveImportedCalendars).
+// Sanitized down to just the fields the cron actually reads -- never trusts
+// or stores anything else a client might include on this array.
+// hasImportedAcademicCalendars is a plain indexed boolean specifically so
+// the cron's own query stays cheap (Firestore has no efficient "array
+// contains an academic sourceType" query), recomputed fresh on every sync
+// rather than trusted from the client.
+async function handleSyncImportedCalendars(user, req, res) {
+  if (!db) return res.status(200).json({ ok: false, reason: 'admin_unconfigured' });
+  const { importedCalendars } = req.body || {};
+  if (!Array.isArray(importedCalendars)) return res.status(400).json({ error: 'importedCalendars must be an array' });
+  const sanitized = importedCalendars
+    .filter(s => s && typeof s.url === 'string' && typeof s.id === 'string')
+    .map(s => ({ id: s.id, url: s.url, label: String(s.label || '').slice(0, 120), sourceType: String(s.sourceType || '').slice(0, 40) }));
+  const hasImportedAcademicCalendars = sanitized.some(s => ACADEMIC_SOURCE_TYPES.includes(s.sourceType));
+  try {
+    await db.collection('users').doc(user.uid).set({ importedCalendars: sanitized, hasImportedAcademicCalendars }, { merge: true });
+    return res.status(200).json({ ok: true });
+  } catch (err) {
+    console.error('sync imported calendars error:', err);
+    return res.status(500).json({ error: 'Could not save calendar list.' });
   }
 }
 
@@ -486,8 +516,13 @@ const CHANNEL_RENEW_WITHIN_MS = 48 * 60 * 60 * 1000;
 // Vercel automatically sends as `Authorization: Bearer <CRON_SECRET>` on
 // a cron-invoked request. Checked before verifyAuth in the main handler
 // below, so this path never touches the normal per-user auth gate.
-async function handleGoogleCalendarCron(res) {
-  if (!db) return res.status(503).json({ error: 'Database unavailable.' });
+// Returns a plain result object rather than calling res itself -- the
+// single cron dispatch point below now runs this alongside
+// handleAcademicCalendarCron in one invocation and sends the one real
+// HTTP response itself, so a second handler calling res.json() here would
+// throw ("headers already sent").
+async function handleGoogleCalendarCron() {
+  if (!db) return { ok: false, error: 'Database unavailable.' };
   const snap = await db.collection('users').where('googleCalendarRefreshToken', '!=', null).get();
   let synced = 0;
   let failed = 0;
@@ -524,7 +559,140 @@ async function handleGoogleCalendarCron(res) {
       await doc.ref.update({ googleCalendarLastSyncError: err.message || 'Sync failed' }).catch(() => {});
     }
   }
-  return res.status(200).json({ ok: true, synced, failed });
+  return { ok: true, synced, failed };
+}
+
+// Real gap found live: connecting Canvas/Schoology/Moodle/Blackboard only
+// ever synced while the student had the app open (a client-side once-a-
+// day check, see studlin-app.jsx's own comment on it) -- a new assignment
+// posted while they weren't looking got a passive, easy-to-miss toast at
+// best, nothing at all if they didn't open Studlin that day. This is the
+// server-side half that makes it a real push notification instead: a
+// second job in the same daily cron Google Calendar already uses, one
+// pass for Canvas (token-based, domain+token already live on the user doc
+// from the token connect flow) and one for every Schoology/Moodle/
+// Blackboard link the client has synced up via handleSyncImportedCalendars
+// below. It does NOT replicate the client's own classification/review
+// pipeline -- its only job is noticing something changed and nudging the
+// student to open the app, where the existing once-a-day client logic
+// (already correct, already tested) picks the actual fetch+classify+
+// review flow back up exactly as it does today.
+function calendarFingerprint(events) {
+  return new Set((events || []).map(e => (e.uid || '') + '|' + (e.date || '') + '|' + (e.time || '') + '|' + (e.title || '')));
+}
+// No stored baseline (a subscription's very first cron pass) never
+// notifies -- that's "everything is new" purely because nothing has been
+// checked yet, not a real change since a genuine last look, and would be a
+// redundant, confusing ping right on the heels of the connect flow's own
+// success toast.
+function calendarChanged(oldFingerprints, newEvents) {
+  if (!oldFingerprints) return false;
+  const fresh = calendarFingerprint(newEvents);
+  if (fresh.size !== oldFingerprints.length) return true;
+  const oldSet = new Set(oldFingerprints);
+  for (const f of fresh) if (!oldSet.has(f)) return true;
+  return false;
+}
+// Capped purely to bound Firestore document size -- no real subscription
+// realistically carries more upcoming items than this at once, and even if
+// it did, comparing a truncated set still correctly catches most real
+// changes. This is a "should I notify" signal, not the source of truth --
+// the client's own resync + review screen remains that.
+const CALENDAR_FINGERPRINT_CAP = 200;
+const ACADEMIC_SOURCE_TYPES = ['Schoology', 'Canvas', 'Blackboard', 'Moodle'];
+function platformHintFor(sourceType) {
+  if (sourceType === 'Schoology') return 'schoology';
+  if (sourceType === 'Blackboard') return 'blackboard';
+  if (sourceType === 'Moodle') return 'moodle';
+  if (sourceType === 'Canvas') return 'canvas';
+  return undefined;
+}
+// Same push-sending shape api/notify.js's sendPush/sendShareAvailabilityRequest
+// already use (preferences gate, stale-token cleanup) -- not reused
+// directly since both of those are scoped to a specific chat/friend
+// context this call has no equivalent of, but kept deliberately identical
+// in structure rather than inventing a third convention.
+async function sendAcademicSyncPush(uid, data, sourceLabel) {
+  if (!data.preferences || data.preferences.pushNotificationsEnabled !== true) return;
+  const tokens = data.fcmTokens || [];
+  if (tokens.length === 0) return;
+  const staleTokens = [];
+  for (const token of tokens) {
+    try {
+      await admin.messaging().send({
+        token,
+        notification: { title: 'New from ' + sourceLabel, body: 'Studlin found new or updated items — open the app to review them.' },
+        data: { url: '/app' },
+      });
+    } catch (e) {
+      if (e.code === 'messaging/invalid-registration-token' || e.code === 'messaging/registration-token-not-registered') {
+        staleTokens.push(token);
+      }
+    }
+  }
+  if (staleTokens.length > 0) {
+    await db.collection('users').doc(uid).update({
+      fcmTokens: admin.firestore.FieldValue.arrayRemove(...staleTokens),
+    }).catch(() => {});
+  }
+}
+async function handleAcademicCalendarCron() {
+  if (!db) return { ok: false, error: 'Database unavailable.' };
+  let checked = 0, notified = 0, failed = 0;
+
+  const canvasSnap = await db.collection('users').where('canvasAccessToken', '!=', null).get();
+  for (const doc of canvasSnap.docs) {
+    const data = doc.data();
+    checked++;
+    try {
+      const resolved = await resolveCanvasDomain(data.canvasDomain);
+      if (!resolved.ok) throw new Error('Canvas domain no longer resolves');
+      const events = await fetchAllCanvasData(resolved.domain, data.canvasAccessToken);
+      if (calendarChanged(data.canvasFingerprints || null, events)) {
+        await sendAcademicSyncPush(doc.id, data, 'Canvas');
+        notified++;
+      }
+      await doc.ref.update({
+        canvasSyncedEvents: events,
+        canvasFingerprints: [...calendarFingerprint(events)].slice(0, CALENDAR_FINGERPRINT_CAP),
+        canvasLastSyncedAt: new Date().toISOString(),
+        canvasLastSyncError: null,
+      });
+    } catch (err) {
+      failed++;
+      await doc.ref.update({ canvasLastSyncError: err.message || 'Sync failed' }).catch(() => {});
+    }
+  }
+
+  const icsSnap = await db.collection('users').where('hasImportedAcademicCalendars', '==', true).get();
+  for (const doc of icsSnap.docs) {
+    const data = doc.data();
+    const subs = (data.importedCalendars || []).filter(s => ACADEMIC_SOURCE_TYPES.includes(s.sourceType));
+    if (subs.length === 0) continue;
+    const snapshots = data.calendarSyncSnapshots || {};
+    const nextSnapshots = { ...snapshots };
+    let anyChanged = false;
+    for (const sub of subs) {
+      checked++;
+      try {
+        const r = await fetchCalendarRevalidated(sub.url, platformHintFor(sub.sourceType));
+        if (!r.ok) throw new Error('Calendar server returned ' + r.status);
+        const ics = await r.text();
+        const { events } = parseICS(ics, { includeAllDay: true });
+        if (calendarChanged(snapshots[sub.id] || null, events)) anyChanged = true;
+        nextSnapshots[sub.id] = [...calendarFingerprint(events)].slice(0, CALENDAR_FINGERPRINT_CAP);
+      } catch (err) {
+        failed++;
+      }
+    }
+    if (anyChanged) {
+      await sendAcademicSyncPush(doc.id, data, subs.length === 1 ? subs[0].label : 'your connected calendars');
+      notified++;
+    }
+    await doc.ref.update({ calendarSyncSnapshots: nextSnapshots }).catch(() => {});
+  }
+
+  return { ok: true, checked, notified, failed };
 }
 
 // Google's push notification -- carries no calendar data itself, just
@@ -762,7 +930,13 @@ module.exports = withSentry(async (req, res) => {
   // Vercel's own scheduler.
   const cronAuth = (req.headers.authorization || '').replace(/^Bearer /, '');
   if (process.env.CRON_SECRET && cronAuth === process.env.CRON_SECRET) {
-    return handleGoogleCalendarCron(res);
+    // One user's provider outage must never block the other's sync --
+    // each pass is independently caught so a Google API hiccup can't
+    // silently skip checking every Canvas/Schoology/Moodle/Blackboard
+    // subscription for the day, or vice versa.
+    const google = await handleGoogleCalendarCron().catch((err) => ({ ok: false, error: err.message }));
+    const academic = await handleAcademicCalendarCron().catch((err) => ({ ok: false, error: err.message }));
+    return res.status(200).json({ ok: true, google, academic });
   }
 
   const user = await verifyAuth(req);
@@ -777,6 +951,7 @@ module.exports = withSentry(async (req, res) => {
     if (action === 'canvas-connect') return handleCanvasConnect(user, req, res);
     if (action === 'canvas-pull') return handleCanvasPull(user, res);
     if (action === 'canvas-disconnect') return handleCanvasDisconnect(user, res);
+    if (action === 'sync-imported-calendars') return handleSyncImportedCalendars(user, req, res);
     if (action === 'redeem-beta') return handleRedeemBeta(user, req, res);
     if (action === 'accept-friend-referral') return handleReferralTrialGrant(user, req, res);
     if (action === 'billing-info') return handleBillingInfo(user, res);

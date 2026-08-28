@@ -1636,7 +1636,17 @@ const saveWakeSleep=(w)=>lsSet("wakeSleep",w);
 // A list of {id,url,label,sourceType,lastSyncedAt} for calendars/work
 // schedules the student has imported via /api/cal-proxy (.ics feeds).
 const getImportedCalendars=()=>lsGet("importedCalendars",[]);
-const saveImportedCalendars=(list)=>lsSet("importedCalendars",list);
+// Also pushed server-side (fire-and-forget) so the daily academic-calendar
+// cron (api/me.js's handleAcademicCalendarCron) has something to check even
+// when the student never opens the app that day -- this list otherwise
+// lives only in localStorage, invisible to any background job. A failure
+// here just means that day's cron pass won't see a just-added/removed link
+// yet; it never blocks the local save, which is the real source of truth
+// for what the app itself does with these subscriptions.
+const saveImportedCalendars=(list)=>{
+  lsSet("importedCalendars",list);
+  authFetch("/api/me",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"sync-imported-calendars",importedCalendars:list})}).catch(()=>{});
+};
 const detectCalendarSourceType=(url)=>{
   try{
     const h=new URL(url).hostname;

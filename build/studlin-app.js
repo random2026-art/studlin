@@ -1119,7 +1119,11 @@ function isHoliday(dateKey) {
 const getWakeSleep = () => lsGet("wakeSleep", null);
 const saveWakeSleep = (w) => lsSet("wakeSleep", w);
 const getImportedCalendars = () => lsGet("importedCalendars", []);
-const saveImportedCalendars = (list) => lsSet("importedCalendars", list);
+const saveImportedCalendars = (list) => {
+  lsSet("importedCalendars", list);
+  authFetch("/api/me", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "sync-imported-calendars", importedCalendars: list }) }).catch(() => {
+  });
+};
 const detectCalendarSourceType = (url) => {
   try {
     const h = new URL(url).hostname;

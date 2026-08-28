@@ -446,3 +446,9 @@ module.exports.normalizeCalendarUrl = normalizeCalendarUrl;
 module.exports.isAllowedCalendarHost = isAllowedCalendarHost;
 module.exports.isCalendarHostAllowedForPlatform = isCalendarHostAllowedForPlatform;
 module.exports.isAcademicCalendarHost = isAcademicCalendarHost;
+// Exported so the daily academic-calendar-sync cron (api/me.js) can fetch a
+// stored Schoology/Moodle/Blackboard link the exact same safe way this
+// route's own handler does -- same redirect-revalidation, same platform-
+// gated allowlist -- rather than a second, easier-to-drift copy of this
+// same SSRF-safety logic living in a different file.
+module.exports.fetchCalendarRevalidated = fetchCalendarRevalidated;
