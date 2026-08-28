@@ -2066,6 +2066,21 @@ function getWorkWindowMinsFor(prefs,dk){
   return {start:timeToMinutes(prefs.workStartTime),end:timeToMinutes(prefs.workEndTime)};
 }
 const CATCHUP_BUFFER_MINS=120;
+// An explicit "study X now" Brain Dump item is a stated, deliberate
+// instruction, not a soft preference findOpenSlotFor should second-guess
+// with the normal 2-hour catch-up cap -- a real bug report: a student
+// typed "study for a class for 40 minutes now" late at night on a
+// genuinely empty calendar, and it silently rolled to tomorrow instead
+// (the plain CATCHUP_BUFFER_MINS window had already closed for the
+// night). "Studlin needs to be truthful" was the explicit ask -- the
+// honest fix isn't a better excuse for saying no, it's actually doing
+// what was asked when nothing on the calendar is stopping it. Passed as
+// findOpenSlotFor/findLegalSlotOrNull's optional catchupBufferMins
+// override (large enough that Math.min(1440,prefEndMins+this) always
+// resolves to 1440 -- end of day -- regardless of workEndTime), only
+// from the two "immediate" call sites; every other caller keeps the
+// normal, unmodified 2-hour buffer.
+const IMMEDIATE_CATCHUP_MINS=1440;
 // Shared occupied-interval computation for a single day — mirrors the inline
 // pattern already duplicated across findOpenSlotFor, findLegalSlotOrNull,
 // dayHasRoomFor and resolveManualSlot. Only findReliableSlotFor (below) uses
@@ -2207,7 +2222,7 @@ function materializeHabitsForDate(dateKey,workingEvents){
   });
   return created;
 }
-function findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey){
+function findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey,catchupBufferMins=CATCHUP_BUFFER_MINS){
   // Never hand back a slot that's already passed today. Most callers (Brain
   // Dump, assignment extensions, review sessions, overdue rollover) pass a
   // fixed desiredTime like prefs.workStartTime with no awareness of the
@@ -2244,7 +2259,7 @@ function findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,
       // scan step below assumes "minutes since this same day's midnight."
       if(dk===todayKey){
         const catchupStart=Math.max(scanStart,prefEndMins);
-        const catchupEnd=Math.min(1440,prefEndMins+CATCHUP_BUFFER_MINS);
+        const catchupEnd=Math.min(1440,prefEndMins+catchupBufferMins);
         for(let t=catchupStart;t+duration<=catchupEnd;t+=15){
           if(!occupied.some(o=>!(t+duration<=o.start||t>=o.end)))return {date:dk,time:minutesToTime(t)};
         }
@@ -2270,8 +2285,8 @@ function findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,
 // Hard Wall that must never be silently violated — used only by "Pause My
 // Life" (Tier 3), never changes findOpenSlotFor itself so every other
 // caller keeps its current behavior.
-function findLegalSlotOrNull(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey){
-  const slot=findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey);
+function findLegalSlotOrNull(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey,catchupBufferMins=CATCHUP_BUFFER_MINS){
+  const slot=findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey,catchupBufferMins);
   if(deadlineKey&&slot.date>deadlineKey)return null;
   // findOpenSlotFor's last-resort fallback can hand back the raw desired
   // time verbatim when its forward scan finds nothing — that's fine for
@@ -2282,7 +2297,7 @@ function findLegalSlotOrNull(events,routines,prefs,desiredDate,desiredTime,durat
   // so a legitimately-found catch-up slot doesn't get rejected here as
   // if it were the raw fallback.
   const{start:winStart,end:winEnd}=getWorkWindowMinsFor(prefs,slot.date);
-  const effectiveEnd=Math.min(1440,slot.date===dayKey()?winEnd+CATCHUP_BUFFER_MINS:winEnd);
+  const effectiveEnd=Math.min(1440,slot.date===dayKey()?winEnd+catchupBufferMins:winEnd);
   const tMins=timeToMinutes(slot.time);
   if(tMins<winStart||tMins+duration>effectiveEnd)return null;
   const occupied=events.filter(e=>e.date===slot.date&&e.time&&!e.timeUnconfirmed&&e.status!=="done")
@@ -13449,7 +13464,16 @@ function weekPrepLoad(dateKey,examEvent,events,prefs){
   const ratio=totalCapacity>0?usedMins/totalCapacity:1;
   const competing=events.filter(e=>weekSet.has(e.date)&&e.status==="pending"&&e.id!==examEvent.id&&!e.isExamPrepSession&&(e.kind==="exam"||e.kind==="deadline"||e.kind==="assignment"))
     .sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:(b.priority||0)-(a.priority||0))[0];
-  return {isPressured:ratio>=0.65,ratio,competingTitle:competing?competing.title:null};
+  // usedMins/totalCapacity ride along as raw numbers, not just the
+  // derived ratio -- a percentage of weekly capacity trivializes to a
+  // meaningless "1%" for a lightly-scheduled week (technically correct,
+  // but conveys nothing a student would actually weigh), where the same
+  // information as a concrete duration ("adds 40m, week goes from 0m to
+  // 40m") stays legible regardless of how full the week is. Purely
+  // additive to this return shape -- every existing caller destructures
+  // only isPressured/ratio/competingTitle, so this changes nothing for
+  // them.
+  return {isPressured:ratio>=0.65,ratio,usedMins,totalCapacity,competingTitle:competing?competing.title:null};
 }
 
 // Proactive version of the same pressure check the adaptive check-in uses
@@ -14237,7 +14261,11 @@ function planBrainDumpTasks(items,events,routines,prefs){
         // straight to the plain nearest-open-gap finder — a declared
         // peak-hour bucket should never be able to bump an explicit "now"
         // request later than the actual next available slot.
-        slot=findLegalSlotOrNull(working,routines,prefs,today,prefs.workStartTime,duration,it.dueDate||null);
+        // IMMEDIATE_CATCHUP_MINS (not the normal 2-hour cap) -- see its own
+        // comment: a late-night "study now" on a genuinely empty calendar
+        // must not silently roll to tomorrow just because it's past the
+        // ordinary catch-up window.
+        slot=findLegalSlotOrNull(working,routines,prefs,today,prefs.workStartTime,duration,it.dueDate||null,IMMEDIATE_CATCHUP_MINS);
       }else{
         slot=findReliableSlotFor(working,routines,prefs,today,prefs.workStartTime,duration,it.dueDate||null,5);
       }
@@ -20280,14 +20308,34 @@ function RescheduleModal({task,events,commit,onClose,onManual}){
                       ?"Fills the rest of that day's open hours"
                       :<>Leaves <strong style={{color:T.text}}>{fmtMinsDur(c.bufferAfterMins)}</strong> of open time that day{c.bufferBeforeMins>c.bufferAfterMins?<> (down from {fmtMinsDur(c.bufferBeforeMins)})</>:""}</>}
                   </div>
+                  {/* A percentage of weekly capacity looked "sciency" but
+                      was nearly meaningless in practice: for a lightly-
+                      scheduled student it rounds to the same 1% regardless
+                      of which day gets picked, and two candidates that
+                      land in the SAME week as each other (any two weekend
+                      days, say) show the literal same number since the
+                      task was already going to count toward that week's
+                      total either way -- both real, not a bug, but reading
+                      as broken to a student comparing the cards side by
+                      side. Concrete minutes fix the first problem (40m
+                      added always reads as 40m added, whatever the week's
+                      size); only rendering this when the week actually
+                      changes (or is already busy) fixes the second --
+                      nothing to say about a week's total when this
+                      candidate doesn't move the task into a different one. */}
                   {(()=>{
-                    const beforePct=Math.round(c.weekPressureBefore.ratio*100);
-                    const afterPct=Math.round(c.weekPressure.ratio*100);
-                    const deltaPts=afterPct-beforePct;
+                    const beforeMins=c.weekPressureBefore.usedMins;
+                    const afterMins=c.weekPressure.usedMins;
+                    const pushesIntoWeek=afterMins>beforeMins;
+                    if(!pushesIntoWeek&&!c.weekPressure.isPressured)return null;
                     return (
                       <div style={{fontSize:11,color:c.weekPressure.isPressured?T.amber:T.faint,marginTop:3}}>
-                        Pushes that week to <strong>{afterPct}%</strong> booked{deltaPts>0?` (+${deltaPts} pt${deltaPts!==1?"s":""})`:""}
-                        {c.weekPressure.isPressured&&(c.weekPressure.competingTitle?` — already busy with ${c.weekPressure.competingTitle}`:" — already a busy week")}
+                        {pushesIntoWeek
+                          ?(beforeMins<=0
+                            ?<>That week has nothing else on it yet — adds <strong style={{color:T.text}}>{fmtMinsDur(afterMins-beforeMins)}</strong></>
+                            :<>Raises that week's workload from <strong style={{color:T.text}}>{fmtMinsDur(beforeMins)}</strong> to <strong style={{color:T.text}}>{fmtMinsDur(afterMins)}</strong></>)
+                          :"That week's already busy"}
+                        {c.weekPressure.isPressured&&c.weekPressure.competingTitle?` — busy with ${c.weekPressure.competingTitle}`:""}
                       </div>
                     );
                   })()}
@@ -23699,7 +23747,14 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         // window: the bogus fallback slot is todayKeyNow at workStartTime,
         // which can easily land within the same-day/20min check below by
         // coincidence, the opposite of what this check exists to catch.
-        const slot=findLegalSlotOrNull(events,routines,prefs,todayKeyNow,prefs.workStartTime,duration,it.dueDate||null);
+        // IMMEDIATE_CATCHUP_MINS -- same override planBrainDumpTasks' own
+        // "immediate" branch uses at commit time (see its comment). Without
+        // matching it here, this pre-commit check could flag a false
+        // "no open time right now" purely because it's late at night on a
+        // genuinely empty calendar, even though the real commit later would
+        // have succeeded fine with the wider window -- exactly the
+        // dishonest-sounding warning that prompted this whole check.
+        const slot=findLegalSlotOrNull(events,routines,prefs,todayKeyNow,prefs.workStartTime,duration,it.dueDate||null,IMMEDIATE_CATCHUP_MINS);
         if(!slot){
           clarify="No open time in the next few weeks — you may need to reschedule something else first.";
         }else if(slot.date!==todayKeyNow||timeToMinutes(slot.time)-nowMins>20){

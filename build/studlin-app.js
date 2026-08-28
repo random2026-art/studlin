@@ -1392,6 +1392,7 @@ function getWorkWindowMinsFor(prefs, dk) {
   return { start: timeToMinutes(prefs.workStartTime), end: timeToMinutes(prefs.workEndTime) };
 }
 const CATCHUP_BUFFER_MINS = 120;
+const IMMEDIATE_CATCHUP_MINS = 1440;
 function computeOccupiedIntervals(events, routines, prefs, dateKey) {
   return events.filter((e) => e.date === dateKey && e.time && !e.timeUnconfirmed && e.status !== "done").concat(expandRoutineOccurrences(routines, dateKey, dateKey).filter((o) => o.kind !== "free period")).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) }));
 }
@@ -1457,7 +1458,7 @@ function materializeHabitsForDate(dateKey, workingEvents) {
   });
   return created;
 }
-function findOpenSlotFor(events, routines, prefs, desiredDate, desiredTime, duration, deadlineKey) {
+function findOpenSlotFor(events, routines, prefs, desiredDate, desiredTime, duration, deadlineKey, catchupBufferMins = CATCHUP_BUFFER_MINS) {
   const now = /* @__PURE__ */ new Date();
   const todayKey = dayKey();
   const nowFloorMins = Math.ceil((now.getHours() * 60 + now.getMinutes() + 15) / 15) * 15;
@@ -1474,7 +1475,7 @@ function findOpenSlotFor(events, routines, prefs, desiredDate, desiredTime, dura
     if (scanStart + duration > prefEndMins) {
       if (dk === todayKey) {
         const catchupStart = Math.max(scanStart, prefEndMins);
-        const catchupEnd = Math.min(1440, prefEndMins + CATCHUP_BUFFER_MINS);
+        const catchupEnd = Math.min(1440, prefEndMins + catchupBufferMins);
         for (let t = catchupStart; t + duration <= catchupEnd; t += 15) {
           if (!occupied.some((o) => !(t + duration <= o.start || t >= o.end))) return { date: dk, time: minutesToTime(t) };
         }
@@ -1488,11 +1489,11 @@ function findOpenSlotFor(events, routines, prefs, desiredDate, desiredTime, dura
   if (desiredDate === todayKey && timeToMinutes(desiredTime) < nowFloorMins) return { date: desiredDate, time: minutesToTime(nowFloorMins) };
   return { date: desiredDate, time: desiredTime };
 }
-function findLegalSlotOrNull(events, routines, prefs, desiredDate, desiredTime, duration, deadlineKey) {
-  const slot = findOpenSlotFor(events, routines, prefs, desiredDate, desiredTime, duration, deadlineKey);
+function findLegalSlotOrNull(events, routines, prefs, desiredDate, desiredTime, duration, deadlineKey, catchupBufferMins = CATCHUP_BUFFER_MINS) {
+  const slot = findOpenSlotFor(events, routines, prefs, desiredDate, desiredTime, duration, deadlineKey, catchupBufferMins);
   if (deadlineKey && slot.date > deadlineKey) return null;
   const { start: winStart, end: winEnd } = getWorkWindowMinsFor(prefs, slot.date);
-  const effectiveEnd = Math.min(1440, slot.date === dayKey() ? winEnd + CATCHUP_BUFFER_MINS : winEnd);
+  const effectiveEnd = Math.min(1440, slot.date === dayKey() ? winEnd + catchupBufferMins : winEnd);
   const tMins = timeToMinutes(slot.time);
   if (tMins < winStart || tMins + duration > effectiveEnd) return null;
   const occupied = events.filter((e) => e.date === slot.date && e.time && !e.timeUnconfirmed && e.status !== "done").concat(expandRoutineOccurrences(routines, slot.date, slot.date).filter((o) => o.kind !== "free period")).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) }));
@@ -8470,7 +8471,7 @@ function weekPrepLoad(dateKey, examEvent, events, prefs) {
   const usedMins = loadEvents.reduce((sum, e) => sum + (e.duration || 0), 0);
   const ratio = totalCapacity > 0 ? usedMins / totalCapacity : 1;
   const competing = events.filter((e) => weekSet.has(e.date) && e.status === "pending" && e.id !== examEvent.id && !e.isExamPrepSession && (e.kind === "exam" || e.kind === "deadline" || e.kind === "assignment")).sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : (b.priority || 0) - (a.priority || 0))[0];
-  return { isPressured: ratio >= 0.65, ratio, competingTitle: competing ? competing.title : null };
+  return { isPressured: ratio >= 0.65, ratio, usedMins, totalCapacity, competingTitle: competing ? competing.title : null };
 }
 function pressuredExamItems(items, events, prefs) {
   return items.filter((it) => {
@@ -8944,7 +8945,7 @@ function planBrainDumpTasks(items, events, routines, prefs) {
       if (it.chained && cursorTime) {
         slot = findLegalSlotOrNull(working, routines, prefs, cursorDate || today, cursorTime, duration, it.dueDate || null);
       } else if (it.immediate) {
-        slot = findLegalSlotOrNull(working, routines, prefs, today, prefs.workStartTime, duration, it.dueDate || null);
+        slot = findLegalSlotOrNull(working, routines, prefs, today, prefs.workStartTime, duration, it.dueDate || null, IMMEDIATE_CATCHUP_MINS);
       } else {
         slot = findReliableSlotFor(working, routines, prefs, today, prefs.workStartTime, duration, it.dueDate || null, 5);
       }
@@ -12505,10 +12506,11 @@ function RescheduleModal({ task, events, commit, onClose, onManual }) {
     onClose();
   };
   return /* @__PURE__ */ React.createElement("div", { onClick: onClose, style: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(6px)", zIndex: 1e3, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, animation: "studlinFade 0.18s ease-out" } }, /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { width: "100%", maxWidth: 420, background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, padding: 22, animation: "studlinPop 0.22s cubic-bezier(.2,.85,.3,1)" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 15, fontWeight: 700, color: T.white, marginBottom: 10 } }, 'Reschedule "', task.title, '"?'), candidates.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.red, marginBottom: 14, padding: "10px 12px", background: T.red + "14", borderRadius: 9 } }, "No open slot before its deadline, even after freeing up what we can. Try a manual edit instead.") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, color: T.text, lineHeight: 1.5, marginBottom: 14 } }, "Rescheduling this gives you ", /* @__PURE__ */ React.createElement("strong", null, fmtMinsDur(taskMins)), " back today. Studlin found the lightest days coming up:"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 18 } }, candidates.map((c, i) => /* @__PURE__ */ React.createElement("div", { key: c.date, onClick: () => setSelectedIdx(i), style: { cursor: "pointer", padding: "12px 14px", borderRadius: 12, border: `1px solid ${selectedIdx === i ? T.lime + "66" : T.border}`, background: selectedIdx === i ? T.lime + "14" : T.card2 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13, fontWeight: 600, color: selectedIdx === i ? T.lime : T.white } }, i === 0 ? "Lightest day \u2014 " : "", (/* @__PURE__ */ new Date(c.date + "T12:00:00")).toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })), selectedIdx === i && /* @__PURE__ */ React.createElement("span", { style: { color: T.lime, fontSize: 12 } }, "\u2713")), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginTop: 3 } }, c.isEmpty ? /* @__PURE__ */ React.createElement("strong", { style: { color: T.teal } }, "Currently free") : /* @__PURE__ */ React.createElement(React.Fragment, null, "Adds ", /* @__PURE__ */ React.createElement("strong", { style: { color: c.isHigh ? T.amber : T.muted } }, c.pct, "%"), " to that day's workload"), c.evictedCount > 0 ? ` \xB7 bumps ${c.evictedCount} other${c.evictedCount !== 1 ? "s" : ""}` : ""), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, marginTop: 3 } }, c.bufferAfterMins <= 0 ? "Fills the rest of that day's open hours" : /* @__PURE__ */ React.createElement(React.Fragment, null, "Leaves ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.text } }, fmtMinsDur(c.bufferAfterMins)), " of open time that day", c.bufferBeforeMins > c.bufferAfterMins ? /* @__PURE__ */ React.createElement(React.Fragment, null, " (down from ", fmtMinsDur(c.bufferBeforeMins), ")") : "")), (() => {
-    const beforePct = Math.round(c.weekPressureBefore.ratio * 100);
-    const afterPct = Math.round(c.weekPressure.ratio * 100);
-    const deltaPts = afterPct - beforePct;
-    return /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: c.weekPressure.isPressured ? T.amber : T.faint, marginTop: 3 } }, "Pushes that week to ", /* @__PURE__ */ React.createElement("strong", null, afterPct, "%"), " booked", deltaPts > 0 ? ` (+${deltaPts} pt${deltaPts !== 1 ? "s" : ""})` : "", c.weekPressure.isPressured && (c.weekPressure.competingTitle ? ` \u2014 already busy with ${c.weekPressure.competingTitle}` : " \u2014 already a busy week"));
+    const beforeMins = c.weekPressureBefore.usedMins;
+    const afterMins = c.weekPressure.usedMins;
+    const pushesIntoWeek = afterMins > beforeMins;
+    if (!pushesIntoWeek && !c.weekPressure.isPressured) return null;
+    return /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: c.weekPressure.isPressured ? T.amber : T.faint, marginTop: 3 } }, pushesIntoWeek ? beforeMins <= 0 ? /* @__PURE__ */ React.createElement(React.Fragment, null, "That week has nothing else on it yet \u2014 adds ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.text } }, fmtMinsDur(afterMins - beforeMins))) : /* @__PURE__ */ React.createElement(React.Fragment, null, "Raises that week's workload from ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.text } }, fmtMinsDur(beforeMins)), " to ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.text } }, fmtMinsDur(afterMins))) : "That week's already busy", c.weekPressure.isPressured && c.weekPressure.competingTitle ? ` \u2014 busy with ${c.weekPressure.competingTitle}` : "");
   })(), c.reason && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 3 } }, "\u{1F552} ", fmtPlacementReason(c.reason, c.placement.time)))))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: confirm, disabled: candidates.length === 0, style: { flex: 1, justifyContent: "center", opacity: candidates.length === 0 ? 0.45 : 1 } }, "Confirm Reschedule"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: onClose, style: { flex: 1, justifyContent: "center" } }, "Cancel")), onManual && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
     onManual();
     onClose();
@@ -14690,7 +14692,7 @@ function CalendarTab({ setActive = () => {
       let clarify = it.clarify || "";
       if (kind === "study" && it.immediate && !it.needsDuration) {
         const duration = Math.max(5, it.durationMin || 30);
-        const slot = findLegalSlotOrNull(events, routines, prefs, todayKeyNow, prefs.workStartTime, duration, it.dueDate || null);
+        const slot = findLegalSlotOrNull(events, routines, prefs, todayKeyNow, prefs.workStartTime, duration, it.dueDate || null, IMMEDIATE_CATCHUP_MINS);
         if (!slot) {
           clarify = "No open time in the next few weeks \u2014 you may need to reschedule something else first.";
         } else if (slot.date !== todayKeyNow || timeToMinutes(slot.time) - nowMins > 20) {

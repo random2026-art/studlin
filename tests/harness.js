@@ -71,6 +71,7 @@ function loadStudlinModule(options) {
 ;(function(){
   var exportNames = ["dayKey","checklistItemVisible","lsGet","lsSet","findOpenSlotFor","findReliableSlotFor",
     "findLegalSlotOrNull","rebalanceDay","isTier0Missed","computePausePlan","computeOccupiedIntervals",
+    "IMMEDIATE_CATCHUP_MINS",
     "findAllOverlaps","CALENDAR_OVERLAP_SCAN_DAYS_AHEAD","CALENDAR_OVERLAP_SCAN_DAYS_BEHIND",
     "computeAvatarScaledSize","AVATAR_MAX_DIM",
     "computeHolidayPlan",
