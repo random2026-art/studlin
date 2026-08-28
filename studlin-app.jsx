@@ -80,6 +80,16 @@ const ACCENTS={
   Sky:   {dk:{lime:"#84BBEA",limeDk:"#5A93C9",limeLt:"#BFE0FA"}, lt:{lime:"#2D74BC",limeDk:"#225A98",limeLt:"#BFE0FA"}},
   Lilac: {dk:{lime:"#B89BE0",limeDk:"#9474C9",limeLt:"#DCCBF5"}, lt:{lime:"#7E5BC0",limeDk:"#634599",limeLt:"#DCCBF5"}},
   Peach: {dk:{lime:"#E8A06E",limeDk:"#C9764A",limeLt:"#F5C9AC"}, lt:{lime:"#C2683A",limeDk:"#A4542C",limeLt:"#F5C9AC"}},
+  // Real ask from live feedback: "some people want a more pink theme or
+  // lighter color theme." Pink reuses this file's own existing `rose`
+  // design token (T.rose, already used elsewhere for content -- e.g.
+  // avatar/tag colors -- but never offered as a selectable accent) rather
+  // than inventing a new color from scratch. Slate is the "lighter"
+  // half of the ask -- a calm, desaturated neutral for a softer look than
+  // every other accent's saturated hue, same dk/lt-pair convention as the
+  // rest of this object.
+  Pink:  {dk:{lime:"#E8829E",limeDk:"#C95F7C",limeLt:"#FFC9D2"}, lt:{lime:"#C23F68",limeDk:"#9E2F52",limeLt:"#FFC9D2"}},
+  Slate: {dk:{lime:"#9AA5B1",limeDk:"#7A8592",limeLt:"#C9D1D9"}, lt:{lime:"#5B6672",limeDk:"#454E58",limeLt:"#C9D1D9"}},
 };
 function applyTheme(name, accent, density) {
   Object.assign(T, name === 'light' ? lightT : darkT);
@@ -27396,7 +27406,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   // still had the pre-removal code. With both gone, the "Study
   // preferences" tab (and its Settings nav entry) has nothing legitimate
   // left in it -- removed below rather than left rendering empty.
-  const accents=[{n:"Lime",c:"#AECE5E"},{n:"Forest",c:"#3E9576"},{n:"Sky",c:"#4F95D6"},{n:"Lilac",c:"#9474C9"},{n:"Peach",c:"#D07C4C"}];
+  const accents=[{n:"Lime",c:"#AECE5E"},{n:"Forest",c:"#3E9576"},{n:"Sky",c:"#4F95D6"},{n:"Lilac",c:"#9474C9"},{n:"Peach",c:"#D07C4C"},{n:"Pink",c:"#D9648A"},{n:"Slate",c:"#7A8592"}];
   const [mgmtSubjs,setMgmtSubjs]=useState(()=>getSubjects().map(s=>({...s})));
   const [mgmtSaved,setMgmtSaved]=useState(false);
   const [confirmClearSubjs,setConfirmClearSubjs]=useState(false);

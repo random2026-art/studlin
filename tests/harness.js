@@ -95,6 +95,7 @@ function loadStudlinModule(options) {
     "MAX_VISIBLE_DAY_COLUMNS",
     "getDayOccupiedIntervals","checkManualStudyTime","dayHasRoomFor","undoTier0Move",
     "checkTimeOffImpact","simulateTimeOffBlock",
+    "T","applyTheme","ACCENTS",
     "getWorkWindowMinsFor","detectPeakHourInsight","dismissPeakHourInsight",
     "logCompletionOutcome","getBucketReliability","setSchedulePreferences",
     "applyCheckInRating","computeExamReadiness","canGenQuiz","recordQuizGen",
