@@ -1397,6 +1397,7 @@ function getWorkWindowMinsFor(prefs, dk) {
 }
 const CATCHUP_BUFFER_MINS = 120;
 const IMMEDIATE_CATCHUP_MINS = 1440;
+const IMMEDIATE_NOW_BUFFER_MINS = 0;
 function computeOccupiedIntervals(events, routines, prefs, dateKey) {
   return events.filter((e) => e.date === dateKey && e.time && !e.timeUnconfirmed && e.status !== "done").concat(expandRoutineOccurrences(routines, dateKey, dateKey).filter((o) => o.kind !== "free period")).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) }));
 }
@@ -1462,10 +1463,10 @@ function materializeHabitsForDate(dateKey, workingEvents) {
   });
   return created;
 }
-function findOpenSlotFor(events, routines, prefs, desiredDate, desiredTime, duration, deadlineKey, catchupBufferMins = CATCHUP_BUFFER_MINS) {
+function findOpenSlotFor(events, routines, prefs, desiredDate, desiredTime, duration, deadlineKey, catchupBufferMins = CATCHUP_BUFFER_MINS, nowBufferMins = 15) {
   const now = /* @__PURE__ */ new Date();
   const todayKey = dayKey();
-  const nowFloorMins = Math.ceil((now.getHours() * 60 + now.getMinutes() + 15) / 15) * 15;
+  const nowFloorMins = Math.ceil((now.getHours() * 60 + now.getMinutes() + nowBufferMins) / 15) * 15;
   for (let dayOffset = 0; dayOffset < 21; dayOffset++) {
     const d = /* @__PURE__ */ new Date(desiredDate + "T12:00:00");
     d.setDate(d.getDate() + dayOffset);
@@ -1493,8 +1494,8 @@ function findOpenSlotFor(events, routines, prefs, desiredDate, desiredTime, dura
   if (desiredDate === todayKey && timeToMinutes(desiredTime) < nowFloorMins) return { date: desiredDate, time: minutesToTime(nowFloorMins) };
   return { date: desiredDate, time: desiredTime };
 }
-function findLegalSlotOrNull(events, routines, prefs, desiredDate, desiredTime, duration, deadlineKey, catchupBufferMins = CATCHUP_BUFFER_MINS) {
-  const slot = findOpenSlotFor(events, routines, prefs, desiredDate, desiredTime, duration, deadlineKey, catchupBufferMins);
+function findLegalSlotOrNull(events, routines, prefs, desiredDate, desiredTime, duration, deadlineKey, catchupBufferMins = CATCHUP_BUFFER_MINS, nowBufferMins = 15) {
+  const slot = findOpenSlotFor(events, routines, prefs, desiredDate, desiredTime, duration, deadlineKey, catchupBufferMins, nowBufferMins);
   if (deadlineKey && slot.date > deadlineKey) return null;
   const { start: winStart, end: winEnd } = getWorkWindowMinsFor(prefs, slot.date);
   const effectiveEnd = Math.min(1440, slot.date === dayKey() ? winEnd + catchupBufferMins : winEnd);
@@ -8949,7 +8950,7 @@ function planBrainDumpTasks(items, events, routines, prefs) {
       if (it.chained && cursorTime) {
         slot = findLegalSlotOrNull(working, routines, prefs, cursorDate || today, cursorTime, duration, it.dueDate || null);
       } else if (it.immediate) {
-        slot = findLegalSlotOrNull(working, routines, prefs, today, prefs.workStartTime, duration, it.dueDate || null, IMMEDIATE_CATCHUP_MINS);
+        slot = findLegalSlotOrNull(working, routines, prefs, today, prefs.workStartTime, duration, it.dueDate || null, IMMEDIATE_CATCHUP_MINS, IMMEDIATE_NOW_BUFFER_MINS);
       } else {
         slot = findReliableSlotFor(working, routines, prefs, today, prefs.workStartTime, duration, it.dueDate || null, 5);
       }
@@ -14696,7 +14697,7 @@ function CalendarTab({ setActive = () => {
       let clarify = it.clarify || "";
       if (kind === "study" && it.immediate && !it.needsDuration) {
         const duration = Math.max(5, it.durationMin || 30);
-        const slot = findLegalSlotOrNull(events, routines, prefs, todayKeyNow, prefs.workStartTime, duration, it.dueDate || null, IMMEDIATE_CATCHUP_MINS);
+        const slot = findLegalSlotOrNull(events, routines, prefs, todayKeyNow, prefs.workStartTime, duration, it.dueDate || null, IMMEDIATE_CATCHUP_MINS, IMMEDIATE_NOW_BUFFER_MINS);
         if (!slot) {
           clarify = "No open time in the next few weeks \u2014 you may need to reschedule something else first.";
         } else if (slot.date !== todayKeyNow || timeToMinutes(slot.time) - nowMins > 20) {

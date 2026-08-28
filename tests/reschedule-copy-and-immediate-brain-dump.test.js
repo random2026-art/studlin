@@ -127,15 +127,15 @@ describe("Fix 2b: planBrainDumpTasks' immediate branch actually uses the wider w
 
   test("planBrainDumpTasks passes IMMEDIATE_CATCHUP_MINS, not the plain default, for the immediate branch specifically", () => {
     const idx = SOURCE.indexOf('}else if(it.immediate){');
-    const body = SOURCE.slice(idx, idx + 800);
-    assert.match(body, /findLegalSlotOrNull\(working,routines,prefs,today,prefs\.workStartTime,duration,it\.dueDate\|\|null,IMMEDIATE_CATCHUP_MINS\);/);
+    const body = SOURCE.slice(idx, idx + 1100);
+    assert.match(body, /findLegalSlotOrNull\(working,routines,prefs,today,prefs\.workStartTime,duration,it\.dueDate\|\|null,IMMEDIATE_CATCHUP_MINS,IMMEDIATE_NOW_BUFFER_MINS\);/);
   });
 });
 
 describe("Fix 2c: the pre-commit \"no open time right now\" honesty check matches the same wider window, so it never warns falsely about a case the real commit would actually succeed at", () => {
   test("the review-screen check also passes IMMEDIATE_CATCHUP_MINS", () => {
     const idx = SOURCE.indexOf('if(kind==="study"&&it.immediate&&!it.needsDuration){');
-    const body = SOURCE.slice(idx, idx + 1500);
-    assert.match(body, /findLegalSlotOrNull\(events,routines,prefs,todayKeyNow,prefs\.workStartTime,duration,it\.dueDate\|\|null,IMMEDIATE_CATCHUP_MINS\);/);
+    const body = SOURCE.slice(idx, idx + 1600);
+    assert.match(body, /findLegalSlotOrNull\(events,routines,prefs,todayKeyNow,prefs\.workStartTime,duration,it\.dueDate\|\|null,IMMEDIATE_CATCHUP_MINS,IMMEDIATE_NOW_BUFFER_MINS\);/);
   });
 });

@@ -2091,6 +2091,18 @@ const CATCHUP_BUFFER_MINS=120;
 // from the two "immediate" call sites; every other caller keeps the
 // normal, unmodified 2-hour buffer.
 const IMMEDIATE_CATCHUP_MINS=1440;
+// The same "now" instruction also deserves a genuinely immediate slot, not
+// one padded a further 15 minutes past the next quarter-hour -- a second
+// real bug report from the same live case: 9:47am, a completely empty
+// calendar, offered 10:15am. findOpenSlotFor's own nowFloorMins rounds up
+// to the next 15-min grid mark AND adds 15 minutes first (see its own
+// comment on why that's the right default elsewhere) -- for THIS one
+// explicit case those two paddings compound into nearly half an hour of
+// "not actually now." 0 here still rounds up to the next quarter-hour
+// (findOpenSlotFor can never hand back an already-past time either way),
+// it just stops padding an extra 15 minutes on top of that for a student
+// who said "now" and meant it.
+const IMMEDIATE_NOW_BUFFER_MINS=0;
 // Shared occupied-interval computation for a single day — mirrors the inline
 // pattern already duplicated across findOpenSlotFor, findLegalSlotOrNull,
 // dayHasRoomFor and resolveManualSlot. Only findReliableSlotFor (below) uses
@@ -2232,15 +2244,22 @@ function materializeHabitsForDate(dateKey,workingEvents){
   });
   return created;
 }
-function findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey,catchupBufferMins=CATCHUP_BUFFER_MINS){
+function findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey,catchupBufferMins=CATCHUP_BUFFER_MINS,nowBufferMins=15){
   // Never hand back a slot that's already passed today. Most callers (Brain
   // Dump, assignment extensions, review sessions, overdue rollover) pass a
   // fixed desiredTime like prefs.workStartTime with no awareness of the
   // actual clock — mirrors the "now + 15min buffer, rounded to the grid"
   // floor that aiArrange already uses for its own AI-planned slots.
+  // nowBufferMins is that 15 -- overridable (see IMMEDIATE_NOW_BUFFER_MINS)
+  // for an explicit "study X now" Brain Dump item specifically. Real bug
+  // report: a student typed that at 9:47am on a genuinely empty calendar
+  // and got offered 10:15am -- not because anything was actually blocking
+  // 9:47-10:15, but because this padding plus the 15-min grid rounding
+  // compounds to nearly half an hour for an instruction that was supposed
+  // to mean right now. Every other caller keeps the original 15.
   const now=new Date();
   const todayKey=dayKey();
-  const nowFloorMins=Math.ceil((now.getHours()*60+now.getMinutes()+15)/15)*15;
+  const nowFloorMins=Math.ceil((now.getHours()*60+now.getMinutes()+nowBufferMins)/15)*15;
   for(let dayOffset=0;dayOffset<21;dayOffset++){
     const d=new Date(desiredDate+"T12:00:00");d.setDate(d.getDate()+dayOffset);
     const dk=dayKey(d);
@@ -2295,8 +2314,8 @@ function findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,
 // Hard Wall that must never be silently violated — used only by "Pause My
 // Life" (Tier 3), never changes findOpenSlotFor itself so every other
 // caller keeps its current behavior.
-function findLegalSlotOrNull(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey,catchupBufferMins=CATCHUP_BUFFER_MINS){
-  const slot=findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey,catchupBufferMins);
+function findLegalSlotOrNull(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey,catchupBufferMins=CATCHUP_BUFFER_MINS,nowBufferMins=15){
+  const slot=findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey,catchupBufferMins,nowBufferMins);
   if(deadlineKey&&slot.date>deadlineKey)return null;
   // findOpenSlotFor's last-resort fallback can hand back the raw desired
   // time verbatim when its forward scan finds nothing — that's fine for
@@ -14274,8 +14293,10 @@ function planBrainDumpTasks(items,events,routines,prefs){
         // IMMEDIATE_CATCHUP_MINS (not the normal 2-hour cap) -- see its own
         // comment: a late-night "study now" on a genuinely empty calendar
         // must not silently roll to tomorrow just because it's past the
-        // ordinary catch-up window.
-        slot=findLegalSlotOrNull(working,routines,prefs,today,prefs.workStartTime,duration,it.dueDate||null,IMMEDIATE_CATCHUP_MINS);
+        // ordinary catch-up window. IMMEDIATE_NOW_BUFFER_MINS (not the
+        // normal 15) -- "now" must not get padded a further 15 minutes
+        // past the next quarter-hour on top of that.
+        slot=findLegalSlotOrNull(working,routines,prefs,today,prefs.workStartTime,duration,it.dueDate||null,IMMEDIATE_CATCHUP_MINS,IMMEDIATE_NOW_BUFFER_MINS);
       }else{
         slot=findReliableSlotFor(working,routines,prefs,today,prefs.workStartTime,duration,it.dueDate||null,5);
       }
@@ -23757,14 +23778,16 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         // window: the bogus fallback slot is todayKeyNow at workStartTime,
         // which can easily land within the same-day/20min check below by
         // coincidence, the opposite of what this check exists to catch.
-        // IMMEDIATE_CATCHUP_MINS -- same override planBrainDumpTasks' own
-        // "immediate" branch uses at commit time (see its comment). Without
-        // matching it here, this pre-commit check could flag a false
-        // "no open time right now" purely because it's late at night on a
-        // genuinely empty calendar, even though the real commit later would
-        // have succeeded fine with the wider window -- exactly the
-        // dishonest-sounding warning that prompted this whole check.
-        const slot=findLegalSlotOrNull(events,routines,prefs,todayKeyNow,prefs.workStartTime,duration,it.dueDate||null,IMMEDIATE_CATCHUP_MINS);
+        // IMMEDIATE_CATCHUP_MINS/IMMEDIATE_NOW_BUFFER_MINS -- same overrides
+        // planBrainDumpTasks' own "immediate" branch uses at commit time
+        // (see their own comments). Without matching them here, this pre-
+        // commit check could flag a false "no open time right now" purely
+        // because it's late at night, or because of the ordinary 15-minute
+        // now-padding, on a genuinely empty calendar -- even though the
+        // real commit later would have succeeded fine with the wider,
+        // truly-immediate window. Exactly the dishonest-sounding warning
+        // that prompted this whole check.
+        const slot=findLegalSlotOrNull(events,routines,prefs,todayKeyNow,prefs.workStartTime,duration,it.dueDate||null,IMMEDIATE_CATCHUP_MINS,IMMEDIATE_NOW_BUFFER_MINS);
         if(!slot){
           clarify="No open time in the next few weeks — you may need to reschedule something else first.";
         }else if(slot.date!==todayKeyNow||timeToMinutes(slot.time)-nowMins>20){
