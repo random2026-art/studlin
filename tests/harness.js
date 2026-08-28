@@ -139,6 +139,7 @@ function loadStudlinModule(options) {
     "suggestDurationFor","difficultyTierOf","TIER0_MIN_BUCKET_SAMPLE","IMPORTANCE_TO_DURATION_MULTIPLIER",
     "gradeWeightNudgeFor","isConfidenceStreak","scoreTierFromPercent","SCORE_TIER_LABEL","subjectOutcomeNudge","completionCredit",
     "getSubjects","saveSubjects","courseIdForLabel","backfillCourseIds",
+    "nextAvailableSubjectColor","SUBJECT_COLORS",
     "deleteCourseWithCascade","undoCourseDelete",
     "deriveFreePeriodsFromPeriods","getHsSchoolHours","saveHsSchoolHours",
     "subtractIntervals","effectiveLeadIn","effectiveTrailOut","effectiveLeadInForManualPlacement","effectiveTrailOutForManualPlacement","isLeadInFixed","isDuePill","formatRealWorldScheduleForDate","findNowConflict",

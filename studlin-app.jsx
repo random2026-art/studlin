@@ -839,6 +839,21 @@ const COLOR_PRESET_TIERS={
 const DEFAULT_SUBJECTS=[];
 const getSubjects=()=>lsGet("user-subjects",DEFAULT_SUBJECTS);
 const saveSubjects=(s)=>lsSet("user-subjects",s);
+// Every "assign a new subject/course a default color" site used to just
+// index SUBJECT_COLORS by a local count (subjects.length%..., i%..., a
+// wizard's own pendingClasses.length%...) -- none of them actually checked
+// which colors were ALREADY in use, so two independent counters landing on
+// the same index (most commonly two separate fresh-count-from-zero flows,
+// e.g. a brand new ClassSetupWizard session right after Settings' own
+// "+ Add" had already used index 0) silently produced two different
+// subjects with the identical swatch. This is the one place that actually
+// looks at colors in use and picks the first one that isn't, falling back
+// to round-robin only once every palette color is genuinely taken.
+const nextAvailableSubjectColor=(usedColors)=>{
+  const used=new Set(usedColors);
+  const free=SUBJECT_COLORS.find(c=>!used.has(c));
+  return free||SUBJECT_COLORS[usedColors.length%SUBJECT_COLORS.length];
+};
 // Resolves a course's real id from its label -- the label is still what
 // every dropdown/form actually carries (SUBJ options, free-typed "Other"
 // text), so this is the one place that turns "whatever string the user
@@ -944,7 +959,7 @@ function ensureSubjectsForClassRoutines(routineItems){
     if(r.kind!=="class"||r.courseId||!r.title)return r;
     const match=findMatch(r.title);
     if(match)return {...r,courseId:match.id,subject:match.label};
-    const newSubj={id:"subj-"+Date.now()+"-"+Math.round(Math.random()*10000),label:r.title,color:SUBJECT_COLORS[subjects.length%SUBJECT_COLORS.length]};
+    const newSubj={id:"subj-"+Date.now()+"-"+Math.round(Math.random()*10000),label:r.title,color:nextAvailableSubjectColor(subjects.map(s=>s.color))};
     subjects=[...subjects,newSubj];
     subjectsChanged=true;
     return {...r,courseId:newSubj.id,subject:newSubj.label};
@@ -12034,7 +12049,7 @@ function Notes({setActive=()=>{}}){
             let cid=courseIdForLabelFuzzy(syllabusReview.tag);
             if(!cid){
               const subs=getSubjects();
-              const newSubj={id:"subj-"+Date.now()+"-"+Math.round(Math.random()*1000),label:syllabusReview.tag,color:SUBJECT_COLORS[subs.length%SUBJECT_COLORS.length],termEnd:null};
+              const newSubj={id:"subj-"+Date.now()+"-"+Math.round(Math.random()*1000),label:syllabusReview.tag,color:nextAvailableSubjectColor(subs.map(s=>s.color)),termEnd:null};
               saveSubjects([...subs,newSubj]);
               cid=newSubj.id;
             }
@@ -18162,7 +18177,13 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
 
   if(!open)return null;
 
-  const nextColor=()=>SUBJECT_COLORS[pendingClasses.length%SUBJECT_COLORS.length];
+  // pendingClasses.length alone reset to 0 every fresh wizard session, so a
+  // color already used by a real, previously-saved subject (or an earlier
+  // ClassSetupWizard run) got handed straight back out -- this is the exact
+  // bug reported live (two different classes both landing on SUBJECT_COLORS[0]).
+  // Checking both getSubjects() and this session's own already-staged
+  // pendingClasses colors avoids colliding with either.
+  const nextColor=()=>nextAvailableSubjectColor([...getSubjects().map(s=>s.color),...pendingClasses.map(c=>c.color)]);
 
   const startManual=()=>{
     setReview({subjectName:"",color:nextColor(),meetingTimes:[],items:[],sourceText:""});
@@ -18388,7 +18409,12 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
       days:Array.isArray(p.days)&&p.days.length>0?p.days:[0,1,2,3,4],
       confidence:p.confidence||"high",
     }));
-    setHsReview(normalized.map((p,i)=>({id:"hs-"+i,subjectName:p.subjectName||("Period "+(i+1)),color:SUBJECT_COLORS[i%SUBJECT_COLORS.length],startTime:p.startTime,endTime:p.endTime,days:p.days,confidence:p.confidence,isFree:false})));
+    const hsUsedColors=getSubjects().map(s=>s.color);
+    setHsReview(normalized.map((p,i)=>{
+      const color=nextAvailableSubjectColor(hsUsedColors);
+      hsUsedColors.push(color);
+      return {id:"hs-"+i,subjectName:p.subjectName||("Period "+(i+1)),color,startTime:p.startTime,endTime:p.endTime,days:p.days,confidence:p.confidence,isFree:false};
+    }));
     setHsFreeReview(deriveFreePeriodsFromPeriods(normalized,schoolStart,schoolEnd));
     setEditingHsTimeId(null);
     setAddMode("hsReview");
@@ -27485,7 +27511,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                   <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:3}}>Manage Subjects & Labels</div>
                   <div style={{fontSize:12,color:T.muted}}>Color-code your classes. These labels appear on your calendar and tasks globally.</div>
                 </div>
-                <Btn onClick={()=>{const term=getSchoolTerm();setMgmtSubjs(s=>[...s,{id:String(Date.now()),label:"",color:SUBJECT_COLORS[s.length%SUBJECT_COLORS.length],termEnd:term?term.end:null}]);}}>+ Add</Btn>
+                <Btn onClick={()=>{const term=getSchoolTerm();setMgmtSubjs(s=>[...s,{id:String(Date.now()),label:"",color:nextAvailableSubjectColor(s.map(x=>x.color)),termEnd:term?term.end:null}]);}}>+ Add</Btn>
               </div>
               {mgmtSubjs.length===0&&(
                 <div style={{fontSize:12.5,color:T.muted,padding:"20px 0",textAlign:"center",borderTop:`1px solid ${T.border}`}}>No subjects yet. Click "+ Add" to create your first label.</div>
