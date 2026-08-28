@@ -3754,26 +3754,33 @@ function timeOffWindowQuality(startTime,prefs){
   if(reliability!==null&&reliability>=TIMEOFF_NOTABLE_RELIABILITY)return {type:"reliability",bucket,pct:reliability};
   return null;
 }
-function checkTimeOffImpact(hours,opts){
-  const events=lsGet("events",[]);
-  const routines=getWeeklyRoutine();
-  const prefs=getSchedulePreferences();
+// Shared core for "Can I go?" -- computes what a busy block of `hours`
+// starting at opts.date/opts.startTime would actually do: which pending
+// items would need to move and where, which fixed routine occurrences (a
+// class, a recurring commitment) conflict and can NEVER be moved at all,
+// and the real resulting events array if this were actually committed.
+// Pure -- takes events/routines/prefs as params, never reads or writes
+// storage itself. checkTimeOffImpact (the dry-run preview) and
+// commitTimeOff (the real, student-confirmed write, see CalendarTab) both
+// call this so the two can never compute two different answers to the
+// same question -- what you're shown before confirming is exactly what
+// happens if you do.
+function simulateTimeOffBlock(hours,opts,events,routines,prefs){
   const now=new Date();
   const date=(opts&&opts.date)||dayKey();
   const startTime=(opts&&opts.startTime)||minutesToTime(now.getHours()*60+now.getMinutes());
   const startMins=timeToMinutes(startTime);
   const endMins=startMins+hours*60;
-  const timeQuality=timeOffWindowQuality(startTime,prefs);
   const overlapsWindow=(s,en)=>!(endMins<=s||startMins>=en);
   // Fixed commitments (a class, a recurring activity like a weekly church
   // service) never live in `events` at all -- they only ever exist as
   // virtual occurrences expanded from `routines` (see
-  // expandRoutineOccurrences). This check used to only ever scan `events`,
-  // so asking "can I go" during a recurring activity already on the
-  // schedule silently came back "you're good" -- nothing in `events`
-  // overlapped, even though the routine plainly did. Free periods are
-  // deliberately excluded -- they represent open time, not a commitment;
-  // expandRoutineOccurrences already skips habits (no fixed time to check).
+  // expandRoutineOccurrences). Free periods are deliberately excluded --
+  // they represent open time, not a commitment; expandRoutineOccurrences
+  // already skips habits (no fixed time to check). These can never be
+  // rescheduled by this (or anything) -- a routine occurrence isn't a
+  // real event to move, it's the class itself. Reported so the student
+  // sees exactly what they'd be skipping, never silently touched.
   const fixedConflicts=expandRoutineOccurrences(routines,date,date)
     .filter(o=>o.kind!=="free period")
     .filter(o=>{const s=timeToMinutes(o.time);return overlapsWindow(s,s+(o.duration||30));})
@@ -3782,24 +3789,32 @@ function checkTimeOffImpact(hours,opts){
     const s=timeToMinutes(e.time),en=s+(e.duration||30);
     return overlapsWindow(s,en);
   });
-  if(affected.length===0&&fixedConflicts.length===0)return {ok:true,timeQuality};
-  const synthetic={id:"timeoff-sim",date,time:startTime,duration:hours*60,kind:"busy block",status:"pending"};
+  const block={id:"timeoff-"+Date.now()+"-"+Math.round(Math.random()*1000),title:"Time off",date,time:startTime,duration:hours*60,kind:"busy block",subject:"",notes:"",priority:5,difficulty:5,deadline:null,status:"pending",timeSpent:0,completedAt:null};
   const blocked=[];
   const displaced=[];
   // Threaded forward so a later affected item's own check sees an earlier
   // one's tentative new slot too -- otherwise two affected items could each
   // independently report "moves to the same opening" when only one of them
-  // actually could. Still never touches real storage.
-  let scratch=events.concat([synthetic]);
+  // actually could.
+  let working=events.concat([block]);
   for(const task of affected){
-    const others=scratch.filter(x=>x.id!==task.id);
+    const others=working.filter(x=>x.id!==task.id);
     const slot=findLegalSlotOrNull(others,routines,prefs,date,prefs.workStartTime,task.duration||30,task.deadline||null);
     if(!slot){blocked.push(task.title);continue;}
     if(slot.date!==task.date||slot.time!==task.time){
       displaced.push({title:task.title,newDate:slot.date});
-      scratch=others.concat([{...task,date:slot.date,time:slot.time}]);
+      working=others.concat([{...task,date:slot.date,time:slot.time}]);
     }
   }
+  return {block,blocked,displaced,fixedConflicts,workingEvents:working};
+}
+function checkTimeOffImpact(hours,opts){
+  const events=lsGet("events",[]);
+  const routines=getWeeklyRoutine();
+  const prefs=getSchedulePreferences();
+  const startTime=(opts&&opts.startTime)||minutesToTime((()=>{const n=new Date();return n.getHours()*60+n.getMinutes();})());
+  const timeQuality=timeOffWindowQuality(startTime,prefs);
+  const {blocked,displaced,fixedConflicts}=simulateTimeOffBlock(hours,opts,events,routines,prefs);
   if(blocked.length===0&&displaced.length===0&&fixedConflicts.length===0)return {ok:true,timeQuality};
   return {ok:false,blocked,displaced,fixedConflicts,timeQuality};
 }
@@ -15535,7 +15550,14 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
   const initBreakMins=computeBreathingRoom(totalMins);
   const initBreakPos=Math.max(1,Math.floor((totalMins-initBreakMins)/2));
 
-  const [breakOn,setBreakOn]=useState(totalMins>=15);
+  // A break genuinely only makes sense once a session is long enough to
+  // need one -- a 20 or 30-minute focus block doesn't warrant a mid-
+  // session interruption, and offering the toggle anyway (previously
+  // defaulted on at just 15+ minutes) let a short session silently pick
+  // up a break with no real reason to. Gated on the same >60min threshold
+  // the setup screen's toggle itself is now hidden behind (see below) --
+  // this default only matters at all once that toggle can even be shown.
+  const [breakOn,setBreakOn]=useState(totalMins>60);
   const [breakMins,setBreakMins]=useState(initBreakMins);
   const [breakPos,setBreakPos]=useState(initBreakPos);
   const [breakEditOpen,setBreakEditOpen]=useState(false);
@@ -15978,7 +16000,11 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
             <button type="button" onClick={()=>onGoToLinkedResource(task)} style={{background:"none",border:`1px solid ${T.borderHover}`,borderRadius:8,color:T.lime,cursor:"pointer",fontFamily:T.font,fontSize:12,fontWeight:600,padding:"7px 14px",marginBottom:28}}>{task.deckId?"Study these cards first →":"Take the practice exam first →"}</button>
           )}
 
-          {/* Interactive timeline */}
+          {/* Interactive timeline -- a break only ever makes sense once a
+              session is long enough to actually need one; offering the
+              toggle for a 20 or 30-minute focus block just invited adding
+              a mid-session interruption that was never really warranted. */}
+          {totalMins>60&&(
           <div style={{marginBottom:24,textAlign:"left"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
               <div>
@@ -16033,6 +16059,7 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
               </div>
             )}
           </div>
+          )}
 
           <Btn onClick={startLockIn} style={{width:"100%",justifyContent:"center",padding:"14px 24px",fontSize:15}}>Lock in</Btn>
         </div>
@@ -22014,6 +22041,31 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const [timeOffFuture,setTimeOffFuture]=useState(false);
   const [timeOffDate,setTimeOffDate]=useState(()=>dayKey());
   const [timeOffTime,setTimeOffTime]=useState("18:00");
+  // "Can I go?" used to only ever answer the question -- a friend's
+  // suggestion, and a good one: once a student has actually seen the
+  // tradeoffs (what moves, what's genuinely stuck, what class they'd be
+  // skipping), let them act on it in one tap instead of manually redoing
+  // the same reschedule elsewhere. Reuses simulateTimeOffBlock -- the
+  // exact same computation checkTimeOffImpact already showed them, not a
+  // second one that could quietly disagree -- and recomputes fresh
+  // against the real current calendar rather than trusting timeOffResult
+  // verbatim, since real time may have passed (or something else changed)
+  // between checking and confirming.
+  // A fixed routine occurrence (a class, a recurring commitment) is never
+  // touched here, on purpose -- expandRoutineOccurrences has no concept of
+  // "move this class," and Studlin isn't the one deciding whether a
+  // student skips it. fixedConflicts already told them exactly what
+  // they'd be missing before this button was ever clickable; going ahead
+  // anyway is their own informed choice, not a silent side effect.
+  const confirmTimeOff=()=>{
+    const date=timeOffFuture?timeOffDate:dayKey();
+    const startTime=timeOffFuture?timeOffTime:minutesToTime((()=>{const n=new Date();return n.getHours()*60+n.getMinutes();})());
+    const {blocked,displaced,workingEvents}=simulateTimeOffBlock(timeOffHours,{date,startTime},lsGet("events",[]),routines,getSchedulePreferences());
+    setEvents(workingEvents);lsSet("events",workingEvents);
+    setTimeOffOpen(false);setTimeOffResult(null);
+    setPlacementToast("Blocked "+timeOffHours+"h"+(displaced.length>0?" — moved "+displaced.length+" task"+(displaced.length!==1?"s":""):"")+(blocked.length>0?" ("+blocked.length+" couldn't move)":"")+".");
+    setTimeout(()=>setPlacementToast(""),3200);
+  };
 
   // Routine Control Center — the ongoing management dashboard, reached via
   // the gear icon on the Calendar toolbar and (since 2026-08-11) also via
@@ -25363,12 +25415,19 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           </div>
         ), document.body);
       })()}
-      {/* ── "Can I go?" -- a pure dry-run, nothing here ever
-          writes to the calendar. See checkTimeOffImpact's own comment for
-          why: it's the exact same "compute, don't commit" approach the
-          shared-project mutual-availability check already uses. ── */}
+      {/* ── "Can I go?" -- Check stays a pure dry-run (checkTimeOffImpact,
+          "compute, don't commit," same approach the shared-project
+          mutual-availability check already uses). Once the tradeoffs are
+          actually on screen, a real confirm action (confirmTimeOff) lets
+          the student act on them in one tap -- see its own comment for
+          why a fixed routine occurrence (a class) is never touched by it
+          either way. ── */}
       <Modal open={timeOffOpen} onClose={()=>setTimeOffOpen(false)} title="Can I go?" sub={timeOffFuture?"Pick how long, and when — Studlin checks what's actually at risk.":"Pick how long, starting now — Studlin checks what's actually at risk."} width={400}
-        footer={<><Btn variant="subtle" onClick={()=>setTimeOffOpen(false)}>Close</Btn><Btn onClick={()=>setTimeOffResult(checkTimeOffImpact(timeOffHours,timeOffFuture?{date:timeOffDate,startTime:timeOffTime}:undefined))}>Check</Btn></>}>
+        footer={<>
+          <Btn variant="subtle" onClick={()=>setTimeOffOpen(false)}>Close</Btn>
+          <Btn variant="subtle" onClick={()=>setTimeOffResult(checkTimeOffImpact(timeOffHours,timeOffFuture?{date:timeOffDate,startTime:timeOffTime}:undefined))}>Check</Btn>
+          {timeOffResult&&<Btn onClick={confirmTimeOff}>{timeOffResult.ok?"Block this time":"Block it anyway"}</Btn>}
+        </>}>
         <div style={{display:"flex",gap:8,marginBottom:12}}>
           <button type="button" onClick={()=>{setTimeOffFuture(false);setTimeOffResult(null);}} style={{flex:1,padding:"7px",borderRadius:8,border:`1px solid ${!timeOffFuture?T.lime+"66":T.border}`,background:!timeOffFuture?T.lime+"14":T.card2,color:!timeOffFuture?T.lime:T.text,cursor:"pointer",fontFamily:T.font,fontSize:12.5,fontWeight:600}}>Now</button>
           <button type="button" onClick={()=>{setTimeOffFuture(true);setTimeOffResult(null);}} style={{flex:1,padding:"7px",borderRadius:8,border:`1px solid ${timeOffFuture?T.lime+"66":T.border}`,background:timeOffFuture?T.lime+"14":T.card2,color:timeOffFuture?T.lime:T.text,cursor:"pointer",fontFamily:T.font,fontSize:12.5,fontWeight:600}}>Pick a time</button>

@@ -2300,16 +2300,12 @@ function timeOffWindowQuality(startTime, prefs) {
   if (reliability !== null && reliability >= TIMEOFF_NOTABLE_RELIABILITY) return { type: "reliability", bucket, pct: reliability };
   return null;
 }
-function checkTimeOffImpact(hours, opts) {
-  const events = lsGet("events", []);
-  const routines = getWeeklyRoutine();
-  const prefs = getSchedulePreferences();
+function simulateTimeOffBlock(hours, opts, events, routines, prefs) {
   const now = /* @__PURE__ */ new Date();
   const date = opts && opts.date || dayKey();
   const startTime = opts && opts.startTime || minutesToTime(now.getHours() * 60 + now.getMinutes());
   const startMins = timeToMinutes(startTime);
   const endMins = startMins + hours * 60;
-  const timeQuality = timeOffWindowQuality(startTime, prefs);
   const overlapsWindow = (s, en) => !(endMins <= s || startMins >= en);
   const fixedConflicts = expandRoutineOccurrences(routines, date, date).filter((o) => o.kind !== "free period").filter((o) => {
     const s = timeToMinutes(o.time);
@@ -2319,13 +2315,12 @@ function checkTimeOffImpact(hours, opts) {
     const s = timeToMinutes(e.time), en = s + (e.duration || 30);
     return overlapsWindow(s, en);
   });
-  if (affected.length === 0 && fixedConflicts.length === 0) return { ok: true, timeQuality };
-  const synthetic = { id: "timeoff-sim", date, time: startTime, duration: hours * 60, kind: "busy block", status: "pending" };
+  const block = { id: "timeoff-" + Date.now() + "-" + Math.round(Math.random() * 1e3), title: "Time off", date, time: startTime, duration: hours * 60, kind: "busy block", subject: "", notes: "", priority: 5, difficulty: 5, deadline: null, status: "pending", timeSpent: 0, completedAt: null };
   const blocked = [];
   const displaced = [];
-  let scratch = events.concat([synthetic]);
+  let working = events.concat([block]);
   for (const task of affected) {
-    const others = scratch.filter((x) => x.id !== task.id);
+    const others = working.filter((x) => x.id !== task.id);
     const slot = findLegalSlotOrNull(others, routines, prefs, date, prefs.workStartTime, task.duration || 30, task.deadline || null);
     if (!slot) {
       blocked.push(task.title);
@@ -2333,9 +2328,21 @@ function checkTimeOffImpact(hours, opts) {
     }
     if (slot.date !== task.date || slot.time !== task.time) {
       displaced.push({ title: task.title, newDate: slot.date });
-      scratch = others.concat([{ ...task, date: slot.date, time: slot.time }]);
+      working = others.concat([{ ...task, date: slot.date, time: slot.time }]);
     }
   }
+  return { block, blocked, displaced, fixedConflicts, workingEvents: working };
+}
+function checkTimeOffImpact(hours, opts) {
+  const events = lsGet("events", []);
+  const routines = getWeeklyRoutine();
+  const prefs = getSchedulePreferences();
+  const startTime = opts && opts.startTime || minutesToTime((() => {
+    const n = /* @__PURE__ */ new Date();
+    return n.getHours() * 60 + n.getMinutes();
+  })());
+  const timeQuality = timeOffWindowQuality(startTime, prefs);
+  const { blocked, displaced, fixedConflicts } = simulateTimeOffBlock(hours, opts, events, routines, prefs);
   if (blocked.length === 0 && displaced.length === 0 && fixedConflicts.length === 0) return { ok: true, timeQuality };
   return { ok: false, blocked, displaced, fixedConflicts, timeQuality };
 }
@@ -9705,7 +9712,7 @@ function TaskTimerModal({ task, onClose, onComplete, onAssignmentComplete, onAss
   };
   const initBreakMins = computeBreathingRoom(totalMins);
   const initBreakPos = Math.max(1, Math.floor((totalMins - initBreakMins) / 2));
-  const [breakOn, setBreakOn] = useState(totalMins >= 15);
+  const [breakOn, setBreakOn] = useState(totalMins > 60);
   const [breakMins, setBreakMins] = useState(initBreakMins);
   const [breakPos, setBreakPos] = useState(initBreakPos);
   const [breakEditOpen, setBreakEditOpen] = useState(false);
@@ -10037,7 +10044,7 @@ function TaskTimerModal({ task, onClose, onComplete, onAssignmentComplete, onAss
   };
   if (phase === "quote") {
     const q = quoteRef.current;
-    return /* @__PURE__ */ React.createElement("div", { onClick: onClose, style: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", backdropFilter: "blur(10px)", zIndex: 1e3, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 } }, /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { width: "100%", maxWidth: 520, background: T.card, borderRadius: 10, border: `1px solid ${T.border}`, padding: "32px 28px", textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 16, fontStyle: "italic", color: T.text, lineHeight: 1.7, marginBottom: 8, fontFamily: T.serif } }, '"', q.text, '"'), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 28 } }, "\u2014 ", q.author), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 15, fontWeight: 600, color: T.white, marginBottom: 4 } }, task.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: task.notes || task.deckId || task.practiceExamId ? 8 : 28 } }, totalMins, " minutes \xB7 ", task.subject || "Study session"), task.notes && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.text, lineHeight: 1.5, marginBottom: task.deckId || task.practiceExamId ? 12 : 28 } }, task.notes), (task.deckId || task.practiceExamId) && onGoToLinkedResource && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => onGoToLinkedResource(task), style: { background: "none", border: `1px solid ${T.borderHover}`, borderRadius: 8, color: T.lime, cursor: "pointer", fontFamily: T.font, fontSize: 12, fontWeight: 600, padding: "7px 14px", marginBottom: 28 } }, task.deckId ? "Study these cards first \u2192" : "Take the practice exam first \u2192"), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 24, textAlign: "left" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 600, color: T.muted, letterSpacing: "0.06em", textTransform: "uppercase" } }, "Add Break Time"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.faint, marginTop: 2 } }, "Toggle on to include a timed break.")), /* @__PURE__ */ React.createElement("div", { onClick: () => setBreakOn((b) => !b), style: { display: "flex", alignItems: "center", gap: 6, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 30, height: 17, borderRadius: 99, background: breakOn ? T.lime : T.faint, position: "relative", transition: "background 0.2s" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 13, height: 13, borderRadius: "50%", background: "#fff", position: "absolute", top: 2, left: breakOn ? 15 : 2, transition: "left 0.2s" } })), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.text } }, breakOn ? "On" : "Off"))), /* @__PURE__ */ React.createElement(
+    return /* @__PURE__ */ React.createElement("div", { onClick: onClose, style: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", backdropFilter: "blur(10px)", zIndex: 1e3, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 } }, /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { width: "100%", maxWidth: 520, background: T.card, borderRadius: 10, border: `1px solid ${T.border}`, padding: "32px 28px", textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 16, fontStyle: "italic", color: T.text, lineHeight: 1.7, marginBottom: 8, fontFamily: T.serif } }, '"', q.text, '"'), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 28 } }, "\u2014 ", q.author), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 15, fontWeight: 600, color: T.white, marginBottom: 4 } }, task.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: task.notes || task.deckId || task.practiceExamId ? 8 : 28 } }, totalMins, " minutes \xB7 ", task.subject || "Study session"), task.notes && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.text, lineHeight: 1.5, marginBottom: task.deckId || task.practiceExamId ? 12 : 28 } }, task.notes), (task.deckId || task.practiceExamId) && onGoToLinkedResource && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => onGoToLinkedResource(task), style: { background: "none", border: `1px solid ${T.borderHover}`, borderRadius: 8, color: T.lime, cursor: "pointer", fontFamily: T.font, fontSize: 12, fontWeight: 600, padding: "7px 14px", marginBottom: 28 } }, task.deckId ? "Study these cards first \u2192" : "Take the practice exam first \u2192"), totalMins > 60 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 24, textAlign: "left" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 600, color: T.muted, letterSpacing: "0.06em", textTransform: "uppercase" } }, "Add Break Time"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.faint, marginTop: 2 } }, "Toggle on to include a timed break.")), /* @__PURE__ */ React.createElement("div", { onClick: () => setBreakOn((b) => !b), style: { display: "flex", alignItems: "center", gap: 6, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 30, height: 17, borderRadius: 99, background: breakOn ? T.lime : T.faint, position: "relative", transition: "background 0.2s" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 13, height: 13, borderRadius: "50%", background: "#fff", position: "absolute", top: 2, left: breakOn ? 15 : 2, transition: "left 0.2s" } })), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.text } }, breakOn ? "On" : "Off"))), /* @__PURE__ */ React.createElement(
       "div",
       {
         ref: barRef,
@@ -13368,6 +13375,20 @@ function CalendarTab({ setActive = () => {
   const [timeOffFuture, setTimeOffFuture] = useState(false);
   const [timeOffDate, setTimeOffDate] = useState(() => dayKey());
   const [timeOffTime, setTimeOffTime] = useState("18:00");
+  const confirmTimeOff = () => {
+    const date = timeOffFuture ? timeOffDate : dayKey();
+    const startTime = timeOffFuture ? timeOffTime : minutesToTime((() => {
+      const n = /* @__PURE__ */ new Date();
+      return n.getHours() * 60 + n.getMinutes();
+    })());
+    const { blocked, displaced, workingEvents } = simulateTimeOffBlock(timeOffHours, { date, startTime }, lsGet("events", []), routines, getSchedulePreferences());
+    setEvents2(workingEvents);
+    lsSet("events", workingEvents);
+    setTimeOffOpen(false);
+    setTimeOffResult(null);
+    setPlacementToast("Blocked " + timeOffHours + "h" + (displaced.length > 0 ? " \u2014 moved " + displaced.length + " task" + (displaced.length !== 1 ? "s" : "") : "") + (blocked.length > 0 ? " (" + blocked.length + " couldn't move)" : "") + ".");
+    setTimeout(() => setPlacementToast(""), 3200);
+  };
   const [routineCenterOpen, setRoutineCenterOpen] = useState(false);
   useEffect(() => {
     if (onWizardOpenChange) onWizardOpenChange(classSetupOpen || routineCenterOpen);
@@ -15905,7 +15926,7 @@ Examples:
       title: "Can I go?",
       sub: timeOffFuture ? "Pick how long, and when \u2014 Studlin checks what's actually at risk." : "Pick how long, starting now \u2014 Studlin checks what's actually at risk.",
       width: 400,
-      footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setTimeOffOpen(false) }, "Close"), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setTimeOffResult(checkTimeOffImpact(timeOffHours, timeOffFuture ? { date: timeOffDate, startTime: timeOffTime } : void 0)) }, "Check"))
+      footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setTimeOffOpen(false) }, "Close"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setTimeOffResult(checkTimeOffImpact(timeOffHours, timeOffFuture ? { date: timeOffDate, startTime: timeOffTime } : void 0)) }, "Check"), timeOffResult && /* @__PURE__ */ React.createElement(Btn, { onClick: confirmTimeOff }, timeOffResult.ok ? "Block this time" : "Block it anyway"))
     },
     /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 12 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
       setTimeOffFuture(false);

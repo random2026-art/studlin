@@ -6,7 +6,11 @@
 // future outing.
 const { test, describe } = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("fs");
+const path = require("path");
 const { loadStudlinModule } = require("./harness.js");
+
+const APP_SOURCE = fs.readFileSync(path.join(__dirname, "..", "studlin-app.jsx"), "utf8");
 
 // checkTimeOffImpact reads getSchedulePreferences() internally (default
 // workStartTime "10:00", workEndTime "18:00") -- no prefs argument to pass.
@@ -154,5 +158,82 @@ describe("checkTimeOffImpact", () => {
       // surfaced together, not one hiding the other.
       assert.equal(result.blocked.length + result.displaced.length, 1);
     });
+  });
+});
+
+// 2026-08-28: a friend's suggested improvement, from the user directly --
+// "Can I go?" used to only ever answer the question and stop there. Now,
+// once the tradeoffs are on screen, the student can actually act on them
+// in one tap (confirmTimeOff, in CalendarTab) instead of manually redoing
+// the same reschedule elsewhere. simulateTimeOffBlock is the shared core
+// both checkTimeOffImpact (the dry-run above) and the real commit action
+// call, so the two can never disagree about what a given window actually
+// does. Tested directly here since it's a real top-level pure function;
+// confirmTimeOff itself lives inside CalendarTab's component closure --
+// source-level regression guards for that half, same established
+// precedent as every other component-closure fix this session.
+describe("simulateTimeOffBlock (the shared real/dry-run core)", () => {
+  test("returns a real, concretely-dated busy block for the requested window", () => {
+    const m = loadStudlinModule({ now: "2026-08-10T10:00:00" });
+    const { block } = m.simulateTimeOffBlock(2, { date: "2026-08-10", startTime: "14:00" }, [], [], { workStartTime: "10:00", workEndTime: "18:00" });
+    assert.equal(block.date, "2026-08-10");
+    assert.equal(block.time, "14:00");
+    assert.equal(block.duration, 120);
+    assert.equal(block.kind, "busy block");
+    assert.equal(block.status, "pending");
+  });
+
+  test("workingEvents actually contains the block plus every original event, ready to persist as-is", () => {
+    const m = loadStudlinModule({ now: "2026-08-10T10:00:00" });
+    const existing = [{ id: "e1", date: "2026-08-10", time: "09:00", duration: 30, kind: "study block", status: "pending" }];
+    const { block, workingEvents } = m.simulateTimeOffBlock(2, { date: "2026-08-10", startTime: "14:00" }, existing, [], { workStartTime: "10:00", workEndTime: "18:00" });
+    assert.ok(workingEvents.some(e => e.id === block.id), "the new block itself must be in the array a caller would persist");
+    assert.ok(workingEvents.some(e => e.id === "e1"), "an untouched, non-conflicting existing event must survive unchanged");
+  });
+
+  test("a genuinely conflicting task's date/time is actually updated in workingEvents, not just named in displaced", () => {
+    const m = loadStudlinModule({ now: "2026-08-10T10:00:00" });
+    const existing = [{ id: "e1", date: "2026-08-10", time: "14:00", duration: 30, kind: "deadline", status: "pending", deadline: "2026-08-20", title: "Moves" }];
+    const { displaced, workingEvents } = m.simulateTimeOffBlock(2, { date: "2026-08-10", startTime: "13:00" }, existing, [], { workStartTime: "10:00", workEndTime: "18:00" });
+    assert.equal(displaced.length, 1);
+    const moved = workingEvents.find(e => e.id === "e1");
+    assert.ok(moved, "the original task must still exist in workingEvents, just relocated");
+    assert.notEqual(moved.time, "14:00", "its time must actually reflect the new slot, not the original conflicting one");
+  });
+
+  test("a blocked task (nowhere legal to go) is left completely untouched in workingEvents", () => {
+    const m = loadStudlinModule({ now: "2026-08-10T10:00:00" });
+    const existing = [{ id: "e1", date: "2026-08-10", time: "11:00", duration: 30, kind: "deadline", status: "pending", deadline: "2026-08-10", title: "Due today" }];
+    const { blocked, workingEvents } = m.simulateTimeOffBlock(10, { date: "2026-08-10", startTime: "10:00" }, existing, [], { workStartTime: "10:00", workEndTime: "18:00" });
+    assert.equal(blocked.length, 1);
+    const untouched = workingEvents.find(e => e.id === "e1");
+    assert.ok(untouched, "a blocked task must still be present, not dropped");
+    assert.equal(untouched.time, "11:00", "left at its original time -- nothing legal was found, so nothing was silently forced");
+  });
+
+  test("a fixed routine occurrence (a class) never appears in workingEvents at all -- it isn't a real event to move", () => {
+    const m = loadStudlinModule({ now: "2026-08-10T09:00:00" });
+    const routines = [{ id: "r1", title: "Chemistry", kind: "class", days: [0], startTime: "13:00", duration: 60 }];
+    const { fixedConflicts, workingEvents } = m.simulateTimeOffBlock(2, { date: "2026-08-10", startTime: "13:00" }, [], routines, { workStartTime: "10:00", workEndTime: "18:00" });
+    assert.equal(fixedConflicts.length, 1);
+    assert.equal(fixedConflicts[0].title, "Chemistry");
+    assert.ok(!workingEvents.some(e => e.title === "Chemistry"), "a class is a routine occurrence, never a real events[] entry -- there is nothing here for this function to move or touch");
+  });
+});
+
+describe("CalendarTab's confirmTimeOff (source-level regression guards -- component closure)", () => {
+  test("calls the exact same simulateTimeOffBlock core the dry-run preview uses, not a second, possibly-divergent computation", () => {
+    assert.match(APP_SOURCE, /const \{blocked,displaced,workingEvents\}=simulateTimeOffBlock\(timeOffHours,\{date,startTime\},lsGet\("events",\[\]\),routines,getSchedulePreferences\(\)\);/);
+  });
+  test("actually persists the result -- both the React state and localStorage, matching this component's own established save pattern", () => {
+    assert.match(APP_SOURCE, /setEvents\(workingEvents\);lsSet\("events",workingEvents\);/);
+  });
+  test("recomputes against the real current date/time rather than trusting timeOffResult verbatim (real time may have passed since the check)", () => {
+    const idx = APP_SOURCE.indexOf("const confirmTimeOff=()=>{");
+    const body = APP_SOURCE.slice(idx, idx + 400);
+    assert.match(body, /const date=timeOffFuture\?timeOffDate:dayKey\(\);/);
+  });
+  test("the modal only offers this action once a check has actually been run -- there's nothing to confirm before that", () => {
+    assert.match(APP_SOURCE, /\{timeOffResult&&<Btn onClick=\{confirmTimeOff\}>\{timeOffResult\.ok\?"Block this time":"Block it anyway"\}<\/Btn>\}/);
   });
 });
