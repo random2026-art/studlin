@@ -26,6 +26,7 @@ const BETA_TESTER_EMAILS = [
   'shenouday7@gmail.com',
   'ymehraeil779@gmail.com',
   'owentyler10@icloud.com',
+  'nourlena28@gmail.com',
 ];
 const BETA_CODE = 'betatesters';
 const BETA_TRIAL_DAYS = 30;
