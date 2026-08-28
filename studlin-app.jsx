@@ -1916,8 +1916,21 @@ function parseCalendarClassificationReply(rawReply,capped){
 async function classifyImportedCalendarEvents(events,platformLabel,existingSubjectLabels){
   if(!events||events.length===0)return {};
   // Capped at 120 -- a semester's worth of due dates comfortably fits; this
-  // is one batch classification call, not a per-item one.
-  const capped=events.slice(0,120);
+  // is one batch classification call, not a per-item one. Sorted soonest-
+  // first before the cap, not left in raw feed order -- api/cal-proxy.js's
+  // parseICS never sorts (a recurring class's expanded weekly occurrences
+  // interleave with standalone assignment/exam VEVENTs in whatever order
+  // the feed happened to list the masters), so on a large, class-meeting-
+  // heavy feed the unsorted cap could silently classify a stack of distant
+  // future lecture occurrences ahead of a near-term assignment due next
+  // week. Every event still gets added to the calendar either way (see
+  // mergeImportedEvents, which merges the FULL fetched list) -- this only
+  // decides which ones are worth spending the AI classification call on,
+  // so an assignment due soon is never the one left with a generic
+  // fallback kind/subject just because of where it happened to sit in the
+  // raw feed.
+  const sorted=[...events].sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
+  const capped=sorted.slice(0,120);
   const prompt=buildCalendarClassificationPrompt(capped,platformLabel,existingSubjectLabels);
   try{
     const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard",format:"json"})});
@@ -18238,9 +18251,22 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
 
   const buildReviewFromExtraction=(result,sourceText)=>{
     const today=dayKey();
+    // Importing a syllabus for a course that already exists (targetCourseId
+    // set -- the "Import syllabus" action from an existing class's own
+    // menu) must reuse that course's real, already-established name and
+    // color, never whatever the AI guessed off the syllabus header (a
+    // slightly different phrasing/abbreviation of the same class, e.g.
+    // "Calculus 2" vs. the real "Calc II"). This isn't just cosmetic:
+    // review.subjectName becomes cls.name, which commitAllToCalendar hands
+    // to commitSyllabusEvents as the `tag` stamped onto every new
+    // assignment/exam event's own `subject` field -- using the AI's guess
+    // there silently mismatched the class's real label everywhere else in
+    // the app (sidebar, calendar colors, "which class is this" matching)
+    // even though the underlying courseId was already correct.
+    const existingCourse=targetCourseId?getSubjects().find(s=>s.id===targetCourseId):null;
     setReview({
-      subjectName:(result.subject&&result.subject.name)||"",
-      color:nextColor(),
+      subjectName:existingCourse?existingCourse.label:((result.subject&&result.subject.name)||""),
+      color:existingCourse?existingCourse.color:nextColor(),
       sourceText:sourceText||"",
       meetingTimes:(result.meetingTimes||[]).map((mt,i)=>({id:"mt-"+Date.now()+"-"+i,days:Array.isArray(mt.days)?mt.days:[],startTime:mt.startTime||"09:00",duration:mt.duration||50})),
       items:(result.deadlines||[]).map((d,i)=>{
@@ -26928,7 +26954,18 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     const nextSubs=[...importedCals.filter(s=>s.id!==subId),sub];
     setImportedCals(nextSubs);saveImportedCalendars(nextSubs);
     setImportCalOpen(false);setImportCalReview(null);
-    showToast(fetched.length+" event"+(fetched.length!==1?"s":"")+" synced from "+label+reconcileToastSuffix(result));
+    // Real bug found live: this used to report fetched.length -- every item
+    // the student reviewed and left checked -- even though mergeImportedEvents
+    // silently drops anything it recognizes as already on the calendar (its
+    // own order-independent dedup against a prior syllabus/whole-schedule
+    // scan, see its own comment). A student who'd already scanned a syllabus
+    // for a class saw "23 events synced" when only a handful were actually
+    // new, then couldn't find the rest on their calendar -- not because
+    // anything was missing, but because Studlin correctly recognized they
+    // were already there. newIds.length is the real post-dedup count;
+    // skippedCount names the gap instead of leaving it a silent mystery.
+    const skippedCount=fetched.length-newIds.length;
+    showToast(newIds.length+" new event"+(newIds.length!==1?"s":"")+" synced from "+label+(skippedCount>0?" ("+skippedCount+" already on your calendar)":"")+reconcileToastSuffix(result));
     // Only jumps to Calendar when nothing else is queued to connect next --
     // the onboarding wizard's "connect these platforms" step can queue more
     // than one pick in a row (see wizPostOnboardConnect), and interrupting

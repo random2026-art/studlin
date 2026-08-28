@@ -1300,7 +1300,8 @@ function parseCalendarClassificationReply(rawReply, capped) {
 }
 async function classifyImportedCalendarEvents(events, platformLabel, existingSubjectLabels) {
   if (!events || events.length === 0) return {};
-  const capped = events.slice(0, 120);
+  const sorted = [...events].sort((a, b) => (a.date || "9999").localeCompare(b.date || "9999"));
+  const capped = sorted.slice(0, 120);
   const prompt = buildCalendarClassificationPrompt(capped, platformLabel, existingSubjectLabels);
   try {
     const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt }], model: "standard", format: "json" }) });
@@ -11299,9 +11300,10 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
   };
   const buildReviewFromExtraction = (result, sourceText) => {
     const today = dayKey();
+    const existingCourse = targetCourseId ? getSubjects().find((s) => s.id === targetCourseId) : null;
     setReview({
-      subjectName: result.subject && result.subject.name || "",
-      color: nextColor(),
+      subjectName: existingCourse ? existingCourse.label : result.subject && result.subject.name || "",
+      color: existingCourse ? existingCourse.color : nextColor(),
       sourceText: sourceText || "",
       meetingTimes: (result.meetingTimes || []).map((mt, i) => ({ id: "mt-" + Date.now() + "-" + i, days: Array.isArray(mt.days) ? mt.days : [], startTime: mt.startTime || "09:00", duration: mt.duration || 50 })),
       items: (result.deadlines || []).map((d, i) => {
@@ -16910,7 +16912,8 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     saveImportedCalendars(nextSubs);
     setImportCalOpen(false);
     setImportCalReview(null);
-    showToast(fetched.length + " event" + (fetched.length !== 1 ? "s" : "") + " synced from " + label + reconcileToastSuffix(result));
+    const skippedCount = fetched.length - newIds.length;
+    showToast(newIds.length + " new event" + (newIds.length !== 1 ? "s" : "") + " synced from " + label + (skippedCount > 0 ? " (" + skippedCount + " already on your calendar)" : "") + reconcileToastSuffix(result));
     const hadMoreQueued = lsGet("openImportCalQueue", []).length > 0;
     openNextQueuedImportCal();
     if (!hadMoreQueued) highlightAndJumpToCalendar(newIds);
