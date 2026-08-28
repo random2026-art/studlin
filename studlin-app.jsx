@@ -19591,21 +19591,22 @@ function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime
         ?(duePills.length===0&&<div style={{textAlign:"center",padding:"24px 0",color:T.muted,fontSize:13}}>Nothing scheduled this day.</div>)
         :<div style={{maxHeight:"62vh",overflowY:"auto"}}>
           <div style={{position:"relative",height:totalHeightPx,marginLeft:54}}>
-            {/* Hour gridlines used to be dashed too, same as the free-time
-                markers below -- both dashed meant neither one read as more
-                meaningful than the other, just visual noise repeating
-                every hour. Solid + the faintest border token now, so they
-                recede into the background as plain structure; dashed is
-                reserved for the one thing actually worth noticing (free
-                time). */}
+            {/* Hour gridlines: solid + the faintest border token, so they
+                recede into the background as plain structure. */}
             {Array.from({length:Math.max(1,hourEnd-hourStart)},(_,i)=>hourStart+i).map(h=>(
               <div key={h} style={{position:"absolute",top:(h*60-spanStart)*(pxPerHr/60),left:0,right:0,borderTop:`1px solid ${T.border}`,boxSizing:"border-box"}}>
                 <span style={{position:"absolute",left:-54,top:-7,width:46,textAlign:"right",fontSize:10,color:T.faint,fontFamily:T.mono}}>{fmtHourLabel(h*60)}</span>
               </div>
             ))}
+            {/* Free time used to be marked with a dashed line spanning the
+                whole gap -- unlabeled-looking and, per direct feedback,
+                distracting rather than informative (what IS a dashed line
+                supposed to mean, at a glance). A plain, centered label
+                stating the actual range and duration says the same thing
+                in a way that doesn't need decoding. */}
             {freeGaps.map((g,i)=>(
-              <div key={"gap-"+i} style={{position:"absolute",top:(g.start-spanStart)*(pxPerHr/60),left:0,right:0,height:(g.end-g.start)*(pxPerHr/60),display:"flex",alignItems:"center",zIndex:1}}>
-                <div style={{width:"100%",borderTop:`1.5px dashed ${T.faint}`,fontSize:10.5,color:T.faint,paddingLeft:8}}>{fmtGapLabel(g.start)}–{fmtGapLabel(g.end)} Free Time</div>
+              <div key={"gap-"+i} style={{position:"absolute",top:(g.start-spanStart)*(pxPerHr/60),left:0,right:0,height:(g.end-g.start)*(pxPerHr/60),display:"flex",alignItems:"center",justifyContent:"center",zIndex:1}}>
+                <div style={{fontSize:10.5,color:T.faint,fontWeight:500}}>{fmtGapLabel(g.start)}–{fmtGapLabel(g.end)} free · {fmtH(g.end-g.start)}</div>
               </div>
             ))}
             {dayLaidOut.map(({ev,col,totalCols,displayCol,displayTotalCols,start,end,hidden,overflowCount})=>{
