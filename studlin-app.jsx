@@ -31473,7 +31473,30 @@ function App() {
         // every occupied-interval builder, a task finished early no longer
         // holds onto time it never used, and one that ran long doesn't
         // under-report the time it actually took.
-        const next=lsGet("events",[]).map(ev=>ev.id===timerTask.id?{...ev,status:"done",timeSpent:mins,duration:mins,completedAt:Date.now()}:ev);
+        let next=lsGet("events",[]).map(ev=>ev.id===timerTask.id?{...ev,status:"done",timeSpent:mins,duration:mins,completedAt:Date.now()}:ev);
+        // Live report: a session ran longer than its scheduled block, but
+        // whatever was scheduled right after it just sat there overlapping
+        // on the calendar -- the duration fix above updates THIS task's own
+        // span, but never checked whether that longer span now runs into
+        // the next thing. Nudges just that one following item later by the
+        // overlap amount (a simple push, not a full re-layout -- matches
+        // what was actually asked for) so the calendar stays honest. Fixed/
+        // pinned items (a class, an exam, anything explicitly locked) are
+        // never auto-moved -- same reasoning "Can I go?"'s fixedConflicts
+        // already established, Studlin surfaces the collision, it doesn't
+        // decide those move on their own.
+        if(timerTask.time){
+          const completedEndMins=timeToMinutes(timerTask.time)+mins;
+          const nextEvent=next.filter(ev=>ev.id!==timerTask.id&&ev.date===timerTask.date&&ev.time&&!ev.timeUnconfirmed&&ev.status==="pending"&&ev.kind!=="free period"&&timeToMinutes(ev.time)>=timeToMinutes(timerTask.time)).sort((a,b)=>timeToMinutes(a.time)-timeToMinutes(b.time))[0];
+          if(nextEvent&&completedEndMins>timeToMinutes(nextEvent.time)){
+            if(TIER0_FIXED_KINDS.has(nextEvent.kind)||nextEvent.userPinned){
+              setDashToast("Ran "+fmtMinsDur(mins)+" — heads up, that now overlaps \""+nextEvent.title+"\".");setTimeout(()=>setDashToast(""),4200);
+            }else{
+              next=next.map(ev=>ev.id===nextEvent.id?{...ev,time:minutesToTime(completedEndMins)}:ev);
+              setDashToast("Ran "+fmtMinsDur(mins)+" — moved \""+nextEvent.title+"\" to "+fmtTime(minutesToTime(completedEndMins))+".");setTimeout(()=>setDashToast(""),4200);
+            }
+          }
+        }
         lsSet("events",next);
         // Any flexible study block finished through the Lock-In Timer gets
         // one extra one-tap prompt once the XP screen above is dismissed —
