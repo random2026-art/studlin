@@ -21455,7 +21455,7 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
   const [commuteBefore,setCommuteBefore]=useState("");
   const [commuteAfter,setCommuteAfter]=useState("");
   const [location,setLocation]=useState("");
-  const [movable,setMovable]=useState(false); // Fixed by default; toggle on = Free
+  const [movable,setMovable]=useState(false); // Fixed by default; true = Free
   // Only meaningful for editing an existing non-class routine -- a Class
   // routine inherits its subject's color (same gating RoutineControlCenter's
   // own Add form already uses), and a one-off event has no persistent color
@@ -21741,11 +21741,15 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
             </span>
           </div>
           <Input value={location} onChange={e=>setLocation(e.target.value)} placeholder="Location (optional)" style={{padding:"7px 10px",fontSize:12}} />
-          <div onClick={()=>setMovable(m=>!m)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"pointer",padding:"7px 10px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2}}>
-            <div style={{fontSize:12,fontWeight:600,color:T.text}}>{movable?"Free":"Fixed"}</div>
-            <div style={{width:32,height:18,borderRadius:9,background:movable?T.lime:T.faint,position:"relative",transition:"background 0.2s",flexShrink:0}}>
-              <div style={{width:14,height:14,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:movable?16:2,transition:"left 0.2s"}} />
-            </div>
+          {/* Live report: an on/off toggle whose own label swapped text
+              with its state ("Fixed" while OFF, "Free" while ON) read to
+              users as "flip this on to make it Fixed" -- backwards from
+              what OFF already meant. Two selectable chips instead of a
+              toggle removes the on/off reading entirely: whichever one is
+              currently true is simply the one already highlighted. */}
+          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+            <div style={{fontSize:10,color:T.faint,textTransform:"uppercase",letterSpacing:"0.05em"}}>Scheduling</div>
+            <SelectChip size="sm" options={[{value:false,label:"Fixed (won't move)"},{value:true,label:"Free (can move)"}]} value={movable} onChange={setMovable} />
           </div>
         </div>
         <div style={{display:"flex",gap:8,justifyContent:editRoutine?"space-between":"flex-end",alignItems:"center",padding:"9px 12px",borderTop:`1px solid ${T.border}`}}>
