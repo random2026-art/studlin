@@ -589,6 +589,9 @@ function normalizeCourseLabel(label) {
   if (ROMAN_TO_ARABIC[last]) words[words.length - 1] = ROMAN_TO_ARABIC[last];
   return words.join(" ");
 }
+function normalizeExamTitleForDedup(title) {
+  return (title || "").trim().toLowerCase().replace(/\bexam\b/g, "").replace(/\s+/g, " ").trim();
+}
 const courseIdForLabelFuzzy = (label) => {
   if (!label) return null;
   const subjects = getSubjects();
@@ -1225,8 +1228,7 @@ function mergeImportedEvents(existingEvents, subId, fetchedEvents, classificatio
     const resolvedTime = fresh.allDay ? ev.kind === "exam" ? "09:00" : "23:59" : fresh.time;
     return { ...ev, title: fresh.title, date: fresh.date, time: resolvedTime, duration: ev.kind === "deadline" ? null : fresh.duration, timeUnconfirmed: fresh.allDay || void 0 };
   });
-  const dupNorm = (t) => (t || "").trim().toLowerCase();
-  const isAlreadyPresent = (title, date, kind) => existingEvents.some((ev) => ev.title && dupNorm(ev.title) === dupNorm(title) && ev.date === date && ev.kind === kind);
+  const isAlreadyPresent = (title, date, kind) => existingEvents.some((ev) => ev.title && normalizeExamTitleForDedup(ev.title) === normalizeExamTitleForDedup(title) && ev.date === date && ev.kind === kind);
   const added = fetchedEvents.filter((e) => e.uid && !keptUids.has(e.uid)).map((e) => {
     const c = classifications && classifications[e.uid];
     const kind = !c ? "busy block" : c.kind === "assignment" || c.kind === "project" ? "deadline" : c.kind === "other" ? "busy block" : c.kind;
@@ -8992,7 +8994,7 @@ function buildSyllabusEventBatch(existing, noteId, tag, items, sourceMaterial, r
   const gates = items.map((it) => (it.kind === "deadline" || it.kind === "project") && it.attackBlock && !it.noDate ? attackBlockActionableDate(it.estimatedHours, it.date, today) : null);
   const normKind = (it) => it.kind === "exam" ? "exam" : "deadline";
   const tagNorm = normalizeCourseLabel(tag);
-  const isDuplicate = items.map((it) => existing.some((e) => e.title && it.title && e.title.trim().toLowerCase() === it.title.trim().toLowerCase() && normalizeCourseLabel(e.subject) === tagNorm && e.date === (it.date || "") && e.kind === normKind(it)));
+  const isDuplicate = items.map((it) => existing.some((e) => e.title && it.title && normalizeExamTitleForDedup(e.title) === normalizeExamTitleForDedup(it.title) && normalizeCourseLabel(e.subject) === tagNorm && e.date === (it.date || "") && e.kind === normKind(it)));
   const markerEvents = items.map((it, i) => {
     const syllabusSeed = it.detail && it.detail.trim() ? [{ name: "From your syllabus", text: it.detail.trim() }] : sourceMaterial ? [{ name: "From your syllabus", text: sourceMaterial }] : [];
     const materialEntries = it.kind === "exam" || it.kind === "project" ? [...syllabusSeed, ...it.materialFiles || []] : [];
@@ -12551,6 +12553,7 @@ function NewSlotPickerModal({ title, sub, candidates, onConfirm, onClose, onManu
   }, style: { display: "block", width: "100%", textAlign: "center", background: "none", border: "none", padding: 0, marginTop: 12, fontSize: 11.5, color: T.muted, textDecoration: "underline", cursor: "pointer", fontFamily: T.font } }, "I'll pick the day and time myself \u2192")));
 }
 function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPricingOpen = () => {
+}, onDelete = () => {
 } }) {
   const allEvents = lsGet("events", []);
   const ev = allEvents.find((e) => e.id === eventId);
@@ -12578,6 +12581,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
   const [asGeneralTask, setAsGeneralTask] = useState(false);
   const [notes, setNotes] = useState("");
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [completeSessionPrompt, setCompleteSessionPrompt] = useState(false);
   const [examSwitchAwayConfirm, setExamSwitchAwayConfirm] = useState(false);
   const [projectSwitchAwayConfirm, setProjectSwitchAwayConfirm] = useState(false);
@@ -12934,7 +12938,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
       title: "Edit task",
       sub: "Update this task's details.",
       width: 580,
-      footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: onClose }, "Cancel"), ev.status !== "done" && isTimerEligible(ev) && /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => {
+      footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => setDeleteConfirmOpen(true) }, "Delete"), /* @__PURE__ */ React.createElement("div", { style: { flex: 1 } }), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: onClose }, "Cancel"), ev.status !== "done" && isTimerEligible(ev) && /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => {
         if (window._setTimerTask) window._setTimerTask(ev);
         onClose();
       } }, "Begin"), /* @__PURE__ */ React.createElement(Btn, { onClick: save, disabled: !title.trim(), style: { opacity: title.trim() ? 1 : 0.45 } }, "Save changes"))
@@ -13047,6 +13051,21 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
       sub: "The due date stays on your calendar. Only the scheduled study time Studlin added for it gets removed. Sessions you've already completed stay put.",
       width: 420,
       footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setCancelConfirmOpen(false) }, "Never mind"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: confirmCancelSessions }, "Cancel " + linkedSessions.filter((s) => s.status === "pending").length + " session" + (linkedSessions.filter((s) => s.status === "pending").length !== 1 ? "s" : "")))
+    },
+    /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text } }, ev.title)
+  ), /* @__PURE__ */ React.createElement(
+    Modal,
+    {
+      open: deleteConfirmOpen,
+      onClose: () => setDeleteConfirmOpen(false),
+      title: "Delete this?",
+      sub: "You can undo this for a few seconds right after.",
+      width: 420,
+      footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setDeleteConfirmOpen(false) }, "Never mind"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => {
+        setDeleteConfirmOpen(false);
+        onDelete(ev);
+        onClose();
+      } }, "Delete"))
     },
     /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text } }, ev.title)
   ), /* @__PURE__ */ React.createElement(
@@ -18644,6 +18663,27 @@ function App() {
   };
   const [rescheduleTask, setRescheduleTask] = useState(null);
   const [dashToast, setDashToast] = useState("");
+  const [eventDeleteUndoSnapshot, setEventDeleteUndoSnapshot] = useState(null);
+  const [eventDeleteUndoToast, setEventDeleteUndoToast] = useState("");
+  const deleteEventFromDetail = (ev) => {
+    const next = lsGet("events", []).filter((e) => e.id !== ev.id);
+    lsSet("events", next);
+    if (calendarSetEventsRef.current) calendarSetEventsRef.current(next);
+    setEventDeleteUndoSnapshot(ev);
+    setEventDeleteUndoToast(`Deleted "${ev.title}"`);
+    setTimeout(() => {
+      setEventDeleteUndoToast("");
+      setEventDeleteUndoSnapshot(null);
+    }, 5e3);
+  };
+  const undoEventDeleteFromDetail = () => {
+    if (!eventDeleteUndoSnapshot) return;
+    const next = [...lsGet("events", []), eventDeleteUndoSnapshot];
+    lsSet("events", next);
+    if (calendarSetEventsRef.current) calendarSetEventsRef.current(next);
+    setEventDeleteUndoSnapshot(null);
+    setEventDeleteUndoToast("");
+  };
   const [detailEventId, setDetailEventId] = useState(null);
   const calendarSetEventsRef = useRef(null);
   const calendarSkipSetEventsRef = useRef(null);
@@ -19116,10 +19156,11 @@ function App() {
         setDashToast(msg);
         setTimeout(() => setDashToast(""), 2800);
       },
+      onDelete: deleteEventFromDetail,
       setActive,
       setPricingOpen
     }
-  ), prepAttackSlotPicker && /* @__PURE__ */ React.createElement(
+  ), eventDeleteUndoToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 1001, background: T.card, border: `1px solid ${T.border}`, color: T.white, fontSize: 12.5, fontWeight: 600, padding: "10px 16px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("span", null, eventDeleteUndoToast), /* @__PURE__ */ React.createElement("button", { onClick: undoEventDeleteFromDetail, style: { background: "none", border: "none", color: T.lime, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: T.font, textDecoration: "underline", padding: 0 } }, "Undo")), prepAttackSlotPicker && /* @__PURE__ */ React.createElement(
     NewSlotPickerModal,
     {
       title: "Choose when to start",

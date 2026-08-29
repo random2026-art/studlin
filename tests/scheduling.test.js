@@ -477,6 +477,28 @@ describe("buildSyllabusEventBatch / commitSyllabusEvents (Class Setup Wizard's e
     assert.equal(examSessionEvents.length, 0, "no fresh sessions should be built for a marker that was skipped as a duplicate");
   });
 
+  // 2026-08-28: live report -- a syllabus scan titled a real exam
+  // "Midterm 1", the same class's Canvas feed titled the identical exam
+  // "Midterm Exam 1". The exact-string dedup above never recognized these
+  // as the same thing, so both landed on the calendar as confusingly
+  // similar duplicates. normalizeExamTitleForDedup fixes this by
+  // stripping only the generic qualifier word "exam" before comparing.
+  test("a re-scanned syllabus titling an exam 'Midterm 1' is recognized as the same exam Canvas already added as 'Midterm Exam 1'", () => {
+    const { buildSyllabusEventBatch, getWeeklyRoutine, getSchedulePreferences } = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const examItem = syllabusItem({ title: "Midterm 1", date: "2026-08-09", kind: "exam", proposeSessions: false, examWeight: "major" });
+    const existingExam = { id: "canvas-old-0", title: "Midterm Exam 1", date: "2026-08-09", subject: "Chemistry", kind: "exam", status: "pending" };
+    const { markerEvents } = buildSyllabusEventBatch([existingExam], "wiz-dup3", "Chemistry", [examItem], null, getWeeklyRoutine(), getSchedulePreferences());
+    assert.equal(markerEvents.length, 0, "'Midterm 1' and 'Midterm Exam 1' must be recognized as the same real exam");
+  });
+
+  test("genuinely different exams that happen to share a qualifier word never collapse into each other", () => {
+    const { buildSyllabusEventBatch, getWeeklyRoutine, getSchedulePreferences } = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const examItem = syllabusItem({ title: "Midterm 2", date: "2026-08-09", kind: "exam", proposeSessions: false, examWeight: "major" });
+    const existingExam = { id: "canvas-old-1", title: "Midterm Exam 1", date: "2026-08-09", subject: "Chemistry", kind: "exam", status: "pending" };
+    const { markerEvents } = buildSyllabusEventBatch([existingExam], "wiz-dup4", "Chemistry", [examItem], null, getWeeklyRoutine(), getSchedulePreferences());
+    assert.equal(markerEvents.length, 1, "'Midterm 1' and 'Midterm 2' are genuinely different exams and must both exist");
+  });
+
   test("an exam item carrying examType/importanceLevel/gradeWeightPercent (from syllabus extraction or the review screen) passes through onto the committed marker", () => {
     const { buildSyllabusEventBatch, getWeeklyRoutine, getSchedulePreferences } = loadStudlinModule({ now: "2026-07-20T09:00:00" });
     const examItem = syllabusItem({ title: "Final Exam", date: "2026-08-09", kind: "exam", proposeSessions: false, examWeight: "major", examType: "final", importanceLevel: "critical", gradeWeightPercent: 30 });

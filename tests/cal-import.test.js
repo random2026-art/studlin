@@ -816,6 +816,28 @@ describe("mergeImportedEvents order-independent dedup (regression: connecting Ca
     const second = mergeImportedEvents(first, "sub-1", fetched);
     assert.equal(second.length, 1);
   });
+
+  // 2026-08-28: live report -- a syllabus scan titled a real exam
+  // "Midterm 1", Canvas titled the identical exam "Midterm Exam 1" --
+  // neither matched the other under the old exact-string check, so both
+  // landed on the calendar as confusingly similar duplicates.
+  test("a syllabus-scanned 'Midterm 1' is recognized as the same exam Canvas reports as 'Midterm Exam 1'", () => {
+    const { mergeImportedEvents } = loadStudlinModule();
+    const alreadyThere = { id: "syl-1", title: "Midterm 1", date: "2026-08-05", time: "09:00", duration: 50, kind: "exam", status: "pending" };
+    const classifications = { u1: { kind: "exam", subject: "Physics", examWeight: "major" } };
+    const fetched = [{ uid: "u1", title: "Midterm Exam 1", date: "2026-08-05", time: "09:00", duration: 50 }];
+    const result = mergeImportedEvents([alreadyThere], "sub-1", fetched, classifications);
+    assert.equal(result.length, 1, "'Midterm 1' and 'Midterm Exam 1' must be recognized as the same real exam");
+  });
+
+  test("'Midterm 1' and 'Midterm 2' never collapse into each other -- only the generic qualifier word is stripped, not the distinguishing number", () => {
+    const { mergeImportedEvents } = loadStudlinModule();
+    const alreadyThere = { id: "syl-1", title: "Midterm 1", date: "2026-08-05", time: "09:00", duration: 50, kind: "exam", status: "pending" };
+    const classifications = { u1: { kind: "exam", subject: "Physics", examWeight: "major" } };
+    const fetched = [{ uid: "u1", title: "Midterm Exam 2", date: "2026-08-05", time: "09:00", duration: 50 }];
+    const result = mergeImportedEvents([alreadyThere], "sub-1", fetched, classifications);
+    assert.equal(result.length, 2, "these are genuinely different exams and must both exist");
+  });
 });
 
 describe("mergeImportedEvents classified projects (regression: a 'project' classification used to collapse to a plain deadline, never actually qualifying as a real Project)", () => {

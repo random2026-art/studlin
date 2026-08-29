@@ -887,6 +887,19 @@ function normalizeCourseLabel(label){
   if(ROMAN_TO_ARABIC[last])words[words.length-1]=ROMAN_TO_ARABIC[last];
   return words.join(" ");
 }
+// Live report: a syllabus scan titled a real exam "Midterm 1"; the same
+// class's Canvas feed titled the SAME real exam "Midterm Exam 1" -- an
+// exact-string dedup check (both the syllabus-batch and calendar-import
+// dedup checks below used one) never recognized these as the same thing,
+// so both landed on the calendar as separate, confusingly-similar items.
+// Strips only the literal word "exam" as a generic qualifier -- NOT
+// "quiz"/"test", which name genuinely different assessment types that can
+// legitimately coexist on the same day -- so "Midterm 1" and "Midterm Exam
+// 1" collapse to the same normalized string, while "Quiz 2" and "Test 2"
+// (or "Midterm 1" and "Midterm 2") stay correctly distinct.
+function normalizeExamTitleForDedup(title){
+  return (title||"").trim().toLowerCase().replace(/\bexam\b/g,"").replace(/\s+/g," ").trim();
+}
 const courseIdForLabelFuzzy=(label)=>{
   if(!label)return null;
   const subjects=getSubjects();
@@ -1820,8 +1833,10 @@ function mergeImportedEvents(existingEvents,subId,fetchedEvents,classifications)
   // ("General") can genuinely differ from a syllabus scan's real subject
   // for the identical item, which would otherwise defeat the whole point
   // of this check).
-  const dupNorm=t=>(t||"").trim().toLowerCase();
-  const isAlreadyPresent=(title,date,kind)=>existingEvents.some(ev=>ev.title&&dupNorm(ev.title)===dupNorm(title)&&ev.date===date&&ev.kind===kind);
+  // normalizeExamTitleForDedup (not a bare .trim().toLowerCase()) so a
+  // syllabus's "Midterm 1" and Canvas's own "Midterm Exam 1" for the same
+  // real exam are recognized as the same item -- see its own comment.
+  const isAlreadyPresent=(title,date,kind)=>existingEvents.some(ev=>ev.title&&normalizeExamTitleForDedup(ev.title)===normalizeExamTitleForDedup(title)&&ev.date===date&&ev.kind===kind);
   const added=fetchedEvents.filter(e=>e.uid&&!keptUids.has(e.uid)).map(e=>{
     const c=classifications&&classifications[e.uid];
     // "assignment"/"project" become Studlin's existing "deadline" kind --
@@ -14390,7 +14405,11 @@ function buildSyllabusEventBatch(existing,noteId,tag,items,sourceMaterial,routin
   // just skip a duplicate index rather than each re-deriving this.
   const normKind=it=>it.kind==="exam"?"exam":"deadline";
   const tagNorm=normalizeCourseLabel(tag);
-  const isDuplicate=items.map(it=>existing.some(e=>e.title&&it.title&&e.title.trim().toLowerCase()===it.title.trim().toLowerCase()&&normalizeCourseLabel(e.subject)===tagNorm&&e.date===(it.date||"")&&e.kind===normKind(it)));
+  // normalizeExamTitleForDedup (not a bare .trim().toLowerCase()) so a
+  // re-scanned syllabus's "Midterm 1" is recognized as the same exam a
+  // prior Canvas sync already added as "Midterm Exam 1" -- see its own
+  // comment for why only the word "exam" is stripped, not "quiz"/"test".
+  const isDuplicate=items.map(it=>existing.some(e=>e.title&&it.title&&normalizeExamTitleForDedup(e.title)===normalizeExamTitleForDedup(it.title)&&normalizeCourseLabel(e.subject)===tagNorm&&e.date===(it.date||"")&&e.kind===normKind(it)));
   const markerEvents=items.map((it,i)=>{
     const syllabusSeed=it.detail&&it.detail.trim()
       ?[{name:"From your syllabus",text:it.detail.trim()}]
@@ -20518,7 +20537,7 @@ function NewSlotPickerModal({title,sub,candidates,onConfirm,onClose,onManual,con
 // CalendarTab) decides once what "persist" means for it, instead of six
 // different inline lsSet calls each needing to remember to also sync
 // whatever local state that caller happens to hold.
-function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOpen=()=>{}}){
+function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOpen=()=>{},onDelete=()=>{}}){
   const allEvents=lsGet("events",[]);
   const ev=allEvents.find(e=>e.id===eventId);
   const routines=getWeeklyRoutine();
@@ -20556,6 +20575,16 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   const [asGeneralTask,setAsGeneralTask]=useState(false);
   const [notes,setNotes]=useState("");
   const [cancelConfirmOpen,setCancelConfirmOpen]=useState(false);
+  // Real gap found live: this modal had no way to delete the item it was
+  // showing at all -- a student who opened an exam/task to remove it (a
+  // duplicate from two different import sources, say) had to close this,
+  // go find the right day on the calendar, and delete it from there
+  // instead. Same confirm-before-destructive-action pattern this modal's
+  // other confirms already use (cancelConfirmOpen above); the actual
+  // undo-backed delete itself is the caller's job (onDelete), same as
+  // every other persist decision this modal hands off via commit/onDelete
+  // rather than owning storage directly.
+  const [deleteConfirmOpen,setDeleteConfirmOpen]=useState(false);
   const [completeSessionPrompt,setCompleteSessionPrompt]=useState(false);
   // Type-switch data-safety confirms (see onTypeChange/save/finishSave
   // below) -- switching the Type away from Exam when there's real linked
@@ -20957,6 +20986,8 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   return (<>
     <Modal open={true} onClose={onClose} title="Edit task" sub="Update this task's details." width={580}
       footer={<>
+        <Btn variant="danger" onClick={()=>setDeleteConfirmOpen(true)}>Delete</Btn>
+        <div style={{flex:1}}/>
         <Btn variant="subtle" onClick={onClose}>Cancel</Btn>
         {/* Phase 10a: same window._setTimerTask/isTimerEligible bridge
             every other Begin button in the app already uses. */}
@@ -21282,6 +21313,16 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
     </Modal>
     <Modal open={cancelConfirmOpen} onClose={()=>setCancelConfirmOpen(false)} title="Cancel prep sessions?" sub="The due date stays on your calendar. Only the scheduled study time Studlin added for it gets removed. Sessions you've already completed stay put." width={420}
       footer={<><Btn variant="subtle" onClick={()=>setCancelConfirmOpen(false)}>Never mind</Btn><Btn variant="danger" onClick={confirmCancelSessions}>{"Cancel "+linkedSessions.filter(s=>s.status==="pending").length+" session"+(linkedSessions.filter(s=>s.status==="pending").length!==1?"s":"")}</Btn></>}>
+      <div style={{fontSize:13,color:T.text}}>{ev.title}</div>
+    </Modal>
+    {/* Real gap found live: no way to delete the item this modal was
+        showing at all -- reachable from every entry point that opens this
+        shared modal (Dashboard, Calendar's Upcoming panel), not just the
+        calendar grid's own separate delete button. onDelete owns the
+        actual undo-backed removal (see its callers); this only confirms
+        the intent, same pattern as the other destructive confirms above. */}
+    <Modal open={deleteConfirmOpen} onClose={()=>setDeleteConfirmOpen(false)} title="Delete this?" sub="You can undo this for a few seconds right after." width={420}
+      footer={<><Btn variant="subtle" onClick={()=>setDeleteConfirmOpen(false)}>Never mind</Btn><Btn variant="danger" onClick={()=>{setDeleteConfirmOpen(false);onDelete(ev);onClose();}}>Delete</Btn></>}>
       <div style={{fontSize:13,color:T.text}}>{ev.title}</div>
     </Modal>
     {/* ── Type-switch data-safety confirms -- see save()/finishSave for why
@@ -30458,6 +30499,27 @@ function App() {
   // sibling of [data-page] fixes that.
   const [rescheduleTask,setRescheduleTask]=useState(null);
   const [dashToast,setDashToast]=useState("");
+  // Backs EventDetailModal's new Delete button (see its own comment) --
+  // same snapshot-and-toast-with-Undo shape CalendarTab's own
+  // deleteEventWithUndo already uses for its grid/day-detail delete
+  // buttons, kept as its own App-level copy since App and CalendarTab
+  // don't share component state; both ultimately write through the same
+  // lsSet("events",...) + calendarSetEventsRef sync either way.
+  const [eventDeleteUndoSnapshot,setEventDeleteUndoSnapshot]=useState(null);
+  const [eventDeleteUndoToast,setEventDeleteUndoToast]=useState("");
+  const deleteEventFromDetail=(ev)=>{
+    const next=lsGet("events",[]).filter(e=>e.id!==ev.id);
+    lsSet("events",next);if(calendarSetEventsRef.current)calendarSetEventsRef.current(next);
+    setEventDeleteUndoSnapshot(ev);
+    setEventDeleteUndoToast(`Deleted "${ev.title}"`);
+    setTimeout(()=>{setEventDeleteUndoToast("");setEventDeleteUndoSnapshot(null);},5000);
+  };
+  const undoEventDeleteFromDetail=()=>{
+    if(!eventDeleteUndoSnapshot)return;
+    const next=[...lsGet("events",[]),eventDeleteUndoSnapshot];
+    lsSet("events",next);if(calendarSetEventsRef.current)calendarSetEventsRef.current(next);
+    setEventDeleteUndoSnapshot(null);setEventDeleteUndoToast("");
+  };
   // EventDetailModal -- same true-sibling-of-[data-page] treatment as
   // rescheduleTask above, and for the same reason: it's how Dashboard
   // reaches the same full detail/edit surface Calendar's grid already
@@ -31273,7 +31335,14 @@ function App() {
         <EventDetailModal eventId={detailEventId} onClose={()=>setDetailEventId(null)}
           commit={(next)=>{lsSet("events",next);if(calendarSetEventsRef.current)calendarSetEventsRef.current(next);}}
           onToast={(msg)=>{setDashToast(msg);setTimeout(()=>setDashToast(""),2800);}}
+          onDelete={deleteEventFromDetail}
           setActive={setActive} setPricingOpen={setPricingOpen} />
+      )}
+      {eventDeleteUndoToast&&(
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:1001,background:T.card,border:`1px solid ${T.border}`,color:T.white,fontSize:12.5,fontWeight:600,padding:"10px 16px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:12}}>
+          <span>{eventDeleteUndoToast}</span>
+          <button onClick={undoEventDeleteFromDetail} style={{background:"none",border:"none",color:T.lime,fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:T.font,textDecoration:"underline",padding:0}}>Undo</button>
+        </div>
       )}
       {/* Actionable-window prep prompt's own multi-option picker -- see
           acceptPrepPrompt's own comment. True sibling of [data-page], same
