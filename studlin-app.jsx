@@ -26229,7 +26229,15 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                     <Input value={it.title} onChange={ev=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,title:ev.target.value}:x)}))} style={{flex:1}} />
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                    <SelectChip options={[{value:"study",label:"Study Session"},{value:"todo",label:"To-Do"},{value:"event",label:"Event"},{value:"exam",label:"Exam"},{value:"project",label:"Project"},{value:"reminder",label:"Reminder"},{value:"unavailable",label:"Vacation/Break"}]} value={it.kind} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v,proposeSessions:false,sessionCount:x.sessionCount||4}:x)}))} />
+                    {/* "Event" relabeled "Activity" (2026-09-01) -- it was
+                        never a distinct concept from Add Task/Edit's own
+                        "Activity" chip, just a differently-worded label for
+                        the exact same kind:"busy block" result
+                        (planBrainDumpTasks builds it identically either
+                        way; only this display label changed). "To-Do"
+                        recased to "To-do" to match EventDetailModal's own
+                        Type chip exactly, same underlying concept. */}
+                    <SelectChip options={[{value:"study",label:"Study Session"},{value:"todo",label:"To-do"},{value:"event",label:"Activity"},{value:"exam",label:"Exam"},{value:"project",label:"Project"},{value:"reminder",label:"Reminder"},{value:"unavailable",label:"Vacation/Break"}]} value={it.kind} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v,proposeSessions:false,sessionCount:x.sessionCount||4}:x)}))} />
                     {it.kind==="project"&&(
                       <Input type="date" value={it.dueDate} onChange={ev=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,dueDate:ev.target.value}:x)}))} style={{width:138}} />
                     )}
