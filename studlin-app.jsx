@@ -24596,10 +24596,17 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // deadline-kind items (assignments + projects, no date floor so an
     // overdue-but-still-pending item keeps showing, arguably the most
     // important thing to surface) plus exam-kind items that haven't
-    // happened yet. !e.checklist excludes a project's own sub-checklist
-    // rows, which aren't top-level due items themselves.
+    // happened yet. (!e.checklist||e.subject) is the same carve-out
+    // upcomingAssignments/upcomingProjects use (studlin-app.jsx:6016-6020):
+    // a class-linked due-date-only item (checklist:true with a real
+    // subject -- a syllabus scan, or a manually-tagged due-date-only
+    // assignment) still belongs here even though it has no scheduled
+    // time; only a subject-less plain to-do (Dashboard's own Checklist
+    // card quick-add) is excluded. Plain !e.checklist used to drop the
+    // class-linked case too, so a due-date-only assignment could show in
+    // Prep's class view but silently vanish from this sidebar.
     return events
-      .filter(e=>e.status!=="done"&&e.date&&!e.checklist&&matches(e)&&(e.kind==="deadline"||(e.kind==="exam"&&e.date>=todayK)))
+      .filter(e=>e.status!=="done"&&e.date&&(!e.checklist||e.subject)&&matches(e)&&(e.kind==="deadline"||(e.kind==="exam"&&e.date>=todayK)))
       .sort((a,b)=>a.date===b.date?(a.time||"").localeCompare(b.time||""):a.date.localeCompare(b.date))
       .slice(0,20);
   })();
