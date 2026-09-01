@@ -20934,7 +20934,20 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
     const updated=allEvents.map(e=>{
       if(e.id!==ev.id)return e;
       if(attackPair)return attackPair.marker;
-      const merged={...e,title:title.trim(),date,time,duration,deadline:deadline||null,priority,difficulty,subject,courseId:courseIdForLabel(subject),kind,notes,checklist:asChecklist,isGeneralTask:asGeneralTask||undefined,...(timeChanged?{userPinned:true}:{}),
+      // asChecklist (To-do) forces time/duration back to the genuinely-
+      // timeless shape saveChecklistItem/planBrainDumpTasks both already
+      // produce -- this used to write whatever stale time/duration
+      // happened to be sitting in state regardless of checklist:true, a
+      // real confirmed bug (a "due date only" item silently carrying a
+      // real scheduled time/duration). deadline mirrors the single Due
+      // date field shown for To-do (the separate Deadline field is hidden
+      // in that mode -- see its own comment above) rather than an
+      // untouched, possibly stale deadline value.
+      const merged={...e,title:title.trim(),date,
+        time:asChecklist?"":time,
+        duration:asChecklist?0:duration,
+        deadline:asChecklist?(date||null):(deadline||null),
+        priority,difficulty,subject,courseId:courseIdForLabel(subject),kind,notes,checklist:asChecklist,isGeneralTask:asGeneralTask||undefined,...(timeChanged?{userPinned:true}:{}),
         ...(kind==="exam"?{sourceMaterials:examPlan.materialFiles,referenceLinks:examPlan.materialLinks}:{}),
         ...projectFieldPatch,
         ...examFieldPatch.patch,
@@ -21086,19 +21099,36 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
         <Btn onClick={save} disabled={!title.trim()} style={{opacity:title.trim()?1:0.45}}>Save changes</Btn>
       </>}>
       <Field label="Title"><Input value={title} onChange={e=>setTitle(e.target.value)} autoFocus /></Field>
-      {/* Labels only, values unchanged -- Add Task now says "Assignment/
-          Activity" instead of "study block/busy block", so this matched
-          the same real kind values to less confusing, consistent wording
-          rather than leaving Edit Task speaking a different vocabulary
-          for the exact same underlying data. "study block" and "deadline"
-          stay two separate picks here (not one merged "Assignment" the
-          way Add Task infers it) since this modal edits an existing
-          real kind directly, not a type that resolves to one at save time. */}
-      <Field label="Type"><SelectChip options={[{value:"study block",label:"Assignment (scheduled)"},{value:"deadline",label:"Assignment (due date)"},{value:"task",label:"Task"},{value:"project",label:"Project"},{value:"todo",label:"To-do"},"exam","class","reminder",{value:"busy block",label:"Activity"}]} value={typeChoice} onChange={onTypeChange} /></Field>
+      {/* Labels only, values unchanged. "Assignment (scheduled)"/
+          "Assignment (due date)" (pre-2026-09-01) were exactly the
+          confusing jargon a real user called out by name -- and "(due
+          date)" was actively misleading besides: that chip (kind:"deadline",
+          checklist:false) is a real AI-scheduled assignment with its own
+          duration, NOT a due-date-only item (that's the separate "To-do"
+          chip, checklist:true). Relabeled to match Add Task's own
+          established wording for the identical concepts: "Study Session"
+          for a manually-scheduled block, plain "Assignment" for an
+          AI-placed one -- same two words Add Task and Brain Dump both
+          already use. "study block" and "deadline" stay two separate
+          picks here (not one merged "Assignment" the way Add Task infers
+          it) since this modal edits an existing real kind directly, not a
+          type that resolves to one at save time. */}
+      <Field label="Type"><SelectChip options={[{value:"study block",label:"Study Session"},{value:"deadline",label:"Assignment"},{value:"task",label:"Task"},{value:"project",label:"Project"},{value:"todo",label:"To-do"},"exam","class","reminder",{value:"busy block",label:"Activity"}]} value={typeChoice} onChange={onTypeChange} /></Field>
       <Field label="Subject"><SelectChip options={SUBJ} value={subject} onChange={setSubject} /></Field>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-        <Field label="Scheduled date"><Input type="date" value={date} onChange={e=>{setDate(e.target.value);setDeadlineErr("");}} /></Field>
-        <Field label={kind==="reminder"?"Reminder time":"Start time"}><BoxedTimeInput value={time} onChange={setTime} /></Field>
+      {/* A To-do (asChecklist) has no scheduled work time at all -- only a
+          due date, same as Add Task's own checklist-mode shape. Used to
+          show Scheduled date + Start time here regardless, and the save
+          merge below wrote whatever stale time/duration happened to be in
+          state onto the record anyway, alongside checklist:true -- a real,
+          confirmed bug (a "due date only" item silently carrying a real
+          time/duration, contradicting checklist:true's own meaning and
+          isDuePill's assumptions). Fixed here by hiding Start time
+          entirely and relabeling to match Add Task's own "Due date
+          (optional)" wording; the merge fix that actually zeroes
+          time/duration lives in save() below. */}
+      <div style={{display:"grid",gridTemplateColumns:asChecklist?"1fr":"1fr 1fr",gap:12}}>
+        <Field label={asChecklist?"Due date (optional)":"Scheduled date"}><Input type="date" value={date} onChange={e=>{setDate(e.target.value);setDeadlineErr("");}} /></Field>
+        {!asChecklist&&<Field label={kind==="reminder"?"Reminder time":"Start time"}><BoxedTimeInput value={time} onChange={setTime} /></Field>}
       </div>
       {ev.userPinned&&(
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px",marginBottom:14,fontSize:12,color:T.muted}}>
@@ -21360,10 +21390,10 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
         )}
       </>)}
       {deadlineErr&&<div style={{fontSize:12,color:T.red,marginTop:-8,marginBottom:14}}>{deadlineErr}</div>}
-      {kind!=="reminder"&&(
+      {kind!=="reminder"&&!asChecklist&&(
         <Field label="Duration (minutes)"><NumField min={5} max={480} fallback={5} value={duration} onChange={setDuration} /></Field>
       )}
-      {kind!=="exam"&&kind!=="class"&&kind!=="reminder"&&(
+      {kind!=="exam"&&kind!=="class"&&kind!=="reminder"&&!asChecklist&&(
         <>
           <Field label="Deadline" hint="When this must be done by"><Input type="date" value={deadline} onChange={e=>{setDeadline(e.target.value);setDeadlineErr("");}} /></Field>
           {moreOpen ? (
