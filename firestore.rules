@@ -9,12 +9,20 @@ service cloud.firestore {
     // client sets directly from InitWizard — anything else (credits, plan,
     // email...) is rejected even if a client tries to sneak it into the
     // same update, because affectedKeys() must be a subset of this list.
+    // freeScheduleScanUsed/freeSyllabusScanUsed (ClassSetupWizard's one-
+    // free-onboarding-scan flags) additionally may only ever be written as
+    // true, never false -- affectedKeys() alone would otherwise let a
+    // client reset its own "already used" flag back to false and keep
+    // re-spending the freebie, unlike the other allowlisted fields here
+    // where an arbitrary client-chosen value is fine.
     match /users/{userId} {
       allow read: if false;
       allow write: if request.auth != null
         && request.auth.uid == userId
         && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['status','affiliation','school','workStartTime','workEndTime','bedtime','bedtimeGuardEnabled','difficultyPreference','taskDifficultyPreference','bufferMarginStrategy','onboarded','onboardedAt','updatedAt','preferences','fcmTokens']);
+             .hasOnly(['status','affiliation','school','workStartTime','workEndTime','bedtime','bedtimeGuardEnabled','difficultyPreference','taskDifficultyPreference','bufferMarginStrategy','onboarded','onboardedAt','updatedAt','preferences','fcmTokens','freeScheduleScanUsed','freeSyllabusScanUsed'])
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['freeScheduleScanUsed']) || request.resource.data.freeScheduleScanUsed == true)
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['freeSyllabusScanUsed']) || request.resource.data.freeSyllabusScanUsed == true);
 
       // Personal-content migration (events/notes/decks/timerLogs/
       // practiceExams -- see DataStore module; essays and lectures were

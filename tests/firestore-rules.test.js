@@ -142,6 +142,22 @@ test('regression: users/{uid} write allowlist still rejects credits/plan tamperi
   await assertSucceeds(dbA.collection('users').doc(USER_A).set({ onboarded: true }, { merge: true }));
 });
 
+test('regression: freeScheduleScanUsed/freeSyllabusScanUsed can only ever be set to true, never reset to false', async () => {
+  // Same onboarding-free-scan-once flags ClassSetupWizard's
+  // canFreeOnboardingScan/markFreeScanUsed write directly from the client
+  // -- allowlisted by key name like `onboarded`, but additionally value-
+  // constrained (see the rule's own comment) so a client can't reset its
+  // own "already used" flag back to false and re-spend the freebie.
+  await testEnv.withSecurityRulesDisabled((ctx) =>
+    ctx.firestore().collection('users').doc(USER_A).set({ plan: 'Free', credits: 120 })
+  );
+  const dbA = testEnv.authenticatedContext(USER_A).firestore();
+  await assertSucceeds(dbA.collection('users').doc(USER_A).set({ freeScheduleScanUsed: true }, { merge: true }));
+  await assertSucceeds(dbA.collection('users').doc(USER_A).set({ freeSyllabusScanUsed: true }, { merge: true }));
+  await assertFails(dbA.collection('users').doc(USER_A).set({ freeScheduleScanUsed: false }, { merge: true }));
+  await assertFails(dbA.collection('users').doc(USER_A).set({ freeSyllabusScanUsed: false }, { merge: true }));
+});
+
 test('regression: friendships only readable by the two parties involved', async () => {
   await testEnv.withSecurityRulesDisabled((ctx) =>
     ctx.firestore().collection('friendships').doc('f1')

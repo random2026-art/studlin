@@ -4909,6 +4909,13 @@ const diffLabel=(v)=>{const p=v/10;return p<=20?"Very Easy":p<=40?"Easy":p<=60?"
 async function getAuthToken(){try{const u=firebase.auth().currentUser;if(!u)return null;return await u.getIdToken();}catch(e){return null;}}
 async function authFetch(url,opts={}){try{const token=await getAuthToken();const h=Object.assign({},opts.headers||{});if(token)h["Authorization"]="Bearer "+token;return fetch(url,Object.assign({},opts,{headers:h}));}catch(e){return fetch(url,opts);}}
 async function fetchUserProfile(){try{const res=await authFetch("/api/me");if(!res.ok)return null;const d=await res.json();lsSet("credits",d.credits);lsSet("plan",d.plan||"Free");["stripeSubscriptionId","subscriptionStatus","subscriptionInterval","subscriptionCancelAtPeriodEnd","subscriptionCurrentPeriodEnd","subscriptionEndsAt","betaTrialExpiresAt","referralTrialExpiresAt"].forEach(k=>lsSet(k,d[k]===undefined?null:d[k]));
+  // Onboarding's one-free-schedule-scan/one-free-syllabus-scan flags (see
+  // ClassSetupWizard's canFreeOnboardingScan) -- only ever upgrades
+  // false->true here, same reasoning as "onboarded" just below: a slow/
+  // failed write to these from another device shouldn't un-spend a freebie
+  // this browser already correctly marked used.
+  if(d.freeScheduleScanUsed)lsSet("freeScheduleScanUsed",true);
+  if(d.freeSyllabusScanUsed)lsSet("freeSyllabusScanUsed",true);
   // "onboarded" otherwise lives only in this browser's localStorage, so a
   // fresh browser/Incognito window/device makes an already-onboarded account
   // repeat the wizard. Only ever upgrades false->true here, never the
@@ -18435,11 +18442,29 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   };
 
   const IMAGE_EXT_MEDIA_TYPES={png:"image/png",jpg:"image/jpeg",jpeg:"image/jpeg",webp:"image/webp",gif:"image/gif"};
+  // Onboarding gets exactly one free schedule scan and one free syllabus
+  // scan even on the Free plan -- canScanScreenshot/canScanSyllabus below
+  // are otherwise Pro-only (the 2026-08-18 pricing pass moved every AI-cost
+  // feature to zero free access). Never applies to the quickScan reuse of
+  // this same wizard ("add another class" / "Set up next term" later --
+  // see the quickScan prop), only the true first-run instance. The
+  // Firestore write-allowlist (firestore.rules, same mechanism the
+  // "onboarded" flag already uses) is what actually enforces "only once"
+  // durably across devices; markFreeScanUsed just persists it the moment
+  // the freebie is actually spent, mirroring locally too so a second scan
+  // in the same session can't slip through before the write lands.
+  const FREE_SCAN_FLAG={schedule:"freeScheduleScanUsed",syllabus:"freeSyllabusScanUsed"};
+  const canFreeOnboardingScan=(kind)=>!quickScan&&!lsGet(FREE_SCAN_FLAG[kind],false);
+  const markFreeScanUsed=(kind)=>{
+    lsSet(FREE_SCAN_FLAG[kind],true);
+    const u=firebase.auth().currentUser;
+    if(u)fsdb().collection('users').doc(u.uid).set({[FREE_SCAN_FLAG[kind]]:true,updatedAt:new Date().toISOString()},{merge:true}).catch(()=>{});
+  };
   const handleScanFile=async(e)=>{
     const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";
     const ext=file.name.split(".").pop().toLowerCase();
-    if(IMAGE_EXT_MEDIA_TYPES[ext]){if(!canScanScreenshot()){setPricingOpen(canScanScreenshotReason()==="free-tier"?"screenshotScan":"aiUsageCap");return;}}
-    else{if(!canScanSyllabus()){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}}
+    if(IMAGE_EXT_MEDIA_TYPES[ext]){if(!canScanScreenshot()&&!canFreeOnboardingScan("syllabus")){setPricingOpen(canScanScreenshotReason()==="free-tier"?"screenshotScan":"aiUsageCap");return;}}
+    else{if(!canScanSyllabus()&&!canFreeOnboardingScan("syllabus")){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}}
     setScanning(true);setScanError("");
     try{
       if(IMAGE_EXT_MEDIA_TYPES[ext]){
@@ -18447,6 +18472,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
         const base64=(dataUrl.split(",")[1])||"";
         const result=await extractClassSyllabusImage(base64,IMAGE_EXT_MEDIA_TYPES[ext]);
         if(result.error){setScanError(result.error);return;}
+        if(!canScanScreenshot())markFreeScanUsed("syllabus");
         recordScreenshotScan();
         buildReviewFromExtraction(result);
         return;
@@ -18469,6 +18495,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
       }
       const result=await extractClassSyllabusText(text);
       if(result.error){setScanError(result.error);return;}
+      if(!canScanSyllabus())markFreeScanUsed("syllabus");
       recordSyllabusScan();
       buildReviewFromExtraction(result,text);
     }catch(err){setScanError("Couldn't read that file: "+err.message);}
@@ -18477,11 +18504,12 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
 
   const handlePasteScan=async()=>{
     if(!pasteText.trim())return;
-    if(!canScanSyllabus()){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}
+    if(!canScanSyllabus()&&!canFreeOnboardingScan("syllabus")){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}
     setScanning(true);setScanError("");
     try{
       const result=await extractClassSyllabusText(pasteText);
       if(result.error){setScanError(result.error);return;}
+      if(!canScanSyllabus())markFreeScanUsed("syllabus");
       recordSyllabusScan();
       buildReviewFromExtraction(result,pasteText);
     }catch(err){setScanError("Couldn't read that text: "+err.message);}
@@ -18529,8 +18557,8 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   const handleCollegeScheduleFile=async(e)=>{
     const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";
     const ext=file.name.split(".").pop().toLowerCase();
-    if(IMAGE_EXT_MEDIA_TYPES[ext]){if(!canScanScreenshot()){setPricingOpen(canScanScreenshotReason()==="free-tier"?"screenshotScan":"aiUsageCap");return;}}
-    else{if(!canScanSyllabus()){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}}
+    if(IMAGE_EXT_MEDIA_TYPES[ext]){if(!canScanScreenshot()&&!canFreeOnboardingScan("schedule")){setPricingOpen(canScanScreenshotReason()==="free-tier"?"screenshotScan":"aiUsageCap");return;}}
+    else{if(!canScanSyllabus()&&!canFreeOnboardingScan("schedule")){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}}
     setScanning(true);setScanError("");
     try{
       if(IMAGE_EXT_MEDIA_TYPES[ext]){
@@ -18538,6 +18566,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
         const base64=(dataUrl.split(",")[1])||"";
         const result=await extractCollegeScheduleImage(base64,IMAGE_EXT_MEDIA_TYPES[ext]);
         if(result.error){setScanError(result.error);return;}
+        if(!canScanScreenshot())markFreeScanUsed("schedule");
         recordScreenshotScan();
         startClassQueue(result.classes);
         return;
@@ -18560,6 +18589,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
       }
       const result=await extractCollegeScheduleText(text);
       if(result.error){setScanError(result.error);return;}
+      if(!canScanSyllabus())markFreeScanUsed("schedule");
       recordSyllabusScan();
       startClassQueue(result.classes,text);
     }catch(err){setScanError("Couldn't read that file: "+err.message);}
@@ -18567,11 +18597,12 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   };
   const handleCollegeSchedulePaste=async()=>{
     if(!pasteText.trim())return;
-    if(!canScanSyllabus()){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}
+    if(!canScanSyllabus()&&!canFreeOnboardingScan("schedule")){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}
     setScanning(true);setScanError("");
     try{
       const result=await extractCollegeScheduleText(pasteText);
       if(result.error){setScanError(result.error);return;}
+      if(!canScanSyllabus())markFreeScanUsed("schedule");
       recordSyllabusScan();
       startClassQueue(result.classes,pasteText);
     }catch(err){setScanError("Couldn't read that text: "+err.message);}
@@ -18610,8 +18641,8 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   const handleHsScheduleFile=async(e)=>{
     const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";
     const ext=file.name.split(".").pop().toLowerCase();
-    if(IMAGE_EXT_MEDIA_TYPES[ext]){if(!canScanScreenshot()){setPricingOpen(canScanScreenshotReason()==="free-tier"?"screenshotScan":"aiUsageCap");return;}}
-    else{if(!canScanSyllabus()){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}}
+    if(IMAGE_EXT_MEDIA_TYPES[ext]){if(!canScanScreenshot()&&!canFreeOnboardingScan("schedule")){setPricingOpen(canScanScreenshotReason()==="free-tier"?"screenshotScan":"aiUsageCap");return;}}
+    else{if(!canScanSyllabus()&&!canFreeOnboardingScan("schedule")){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}}
     setScanning(true);setScanError("");
     try{
       if(IMAGE_EXT_MEDIA_TYPES[ext]){
@@ -18620,6 +18651,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
         const result=await extractHsScheduleFromImage(base64,IMAGE_EXT_MEDIA_TYPES[ext]);
         if(result.error){setScanError(result.error);return;}
         if(result.periods.length===0){setScanError("Couldn't make out any periods in that image. Try a clearer photo, or add classes manually.");return;}
+        if(!canScanScreenshot())markFreeScanUsed("schedule");
         recordScreenshotScan();
         buildHsReviewFromPeriods(result.periods);
         return;
@@ -18647,6 +18679,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
       const result=await extractHsScheduleFromText(text);
       if(result.error){setScanError(result.error);return;}
       if(result.periods.length===0){setScanError("Couldn't find any periods in that. Try a clearer file, or add classes manually.");return;}
+      if(!canScanSyllabus())markFreeScanUsed("schedule");
       recordSyllabusScan();
       buildHsReviewFromPeriods(result.periods);
     }catch(err){setScanError("Couldn't read that file: "+err.message);}
@@ -18655,12 +18688,13 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
 
   const handleHsPasteScan=async()=>{
     if(!hsPasteText.trim())return;
-    if(!canScanSyllabus()){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}
+    if(!canScanSyllabus()&&!canFreeOnboardingScan("schedule")){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}
     setScanning(true);setScanError("");
     try{
       const result=await extractHsScheduleFromText(hsPasteText);
       if(result.error){setScanError(result.error);return;}
       if(result.periods.length===0){setScanError("Couldn't find any periods in that text. Try adding more detail, or add classes manually.");return;}
+      if(!canScanSyllabus())markFreeScanUsed("schedule");
       recordSyllabusScan();
       buildHsReviewFromPeriods(result.periods);
     }catch(err){setScanError("Couldn't read that text: "+err.message);}

@@ -1013,6 +1013,8 @@ module.exports = withSentry(async (req, res) => {
       subscriptionCurrentPeriodEnd: data.subscriptionCurrentPeriodEnd || null,
       subscriptionEndsAt: data.subscriptionEndsAt || null,
       onboarded: !!data.onboarded,
+      freeScheduleScanUsed: !!data.freeScheduleScanUsed,
+      freeSyllabusScanUsed: !!data.freeSyllabusScanUsed,
     });
   } catch (err) {
     console.warn('Profile lookup unavailable, returning defaults:', err.message);
