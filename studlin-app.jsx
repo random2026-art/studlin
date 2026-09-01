@@ -12240,7 +12240,13 @@ function Notes({setActive=()=>{}}){
                     {!it.noDate&&<Input type="date" value={it.date} onChange={ev=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,date:ev.target.value}:x)}))} style={{width:150}} />}
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                    <SelectChip options={[{value:"deadline",label:"To-Do"},{value:"exam",label:"Exam"}]} value={it.kind} onChange={v=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v,attackBlock:v==="deadline",proposeSessions:false,sessionCount:x.sessionCount||defaultSessionCountFor()}:x)}))} />
+                    {/* Was labeled "To-Do" -- misleading: picking it
+                        defaults attackBlock true (see onChange), the same
+                        "gets a scheduled study session chain by default"
+                        behavior every other surface calls "Assignment",
+                        not a plain unscheduled checkbox item. Relabeled to
+                        match. */}
+                    <SelectChip options={[{value:"deadline",label:"Assignment"},{value:"exam",label:"Exam"}]} value={it.kind} onChange={v=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v,attackBlock:v==="deadline",proposeSessions:false,sessionCount:x.sessionCount||defaultSessionCountFor()}:x)}))} />
                     {it.kind==="exam"&&(
                       <SelectChip size="sm" options={[{value:"quiz",label:"Quiz"},{value:"midterm",label:"Midterm"},{value:"final",label:"Final"},{value:"project",label:"Project"},{value:"other",label:"Other"}]}
                         value={it.examType||""} onChange={v=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>{
