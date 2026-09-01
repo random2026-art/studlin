@@ -15304,7 +15304,7 @@ Examples:
   const selectedCourse = selectedCourseId ? userSubjects.find((s) => s.id === selectedCourseId) : null;
   const sidebarUpcomingItems = (() => {
     const matches = selectedCourse ? (item) => item.courseId === selectedCourse.id || item.subject === selectedCourse.label : () => true;
-    return events.filter((e) => e.status !== "done" && e.date && !e.checklist && matches(e) && (e.kind === "deadline" || e.kind === "exam" && e.date >= todayK)).sort((a, b) => a.date === b.date ? (a.time || "").localeCompare(b.time || "") : a.date.localeCompare(b.date)).slice(0, 20);
+    return events.filter((e) => e.status !== "done" && e.date && (!e.checklist || e.subject) && matches(e) && (e.kind === "deadline" || e.kind === "exam" && e.date >= todayK)).sort((a, b) => a.date === b.date ? (a.time || "").localeCompare(b.time || "") : a.date.localeCompare(b.date)).slice(0, 20);
   })();
   const dueDateLabel = (dateKey) => {
     if (dateKey < todayK) return "Overdue";
