@@ -225,7 +225,65 @@ function usageCostCents(modelKey, usage) {
   return (inputCost + outputCost) * 100;
 }
 
-module.exports = withSentry(async (req, res) => {
+// Basic shape/size guard on any attached image(s) before a request ever
+// reaches the credit transaction or the upstream call -- a malformed or
+// oversized payload should fail fast and cheap, not burn a credit first
+// and find out from Anthropic's own error response.
+// Vercel's Node.js serverless functions have a hard 4.5MB request body
+// ceiling that nothing in this repo's vercel.json raises (it isn't
+// configurable for this runtime) -- a bigger base64 payload than this
+// never reaches this code at all, it gets a platform-level 413 first.
+// Sized with headroom under that real ceiling, not Anthropic's own (much
+// larger) per-image limit, since Vercel's is the actual bottleneck here.
+const MAX_IMAGE_BASE64_CHARS = 3.5 * 1024 * 1024;
+// m.images (plural) is the multi-screenshot path -- the "scan whole
+// schedule" flow can now span more than one photo. A separate field from
+// the original singular m.image rather than overloading it, so every
+// existing single-image call site keeps working unchanged. Capped
+// independently of the per-image limit above: several images each just
+// under that per-image cap could still blow past Vercel's combined
+// 4.5MB body ceiling even though none individually would.
+const MAX_IMAGES_PER_MESSAGE = 6;
+const MAX_TOTAL_IMAGE_BASE64_CHARS = 4 * 1024 * 1024;
+const ALLOWED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+function imageValidationError(img) {
+  if (!img.data || !img.mediaType) return 'Image is missing required fields.';
+  if (!ALLOWED_IMAGE_TYPES.has(img.mediaType)) return 'Unsupported image type. Use PNG, JPEG, WEBP, or GIF.';
+  if (img.data.length > MAX_IMAGE_BASE64_CHARS) return 'Image is too large. Try a smaller screenshot or crop it down.';
+  return null;
+}
+// Pulled out as its own pure function (message shapes in, an error string
+// or null out) specifically so it's unit-testable without mocking auth/
+// Firestore/the Anthropic fetch call the rest of this handler needs --
+// exported below alongside the default handler export.
+function validateMessageImages(messages) {
+  for (const m of messages) {
+    if (m.image) {
+      const err = imageValidationError(m.image);
+      if (err) return err;
+    }
+    if (m.images) {
+      if (!Array.isArray(m.images) || m.images.length === 0) {
+        return 'images must be a non-empty array.';
+      }
+      if (m.images.length > MAX_IMAGES_PER_MESSAGE) {
+        return `Too many screenshots at once (max ${MAX_IMAGES_PER_MESSAGE}). Try fewer, or submit the rest separately.`;
+      }
+      let totalChars = 0;
+      for (const img of m.images) {
+        const err = imageValidationError(img);
+        if (err) return err;
+        totalChars += img.data.length;
+      }
+      if (totalChars > MAX_TOTAL_IMAGE_BASE64_CHARS) {
+        return 'Combined size of these screenshots is too large. Try fewer photos, or smaller ones.';
+      }
+    }
+  }
+  return null;
+}
+
+const chatHandler = async (req, res) => {
   setCors(req, res);
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -242,33 +300,10 @@ module.exports = withSentry(async (req, res) => {
       return res.status(400).json({ error: 'Messages are required.' });
     }
 
-    // Basic shape/size guard on any attached image before it ever reaches
-    // the credit transaction or the upstream call -- a malformed or
-    // oversized payload should fail fast and cheap, not burn a credit
-    // first and find out from Anthropic's own error response.
-    // Vercel's Node.js serverless functions have a hard 4.5MB request body
-    // ceiling that nothing in this repo's vercel.json raises (it isn't
-    // configurable for this runtime) -- a bigger base64 payload than this
-    // never reaches this code at all, it gets a platform-level 413 first.
-    // Sized with headroom under that real ceiling, not Anthropic's own
-    // (much larger) per-image limit, since Vercel's is the actual
-    // bottleneck here.
-    const MAX_IMAGE_BASE64_CHARS = 3.5 * 1024 * 1024;
-    const ALLOWED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
-    for (const m of messages) {
-      if (!m.image) continue;
-      if (!m.image.data || !m.image.mediaType) {
-        return res.status(400).json({ error: 'Image is missing required fields.' });
-      }
-      if (!ALLOWED_IMAGE_TYPES.has(m.image.mediaType)) {
-        return res.status(400).json({ error: 'Unsupported image type. Use PNG, JPEG, WEBP, or GIF.' });
-      }
-      if (m.image.data.length > MAX_IMAGE_BASE64_CHARS) {
-        return res.status(400).json({ error: 'Image is too large. Try a smaller screenshot or crop it down.' });
-      }
-    }
+    const imagesError = validateMessageImages(messages);
+    if (imagesError) return res.status(400).json({ error: imagesError });
 
-    const hasImage = messages.some(m => !!m.image);
+    const hasImage = messages.some(m => !!m.image || (Array.isArray(m.images) && m.images.length > 0));
     const cost = hasImage ? IMAGE_CREDIT_COST : (CREDIT_COST[model] || 1);
 
     // Credit tracking is best-effort: if Firestore is unreachable or the
@@ -370,18 +405,26 @@ module.exports = withSentry(async (req, res) => {
 
     // Plain string content for every existing text-only caller (chat,
     // syllabus text extraction, flashcard/quiz gen, ...) -- completely
-    // unchanged. Only a message carrying an image switches to Anthropic's
-    // multi-part content block array, image first so the model reads it
-    // before the accompanying instruction text.
-    const claudeMessages = messages.map(m => ({
-      role: m.r === 'ai' ? 'assistant' : 'user',
-      content: m.image
-        ? [
-            { type: 'image', source: { type: 'base64', media_type: m.image.mediaType, data: m.image.data } },
-            { type: 'text', text: m.t || '' },
-          ]
-        : m.t,
-    }));
+    // unchanged. A message carrying image(s) switches to Anthropic's
+    // multi-part content block array, image(s) first so the model reads
+    // them before the accompanying instruction text. m.images (plural,
+    // the multi-screenshot path) attaches every image as its own block in
+    // the same message -- Claude reads a multi-image message as one
+    // combined context, which is what lets it de-duplicate a class/period
+    // that happens to appear in more than one screenshot instead of
+    // double-counting it.
+    const claudeMessages = messages.map(m => {
+      const images = m.images && m.images.length ? m.images : (m.image ? [m.image] : null);
+      return {
+        role: m.r === 'ai' ? 'assistant' : 'user',
+        content: images
+          ? [
+              ...images.map(img => ({ type: 'image', source: { type: 'base64', media_type: img.mediaType, data: img.data } })),
+              { type: 'text', text: m.t || '' },
+            ]
+          : m.t,
+      };
+    });
 
     // A hung/slow upstream call would otherwise let Vercel's own platform
     // timeout (maxDuration, set in vercel.json) kill the function first —
@@ -516,4 +559,12 @@ module.exports = withSentry(async (req, res) => {
   } catch (err) {
     return res.status(500).json({ error: err.message || 'Server error.' });
   }
-});
+};
+
+module.exports = withSentry(chatHandler);
+// Attached to the exported handler (functions are objects) so
+// tests/chat-image-validation.test.js can exercise this pure validation
+// logic directly, without mocking auth/Firestore/the Anthropic fetch call
+// the handler itself needs -- Vercel only cares that module.exports is
+// callable, so this extra property is otherwise inert in production.
+module.exports.validateMessageImages = validateMessageImages;

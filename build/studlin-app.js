@@ -2618,10 +2618,11 @@ async function extractCollegeScheduleText(text) {
     return { classes: [], error: "Couldn't read that. Try again." };
   }
 }
-async function extractCollegeScheduleImage(base64Data, mediaType) {
+async function extractCollegeScheduleImage(images) {
   try {
-    const prompt = "This image is a screenshot or photo of a college student's full class schedule for a term -- a registrar 'my schedule' grid or similar, likely covering several different classes at once. Today's date is " + dayKey() + ". If a date has no year, infer the most likely upcoming year given today's date. Extract every class, its recurring weekly meeting time(s), and every deadline/exam date visible for each one. Never invent a URL or link -- a screenshot's visible text has no way to reveal what an actual link points to. " + COLLEGE_SCHEDULE_JSON_CONTRACT;
-    const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt, image: { mediaType, data: base64Data } }], model: "standard", format: "json" }) });
+    const multi = images.length > 1;
+    const prompt = "This " + (multi ? "set of images is " + images.length + " screenshots or photos" : "image is a screenshot or photo") + " of a college student's full class schedule for a term -- a registrar 'my schedule' grid or similar, likely covering several different classes at once" + (multi ? ", possibly split across the images (e.g. one screenshot per page, or overlapping views of the same schedule)" : "") + ". Today's date is " + dayKey() + ". If a date has no year, infer the most likely upcoming year given today's date. Extract every class, its recurring weekly meeting time(s), and every deadline/exam date visible for each one. " + (multi ? "If the same class or deadline appears in more than one image, include it only once in the result -- don't duplicate it. " : "") + "Never invent a URL or link -- a screenshot's visible text has no way to reveal what an actual link points to. " + COLLEGE_SCHEDULE_JSON_CONTRACT;
+    const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt, images: images.map((img) => ({ mediaType: img.mediaType, data: img.data })) }], model: "standard", format: "json" }) });
     const data = await res.json();
     if (!res.ok) return { classes: [], error: data.error || "Couldn't read that image. Try again." };
     const raw = (data.reply || "").replace(/```json?\n?/gi, "").replace(/```/g, "").trim();
@@ -2637,10 +2638,11 @@ async function extractCollegeScheduleImage(base64Data, mediaType) {
   }
 }
 const HS_SCHEDULE_JSON_CONTRACT = `For each period return: "subjectName" (the class name as shown, e.g. "English IV", "AP Biology"), "startTime" and "endTime" (24-hour "HH:MM"), "days" (which weekdays this period happens, 0=Monday..6=Sunday -- if the schedule doesn't say otherwise, assume every school day it's shown applies to, most commonly Monday-Friday so [0,1,2,3,4]), "confidence" ("high" normally; "low" specifically when the schedule uses a rotating block system -- "A Day"/"B Day", or a numbered cycle like "Day 1"-"Day 6" -- instead of fixed weekdays, since which actual weekdays a rotating day falls on isn't something a single week's schedule can state with certainty; still do your best guess for "days" in that case, just flag it low-confidence rather than presenting a guess as fact). Respond with ONLY valid JSON, no markdown fences, no commentary: {"periods":[{"subjectName":"English IV","startTime":"08:00","endTime":"08:45","days":[0,1,2,3,4],"confidence":"high"}]}. ` + SCHEDULE_EXTRACTION_ROBUSTNESS_RULE;
-async function extractHsScheduleFromImage(base64Data, mediaType) {
+async function extractHsScheduleFromImage(images) {
   try {
-    const prompt = "This image is a photo or screenshot of a high school class schedule -- a table or list of periods, each with a class name and the time it meets. Extract every period you can see. " + HS_SCHEDULE_JSON_CONTRACT + `If you can't make out any periods at all, respond with {"periods":[]}.`;
-    const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt, image: { mediaType, data: base64Data } }], model: "standard", format: "json" }) });
+    const multi = images.length > 1;
+    const prompt = "This " + (multi ? "set of images is " + images.length + " photos or screenshots" : "image is a photo or screenshot") + " of a high school class schedule -- a table or list of periods, each with a class name and the time it meets" + (multi ? ", possibly split across the images (e.g. one screenshot per page, or overlapping views of the same schedule)" : "") + ". Extract every period you can see. " + (multi ? "If the same period appears in more than one image, include it only once in the result -- don't duplicate it. " : "") + HS_SCHEDULE_JSON_CONTRACT + `If you can't make out any periods at all, respond with {"periods":[]}.`;
+    const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt, images: images.map((img) => ({ mediaType: img.mediaType, data: img.data })) }], model: "standard", format: "json" }) });
     const data = await res.json();
     if (!res.ok) return { periods: [], error: data.error || "Couldn't read that image. Try again." };
     const raw = (data.reply || "").replace(/```json?\n?/gi, "").replace(/```/g, "").trim();
@@ -11508,12 +11510,22 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     buildReviewFromExtraction(classes[0], sourceText);
     setScanQueue(classes.slice(1));
   };
+  const MAX_SCHEDULE_IMAGES = 6;
   const handleCollegeScheduleFile = async (e) => {
-    const file = e.target.files && e.target.files[0];
-    if (!file) return;
+    const files = e.target.files ? Array.from(e.target.files) : [];
+    if (files.length === 0) return;
     e.target.value = "";
-    const ext = file.name.split(".").pop().toLowerCase();
-    if (IMAGE_EXT_MEDIA_TYPES[ext]) {
+    const exts = files.map((f) => f.name.split(".").pop().toLowerCase());
+    const allImages = exts.every((ext) => IMAGE_EXT_MEDIA_TYPES[ext]);
+    if (files.length > 1 && !allImages) {
+      setScanError("Select multiple photos/screenshots together, or a single PDF/Word/text file -- not a mix.");
+      return;
+    }
+    if (files.length > MAX_SCHEDULE_IMAGES) {
+      setScanError("Too many screenshots at once (max " + MAX_SCHEDULE_IMAGES + "). Try fewer, or scan the rest separately.");
+      return;
+    }
+    if (allImages) {
       if (!canScanScreenshot() && !canFreeOnboardingScan("schedule")) {
         setPricingOpen(canScanScreenshotReason() === "free-tier" ? "screenshotScan" : "aiUsageCap");
         return;
@@ -11527,14 +11539,16 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     setScanning(true);
     setScanError("");
     try {
-      if (IMAGE_EXT_MEDIA_TYPES[ext]) {
-        const dataUrl = await new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result);
-          reader.readAsDataURL(file);
-        });
-        const base64 = dataUrl.split(",")[1] || "";
-        const result2 = await extractCollegeScheduleImage(base64, IMAGE_EXT_MEDIA_TYPES[ext]);
+      if (allImages) {
+        const images = await Promise.all(files.map(async (file2, i) => {
+          const dataUrl = await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.readAsDataURL(file2);
+          });
+          return { mediaType: IMAGE_EXT_MEDIA_TYPES[exts[i]], data: dataUrl.split(",")[1] || "" };
+        }));
+        const result2 = await extractCollegeScheduleImage(images);
         if (result2.error) {
           setScanError(result2.error);
           return;
@@ -11544,6 +11558,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
         startClassQueue(result2.classes);
         return;
       }
+      const file = files[0], ext = exts[0];
       let text = "";
       if (ext === "pdf") {
         const pdfjsLib = await window._pdfjs;
@@ -11626,11 +11641,20 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     setAddMode("hsReview");
   };
   const handleHsScheduleFile = async (e) => {
-    const file = e.target.files && e.target.files[0];
-    if (!file) return;
+    const files = e.target.files ? Array.from(e.target.files) : [];
+    if (files.length === 0) return;
     e.target.value = "";
-    const ext = file.name.split(".").pop().toLowerCase();
-    if (IMAGE_EXT_MEDIA_TYPES[ext]) {
+    const exts = files.map((f) => f.name.split(".").pop().toLowerCase());
+    const allImages = exts.every((ext) => IMAGE_EXT_MEDIA_TYPES[ext]);
+    if (files.length > 1 && !allImages) {
+      setScanError("Select multiple photos/screenshots together, or a single PDF/Word/text file -- not a mix.");
+      return;
+    }
+    if (files.length > MAX_SCHEDULE_IMAGES) {
+      setScanError("Too many screenshots at once (max " + MAX_SCHEDULE_IMAGES + "). Try fewer, or scan the rest separately.");
+      return;
+    }
+    if (allImages) {
       if (!canScanScreenshot() && !canFreeOnboardingScan("schedule")) {
         setPricingOpen(canScanScreenshotReason() === "free-tier" ? "screenshotScan" : "aiUsageCap");
         return;
@@ -11644,20 +11668,22 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     setScanning(true);
     setScanError("");
     try {
-      if (IMAGE_EXT_MEDIA_TYPES[ext]) {
-        const dataUrl = await new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result);
-          reader.readAsDataURL(file);
-        });
-        const base64 = dataUrl.split(",")[1] || "";
-        const result2 = await extractHsScheduleFromImage(base64, IMAGE_EXT_MEDIA_TYPES[ext]);
+      if (allImages) {
+        const images = await Promise.all(files.map(async (file2, i) => {
+          const dataUrl = await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.readAsDataURL(file2);
+          });
+          return { mediaType: IMAGE_EXT_MEDIA_TYPES[exts[i]], data: dataUrl.split(",")[1] || "" };
+        }));
+        const result2 = await extractHsScheduleFromImage(images);
         if (result2.error) {
           setScanError(result2.error);
           return;
         }
         if (result2.periods.length === 0) {
-          setScanError("Couldn't make out any periods in that image. Try a clearer photo, or add classes manually.");
+          setScanError("Couldn't make out any periods in " + (images.length > 1 ? "those images" : "that image") + ". Try a clearer photo, or add classes manually.");
           return;
         }
         if (!canScanScreenshot()) markFreeScanUsed("schedule");
@@ -11665,6 +11691,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
         buildHsReviewFromPeriods(result2.periods);
         return;
       }
+      const file = files[0], ext = exts[0];
       let text = "";
       if (ext === "pdf") {
         const pdfjsLib = await window._pdfjs;
@@ -11851,7 +11878,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
       rows: 8,
       style: { width: "100%", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 10, padding: "12px 14px", color: T.text, fontSize: 13, fontFamily: T.font, outline: "none", resize: "vertical", boxSizing: "border-box" }
     }
-  ), /* @__PURE__ */ React.createElement(Btn, { onClick: handleCollegeSchedulePaste, disabled: !pasteText.trim(), style: { marginTop: 10, width: "100%", justifyContent: "center", opacity: pasteText.trim() ? 1 : 0.45 } }, "Scan this text")) : /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => collegeScheduleFileRef.current && collegeScheduleFileRef.current.click(), style: { width: "100%", padding: "32px", borderRadius: 12, border: `1.5px dashed ${T.borderHover}`, background: T.card2, color: T.muted, cursor: "pointer", fontFamily: T.font, fontSize: 13, textAlign: "center" } }, "Tap to choose a file or photo"), /* @__PURE__ */ React.createElement("input", { ref: collegeScheduleFileRef, type: "file", accept: ".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,.gif", style: { display: "none" }, onChange: handleCollegeScheduleFile }), scanError && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: 10 } }, scanError), !scanning && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+  ), /* @__PURE__ */ React.createElement(Btn, { onClick: handleCollegeSchedulePaste, disabled: !pasteText.trim(), style: { marginTop: 10, width: "100%", justifyContent: "center", opacity: pasteText.trim() ? 1 : 0.45 } }, "Scan this text")) : /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => collegeScheduleFileRef.current && collegeScheduleFileRef.current.click(), style: { width: "100%", padding: "32px", borderRadius: 12, border: `1.5px dashed ${T.borderHover}`, background: T.card2, color: T.muted, cursor: "pointer", fontFamily: T.font, fontSize: 13, textAlign: "center" } }, "Tap to choose a file, or one or more photos"), /* @__PURE__ */ React.createElement("input", { ref: collegeScheduleFileRef, type: "file", accept: ".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,.gif", style: { display: "none" }, onChange: handleCollegeScheduleFile, multiple: true }), scanError && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: 10 } }, scanError), !scanning && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
     setPasteMode((m) => !m);
     setScanError("");
   }, style: { marginTop: 12, background: "none", border: "none", color: T.muted, fontSize: 12, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, pasteMode ? "Upload a file instead" : "File didn't work? Paste the text instead")), step === "classes" && addMode === "scan" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: status === "highschool" ? "Scan assignments" : "Scan a syllabus", sub: status === "highschool" ? "A unit calendar, worksheet, handout, whatever your teacher gave you -- PDF, Word doc, text, or a photo. Studlin reads it and fills in the review below." : "PDF, Word doc, text, or a photo/screenshot \u2014 Studlin reads it and fills in the review below." }), scanning ? /* @__PURE__ */ React.createElement("div", { style: { padding: "40px 0", textAlign: "center", color: T.muted, fontSize: 13 } }, "Reading your syllabus\u2026") : pasteMode ? /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(
@@ -11875,7 +11902,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
       rows: 8,
       style: { width: "100%", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 10, padding: "12px 14px", color: T.text, fontSize: 13, fontFamily: T.font, outline: "none", resize: "vertical", boxSizing: "border-box" }
     }
-  ), /* @__PURE__ */ React.createElement(Btn, { onClick: handleHsPasteScan, disabled: !hsPasteText.trim(), style: { marginTop: 10, width: "100%", justifyContent: "center", opacity: hsPasteText.trim() ? 1 : 0.45 } }, "Scan this text")) : /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => hsFileInputRef.current && hsFileInputRef.current.click(), style: { width: "100%", padding: "32px", borderRadius: 12, border: `1.5px dashed ${T.borderHover}`, background: T.card2, color: T.muted, cursor: "pointer", fontFamily: T.font, fontSize: 13, textAlign: "center" } }, "Tap to choose a file or photo"), /* @__PURE__ */ React.createElement("input", { ref: hsFileInputRef, type: "file", accept: ".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,.gif", style: { display: "none" }, onChange: handleHsScheduleFile }), scanError && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: 10 } }, scanError), !scanning && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+  ), /* @__PURE__ */ React.createElement(Btn, { onClick: handleHsPasteScan, disabled: !hsPasteText.trim(), style: { marginTop: 10, width: "100%", justifyContent: "center", opacity: hsPasteText.trim() ? 1 : 0.45 } }, "Scan this text")) : /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => hsFileInputRef.current && hsFileInputRef.current.click(), style: { width: "100%", padding: "32px", borderRadius: 12, border: `1.5px dashed ${T.borderHover}`, background: T.card2, color: T.muted, cursor: "pointer", fontFamily: T.font, fontSize: 13, textAlign: "center" } }, "Tap to choose a file, or one or more photos"), /* @__PURE__ */ React.createElement("input", { ref: hsFileInputRef, type: "file", accept: ".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,.gif", style: { display: "none" }, onChange: handleHsScheduleFile, multiple: true }), scanError && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: 10 } }, scanError), !scanning && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
     setHsPasteMode((m) => !m);
     setScanError("");
   }, style: { marginTop: 12, background: "none", border: "none", color: T.muted, fontSize: 12, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, hsPasteMode ? "Upload a file instead" : "No file? Paste the text instead")), step === "classes" && addMode === "hsReview" && hsReview && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: "Review your schedule", sub: "Check the class names and colors, then add them all at once." }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 } }, hsReview.map((p, i) => {
