@@ -9696,6 +9696,76 @@ function ChatDrawer({ open, target, myUid, onClose, onMakePermanent, onDeleteGro
     document.body
   );
 }
+const STUDLIN_AI_BUBBLE_Z = 1060;
+const STUDLIN_AI_DRAWER_BACKDROP_Z = 1070;
+const STUDLIN_AI_DRAWER_PANEL_Z = 1071;
+function StudlinAiBubble({ onClick }) {
+  return /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick,
+      title: "Ask Studlin AI about your schedule",
+      style: { position: "fixed", bottom: 20, right: 20, width: 52, height: 52, borderRadius: "50%", background: T.lime, color: T.ink, border: "none", cursor: "pointer", display: "grid", placeItems: "center", boxShadow: "0 8px 24px -6px rgba(0,0,0,0.4)", zIndex: STUDLIN_AI_BUBBLE_Z }
+    },
+    Icon.sparkles
+  );
+}
+function StudlinAiDrawer({ open, onClose }) {
+  const pp = panelPalette();
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const scrollRef = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [messages, loading]);
+  const send = () => {
+    const text = input.trim();
+    if (!text || loading) return;
+    setMessages((m) => [...m, { role: "user", text }]);
+    setInput("");
+    setLoading(true);
+    setTimeout(() => {
+      setMessages((m) => [...m, { role: "ai", text: "(stub) Real answers land once this is wired up to your actual schedule." }]);
+      setLoading(false);
+    }, 500);
+  };
+  return ReactDOM.createPortal(
+    /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: onClose, style: { position: "fixed", inset: 0, background: "rgba(8,12,10,0.5)", zIndex: STUDLIN_AI_DRAWER_BACKDROP_Z, opacity: open ? 1 : 0, pointerEvents: open ? "auto" : "none", transition: "opacity 0.25s" } }), /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 0, right: 0, height: "100vh", width: 400, maxWidth: "92vw", background: T.surface, borderLeft: `1px solid ${pp.border}`, boxShadow: "-24px 0 60px -20px rgba(0,0,0,0.5)", zIndex: STUDLIN_AI_DRAWER_PANEL_Z, display: "flex", flexDirection: "column", transform: open ? "translateX(0)" : "translateX(100%)", transition: "transform 0.28s cubic-bezier(.2,.85,.3,1)", pointerEvents: open ? "auto" : "none" } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "18px 18px 14px", borderBottom: `1px solid ${pp.border}`, display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: pp.text } }, "Studlin AI"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: pp.muted } }, "Ask about your schedule")), /* @__PURE__ */ React.createElement("button", { onClick: onClose, style: { width: 30, height: 30, borderRadius: 8, border: `1px solid ${pp.border}`, background: pp.card2, color: pp.muted, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0 } }, Icon.xmark)), /* @__PURE__ */ React.createElement("div", { ref: scrollRef, style: { flex: 1, overflowY: "auto", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10 } }, messages.length === 0 && !loading && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: pp.muted, lineHeight: 1.6, marginTop: 10 } }, 'Ask something like "which day next week is busiest?" or "how am I doing in Chemistry?"'), messages.map((m, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "85%", padding: "9px 13px", borderRadius: 12, fontSize: 13, lineHeight: 1.5, background: m.role === "user" ? pp.card2 : T.lime + "14", color: pp.text, border: m.role === "user" ? `1px solid ${pp.border}` : `1px solid ${T.lime}33` } }, m.text)), loading && /* @__PURE__ */ React.createElement("div", { style: { alignSelf: "flex-start", fontSize: 12.5, color: pp.muted, padding: "9px 13px" } }, "Thinking\u2026")), /* @__PURE__ */ React.createElement("div", { style: { padding: "12px 18px", borderTop: `1px solid ${pp.border}`, display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        value: input,
+        onChange: (e) => setInput(e.target.value),
+        onKeyDown: (e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            send();
+          }
+        },
+        placeholder: "Ask about your schedule...",
+        style: { flex: 1, background: pp.card2, border: `1px solid ${pp.border}`, borderRadius: 8, padding: "9px 12px", color: pp.text, fontSize: 13, fontFamily: T.font, outline: "none" }
+      }
+    ), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: send,
+        disabled: !input.trim() || loading,
+        style: { padding: "9px 14px", borderRadius: 8, border: "none", background: T.lime, color: T.ink, fontWeight: 600, fontSize: 13, cursor: "pointer", opacity: !input.trim() || loading ? 0.5 : 1, flexShrink: 0 }
+      },
+      "Send"
+    )))),
+    document.body
+  );
+}
 function computeCoopFromParticipants(participants, myUid) {
   return Object.entries(participants || {}).filter(([uid, p]) => uid !== myUid && p.state === "joined").map(([uid, p]) => ({ uid, name: p.name, initials: p.initials }));
 }
@@ -18123,6 +18193,7 @@ function App() {
   seedEventsIfStale();
   const notifiedRef = useRef(/* @__PURE__ */ new Set());
   const [timerTask, setTimerTask] = useState(null);
+  const [studlinAiOpen, setStudlinAiOpen] = useState(false);
   useEffect(() => {
     if (typeof Notification === "undefined") return;
     const LEAD_TIMES = [10, 5];
@@ -19533,7 +19604,7 @@ function App() {
     lsSet("cal-onboard-done", true);
     if (worksJob !== null) lsSet("has-job", worksJob);
     setCalOnboardDone(true);
-  } }, "Skip for now")), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, textAlign: "center", marginTop: 14, lineHeight: 1.5 } }, "You can connect or disconnect calendars anytime in Settings \u2192 Integrations."))));
+  } }, "Skip for now")), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, textAlign: "center", marginTop: 14, lineHeight: 1.5 } }, "You can connect or disconnect calendars anytime in Settings \u2192 Integrations."))), /* @__PURE__ */ React.createElement(StudlinAiBubble, { onClick: () => setStudlinAiOpen(true) }), /* @__PURE__ */ React.createElement(StudlinAiDrawer, { open: studlinAiOpen, onClose: () => setStudlinAiOpen(false) }));
 }
 class ErrorBoundary extends React.Component {
   constructor(props) {
