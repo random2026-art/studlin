@@ -15656,6 +15656,115 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
   );
 }
 
+// Studlin AI (Phase 1, read-only calendar assistant) -- floating bubble +
+// slide-in drawer, mounted once in App() (see its own comment) so it's
+// reachable from every tab rather than nested in any one page. Shell
+// copied from ChatDrawer's own portal+backdrop+translateX pattern just
+// above, including panelPalette()'s "stays dark-styled even in light
+// mode" convention, for visual consistency with the one real slide-in
+// drawer already in this app.
+//
+// z-index deliberately sits above EVERY other overlay in this file, not
+// just the two nearest drawers (ChatDrawer 400/401, the demo-only
+// ClassPreviewDrawer 410/411) -- this app's shared Modal component and
+// the paywall modal already go up to 1000/1010, and a globally-available
+// "always there" assistant has to actually stay reachable regardless of
+// what else is open, the same way the paywall modal already deliberately
+// renders above an already-open shared Modal (see that modal's own
+// comment) rather than being hidden behind it, instead of trying to
+// force-close every other overlay when this one opens. 1060/1070/1071
+// clear every documented z-index in this file with real headroom.
+//
+// Real credit/API wiring is NOT here yet (see feat/studlin-ai-wire-
+// together) -- send() below is a stub so the shell itself is visually
+// reviewable and manually QA-able (open/close, type, see a reply appear,
+// check it doesn't collide with ChatDrawer/toasts/modals) before it ever
+// touches a real credit or a real AI call.
+const STUDLIN_AI_BUBBLE_Z=1060;
+const STUDLIN_AI_DRAWER_BACKDROP_Z=1070;
+const STUDLIN_AI_DRAWER_PANEL_Z=1071;
+
+function StudlinAiBubble({onClick}){
+  return (
+    <button type="button" onClick={onClick} title="Ask Studlin AI about your schedule"
+      style={{position:"fixed",bottom:20,right:20,width:52,height:52,borderRadius:"50%",background:T.lime,color:T.ink,border:"none",cursor:"pointer",display:"grid",placeItems:"center",boxShadow:"0 8px 24px -6px rgba(0,0,0,0.4)",zIndex:STUDLIN_AI_BUBBLE_Z}}>
+      {Icon.sparkles}
+    </button>
+  );
+}
+
+function StudlinAiDrawer({open,onClose}){
+  const pp=panelPalette();
+  const [messages,setMessages]=useState([]); // {role:"user"|"ai",text}
+  const [input,setInput]=useState("");
+  const [loading,setLoading]=useState(false);
+  const scrollRef=useRef(null);
+
+  useEffect(()=>{
+    if(!open)return;
+    const onKey=e=>{if(e.key==="Escape")onClose();};
+    window.addEventListener("keydown",onKey);
+    return ()=>window.removeEventListener("keydown",onKey);
+  },[open]);
+
+  useEffect(()=>{
+    if(scrollRef.current)scrollRef.current.scrollTop=scrollRef.current.scrollHeight;
+  },[messages,loading]);
+
+  const send=()=>{
+    const text=input.trim();
+    if(!text||loading)return;
+    setMessages(m=>[...m,{role:"user",text}]);
+    setInput("");
+    setLoading(true);
+    // Stub reply -- real digest/routing/API wiring lands in the next
+    // branch. Deliberately still simulates a real round-trip (delay,
+    // loading state) so the shell's actual UX is what gets reviewed here,
+    // not a placeholder that behaves nothing like the real thing will.
+    setTimeout(()=>{
+      setMessages(m=>[...m,{role:"ai",text:"(stub) Real answers land once this is wired up to your actual schedule."}]);
+      setLoading(false);
+    },500);
+  };
+
+  return ReactDOM.createPortal(
+    <>
+      <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(8,12,10,0.5)",zIndex:STUDLIN_AI_DRAWER_BACKDROP_Z,opacity:open?1:0,pointerEvents:open?"auto":"none",transition:"opacity 0.25s"}} />
+      <div style={{position:"fixed",top:0,right:0,height:"100vh",width:400,maxWidth:"92vw",background:T.surface,borderLeft:`1px solid ${pp.border}`,boxShadow:"-24px 0 60px -20px rgba(0,0,0,0.5)",zIndex:STUDLIN_AI_DRAWER_PANEL_Z,display:"flex",flexDirection:"column",transform:open?"translateX(0)":"translateX(100%)",transition:"transform 0.28s cubic-bezier(.2,.85,.3,1)",pointerEvents:open?"auto":"none"}}>
+        <div style={{padding:"18px 18px 14px",borderBottom:`1px solid ${pp.border}`,display:"flex",alignItems:"center",gap:12}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:14,fontWeight:700,color:pp.text}}>Studlin AI</div>
+            <div style={{fontSize:11,color:pp.muted}}>Ask about your schedule</div>
+          </div>
+          <button onClick={onClose} style={{width:30,height:30,borderRadius:8,border:`1px solid ${pp.border}`,background:pp.card2,color:pp.muted,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.xmark}</button>
+        </div>
+        <div ref={scrollRef} style={{flex:1,overflowY:"auto",padding:"14px 18px",display:"flex",flexDirection:"column",gap:10}}>
+          {messages.length===0&&!loading&&(
+            <div style={{fontSize:12.5,color:pp.muted,lineHeight:1.6,marginTop:10}}>Ask something like "which day next week is busiest?" or "how am I doing in Chemistry?"</div>
+          )}
+          {messages.map((m,i)=>(
+            <div key={i} style={{alignSelf:m.role==="user"?"flex-end":"flex-start",maxWidth:"85%",padding:"9px 13px",borderRadius:12,fontSize:13,lineHeight:1.5,background:m.role==="user"?pp.card2:T.lime+"14",color:pp.text,border:m.role==="user"?`1px solid ${pp.border}`:`1px solid ${T.lime}33`}}>
+              {m.text}
+            </div>
+          ))}
+          {loading&&(
+            <div style={{alignSelf:"flex-start",fontSize:12.5,color:pp.muted,padding:"9px 13px"}}>Thinking…</div>
+          )}
+        </div>
+        <div style={{padding:"12px 18px",borderTop:`1px solid ${pp.border}`,display:"flex",gap:8}}>
+          <input value={input} onChange={e=>setInput(e.target.value)}
+            onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}}
+            placeholder="Ask about your schedule..."
+            style={{flex:1,background:pp.card2,border:`1px solid ${pp.border}`,borderRadius:8,padding:"9px 12px",color:pp.text,fontSize:13,fontFamily:T.font,outline:"none"}} />
+          <button onClick={send} disabled={!input.trim()||loading}
+            style={{padding:"9px 14px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontWeight:600,fontSize:13,cursor:"pointer",opacity:(!input.trim()||loading)?0.5:1,flexShrink:0}}>Send</button>
+        </div>
+      </div>
+    </>,
+    document.body
+  );
+}
+
 // Derives the live "who else is locked in" list from a studySessions doc's
 // participants map — used by TaskTimerModal's coop UI, joinLockIn, and the
 // App-level invite banner. Never includes the current user themselves.
@@ -29978,6 +30087,12 @@ function App() {
   // doesn't downlevel block scoping, so the same latent bug now throws for
   // real on every render. Moved up instead of leaving the effect broken.
   const [timerTask,setTimerTask]=useState(null);
+  // Studlin AI (Phase 1, read-only calendar assistant) -- declared at
+  // App() level, not inside any one tab's component, so the bubble/drawer
+  // stay mounted and reachable regardless of which tab is active. See
+  // StudlinAiBubble/StudlinAiDrawer's own comments for the shell/z-index
+  // design.
+  const [studlinAiOpen,setStudlinAiOpen]=useState(false);
   useEffect(()=>{
     if(typeof Notification==="undefined")return;
     const LEAD_TIMES=[10,5]; // minutes before start
@@ -32364,6 +32479,10 @@ function App() {
           </div>
         </div>
       )}
+      {/* Studlin AI (Phase 1) -- mounted last, globally, so it's reachable
+          from every tab regardless of which one is active. */}
+      <StudlinAiBubble onClick={()=>setStudlinAiOpen(true)} />
+      <StudlinAiDrawer open={studlinAiOpen} onClose={()=>setStudlinAiOpen(false)} />
     </div>
   );
 }
