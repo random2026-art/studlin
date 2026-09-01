@@ -192,6 +192,28 @@ const FLASH_PROMPT = `You are Studlin Flash, a quick-answer study assistant. Giv
 // unreliable. This prompt has no personality to override.
 const EXTRACTION_PROMPT = `You extract structured data from student input. Follow the user's formatting instructions exactly and completely. Respond with ONLY the requested output — no greeting, no explanation, no markdown code fences, no commentary before or after.`;
 
+// Studlin AI Phase 1 (the floating, read-only calendar assistant) --
+// distinct product from the general tutoring persona above (which
+// already self-identifies as "Studlin AI" in its own text; that naming
+// overlap is real and worth resolving at the product level, but doesn't
+// collide at the code level -- separate constant, separate format value).
+// The DIGEST referenced below is assembled client-side by
+// assembleStudlinAiDigest/the profile-signal calls around it (see
+// studlin-app.jsx) and sent as part of the request's own message text --
+// this server never touches calendar data directly, same reason every
+// other AI-calling feature in this file already builds its own context
+// client-side (Brain Dump's todaysScheduleForBrainDump is the existing
+// precedent).
+const STUDLIN_AI_SYSTEM_PROMPT = `You are Studlin's calendar assistant. A student is asking about their own real schedule and study history.
+
+You will be given a DIGEST: real, already-computed data about their upcoming schedule and/or their study patterns. This is the ONLY source of truth you have. Never invent an assignment, date, class, or number that isn't in the digest. If the digest doesn't cover what they're asking, say so plainly instead of guessing -- "I don't have data on that yet" is a correct answer, not a failure.
+
+You cannot create, move, reschedule, or delete anything. You are read-only. If asked to do any of those, say you can't do that yet -- never claim you did it.
+
+Answer in one to three sentences. State the real number the digest gives you, not a vague impression. Never pad with filler like "I'd be happy to help" or "great question." Sound like a smart friend stating a fact, not a customer service bot.
+
+If a signal in the digest has too little data to be trustworthy (the digest will say so explicitly), say that plainly too rather than answering around it.`;
+
 const CREDIT_COST = { standard: 1, flash: 1 };
 // A request carrying an image (the Canvas/syllabus screenshot importer)
 // costs meaningfully more real tokens than a text-only call -- a full-
@@ -200,6 +222,12 @@ const CREDIT_COST = { standard: 1, flash: 1 };
 // 1-credit pricing for that would badly under-charge relative to every
 // other AI feature in this app.
 const IMAGE_CREDIT_COST = 4;
+// Studlin AI's digest (14 days of schedule data plus whichever behavioral
+// signals the question routed to) is meaningfully bigger input than a
+// plain chat message but never carries an image -- priced between plain
+// chat (1) and an image call (4) rather than folded into either.
+const STUDLIN_AI_CREDIT_COST = 2;
+const MAX_TOKENS_STUDLIN_AI = 768;
 const DEFAULT_CREDITS = 120; // Free plan limit — must match api/me.js, the actual account-creation default
 const RATE_LIMIT_PER_MIN = 20;
 
@@ -283,6 +311,26 @@ function validateMessageImages(messages) {
   return null;
 }
 
+// Pulled out as their own pure functions (same reasoning as
+// validateMessageImages above) so pricing/prompt-selection logic is
+// unit-testable directly, without mocking auth/Firestore/the Anthropic
+// fetch call -- exported below alongside the default handler export.
+function resolveRequestCost(hasImage, model, format) {
+  if (hasImage) return IMAGE_CREDIT_COST;
+  if (format === 'studlin_ai') return STUDLIN_AI_CREDIT_COST;
+  return CREDIT_COST[model] || 1;
+}
+function resolveSystemPrompt(format, effectiveModel) {
+  if (format === 'json') return EXTRACTION_PROMPT;
+  if (format === 'studlin_ai') return STUDLIN_AI_SYSTEM_PROMPT;
+  return effectiveModel === 'flash' ? FLASH_PROMPT : SYSTEM_PROMPT;
+}
+function resolveMaxTokens(format, effectiveModel) {
+  if (format === 'studlin_ai') return MAX_TOKENS_STUDLIN_AI;
+  if (format === 'json' && effectiveModel !== 'flash') return MAX_TOKENS_JSON_STANDARD;
+  return MAX_TOKENS[effectiveModel] || 2048;
+}
+
 const chatHandler = async (req, res) => {
   setCors(req, res);
   if (req.method === 'OPTIONS') return res.status(200).end();
@@ -304,7 +352,7 @@ const chatHandler = async (req, res) => {
     if (imagesError) return res.status(400).json({ error: imagesError });
 
     const hasImage = messages.some(m => !!m.image || (Array.isArray(m.images) && m.images.length > 0));
-    const cost = hasImage ? IMAGE_CREDIT_COST : (CREDIT_COST[model] || 1);
+    const cost = resolveRequestCost(hasImage, model, format);
 
     // Credit tracking is best-effort: if Firestore is unreachable or the
     // `users` collection/document isn't there yet, don't let that break the
@@ -381,8 +429,8 @@ const chatHandler = async (req, res) => {
 
     const effectiveModel = downgradedForCostCap ? 'flash' : model;
     const claudeModel = MODEL_MAP[effectiveModel] || MODEL_MAP.standard;
-    let systemPrompt = format === 'json' ? EXTRACTION_PROMPT : (effectiveModel === 'flash' ? FLASH_PROMPT : SYSTEM_PROMPT);
-    const maxTokens = (format === 'json' && effectiveModel !== 'flash') ? MAX_TOKENS_JSON_STANDARD : (MAX_TOKENS[effectiveModel] || 2048);
+    let systemPrompt = resolveSystemPrompt(format, effectiveModel);
+    const maxTokens = resolveMaxTokens(format, effectiveModel);
 
     // Only genuine chat/tutoring surfaces send verbosity/tutorStyle — every
     // other call site (citations, grammar, essay feedback, flashcard/quiz
@@ -444,7 +492,11 @@ const chatHandler = async (req, res) => {
       system: systemPrompt,
       messages: claudeMessages,
     };
-    if (format === 'json') requestBody.temperature = 0.2;
+    // studlin_ai gets the same low temperature json mode does -- the system
+    // prompt already instructs "never invent a number not in the digest,"
+    // but a real sampling-parameter backstop against creative drift is
+    // cheap insurance on top of an instruction alone.
+    if (format === 'json' || format === 'studlin_ai') requestBody.temperature = 0.2;
 
     // Raised alongside vercel.json's maxDuration (30s -> 60s): flashcard/quiz
     // generation now sends up to MATERIAL_TEXT_CAP (50,000 chars, was 15,000)
@@ -568,3 +620,6 @@ module.exports = withSentry(chatHandler);
 // the handler itself needs -- Vercel only cares that module.exports is
 // callable, so this extra property is otherwise inert in production.
 module.exports.validateMessageImages = validateMessageImages;
+module.exports.resolveRequestCost = resolveRequestCost;
+module.exports.resolveSystemPrompt = resolveSystemPrompt;
+module.exports.resolveMaxTokens = resolveMaxTokens;
