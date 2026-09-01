@@ -4344,13 +4344,15 @@ const COLLEGE_SCHEDULE_JSON_CONTRACT=
   "Respond with ONLY valid JSON, no markdown fences, no commentary, in this exact shape: "+
   "{\"classes\":[{\"subject\":{\"name\":\"Biology 101\"},"+
   "\"meetingTimes\":[{\"days\":[0,2,4],\"startTime\":\"10:00\",\"duration\":50}],"+
+  "\"scheduleConfidence\":\"high\","+
   "\"deadlines\":[{\"title\":\"Midterm 1\",\"date\":\"2026-09-24\",\"kind\":\"exam\",\"examType\":\"midterm\",\"confidence\":\"high\"}]}]}. "+
   "One entry in \"classes\" per distinct course. \"subject.name\" is the class name as it would appear on a schedule -- if genuinely not stated, use your best guess from context, never leave it blank. "+
   "\"meetingTimes\" is the class's REAL RECURRING weekly pattern only -- \"days\" uses 0=Monday..6=Sunday, \"startTime\" is 24-hour \"HH:MM\", \"duration\" is minutes, and it should only ever describe something that repeats across a semester-long date range. Include one entry per distinct day/time pattern (e.g. a class meeting Mon/Wed/Fri at one time and a separate recitation Tue/Thu at another time are two entries, possibly even two different \"classes\" entries if the recitation has its own name). "+
   "Any entry with a SINGLE date instead of a recurring range -- especially anything labeled Exam, Midterm, Final, or Common Hour Exam, even if its listed time differs from the class's regular meeting time -- is NOT a meeting time. It belongs in that same class's own \"deadlines\" array as \"kind\":\"exam\" with that real date, exactly like any other exam. Never fold a one-off exam date into \"meetingTimes\". "+
+  "\"scheduleConfidence\" is separate from any given deadline's own \"confidence\" below -- it covers ONLY \"subject.name\" and \"meetingTimes\": \"low\" when the class name or a meeting time/day was blurry, cut off, or otherwise genuinely hard to read and you had to guess at it; \"high\" otherwise, including the common case where nothing needed guessing at all. "+
   "\"deadlines\" otherwise follows the same rules as a normal exam/assignment: \"title\" short, \"date\" YYYY-MM-DD (never omit even if uncertain), \"kind\" is \"exam\" for quizzes/tests/midterms/finals/common-hour-exams, \"project\" for a genuinely multi-step multi-week deliverable, or \"assignment\" for everything else. "+
   "\"examType\" (exams only: \"quiz\"/\"midterm\"/\"final\"/\"project\"/\"other\"), \"gradeWeightPercent\" (exams only, ONLY when the source explicitly states a percentage of the final grade, a plain number like 20, never guessed), "+
-  "\"confidence\" (\"high\"/\"low\"), \"detail\" (optional, only when something concrete is stated beyond the title). "+
+  "\"confidence\" (\"high\"/\"low\", whether THIS deadline's own date/title was clear), \"detail\" (optional, only when something concrete is stated beyond the title). "+
   ANTI_GARBAGE_EXTRACTION_RULE+SCHEDULE_EXTRACTION_ROBUSTNESS_RULE+
   "If you find no classes at all, return an empty \"classes\" array -- never omit the key.";
 async function extractCollegeScheduleText(text){
@@ -4377,6 +4379,7 @@ async function extractCollegeScheduleText(text){
     const classes=(parsed&&Array.isArray(parsed.classes))?parsed.classes.filter(c=>c&&c.subject&&c.subject.name).map(c=>({
       subject:c.subject,
       meetingTimes:Array.isArray(c.meetingTimes)?c.meetingTimes:[],
+      scheduleConfidence:c.scheduleConfidence==="low"?"low":"high",
       deadlines:(Array.isArray(c.deadlines)?c.deadlines:[]).filter(d=>looksLikeRealDeadlineTitle(d&&d.title)).map(withDerivedExamImportance),
     })):[];
     return{classes,error:null};
@@ -4402,6 +4405,7 @@ async function extractCollegeScheduleImage(images){
     const classes=(parsed&&Array.isArray(parsed.classes))?parsed.classes.filter(c=>c&&c.subject&&c.subject.name).map(c=>({
       subject:c.subject,
       meetingTimes:Array.isArray(c.meetingTimes)?c.meetingTimes:[],
+      scheduleConfidence:c.scheduleConfidence==="low"?"low":"high",
       deadlines:(Array.isArray(c.deadlines)?c.deadlines:[]).filter(d=>looksLikeRealDeadlineTitle(d&&d.title)).map(withDerivedExamImportance),
     })):[];
     return{classes,error:null};
@@ -4418,7 +4422,7 @@ const HS_SCHEDULE_JSON_CONTRACT=
   "For each period return: \"subjectName\" (the class name as shown, e.g. \"English IV\", \"AP Biology\"), "+
   "\"startTime\" and \"endTime\" (24-hour \"HH:MM\"), "+
   "\"days\" (which weekdays this period happens, 0=Monday..6=Sunday -- if the schedule doesn't say otherwise, assume every school day it's shown applies to, most commonly Monday-Friday so [0,1,2,3,4]), "+
-  "\"confidence\" (\"high\" normally; \"low\" specifically when the schedule uses a rotating block system -- \"A Day\"/\"B Day\", or a numbered cycle like \"Day 1\"-\"Day 6\" -- instead of fixed weekdays, since which actual weekdays a rotating day falls on isn't something a single week's schedule can state with certainty; still do your best guess for \"days\" in that case, just flag it low-confidence rather than presenting a guess as fact). "+
+  "\"confidence\" (\"low\" when ANYTHING about this row was genuinely uncertain -- the class name or a time was blurry, cut off, handwritten, or otherwise hard to read and you had to guess at it, OR the schedule uses a rotating block system -- \"A Day\"/\"B Day\", or a numbered cycle like \"Day 1\"-\"Day 6\" -- instead of fixed weekdays, since which actual weekdays a rotating day falls on isn't something a single week's schedule can state with certainty; still give your best guess for whatever was uncertain, just flag the row low-confidence rather than presenting a guess as fact; \"high\" otherwise). "+
   "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
   "{\"periods\":[{\"subjectName\":\"English IV\",\"startTime\":\"08:00\",\"endTime\":\"08:45\",\"days\":[0,1,2,3,4],\"confidence\":\"high\"}]}. "+
   SCHEDULE_EXTRACTION_ROBUSTNESS_RULE;
@@ -18404,6 +18408,12 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
       subjectName:existingCourse?existingCourse.label:((result.subject&&result.subject.name)||""),
       color:existingCourse?existingCourse.color:nextColor(),
       sourceText:sourceText||"",
+      // Only meaningful when the AI actually supplied it (the college-
+      // schedule scan does; a plain single-syllabus scan's `result` never
+      // carries this field, so it's undefined there and the badge below
+      // simply never renders -- not every extraction path claims a
+      // confidence read on the class name/meeting time).
+      scheduleConfidence:result.scheduleConfidence,
       meetingTimes:(result.meetingTimes||[]).map((mt,i)=>({id:"mt-"+Date.now()+"-"+i,days:Array.isArray(mt.days)?mt.days:[],startTime:mt.startTime||"09:00",duration:mt.duration||50})),
       items:(result.deadlines||[]).map((d,i)=>{
         const kind=d.kind==="exam"?"exam":d.kind==="project"?"project":"assignment";
@@ -18544,6 +18554,11 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
       if(existing){
         existing.meetingTimes=existing.meetingTimes.concat(c.meetingTimes);
         existing.deadlines=existing.deadlines.concat(c.deadlines);
+        // Favor flagging over silently hiding uncertainty: if either scan
+        // of this same class was low-confidence, the merged result stays
+        // low-confidence rather than the first occurrence's rating quietly
+        // winning.
+        if(c.scheduleConfidence==="low")existing.scheduleConfidence="low";
       }else{
         const copy={...c,meetingTimes:[...c.meetingTimes],deadlines:[...c.deadlines]};
         merged.push(copy);
@@ -19151,7 +19166,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                         <div onDoubleClick={()=>setEditingHsTimeId(p.id)} title="Double-click to edit" style={{fontSize:11,color:T.muted,whiteSpace:"nowrap",cursor:"pointer"}}>{p.days.map(d=>ROUTINE_DOW[d]).join("")} · {fmtClock12(p.startTime)}–{fmtClock12(p.endTime)}</div>
                       )}
                       {p.confidence==="low"&&(
-                        <span title="This looks like a rotating block schedule (A/B days, a numbered cycle) -- Studlin guessed which weekdays this applies to, double-check it" style={{fontSize:10,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 7px",whiteSpace:"nowrap",flexShrink:0}}>Double-check days</span>
+                        <span title="Studlin wasn't fully sure about this row -- the class name or a time may have been hard to read, or this looks like a rotating block schedule (A/B days, a numbered cycle) where it had to guess which weekdays apply. Double-check it." style={{fontSize:10,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 7px",whiteSpace:"nowrap",flexShrink:0}}>Double-check</span>
                       )}
                     </div>
                     <div style={{display:"flex",gap:6,marginTop:8}}>
@@ -19211,6 +19226,9 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                 <div style={{display:"flex",gap:10,alignItems:"center"}}>
                   <ColorSelect value={review.color} onChange={c=>setReview(r=>({...r,color:c}))} />
                   <Input value={review.subjectName} onChange={e=>setReview(r=>({...r,subjectName:e.target.value}))} placeholder="e.g. Biology 101" style={{flex:1}} />
+                  {review.scheduleConfidence==="low"&&(
+                    <span title="Studlin wasn't fully sure it read this class's name or meeting time correctly -- double-check both below." style={{fontSize:10.5,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 8px",whiteSpace:"nowrap",flexShrink:0}}>Double-check</span>
+                  )}
                 </div>
               </Field>
               <div style={{marginTop:16,marginBottom:16}}>
