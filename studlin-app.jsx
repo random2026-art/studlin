@@ -9866,29 +9866,11 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
           refresh();
         };
         const clearExamScore=()=>{patchExam(selectedExam.id,{scoreTier:null,scorePercent:null});refresh();};
-        // The "amazing" use of stored scores, per direct ask: not just
-        // feeding math silently, but telling the student something real
-        // about themselves. Compares each scored exam's LAST pre-exam
-        // confidence answer against how it actually went. Needs 3+ scored
-        // exams (same average-student-first, evidence-gated principle as
-        // everywhere else) and the mismatch has to be the dominant pattern
-        // (>=half), not a one-off, before this ever says anything --
-        // otherwise a single rough day would misleadingly read as "you're
-        // bad at judging your own confidence."
-        const confidenceOutcomeInsight=(()=>{
-          const scored=allExamsForPrep().filter(ex=>ex.scoreTier&&ex.confidenceLog&&ex.confidenceLog.length>0);
-          if(scored.length<3)return null;
-          const zoneOf=ex=>confidenceZoneOf(ex.confidenceLog[ex.confidenceLog.length-1]);
-          const solidButBelow=scored.filter(ex=>zoneOf(ex)==="solid"&&ex.scoreTier==="below");
-          const shakyButAbove=scored.filter(ex=>zoneOf(ex)==="shaky"&&ex.scoreTier==="above");
-          if(solidButBelow.length>=Math.ceil(scored.length/2)&&solidButBelow.length>=shakyButAbove.length){
-            return "Your \"solid\" confidence calls have run worse than expected on "+solidButBelow.length+" of your last "+scored.length+" scored exams. Worth trusting that answer a little more cautiously.";
-          }
-          if(shakyButAbove.length>=Math.ceil(scored.length/2)){
-            return "You've scored better than expected on "+shakyButAbove.length+" of your last "+scored.length+" \"shaky\" exams. You might be tougher on yourself than the results show.";
-          }
-          return null;
-        })();
+        // Logic lives in the module-level confidenceOutcomeInsight() now
+        // (2026-09-01, extracted so Studlin AI's digest can call it too) --
+        // see that function's own comment for the "why" this exists at all.
+        // Local binding renamed to avoid shadowing the function it calls.
+        const confidenceInsight=confidenceOutcomeInsight();
         // Silent-reprioritization surfacing (2026-08-19): restampSessionPriorities
         // already re-scores this exam's remaining sessions the moment a
         // check-in comes in (see submitExamCheckIn) -- a "solid" streak
@@ -10037,8 +10019,8 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                 </div>
               </div>
             )}
-            {confidenceOutcomeInsight&&(
-              <div style={{fontSize:11.5,color:T.teal,background:T.teal+"0c",border:`1px solid ${T.teal}33`,borderRadius:8,padding:"10px 12px",marginBottom:14,lineHeight:1.5}}>{confidenceOutcomeInsight}</div>
+            {confidenceInsight&&(
+              <div style={{fontSize:11.5,color:T.teal,background:T.teal+"0c",border:`1px solid ${T.teal}33`,borderRadius:8,padding:"10px 12px",marginBottom:14,lineHeight:1.5}}>{confidenceInsight}</div>
             )}
             {priorityShiftNote&&(
               <div style={{fontSize:11.5,color:T.muted,marginBottom:14}}>{priorityShiftNote}</div>
@@ -13914,6 +13896,28 @@ function confidenceUnitOf(rating){
 function confidenceZoneOf(rating){
   if(typeof rating==="number")return rating<=2?"shaky":rating===3?"okay":"solid";
   return rating;
+}
+// Extracted from Studlin Prep's exam-detail render (2026-09-01, was an
+// inline IIFE there) so Studlin AI's digest can call it too -- verbatim
+// logic, no behavior change. Compares each scored exam's LAST pre-exam
+// confidence answer against how it actually went. Needs 3+ scored exams
+// (same evidence-gated principle as everywhere else in this file) and the
+// mismatch has to be the dominant pattern (>=half), not a one-off, before
+// this ever says anything -- otherwise a single rough day would
+// misleadingly read as "you're bad at judging your own confidence."
+function confidenceOutcomeInsight(){
+  const scored=allExamsForPrep().filter(ex=>ex.scoreTier&&ex.confidenceLog&&ex.confidenceLog.length>0);
+  if(scored.length<3)return null;
+  const zoneOf=ex=>confidenceZoneOf(ex.confidenceLog[ex.confidenceLog.length-1]);
+  const solidButBelow=scored.filter(ex=>zoneOf(ex)==="solid"&&ex.scoreTier==="below");
+  const shakyButAbove=scored.filter(ex=>zoneOf(ex)==="shaky"&&ex.scoreTier==="above");
+  if(solidButBelow.length>=Math.ceil(scored.length/2)&&solidButBelow.length>=shakyButAbove.length){
+    return "Your \"solid\" confidence calls have run worse than expected on "+solidButBelow.length+" of your last "+scored.length+" scored exams. Worth trusting that answer a little more cautiously.";
+  }
+  if(shakyButAbove.length>=Math.ceil(scored.length/2)){
+    return "You've scored better than expected on "+shakyButAbove.length+" of your last "+scored.length+" \"shaky\" exams. You might be tougher on yourself than the results show.";
+  }
+  return null;
 }
 // Shared "last N check-ins all landed in this zone" check -- pulled out of
 // evaluateExamPrepAdjustment's own inline lastThree/lastTwoSolid checks
