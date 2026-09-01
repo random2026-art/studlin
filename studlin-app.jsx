@@ -4385,14 +4385,16 @@ async function extractCollegeScheduleText(text){
     return{classes:[],error:"Couldn't read that. Try again."};
   }
 }
-async function extractCollegeScheduleImage(base64Data,mediaType){
+async function extractCollegeScheduleImage(images){
   try{
-    const prompt="This image is a screenshot or photo of a college student's full class schedule for a term -- a registrar 'my schedule' grid or similar, likely covering several different classes at once. "+
+    const multi=images.length>1;
+    const prompt="This "+(multi?"set of images is "+images.length+" screenshots or photos":"image is a screenshot or photo")+" of a college student's full class schedule for a term -- a registrar 'my schedule' grid or similar, likely covering several different classes at once"+(multi?", possibly split across the images (e.g. one screenshot per page, or overlapping views of the same schedule)":"")+". "+
       "Today's date is "+dayKey()+". If a date has no year, infer the most likely upcoming year given today's date. "+
       "Extract every class, its recurring weekly meeting time(s), and every deadline/exam date visible for each one. "+
+      (multi?"If the same class or deadline appears in more than one image, include it only once in the result -- don't duplicate it. ":"")+
       "Never invent a URL or link -- a screenshot's visible text has no way to reveal what an actual link points to. "+
       COLLEGE_SCHEDULE_JSON_CONTRACT;
-    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt,image:{mediaType,data:base64Data}}],model:"standard",format:"json"})});
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt,images:images.map(img=>({mediaType:img.mediaType,data:img.data}))}],model:"standard",format:"json"})});
     const data=await res.json();
     if(!res.ok)return{classes:[],error:data.error||"Couldn't read that image. Try again."};
     const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
@@ -4420,13 +4422,15 @@ const HS_SCHEDULE_JSON_CONTRACT=
   "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
   "{\"periods\":[{\"subjectName\":\"English IV\",\"startTime\":\"08:00\",\"endTime\":\"08:45\",\"days\":[0,1,2,3,4],\"confidence\":\"high\"}]}. "+
   SCHEDULE_EXTRACTION_ROBUSTNESS_RULE;
-async function extractHsScheduleFromImage(base64Data,mediaType){
+async function extractHsScheduleFromImage(images){
   try{
-    const prompt="This image is a photo or screenshot of a high school class schedule -- a table or list of periods, each with a class name and the time it meets. "+
+    const multi=images.length>1;
+    const prompt="This "+(multi?"set of images is "+images.length+" photos or screenshots":"image is a photo or screenshot")+" of a high school class schedule -- a table or list of periods, each with a class name and the time it meets"+(multi?", possibly split across the images (e.g. one screenshot per page, or overlapping views of the same schedule)":"")+". "+
       "Extract every period you can see. "+
+      (multi?"If the same period appears in more than one image, include it only once in the result -- don't duplicate it. ":"")+
       HS_SCHEDULE_JSON_CONTRACT+
       "If you can't make out any periods at all, respond with {\"periods\":[]}.";
-    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt,image:{mediaType,data:base64Data}}],model:"standard",format:"json"})});
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt,images:images.map(img=>({mediaType:img.mediaType,data:img.data}))}],model:"standard",format:"json"})});
     const data=await res.json();
     if(!res.ok)return{periods:[],error:data.error||"Couldn't read that image. Try again."};
     const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
@@ -18554,23 +18558,40 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     buildReviewFromExtraction(classes[0],sourceText);
     setScanQueue(classes.slice(1));
   };
+  // A whole-schedule photo often needs more than one shot (multiple terms/
+  // pages, or a schedule that doesn't fit one screenshot) -- files can now
+  // be a multi-select of screenshots, combined into one extraction call
+  // instead of the old one-photo-only limit. A single non-image document
+  // (PDF/Word/text) still works exactly as before; mixing screenshots with
+  // a document in the same selection isn't supported (no sensible way to
+  // combine them), so that's rejected with a clear message rather than
+  // silently picking one. MAX_SCHEDULE_IMAGES mirrors api/chat.js's own
+  // MAX_IMAGES_PER_MESSAGE so this fails fast client-side with a friendly
+  // message instead of waiting on the server's 400.
+  const MAX_SCHEDULE_IMAGES=6;
   const handleCollegeScheduleFile=async(e)=>{
-    const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";
-    const ext=file.name.split(".").pop().toLowerCase();
-    if(IMAGE_EXT_MEDIA_TYPES[ext]){if(!canScanScreenshot()&&!canFreeOnboardingScan("schedule")){setPricingOpen(canScanScreenshotReason()==="free-tier"?"screenshotScan":"aiUsageCap");return;}}
+    const files=e.target.files?Array.from(e.target.files):[];if(files.length===0)return;e.target.value="";
+    const exts=files.map(f=>f.name.split(".").pop().toLowerCase());
+    const allImages=exts.every(ext=>IMAGE_EXT_MEDIA_TYPES[ext]);
+    if(files.length>1&&!allImages){setScanError("Select multiple photos/screenshots together, or a single PDF/Word/text file -- not a mix.");return;}
+    if(files.length>MAX_SCHEDULE_IMAGES){setScanError("Too many screenshots at once (max "+MAX_SCHEDULE_IMAGES+"). Try fewer, or scan the rest separately.");return;}
+    if(allImages){if(!canScanScreenshot()&&!canFreeOnboardingScan("schedule")){setPricingOpen(canScanScreenshotReason()==="free-tier"?"screenshotScan":"aiUsageCap");return;}}
     else{if(!canScanSyllabus()&&!canFreeOnboardingScan("schedule")){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}}
     setScanning(true);setScanError("");
     try{
-      if(IMAGE_EXT_MEDIA_TYPES[ext]){
-        const dataUrl=await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.readAsDataURL(file);});
-        const base64=(dataUrl.split(",")[1])||"";
-        const result=await extractCollegeScheduleImage(base64,IMAGE_EXT_MEDIA_TYPES[ext]);
+      if(allImages){
+        const images=await Promise.all(files.map(async(file,i)=>{
+          const dataUrl=await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.readAsDataURL(file);});
+          return{mediaType:IMAGE_EXT_MEDIA_TYPES[exts[i]],data:(dataUrl.split(",")[1])||""};
+        }));
+        const result=await extractCollegeScheduleImage(images);
         if(result.error){setScanError(result.error);return;}
         if(!canScanScreenshot())markFreeScanUsed("schedule");
         recordScreenshotScan();
         startClassQueue(result.classes);
         return;
       }
+      const file=files[0],ext=exts[0];
       let text="";
       if(ext==="pdf"){
         const pdfjsLib=await window._pdfjs;const buf=await file.arrayBuffer();const pdf=await pdfjsLib.getDocument({data:buf}).promise;
@@ -18639,23 +18660,29 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   // handleScanFile's identical extension-branching pattern -- reused here
   // rather than reinvented.
   const handleHsScheduleFile=async(e)=>{
-    const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";
-    const ext=file.name.split(".").pop().toLowerCase();
-    if(IMAGE_EXT_MEDIA_TYPES[ext]){if(!canScanScreenshot()&&!canFreeOnboardingScan("schedule")){setPricingOpen(canScanScreenshotReason()==="free-tier"?"screenshotScan":"aiUsageCap");return;}}
+    const files=e.target.files?Array.from(e.target.files):[];if(files.length===0)return;e.target.value="";
+    const exts=files.map(f=>f.name.split(".").pop().toLowerCase());
+    const allImages=exts.every(ext=>IMAGE_EXT_MEDIA_TYPES[ext]);
+    if(files.length>1&&!allImages){setScanError("Select multiple photos/screenshots together, or a single PDF/Word/text file -- not a mix.");return;}
+    if(files.length>MAX_SCHEDULE_IMAGES){setScanError("Too many screenshots at once (max "+MAX_SCHEDULE_IMAGES+"). Try fewer, or scan the rest separately.");return;}
+    if(allImages){if(!canScanScreenshot()&&!canFreeOnboardingScan("schedule")){setPricingOpen(canScanScreenshotReason()==="free-tier"?"screenshotScan":"aiUsageCap");return;}}
     else{if(!canScanSyllabus()&&!canFreeOnboardingScan("schedule")){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}}
     setScanning(true);setScanError("");
     try{
-      if(IMAGE_EXT_MEDIA_TYPES[ext]){
-        const dataUrl=await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.readAsDataURL(file);});
-        const base64=(dataUrl.split(",")[1])||"";
-        const result=await extractHsScheduleFromImage(base64,IMAGE_EXT_MEDIA_TYPES[ext]);
+      if(allImages){
+        const images=await Promise.all(files.map(async(file,i)=>{
+          const dataUrl=await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.readAsDataURL(file);});
+          return{mediaType:IMAGE_EXT_MEDIA_TYPES[exts[i]],data:(dataUrl.split(",")[1])||""};
+        }));
+        const result=await extractHsScheduleFromImage(images);
         if(result.error){setScanError(result.error);return;}
-        if(result.periods.length===0){setScanError("Couldn't make out any periods in that image. Try a clearer photo, or add classes manually.");return;}
+        if(result.periods.length===0){setScanError("Couldn't make out any periods in "+(images.length>1?"those images":"that image")+". Try a clearer photo, or add classes manually.");return;}
         if(!canScanScreenshot())markFreeScanUsed("schedule");
         recordScreenshotScan();
         buildHsReviewFromPeriods(result.periods);
         return;
       }
+      const file=files[0],ext=exts[0];
       let text="";
       if(ext==="pdf"){
         const pdfjsLib=await window._pdfjs;const buf=await file.arrayBuffer();const pdf=await pdfjsLib.getDocument({data:buf}).promise;
@@ -19052,9 +19079,9 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                     style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box"}} />
                   <Btn onClick={handleCollegeSchedulePaste} disabled={!pasteText.trim()} style={{marginTop:10,width:"100%",justifyContent:"center",opacity:pasteText.trim()?1:0.45}}>Scan this text</Btn>
                 </div>
-              ) : <button type="button" onClick={()=>collegeScheduleFileRef.current&&collegeScheduleFileRef.current.click()} style={{width:"100%",padding:"32px",borderRadius:12,border:`1.5px dashed ${T.borderHover}`,background:T.card2,color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:13,textAlign:"center"}}>Tap to choose a file or photo</button>
+              ) : <button type="button" onClick={()=>collegeScheduleFileRef.current&&collegeScheduleFileRef.current.click()} style={{width:"100%",padding:"32px",borderRadius:12,border:`1.5px dashed ${T.borderHover}`,background:T.card2,color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:13,textAlign:"center"}}>Tap to choose a file, or one or more photos</button>
             }
-            <input ref={collegeScheduleFileRef} type="file" accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,.gif" style={{display:"none"}} onChange={handleCollegeScheduleFile} />
+            <input ref={collegeScheduleFileRef} type="file" accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,.gif" style={{display:"none"}} onChange={handleCollegeScheduleFile} multiple />
             {scanError&&<div style={{fontSize:12,color:T.red,marginTop:10}}>{scanError}</div>}
             {!scanning&&(
               <button type="button" onClick={()=>{setPasteMode(m=>!m);setScanError("");}} style={{marginTop:12,background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>
@@ -19098,9 +19125,9 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                     style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box"}} />
                   <Btn onClick={handleHsPasteScan} disabled={!hsPasteText.trim()} style={{marginTop:10,width:"100%",justifyContent:"center",opacity:hsPasteText.trim()?1:0.45}}>Scan this text</Btn>
                 </div>
-              ) : <button type="button" onClick={()=>hsFileInputRef.current&&hsFileInputRef.current.click()} style={{width:"100%",padding:"32px",borderRadius:12,border:`1.5px dashed ${T.borderHover}`,background:T.card2,color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:13,textAlign:"center"}}>Tap to choose a file or photo</button>
+              ) : <button type="button" onClick={()=>hsFileInputRef.current&&hsFileInputRef.current.click()} style={{width:"100%",padding:"32px",borderRadius:12,border:`1.5px dashed ${T.borderHover}`,background:T.card2,color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:13,textAlign:"center"}}>Tap to choose a file, or one or more photos</button>
             }
-            <input ref={hsFileInputRef} type="file" accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,.gif" style={{display:"none"}} onChange={handleHsScheduleFile} />
+            <input ref={hsFileInputRef} type="file" accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,.gif" style={{display:"none"}} onChange={handleHsScheduleFile} multiple />
             {scanError&&<div style={{fontSize:12,color:T.red,marginTop:10}}>{scanError}</div>}
             {!scanning&&(
               <button type="button" onClick={()=>{setHsPasteMode(m=>!m);setScanError("");}} style={{marginTop:12,background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>
