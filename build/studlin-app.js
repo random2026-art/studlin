@@ -4374,10 +4374,10 @@ function computeFillSuggestions(freedDate, freedTime, freedDuration) {
   })();
   if (freedDate === dayKey() && timeToMinutes(freedTime) + freedDuration <= nowMins) return [];
   const all = lsGet("events", []);
-  return all.filter((ev) => isQualifying(ev) && ev.date >= freedDate && (ev.duration || 30) <= freedDuration).sort((a, b) => {
+  return all.filter((ev) => isQualifying(ev) && ev.kind !== "reminder" && ev.date >= freedDate && ev.duration <= freedDuration).sort((a, b) => {
     const da = a.deadline || "9999-99-99", db = b.deadline || "9999-99-99";
     return da < db ? -1 : da > db ? 1 : 0;
-  }).slice(0, 3).map((ev) => ({ id: ev.id, title: ev.title, duration: ev.duration || 30 }));
+  }).slice(0, 3).map((ev) => ({ id: ev.id, title: ev.title, duration: ev.duration }));
 }
 function sessionPriorityFor(ev, pool) {
   const exam = ev.dueEventId ? pool.find((e) => e.id === ev.dueEventId && e.kind === "exam") : null;

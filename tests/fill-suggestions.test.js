@@ -76,4 +76,28 @@ describe("computeFillSuggestions", () => {
     const suggestions = m.computeFillSuggestions("2026-08-25", "10:00", 60);
     assert.equal(suggestions.length, 1);
   });
+
+  // A reminder is a point-in-time nudge with duration:0 by design -- it has
+  // no real duration to occupy a freed work slot, so it should never be
+  // offered here, even though isQualifying/PAUSE_QUALIFYING_KINDS legitimately
+  // includes "reminder" for the unrelated pause-plan/reschedule engine.
+  test("never suggests a reminder to fill a freed slot", () => {
+    const m = loadStudlinModule({ now: "2026-07-28T12:00:00" });
+    m.lsSet("events", [
+      { id: "r1", title: "Email professor", kind: "reminder", status: "pending", date: "2026-07-28", time: "14:30", duration: 0 },
+    ]);
+    const suggestions = m.computeFillSuggestions("2026-07-28", "14:00", 60);
+    assert.equal(suggestions.length, 0);
+  });
+
+  test("still offers a genuine study block alongside an excluded reminder for the same slot", () => {
+    const m = loadStudlinModule({ now: "2026-07-28T12:00:00" });
+    m.lsSet("events", [
+      { id: "r1", title: "Email professor", kind: "reminder", status: "pending", date: "2026-07-28", time: "14:30", duration: 0 },
+      { id: "t1", title: "Read chapter 4", kind: "study block", status: "pending", date: "2026-07-28", time: "15:00", duration: 30 },
+    ]);
+    const suggestions = m.computeFillSuggestions("2026-07-28", "14:00", 60);
+    assert.equal(suggestions.length, 1);
+    assert.equal(suggestions[0].id, "t1");
+  });
 });
