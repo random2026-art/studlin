@@ -13625,6 +13625,7 @@ function CalendarTab({ setActive = () => {
   const [evDeadline, setEvDeadline] = useState("");
   const [evDeadlineTime, setEvDeadlineTime] = useState("23:59");
   const [asChecklist, setAsChecklist] = useState(false);
+  const [taskRepeatDays, setTaskRepeatDays] = useState([]);
   const [brainDumpOpen, setBrainDumpOpen] = useState(false);
   const [brainDumpText, setBrainDumpText] = useState("");
   const [brainDumpLoading, setBrainDumpLoading] = useState(false);
@@ -14539,6 +14540,8 @@ function CalendarTab({ setActive = () => {
     setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);
     setEvCommuteBefore("");
     setEvCommuteAfter("");
+    setAsChecklist(false);
+    setTaskRepeatDays([]);
     resetTypeExtras();
     setNewOpen(true);
   };
@@ -14594,6 +14597,7 @@ function CalendarTab({ setActive = () => {
     setEvCommuteAfter("");
     setAiLoading(false);
     setAsChecklist(false);
+    setTaskRepeatDays([]);
     resetTypeExtras();
   };
   const onEvKindChange = (k) => {
@@ -14608,7 +14612,8 @@ function CalendarTab({ setActive = () => {
       setEvSplitEnabled(false);
       setEvSplitCount(2);
     }
-    if (k !== "assignment") setAsChecklist(false);
+    if (k !== "assignment" && k !== "task") setAsChecklist(false);
+    if (k !== "task") setTaskRepeatDays([]);
     resetTypeExtras();
   };
   const resolveAssignmentKind = () => evKind === "assignment" || evKind === "task" ? taskMode === "ai" ? "deadline" : "study block" : evKind === "project" ? "deadline" : evKind;
@@ -14744,6 +14749,13 @@ function CalendarTab({ setActive = () => {
     const subj = evSubject === "None" ? "" : evSubject === "Other" && evCustom.trim() ? evCustom.trim() : evSubject;
     const item = { id: String(Date.now() + Math.random() * 1e3), title: evTitle.trim(), date: evDeadline || "", time: "", subject: subj, kind: "deadline", notes: evNotes, checklist: true, deadline: evDeadline || null, priority: 5, difficulty: 5, duration: 0, status: "pending", timeSpent: 0, completedAt: null };
     commitTasks([item]);
+  };
+  const saveRepeatingTask = () => {
+    if (!evTitle.trim() || taskRepeatDays.length === 0) return;
+    const subj = evSubject === "None" ? "" : evSubject === "Other" && evCustom.trim() ? evCustom.trim() : evSubject;
+    const base = { title: evTitle.trim(), kind: "habit", ...subj ? { subject: subj } : {}, notes: evNotes || void 0 };
+    persistRoutines([...routines, ...buildRoutineObjectsForDays(base, taskRepeatDays, "09:00", evDuration || 30, {})]);
+    resetForm();
   };
   const todaysScheduleForBrainDump = () => formatRealWorldScheduleForDate(events, routines, dayKey());
   const parseBrainDump = async (text) => {
@@ -15339,7 +15351,8 @@ Examples:
   const isTaskKind = !isFixedKind && !isReminderKind;
   const isExamKind = evKind === "exam";
   const isProjectKind = evKind === "project";
-  const isChecklistMode = evKind === "assignment" && asChecklist;
+  const isChecklistMode = (evKind === "assignment" || evKind === "task") && asChecklist;
+  const isRepeatingTask = evKind === "task" && taskRepeatDays.length > 0;
   const manualMode = isTaskKind && !isChecklistMode && taskMode === "manual";
   const stepSelDay = (n) => {
     const d = /* @__PURE__ */ new Date(selDay + "T00:00:00");
@@ -16068,34 +16081,46 @@ Examples:
       open: newOpen,
       onClose: resetForm,
       title: "New task",
-      sub: taskMode === "manual" ? "Add details and pick exactly when." : "Add details and Studlin finds the time.",
+      sub: isRepeatingTask ? "Repeats on the days you pick -- Studlin fits it in each time." : isChecklistMode ? "Just track when it's due -- schedule time for it later if you want to." : taskMode === "manual" ? "Add details and pick exactly when." : "Add details and Studlin finds the time.",
       width: 580,
-      footer: isChecklistMode ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: resetForm }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: saveChecklistItem, disabled: !evTitle.trim(), style: { flex: 1, justifyContent: "center", opacity: evTitle.trim() ? 1 : 0.45 } }, "Add to Checklist")) : isReminderKind || isFixedKind ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: resetForm }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: saveManual, disabled: !(evTitle.trim() && evDate.trim() && evTime.trim()), style: { opacity: evTitle.trim() && evDate.trim() && evTime.trim() ? 1 : 0.45 } }, isReminderKind ? "Save reminder" : "Save")) : taskMode === "manual" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: resetForm }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: saveManual, disabled: !evTitle.trim() || !evDate.trim() || !evTime.trim(), style: { flex: 1, justifyContent: "center", opacity: evTitle.trim() && evDate.trim() && evTime.trim() ? 1 : 0.45 } }, "Save to Calendar")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: resetForm }, "Cancel"), evAttackBlock && /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: placeAssignmentManually, disabled: !evTitle.trim() }, "Place manually"), /* @__PURE__ */ React.createElement(Btn, { onClick: aiArrange, disabled: aiLoading || !evTitle.trim(), style: { flex: 1, justifyContent: "center", opacity: aiLoading ? 1 : !evTitle.trim() ? 0.45 : 1 } }, aiLoading ? "Scheduling..." : "Add Task with AI"))
+      footer: isRepeatingTask ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: resetForm }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: saveRepeatingTask, disabled: !evTitle.trim(), style: { flex: 1, justifyContent: "center", opacity: evTitle.trim() ? 1 : 0.45 } }, "Save repeating task")) : isChecklistMode ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: resetForm }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: saveChecklistItem, disabled: !evTitle.trim(), style: { flex: 1, justifyContent: "center", opacity: evTitle.trim() ? 1 : 0.45 } }, "Add to Checklist")) : isReminderKind || isFixedKind ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: resetForm }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: saveManual, disabled: !(evTitle.trim() && evDate.trim() && evTime.trim()), style: { opacity: evTitle.trim() && evDate.trim() && evTime.trim() ? 1 : 0.45 } }, isReminderKind ? "Save reminder" : "Save")) : taskMode === "manual" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: resetForm }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: saveManual, disabled: !evTitle.trim() || !evDate.trim() || !evTime.trim(), style: { flex: 1, justifyContent: "center", opacity: evTitle.trim() && evDate.trim() && evTime.trim() ? 1 : 0.45 } }, "Save to Calendar")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: resetForm }, "Cancel"), evAttackBlock && /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: placeAssignmentManually, disabled: !evTitle.trim() }, "Place manually"), /* @__PURE__ */ React.createElement(Btn, { onClick: aiArrange, disabled: aiLoading || !evTitle.trim(), style: { flex: 1, justifyContent: "center", opacity: aiLoading ? 1 : !evTitle.trim() ? 0.45 : 1 } }, aiLoading ? "Scheduling..." : "Add Task with AI"))
     },
     /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement(Input, { placeholder: "e.g. Study Bio chapter 4-6", value: evTitle, onChange: (ev) => setEvTitle(ev.target.value), autoFocus: true })),
-    isTaskKind && !isChecklistMode && /* @__PURE__ */ React.createElement(Field, { label: "Scheduling" }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 2, background: T.card2, padding: 2, borderRadius: 4, width: "fit-content" } }, [{ id: "manual", label: "I'll pick the time" }, { id: "ai", label: "Studlin finds the time" }].map((v) => /* @__PURE__ */ React.createElement(
-      "button",
-      {
-        key: v.id,
-        type: "button",
-        onClick: () => setTaskMode(v.id),
-        style: {
-          padding: "6px 12px",
-          borderRadius: 4,
-          fontSize: 12,
-          fontWeight: taskMode === v.id ? 600 : 400,
-          cursor: "pointer",
-          background: taskMode === v.id ? T.card : "transparent",
-          color: taskMode === v.id ? T.text : T.muted,
-          border: "none",
-          fontFamily: T.font,
-          transition: "all 0.15s",
-          whiteSpace: "nowrap"
-        }
-      },
-      v.label
-    )))),
-    /* @__PURE__ */ React.createElement(Field, { label: "Type", hint: isFixedKind ? "Won't be moved or rescheduled." : evKind === "assignment" || evKind === "task" ? taskMode === "manual" ? evKind === "task" ? "Happens at this exact time." : "A study session at this exact time." : "Studlin finds the time before it's due." : void 0 }, /* @__PURE__ */ React.createElement(SelectChip, { options: [{ value: "assignment", label: taskMode === "manual" ? "Study Session" : "Assignment" }, { value: "task", label: "Task" }, { value: "project", label: "Project" }, "exam", "class", { value: "busy block", label: "Activity" }, "reminder"], value: evKind, onChange: onEvKindChange })),
+    isTaskKind && taskRepeatDays.length === 0 && /* @__PURE__ */ React.createElement(Field, { label: "Scheduling" }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 2, background: T.card2, padding: 2, borderRadius: 4, width: "fit-content", flexWrap: "wrap" } }, [{ id: "none", label: "No schedule yet" }, { id: "manual", label: "I'll pick the time" }, { id: "ai", label: "Studlin finds the time" }].map((v) => {
+      const active = v.id === "none" ? isChecklistMode : !isChecklistMode && taskMode === v.id;
+      return /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          key: v.id,
+          type: "button",
+          onClick: () => {
+            if (v.id === "none") {
+              setAsChecklist(true);
+            } else {
+              setAsChecklist(false);
+              setTaskMode(v.id);
+            }
+          },
+          style: {
+            padding: "6px 12px",
+            borderRadius: 4,
+            fontSize: 12,
+            fontWeight: active ? 600 : 400,
+            cursor: "pointer",
+            background: active ? T.card : "transparent",
+            color: active ? T.text : T.muted,
+            border: "none",
+            fontFamily: T.font,
+            transition: "all 0.15s",
+            whiteSpace: "nowrap"
+          }
+        },
+        v.label
+      );
+    }))),
+    evKind === "task" && /* @__PURE__ */ React.createElement(Field, { label: "Repeat", hint: taskRepeatDays.length > 0 ? "No fixed time -- Studlin fits it in wherever there's room each day it repeats." : "Leave off for a one-time task." }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } }, ROUTINE_DOW.map((d, di) => /* @__PURE__ */ React.createElement("button", { key: di, type: "button", onClick: () => setTaskRepeatDays((r) => r.includes(di) ? r.filter((x) => x !== di) : [...r, di]), style: wizardChipStyle(taskRepeatDays.includes(di)) }, d)), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setTaskRepeatDays((r) => r.length === 7 ? [] : [0, 1, 2, 3, 4, 5, 6]), style: wizardChipStyle(taskRepeatDays.length === 7) }, "Every day"))),
+    evKind === "task" && taskRepeatDays.length > 0 && /* @__PURE__ */ React.createElement(Field, { label: "Duration (minutes)", hint: "How long this occupies on your calendar" }, /* @__PURE__ */ React.createElement(NumField, { min: 5, max: 480, fallback: 30, value: evDuration, onChange: setEvDuration })),
+    /* @__PURE__ */ React.createElement(Field, { label: "Type", hint: isFixedKind ? "Won't be moved or rescheduled." : isRepeatingTask ? "Repeats on the days you pick below." : isChecklistMode ? "Just a due date -- no calendar time yet." : evKind === "assignment" || evKind === "task" ? taskMode === "manual" ? evKind === "task" ? "Happens at this exact time." : "A study session at this exact time." : "Studlin finds the time before it's due." : void 0 }, /* @__PURE__ */ React.createElement(SelectChip, { options: [{ value: "assignment", label: taskMode === "manual" ? "Study Session" : "Assignment" }, { value: "task", label: "Task" }, { value: "project", label: "Project" }, "exam", "class", { value: "busy block", label: "Activity" }, "reminder"], value: evKind, onChange: onEvKindChange })),
     /* @__PURE__ */ React.createElement(Field, { label: "Subject" }, /* @__PURE__ */ React.createElement(SelectChip, { options: SUBJ, value: evSubject, onChange: setEvSubject })),
     evSubject === "Other" && /* @__PURE__ */ React.createElement(Field, { label: "Custom subject", hint: "Pick a color so it doesn't get lost on the calendar." }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement(ColorSelect, { value: evCustomColor, onChange: setEvCustomColor }), /* @__PURE__ */ React.createElement(Input, { placeholder: "e.g. Drivers ed, SAT prep, club...", value: evCustom, onChange: (ev) => setEvCustom(ev.target.value), style: { flex: 1 } }))),
     evKind === "assignment" && taskMode === "manual" && evSubject !== "None" && (() => {
@@ -16179,9 +16204,9 @@ Examples:
       const name = (evCollabCandidates.find((c) => c.uid === uid) || {}).name || "Studlin User";
       return /* @__PURE__ */ React.createElement("span", { key: uid, style: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 600, color: T.text, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 99, padding: "4px 10px" } }, name, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => toggleEvCollabSelected(uid), style: { background: "none", border: "none", color: T.muted, cursor: "pointer", padding: 0, fontSize: 13, lineHeight: 1 } }, "\xD7"));
     }), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: openEvCollabPicker }, "+ Add more")) : /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: openEvCollabPicker }, "+ Add collaborators"))),
-    isTaskKind && !isChecklistMode && taskMode === "manual" && /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } }, /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement(Input, { type: "date", value: evDate, onChange: (ev) => setEvDate(ev.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Start Time" }, /* @__PURE__ */ React.createElement(BoxedTimeInput, { value: evTime, onChange: setEvTime }))),
-    isTaskKind && !isChecklistMode && taskMode === "ai" && /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } }, /* @__PURE__ */ React.createElement(Field, { label: "Due Date & Time", hint: "When this must be done by" }, /* @__PURE__ */ React.createElement(Input, { type: "date", value: evDeadline, onChange: (ev) => setEvDeadline(ev.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Due time" }, /* @__PURE__ */ React.createElement(BoxedTimeInput, { value: evDeadlineTime, onChange: setEvDeadlineTime }))),
-    isTaskKind && !isChecklistMode && !evAttackBlock && /* @__PURE__ */ React.createElement(Field, { label: "Duration (minutes)", hint: "How long you plan to spend" }, /* @__PURE__ */ React.createElement(NumField, { min: 5, max: 480, fallback: 5, value: evDuration, onChange: (v) => {
+    isTaskKind && !isChecklistMode && taskRepeatDays.length === 0 && taskMode === "manual" && /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } }, /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement(Input, { type: "date", value: evDate, onChange: (ev) => setEvDate(ev.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Start Time" }, /* @__PURE__ */ React.createElement(BoxedTimeInput, { value: evTime, onChange: setEvTime }))),
+    isTaskKind && !isChecklistMode && taskRepeatDays.length === 0 && taskMode === "ai" && /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } }, /* @__PURE__ */ React.createElement(Field, { label: "Due Date & Time", hint: "When this must be done by" }, /* @__PURE__ */ React.createElement(Input, { type: "date", value: evDeadline, onChange: (ev) => setEvDeadline(ev.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Due time" }, /* @__PURE__ */ React.createElement(BoxedTimeInput, { value: evDeadlineTime, onChange: setEvDeadlineTime }))),
+    isTaskKind && !isChecklistMode && taskRepeatDays.length === 0 && !evAttackBlock && /* @__PURE__ */ React.createElement(Field, { label: "Duration (minutes)", hint: "How long you plan to spend" }, /* @__PURE__ */ React.createElement(NumField, { min: 5, max: 480, fallback: 5, value: evDuration, onChange: (v) => {
       setEvDuration(v);
       setEvDurationTouched(true);
     } }), (() => {
@@ -16192,7 +16217,7 @@ Examples:
       }, style: { background: "none", border: "none", color: T.lime, cursor: "pointer", fontSize: 11.5, fontFamily: T.font, padding: 0, textDecoration: "underline" } }, "use this"));
     })()),
     isTaskKind && !isChecklistMode && evKind !== "task" && (evSplitEnabled ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, marginBottom: 14 } }, `"I don't know how long this takes" isn't available while Split into sessions is on \u2014 turn Split off below to use it instead.`) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "12px 14px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setEvAttackBlock((a) => !a), style: { display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text } }, "I don't know how long this takes"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, "Start with a short probe session. Studlin figures out the rest.")), /* @__PURE__ */ React.createElement("div", { style: { width: 36, height: 20, borderRadius: 10, background: evAttackBlock ? T.lime : T.faint, position: "relative", transition: "background 0.2s", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 16, height: 16, borderRadius: "50%", background: "#fff", position: "absolute", top: 2, left: evAttackBlock ? 18 : 2, transition: "left 0.2s" } }))), /* @__PURE__ */ React.createElement(AttackBlockExplainer, null), evAttackBlock && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement(Field, { label: "Probe session length" }, /* @__PURE__ */ React.createElement(NumField, { min: 15, max: 60, fallback: ATTACK_BLOCK_DEFAULT_PROBE_MINS, value: evAttackProbeMins, onChange: setEvAttackProbeMins })))))),
-    isTaskKind && !isChecklistMode && taskMode === "ai" && (evMoreOpen ? /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } }, /* @__PURE__ */ React.createElement(Field, { label: `Impact: ${Math.round(evPriority / 10)}%`, hint: "Higher-impact tasks get scheduled earlier." }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: T.muted, width: 22 } }, "Low"), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, position: "relative", paddingTop: 22 } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 0, left: `${evPriority / 10}%`, transform: "translateX(-50%)", fontSize: 10, fontWeight: 700, color: T.lime, background: T.lime + "18", border: `1px solid ${T.lime}44`, borderRadius: 5, padding: "2px 7px", whiteSpace: "nowrap", pointerEvents: "none" } }, prioLabel(evPriority)), /* @__PURE__ */ React.createElement("input", { type: "range", min: 0, max: 1e3, value: evPriority, onChange: (ev) => setEvPriority(+ev.target.value), style: { width: "100%", accentColor: T.lime, height: 6, borderRadius: 3, cursor: "pointer" } })))), /* @__PURE__ */ React.createElement(Field, { label: `Difficulty: ${diffLabel(evDifficulty)}`, hint: "Schedules it when your energy matches." }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: T.muted, width: 22 } }, "Easy"), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, position: "relative", paddingTop: 22 } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 0, left: `${evDifficulty / 10}%`, transform: "translateX(-50%)", fontSize: 10, fontWeight: 700, color: T.lime, background: T.lime + "18", border: `1px solid ${T.lime}44`, borderRadius: 5, padding: "2px 7px", whiteSpace: "nowrap", pointerEvents: "none" } }, diffLabel(evDifficulty)), /* @__PURE__ */ React.createElement("input", { type: "range", min: 0, max: 1e3, value: evDifficulty, onChange: (ev) => setEvDifficulty(+ev.target.value), style: { width: "100%", accentColor: T.lime, height: 6, borderRadius: 3, cursor: "pointer" } }))))) : /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setEvMoreOpen(true), style: { background: "none", border: "none", color: T.muted, fontSize: 12.5, fontFamily: T.font, cursor: "pointer", padding: "4px 0", marginBottom: 14, textDecoration: "underline" } }, "+ More details (impact & difficulty)")),
+    isTaskKind && !isChecklistMode && taskRepeatDays.length === 0 && taskMode === "ai" && (evMoreOpen ? /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } }, /* @__PURE__ */ React.createElement(Field, { label: `Impact: ${Math.round(evPriority / 10)}%`, hint: "Higher-impact tasks get scheduled earlier." }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: T.muted, width: 22 } }, "Low"), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, position: "relative", paddingTop: 22 } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 0, left: `${evPriority / 10}%`, transform: "translateX(-50%)", fontSize: 10, fontWeight: 700, color: T.lime, background: T.lime + "18", border: `1px solid ${T.lime}44`, borderRadius: 5, padding: "2px 7px", whiteSpace: "nowrap", pointerEvents: "none" } }, prioLabel(evPriority)), /* @__PURE__ */ React.createElement("input", { type: "range", min: 0, max: 1e3, value: evPriority, onChange: (ev) => setEvPriority(+ev.target.value), style: { width: "100%", accentColor: T.lime, height: 6, borderRadius: 3, cursor: "pointer" } })))), /* @__PURE__ */ React.createElement(Field, { label: `Difficulty: ${diffLabel(evDifficulty)}`, hint: "Schedules it when your energy matches." }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: T.muted, width: 22 } }, "Easy"), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, position: "relative", paddingTop: 22 } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 0, left: `${evDifficulty / 10}%`, transform: "translateX(-50%)", fontSize: 10, fontWeight: 700, color: T.lime, background: T.lime + "18", border: `1px solid ${T.lime}44`, borderRadius: 5, padding: "2px 7px", whiteSpace: "nowrap", pointerEvents: "none" } }, diffLabel(evDifficulty)), /* @__PURE__ */ React.createElement("input", { type: "range", min: 0, max: 1e3, value: evDifficulty, onChange: (ev) => setEvDifficulty(+ev.target.value), style: { width: "100%", accentColor: T.lime, height: 6, borderRadius: 3, cursor: "pointer" } }))))) : /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setEvMoreOpen(true), style: { background: "none", border: "none", color: T.muted, fontSize: 12.5, fontFamily: T.font, cursor: "pointer", padding: "4px 0", marginBottom: 14, textDecoration: "underline" } }, "+ More details (impact & difficulty)")),
     isTaskKind && !isChecklistMode && (evAttackBlock ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, marginBottom: 14 } }, `Split into sessions isn't available while "I don't know how long this takes" is on \u2014 turn that off above to use Split instead.`) : /* @__PURE__ */ React.createElement("div", { style: { background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "12px 14px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setEvSplitEnabled((s) => !s), style: { display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text } }, "Split into sessions"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, "Spread this task across multiple days")), /* @__PURE__ */ React.createElement("div", { style: { width: 36, height: 20, borderRadius: 10, background: evSplitEnabled ? T.lime : T.faint, position: "relative", transition: "background 0.2s", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 16, height: 16, borderRadius: "50%", background: "#fff", position: "absolute", top: 2, left: evSplitEnabled ? 18 : 2, transition: "left 0.2s" } }))), evSplitEnabled && /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement(Field, { label: "Number of sessions" }, /* @__PURE__ */ React.createElement(NumField, { min: 2, max: 10, fallback: 2, value: evSplitCount, onChange: setEvSplitCount })), /* @__PURE__ */ React.createElement(Field, { label: "Per session" }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: T.lime, padding: "10px 0" } }, splitSessionDuration(evDuration, evSplitCount), " min each", splitSessionDuration(evDuration, evSplitCount) > Math.round(evDuration / evSplitCount) ? " (extended to a minimum length)" : ""))))),
     !isProjectKind && /* @__PURE__ */ React.createElement(Field, { label: "Notes (optional)" }, /* @__PURE__ */ React.createElement(Textarea, { placeholder: "e.g. Bring calculator, covers chapters 4 to 6.", value: evNotes, onChange: (ev) => setEvNotes(ev.target.value) }))
   ), /* @__PURE__ */ React.createElement(Modal, { open: examPickerOpen, onClose: () => setExamPickerOpen(false), title: "Link to an exam", sub: "Studlin will show this session on that exam's page in Studlin Prep too.", width: 440 }, (() => {

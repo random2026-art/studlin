@@ -22482,6 +22482,16 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // calendar time slot. Only offered for the "deadline"/To-Do kind; exams,
   // classes, study blocks etc. all have a real duration and stay scheduled.
   const [asChecklist,setAsChecklist]=useState(false);
+  // Task-only: a recurring daily/weekly commitment (e.g. "search for
+  // scholarships, 1hr, every day") created straight from Add Task instead
+  // of requiring a detour through Settings -> Activities -> Add New ->
+  // switch Type to Habit, the exact confusion a real user hit. Empty =
+  // not repeating (the normal one-off Task flow, entirely unaffected).
+  // When non-empty, saving writes a kind:"habit" weeklyRoutine entry via
+  // buildRoutineObjectsForDays/persistRoutines -- the same, already-
+  // working mechanism NewEventModal's own evKind==="habit" path uses --
+  // rather than a new recurrence engine.
+  const [taskRepeatDays,setTaskRepeatDays]=useState([]);
   // Brain Dump — tell Studlin everything at once instead of one task at a
   // time. One AI call splits it into items; anything with a real duration
   // gets slotted deterministically via findOpenSlotFor (same placement
@@ -23630,7 +23640,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // "let AI schedule this". The clicked day is remembered so fixed-time kinds
   // (exam/class/reminder), which always need a real date, can still default
   // to it once the user picks one of those types.
-  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("09:00");setEvSubject("None");setEvCustomColor(T.lime);setEvDate("");setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setEvCommuteBefore("");setEvCommuteAfter("");resetTypeExtras();setNewOpen(true);};
+  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("09:00");setEvSubject("None");setEvCustomColor(T.lime);setEvDate("");setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setEvCommuteBefore("");setEvCommuteAfter("");setAsChecklist(false);setTaskRepeatDays([]);resetTypeExtras();setNewOpen(true);};
   // Same form as openNew, just arriving with the scheduling mode already
   // decided by which "Add task" menu option was tapped -- the in-modal
   // manual/AI toggle stays visible so it's correctable, not a dead end.
@@ -23662,7 +23672,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     const params=computeStudyPlanParams(undefined,25,evConfidence,materialCharCount,undefined,daysUntilExam);
     if(params.sessionCount!==evExamPlan.sessionCount)setEvExamPlan(m=>({...m,sessionCount:params.sessionCount}));
   },[newOpen,evKind,evExamPlan.proposeSessions,evExamPlan.materialFiles,evConfidence,evSessionCountTouched]);
-  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvCustomColor(T.lime);setEvDate("");setEvTime("09:00");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setEvCommuteBefore("");setEvCommuteAfter("");setAiLoading(false);setAsChecklist(false);resetTypeExtras();};
+  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvCustomColor(T.lime);setEvDate("");setEvTime("09:00");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setEvCommuteBefore("");setEvCommuteAfter("");setAiLoading(false);setAsChecklist(false);setTaskRepeatDays([]);resetTypeExtras();};
   const onEvKindChange=(k)=>{
     setEvKind(k);
     const willBeFixed=(k==="exam"||k==="class"||k==="reminder"||k==="busy block");
@@ -23679,7 +23689,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);
       setEvSplitEnabled(false);setEvSplitCount(2);
     }
-    if(k!=="assignment")setAsChecklist(false);
+    if(k!=="assignment"&&k!=="task")setAsChecklist(false);
+    if(k!=="task")setTaskRepeatDays([]);
     // Exam material/session drafts and Project phases/outline drafts are
     // both purely local to whichever type is currently picked -- carrying
     // either across a switch to a different type (or between exam <->
@@ -23859,6 +23870,20 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
     const item={id:String(Date.now()+Math.random()*1000),title:evTitle.trim(),date:evDeadline||"",time:"",subject:subj,kind:"deadline",notes:evNotes,checklist:true,deadline:evDeadline||null,priority:5,difficulty:5,duration:0,status:"pending",timeSpent:0,completedAt:null};
     commitTasks([item]);
+  };
+  // Task + Repeat (see taskRepeatDays' own comment): reuses the exact same
+  // buildRoutineObjectsForDays/persistRoutines mechanism NewEventModal's
+  // own evKind==="habit" path already uses for Class/Activity/Habit
+  // routines (see commitNewEvent) -- a habit is materialized into a real
+  // daily task by materializeHabitsForDate/findHabitSlotForToday at
+  // runtime, with no fixed clock time, so startTime here is just a
+  // placeholder the habit engine ignores, same as NewEventModal's own.
+  const saveRepeatingTask=()=>{
+    if(!evTitle.trim()||taskRepeatDays.length===0)return;
+    const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
+    const base={title:evTitle.trim(),kind:"habit",...(subj?{subject:subj}:{}),notes:evNotes||undefined};
+    persistRoutines([...routines,...buildRoutineObjectsForDays(base,taskRepeatDays,"09:00",evDuration||30,{})]);
+    resetForm();
   };
   // "right after I finish my engineering class today" has a real answer
   // sitting in this student's own calendar -- see
@@ -24656,7 +24681,22 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const isTaskKind=!isFixedKind&&!isReminderKind;
   const isExamKind=evKind==="exam";
   const isProjectKind=evKind==="project";
-  const isChecklistMode=evKind==="assignment"&&asChecklist;
+  // Restored 2026-09-01 (was assignment-only, forced permanently
+  // unreachable since 2026-07-30 -- see the "No specific time" comment
+  // below) and extended to Task: a due-date-only Task is exactly as
+  // sensible as a due-date-only Assignment. Project is deliberately left
+  // out here -- isProjectMarker needs real phases/outline to tell a
+  // project apart from a plain assignment, which a bare checklist item
+  // never has, so a due-date-only Project needs its own separate design
+  // rather than silently becoming an indistinguishable Assignment.
+  const isChecklistMode=(evKind==="assignment"||evKind==="task")&&asChecklist;
+  // A repeating Task takes over from the normal Scheduling choice entirely
+  // (see taskRepeatDays' own comment) -- it has no single date to schedule
+  // around, so every one of isChecklistMode/taskMode's usual downstream
+  // fields (due date, attack block, priority/difficulty, etc.) needs to
+  // stay hidden while this is active, same as isChecklistMode already does
+  // for its own fields.
+  const isRepeatingTask=evKind==="task"&&taskRepeatDays.length>0;
   const manualMode=isTaskKind&&!isChecklistMode&&taskMode==="manual";
   // Steps selDay by n whole days -- the toolbar's prev/next needs this for
   // the Day view, mirroring what nav()/setWeekOffset already do for
@@ -25741,9 +25781,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           candidates={attackSlotPicker.candidates} confirmLabel="Start here"
           onConfirm={attackSlotPicker.confirm} onClose={()=>setAttackSlotPicker(null)} />
       )}
-      <Modal open={newOpen} onClose={resetForm} title="New task" sub={taskMode==="manual"?"Add details and pick exactly when.":"Add details and Studlin finds the time."} width={580}
+      <Modal open={newOpen} onClose={resetForm} title="New task" sub={isRepeatingTask?"Repeats on the days you pick -- Studlin fits it in each time.":isChecklistMode?"Just track when it's due -- schedule time for it later if you want to.":taskMode==="manual"?"Add details and pick exactly when.":"Add details and Studlin finds the time."} width={580}
         footer={
-          isChecklistMode
+          isRepeatingTask
+            ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveRepeatingTask} disabled={!evTitle.trim()} style={{flex:1,justifyContent:"center",opacity:evTitle.trim()?1:0.45}}>Save repeating task</Btn></>
+            : isChecklistMode
             ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveChecklistItem} disabled={!evTitle.trim()} style={{flex:1,justifyContent:"center",opacity:evTitle.trim()?1:0.45}}>Add to Checklist</Btn></>
             : isReminderKind||isFixedKind
               ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveManual} disabled={!(evTitle.trim()&&evDate.trim()&&evTime.trim())} style={{opacity:evTitle.trim()&&evDate.trim()&&evTime.trim()?1:0.45}}>{isReminderKind?"Save reminder":"Save"}</Btn></>
@@ -25770,29 +25812,64 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             Only meaningful for Assignment/Project (isTaskKind) -- exam/
             class/reminder/Activity already always use exact Date+Start
             Time regardless of mode, so the toggle would do nothing there. */}
-        {isTaskKind&&!isChecklistMode&&(
+        {isTaskKind&&taskRepeatDays.length===0&&(
           <Field label="Scheduling">
-            <div style={{display:"flex",gap:2,background:T.card2,padding:2,borderRadius:4,width:"fit-content"}}>
-              {[{id:"manual",label:"I'll pick the time"},{id:"ai",label:"Studlin finds the time"}].map(v=>(
-                <button key={v.id} type="button" onClick={()=>setTaskMode(v.id)}
-                  style={{padding:"6px 12px",borderRadius:4,fontSize:12,fontWeight:taskMode===v.id?600:400,cursor:"pointer",
-                    background:taskMode===v.id?T.card:"transparent",color:taskMode===v.id?T.text:T.muted,border:"none",fontFamily:T.font,transition:"all 0.15s",whiteSpace:"nowrap"}}>{v.label}</button>
-              ))}
+            {/* "No schedule yet" restored 2026-09-01 as a real 3rd choice
+                (see isChecklistMode's own comment) -- picking it sets
+                asChecklist instead of taskMode, everything downstream
+                already keys off isChecklistMode correctly. This toggle
+                stays visible even once that choice is active (unlike the
+                old 2-way version, which used to hide once isChecklistMode
+                was reachable) so switching back to a real scheduled time
+                is one click, not a dead end. */}
+            <div style={{display:"flex",gap:2,background:T.card2,padding:2,borderRadius:4,width:"fit-content",flexWrap:"wrap"}}>
+              {[{id:"none",label:"No schedule yet"},{id:"manual",label:"I'll pick the time"},{id:"ai",label:"Studlin finds the time"}].map(v=>{
+                const active=v.id==="none"?isChecklistMode:(!isChecklistMode&&taskMode===v.id);
+                return (
+                  <button key={v.id} type="button" onClick={()=>{if(v.id==="none"){setAsChecklist(true);}else{setAsChecklist(false);setTaskMode(v.id);}}}
+                    style={{padding:"6px 12px",borderRadius:4,fontSize:12,fontWeight:active?600:400,cursor:"pointer",
+                      background:active?T.card:"transparent",color:active?T.text:T.muted,border:"none",fontFamily:T.font,transition:"all 0.15s",whiteSpace:"nowrap"}}>{v.label}</button>
+                );
+              })}
             </div>
           </Field>
         )}
 
-        {/* "No specific time, add to checklist instead" removed (2026-07-30)
-            -- a plain checklist item can already be added directly from
-            Dashboard, so this was a second, redundant entry point to the
-            same thing cluttering the calendar's own task-creation modal.
-            asChecklist/isChecklistMode below now always evaluate false in
-            this modal (nothing else sets asChecklist=true here), which
-            correctly makes every branch gated on it simply unreachable --
-            left in place rather than torn out, since several other
-            conditionals in this same modal key off !isChecklistMode and
-            re-deriving all of them individually is a bigger, riskier
-            change than removing this one entry point. */}
+        {/* Task-only: fold a recurring commitment straight into Add Task
+            instead of requiring a detour through Settings -> Activities ->
+            Add New -> switch Type to Habit -- see taskRepeatDays' own
+            comment. Picking any day here takes over from the Scheduling
+            choice above (a repeating task has no single due date to
+            schedule around), so that field hides itself once this has a
+            day picked. */}
+        {evKind==="task"&&(
+          <Field label="Repeat" hint={taskRepeatDays.length>0?"No fixed time -- Studlin fits it in wherever there's room each day it repeats.":"Leave off for a one-time task."}>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {ROUTINE_DOW.map((d,di)=>(
+                <button key={di} type="button" onClick={()=>setTaskRepeatDays(r=>r.includes(di)?r.filter(x=>x!==di):[...r,di])} style={wizardChipStyle(taskRepeatDays.includes(di))}>{d}</button>
+              ))}
+              <button type="button" onClick={()=>setTaskRepeatDays(r=>r.length===7?[]:[0,1,2,3,4,5,6])} style={wizardChipStyle(taskRepeatDays.length===7)}>Every day</button>
+            </div>
+          </Field>
+        )}
+        {evKind==="task"&&taskRepeatDays.length>0&&(
+          <Field label="Duration (minutes)" hint="How long this occupies on your calendar"><NumField min={5} max={480} fallback={30} value={evDuration} onChange={setEvDuration} /></Field>
+        )}
+
+        {/* "No specific time, add to checklist instead" was removed
+            2026-07-30 (the reasoning at the time: a plain checklist item
+            can already be added from Dashboard, so this looked like a
+            redundant second entry point) and restored 2026-09-01 above,
+            via the Scheduling toggle's "No schedule yet" option -- that
+            2026-07-30 reasoning didn't hold up: Dashboard's own quick-add
+            has no class/subject field and no due date, so it could never
+            actually cover "I have an assignment for a specific class, due
+            a specific day, but don't want to schedule study time for it
+            yet" -- exactly the case a real user hit. Every conditional
+            elsewhere in this modal already keyed off isChecklistMode
+            correctly the whole time (see that field's own comment), so
+            restoring it needed no changes beyond adding back a way to
+            actually set asChecklist=true. */}
 
         {/* Type (6 options) and Subject (up to 11: None + every period/class +
             Other) used to be forced into equal 1fr/1fr columns -- fine for
@@ -25809,7 +25886,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             answers "where's Study Session as a type" with Studlin's own
             existing vocabulary instead of introducing a second, competing
             type that would also need its own resolution logic. */}
-        <Field label="Type" hint={isFixedKind?"Won't be moved or rescheduled.":(evKind==="assignment"||evKind==="task")?(taskMode==="manual"?(evKind==="task"?"Happens at this exact time.":"A study session at this exact time."):"Studlin finds the time before it's due."):undefined}>
+        <Field label="Type" hint={isFixedKind?"Won't be moved or rescheduled.":isRepeatingTask?"Repeats on the days you pick below.":isChecklistMode?"Just a due date -- no calendar time yet.":(evKind==="assignment"||evKind==="task")?(taskMode==="manual"?(evKind==="task"?"Happens at this exact time.":"A study session at this exact time."):"Studlin finds the time before it's due."):undefined}>
           <SelectChip options={[{value:"assignment",label:taskMode==="manual"?"Study Session":"Assignment"},{value:"task",label:"Task"},{value:"project",label:"Project"},"exam","class",{value:"busy block",label:"Activity"},"reminder"]} value={evKind} onChange={onEvKindChange} />
         </Field>
         <Field label="Subject"><SelectChip options={SUBJ} value={evSubject} onChange={setEvSubject} /></Field>
@@ -25967,14 +26044,14 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           </div>
         </>)}
 
-        {isTaskKind&&!isChecklistMode&&taskMode==="manual"&&(
+        {isTaskKind&&!isChecklistMode&&taskRepeatDays.length===0&&taskMode==="manual"&&(
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
             <Field label="Date"><Input type="date" value={evDate} onChange={ev=>setEvDate(ev.target.value)} /></Field>
             <Field label="Start Time"><BoxedTimeInput value={evTime} onChange={setEvTime} /></Field>
           </div>
         )}
 
-        {isTaskKind&&!isChecklistMode&&taskMode==="ai"&&(
+        {isTaskKind&&!isChecklistMode&&taskRepeatDays.length===0&&taskMode==="ai"&&(
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
             <Field label="Due Date & Time" hint="When this must be done by">
               <Input type="date" value={evDeadline} onChange={ev=>setEvDeadline(ev.target.value)} />
@@ -25983,7 +26060,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           </div>
         )}
 
-        {isTaskKind&&!isChecklistMode&&!evAttackBlock&&(
+        {isTaskKind&&!isChecklistMode&&taskRepeatDays.length===0&&!evAttackBlock&&(
           <Field label="Duration (minutes)" hint="How long you plan to spend">
             <NumField min={5} max={480} fallback={5} value={evDuration} onChange={v=>{setEvDuration(v);setEvDurationTouched(true);}} />
             {(()=>{const s=suggestDurationFor(evSubject,resolveAssignmentKind());return s&&s!==evDuration&&(
@@ -26020,7 +26097,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           </div>
         </>))}
 
-        {isTaskKind&&!isChecklistMode&&taskMode==="ai"&&(
+        {isTaskKind&&!isChecklistMode&&taskRepeatDays.length===0&&taskMode==="ai"&&(
           evMoreOpen ? (
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
               <Field label={`Impact: ${Math.round(evPriority/10)}%`} hint="Higher-impact tasks get scheduled earlier.">
