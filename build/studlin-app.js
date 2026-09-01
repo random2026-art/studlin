@@ -6074,20 +6074,7 @@ function StudlinPrep({ setActive = () => {
       patchExam(selectedExam.id, { scoreTier: null, scorePercent: null });
       refresh();
     };
-    const confidenceOutcomeInsight = (() => {
-      const scored = allExamsForPrep().filter((ex) => ex.scoreTier && ex.confidenceLog && ex.confidenceLog.length > 0);
-      if (scored.length < 3) return null;
-      const zoneOf = (ex) => confidenceZoneOf(ex.confidenceLog[ex.confidenceLog.length - 1]);
-      const solidButBelow = scored.filter((ex) => zoneOf(ex) === "solid" && ex.scoreTier === "below");
-      const shakyButAbove = scored.filter((ex) => zoneOf(ex) === "shaky" && ex.scoreTier === "above");
-      if (solidButBelow.length >= Math.ceil(scored.length / 2) && solidButBelow.length >= shakyButAbove.length) {
-        return 'Your "solid" confidence calls have run worse than expected on ' + solidButBelow.length + " of your last " + scored.length + " scored exams. Worth trusting that answer a little more cautiously.";
-      }
-      if (shakyButAbove.length >= Math.ceil(scored.length / 2)) {
-        return "You've scored better than expected on " + shakyButAbove.length + " of your last " + scored.length + ' "shaky" exams. You might be tougher on yourself than the results show.';
-      }
-      return null;
-    })();
+    const confidenceInsight = confidenceOutcomeInsight();
     const priorityShiftNote = (() => {
       const log = selectedExam.confidenceLog || [];
       if (log.length < 2) return null;
@@ -6156,7 +6143,7 @@ function StudlinPrep({ setActive = () => {
     } }, selectedExam.scoreTier ? "Edit score" : "Add your score"))), examScoreDraftOpen && /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: "12px 14px", marginBottom: 20, fontSize: 12.5, color: T.text } }, /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 8, color: T.muted } }, "How'd it go? Optional -- only used to make your future plans for this subject smarter."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap", alignItems: "center" } }, /* @__PURE__ */ React.createElement(Input, { type: "number", min: 0, max: 100, placeholder: "Score % (optional)", value: examScoreDraft, onChange: (e) => setExamScoreDraft(e.target.value), style: { width: 150 } }), /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
       const pct = Math.max(0, Math.min(100, parseFloat(examScoreDraft)));
       saveExamScore(scoreTierFromPercent(pct), pct);
-    }, disabled: examScoreDraft === "" || isNaN(parseFloat(examScoreDraft)) }, "Save %")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } }, Object.entries(SCORE_TIER_LABEL).map(([tier, label]) => /* @__PURE__ */ React.createElement(BtnSm, { key: tier, variant: "ghost", onClick: () => saveExamScore(tier, null) }, label))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, selectedExam.scoreTier && /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: clearExamScore, style: { color: T.red } }, "Clear score"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setExamScoreDraftOpen(false) }, "Cancel"))), examCompleteSessionPrompt && /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.amber}44`, borderRadius: 8, padding: "12px 14px", marginBottom: 20, fontSize: 12.5, color: T.text, lineHeight: 1.5 } }, "You still have ", examPendingSessions.length, " session", examPendingSessions.length !== 1 ? "s" : "", " scheduled for this \u2014 cancel ", examPendingSessions.length !== 1 ? "them" : "it", " too?", /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => finishMarkingComplete(true) }, "Cancel ", examPendingSessions.length !== 1 ? "them" : "it"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => finishMarkingComplete(false) }, "Keep them"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setExamCompleteSessionPrompt(false) }, "Never mind"))), confidenceOutcomeInsight && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.teal, background: T.teal + "0c", border: `1px solid ${T.teal}33`, borderRadius: 8, padding: "10px 12px", marginBottom: 14, lineHeight: 1.5 } }, confidenceOutcomeInsight), priorityShiftNote && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 14 } }, priorityShiftNote), weekTightNudge && /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: "12px 14px", marginBottom: 20, fontSize: 12.5, color: T.text, lineHeight: 1.5 } }, "Your week's tight. Studlin found room by moving some lower-priority sessions around.", /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
+    }, disabled: examScoreDraft === "" || isNaN(parseFloat(examScoreDraft)) }, "Save %")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } }, Object.entries(SCORE_TIER_LABEL).map(([tier, label]) => /* @__PURE__ */ React.createElement(BtnSm, { key: tier, variant: "ghost", onClick: () => saveExamScore(tier, null) }, label))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, selectedExam.scoreTier && /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: clearExamScore, style: { color: T.red } }, "Clear score"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setExamScoreDraftOpen(false) }, "Cancel"))), examCompleteSessionPrompt && /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.amber}44`, borderRadius: 8, padding: "12px 14px", marginBottom: 20, fontSize: 12.5, color: T.text, lineHeight: 1.5 } }, "You still have ", examPendingSessions.length, " session", examPendingSessions.length !== 1 ? "s" : "", " scheduled for this \u2014 cancel ", examPendingSessions.length !== 1 ? "them" : "it", " too?", /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => finishMarkingComplete(true) }, "Cancel ", examPendingSessions.length !== 1 ? "them" : "it"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => finishMarkingComplete(false) }, "Keep them"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setExamCompleteSessionPrompt(false) }, "Never mind"))), confidenceInsight && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.teal, background: T.teal + "0c", border: `1px solid ${T.teal}33`, borderRadius: 8, padding: "10px 12px", marginBottom: 14, lineHeight: 1.5 } }, confidenceInsight), priorityShiftNote && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 14 } }, priorityShiftNote), weekTightNudge && /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: "12px 14px", marginBottom: 20, fontSize: 12.5, color: T.text, lineHeight: 1.5 } }, "Your week's tight. Studlin found room by moving some lower-priority sessions around.", /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
       setWeekTightNudge(false);
       setActive("calendar");
     } }, "See what's using the time"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => {
@@ -8677,6 +8664,20 @@ function confidenceUnitOf(rating) {
 function confidenceZoneOf(rating) {
   if (typeof rating === "number") return rating <= 2 ? "shaky" : rating === 3 ? "okay" : "solid";
   return rating;
+}
+function confidenceOutcomeInsight() {
+  const scored = allExamsForPrep().filter((ex) => ex.scoreTier && ex.confidenceLog && ex.confidenceLog.length > 0);
+  if (scored.length < 3) return null;
+  const zoneOf = (ex) => confidenceZoneOf(ex.confidenceLog[ex.confidenceLog.length - 1]);
+  const solidButBelow = scored.filter((ex) => zoneOf(ex) === "solid" && ex.scoreTier === "below");
+  const shakyButAbove = scored.filter((ex) => zoneOf(ex) === "shaky" && ex.scoreTier === "above");
+  if (solidButBelow.length >= Math.ceil(scored.length / 2) && solidButBelow.length >= shakyButAbove.length) {
+    return 'Your "solid" confidence calls have run worse than expected on ' + solidButBelow.length + " of your last " + scored.length + " scored exams. Worth trusting that answer a little more cautiously.";
+  }
+  if (shakyButAbove.length >= Math.ceil(scored.length / 2)) {
+    return "You've scored better than expected on " + shakyButAbove.length + " of your last " + scored.length + ' "shaky" exams. You might be tougher on yourself than the results show.';
+  }
+  return null;
 }
 function isConfidenceStreak(log, zone, n) {
   const last = (log || []).slice(-n);

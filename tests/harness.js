@@ -154,7 +154,7 @@ function loadStudlinModule(options) {
     "IMPORTANCE_TO_IMPACT","EXAM_TYPE_TO_IMPORTANCE","examWeightFromImportance","withDerivedExamImportance",
     "derivePerformanceConfidence","performanceConfidenceSuggestion","dismissPerformanceConfidence",
     "CONFIDENCE_TO_UNIT","EXAM_WEIGHT_TO_IMPACT",
-    "confidenceUnitOf","confidenceZoneOf","RATING_UNIT","RATING_COMPLETION_CREDIT","EXAM_CHECKIN_SCALE",
+    "confidenceUnitOf","confidenceZoneOf","confidenceOutcomeInsight","RATING_UNIT","RATING_COMPLETION_CREDIT","EXAM_CHECKIN_SCALE",
     "computeCapacitySlack","EXAM_READINESS_TIGHT_SLACK_RATIO",
     "applyHoursTarget",
     "computeAssignmentPace","ASSIGNMENT_BEHIND_THRESHOLD","ATTACK_BLOCK_DEFAULT_ESTIMATE_HOURS",
