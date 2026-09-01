@@ -7021,13 +7021,23 @@ function computeFillSuggestions(freedDate,freedTime,freedDuration){
   const nowMins=(()=>{const n=new Date();return n.getHours()*60+n.getMinutes();})();
   if(freedDate===dayKey()&&timeToMinutes(freedTime)+freedDuration<=nowMins)return [];
   const all=lsGet("events",[]);
-  return all.filter(ev=>isQualifying(ev)&&ev.date>=freedDate&&(ev.duration||30)<=freedDuration)
+  // Reminders are point-in-time nudges with duration:0 by design (see
+  // isQualifying's own comment above) -- legitimately reschedulable by the
+  // pause-plan engine, but nonsensical as a "put this in the freed work
+  // slot" suggestion here, since they have no real duration to occupy.
+  // Excluded locally rather than from isQualifying/PAUSE_QUALIFYING_KINDS
+  // itself, which the pause-plan engine still needs reminders in. Once
+  // reminders are out, no remaining qualifying kind has duration:0, so the
+  // old `ev.duration||30` fallback is dropped too -- it was silently
+  // turning a reminder's real duration:0 into 30, which is exactly what
+  // let a reminder pass the size check and get suggested here at all.
+  return all.filter(ev=>isQualifying(ev)&&ev.kind!=="reminder"&&ev.date>=freedDate&&ev.duration<=freedDuration)
     .sort((a,b)=>{
       const da=a.deadline||"9999-99-99",db=b.deadline||"9999-99-99";
       return da<db?-1:da>db?1:0;
     })
     .slice(0,3)
-    .map(ev=>({id:ev.id,title:ev.title,duration:ev.duration||30}));
+    .map(ev=>({id:ev.id,title:ev.title,duration:ev.duration}));
 }
 // Exam-stakes-aware ranking for computePausePlan's shift/clear_day/
 // clear_week reslotting below -- an exam-prep session looks up its real
