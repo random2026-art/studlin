@@ -1382,6 +1382,77 @@ function formatRealWorldScheduleForDate(events, routines, dateKey) {
   const realEvents = (events || []).filter((e) => e.date === dateKey && e.time && !e.timeUnconfirmed && isRealWorldKind(e.kind));
   return [...routineOccs, ...realEvents].sort((a, b) => a.time < b.time ? -1 : a.time > b.time ? 1 : 0).map((e) => e.title + ": " + fmtClock12(e.time) + "\u2013" + fmtClock12(minutesToTime(timeToMinutes(e.time) + (e.duration || 30))));
 }
+const STUDLIN_AI_DIGEST_DAYS = 14;
+function assembleStudlinAiDigest(events, routines, prefs, todayKey) {
+  const today = todayKey || dayKey();
+  const endDate = (() => {
+    const d = /* @__PURE__ */ new Date(today + "T12:00:00");
+    d.setDate(d.getDate() + STUDLIN_AI_DIGEST_DAYS - 1);
+    return dayKey(d);
+  })();
+  const routineOccs = expandRoutineOccurrences(routines || [], today, endDate);
+  const allItems = [...events || [], ...routineOccs];
+  const windowDays = [];
+  {
+    const cursor = /* @__PURE__ */ new Date(today + "T12:00:00");
+    const end = /* @__PURE__ */ new Date(endDate + "T12:00:00");
+    while (cursor <= end) {
+      const dk = dayKey(cursor);
+      const dayItems = allItems.filter((it) => it.date === dk && it.status !== "done" && !it.checklist);
+      const minutes = dayWorkloadMinutes(dayItems);
+      windowDays.push({
+        date: dk,
+        items: dayItems.map((it) => ({ title: it.title, kind: it.kind, time: it.time || null, duration: it.duration || 0 })),
+        workloadMinutes: minutes,
+        tier: dayWorkloadTier(minutes)
+      });
+      cursor.setDate(cursor.getDate() + 1);
+    }
+  }
+  const heavyDayKeys = Array.from(computeMonthHeavyDays(windowDays.map((d) => ({ key: d.date, minutes: d.workloadMinutes }))));
+  const withWork = windowDays.filter((d) => d.workloadMinutes > 0);
+  const busiestDay = withWork.length ? withWork.reduce((max, d) => d.workloadMinutes > max.workloadMinutes ? d : max, withWork[0]) : null;
+  const lightestDay = withWork.length ? withWork.reduce((min, d) => d.workloadMinutes < min.workloadMinutes ? d : min, withWork[0]) : null;
+  const missed = computeCatchUpMissedItems(events || [], today);
+  const overdue = missed.map((ev) => {
+    const staleDays = catchUpStalenessDays([ev], today);
+    return { title: ev.title, date: ev.date, staleDays, staleLabel: catchUpStalenessLabel(staleDays) };
+  });
+  const attackBlockRisks = detectAttackBlockOverruns(events || [], today);
+  const effectivePrefs = prefs || getSchedulePreferences();
+  const assignmentPace = (events || []).filter((ev) => ev.status === "pending" && !ev.checklist && ev.date && ev.date >= today && ev.date <= endDate && (ev.kind === "deadline" || ev.kind === "study block")).map((ev) => {
+    const pace = computeAssignmentPace(ev, events || [], today, effectivePrefs);
+    if (!pace || !pace.behind && !pace.ahead) return null;
+    return { title: ev.title, date: ev.date, behind: pace.behind, ahead: pace.ahead };
+  }).filter(Boolean);
+  return { todayKey: today, windowEndKey: endDate, windowDays, heavyDayKeys, busiestDay, lightestDay, overdue, attackBlockRisks, assignmentPace };
+}
+function routeStudlinAiQuestion(text, knownSubjects) {
+  const t = (text || "").toLowerCase();
+  const has = (...words) => words.some((w) => t.includes(w));
+  const subject = (knownSubjects || []).find((s) => t.includes(String(s).toLowerCase())) || null;
+  const flags = {
+    needsWorkload: has("busy", "busiest", "lightest", "heaviest", "light day", "free day", "workload", "packed"),
+    needsOverdue: has("overdue", "missed", "behind on", "late", "catch up", "catch-up"),
+    needsPace: has("pace", "on track", "ahead of", "behind schedule", "progress"),
+    needsAttackRisk: has("attack block", "running out", "won't finish", "wont finish", "won't have time"),
+    needsStreak: has("streak", "consistent", "consistency", "activity", "engagement"),
+    needsPeakHours: has("productive", "peak", "best time", "focus", "when am i", "when do i"),
+    needsStrugglingBucket: has("struggl", "worst time", "trouble focusing", "hard time"),
+    needsDuration: has("how long", "duration", "usually take"),
+    needsConfidence: has("confiden", "calibrat"),
+    subject,
+    needsSubjectTrend: false
+  };
+  flags.needsSubjectTrend = !!subject && has("doing", "trend", "score", "grade", "exam");
+  const anyFlag = Object.keys(flags).some((k) => k !== "subject" && k !== "needsSubjectTrend" && flags[k]) || flags.needsSubjectTrend;
+  if (!anyFlag) {
+    flags.needsWorkload = true;
+    flags.needsOverdue = true;
+    flags.needsStreak = true;
+  }
+  return flags;
+}
 function matchEventByTitle(phrase, dateKey) {
   const q = (phrase || "").trim().toLowerCase();
   if (!q) return { matches: [] };

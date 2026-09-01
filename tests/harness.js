@@ -145,6 +145,7 @@ function loadStudlinModule(options) {
     "deleteCourseWithCascade","undoCourseDelete",
     "deriveFreePeriodsFromPeriods","getHsSchoolHours","saveHsSchoolHours",
     "subtractIntervals","effectiveLeadIn","effectiveTrailOut","effectiveLeadInForManualPlacement","effectiveTrailOutForManualPlacement","isLeadInFixed","isDuePill","formatRealWorldScheduleForDate","findNowConflict",
+    "assembleStudlinAiDigest","routeStudlinAiQuestion","STUDLIN_AI_DIGEST_DAYS",
     "getRoutineOverrides","saveRoutineOverrides","expandRoutineOccurrences",
     "findFragmentedRoutineGroups","mergeFragmentedRoutineGroup","mergeDuplicateRoutines",
     "getHolidays","saveHolidays","isHoliday","getWakeSleep","saveWakeSleep",

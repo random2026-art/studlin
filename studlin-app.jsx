@@ -2051,6 +2051,115 @@ function formatRealWorldScheduleForDate(events,routines,dateKey){
     .sort((a,b)=>a.time<b.time?-1:a.time>b.time?1:0)
     .map(e=>e.title+": "+fmtClock12(e.time)+"–"+fmtClock12(minutesToTime(timeToMinutes(e.time)+(e.duration||30))));
 }
+// Studlin AI Phase 1 (read-only calendar assistant): builds a compact,
+// structured forward digest from the student's own real data -- events,
+// materialized routine occurrences (classes/activities, same
+// expandRoutineOccurrences mechanism formatRealWorldScheduleForDate
+// already uses), overdue items, at-risk Attack Block chains, and
+// per-assignment pace. Deliberately NOT a raw event dump -- every
+// included item is already filtered/summarized, both for token cost and
+// so the model narrates real numbers these functions already got right
+// instead of re-deriving scheduling arithmetic itself. Unlike
+// formatRealWorldScheduleForDate (which deliberately excludes flexible
+// study blocks/deadlines -- it only needs "real world" fixed
+// commitments), this includes every pending item, since Studlin AI needs
+// the whole picture, not just fixed events. Pure enough to unit test
+// directly (same "pure-ish, reads a little shared state via its own
+// helper calls" standard as computeAssignmentPace/expandRoutineOccurrences
+// themselves already use in this file).
+const STUDLIN_AI_DIGEST_DAYS=14;
+function assembleStudlinAiDigest(events,routines,prefs,todayKey){
+  const today=todayKey||dayKey();
+  const endDate=(()=>{const d=new Date(today+"T12:00:00");d.setDate(d.getDate()+STUDLIN_AI_DIGEST_DAYS-1);return dayKey(d);})();
+  const routineOccs=expandRoutineOccurrences(routines||[],today,endDate);
+  const allItems=[...(events||[]),...routineOccs];
+
+  const windowDays=[];
+  {
+    const cursor=new Date(today+"T12:00:00");
+    const end=new Date(endDate+"T12:00:00");
+    while(cursor<=end){
+      const dk=dayKey(cursor);
+      const dayItems=allItems.filter(it=>it.date===dk&&it.status!=="done"&&!it.checklist);
+      const minutes=dayWorkloadMinutes(dayItems);
+      windowDays.push({
+        date:dk,
+        items:dayItems.map(it=>({title:it.title,kind:it.kind,time:it.time||null,duration:it.duration||0})),
+        workloadMinutes:minutes,
+        tier:dayWorkloadTier(minutes),
+      });
+      cursor.setDate(cursor.getDate()+1);
+    }
+  }
+
+  // computeMonthHeavyDays already does exactly the "heavy relative to this
+  // window's own average" comparison Studlin AI needs for "which day
+  // stands out" -- reused as-is rather than a second threshold. Returns a
+  // Set; converted to a plain array here so callers/tests never have to
+  // deal with cross-realm Set identity.
+  const heavyDayKeys=Array.from(computeMonthHeavyDays(windowDays.map(d=>({key:d.date,minutes:d.workloadMinutes}))));
+  const withWork=windowDays.filter(d=>d.workloadMinutes>0);
+  const busiestDay=withWork.length?withWork.reduce((max,d)=>d.workloadMinutes>max.workloadMinutes?d:max,withWork[0]):null;
+  const lightestDay=withWork.length?withWork.reduce((min,d)=>d.workloadMinutes<min.workloadMinutes?d:min,withWork[0]):null;
+
+  const missed=computeCatchUpMissedItems(events||[],today);
+  const overdue=missed.map(ev=>{
+    const staleDays=catchUpStalenessDays([ev],today);
+    return {title:ev.title,date:ev.date,staleDays,staleLabel:catchUpStalenessLabel(staleDays)};
+  });
+
+  const attackBlockRisks=detectAttackBlockOverruns(events||[],today);
+
+  // Only surfaced when computeAssignmentPace itself found a real signal
+  // (genuinely behind or ahead) -- on-pace items add noise, not signal,
+  // to a digest that's meant to stay short.
+  const effectivePrefs=prefs||getSchedulePreferences();
+  const assignmentPace=(events||[])
+    .filter(ev=>ev.status==="pending"&&!ev.checklist&&ev.date&&ev.date>=today&&ev.date<=endDate&&(ev.kind==="deadline"||ev.kind==="study block"))
+    .map(ev=>{
+      const pace=computeAssignmentPace(ev,events||[],today,effectivePrefs);
+      if(!pace||(!pace.behind&&!pace.ahead))return null;
+      return {title:ev.title,date:ev.date,behind:pace.behind,ahead:pace.ahead};
+    })
+    .filter(Boolean);
+
+  return {todayKey:today,windowEndKey:endDate,windowDays,heavyDayKeys,busiestDay,lightestDay,overdue,attackBlockRisks,assignmentPace};
+}
+// Deterministic keyword routing, not a second AI call before the real
+// answer -- a classification call would double latency/cost against a
+// feature already priced flat (2 credits/question), and this question set
+// is small and closed (schedule/study-history only; open-ended tutoring
+// already has its own separate chat surface). Mirrors matchEventByTitle's
+// existing precedent in this file: solve a bounded matching problem with
+// keyword scoring instead of a model call. Nothing confidently matching
+// falls back to a baseline (workload+overdue+streak) rather than an empty
+// digest, so even a wrong route usually still contains the real answer.
+function routeStudlinAiQuestion(text,knownSubjects){
+  const t=(text||"").toLowerCase();
+  const has=(...words)=>words.some(w=>t.includes(w));
+  const subject=(knownSubjects||[]).find(s=>t.includes(String(s).toLowerCase()))||null;
+  const flags={
+    needsWorkload:has("busy","busiest","lightest","heaviest","light day","free day","workload","packed"),
+    needsOverdue:has("overdue","missed","behind on","late","catch up","catch-up"),
+    needsPace:has("pace","on track","ahead of","behind schedule","progress"),
+    needsAttackRisk:has("attack block","running out","won't finish","wont finish","won't have time"),
+    needsStreak:has("streak","consistent","consistency","activity","engagement"),
+    needsPeakHours:has("productive","peak","best time","focus","when am i","when do i"),
+    needsStrugglingBucket:has("struggl","worst time","trouble focusing","hard time"),
+    needsDuration:has("how long","duration","usually take"),
+    needsConfidence:has("confiden","calibrat"),
+    subject,
+    needsSubjectTrend:false,
+  };
+  flags.needsSubjectTrend=!!subject&&has("doing","trend","score","grade","exam");
+  const anyFlag=Object.keys(flags).some(k=>k!=="subject"&&k!=="needsSubjectTrend"&&flags[k])||flags.needsSubjectTrend;
+  if(!anyFlag){
+    flags.needsWorkload=true;
+    flags.needsOverdue=true;
+    flags.needsStreak=true;
+  }
+  return flags;
+}
 // Matches a free-text phrase (e.g. "gym", "track practice") against the
 // calendar items on one date — used by Tier 3's move_event/retime_event
 // intents to resolve a student's plain-English target into a real event or
