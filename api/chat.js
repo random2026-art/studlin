@@ -240,6 +240,27 @@ const MAX_TOKENS_STUDLIN_AI = 768;
 const STUDLIN_AI_INTENT_SYSTEM_PROMPT = EXTRACTION_PROMPT;
 const STUDLIN_AI_INTENT_CREDIT_COST = 1;
 const MAX_TOKENS_STUDLIN_AI_INTENT = 220;
+// Studlin AI's real coaching mode -- distinct from STUDLIN_AI_SYSTEM_PROMPT
+// above, which is deliberately restricted to stating digest facts and
+// explicitly can't give advice. This one is allowed to: a student asking
+// "how should I study for this" wants real strategy, not a fact, and a
+// generic answer would be a weak version of the feature (any chatbot can
+// give generic study tips) -- the actual point is grounding it in this
+// student's real situation via the CONTEXT block
+// (gatherStudlinAiCoachingContext/formatStudlinAiCoachingPrompt in
+// studlin-app.jsx), same "client builds real context, server never
+// touches calendar data directly" precedent as the Q&A path above.
+const STUDLIN_AI_COACHING_SYSTEM_PROMPT = `You are Studlin's calendar-aware study coach. A student is asking for real help with how to approach studying, not just a fact about their schedule.
+
+You will be given CONTEXT: real data about this student -- their upcoming workload, and, when identifiable, their own real performance history and exam readiness for the subject they're asking about. Use it to make your advice specific to THIS student's real situation, not a generic template that would fit anyone. Never invent a fact beyond what's given in the context -- if something isn't there, don't claim to know it.
+
+Give real, actionable strategy: how to break the material down, how to sequence study time, what to prioritize first, concrete techniques (active recall, spaced practice, reviewing past mistakes) suited to the situation described. If the context shows a tight timeline or a real weak spot, say so plainly and factor it into the advice.
+
+You cannot create, move, reschedule, or delete anything from this response -- if a real study session or task would help, say so, but never claim to have added one.
+
+Keep it focused and real: three to six sentences, or a short list when an actual breakdown helps. No filler, no "I'd be happy to help," no encouragement that isn't earned by something in the context. Never use an em dash.`;
+const STUDLIN_AI_COACHING_CREDIT_COST = 2;
+const MAX_TOKENS_STUDLIN_AI_COACHING = 1024;
 const DEFAULT_CREDITS = 120; // Free plan limit — must match api/me.js, the actual account-creation default
 const RATE_LIMIT_PER_MIN = 20;
 
@@ -331,17 +352,20 @@ function resolveRequestCost(hasImage, model, format) {
   if (hasImage) return IMAGE_CREDIT_COST;
   if (format === 'studlin_ai') return STUDLIN_AI_CREDIT_COST;
   if (format === 'studlin_ai_intent') return STUDLIN_AI_INTENT_CREDIT_COST;
+  if (format === 'studlin_ai_coaching') return STUDLIN_AI_COACHING_CREDIT_COST;
   return CREDIT_COST[model] || 1;
 }
 function resolveSystemPrompt(format, effectiveModel) {
   if (format === 'json') return EXTRACTION_PROMPT;
   if (format === 'studlin_ai') return STUDLIN_AI_SYSTEM_PROMPT;
   if (format === 'studlin_ai_intent') return STUDLIN_AI_INTENT_SYSTEM_PROMPT;
+  if (format === 'studlin_ai_coaching') return STUDLIN_AI_COACHING_SYSTEM_PROMPT;
   return effectiveModel === 'flash' ? FLASH_PROMPT : SYSTEM_PROMPT;
 }
 function resolveMaxTokens(format, effectiveModel) {
   if (format === 'studlin_ai') return MAX_TOKENS_STUDLIN_AI;
   if (format === 'studlin_ai_intent') return MAX_TOKENS_STUDLIN_AI_INTENT;
+  if (format === 'studlin_ai_coaching') return MAX_TOKENS_STUDLIN_AI_COACHING;
   if (format === 'json' && effectiveModel !== 'flash') return MAX_TOKENS_JSON_STANDARD;
   return MAX_TOKENS[effectiveModel] || 2048;
 }
@@ -511,7 +535,7 @@ const chatHandler = async (req, res) => {
     // prompt already instructs "never invent a number not in the digest,"
     // but a real sampling-parameter backstop against creative drift is
     // cheap insurance on top of an instruction alone.
-    if (format === 'json' || format === 'studlin_ai' || format === 'studlin_ai_intent') requestBody.temperature = 0.2;
+    if (format === 'json' || format === 'studlin_ai' || format === 'studlin_ai_intent' || format === 'studlin_ai_coaching') requestBody.temperature = 0.2;
 
     // Raised alongside vercel.json's maxDuration (30s -> 60s): flashcard/quiz
     // generation now sends up to MATERIAL_TEXT_CAP (50,000 chars, was 15,000)

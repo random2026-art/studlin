@@ -1,4 +1,4 @@
-// Studlin AI Phase 2's action-proposal builders and commit helpers --
+﻿// Studlin AI Phase 2's action-proposal builders and commit helpers --
 // classifyStudlinAiMessage itself is a real /api/chat call and isn't
 // exercised here (this repo has no fetch-mocking pattern, same reasoning
 // tests/chat-studlin-ai-format.test.js gives for testing api/chat.js's
@@ -492,5 +492,78 @@ describe("studlinAiProposalPreviewSpec", () => {
     const m = loadStudlinModule();
     assert.equal(m.studlinAiProposalPreviewSpec(null), null);
     assert.equal(m.studlinAiProposalPreviewSpec({ ok: false, label: "no" }), null);
+  });
+});
+
+describe("gatherStudlinAiCoachingContext", () => {
+  test("no identifiable subject in the message -> subject/subjectNudge/examReadiness all null, digest still present", () => {
+    const m = loadStudlinModule({ now: "2026-09-14T08:00:00" });
+    m.saveSubjects([{ id: "s1", label: "Calculus II" }]);
+    const prefs = m.getSchedulePreferences();
+    const ctx = m.gatherStudlinAiCoachingContext("I'm stressed and don't know where to start", [], [], prefs, "2026-09-14");
+    assert.equal(ctx.subject, null);
+    assert.equal(ctx.subjectNudge, null);
+    assert.equal(ctx.examReadiness, null);
+    assert.equal(ctx.digest.todayKey, "2026-09-14");
+  });
+
+  test("an identifiable subject with an upcoming linked exam gets real exam readiness, not fabricated", () => {
+    const m = loadStudlinModule({ now: "2026-09-14T08:00:00" });
+    m.saveSubjects([{ id: "s1", label: "Calculus II" }]);
+    const prefs = m.getSchedulePreferences();
+    const exam = { id: "exam1", kind: "exam", subject: "Calculus II", date: "2026-09-24", status: "pending" };
+    const ctx = m.gatherStudlinAiCoachingContext("I have a Calculus II exam in 10 days and I'm stressed", [exam], [], prefs, "2026-09-14");
+    assert.equal(ctx.subject, "Calculus II");
+    assert.ok(ctx.examReadiness);
+    assert.equal(ctx.examReadiness.daysUntil, 10);
+    assert.equal(ctx.examReadiness.state, "no-data");
+  });
+
+  test("a subject with fewer than 3 scored exams never claims a trend (subjectNudge stays null)", () => {
+    const m = loadStudlinModule({ now: "2026-09-14T08:00:00" });
+    m.saveSubjects([{ id: "s1", label: "Calculus II" }]);
+    const prefs = m.getSchedulePreferences();
+    const events = [
+      { id: "e1", kind: "exam", subject: "Calculus II", date: "2026-08-01", status: "done", scoreTier: "high" },
+      { id: "e2", kind: "exam", subject: "Calculus II", date: "2026-08-15", status: "done", scoreTier: "high" },
+    ];
+    const ctx = m.gatherStudlinAiCoachingContext("how should I study for Calculus II", events, [], prefs, "2026-09-14");
+    assert.equal(ctx.subjectNudge, null);
+  });
+
+  test("a subject mentioned with no upcoming exam event gets no fabricated readiness", () => {
+    const m = loadStudlinModule({ now: "2026-09-14T08:00:00" });
+    m.saveSubjects([{ id: "s1", label: "Calculus II" }]);
+    const prefs = m.getSchedulePreferences();
+    const ctx = m.gatherStudlinAiCoachingContext("how should I study for Calculus II", [], [], prefs, "2026-09-14");
+    assert.equal(ctx.subject, "Calculus II");
+    assert.equal(ctx.examReadiness, null);
+  });
+});
+
+describe("formatStudlinAiCoachingPrompt", () => {
+  test("includes the subject, exam readiness sentence, trend, and the student's message", () => {
+    const m = loadStudlinModule();
+    const context = {
+      digest: { todayKey: "2026-09-14", heavyDayKeys: ["2026-09-16"], overdue: [] },
+      subject: "Calculus II",
+      subjectNudge: -0.1,
+      examReadiness: { daysUntil: 10, sentence: "No review sessions linked yet." },
+      confidenceInsight: null,
+    };
+    const prompt = m.formatStudlinAiCoachingPrompt("how should I study for Calculus II", context);
+    assert.match(prompt, /Calculus II/);
+    assert.match(prompt, /No review sessions linked yet\./);
+    assert.match(prompt, /below expectation/);
+    assert.match(prompt, /2026-09-16/);
+    assert.match(prompt, /STUDENT'S MESSAGE: how should I study for Calculus II/);
+  });
+
+  test("no subject identified -> no subject/exam lines, prompt still valid", () => {
+    const m = loadStudlinModule();
+    const context = { digest: { todayKey: "2026-09-14", heavyDayKeys: [], overdue: [] }, subject: null, subjectNudge: null, examReadiness: null, confidenceInsight: null };
+    const prompt = m.formatStudlinAiCoachingPrompt("help me get motivated", context);
+    assert.doesNotMatch(prompt, /exam trend/);
+    assert.match(prompt, /STUDENT'S MESSAGE: help me get motivated/);
   });
 });

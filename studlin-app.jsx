@@ -16118,6 +16118,55 @@ function formatStudlinAiDigestForPrompt(question,digest,flags,profile){
   return lines.join("\n");
 }
 
+// Real coaching -- distinct from the digest Q&A path above, which is
+// deliberately restricted to stating facts already in the digest and
+// explicitly can't give advice (see STUDLIN_AI_SYSTEM_PROMPT in
+// api/chat.js). A student asking "how should I study for this" isn't
+// asking for a fact, they're asking for help -- generic advice would be
+// a weak version of this (any chatbot can do that); the actual
+// differentiator is grounding it in THIS student's real situation. Tries
+// to identify which subject the message is actually about (same
+// substring match routeStudlinAiQuestion already uses for its own
+// subject flag) and, when found, pulls that subject's real outcome
+// trend and the real readiness state of its nearest upcoming exam --
+// the same signals already computed and trusted elsewhere in this file,
+// not new ones invented for this. Falls back gracefully (no subject
+// identified, or too little data for a signal) rather than fabricating.
+function gatherStudlinAiCoachingContext(text,events,routines,prefs,todayKey){
+  const subjects=getSubjects().map(s=>s.label);
+  const t=(text||"").toLowerCase();
+  const matchedSubject=subjects.find(s=>s&&t.includes(s.toLowerCase()))||null;
+  const digest=assembleStudlinAiDigest(events,routines,prefs,todayKey);
+  const context={digest,subject:matchedSubject,subjectNudge:null,examReadiness:null,confidenceInsight:confidenceOutcomeInsight()};
+  if(matchedSubject){
+    const scoredCount=events.filter(e=>e.kind==="exam"&&e.subject===matchedSubject&&e.scoreTier).length;
+    context.subjectNudge=scoredCount>=3?subjectOutcomeNudge(matchedSubject):null;
+    const upcomingExam=events.filter(e=>e.kind==="exam"&&e.subject===matchedSubject&&e.date>=todayKey&&e.status==="pending").sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0)[0]||null;
+    if(upcomingExam)context.examReadiness=computeExamReadiness(upcomingExam,events,todayKey);
+  }
+  return context;
+}
+// Turns the coaching context into the actual prompt text -- same
+// authored-sentence-per-signal approach formatStudlinAiDigestForPrompt
+// already uses (a model phrasing raw numbers itself reads worse and
+// risks misstating them), so the two prompts read as the same voice.
+function formatStudlinAiCoachingPrompt(question,context){
+  const{digest,subject,subjectNudge,examReadiness,confidenceInsight}=context;
+  const lines=["CONTEXT (real data about this student -- ground your advice in this, never invent beyond it):"];
+  lines.push("Today: "+digest.todayKey+".");
+  if(digest.heavyDayKeys.length>0)lines.push("Heavier-than-usual days in the next two weeks: "+digest.heavyDayKeys.join(", ")+".");
+  if(digest.overdue.length>0)lines.push(digest.overdue.length+" overdue item(s) right now: "+digest.overdue.map(o=>o.title).join(", ")+".");
+  if(subject){
+    lines.push("The student appears to be asking about: "+subject+".");
+    if(examReadiness)lines.push("Real status for their upcoming "+subject+" exam, "+examReadiness.daysUntil+" day(s) out: "+examReadiness.sentence);
+    if(subjectNudge!=null)lines.push(subject+" exam trend: "+(subjectNudge>0?"scoring above expectation lately.":subjectNudge<0?"scoring below expectation lately.":"on par with expectations lately."));
+  }
+  if(confidenceInsight)lines.push(confidenceInsight);
+  lines.push("");
+  lines.push("STUDENT'S MESSAGE: "+question);
+  return lines.join("\n");
+}
+
 // Studlin AI Phase 2's message router -- the first thing StudlinAiDrawer's
 // send() does with a new message, before deciding whether to run the
 // existing read-only Phase 1 path or build an action proposal. Real
@@ -16178,11 +16227,11 @@ async function classifyStudlinAiMessage(text,history){
   const tomorrow=dayKey(new Date(Date.now()+86400000));
   const nextWeekSameDay=dayKey(new Date(Date.now()+7*86400000));
   const weekday=new Date().toLocaleDateString("en-US",{weekday:"long"});
-  const prompt="You are a message router for a student calendar assistant chat. Today is "+weekday+", "+today+". The student typed: \""+text+"\". Decide whether this is a QUESTION about their existing schedule/study history, an ACTION request (create something new, or move/reschedule something that already exists), or unsupported. Respond with ONLY this JSON, no markdown fences, no explanation:\n"+
-    "{\"kind\":\"question\"|\"action\"|\"unsupported\",\"intent\":\"create_task\"|\"delete_task\"|\"set_peak_hours\"|\"shift\"|\"clear_day\"|\"clear_week\"|\"skip_class\"|\"move_event\"|\"retime_event\"|\"move_flex_task\"|null,\"days\":<integer 1-14 or null>,\"date\":\"YYYY-MM-DD or null\",\"target\":\"<short name of the specific existing item, or null>\",\"targetDate\":\"YYYY-MM-DD or null\",\"destDate\":\"YYYY-MM-DD or null\",\"newStart\":\"HH:MM 24h or null\",\"newDuration\":<integer minutes or null>,\"title\":\"<short name of the NEW item to create, or null>\",\"dueDate\":\"YYYY-MM-DD or null\",\"dueTime\":\"HH:MM 24h or null\",\"durationMin\":<integer minutes or null>,\"taskKind\":\"study\"|\"todo\"|\"event\"|\"reminder\"|\"exam\"|\"project\"|null,\"peakHours\":\"morning\"|\"midday\"|\"afternoon\"|\"evening\"|null,\"clarify\":\"<a short, specific question, or null>\"}\n"+
-    "Rules: \"question\" is anything asking about their real schedule/workload/streak/pace/productivity -- not asking Studlin to change anything, leave intent and every other field null. \"unsupported\" covers anything ambiguous, multi-step, deleting/cancelling MULTIPLE things or an entire day/week/recurring routine, or that doesn't clearly match one action below -- never guess. Deleting exactly ONE clearly-named item uses delete_task instead, not unsupported.\n"+
-    "\"clarify\": if the message clearly WANTS one of the actions below but is missing something required to do it (no title for a new item, no clear name for what to move/retime/delete, no day count for \"shift\"), set kind to \"unsupported\", intent to null, and \"clarify\" to ONE short, specific question asking for exactly the missing thing (e.g. \"When is that due?\" or \"Which day would you like it moved to?\"). Leave \"clarify\" null for every other case -- genuinely off-topic, too vague to guess the intended action at all, multi-step, or a bulk/destructive request. Never set clarify when kind is \"question\" or \"action\".\n"+
-    "\"create_task\" is for adding something NEW that doesn't exist yet -- \"title\" is required, \"dueDate\" if a deadline/date was mentioned (resolve relative phrases like \"tomorrow\"/\"Friday\" against today's date above), \"dueTime\" only if a real clock time was mentioned, \"durationMin\" only if a specific work-time length was mentioned. \"taskKind\" picks which kind of thing: \"exam\" for a test/quiz/final, \"project\" for a multi-step project, \"event\" for a fixed real-world thing at a specific time (an appointment, a meeting -- not a class or something already on a routine), \"reminder\" for a simple point-in-time nudge with no real work involved (\"remind me to email my professor\"), \"todo\" if the student explicitly just wants a due date tracked with no work time scheduled (\"just remind me,\" \"don't schedule time for it\"), otherwise \"study\" (the default -- a task/assignment/homework Studlin finds real time to work on before its deadline). IMPORTANT: only classify as create_task when the student is actually ASKING to add/track/schedule something. A message that merely mentions, describes, or shares feelings about an exam/assignment/deadline (stress, context, background) without asking for it to be added is \"question\" instead -- the mere presence of a date or an exam name is not itself a request to create anything, look for real intent to add.\n"+
+  const prompt="You are a message router for a student calendar assistant chat. Today is "+weekday+", "+today+". The student typed: \""+text+"\". Decide whether this is a QUESTION about their existing schedule/study history (a real number/fact), a COACHING ask (wants real study-strategy help, not a fact), an ACTION request (create something new, or move/reschedule something that already exists), or unsupported. Respond with ONLY this JSON, no markdown fences, no explanation:\n"+
+    "{\"kind\":\"question\"|\"coaching\"|\"action\"|\"unsupported\",\"intent\":\"create_task\"|\"delete_task\"|\"set_peak_hours\"|\"shift\"|\"clear_day\"|\"clear_week\"|\"skip_class\"|\"move_event\"|\"retime_event\"|\"move_flex_task\"|null,\"days\":<integer 1-14 or null>,\"date\":\"YYYY-MM-DD or null\",\"target\":\"<short name of the specific existing item, or null>\",\"targetDate\":\"YYYY-MM-DD or null\",\"destDate\":\"YYYY-MM-DD or null\",\"newStart\":\"HH:MM 24h or null\",\"newDuration\":<integer minutes or null>,\"title\":\"<short name of the NEW item to create, or null>\",\"dueDate\":\"YYYY-MM-DD or null\",\"dueTime\":\"HH:MM 24h or null\",\"durationMin\":<integer minutes or null>,\"taskKind\":\"study\"|\"todo\"|\"event\"|\"reminder\"|\"exam\"|\"project\"|null,\"peakHours\":\"morning\"|\"midday\"|\"afternoon\"|\"evening\"|null,\"clarify\":\"<a short, specific question, or null>\"}\n"+
+    "Rules: \"question\" is asking for a real FACT about their schedule/workload/streak/pace/productivity (a number, a date, a yes/no). \"coaching\" is asking for real help or a plan -- \"how should I study for X,\" \"help me prepare,\" \"where do I start,\" \"I'm stressed about Y and don't know the material\" -- wanting strategy/advice, not a fact, and not (yet) asking to add/move anything. Neither ever changes anything -- leave intent and every other field null for both. \"unsupported\" covers anything ambiguous, multi-step, deleting/cancelling MULTIPLE things or an entire day/week/recurring routine, or that doesn't clearly match one action below -- never guess. Deleting exactly ONE clearly-named item uses delete_task instead, not unsupported.\n"+
+    "\"clarify\": if the message clearly WANTS one of the actions below but is missing something required to do it (no title for a new item, no clear name for what to move/retime/delete, no day count for \"shift\"), set kind to \"unsupported\", intent to null, and \"clarify\" to ONE short, specific question asking for exactly the missing thing (e.g. \"When is that due?\" or \"Which day would you like it moved to?\"). Leave \"clarify\" null for every other case -- genuinely off-topic, too vague to guess the intended action at all, multi-step, or a bulk/destructive request. Never set clarify when kind is \"question\", \"coaching\", or \"action\".\n"+
+    "\"create_task\" is for adding something NEW that doesn't exist yet -- \"title\" is required, \"dueDate\" if a deadline/date was mentioned (resolve relative phrases like \"tomorrow\"/\"Friday\" against today's date above), \"dueTime\" only if a real clock time was mentioned, \"durationMin\" only if a specific work-time length was mentioned. \"taskKind\" picks which kind of thing: \"exam\" for a test/quiz/final, \"project\" for a multi-step project, \"event\" for a fixed real-world thing at a specific time (an appointment, a meeting -- not a class or something already on a routine), \"reminder\" for a simple point-in-time nudge with no real work involved (\"remind me to email my professor\"), \"todo\" if the student explicitly just wants a due date tracked with no work time scheduled (\"just remind me,\" \"don't schedule time for it\"), otherwise \"study\" (the default -- a task/assignment/homework Studlin finds real time to work on before its deadline). IMPORTANT: only classify as create_task when the student is actually ASKING to add/track/schedule something. A message that merely mentions, describes, or shares feelings about an exam/assignment/deadline (stress, context, background) without asking for it to be added is \"question\" or \"coaching\" instead -- the mere presence of a date or an exam name is not itself a request to create anything, look for real intent to add.\n"+
     "\"delete_task\" is for permanently removing ONE existing, clearly-named item from the calendar -- a task, assignment, event, exam, or reminder, NEVER a recurring class/routine (\"delete my chem homework,\" \"cancel my dentist appointment\" -- not \"delete all my chem classes\") -- \"target\" is its name as the student said it, \"targetDate\" is the date it's currently on (default today's date above if not mentioned).\n"+
     "\"set_peak_hours\" is for the student declaring or changing when THEY PERSONALLY focus/work best -- \"peakHours\" is exactly one of \"morning\" (roughly 6-11am), \"midday\" (11am-3pm), \"afternoon\" (3-6pm), \"evening\" (6-10pm) -- map their own words to the single closest window. If what they said doesn't clearly fit one of these four (e.g. \"late at night,\" \"whenever,\" \"it varies\"), this doesn't qualify -- leave peakHours null and use clarify to ask which of morning/midday/afternoon/evening fits best instead of guessing.\n"+
     "\"move_flex_task\" is for relocating ONE existing FLEXIBLE item the student themselves controls the timing of -- a homework/study task, assignment, or to-do, not a fixed real-world commitment -- \"target\" is its name as the student said it, \"targetDate\" is the date it's currently on (default today's date above if not mentioned), \"destDate\" is the day they want it moved to (null if they said \"sometime\"/didn't specify).\n"+
@@ -16195,7 +16244,8 @@ async function classifyStudlinAiMessage(text,history){
     "\"add a task to finish my history essay, due Friday\" -> {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"Finish history essay\",\"dueDate\":\"<the real date of this Friday>\",\"dueTime\":null,\"durationMin\":null,\"taskKind\":\"study\",\"peakHours\":null,\"clarify\":null}\n"+
     "\"just track that my chem lab report is due next Monday, don't schedule time for it\" -> {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"Chem lab report\",\"dueDate\":\"<that Monday's date>\",\"dueTime\":null,\"durationMin\":null,\"taskKind\":\"todo\",\"peakHours\":null,\"clarify\":null}\n"+
     "\"add my chem final, it's on the 20th\" -> {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"Chem final\",\"dueDate\":\"<the 20th of the current or next occurring month>\",\"dueTime\":null,\"durationMin\":null,\"taskKind\":\"exam\",\"peakHours\":null,\"clarify\":null}\n"+
-    "\"i have an upcoming calc exam in 10 days and i am stressing because i dont know any of the material\" (describing/venting about an exam, never actually asked to add anything) -> {\"kind\":\"question\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"peakHours\":null,\"clarify\":null}\n"+
+    "\"i have an upcoming calc exam in 10 days and i am stressing because i dont know any of the material\" (wants real help, not a fact, never actually asked to add anything) -> {\"kind\":\"coaching\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"peakHours\":null,\"clarify\":null}\n"+
+    "\"can you help me think of a plan of how i should study for it\" -> {\"kind\":\"coaching\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"peakHours\":null,\"clarify\":null}\n"+
     "\"add a dentist appointment tomorrow at 3pm\" -> {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"Dentist appointment\",\"dueDate\":\""+tomorrow+"\",\"dueTime\":\"15:00\",\"durationMin\":null,\"taskKind\":\"event\",\"peakHours\":null,\"clarify\":null}\n"+
     "\"remind me to email my professor tomorrow\" -> {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"Email professor\",\"dueDate\":\""+tomorrow+"\",\"dueTime\":null,\"durationMin\":null,\"taskKind\":\"reminder\",\"peakHours\":null,\"clarify\":null}\n"+
     "\"add my history project, due in two weeks\" -> {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"History project\",\"dueDate\":\"<today's date above + 14 days>\",\"dueTime\":null,\"durationMin\":null,\"taskKind\":\"project\",\"peakHours\":null,\"clarify\":null}\n"+
@@ -16225,7 +16275,7 @@ async function classifyStudlinAiMessage(text,history){
   try{
     const raw=(data.reply||"").replace(/```json?|```/g,"").trim();
     const parsed=JSON.parse(raw);
-    if(!parsed||!["question","action","unsupported"].includes(parsed.kind))throw new Error("bad-kind");
+    if(!parsed||!["question","coaching","action","unsupported"].includes(parsed.kind))throw new Error("bad-kind");
     if(parsed.kind==="action"){
       const knownIntents=["create_task","delete_task","set_peak_hours","shift","clear_day","clear_week","skip_class","move_event","retime_event","move_flex_task"];
       if(!knownIntents.includes(parsed.intent))throw new Error("bad-intent");
@@ -16435,6 +16485,32 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
     setMessages(m=>[...m,{role:"ai",text:(data.reply||"").trim()||"I didn't get a real answer back. Try again.",kind:"fact"}]);
   };
 
+  // Real coaching -- reached once classifyStudlinAiMessage decides the
+  // message wants strategy/help, not a schedule fact. Same Pro gate as
+  // askQuestion (both are "talking to Studlin AI," not a separate
+  // capability worth its own gate) -- see gatherStudlinAiCoachingContext/
+  // formatStudlinAiCoachingPrompt for what actually grounds the answer.
+  const giveCoaching=async(text,history)=>{
+    if(!canUseStudlinAiQna()){
+      setPricingOpen(canUseStudlinAiQnaReason()==="free-tier"?"studlinAiQna":"aiUsageCap");
+      setMessages(m=>[...m,{role:"ai",text:"Studlin AI needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
+      return;
+    }
+    const events=lsGet("events",[]);
+    const routines=getWeeklyRoutine();
+    const prefs=getSchedulePreferences();
+    const context=gatherStudlinAiCoachingContext(text,events,routines,prefs,dayKey());
+    const promptText=formatStudlinAiCoachingPrompt(text,context);
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[...(history||[]),{r:"user",t:promptText}],model:"standard",format:"studlin_ai_coaching"})});
+    const data=await res.json();
+    recordStudlinAiQnaUsage();
+    if(!res.ok){
+      setMessages(m=>[...m,{role:"ai",text:data.error||"Something went wrong. Try again.",kind:"error"}]);
+      return;
+    }
+    setMessages(m=>[...m,{role:"ai",text:(data.reply||"").trim()||"I didn't get a real answer back. Try again.",kind:"coaching"}]);
+  };
+
   // Builds and shows a proposal card for a classified action -- never
   // writes anything itself (buildStudlinAiActionProposal is pure). Pro
   // gating happens here, before the proposal is even built, using the
@@ -16501,12 +16577,13 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
     }
     try{
       if(parsed.kind==="question")await askQuestion(text,history);
+      else if(parsed.kind==="coaching")await giveCoaching(text,history);
       else if(parsed.kind==="unsupported"){
         if(parsed.clarify){
           setMessages(m=>[...m,{role:"ai",text:parsed.clarify,kind:"clarify"}]);
           setPendingClarification(true);
         }else{
-          setMessages(m=>[...m,{role:"ai",text:"I can answer questions about your schedule, or help create, move, or delete a task. Try rephrasing that.",kind:"info"}]);
+          setMessages(m=>[...m,{role:"ai",text:"I can answer questions about your schedule, help you plan how to study for something, or create, move, or delete a task. Try rephrasing that.",kind:"info"}]);
         }
       }
       else await runAction(parsed,null);
@@ -16621,7 +16698,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
         </div>
         <div ref={scrollRef} style={{flex:1,overflowY:"auto",padding:"14px 18px",display:"flex",flexDirection:"column",gap:10}}>
           {messages.length===0&&!loading&&(
-            <div style={{fontSize:12.5,color:pp.muted,lineHeight:1.6,marginTop:10}}>Ask something like "which day next week is busiest?", or tell me to add a task or move something on your calendar.</div>
+            <div style={{fontSize:12.5,color:pp.muted,lineHeight:1.6,marginTop:10}}>Ask something like "which day next week is busiest?" or "how should I study for my calc exam," or tell me to add a task or move something on your calendar.</div>
           )}
           {messages.map((m,i)=>(
             <div key={i} style={{alignSelf:m.role==="user"?"flex-end":"flex-start",maxWidth:"85%",display:"flex",flexDirection:"column",gap:6}}>
