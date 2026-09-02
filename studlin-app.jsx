@@ -16787,8 +16787,17 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
         const subjects=getSubjects();
         const matchedSubjectObj=proposal.subject?subjects.find(s=>s.label===proposal.subject):null;
         const upcomingExam=proposal.subject?lsGet("events",[]).filter(e=>e.kind==="exam"&&e.subject===proposal.subject&&e.status==="pending"&&e.date>=dayKey()).sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0)[0]||null:null;
+        // Weak-spot targeting -- an exam that already has a prior practice
+        // attempt has real "what did they get wrong" data (same
+        // latestWrongTopicsForExam/wrongTopicsFor pipeline doGenDeckForExam
+        // and the taking-a-quiz follow-up already use), so a deck/quiz
+        // generated here for the same exam actively targets those topics
+        // instead of covering the pasted material generically again.
+        const weakTopics=upcomingExam?latestWrongTopicsForExam(upcomingExam.id):[];
+        const weakFocus=weakTopics.length>0?weakTopics.join(", "):undefined;
+        const weakSuffix=weakTopics.length>0?", weighted toward what you missed last time":"";
         if(isQuiz){
-          const questions=await generateQuizFromText(proposal.materialText,proposal.subject||"this material",scaledQuizCount(proposal.materialText.length));
+          const questions=await generateQuizFromText(proposal.materialText,proposal.subject||"this material",scaledQuizCount(proposal.materialText.length),weakFocus);
           if(!questions||questions.length===0){
             setMessages(m=>{
               const withResolved=m.map((mm,i)=>i===idx?{...mm,proposal:{...mm.proposal,resolved:"cancelled"}}:mm);
@@ -16800,10 +16809,10 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
           const pe=createPracticeExam((proposal.subject?proposal.subject+" ":"")+"Practice Exam",proposal.subject||"",upcomingExam?upcomingExam.id:null,questions);
           setMessages(m=>{
             const withResolved=m.map((mm,i)=>i===idx?{...mm,proposal:{...mm.proposal,resolved:"confirmed"}}:mm);
-            return [...withResolved,{role:"ai",text:"Done. Built a "+questions.length+"-question practice quiz"+(proposal.subject?" for "+proposal.subject:"")+(upcomingExam?", linked to "+upcomingExam.title:"")+".",kind:"done"}];
+            return [...withResolved,{role:"ai",text:"Done. Built a "+questions.length+"-question practice quiz"+(proposal.subject?" for "+proposal.subject:"")+(upcomingExam?", linked to "+upcomingExam.title:"")+weakSuffix+".",kind:"done"}];
           });
         }else{
-          const cards=await generateFlashcardsFromText(proposal.materialText,proposal.subject||"this material",scaledFlashcardCount(proposal.materialText.length));
+          const cards=await generateFlashcardsFromText(proposal.materialText,proposal.subject||"this material",scaledFlashcardCount(proposal.materialText.length),weakFocus);
           if(!cards||cards.length===0){
             setMessages(m=>{
               const withResolved=m.map((mm,i)=>i===idx?{...mm,proposal:{...mm.proposal,resolved:"cancelled"}}:mm);
@@ -16816,7 +16825,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
           lsSet("decks",[nd,...lsGet("decks",[])]);
           setMessages(m=>{
             const withResolved=m.map((mm,i)=>i===idx?{...mm,proposal:{...mm.proposal,resolved:"confirmed"}}:mm);
-            return [...withResolved,{role:"ai",text:"Done. Saved "+cards.length+" flashcards"+(proposal.subject?" for "+proposal.subject:"")+(upcomingExam?", linked to "+upcomingExam.title:"")+".",kind:"done"}];
+            return [...withResolved,{role:"ai",text:"Done. Saved "+cards.length+" flashcards"+(proposal.subject?" for "+proposal.subject:"")+(upcomingExam?", linked to "+upcomingExam.title:"")+weakSuffix+".",kind:"done"}];
           });
         }
       }catch(e){
