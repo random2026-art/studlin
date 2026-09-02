@@ -30,6 +30,11 @@ describe("resolveRequestCost", () => {
     // still be deliberate, not accidental) costs the image rate, not 2.
     assert.equal(resolveRequestCost(true, "flash", "studlin_ai"), 4);
   });
+
+  test("format:studlin_ai_intent (Phase 2's message router) costs the flat flash rate (1), cheaper than a real digest-bearing Q&A call", () => {
+    assert.equal(resolveRequestCost(false, "flash", "studlin_ai_intent"), 1);
+    assert.equal(resolveRequestCost(false, "standard", "studlin_ai_intent"), 1);
+  });
 });
 
 describe("resolveSystemPrompt", () => {
@@ -58,6 +63,12 @@ describe("resolveSystemPrompt", () => {
     assert.match(flash, /Studlin Flash/);
     assert.doesNotMatch(standard, /Studlin Flash/);
   });
+
+  test("format:studlin_ai_intent gets the bare JSON-extraction prompt, not the conversational studlin_ai one", () => {
+    const prompt = resolveSystemPrompt("studlin_ai_intent", "flash");
+    assert.match(prompt, /extract structured data/);
+    assert.doesNotMatch(prompt, /calendar assistant/);
+  });
 });
 
 describe("resolveMaxTokens", () => {
@@ -77,5 +88,10 @@ describe("resolveMaxTokens", () => {
   test("plain chat still gets each model's own default budget", () => {
     assert.equal(resolveMaxTokens(undefined, "standard"), 2048);
     assert.equal(resolveMaxTokens(undefined, "flash"), 512);
+  });
+
+  test("format:studlin_ai_intent gets a small, fixed budget -- the response is one short JSON object", () => {
+    assert.equal(resolveMaxTokens("studlin_ai_intent", "flash"), 220);
+    assert.equal(resolveMaxTokens("studlin_ai_intent", "standard"), 220);
   });
 });

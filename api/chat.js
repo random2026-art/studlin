@@ -228,6 +228,18 @@ const IMAGE_CREDIT_COST = 4;
 // chat (1) and an image call (4) rather than folded into either.
 const STUDLIN_AI_CREDIT_COST = 2;
 const MAX_TOKENS_STUDLIN_AI = 768;
+// Studlin AI Phase 2's message router/intent classifier -- a separate,
+// bounded-choice call (question vs. a fixed set of calendar actions),
+// same reasoning as EXTRACTION_PROMPT above: a personality prompt fights
+// a strict JSON contract, so this reuses that bare framing rather than
+// STUDLIN_AI_SYSTEM_PROMPT's conversational one. Priced like the existing
+// Tier-3 Reschedule classifier (submitPauseCommand in studlin-app.jsx),
+// which already rides the flat 1-credit flash rate for the same kind of
+// call -- no reason for this new one to cost more. Output is a short,
+// fixed-shape JSON object, so MAX_TOKENS is small.
+const STUDLIN_AI_INTENT_SYSTEM_PROMPT = EXTRACTION_PROMPT;
+const STUDLIN_AI_INTENT_CREDIT_COST = 1;
+const MAX_TOKENS_STUDLIN_AI_INTENT = 220;
 const DEFAULT_CREDITS = 120; // Free plan limit — must match api/me.js, the actual account-creation default
 const RATE_LIMIT_PER_MIN = 20;
 
@@ -318,15 +330,18 @@ function validateMessageImages(messages) {
 function resolveRequestCost(hasImage, model, format) {
   if (hasImage) return IMAGE_CREDIT_COST;
   if (format === 'studlin_ai') return STUDLIN_AI_CREDIT_COST;
+  if (format === 'studlin_ai_intent') return STUDLIN_AI_INTENT_CREDIT_COST;
   return CREDIT_COST[model] || 1;
 }
 function resolveSystemPrompt(format, effectiveModel) {
   if (format === 'json') return EXTRACTION_PROMPT;
   if (format === 'studlin_ai') return STUDLIN_AI_SYSTEM_PROMPT;
+  if (format === 'studlin_ai_intent') return STUDLIN_AI_INTENT_SYSTEM_PROMPT;
   return effectiveModel === 'flash' ? FLASH_PROMPT : SYSTEM_PROMPT;
 }
 function resolveMaxTokens(format, effectiveModel) {
   if (format === 'studlin_ai') return MAX_TOKENS_STUDLIN_AI;
+  if (format === 'studlin_ai_intent') return MAX_TOKENS_STUDLIN_AI_INTENT;
   if (format === 'json' && effectiveModel !== 'flash') return MAX_TOKENS_JSON_STANDARD;
   return MAX_TOKENS[effectiveModel] || 2048;
 }
@@ -496,7 +511,7 @@ const chatHandler = async (req, res) => {
     // prompt already instructs "never invent a number not in the digest,"
     // but a real sampling-parameter backstop against creative drift is
     // cheap insurance on top of an instruction alone.
-    if (format === 'json' || format === 'studlin_ai') requestBody.temperature = 0.2;
+    if (format === 'json' || format === 'studlin_ai' || format === 'studlin_ai_intent') requestBody.temperature = 0.2;
 
     // Raised alongside vercel.json's maxDuration (30s -> 60s): flashcard/quiz
     // generation now sends up to MATERIAL_TEXT_CAP (50,000 chars, was 15,000)

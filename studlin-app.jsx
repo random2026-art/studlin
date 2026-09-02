@@ -7313,6 +7313,159 @@ function computePausePlan(intent,forcedId){
   });
   return {label,moved,couldntMove};
 }
+// ── Studlin AI Phase 2: action proposals (create/move via chat) ────────────
+// Routes a classified chat message (see classifyStudlinAiMessage, near
+// StudlinAiDrawer below) into a concrete, previewable proposal before
+// anything is ever written -- split into three thin builders so each
+// write-path's real safety boundary stays visible and independently
+// testable:
+//   - buildMoveFixedProposal: fixed real-world commitments (class/
+//     practice/appointment) and the whole-schedule bulk intents -- calls
+//     computePausePlan completely unchanged.
+//   - buildMoveFlexTaskProposal: ONE flexible, deadline-bearing item (a
+//     study block/deadline/reminder) -- deliberately its own intent
+//     (move_flex_task), never routed through computePausePlan's
+//     move_event, which calls findFixedEventSlot -- a deadline-blind
+//     slot finder meant only for fixed commitments (see its own comment
+//     a few hundred lines up). findLegalSlotOrNull (the same Hard Wall
+//     primitive shift/clear_day/retime_event already trust) is the
+//     correct primitive for a task that has its own deadline and work-
+//     hour constraints to respect.
+//   - buildCreateTaskProposal: wraps planBrainDumpTasks at single-item
+//     granularity, the exact call shape expandBrainDumpItem (CalendarTab)
+//     already proves safe and reusable.
+// All three are pure -- no lsSet, no write -- matching computePausePlan/
+// planBrainDumpTasks' own "preview only" contract, so nothing commits
+// before the student explicitly confirms (see commitStudlinAiTasks/
+// commitStudlinAiFixedMove/commitStudlinAiFlexMove below for the actual
+// writes, called only from StudlinAiDrawer's Confirm handler).
+function buildMoveFixedProposal(parsed,forcedId){
+  return computePausePlan(parsed,forcedId);
+}
+// Reuses isQualifying/PAUSE_QUALIFYING_KINDS -- the exact same "is this a
+// flexible, movable, non-fact item" definition the pause-plan engine
+// itself already established (excludes a real due-date fact, a checklist
+// item, anything not pending), rather than inventing a second one here.
+function buildMoveFlexTaskProposal(parsed,events,routines,prefs,forcedId){
+  const targetDate=parsed.targetDate||dayKey();
+  let matched;
+  if(forcedId){
+    const pool=events.filter(ev=>ev.date===targetDate).concat(getRoutineOccurrencesForDate(targetDate));
+    matched=pool.find(ev=>ev.id===forcedId)||null;
+    if(!matched)return{label:"That task isn't on the calendar anymore",moved:[],couldntMove:[],noMatch:true};
+  }else{
+    const{matches}=matchEventByTitle(parsed.target||"",targetDate);
+    const flexMatches=matches.filter(m=>!m.isRoutine&&isQualifying(m));
+    if(flexMatches.length===0)return{label:"Couldn't find \""+(parsed.target||"")+"\" on "+targetDate,moved:[],couldntMove:[],noMatch:true};
+    if(flexMatches.length>1)return{label:"Which one did you mean?",moved:[],couldntMove:[],disambiguate:flexMatches.map(ev=>({id:ev.id,title:ev.title,date:ev.date,time:ev.time}))};
+    matched=flexMatches[0];
+  }
+  const destDate=parsed.destDate||dayKey(new Date(new Date(targetDate+"T12:00:00").getTime()+86400000));
+  const others=events.filter(e=>e.id!==matched.id);
+  const slot=findLegalSlotOrNull(others,routines,prefs,destDate,matched.time||prefs.workStartTime,matched.duration||30,matched.deadline||null);
+  if(!slot)return{label:"No open, on-time slot for \""+matched.title+"\" on or before its deadline",moved:[],couldntMove:[{id:matched.id,title:matched.title,deadline:matched.deadline||null}]};
+  return{label:"Move "+matched.title,moved:[{id:matched.id,title:matched.title,oldDate:matched.date,oldTime:matched.time,newDate:slot.date,newTime:slot.time}],couldntMove:[]};
+}
+// Small pure formatter for the proposal card's label text -- mirrors
+// computePausePlan's own plain-English `label` field so create and move
+// proposals both read the same way in the drawer.
+function describeCreateProposal(task){
+  if(!task)return"Add task";
+  const when=task.time?(task.date+" "+task.time+(task.duration?" ("+task.duration+" min)":"")):(task.date?"due "+task.date:"no date yet");
+  return"Add \""+task.title+"\" -- "+when+"?";
+}
+// Wraps planBrainDumpTasks at single-item granularity -- the exact same
+// call shape expandBrainDumpItem already proves safe and reusable.
+// taskKind is "study" (needs real work time scheduled before its own
+// deadline) or "todo" (due-date-only tracking, never scheduled) -- the
+// same two categories Brain Dump's own review screen already exposes to
+// a student. Deliberately narrower than Brain Dump's full kind set
+// (event/reminder/exam/project creation via free-text chat is out of
+// scope for this pass) -- study/todo covers "add me a task/assignment,"
+// the phrasing this feature is actually built for.
+function buildCreateTaskProposal(parsed,events,routines,prefs){
+  const item={title:parsed.title,kind:parsed.taskKind==="todo"?"todo":"study",dueDate:parsed.dueDate||null,durationMin:parsed.durationMin||null};
+  const{tasks,unplaced}=planBrainDumpTasks([item],events,routines,prefs);
+  if(tasks.length===0)return{ok:false,label:"Couldn't find room for \""+parsed.title+"\" -- try a different date."};
+  const primary=tasks[0];
+  const degraded=unplaced.some(t=>t.title===primary.title);
+  return{ok:true,kind:"create_task",tasks,label:describeCreateProposal(primary)+(degraded?" (no open slot found -- added as a to-do instead)":"")};
+}
+// Top-level dispatcher StudlinAiDrawer calls once a message classifies as
+// an action -- normalizes all three builders above into one
+// {ok,kind,label,disambiguate?,noMatch?,...} shape the drawer's proposal
+// card renders generically, regardless of which underlying engine ran.
+function buildStudlinAiActionProposal(parsed,events,routines,prefs,forcedId){
+  if(parsed.intent==="create_task")return buildCreateTaskProposal(parsed,events,routines,prefs);
+  if(parsed.intent==="move_flex_task"){
+    const r=buildMoveFlexTaskProposal(parsed,events,routines,prefs,forcedId);
+    if(r.noMatch)return{ok:false,noMatch:true,label:r.label};
+    if(r.disambiguate)return{ok:false,disambiguate:r.disambiguate,label:r.label};
+    if(r.moved.length===0)return{ok:false,label:r.label};
+    return{ok:true,kind:"move_flex_task",moved:r.moved,label:r.label};
+  }
+  const r=buildMoveFixedProposal(parsed,forcedId);
+  if(r.noMatch)return{ok:false,noMatch:true,label:r.label};
+  if(r.disambiguate)return{ok:false,disambiguate:r.disambiguate,label:r.label};
+  if(r.moved.length===0&&r.couldntMove.length===0&&!r.skipRoutine)return{ok:false,label:"Nothing to move right now."};
+  return{ok:true,kind:"move_fixed",pausePreview:r,label:r.label};
+}
+// Top-level commit helpers for the proposals above -- commitTasks and
+// confirmPausePlan (both CalendarTab closures) are unreachable from
+// StudlinAiDrawer, an App-level component. Rather than restructure
+// either proven, already-shipped path, these replicate their exact write
+// logic as plain top-level functions. Each returns the new events array;
+// the caller (StudlinAiDrawer's Confirm handler) is responsible for
+// lsSet-syncing it into CalendarTab's live grid via calendarSetEventsRef,
+// the same bridge App()'s own event writes (deleteEventFromDetail etc.)
+// already use for exactly this reason.
+function commitStudlinAiTasks(tasks){
+  const events=lsGet("events",[]);
+  const routines=getWeeklyRoutine();
+  const prefs=getSchedulePreferences();
+  const datesAffected=new Set(tasks.map(t=>t.date).filter(Boolean));
+  let next=events.concat(tasks);
+  datesAffected.forEach(dk=>{next=rebalanceDay(dk,next,routines,prefs);});
+  lsSet("events",next);
+  return next;
+}
+// Mirrors confirmPausePlan's write body exactly (Tier 3 Reschedule) --
+// kept as a separate copy rather than refactoring confirmPausePlan
+// itself to call this, to keep this change's blast radius on new code
+// only and not risk the already-shipped Pause flow.
+function commitStudlinAiFixedMove(pausePreview){
+  const all=lsGet("events",[]);
+  const routineMoves=pausePreview.moved.filter(m=>m.isRoutine);
+  const oneOffMoves=new Map(pausePreview.moved.filter(m=>!m.isRoutine).map(m=>[m.id,m]));
+  let next=all.map(ev=>{
+    if(!oneOffMoves.has(ev.id))return ev;
+    const m=oneOffMoves.get(ev.id);
+    return{...ev,date:m.newDate,time:m.newTime,duration:m.newDuration!=null?m.newDuration:ev.duration};
+  });
+  if(routineMoves.length){
+    const skips=getRoutineSkips();
+    const nextSkips={...skips};
+    routineMoves.forEach(m=>{
+      nextSkips[m.oldDate]=[...new Set([...(nextSkips[m.oldDate]||[]),m.routineId])];
+      next=next.concat([{id:String(Date.now()+Math.random()*1000),title:m.title,date:m.newDate,time:m.newTime,subject:m.subject||"",kind:m.kind,notes:"",priority:null,difficulty:null,deadline:null,duration:m.newDuration||30,status:"pending",timeSpent:0,completedAt:null}]);
+    });
+    lsSet("routineSkips",nextSkips);
+  }
+  lsSet("events",next);
+  if(pausePreview.skipRoutine){
+    const{date,routineIds}=pausePreview.skipRoutine;
+    const skips=getRoutineSkips();
+    lsSet("routineSkips",{...skips,[date]:[...new Set([...(skips[date]||[]),...routineIds])]});
+  }
+  return next;
+}
+function commitStudlinAiFlexMove(moved){
+  const events=lsGet("events",[]);
+  const m=moved[0];
+  const next=events.map(ev=>ev.id===m.id?{...ev,date:m.newDate,time:m.newTime}:ev);
+  lsSet("events",next);
+  return next;
+}
 // Same engine as computePausePlan's shift/clear_day/clear_week tail above
 // (findLegalSlotOrNull per affected event), for a different trigger: a
 // student adding a holiday mid-term, over dates that may already have
@@ -15791,6 +15944,70 @@ function formatStudlinAiDigestForPrompt(question,digest,flags,profile){
   return lines.join("\n");
 }
 
+// Studlin AI Phase 2's message router -- the first thing StudlinAiDrawer's
+// send() does with a new message, before deciding whether to run the
+// existing read-only Phase 1 path or build an action proposal. Real
+// /api/chat call (format:"studlin_ai_intent"), same "flash"-model,
+// bounded-JSON-contract shape as the existing Tier 3 Reschedule
+// classifier (submitPauseCommand, CalendarTab) -- reuses that exact
+// proven safety property: the model only ever picks one of a few known
+// intents, it never invents a date/time/action of its own beyond what's
+// in this contract, so a misclassification can only ever result in the
+// wrong known thing happening (or "unsupported"), never a hallucinated
+// calendar change.
+//
+// Deliberately UNGATED (no canUseX() check before this call) -- unlike
+// submitPauseCommand, which only ever serves the Pro-only Reschedule
+// feature, this same call also decides whether an incoming message is a
+// plain QUESTION, and Studlin AI's Q&A path has been reachable by every
+// signed-in user (free included) since Phase 1 shipped, no Pro gate.
+// Gating this call itself would silently take Q&A away from free users
+// as a side effect of adding write capability, which is a real, user-
+// facing regression a Phase 2 PR has no business making unilaterally --
+// see this branch's own notes on the still-open, deliberately-deferred
+// question of whether Q&A should eventually require Pro too. The
+// resolved action intents (create_task and the six move/bulk intents)
+// ARE gated, at the point they're about to run -- see StudlinAiDrawer's
+// send()/confirm() below.
+async function classifyStudlinAiMessage(text){
+  const today=dayKey();
+  const tomorrow=dayKey(new Date(Date.now()+86400000));
+  const nextWeekSameDay=dayKey(new Date(Date.now()+7*86400000));
+  const weekday=new Date().toLocaleDateString("en-US",{weekday:"long"});
+  const prompt="You are a message router for a student calendar assistant chat. Today is "+weekday+", "+today+". The student typed: \""+text+"\". Decide whether this is a QUESTION about their existing schedule/study history, an ACTION request (create something new, or move/reschedule something that already exists), or unsupported. Respond with ONLY this JSON, no markdown fences, no explanation:\n"+
+    "{\"kind\":\"question\"|\"action\"|\"unsupported\",\"intent\":\"create_task\"|\"shift\"|\"clear_day\"|\"clear_week\"|\"skip_class\"|\"move_event\"|\"retime_event\"|\"move_flex_task\"|null,\"days\":<integer 1-14 or null>,\"date\":\"YYYY-MM-DD or null\",\"target\":\"<short name of the specific existing item, or null>\",\"targetDate\":\"YYYY-MM-DD or null\",\"destDate\":\"YYYY-MM-DD or null\",\"newStart\":\"HH:MM 24h or null\",\"newDuration\":<integer minutes or null>,\"title\":\"<short name of the NEW item to create, or null>\",\"dueDate\":\"YYYY-MM-DD or null\",\"durationMin\":<integer minutes or null>,\"taskKind\":\"study\"|\"todo\"|null}\n"+
+    "Rules: \"question\" is anything asking about their real schedule/workload/streak/pace/productivity -- not asking Studlin to change anything, leave intent and every other field null. \"unsupported\" covers anything ambiguous, multi-step, permanently deleting/cancelling things, or that doesn't clearly match one action below -- never guess.\n"+
+    "\"create_task\" is for adding something NEW that doesn't exist yet (a task, assignment, to-do) -- \"title\" is required, \"dueDate\" if a deadline was mentioned (resolve relative phrases like \"tomorrow\"/\"Friday\" against today's date above), \"durationMin\" only if a specific work-time length was mentioned, \"taskKind\" is \"todo\" if the student explicitly just wants the due date tracked with no work time scheduled (\"just remind me,\" \"don't schedule time for it\"), otherwise \"study\" (the default -- Studlin finds real time to work on it before the deadline).\n"+
+    "\"move_flex_task\" is for relocating ONE existing FLEXIBLE item the student themselves controls the timing of -- a homework/study task, assignment, or to-do, not a fixed real-world commitment -- \"target\" is its name as the student said it, \"targetDate\" is the date it's currently on (default today's date above if not mentioned), \"destDate\" is the day they want it moved to (null if they said \"sometime\"/didn't specify).\n"+
+    "\"move_event\" is ONLY for a fixed real-world commitment (a class, practice, gym, appointment, meeting) that can't happen at its current time and should be relocated whole -- same target/targetDate/destDate fields as move_flex_task.\n"+
+    "\"retime_event\" is for when ONE fixed thing's own time changed (not cancelled) and everything else should fit around the new time -- \"target\"/\"targetDate\" as above, \"newStart\" 24h HH:MM, \"newDuration\" in minutes if a range was given, null if only a start time was given.\n"+
+    "\"shift\" pushes everything from today onward back by a day count, only with an explicit or clearly implied number, never invent one. \"clear_day\" empties one specific date (resolve relative phrases against today's date above). \"clear_week\" clears the next 7 days, no parameters. \"skip_class\" is for not physically attending class/school on a specific day, opening that time for other work.\n"+
+    "Leave every field the chosen intent/kind doesn't use as null. Relative-date phrases are never off by less than what they literally say: \"tomorrow\" is exactly today's date above + 1 day. \"next week\" (no specific weekday named) means "+nextWeekSameDay+" (today's date above + 7 days), never less than 7 days out, never treated the same as \"tomorrow.\" \"next Monday\"/\"next Friday\"/etc. resolve to that exact date within the next 7 days.\n"+
+    "Examples:\n"+
+    "\"which day next week is busiest?\" -> {\"kind\":\"question\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"durationMin\":null,\"taskKind\":null}\n"+
+    "\"add a task to finish my history essay, due Friday\" -> {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"Finish history essay\",\"dueDate\":\"<the real date of this Friday>\",\"durationMin\":null,\"taskKind\":\"study\"}\n"+
+    "\"just track that my chem lab report is due next Monday, don't schedule time for it\" -> {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"Chem lab report\",\"dueDate\":\"<that Monday's date>\",\"durationMin\":null,\"taskKind\":\"todo\"}\n"+
+    "\"move my chem homework to tomorrow\" -> {\"kind\":\"action\",\"intent\":\"move_flex_task\",\"days\":null,\"date\":null,\"target\":\"chem homework\",\"targetDate\":\""+today+"\",\"destDate\":\""+tomorrow+"\",\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"durationMin\":null,\"taskKind\":null}\n"+
+    "\"I can't make the gym today, move it to tomorrow\" -> {\"kind\":\"action\",\"intent\":\"move_event\",\"days\":null,\"date\":null,\"target\":\"gym\",\"targetDate\":\""+today+"\",\"destDate\":\""+tomorrow+"\",\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"durationMin\":null,\"taskKind\":null}\n"+
+    "\"my track practice got moved to 7-9pm\" -> {\"kind\":\"action\",\"intent\":\"retime_event\",\"days\":null,\"date\":null,\"target\":\"track practice\",\"targetDate\":\""+today+"\",\"destDate\":null,\"newStart\":\"19:00\",\"newDuration\":120,\"title\":null,\"dueDate\":null,\"durationMin\":null,\"taskKind\":null}\n"+
+    "\"I'm sick, push everything back 3 days\" -> {\"kind\":\"action\",\"intent\":\"shift\",\"days\":3,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"durationMin\":null,\"taskKind\":null}\n"+
+    "\"cancel everything forever\" -> {\"kind\":\"unsupported\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"durationMin\":null,\"taskKind\":null}";
+  const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash",format:"studlin_ai_intent"})});
+  const data=await res.json();
+  const raw=(data.reply||"").replace(/```json?|```/g,"").trim();
+  const parsed=JSON.parse(raw);
+  if(!parsed||!["question","action","unsupported"].includes(parsed.kind))throw new Error("bad-kind");
+  if(parsed.kind==="action"){
+    const knownIntents=["create_task","shift","clear_day","clear_week","skip_class","move_event","retime_event","move_flex_task"];
+    if(!knownIntents.includes(parsed.intent))throw new Error("bad-intent");
+    if(parsed.intent==="create_task"&&!(typeof parsed.title==="string"&&parsed.title.trim()))throw new Error("no-title");
+    if((parsed.intent==="move_event"||parsed.intent==="retime_event"||parsed.intent==="move_flex_task")&&!(typeof parsed.target==="string"&&parsed.target.trim()))throw new Error("no-target");
+    if(parsed.intent==="retime_event"&&!/^\d{2}:\d{2}$/.test(parsed.newStart||""))throw new Error("bad-time");
+    if(parsed.intent==="shift"&&!(parsed.days>=1&&parsed.days<=14))throw new Error("bad-days");
+  }
+  return parsed;
+}
+
 function StudlinAiBubble({onClick}){
   return (
     <button type="button" onClick={onClick} title="Ask Studlin AI about your schedule"
@@ -15800,11 +16017,17 @@ function StudlinAiBubble({onClick}){
   );
 }
 
-function StudlinAiDrawer({open,onClose}){
+function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=()=>{}}){
   const pp=panelPalette();
-  const [messages,setMessages]=useState([]); // {role:"user"|"ai",text}
+  const [messages,setMessages]=useState([]); // {role:"user"|"ai",text,proposal?}
   const [input,setInput]=useState("");
   const [loading,setLoading]=useState(false);
+  // Index into `messages` of the one proposal card currently awaiting a
+  // Confirm/Cancel tap, if any -- confirm()/cancelProposal()/
+  // pickDisambiguate() below all read messages[pendingIndex].proposal for
+  // the data they need to act on, so the card and the action stay in
+  // sync by construction rather than by a second parallel copy of state.
+  const [pendingIndex,setPendingIndex]=useState(null);
   const scrollRef=useRef(null);
 
   useEffect(()=>{
@@ -15818,40 +16041,156 @@ function StudlinAiDrawer({open,onClose}){
     if(scrollRef.current)scrollRef.current.scrollTop=scrollRef.current.scrollHeight;
   },[messages,loading]);
 
+  // Phase 1's original read-only path, unchanged -- now only reached once
+  // classifyStudlinAiMessage has decided the message is a real question,
+  // not an action request.
+  const askQuestion=async(text)=>{
+    // Read fresh at send time, not held in component state -- this
+    // drawer is mounted once, globally, for the life of the tab, so a
+    // stale snapshot taken at mount would silently drift from whatever
+    // the student actually did on Calendar/Prep since then. Same
+    // "read localStorage at the moment it's needed" convention every
+    // other one-off AI-context builder in this file already follows
+    // (e.g. Brain Dump's todaysScheduleForBrainDump).
+    const events=lsGet("events",[]);
+    const routines=getWeeklyRoutine();
+    const prefs=getSchedulePreferences();
+    const subjects=getSubjects().map(s=>s.label);
+    const flags=routeStudlinAiQuestion(text,subjects);
+    const digest=assembleStudlinAiDigest(events,routines,prefs,dayKey());
+    const profile=gatherStudlinAiProfileSignals(flags,prefs);
+    const promptText=formatStudlinAiDigestForPrompt(text,digest,flags,profile);
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:promptText}],model:"standard",format:"studlin_ai"})});
+    const data=await res.json();
+    if(!res.ok){
+      setMessages(m=>[...m,{role:"ai",text:data.error||"Something went wrong. Try again."}]);
+      return;
+    }
+    setMessages(m=>[...m,{role:"ai",text:(data.reply||"").trim()||"I didn't get a real answer back. Try again."}]);
+  };
+
+  // Builds and shows a proposal card for a classified action -- never
+  // writes anything itself (buildStudlinAiActionProposal is pure). Pro
+  // gating happens here, before the proposal is even built, using the
+  // same feature the underlying engine actually is: create_task reuses
+  // Brain Dump's placement engine (canUseBrainDump), every move/bulk
+  // intent reuses the Tier 3 Reschedule engine (canUseSmartReschedule) --
+  // re-checked again in confirm() below right before the real write,
+  // same defense-in-depth confirmPausePlan already applies to its own
+  // gate. forcedId is only set on a disambiguation re-entry.
+  const runAction=async(parsed,forcedId)=>{
+    const isCreate=parsed.intent==="create_task";
+    if(isCreate){
+      if(!canUseBrainDump()){
+        setPricingOpen(canUseBrainDumpReason()==="free-tier"?"brainDump":"aiUsageCap");
+        setMessages(m=>[...m,{role:"ai",text:"Creating tasks through Studlin AI needs Pro. I've opened the upgrade options."}]);
+        return;
+      }
+    }else if(!canUseSmartReschedule()){
+      setPricingOpen(canUseSmartRescheduleReason()==="free-tier"?"smartReschedule":"aiUsageCap");
+      setMessages(m=>[...m,{role:"ai",text:"Moving or rescheduling through Studlin AI needs Pro. I've opened the upgrade options."}]);
+      return;
+    }
+    const events=lsGet("events",[]);
+    const routines=getWeeklyRoutine();
+    const prefs=getSchedulePreferences();
+    const proposal=buildStudlinAiActionProposal(parsed,events,routines,prefs,forcedId);
+    if(!proposal.ok&&!proposal.disambiguate){
+      setMessages(m=>[...m,{role:"ai",text:proposal.label}]);
+      return;
+    }
+    setMessages(m=>{
+      const next=[...m,{role:"ai",text:proposal.label,proposal:{...proposal,parsed}}];
+      setPendingIndex(next.length-1);
+      return next;
+    });
+  };
+
   const send=async()=>{
     const text=input.trim();
-    if(!text||loading)return;
+    // A pending proposal blocks new messages until it's resolved -- a
+    // second in-flight proposal would have no clean way to say which
+    // Confirm tap belongs to which card, and the student explicitly needs
+    // to decide on the one already showing before asking for anything
+    // else.
+    if(!text||loading||pendingIndex!=null)return;
     setMessages(m=>[...m,{role:"user",text}]);
     setInput("");
     setLoading(true);
+    let parsed;
     try{
-      // Read fresh at send time, not held in component state -- this
-      // drawer is mounted once, globally, for the life of the tab, so a
-      // stale snapshot taken at mount would silently drift from whatever
-      // the student actually did on Calendar/Prep since then. Same
-      // "read localStorage at the moment it's needed" convention every
-      // other one-off AI-context builder in this file already follows
-      // (e.g. Brain Dump's todaysScheduleForBrainDump).
-      const events=lsGet("events",[]);
-      const routines=getWeeklyRoutine();
-      const prefs=getSchedulePreferences();
-      const subjects=getSubjects().map(s=>s.label);
-      const flags=routeStudlinAiQuestion(text,subjects);
-      const digest=assembleStudlinAiDigest(events,routines,prefs,dayKey());
-      const profile=gatherStudlinAiProfileSignals(flags,prefs);
-      const promptText=formatStudlinAiDigestForPrompt(text,digest,flags,profile);
-      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:promptText}],model:"standard",format:"studlin_ai"})});
-      const data=await res.json();
-      if(!res.ok){
-        setMessages(m=>[...m,{role:"ai",text:data.error||"Something went wrong. Try again."}]);
-        return;
-      }
-      setMessages(m=>[...m,{role:"ai",text:(data.reply||"").trim()||"I didn't get a real answer back. Try again."}]);
+      parsed=await classifyStudlinAiMessage(text);
     }catch(e){
       setMessages(m=>[...m,{role:"ai",text:"Couldn't reach Studlin AI. Check your connection and try again."}]);
+      setLoading(false);
+      return;
+    }
+    try{
+      if(parsed.kind==="question")await askQuestion(text);
+      else if(parsed.kind==="unsupported")setMessages(m=>[...m,{role:"ai",text:"I can answer questions about your schedule, or help create or move a task. Try rephrasing that."}]);
+      else await runAction(parsed,null);
+    }catch(e){
+      setMessages(m=>[...m,{role:"ai",text:"Something went wrong. Try again."}]);
     }finally{
       setLoading(false);
     }
+  };
+
+  const pickDisambiguate=async(idx,choiceId)=>{
+    const msg=messages[idx];
+    const parsed=msg&&msg.proposal&&msg.proposal.parsed;
+    if(!parsed)return;
+    setMessages(m=>m.map((mm,i)=>i===idx?{...mm,proposal:{...mm.proposal,resolved:"picked"}}:mm));
+    setPendingIndex(null);
+    setLoading(true);
+    try{
+      await runAction(parsed,choiceId);
+    }finally{
+      setLoading(false);
+    }
+  };
+
+  // The actual write -- everything before this point (classify, build,
+  // render) is pure/no-op-on-storage, so nothing has touched the
+  // calendar until this exact tap. Re-checks the same gate runAction
+  // already checked before showing the card (an unconfirmed proposal can
+  // sit on screen across a real async gap -- a trial expiring or a spend
+  // cap tripping in between is a real, if rare, case, same reasoning
+  // confirmPausePlan's own redundant re-check documents).
+  const confirmProposal=(idx)=>{
+    const msg=messages[idx];
+    const proposal=msg&&msg.proposal;
+    if(!proposal||!proposal.ok)return;
+    let next;
+    if(proposal.kind==="create_task"){
+      if(!canUseBrainDump()){setPricingOpen(canUseBrainDumpReason()==="free-tier"?"brainDump":"aiUsageCap");return;}
+      next=commitStudlinAiTasks(proposal.tasks);
+      recordBrainDump();
+    }else if(proposal.kind==="move_fixed"){
+      if(!canUseSmartReschedule()){setPricingOpen(canUseSmartRescheduleReason()==="free-tier"?"smartReschedule":"aiUsageCap");return;}
+      next=commitStudlinAiFixedMove(proposal.pausePreview);
+      recordSmartReschedule();
+    }else if(proposal.kind==="move_flex_task"){
+      if(!canUseSmartReschedule()){setPricingOpen(canUseSmartRescheduleReason()==="free-tier"?"smartReschedule":"aiUsageCap");return;}
+      next=commitStudlinAiFlexMove(proposal.moved);
+      recordSmartReschedule();
+    }else return;
+    onEventsCommitted(next);
+    setMessages(m=>{
+      const withResolved=m.map((mm,i)=>i===idx?{...mm,proposal:{...mm.proposal,resolved:"confirmed"}}:mm);
+      return [...withResolved,{role:"ai",text:"Done. "+proposal.label}];
+    });
+    setPendingIndex(null);
+  };
+
+  // Nothing was written by anything before this point (every proposal
+  // builder is pure) -- Cancel is always a true no-op on the calendar.
+  const cancelProposal=(idx)=>{
+    setMessages(m=>{
+      const withResolved=m.map((mm,i)=>i===idx?{...mm,proposal:{...mm.proposal,resolved:"cancelled"}}:mm);
+      return [...withResolved,{role:"ai",text:"No changes made."}];
+    });
+    setPendingIndex(null);
   };
 
   return ReactDOM.createPortal(
@@ -15861,17 +16200,37 @@ function StudlinAiDrawer({open,onClose}){
         <div style={{padding:"18px 18px 14px",borderBottom:`1px solid ${pp.border}`,display:"flex",alignItems:"center",gap:12}}>
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontSize:14,fontWeight:700,color:pp.text}}>Studlin AI</div>
-            <div style={{fontSize:11,color:pp.muted}}>Ask about your schedule</div>
+            <div style={{fontSize:11,color:pp.muted}}>Ask, or tell me to add or move something</div>
           </div>
           <button onClick={onClose} style={{width:30,height:30,borderRadius:8,border:`1px solid ${pp.border}`,background:pp.card2,color:pp.muted,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.xmark}</button>
         </div>
         <div ref={scrollRef} style={{flex:1,overflowY:"auto",padding:"14px 18px",display:"flex",flexDirection:"column",gap:10}}>
           {messages.length===0&&!loading&&(
-            <div style={{fontSize:12.5,color:pp.muted,lineHeight:1.6,marginTop:10}}>Ask something like "which day next week is busiest?" or "how am I doing in Chemistry?"</div>
+            <div style={{fontSize:12.5,color:pp.muted,lineHeight:1.6,marginTop:10}}>Ask something like "which day next week is busiest?", or tell me to add a task or move something on your calendar.</div>
           )}
           {messages.map((m,i)=>(
-            <div key={i} style={{alignSelf:m.role==="user"?"flex-end":"flex-start",maxWidth:"85%",padding:"9px 13px",borderRadius:12,fontSize:13,lineHeight:1.5,background:m.role==="user"?pp.card2:T.lime+"14",color:pp.text,border:m.role==="user"?`1px solid ${pp.border}`:`1px solid ${T.lime}33`}}>
-              {m.text}
+            <div key={i} style={{alignSelf:m.role==="user"?"flex-end":"flex-start",maxWidth:"85%",display:"flex",flexDirection:"column",gap:6}}>
+              <div style={{padding:"9px 13px",borderRadius:12,fontSize:13,lineHeight:1.5,background:m.role==="user"?pp.card2:T.lime+"14",color:pp.text,border:m.role==="user"?`1px solid ${pp.border}`:`1px solid ${T.lime}33`}}>
+                {m.text}
+              </div>
+              {m.proposal&&m.proposal.disambiguate&&!m.proposal.resolved&&(
+                <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                  {m.proposal.disambiguate.map(c=>(
+                    <button key={c.id} onClick={()=>pickDisambiguate(i,c.id)}
+                      style={{textAlign:"left",padding:"8px 12px",borderRadius:8,border:`1px solid ${pp.border}`,background:pp.card2,color:pp.text,fontSize:12.5,cursor:"pointer",fontFamily:T.font}}>
+                      {c.title}{c.time?" -- "+c.time:""}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {m.proposal&&m.proposal.ok&&!m.proposal.resolved&&(
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>confirmProposal(i)}
+                    style={{padding:"7px 14px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontWeight:600,fontSize:12.5,cursor:"pointer",fontFamily:T.font}}>Confirm</button>
+                  <button onClick={()=>cancelProposal(i)}
+                    style={{padding:"7px 14px",borderRadius:8,border:`1px solid ${pp.border}`,background:"transparent",color:pp.muted,fontSize:12.5,cursor:"pointer",fontFamily:T.font}}>Cancel</button>
+                </div>
+              )}
             </div>
           ))}
           {loading&&(
@@ -15881,10 +16240,11 @@ function StudlinAiDrawer({open,onClose}){
         <div style={{padding:"12px 18px",borderTop:`1px solid ${pp.border}`,display:"flex",gap:8}}>
           <input value={input} onChange={e=>setInput(e.target.value)}
             onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}}
-            placeholder="Ask about your schedule..."
-            style={{flex:1,background:pp.card2,border:`1px solid ${pp.border}`,borderRadius:8,padding:"9px 12px",color:pp.text,fontSize:13,fontFamily:T.font,outline:"none"}} />
-          <button onClick={send} disabled={!input.trim()||loading}
-            style={{padding:"9px 14px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontWeight:600,fontSize:13,cursor:"pointer",opacity:(!input.trim()||loading)?0.5:1,flexShrink:0}}>Send</button>
+            placeholder={pendingIndex!=null?"Confirm or cancel the proposal above first...":"Ask, or tell me what to add or move..."}
+            disabled={pendingIndex!=null}
+            style={{flex:1,background:pp.card2,border:`1px solid ${pp.border}`,borderRadius:8,padding:"9px 12px",color:pp.text,fontSize:13,fontFamily:T.font,outline:"none",opacity:pendingIndex!=null?0.6:1}} />
+          <button onClick={send} disabled={!input.trim()||loading||pendingIndex!=null}
+            style={{padding:"9px 14px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontWeight:600,fontSize:13,cursor:"pointer",opacity:(!input.trim()||loading||pendingIndex!=null)?0.5:1,flexShrink:0}}>Send</button>
         </div>
       </div>
     </>,
@@ -32606,10 +32966,15 @@ function App() {
           </div>
         </div>
       )}
-      {/* Studlin AI (Phase 1) -- mounted last, globally, so it's reachable
-          from every tab regardless of which one is active. */}
+      {/* Studlin AI -- mounted last, globally, so it's reachable from
+          every tab regardless of which one is active. Phase 2's action
+          proposals write through the same calendarSetEventsRef bridge
+          every other App-level event write (deleteEventFromDetail etc.)
+          already uses to reach CalendarTab's live grid, since this
+          component holds no events state of its own. */}
       <StudlinAiBubble onClick={()=>setStudlinAiOpen(true)} />
-      <StudlinAiDrawer open={studlinAiOpen} onClose={()=>setStudlinAiOpen(false)} />
+      <StudlinAiDrawer open={studlinAiOpen} onClose={()=>setStudlinAiOpen(false)} setPricingOpen={setPricingOpen}
+        onEventsCommitted={(next)=>{if(calendarSetEventsRef.current)calendarSetEventsRef.current(next);}} />
     </div>
   );
 }
