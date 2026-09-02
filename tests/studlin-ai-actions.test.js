@@ -172,6 +172,57 @@ describe("buildMoveFlexTaskProposal / move_flex_task safety", () => {
   });
 });
 
+describe("buildDeleteProposal / delete_task safety", () => {
+  test("deletes a real one-off event by name, resolving to the exact matched event object", () => {
+    const m = loadStudlinModule({ now: "2026-09-14T08:00:00" });
+    const task = { id: "t1", title: "Chem Homework", kind: "study block", status: "pending", date: "2026-09-14", time: "11:00", duration: 30 };
+    m.lsSet("events", [task]);
+    const parsed = { intent: "delete_task", target: "chem homework", targetDate: "2026-09-14" };
+    const proposal = m.buildStudlinAiActionProposal(parsed, [task], [], m.getSchedulePreferences(), null);
+    assert.equal(proposal.ok, true);
+    assert.equal(proposal.kind, "delete_task");
+    assert.equal(proposal.event.id, "t1");
+  });
+
+  test("a routine occurrence (recurring class) is never a delete candidate -- only a real one-off event", () => {
+    const m = loadStudlinModule({ now: "2026-09-14T08:00:00" });
+    const dow = (new Date("2026-09-14T12:00:00").getDay() + 6) % 7;
+    const routine = { id: "r1", title: "Chem Lecture", kind: "class", days: [dow], startTime: "10:00", duration: 50, subject: "" };
+    m.saveWeeklyRoutine([routine]);
+    m.lsSet("events", []);
+    const parsed = { intent: "delete_task", target: "chem lecture", targetDate: "2026-09-14" };
+    const proposal = m.buildStudlinAiActionProposal(parsed, [], [routine], m.getSchedulePreferences(), null);
+    assert.equal(proposal.ok, false);
+    assert.equal(proposal.noMatch, true);
+  });
+
+  test("an ambiguous title returns disambiguate and never auto-picks a candidate to delete", () => {
+    const m = loadStudlinModule({ now: "2026-09-14T08:00:00" });
+    const events = [
+      { id: "d1", title: "Draft", kind: "study block", status: "pending", date: "2026-09-14", time: "09:00", duration: 30 },
+      { id: "d2", title: "Draft", kind: "study block", status: "pending", date: "2026-09-14", time: "14:00", duration: 30 },
+    ];
+    m.lsSet("events", events);
+    const parsed = { intent: "delete_task", target: "draft", targetDate: "2026-09-14" };
+    const proposal = m.buildStudlinAiActionProposal(parsed, events, [], m.getSchedulePreferences(), null);
+    assert.equal(proposal.ok, false);
+    assert.equal(proposal.disambiguate.length, 2);
+  });
+
+  test("a forcedId re-entry resolves to the exact chosen event", () => {
+    const m = loadStudlinModule({ now: "2026-09-14T08:00:00" });
+    const events = [
+      { id: "d1", title: "Draft", kind: "study block", status: "pending", date: "2026-09-14", time: "09:00", duration: 30 },
+      { id: "d2", title: "Draft", kind: "study block", status: "pending", date: "2026-09-14", time: "14:00", duration: 30 },
+    ];
+    m.lsSet("events", events);
+    const parsed = { intent: "delete_task", target: "draft", targetDate: "2026-09-14" };
+    const proposal = m.buildStudlinAiActionProposal(parsed, events, [], m.getSchedulePreferences(), "d2");
+    assert.equal(proposal.ok, true);
+    assert.equal(proposal.event.id, "d2");
+  });
+});
+
 describe("buildMoveFixedProposal / move_event dispatch", () => {
   test("an ambiguous title returns disambiguate and never auto-picks or writes", () => {
     const m = loadStudlinModule({ now: "2026-09-14T08:00:00" });

@@ -4635,8 +4635,25 @@ function buildCreateTaskProposal(parsed, events, routines, prefs) {
   const degraded = unplaced.some((t) => t.title === primary.title);
   return { ok: true, kind: "create_task", tasks, label: describeCreateProposal(primary) + (degraded ? " (no open slot found -- added as a to-do instead)" : "") };
 }
+function buildDeleteProposal(parsed, forcedId) {
+  const targetDate = parsed.targetDate || dayKey();
+  const all = lsGet("events", []);
+  let matched;
+  if (forcedId) {
+    matched = all.find((ev) => ev.id === forcedId) || null;
+    if (!matched) return { ok: false, noMatch: true, label: "That item isn't on the calendar anymore" };
+  } else {
+    const { matches } = matchEventByTitle(parsed.target || "", targetDate);
+    const deletable = matches.filter((m) => !m.isRoutine);
+    if (deletable.length === 0) return { ok: false, noMatch: true, label: `Couldn't find "` + (parsed.target || "") + '" on ' + targetDate };
+    if (deletable.length > 1) return { ok: false, disambiguate: deletable.map((ev) => ({ id: ev.id, title: ev.title, date: ev.date, time: ev.time })) };
+    matched = deletable[0];
+  }
+  return { ok: true, kind: "delete_task", event: matched, label: 'Delete "' + matched.title + '" from ' + matched.date + "?" };
+}
 function buildStudlinAiActionProposal(parsed, events, routines, prefs, forcedId) {
   if (parsed.intent === "create_task") return buildCreateTaskProposal(parsed, events, routines, prefs);
+  if (parsed.intent === "delete_task") return buildDeleteProposal(parsed, forcedId);
   if (parsed.intent === "move_flex_task") {
     const r2 = buildMoveFlexTaskProposal(parsed, events, routines, prefs, forcedId);
     if (r2.noMatch) return { ok: false, noMatch: true, label: r2.label };
@@ -9951,9 +9968,10 @@ async function classifyStudlinAiMessage(text) {
   const nextWeekSameDay = dayKey(new Date(Date.now() + 7 * 864e5));
   const weekday = (/* @__PURE__ */ new Date()).toLocaleDateString("en-US", { weekday: "long" });
   const prompt = "You are a message router for a student calendar assistant chat. Today is " + weekday + ", " + today + '. The student typed: "' + text + `". Decide whether this is a QUESTION about their existing schedule/study history, an ACTION request (create something new, or move/reschedule something that already exists), or unsupported. Respond with ONLY this JSON, no markdown fences, no explanation:
-{"kind":"question"|"action"|"unsupported","intent":"create_task"|"shift"|"clear_day"|"clear_week"|"skip_class"|"move_event"|"retime_event"|"move_flex_task"|null,"days":<integer 1-14 or null>,"date":"YYYY-MM-DD or null","target":"<short name of the specific existing item, or null>","targetDate":"YYYY-MM-DD or null","destDate":"YYYY-MM-DD or null","newStart":"HH:MM 24h or null","newDuration":<integer minutes or null>,"title":"<short name of the NEW item to create, or null>","dueDate":"YYYY-MM-DD or null","dueTime":"HH:MM 24h or null","durationMin":<integer minutes or null>,"taskKind":"study"|"todo"|"event"|"reminder"|"exam"|"project"|null}
-Rules: "question" is anything asking about their real schedule/workload/streak/pace/productivity -- not asking Studlin to change anything, leave intent and every other field null. "unsupported" covers anything ambiguous, multi-step, permanently deleting/cancelling things, or that doesn't clearly match one action below -- never guess.
+{"kind":"question"|"action"|"unsupported","intent":"create_task"|"delete_task"|"shift"|"clear_day"|"clear_week"|"skip_class"|"move_event"|"retime_event"|"move_flex_task"|null,"days":<integer 1-14 or null>,"date":"YYYY-MM-DD or null","target":"<short name of the specific existing item, or null>","targetDate":"YYYY-MM-DD or null","destDate":"YYYY-MM-DD or null","newStart":"HH:MM 24h or null","newDuration":<integer minutes or null>,"title":"<short name of the NEW item to create, or null>","dueDate":"YYYY-MM-DD or null","dueTime":"HH:MM 24h or null","durationMin":<integer minutes or null>,"taskKind":"study"|"todo"|"event"|"reminder"|"exam"|"project"|null}
+Rules: "question" is anything asking about their real schedule/workload/streak/pace/productivity -- not asking Studlin to change anything, leave intent and every other field null. "unsupported" covers anything ambiguous, multi-step, deleting/cancelling MULTIPLE things or an entire day/week/recurring routine, or that doesn't clearly match one action below -- never guess. Deleting exactly ONE clearly-named item uses delete_task instead, not unsupported.
 "create_task" is for adding something NEW that doesn't exist yet -- "title" is required, "dueDate" if a deadline/date was mentioned (resolve relative phrases like "tomorrow"/"Friday" against today's date above), "dueTime" only if a real clock time was mentioned, "durationMin" only if a specific work-time length was mentioned. "taskKind" picks which kind of thing: "exam" for a test/quiz/final, "project" for a multi-step project, "event" for a fixed real-world thing at a specific time (an appointment, a meeting -- not a class or something already on a routine), "reminder" for a simple point-in-time nudge with no real work involved ("remind me to email my professor"), "todo" if the student explicitly just wants a due date tracked with no work time scheduled ("just remind me," "don't schedule time for it"), otherwise "study" (the default -- a task/assignment/homework Studlin finds real time to work on before its deadline).
+"delete_task" is for permanently removing ONE existing, clearly-named item from the calendar -- a task, assignment, event, exam, or reminder, NEVER a recurring class/routine ("delete my chem homework," "cancel my dentist appointment" -- not "delete all my chem classes") -- "target" is its name as the student said it, "targetDate" is the date it's currently on (default today's date above if not mentioned).
 "move_flex_task" is for relocating ONE existing FLEXIBLE item the student themselves controls the timing of -- a homework/study task, assignment, or to-do, not a fixed real-world commitment -- "target" is its name as the student said it, "targetDate" is the date it's currently on (default today's date above if not mentioned), "destDate" is the day they want it moved to (null if they said "sometime"/didn't specify).
 "move_event" is ONLY for a fixed real-world commitment (a class, practice, gym, appointment, meeting) that can't happen at its current time and should be relocated whole -- same target/targetDate/destDate fields as move_flex_task.
 "retime_event" is for when ONE fixed thing's own time changed (not cancelled) and everything else should fit around the new time -- "target"/"targetDate" as above, "newStart" 24h HH:MM, "newDuration" in minutes if a range was given, null if only a start time was given.
@@ -9966,7 +9984,7 @@ Examples:
 "add my chem final, it's on the 20th" -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Chem final","dueDate":"<the 20th of the current or next occurring month>","dueTime":null,"durationMin":null,"taskKind":"exam"}
 "add a dentist appointment tomorrow at 3pm" -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Dentist appointment","dueDate":"` + tomorrow + '","dueTime":"15:00","durationMin":null,"taskKind":"event"}\n"remind me to email my professor tomorrow" -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Email professor","dueDate":"' + tomorrow + `","dueTime":null,"durationMin":null,"taskKind":"reminder"}
 "add my history project, due in two weeks" -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"History project","dueDate":"<today's date above + 14 days>","dueTime":null,"durationMin":null,"taskKind":"project"}
-"move my chem homework to tomorrow" -> {"kind":"action","intent":"move_flex_task","days":null,"date":null,"target":"chem homework","targetDate":"` + today + '","destDate":"' + tomorrow + `","newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null}
+"delete my old chem homework task" -> {"kind":"action","intent":"delete_task","days":null,"date":null,"target":"chem homework","targetDate":"` + today + '","destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null}\n"cancel my dentist appointment tomorrow" -> {"kind":"action","intent":"delete_task","days":null,"date":null,"target":"dentist appointment","targetDate":"' + tomorrow + '","destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null}\n"delete all my chem classes" -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null}\n"move my chem homework to tomorrow" -> {"kind":"action","intent":"move_flex_task","days":null,"date":null,"target":"chem homework","targetDate":"' + today + '","destDate":"' + tomorrow + `","newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null}
 "I can't make the gym today, move it to tomorrow" -> {"kind":"action","intent":"move_event","days":null,"date":null,"target":"gym","targetDate":"` + today + '","destDate":"' + tomorrow + '","newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null}\n"my track practice got moved to 7-9pm" -> {"kind":"action","intent":"retime_event","days":null,"date":null,"target":"track practice","targetDate":"' + today + `","destDate":null,"newStart":"19:00","newDuration":120,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null}
 "I'm sick, push everything back 3 days" -> {"kind":"action","intent":"shift","days":3,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null}
 "cancel everything forever" -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null}`;
@@ -9976,10 +9994,10 @@ Examples:
   const parsed = JSON.parse(raw);
   if (!parsed || !["question", "action", "unsupported"].includes(parsed.kind)) throw new Error("bad-kind");
   if (parsed.kind === "action") {
-    const knownIntents = ["create_task", "shift", "clear_day", "clear_week", "skip_class", "move_event", "retime_event", "move_flex_task"];
+    const knownIntents = ["create_task", "delete_task", "shift", "clear_day", "clear_week", "skip_class", "move_event", "retime_event", "move_flex_task"];
     if (!knownIntents.includes(parsed.intent)) throw new Error("bad-intent");
     if (parsed.intent === "create_task" && !(typeof parsed.title === "string" && parsed.title.trim())) throw new Error("no-title");
-    if ((parsed.intent === "move_event" || parsed.intent === "retime_event" || parsed.intent === "move_flex_task") && !(typeof parsed.target === "string" && parsed.target.trim())) throw new Error("no-target");
+    if ((parsed.intent === "move_event" || parsed.intent === "retime_event" || parsed.intent === "move_flex_task" || parsed.intent === "delete_task") && !(typeof parsed.target === "string" && parsed.target.trim())) throw new Error("no-target");
     if (parsed.intent === "retime_event" && !/^\d{2}:\d{2}$/.test(parsed.newStart || "")) throw new Error("bad-time");
     if (parsed.intent === "shift" && !(parsed.days >= 1 && parsed.days <= 14)) throw new Error("bad-days");
   }
@@ -9999,6 +10017,7 @@ function StudlinAiBubble({ onClick }) {
 }
 function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
 }, onEventsCommitted = () => {
+}, onDeleteEvent = () => {
 } }) {
   const pp = panelPalette();
   const [messages, setMessages] = useState([]);
@@ -10130,8 +10149,15 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
       }
       next = commitStudlinAiFlexMove(proposal.moved);
       recordSmartReschedule();
+    } else if (proposal.kind === "delete_task") {
+      if (!canUseSmartReschedule()) {
+        setPricingOpen(canUseSmartRescheduleReason() === "free-tier" ? "smartReschedule" : "aiUsageCap");
+        return;
+      }
+      onDeleteEvent(proposal.event);
+      recordSmartReschedule();
     } else return;
-    onEventsCommitted(next);
+    if (next) onEventsCommitted(next);
     setMessages((m) => {
       const withResolved = m.map((mm, i) => i === idx ? { ...mm, proposal: { ...mm.proposal, resolved: "confirmed" } } : mm);
       return [...withResolved, { role: "ai", text: "Done. " + proposal.label }];
@@ -20043,7 +20069,8 @@ function App() {
       setPricingOpen,
       onEventsCommitted: (next) => {
         if (calendarSetEventsRef.current) calendarSetEventsRef.current(next);
-      }
+      },
+      onDeleteEvent: deleteEventFromDetail
     }
   ));
 }
