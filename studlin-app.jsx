@@ -12406,7 +12406,7 @@ function Notes({setActive=()=>{}}){
 
       {/* ── SYLLABUS COMMIT TOAST — success confirmation only ── */}
       {syllabusToast&&(
-        <div style={{position:"fixed",bottom:20,right:20,zIndex:999,padding:"11px 18px",borderRadius:10,background:T.teal,color:"#fff",fontSize:13,fontWeight:600,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
+        <div style={{position:"fixed",bottom:STUDLIN_AI_BUBBLE_CLEARANCE,right:20,zIndex:999,padding:"11px 18px",borderRadius:10,background:T.teal,color:"#fff",fontSize:13,fontWeight:600,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
           {syllabusToast}
         </div>
       )}
@@ -15687,6 +15687,109 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
 const STUDLIN_AI_BUBBLE_Z=1060;
 const STUDLIN_AI_DRAWER_BACKDROP_Z=1070;
 const STUDLIN_AI_DRAWER_PANEL_Z=1071;
+// The bubble is permanent (unlike a toast, which comes and goes), so every
+// bottom-right toast in this file needs to clear it instead of the other
+// way around -- same "offset upward when something else is known to
+// occupy that corner" idea this file already used once before
+// (headsUpEvent?110:20), just made permanent now that something is
+// always there. 52px bubble + 20px inset + a real gap, not a bare
+// touching edge.
+const STUDLIN_AI_BUBBLE_CLEARANCE=90;
+
+// Orchestration/formatting glue for a single question -- calls the
+// non-pure "profile-level" signals routeStudlinAiQuestion flagged as
+// relevant (see assembleStudlinAiDigest's own comment for why these
+// can't live inside that pure function: several of them read localStorage
+// directly and take no params at all, e.g. getStreak()). Deliberately NOT
+// added to tests/harness.js -- this is formatting/orchestration over
+// already-tested decision logic (routing, the digest itself, each signal
+// function), not new decision logic of its own to pin with tests.
+//
+// subjectOutcomeNudge needs special handling here: it returns 0 for BOTH
+// "genuinely neutral trend" and "fewer than 3 scored exams" (confirmed by
+// reading its own body, studlin-app.jsx:5859-5865) -- silently treating
+// those the same would present an untrustworthy signal as a confident
+// "you're doing fine," the exact kind of fabrication this whole feature
+// is built to avoid. The sample-size check below mirrors that function's
+// own internal floor exactly, rather than trusting its return value alone.
+function gatherStudlinAiProfileSignals(flags,prefs){
+  const profile={};
+  if(flags.needsStreak)profile.streak=getStreak();
+  if(flags.needsPeakHours)profile.peakInsight=detectPeakHourInsight(prefs);
+  if(flags.needsStrugglingBucket)profile.strugglingBucket=detectStrugglingBucket(prefs);
+  if(flags.subject&&flags.needsSubjectTrend){
+    const scoredCount=lsGet("events",[]).filter(e=>e.kind==="exam"&&e.subject===flags.subject&&e.scoreTier).length;
+    profile.subjectNudge=scoredCount>=3?subjectOutcomeNudge(flags.subject):null;
+  }
+  if(flags.subject&&flags.needsDuration)profile.subjectDuration=suggestDurationFor(flags.subject,"study block");
+  if(flags.needsConfidence)profile.confidenceInsight=confidenceOutcomeInsight();
+  return profile;
+}
+// Turns the digest + whichever profile signals were gathered into the
+// actual text sent to the model -- one short, pre-written sentence per
+// included signal (authored once, centrally, here) rather than raw
+// numbers the model would have to phrase itself, same reasoning
+// assembleStudlinAiDigest's own comment gives for not sending a raw event
+// dump. Every branch below explicitly says "not enough data" when a
+// signal came back null/insufficient, instead of omitting it silently --
+// an omitted signal reads to the model as "wasn't asked for," not "was
+// asked for and came back empty," which matters for honoring the system
+// prompt's "say so plainly" instruction.
+function formatStudlinAiDigestForPrompt(question,digest,flags,profile){
+  const lines=["DIGEST (real data about this student -- the ONLY source of truth; never invent beyond this):"];
+  lines.push("Today: "+digest.todayKey+". Schedule window shown below: "+digest.todayKey+" through "+digest.windowEndKey+".");
+
+  if(flags.needsWorkload){
+    if(digest.busiestDay)lines.push("Busiest day in this window: "+digest.busiestDay.date+" ("+digest.busiestDay.workloadMinutes+" minutes scheduled).");
+    if(digest.lightestDay)lines.push("Lightest day with anything scheduled: "+digest.lightestDay.date+" ("+digest.lightestDay.workloadMinutes+" minutes).");
+    if(digest.heavyDayKeys.length>0)lines.push("Days notably heavier than the rest of this window: "+digest.heavyDayKeys.join(", ")+".");
+    digest.windowDays.forEach(d=>{
+      if(d.items.length===0)return;
+      lines.push(d.date+": "+d.items.map(it=>it.title+(it.time?" "+it.time:"")+(it.duration?" ("+it.duration+"m)":"")).join("; "));
+    });
+  }
+  if(flags.needsOverdue){
+    if(digest.overdue.length===0)lines.push("Nothing overdue right now.");
+    else digest.overdue.forEach(o=>lines.push("Overdue: \""+o.title+"\" -- "+o.staleLabel+"."));
+  }
+  if(flags.needsPace){
+    if(digest.assignmentPace.length===0)lines.push("Nothing tracked as meaningfully ahead or behind pace right now.");
+    else digest.assignmentPace.forEach(p=>lines.push("\""+p.title+"\" (due "+p.date+") is "+(p.behind?"behind pace":"ahead of pace")+"."));
+  }
+  if(flags.needsAttackRisk){
+    if(digest.attackBlockRisks.length===0)lines.push("No study chains currently at risk of running out of time.");
+    else digest.attackBlockRisks.forEach(r=>lines.push("\""+r.title+"\" (due "+r.deadline+") has "+r.pendingMins+" minutes of work left but only "+r.capacityMins+" realistic minutes before then -- at risk of not finishing."));
+  }
+  if(flags.needsStreak){
+    lines.push(profile.streak>0?("Current study streak: "+profile.streak+" day"+(profile.streak===1?"":"s")+"."):"No active study streak right now.");
+  }
+  if(flags.needsPeakHours){
+    lines.push(profile.peakInsight
+      ?("Measured completion rate: "+Math.round(profile.peakInsight.suggestedPct*100)+"% in the "+PEAK_BUCKET_LABELS[profile.peakInsight.suggestedBucket]+" window, vs "+Math.round(profile.peakInsight.currentPct*100)+"% in the currently-declared "+PEAK_BUCKET_LABELS[profile.peakInsight.currentBucket]+" peak window.")
+      :"Not enough logged completions yet to say confidently when this student is most productive.");
+  }
+  if(flags.needsStrugglingBucket){
+    lines.push(profile.strugglingBucket
+      ?("Recently missing tasks scheduled in the "+PEAK_BUCKET_LABELS[profile.strugglingBucket.strugglingBucket]+" window.")
+      :"No struggling time-of-day window detected right now.");
+  }
+  if(flags.subject&&flags.needsSubjectTrend){
+    lines.push(profile.subjectNudge==null?("Not enough scored exams yet in "+flags.subject+" to say anything about trend."):
+      profile.subjectNudge>0?(flags.subject+" exam trend: scoring above expectation lately."):
+      profile.subjectNudge<0?(flags.subject+" exam trend: scoring below expectation lately."):
+      (flags.subject+" exam trend: on par with expectations lately."));
+  }
+  if(flags.subject&&flags.needsDuration){
+    lines.push(profile.subjectDuration?(flags.subject+" sessions typically take about "+profile.subjectDuration+" minutes."):("Not enough completed "+flags.subject+" sessions yet to say how long they really take."));
+  }
+  if(flags.needsConfidence){
+    lines.push(profile.confidenceInsight||"Not enough scored exams with confidence check-ins yet to say anything about calibration.");
+  }
+
+  lines.push("");
+  lines.push("STUDENT'S QUESTION: "+question);
+  return lines.join("\n");
+}
 
 function StudlinAiBubble({onClick}){
   return (
@@ -15715,20 +15818,40 @@ function StudlinAiDrawer({open,onClose}){
     if(scrollRef.current)scrollRef.current.scrollTop=scrollRef.current.scrollHeight;
   },[messages,loading]);
 
-  const send=()=>{
+  const send=async()=>{
     const text=input.trim();
     if(!text||loading)return;
     setMessages(m=>[...m,{role:"user",text}]);
     setInput("");
     setLoading(true);
-    // Stub reply -- real digest/routing/API wiring lands in the next
-    // branch. Deliberately still simulates a real round-trip (delay,
-    // loading state) so the shell's actual UX is what gets reviewed here,
-    // not a placeholder that behaves nothing like the real thing will.
-    setTimeout(()=>{
-      setMessages(m=>[...m,{role:"ai",text:"(stub) Real answers land once this is wired up to your actual schedule."}]);
+    try{
+      // Read fresh at send time, not held in component state -- this
+      // drawer is mounted once, globally, for the life of the tab, so a
+      // stale snapshot taken at mount would silently drift from whatever
+      // the student actually did on Calendar/Prep since then. Same
+      // "read localStorage at the moment it's needed" convention every
+      // other one-off AI-context builder in this file already follows
+      // (e.g. Brain Dump's todaysScheduleForBrainDump).
+      const events=lsGet("events",[]);
+      const routines=getWeeklyRoutine();
+      const prefs=getSchedulePreferences();
+      const subjects=getSubjects().map(s=>s.label);
+      const flags=routeStudlinAiQuestion(text,subjects);
+      const digest=assembleStudlinAiDigest(events,routines,prefs,dayKey());
+      const profile=gatherStudlinAiProfileSignals(flags,prefs);
+      const promptText=formatStudlinAiDigestForPrompt(text,digest,flags,profile);
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:promptText}],model:"standard",format:"studlin_ai"})});
+      const data=await res.json();
+      if(!res.ok){
+        setMessages(m=>[...m,{role:"ai",text:data.error||"Something went wrong. Try again."}]);
+        return;
+      }
+      setMessages(m=>[...m,{role:"ai",text:(data.reply||"").trim()||"I didn't get a real answer back. Try again."}]);
+    }catch(e){
+      setMessages(m=>[...m,{role:"ai",text:"Couldn't reach Studlin AI. Check your connection and try again."}]);
+    }finally{
       setLoading(false);
-    },500);
+    }
   };
 
   return ReactDOM.createPortal(
@@ -32203,7 +32326,7 @@ function App() {
           (computed once, above, from bottomRightNotifSlot) picks one
           winner instead of letting them stack on top of each other. */}
       {bottomRightSlot==="promptBatch"&&(
-        <div style={{position:"fixed",bottom:20,right:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
+        <div style={{position:"fixed",bottom:STUDLIN_AI_BUBBLE_CLEARANCE,right:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
           <div style={{fontSize:13,color:T.white,marginBottom:10}}>
             Due soon. Want Studlin to find prep time for these?
           </div>
@@ -32225,12 +32348,12 @@ function App() {
         </div>
       )}
       {bottomRightSlot==="autoToast"&&(
-        <div style={{position:"fixed",bottom:20,right:20,zIndex:999,padding:"11px 18px",borderRadius:10,background:T.teal,color:"#fff",fontSize:13,fontWeight:600,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
+        <div style={{position:"fixed",bottom:STUDLIN_AI_BUBBLE_CLEARANCE,right:20,zIndex:999,padding:"11px 18px",borderRadius:10,background:T.teal,color:"#fff",fontSize:13,fontWeight:600,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
           {prepAutoToast}
         </div>
       )}
       {bottomRightSlot==="error"&&(
-        <div style={{position:"fixed",bottom:20,right:20,zIndex:1001,padding:"11px 18px",borderRadius:10,background:T.red,color:"#fff",fontSize:13,fontWeight:600,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
+        <div style={{position:"fixed",bottom:STUDLIN_AI_BUBBLE_CLEARANCE,right:20,zIndex:1001,padding:"11px 18px",borderRadius:10,background:T.red,color:"#fff",fontSize:13,fontWeight:600,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
           {lockInErrorToast}
         </div>
       )}
@@ -32253,7 +32376,7 @@ function App() {
       </Modal>
       <ProjectCheckInModal taskId={projectCheckInTaskId} onClose={()=>setProjectCheckInTaskId(null)} onToast={(msg)=>{setDashToast(msg);setTimeout(()=>setDashToast(""),2800);}} />
       {bottomRightSlot==="suggestion"&&(
-        <div style={{position:"fixed",bottom:20,right:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:360}}>
+        <div style={{position:"fixed",bottom:STUDLIN_AI_BUBBLE_CLEARANCE,right:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:360}}>
           <div style={{fontSize:13,color:T.text,marginBottom:12,lineHeight:1.5}}>{examPrepSuggestion.reason}</div>
           <div style={{display:"flex",gap:8}}>
             {["shorten","extend","drop-remaining","pull-closer","shaky-packed"].includes(examPrepSuggestion.type)&&(
