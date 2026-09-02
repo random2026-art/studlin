@@ -10096,6 +10096,7 @@ function deriveStudlinAiProactiveSignal(strugglingBucketOffer, peakInsightOffer)
   if (peakInsightOffer) return { kind: "peak_hours", ...peakInsightOffer };
   return null;
 }
+const STUDLIN_AI_MSG_KIND_ACCENT = { proposal: T.lime, done: T.lime, fact: T.teal, coaching: T.purple, clarify: T.amber, paywall: T.amber, error: T.red, info: T.faint };
 function StudlinAiMiniDayPreview({ dateKey, proposedBlock }) {
   const pp = panelPalette();
   if (!dateKey) return null;
@@ -10178,7 +10179,7 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
     const text = proactiveSignal.kind === "struggling_bucket" ? "Your " + PEAK_BUCKET_LABELS[proactiveSignal.strugglingBucket].toLowerCase() + " tasks haven't been sticking -- " + proactiveSignal.recentMissedCount + " of your last " + proactiveSignal.recentWindow + " were missed. Want me to default new tasks to " + PEAK_BUCKET_LABELS[proactiveSignal.suggestedBucket].toLowerCase() + " instead?" : "Looks like you actually finish more " + PEAK_BUCKET_LABELS[proactiveSignal.suggestedBucket].toLowerCase() + " tasks (" + Math.round(proactiveSignal.suggestedPct * 100) + "%) than " + PEAK_BUCKET_LABELS[proactiveSignal.currentBucket].toLowerCase() + " ones (" + Math.round(proactiveSignal.currentPct * 100) + "%). Want me to update your peak hours?";
     const label = "Switch to " + PEAK_BUCKET_LABELS[proactiveSignal.suggestedBucket];
     setMessages((m) => {
-      const next = [...m, { role: "ai", text, proposal: { ok: true, source: "proactive", signal: proactiveSignal, label } }];
+      const next = [...m, { role: "ai", text, kind: "proposal", proposal: { ok: true, source: "proactive", signal: proactiveSignal, label } }];
       setPendingIndex(next.length - 1);
       return next;
     });
@@ -10186,7 +10187,7 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
   const askQuestion = async (text, history) => {
     if (!canUseStudlinAiQna()) {
       setPricingOpen(canUseStudlinAiQnaReason() === "free-tier" ? "studlinAiQna" : "aiUsageCap");
-      setMessages((m) => [...m, { role: "ai", text: "Studlin AI needs Pro. I've opened the upgrade options." }]);
+      setMessages((m) => [...m, { role: "ai", text: "Studlin AI needs Pro. I've opened the upgrade options.", kind: "paywall" }]);
       return;
     }
     const events = lsGet("events", []);
@@ -10201,22 +10202,22 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
     const data = await res.json();
     recordStudlinAiQnaUsage();
     if (!res.ok) {
-      setMessages((m) => [...m, { role: "ai", text: data.error || "Something went wrong. Try again." }]);
+      setMessages((m) => [...m, { role: "ai", text: data.error || "Something went wrong. Try again.", kind: "error" }]);
       return;
     }
-    setMessages((m) => [...m, { role: "ai", text: (data.reply || "").trim() || "I didn't get a real answer back. Try again." }]);
+    setMessages((m) => [...m, { role: "ai", text: (data.reply || "").trim() || "I didn't get a real answer back. Try again.", kind: "fact" }]);
   };
   const runAction = async (parsed, forcedId) => {
     const isCreate = parsed.intent === "create_task";
     if (isCreate) {
       if (!canUseBrainDump()) {
         setPricingOpen(canUseBrainDumpReason() === "free-tier" ? "brainDump" : "aiUsageCap");
-        setMessages((m) => [...m, { role: "ai", text: "Creating tasks through Studlin AI needs Pro. I've opened the upgrade options." }]);
+        setMessages((m) => [...m, { role: "ai", text: "Creating tasks through Studlin AI needs Pro. I've opened the upgrade options.", kind: "paywall" }]);
         return;
       }
     } else if (!canUseSmartReschedule()) {
       setPricingOpen(canUseSmartRescheduleReason() === "free-tier" ? "smartReschedule" : "aiUsageCap");
-      setMessages((m) => [...m, { role: "ai", text: "Moving or rescheduling through Studlin AI needs Pro. I've opened the upgrade options." }]);
+      setMessages((m) => [...m, { role: "ai", text: "Moving or rescheduling through Studlin AI needs Pro. I've opened the upgrade options.", kind: "paywall" }]);
       return;
     }
     const events = lsGet("events", []);
@@ -10224,11 +10225,11 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
     const prefs = getSchedulePreferences();
     const proposal = buildStudlinAiActionProposal(parsed, events, routines, prefs, forcedId);
     if (!proposal.ok && !proposal.disambiguate) {
-      setMessages((m) => [...m, { role: "ai", text: proposal.label }]);
+      setMessages((m) => [...m, { role: "ai", text: proposal.label, kind: "info" }]);
       return;
     }
     setMessages((m) => {
-      const next = [...m, { role: "ai", text: proposal.label, proposal: { ...proposal, parsed } }];
+      const next = [...m, { role: "ai", text: proposal.label, kind: "proposal", proposal: { ...proposal, parsed } }];
       setPendingIndex(next.length - 1);
       return next;
     });
@@ -10245,7 +10246,7 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
     try {
       parsed = await classifyStudlinAiMessage(text, history);
     } catch (e) {
-      setMessages((m) => [...m, { role: "ai", text: "Couldn't reach Studlin AI. Check your connection and try again." }]);
+      setMessages((m) => [...m, { role: "ai", text: "Couldn't reach Studlin AI. Check your connection and try again.", kind: "error" }]);
       setLoading(false);
       return;
     }
@@ -10253,14 +10254,14 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
       if (parsed.kind === "question") await askQuestion(text, history);
       else if (parsed.kind === "unsupported") {
         if (parsed.clarify) {
-          setMessages((m) => [...m, { role: "ai", text: parsed.clarify }]);
+          setMessages((m) => [...m, { role: "ai", text: parsed.clarify, kind: "clarify" }]);
           setPendingClarification(true);
         } else {
-          setMessages((m) => [...m, { role: "ai", text: "I can answer questions about your schedule, or help create, move, or delete a task. Try rephrasing that." }]);
+          setMessages((m) => [...m, { role: "ai", text: "I can answer questions about your schedule, or help create, move, or delete a task. Try rephrasing that.", kind: "info" }]);
         }
       } else await runAction(parsed, null);
     } catch (e) {
-      setMessages((m) => [...m, { role: "ai", text: "Something went wrong. Try again." }]);
+      setMessages((m) => [...m, { role: "ai", text: "Something went wrong. Try again.", kind: "error" }]);
     } finally {
       setLoading(false);
     }
@@ -10286,7 +10287,7 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
       onAcceptProactive(proposal.signal);
       setMessages((m) => {
         const withResolved = m.map((mm, i) => i === idx ? { ...mm, proposal: { ...mm.proposal, resolved: "confirmed" } } : mm);
-        return [...withResolved, { role: "ai", text: "Done. " + proposal.label }];
+        return [...withResolved, { role: "ai", text: "Done. " + proposal.label, kind: "done" }];
       });
       setPendingIndex(null);
       return;
@@ -10341,12 +10342,12 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
     if (proposal && proposal.source === "proactive") onDeclineProactive(proposal.signal);
     setMessages((m) => {
       const withResolved = m.map((mm, i) => i === idx ? { ...mm, proposal: { ...mm.proposal, resolved: "cancelled" } } : mm);
-      return [...withResolved, { role: "ai", text: "No changes made. Let me know if you'd like something else." }];
+      return [...withResolved, { role: "ai", text: "No changes made. Let me know if you'd like something else.", kind: "info" }];
     });
     setPendingIndex(null);
   };
   return ReactDOM.createPortal(
-    /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: onClose, style: { position: "fixed", inset: 0, background: "rgba(8,12,10,0.5)", zIndex: STUDLIN_AI_DRAWER_BACKDROP_Z, opacity: open ? 1 : 0, pointerEvents: open ? "auto" : "none", transition: "opacity 0.25s" } }), /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 0, right: 0, height: "100vh", width: 400, maxWidth: "92vw", background: T.surface, borderLeft: `1px solid ${pp.border}`, boxShadow: "-24px 0 60px -20px rgba(0,0,0,0.5)", zIndex: STUDLIN_AI_DRAWER_PANEL_Z, display: "flex", flexDirection: "column", transform: open ? "translateX(0)" : "translateX(100%)", transition: "transform 0.28s cubic-bezier(.2,.85,.3,1)", pointerEvents: open ? "auto" : "none" } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "18px 18px 14px", borderBottom: `1px solid ${pp.border}`, display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: pp.text } }, "Studlin AI"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: pp.muted } }, "Ask, or tell me to add or move something")), /* @__PURE__ */ React.createElement("button", { onClick: onClose, style: { width: 30, height: 30, borderRadius: 8, border: `1px solid ${pp.border}`, background: pp.card2, color: pp.muted, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0 } }, Icon.xmark)), /* @__PURE__ */ React.createElement("div", { ref: scrollRef, style: { flex: 1, overflowY: "auto", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10 } }, messages.length === 0 && !loading && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: pp.muted, lineHeight: 1.6, marginTop: 10 } }, 'Ask something like "which day next week is busiest?", or tell me to add a task or move something on your calendar.'), messages.map((m, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "85%", display: "flex", flexDirection: "column", gap: 6 } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "9px 13px", borderRadius: 12, fontSize: 13, lineHeight: 1.5, background: m.role === "user" ? pp.card2 : T.lime + "14", color: pp.text, border: m.role === "user" ? `1px solid ${pp.border}` : `1px solid ${T.lime}33` } }, m.text), m.proposal && m.proposal.disambiguate && !m.proposal.resolved && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, m.proposal.disambiguate.map((c) => /* @__PURE__ */ React.createElement(
+    /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: onClose, style: { position: "fixed", inset: 0, background: "rgba(8,12,10,0.5)", zIndex: STUDLIN_AI_DRAWER_BACKDROP_Z, opacity: open ? 1 : 0, pointerEvents: open ? "auto" : "none", transition: "opacity 0.25s" } }), /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 0, right: 0, height: "100vh", width: 400, maxWidth: "92vw", background: T.surface, borderLeft: `1px solid ${pp.border}`, boxShadow: "-24px 0 60px -20px rgba(0,0,0,0.5)", zIndex: STUDLIN_AI_DRAWER_PANEL_Z, display: "flex", flexDirection: "column", transform: open ? "translateX(0)" : "translateX(100%)", transition: "transform 0.28s cubic-bezier(.2,.85,.3,1)", pointerEvents: open ? "auto" : "none" } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "18px 18px 14px", borderBottom: `1px solid ${pp.border}`, display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: pp.text } }, "Studlin AI"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: pp.muted } }, "Ask, or tell me to add or move something")), /* @__PURE__ */ React.createElement("button", { onClick: onClose, style: { width: 30, height: 30, borderRadius: 8, border: `1px solid ${pp.border}`, background: pp.card2, color: pp.muted, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0 } }, Icon.xmark)), /* @__PURE__ */ React.createElement("div", { ref: scrollRef, style: { flex: 1, overflowY: "auto", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10 } }, messages.length === 0 && !loading && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: pp.muted, lineHeight: 1.6, marginTop: 10 } }, 'Ask something like "which day next week is busiest?", or tell me to add a task or move something on your calendar.'), messages.map((m, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "85%", display: "flex", flexDirection: "column", gap: 6 } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "9px 13px", borderRadius: 12, fontSize: 13, lineHeight: 1.5, background: m.role === "user" ? pp.card2 : T.lime + "14", color: pp.text, border: m.role === "user" ? `1px solid ${pp.border}` : `1px solid ${T.lime}33`, borderLeft: m.role === "ai" ? `3px solid ${STUDLIN_AI_MSG_KIND_ACCENT[m.kind] || T.lime}` : void 0 } }, m.text), m.proposal && m.proposal.disambiguate && !m.proposal.resolved && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, m.proposal.disambiguate.map((c) => /* @__PURE__ */ React.createElement(
       "button",
       {
         key: c.id,

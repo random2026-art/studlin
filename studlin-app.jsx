@@ -16270,6 +16270,14 @@ function deriveStudlinAiProactiveSignal(strugglingBucketOffer,peakInsightOffer){
 // T.lime, the same "not yet real" convention already used elsewhere
 // (e.g. the schedule-preview block ~line 18182), so it reads as
 // distinct from the student's real, already-committed events.
+// Every AI message used to render identically regardless of what kind
+// of thing it actually was -- a digest fact, a proposal, a clarifying
+// question, and an error all looked the same flat lime bubble. A
+// per-kind left-border accent (subtle, not a redesign) lets the drawer
+// read at a glance instead of as one undifferentiated stream of text.
+// Kept as its own small map, not inline per call site, so every message
+// push in this drawer stays consistent with the same small vocabulary.
+const STUDLIN_AI_MSG_KIND_ACCENT={proposal:T.lime,done:T.lime,fact:T.teal,coaching:T.purple,clarify:T.amber,paywall:T.amber,error:T.red,info:T.faint};
 function StudlinAiMiniDayPreview({dateKey,proposedBlock}){
   const pp=panelPalette();
   if(!dateKey)return null;
@@ -16380,7 +16388,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
       :("Looks like you actually finish more "+PEAK_BUCKET_LABELS[proactiveSignal.suggestedBucket].toLowerCase()+" tasks ("+Math.round(proactiveSignal.suggestedPct*100)+"%) than "+PEAK_BUCKET_LABELS[proactiveSignal.currentBucket].toLowerCase()+" ones ("+Math.round(proactiveSignal.currentPct*100)+"%). Want me to update your peak hours?");
     const label="Switch to "+PEAK_BUCKET_LABELS[proactiveSignal.suggestedBucket];
     setMessages(m=>{
-      const next=[...m,{role:"ai",text,proposal:{ok:true,source:"proactive",signal:proactiveSignal,label}}];
+      const next=[...m,{role:"ai",text,kind:"proposal",proposal:{ok:true,source:"proactive",signal:proactiveSignal,label}}];
       setPendingIndex(next.length-1);
       return next;
     });
@@ -16395,7 +16403,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
   const askQuestion=async(text,history)=>{
     if(!canUseStudlinAiQna()){
       setPricingOpen(canUseStudlinAiQnaReason()==="free-tier"?"studlinAiQna":"aiUsageCap");
-      setMessages(m=>[...m,{role:"ai",text:"Studlin AI needs Pro. I've opened the upgrade options."}]);
+      setMessages(m=>[...m,{role:"ai",text:"Studlin AI needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
       return;
     }
     // Read fresh at send time, not held in component state -- this
@@ -16421,10 +16429,10 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
     // already follows.
     recordStudlinAiQnaUsage();
     if(!res.ok){
-      setMessages(m=>[...m,{role:"ai",text:data.error||"Something went wrong. Try again."}]);
+      setMessages(m=>[...m,{role:"ai",text:data.error||"Something went wrong. Try again.",kind:"error"}]);
       return;
     }
-    setMessages(m=>[...m,{role:"ai",text:(data.reply||"").trim()||"I didn't get a real answer back. Try again."}]);
+    setMessages(m=>[...m,{role:"ai",text:(data.reply||"").trim()||"I didn't get a real answer back. Try again.",kind:"fact"}]);
   };
 
   // Builds and shows a proposal card for a classified action -- never
@@ -16441,12 +16449,12 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
     if(isCreate){
       if(!canUseBrainDump()){
         setPricingOpen(canUseBrainDumpReason()==="free-tier"?"brainDump":"aiUsageCap");
-        setMessages(m=>[...m,{role:"ai",text:"Creating tasks through Studlin AI needs Pro. I've opened the upgrade options."}]);
+        setMessages(m=>[...m,{role:"ai",text:"Creating tasks through Studlin AI needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
         return;
       }
     }else if(!canUseSmartReschedule()){
       setPricingOpen(canUseSmartRescheduleReason()==="free-tier"?"smartReschedule":"aiUsageCap");
-      setMessages(m=>[...m,{role:"ai",text:"Moving or rescheduling through Studlin AI needs Pro. I've opened the upgrade options."}]);
+      setMessages(m=>[...m,{role:"ai",text:"Moving or rescheduling through Studlin AI needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
       return;
     }
     const events=lsGet("events",[]);
@@ -16454,11 +16462,11 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
     const prefs=getSchedulePreferences();
     const proposal=buildStudlinAiActionProposal(parsed,events,routines,prefs,forcedId);
     if(!proposal.ok&&!proposal.disambiguate){
-      setMessages(m=>[...m,{role:"ai",text:proposal.label}]);
+      setMessages(m=>[...m,{role:"ai",text:proposal.label,kind:"info"}]);
       return;
     }
     setMessages(m=>{
-      const next=[...m,{role:"ai",text:proposal.label,proposal:{...proposal,parsed}}];
+      const next=[...m,{role:"ai",text:proposal.label,kind:"proposal",proposal:{...proposal,parsed}}];
       setPendingIndex(next.length-1);
       return next;
     });
@@ -16487,7 +16495,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
     try{
       parsed=await classifyStudlinAiMessage(text,history);
     }catch(e){
-      setMessages(m=>[...m,{role:"ai",text:"Couldn't reach Studlin AI. Check your connection and try again."}]);
+      setMessages(m=>[...m,{role:"ai",text:"Couldn't reach Studlin AI. Check your connection and try again.",kind:"error"}]);
       setLoading(false);
       return;
     }
@@ -16495,15 +16503,15 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
       if(parsed.kind==="question")await askQuestion(text,history);
       else if(parsed.kind==="unsupported"){
         if(parsed.clarify){
-          setMessages(m=>[...m,{role:"ai",text:parsed.clarify}]);
+          setMessages(m=>[...m,{role:"ai",text:parsed.clarify,kind:"clarify"}]);
           setPendingClarification(true);
         }else{
-          setMessages(m=>[...m,{role:"ai",text:"I can answer questions about your schedule, or help create, move, or delete a task. Try rephrasing that."}]);
+          setMessages(m=>[...m,{role:"ai",text:"I can answer questions about your schedule, or help create, move, or delete a task. Try rephrasing that.",kind:"info"}]);
         }
       }
       else await runAction(parsed,null);
     }catch(e){
-      setMessages(m=>[...m,{role:"ai",text:"Something went wrong. Try again."}]);
+      setMessages(m=>[...m,{role:"ai",text:"Something went wrong. Try again.",kind:"error"}]);
     }finally{
       setLoading(false);
     }
@@ -16545,7 +16553,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
       onAcceptProactive(proposal.signal);
       setMessages(m=>{
         const withResolved=m.map((mm,i)=>i===idx?{...mm,proposal:{...mm.proposal,resolved:"confirmed"}}:mm);
-        return [...withResolved,{role:"ai",text:"Done. "+proposal.label}];
+        return [...withResolved,{role:"ai",text:"Done. "+proposal.label,kind:"done"}];
       });
       setPendingIndex(null);
       return;
@@ -16595,7 +16603,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
     if(proposal&&proposal.source==="proactive")onDeclineProactive(proposal.signal);
     setMessages(m=>{
       const withResolved=m.map((mm,i)=>i===idx?{...mm,proposal:{...mm.proposal,resolved:"cancelled"}}:mm);
-      return [...withResolved,{role:"ai",text:"No changes made. Let me know if you'd like something else."}];
+      return [...withResolved,{role:"ai",text:"No changes made. Let me know if you'd like something else.",kind:"info"}];
     });
     setPendingIndex(null);
   };
@@ -16617,7 +16625,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
           )}
           {messages.map((m,i)=>(
             <div key={i} style={{alignSelf:m.role==="user"?"flex-end":"flex-start",maxWidth:"85%",display:"flex",flexDirection:"column",gap:6}}>
-              <div style={{padding:"9px 13px",borderRadius:12,fontSize:13,lineHeight:1.5,background:m.role==="user"?pp.card2:T.lime+"14",color:pp.text,border:m.role==="user"?`1px solid ${pp.border}`:`1px solid ${T.lime}33`}}>
+              <div style={{padding:"9px 13px",borderRadius:12,fontSize:13,lineHeight:1.5,background:m.role==="user"?pp.card2:T.lime+"14",color:pp.text,border:m.role==="user"?`1px solid ${pp.border}`:`1px solid ${T.lime}33`,borderLeft:m.role==="ai"?`3px solid ${STUDLIN_AI_MSG_KIND_ACCENT[m.kind]||T.lime}`:undefined}}>
                 {m.text}
               </div>
               {m.proposal&&m.proposal.disambiguate&&!m.proposal.resolved&&(
