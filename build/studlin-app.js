@@ -4708,10 +4708,27 @@ function buildSetPeakHoursProposal(parsed, prefs) {
   const unreachable = !(bucket.startMin < winEnd && bucket.endMin > winStart);
   return { ok: true, kind: "set_peak_hours", bucketId, label: "Set your peak focus hours to " + PEAK_BUCKET_LABELS[bucketId] + "?" + (unreachable ? " (heads up -- that's outside your declared work hours, so Studlin can't actually schedule around it yet)" : "") };
 }
-function buildStudlinAiActionProposal(parsed, events, routines, prefs, forcedId) {
+const STUDLIN_AI_MATERIAL_MIN_LENGTH = 200;
+function matchSubjectInMaterialText(text) {
+  const subjects = getSubjects().map((s) => s.label);
+  const t = (text || "").toLowerCase();
+  return subjects.find((s) => s && t.includes(s.toLowerCase())) || null;
+}
+function buildGenerateStudyMaterialProposal(parsed, materialText) {
+  const genFormat = parsed.genFormat === "quiz" ? "quiz" : "flashcards";
+  const trimmed = (materialText || "").trim();
+  if (trimmed.length < STUDLIN_AI_MATERIAL_MIN_LENGTH) {
+    return { ok: false, label: "Paste more of the actual material and I'll turn it into " + (genFormat === "quiz" ? "a practice quiz" : "flashcards") + " -- that was too short to work with." };
+  }
+  const subject = matchSubjectInMaterialText(trimmed);
+  const label = genFormat === "quiz" ? "Generate a practice quiz from this" + (subject ? " for " + subject : "") + "?" : "Generate flashcards from this" + (subject ? " for " + subject : "") + "?";
+  return { ok: true, kind: "generate_study_material", genFormat, materialText: trimmed, subject, label };
+}
+function buildStudlinAiActionProposal(parsed, events, routines, prefs, forcedId, rawText) {
   if (parsed.intent === "create_task") return buildCreateTaskProposal(parsed, events, routines, prefs);
   if (parsed.intent === "delete_task") return buildDeleteProposal(parsed, forcedId);
   if (parsed.intent === "set_peak_hours") return buildSetPeakHoursProposal(parsed, prefs);
+  if (parsed.intent === "generate_study_material") return buildGenerateStudyMaterialProposal(parsed, rawText);
   if (parsed.intent === "move_flex_task") {
     const r2 = buildMoveFlexTaskProposal(parsed, events, routines, prefs, forcedId);
     if (r2.noMatch) return { ok: false, noMatch: true, label: r2.label };
@@ -10100,8 +10117,8 @@ async function classifyStudlinAiMessage(text, history) {
   const tomorrow = dayKey(new Date(Date.now() + 864e5));
   const nextWeekSameDay = dayKey(new Date(Date.now() + 7 * 864e5));
   const weekday = (/* @__PURE__ */ new Date()).toLocaleDateString("en-US", { weekday: "long" });
-  const prompt = "You are a message router for a student calendar assistant chat. Today is " + weekday + ", " + today + '. The student typed: "' + text + `". Decide whether this is a QUESTION about their existing schedule/study history (a real number/fact), a COACHING ask (wants real study-strategy help, not a fact), an ACTION request (create something new, or move/reschedule something that already exists), or unsupported. Respond with ONLY this JSON, no markdown fences, no explanation:
-{"kind":"question"|"coaching"|"action"|"unsupported","intent":"create_task"|"delete_task"|"set_peak_hours"|"shift"|"clear_day"|"clear_week"|"skip_class"|"move_event"|"retime_event"|"move_flex_task"|null,"days":<integer 1-14 or null>,"date":"YYYY-MM-DD or null","target":"<short name of the specific existing item, or null>","targetDate":"YYYY-MM-DD or null","destDate":"YYYY-MM-DD or null","newStart":"HH:MM 24h or null","newDuration":<integer minutes or null>,"title":"<short name of the NEW item to create, or null>","dueDate":"YYYY-MM-DD or null","dueTime":"HH:MM 24h or null","durationMin":<integer minutes or null>,"taskKind":"study"|"todo"|"event"|"reminder"|"exam"|"project"|null,"peakHours":"morning"|"midday"|"afternoon"|"evening"|null,"clarify":"<a short, specific question, or null>"}
+  const prompt = "You are a message router for a student calendar assistant chat. Today is " + weekday + ", " + today + '. The student typed: "' + text + `". Decide whether this is a QUESTION about their existing schedule/study history (a real number/fact), a COACHING ask (wants real study-strategy help, not a fact), an ACTION request (create something new, move/reschedule something that already exists, or turn pasted study material into flashcards/a quiz), or unsupported. Respond with ONLY this JSON, no markdown fences, no explanation:
+{"kind":"question"|"coaching"|"action"|"unsupported","intent":"create_task"|"delete_task"|"set_peak_hours"|"shift"|"clear_day"|"clear_week"|"skip_class"|"move_event"|"retime_event"|"move_flex_task"|"generate_study_material"|null,"days":<integer 1-14 or null>,"date":"YYYY-MM-DD or null","target":"<short name of the specific existing item, or null>","targetDate":"YYYY-MM-DD or null","destDate":"YYYY-MM-DD or null","newStart":"HH:MM 24h or null","newDuration":<integer minutes or null>,"title":"<short name of the NEW item to create, or null>","dueDate":"YYYY-MM-DD or null","dueTime":"HH:MM 24h or null","durationMin":<integer minutes or null>,"taskKind":"study"|"todo"|"event"|"reminder"|"exam"|"project"|null,"genFormat":"flashcards"|"quiz"|null,"peakHours":"morning"|"midday"|"afternoon"|"evening"|null,"clarify":"<a short, specific question, or null>"}
 Rules: "question" is asking for a real FACT about their schedule/workload/streak/pace/productivity (a number, a date, a yes/no). "coaching" is asking for real help or a plan -- "how should I study for X," "help me prepare," "where do I start," "I'm stressed about Y and don't know the material" -- wanting strategy/advice, not a fact, and not (yet) asking to add/move anything. Neither ever changes anything -- leave intent and every other field null for both. "unsupported" covers anything ambiguous, multi-step, deleting/cancelling MULTIPLE things or an entire day/week/recurring routine, or that doesn't clearly match one action below -- never guess. Deleting exactly ONE clearly-named item uses delete_task instead, not unsupported.
 "clarify": if the message clearly WANTS one of the actions below but is missing something required to do it (no title for a new item, no clear name for what to move/retime/delete, no day count for "shift"), set kind to "unsupported", intent to null, and "clarify" to ONE short, specific question asking for exactly the missing thing (e.g. "When is that due?" or "Which day would you like it moved to?"). Leave "clarify" null for every other case -- genuinely off-topic, too vague to guess the intended action at all, multi-step, or a bulk/destructive request. Never set clarify when kind is "question", "coaching", or "action".
 "create_task" is for adding something NEW that doesn't exist yet -- "title" is required, "dueDate" if a deadline/date was mentioned (resolve relative phrases like "tomorrow"/"Friday" against today's date above), "dueTime" only if a real clock time was mentioned, "durationMin" only if a specific work-time length was mentioned. "taskKind" picks which kind of thing: "exam" for a test/quiz/final, "project" for a multi-step project, "event" for a fixed real-world thing at a specific time (an appointment, a meeting -- not a class or something already on a routine), "reminder" for a simple point-in-time nudge with no real work involved ("remind me to email my professor"), "todo" if the student explicitly just wants a due date tracked with no work time scheduled ("just remind me," "don't schedule time for it"), otherwise "study" (the default -- a task/assignment/homework Studlin finds real time to work on before its deadline). IMPORTANT: only classify as create_task when the student is actually ASKING to add/track/schedule something. A message that merely mentions, describes, or shares feelings about an exam/assignment/deadline (stress, context, background) without asking for it to be added is "question" or "coaching" instead -- the mere presence of a date or an exam name is not itself a request to create anything, look for real intent to add.
@@ -10111,25 +10128,28 @@ Rules: "question" is asking for a real FACT about their schedule/workload/streak
 "move_event" is ONLY for a fixed real-world commitment (a class, practice, gym, appointment, meeting) that can't happen at its current time and should be relocated whole -- same target/targetDate/destDate fields as move_flex_task.
 "retime_event" is for when ONE fixed thing's own time changed (not cancelled) and everything else should fit around the new time -- "target"/"targetDate" as above, "newStart" 24h HH:MM, "newDuration" in minutes if a range was given, null if only a start time was given.
 "shift" pushes everything from today onward back by a day count, only with an explicit or clearly implied number, never invent one. "clear_day" empties one specific date (resolve relative phrases against today's date above). "clear_week" clears the next 7 days, no parameters. "skip_class" is for not physically attending class/school on a specific day, opening that time for other work.
+"generate_study_material" is for when the student pastes real study material (notes, a definition list, an excerpt, a transcript) directly in their message and asks to be quizzed on it or have flashcards made from it -- "genFormat" is "flashcards" for card/flashcard requests, "quiz" for quiz/test/practice-exam requests (default to "flashcards" if genuinely ambiguous which they want). Only classify this way when the message actually contains real pasted content to learn from, not just a bare request -- "quiz me on chapter 3" with nothing pasted is coaching or unsupported instead, never this.
 Leave every field the chosen intent/kind doesn't use as null. Relative-date phrases are never off by less than what they literally say: "tomorrow" is exactly today's date above + 1 day. "next week" (no specific weekday named) means ` + nextWeekSameDay + ` (today's date above + 7 days), never less than 7 days out, never treated the same as "tomorrow." "next Monday"/"next Friday"/etc. resolve to that exact date within the next 7 days.
 Examples:
-"which day next week is busiest?" -> {"kind":"question","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"peakHours":null,"clarify":null}
-"add a task to finish my history essay, due Friday" -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Finish history essay","dueDate":"<the real date of this Friday>","dueTime":null,"durationMin":null,"taskKind":"study","peakHours":null,"clarify":null}
-"just track that my chem lab report is due next Monday, don't schedule time for it" -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Chem lab report","dueDate":"<that Monday's date>","dueTime":null,"durationMin":null,"taskKind":"todo","peakHours":null,"clarify":null}
-"add my chem final, it's on the 20th" -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Chem final","dueDate":"<the 20th of the current or next occurring month>","dueTime":null,"durationMin":null,"taskKind":"exam","peakHours":null,"clarify":null}
-"i have an upcoming calc exam in 10 days and i am stressing because i dont know any of the material" (wants real help, not a fact, never actually asked to add anything) -> {"kind":"coaching","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"peakHours":null,"clarify":null}
-"can you help me think of a plan of how i should study for it" -> {"kind":"coaching","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"peakHours":null,"clarify":null}
-"add a dentist appointment tomorrow at 3pm" -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Dentist appointment","dueDate":"` + tomorrow + '","dueTime":"15:00","durationMin":null,"taskKind":"event","peakHours":null,"clarify":null}\n"remind me to email my professor tomorrow" -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Email professor","dueDate":"' + tomorrow + `","dueTime":null,"durationMin":null,"taskKind":"reminder","peakHours":null,"clarify":null}
-"add my history project, due in two weeks" -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"History project","dueDate":"<today's date above + 14 days>","dueTime":null,"durationMin":null,"taskKind":"project","peakHours":null,"clarify":null}
-"delete my old chem homework task" -> {"kind":"action","intent":"delete_task","days":null,"date":null,"target":"chem homework","targetDate":"` + today + '","destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"peakHours":null,"clarify":null}\n"cancel my dentist appointment tomorrow" -> {"kind":"action","intent":"delete_task","days":null,"date":null,"target":"dentist appointment","targetDate":"' + tomorrow + '","destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"peakHours":null,"clarify":null}\n"delete all my chem classes" -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"peakHours":null,"clarify":null}\n"move my chem homework to tomorrow" -> {"kind":"action","intent":"move_flex_task","days":null,"date":null,"target":"chem homework","targetDate":"' + today + '","destDate":"' + tomorrow + `","newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"peakHours":null,"clarify":null}
-"I can't make the gym today, move it to tomorrow" -> {"kind":"action","intent":"move_event","days":null,"date":null,"target":"gym","targetDate":"` + today + '","destDate":"' + tomorrow + '","newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"peakHours":null,"clarify":null}\n"my track practice got moved to 7-9pm" -> {"kind":"action","intent":"retime_event","days":null,"date":null,"target":"track practice","targetDate":"' + today + `","destDate":null,"newStart":"19:00","newDuration":120,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"peakHours":null,"clarify":null}
-"I'm sick, push everything back 3 days" -> {"kind":"action","intent":"shift","days":3,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"peakHours":null,"clarify":null}
-"cancel everything forever" -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"peakHours":null,"clarify":null}
-"add a task to finish my essay" (no date mentioned at all) -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"peakHours":null,"clarify":"When is that due?"}
+"which day next week is busiest?" -> {"kind":"question","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":null}
+"add a task to finish my history essay, due Friday" -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Finish history essay","dueDate":"<the real date of this Friday>","dueTime":null,"durationMin":null,"taskKind":"study","genFormat":null,"peakHours":null,"clarify":null}
+"just track that my chem lab report is due next Monday, don't schedule time for it" -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Chem lab report","dueDate":"<that Monday's date>","dueTime":null,"durationMin":null,"taskKind":"todo","genFormat":null,"peakHours":null,"clarify":null}
+"add my chem final, it's on the 20th" -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Chem final","dueDate":"<the 20th of the current or next occurring month>","dueTime":null,"durationMin":null,"taskKind":"exam","genFormat":null,"peakHours":null,"clarify":null}
+"i have an upcoming calc exam in 10 days and i am stressing because i dont know any of the material" (wants real help, not a fact, never actually asked to add anything) -> {"kind":"coaching","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":null}
+"can you help me think of a plan of how i should study for it" -> {"kind":"coaching","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":null}
+"add a dentist appointment tomorrow at 3pm" -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Dentist appointment","dueDate":"` + tomorrow + '","dueTime":"15:00","durationMin":null,"taskKind":"event","genFormat":null,"peakHours":null,"clarify":null}\n"remind me to email my professor tomorrow" -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Email professor","dueDate":"' + tomorrow + `","dueTime":null,"durationMin":null,"taskKind":"reminder","genFormat":null,"peakHours":null,"clarify":null}
+"add my history project, due in two weeks" -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"History project","dueDate":"<today's date above + 14 days>","dueTime":null,"durationMin":null,"taskKind":"project","genFormat":null,"peakHours":null,"clarify":null}
+"delete my old chem homework task" -> {"kind":"action","intent":"delete_task","days":null,"date":null,"target":"chem homework","targetDate":"` + today + '","destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":null}\n"cancel my dentist appointment tomorrow" -> {"kind":"action","intent":"delete_task","days":null,"date":null,"target":"dentist appointment","targetDate":"' + tomorrow + '","destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":null}\n"delete all my chem classes" -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":null}\n"move my chem homework to tomorrow" -> {"kind":"action","intent":"move_flex_task","days":null,"date":null,"target":"chem homework","targetDate":"' + today + '","destDate":"' + tomorrow + `","newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":null}
+"I can't make the gym today, move it to tomorrow" -> {"kind":"action","intent":"move_event","days":null,"date":null,"target":"gym","targetDate":"` + today + '","destDate":"' + tomorrow + '","newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":null}\n"my track practice got moved to 7-9pm" -> {"kind":"action","intent":"retime_event","days":null,"date":null,"target":"track practice","targetDate":"' + today + `","destDate":null,"newStart":"19:00","newDuration":120,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":null}
+"I'm sick, push everything back 3 days" -> {"kind":"action","intent":"shift","days":3,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":null}
+"cancel everything forever" -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":null}
+"add a task to finish my essay" (no date mentioned at all) -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":"When is that due?"}
 "I actually focus way better in the evening than in the morning" -> {"kind":"action","intent":"set_peak_hours","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"peakHours":"evening","clarify":null}
-"update my peak hours" (no specific time of day named at all) -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"peakHours":null,"clarify":"Which time of day -- morning, midday, afternoon, or evening?"}
-"add a task to finish my essay. When is that due? next Friday" (a combined follow-up, same student message thread) -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Finish essay","dueDate":"<the real date of next Friday>","dueTime":null,"durationMin":null,"taskKind":"study","peakHours":null,"clarify":null}
-"can you move my project" (no destination day given at all, not even "sometime") -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"peakHours":null,"clarify":"What day would you like it moved to?"}`;
+"update my peak hours" (no specific time of day named at all) -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":"Which time of day -- morning, midday, afternoon, or evening?"}
+"add a task to finish my essay. When is that due? next Friday" (a combined follow-up, same student message thread) -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Finish essay","dueDate":"<the real date of next Friday>","dueTime":null,"durationMin":null,"taskKind":"study","genFormat":null,"peakHours":null,"clarify":null}
+"can you move my project" (no destination day given at all, not even "sometime") -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":"What day would you like it moved to?"}
+"Here's my notes: Mitochondria are the powerhouse of the cell -- they produce ATP through cellular respiration, using oxygen to break down glucose into usable energy. Can you make flashcards from this?" (real pasted content, clearly asking for cards) -> {"kind":"action","intent":"generate_study_material","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":"flashcards","genFormat":null,"peakHours":null,"clarify":null}
+"quiz me on chapter 3" (no real material actually pasted, just a bare request) -> {"kind":"coaching","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":null}`;
   const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [...history || [], { r: "user", t: prompt }], model: "flash", format: "studlin_ai_intent" }) });
   const data = await res.json();
   try {
@@ -10137,13 +10157,14 @@ Examples:
     const parsed = JSON.parse(raw);
     if (!parsed || !["question", "coaching", "action", "unsupported"].includes(parsed.kind)) throw new Error("bad-kind");
     if (parsed.kind === "action") {
-      const knownIntents = ["create_task", "delete_task", "set_peak_hours", "shift", "clear_day", "clear_week", "skip_class", "move_event", "retime_event", "move_flex_task"];
+      const knownIntents = ["create_task", "delete_task", "set_peak_hours", "shift", "clear_day", "clear_week", "skip_class", "move_event", "retime_event", "move_flex_task", "generate_study_material"];
       if (!knownIntents.includes(parsed.intent)) throw new Error("bad-intent");
       if (parsed.intent === "create_task" && !(typeof parsed.title === "string" && parsed.title.trim())) throw new Error("no-title");
       if ((parsed.intent === "move_event" || parsed.intent === "retime_event" || parsed.intent === "move_flex_task" || parsed.intent === "delete_task") && !(typeof parsed.target === "string" && parsed.target.trim())) throw new Error("no-target");
       if (parsed.intent === "retime_event" && !/^\d{2}:\d{2}$/.test(parsed.newStart || "")) throw new Error("bad-time");
       if (parsed.intent === "shift" && !(parsed.days >= 1 && parsed.days <= 14)) throw new Error("bad-days");
       if (parsed.intent === "set_peak_hours" && !["morning", "midday", "afternoon", "evening"].includes(parsed.peakHours)) throw new Error("bad-peak-hours");
+      if (parsed.intent === "generate_study_material" && !["flashcards", "quiz"].includes(parsed.genFormat)) throw new Error("bad-genformat");
     }
     return parsed;
   } catch (e) {
@@ -10296,12 +10317,21 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
     }
     setMessages((m) => [...m, { role: "ai", text: (data.reply || "").trim() || "I didn't get a real answer back. Try again.", kind: "coaching" }]);
   };
-  const runAction = async (parsed, forcedId) => {
+  const runAction = async (parsed, forcedId, rawText) => {
     const isCreate = parsed.intent === "create_task";
+    const isGenMaterial = parsed.intent === "generate_study_material";
     if (isCreate) {
       if (!canUseBrainDump()) {
         setPricingOpen(canUseBrainDumpReason() === "free-tier" ? "brainDump" : "aiUsageCap");
         setMessages((m) => [...m, { role: "ai", text: "Creating tasks through Studlin AI needs Pro. I've opened the upgrade options.", kind: "paywall" }]);
+        return;
+      }
+    } else if (isGenMaterial) {
+      const gateOk = parsed.genFormat === "quiz" ? canGenQuiz() : canGenFlashcards();
+      if (!gateOk) {
+        const reason = parsed.genFormat === "quiz" ? canGenQuizReason() : canGenFlashcardsReason();
+        setPricingOpen(reason === "free-tier" ? "studyMaterialGen" : "aiUsageCap");
+        setMessages((m) => [...m, { role: "ai", text: "Generating " + (parsed.genFormat === "quiz" ? "a practice quiz" : "flashcards") + " through Studlin AI needs Pro. I've opened the upgrade options.", kind: "paywall" }]);
         return;
       }
     } else if (!canUseSmartReschedule()) {
@@ -10312,7 +10342,7 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
     const events = lsGet("events", []);
     const routines = getWeeklyRoutine();
     const prefs = getSchedulePreferences();
-    const proposal = buildStudlinAiActionProposal(parsed, events, routines, prefs, forcedId);
+    const proposal = buildStudlinAiActionProposal(parsed, events, routines, prefs, forcedId, rawText);
     if (!proposal.ok && !proposal.disambiguate) {
       setMessages((m) => [...m, { role: "ai", text: proposal.label, kind: "info" }]);
       return;
@@ -10347,9 +10377,9 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
           setMessages((m) => [...m, { role: "ai", text: parsed.clarify, kind: "clarify" }]);
           setPendingClarification(true);
         } else {
-          setMessages((m) => [...m, { role: "ai", text: "I can answer questions about your schedule, help you plan how to study for something, or create, move, or delete a task. Try rephrasing that.", kind: "info" }]);
+          setMessages((m) => [...m, { role: "ai", text: "I can answer questions about your schedule, help you plan how to study for something, turn pasted material into flashcards or a quiz, or create, move, or delete a task. Try rephrasing that.", kind: "info" }]);
         }
-      } else await runAction(parsed, null);
+      } else await runAction(parsed, null, text);
     } catch (e) {
       setMessages((m) => [...m, { role: "ai", text: "Something went wrong. Try again.", kind: "error" }]);
     } finally {
@@ -10369,7 +10399,7 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
       setLoading(false);
     }
   };
-  const confirmProposal = (idx) => {
+  const confirmProposal = async (idx) => {
     const msg = messages[idx];
     const proposal = msg && msg.proposal;
     if (!proposal || !proposal.ok) return;
@@ -10380,6 +10410,59 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
         return [...withResolved, { role: "ai", text: "Done. " + proposal.label, kind: "done" }];
       });
       setPendingIndex(null);
+      return;
+    }
+    if (proposal.kind === "generate_study_material") {
+      const isQuiz = proposal.genFormat === "quiz";
+      const gateOk = isQuiz ? canGenQuiz() : canGenFlashcards();
+      if (!gateOk) {
+        const reason = isQuiz ? canGenQuizReason() : canGenFlashcardsReason();
+        setPricingOpen(reason === "free-tier" ? "studyMaterialGen" : "aiUsageCap");
+        return;
+      }
+      setLoading(true);
+      try {
+        const subjects = getSubjects();
+        const matchedSubjectObj = proposal.subject ? subjects.find((s) => s.label === proposal.subject) : null;
+        const upcomingExam = proposal.subject ? lsGet("events", []).filter((e) => e.kind === "exam" && e.subject === proposal.subject && e.status === "pending" && e.date >= dayKey()).sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0)[0] || null : null;
+        if (isQuiz) {
+          const questions = await generateQuizFromText(proposal.materialText, proposal.subject || "this material", scaledQuizCount(proposal.materialText.length));
+          if (!questions || questions.length === 0) {
+            setMessages((m) => {
+              const withResolved = m.map((mm, i) => i === idx ? { ...mm, proposal: { ...mm.proposal, resolved: "cancelled" } } : mm);
+              return [...withResolved, { role: "ai", text: "Couldn't generate a quiz from that material. Try again with more content.", kind: "error" }];
+            });
+            return;
+          }
+          recordQuizGen();
+          const pe = createPracticeExam((proposal.subject ? proposal.subject + " " : "") + "Practice Exam", proposal.subject || "", upcomingExam ? upcomingExam.id : null, questions);
+          setMessages((m) => {
+            const withResolved = m.map((mm, i) => i === idx ? { ...mm, proposal: { ...mm.proposal, resolved: "confirmed" } } : mm);
+            return [...withResolved, { role: "ai", text: "Done. Built a " + questions.length + "-question practice quiz" + (proposal.subject ? " for " + proposal.subject : "") + (upcomingExam ? ", linked to " + upcomingExam.title : "") + ".", kind: "done" }];
+          });
+        } else {
+          const cards = await generateFlashcardsFromText(proposal.materialText, proposal.subject || "this material", scaledFlashcardCount(proposal.materialText.length));
+          if (!cards || cards.length === 0) {
+            setMessages((m) => {
+              const withResolved = m.map((mm, i) => i === idx ? { ...mm, proposal: { ...mm.proposal, resolved: "cancelled" } } : mm);
+              return [...withResolved, { role: "ai", text: "Couldn't generate flashcards from that material. Try again with more content.", kind: "error" }];
+            });
+            return;
+          }
+          recordFlashcardGen();
+          const nd = { id: String(Date.now() + Math.random() * 1e3), name: (proposal.subject || "Chat") + " flashcards", count: cards.length, done: 0, color: matchedSubjectObj && matchedSubjectObj.color || T.lime, cards, ...upcomingExam ? { examEventId: upcomingExam.id, examEventIds: [upcomingExam.id] } : {} };
+          lsSet("decks", [nd, ...lsGet("decks", [])]);
+          setMessages((m) => {
+            const withResolved = m.map((mm, i) => i === idx ? { ...mm, proposal: { ...mm.proposal, resolved: "confirmed" } } : mm);
+            return [...withResolved, { role: "ai", text: "Done. Saved " + cards.length + " flashcards" + (proposal.subject ? " for " + proposal.subject : "") + (upcomingExam ? ", linked to " + upcomingExam.title : "") + ".", kind: "done" }];
+          });
+        }
+      } catch (e) {
+        setMessages((m) => [...m, { role: "ai", text: "Something went wrong generating that. Try again.", kind: "error" }]);
+      } finally {
+        setLoading(false);
+        setPendingIndex(null);
+      }
       return;
     }
     let next;
@@ -10437,7 +10520,7 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
     setPendingIndex(null);
   };
   return ReactDOM.createPortal(
-    /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: onClose, style: { position: "fixed", inset: 0, background: "rgba(8,12,10,0.5)", zIndex: STUDLIN_AI_DRAWER_BACKDROP_Z, opacity: open ? 1 : 0, pointerEvents: open ? "auto" : "none", transition: "opacity 0.25s" } }), /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 0, right: 0, height: "100vh", width: 400, maxWidth: "92vw", background: T.surface, borderLeft: `1px solid ${pp.border}`, boxShadow: "-24px 0 60px -20px rgba(0,0,0,0.5)", zIndex: STUDLIN_AI_DRAWER_PANEL_Z, display: "flex", flexDirection: "column", transform: open ? "translateX(0)" : "translateX(100%)", transition: "transform 0.28s cubic-bezier(.2,.85,.3,1)", pointerEvents: open ? "auto" : "none" } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "18px 18px 14px", borderBottom: `1px solid ${pp.border}`, display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: pp.text } }, "Studlin AI"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: pp.muted } }, "Ask, or tell me to add or move something")), /* @__PURE__ */ React.createElement("button", { onClick: onClose, style: { width: 30, height: 30, borderRadius: 8, border: `1px solid ${pp.border}`, background: pp.card2, color: pp.muted, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0 } }, Icon.xmark)), /* @__PURE__ */ React.createElement("div", { ref: scrollRef, style: { flex: 1, overflowY: "auto", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10 } }, messages.length === 0 && !loading && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: pp.muted, lineHeight: 1.6, marginTop: 10 } }, 'Ask something like "which day next week is busiest?" or "how should I study for my calc exam," or tell me to add a task or move something on your calendar.'), messages.map((m, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "85%", display: "flex", flexDirection: "column", gap: 6 } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "9px 13px", borderRadius: 12, fontSize: 13, lineHeight: 1.5, background: m.role === "user" ? pp.card2 : T.lime + "14", color: pp.text, border: m.role === "user" ? `1px solid ${pp.border}` : `1px solid ${T.lime}33`, borderLeft: m.role === "ai" ? `3px solid ${STUDLIN_AI_MSG_KIND_ACCENT[m.kind] || T.lime}` : void 0 } }, m.text), m.proposal && m.proposal.disambiguate && !m.proposal.resolved && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, m.proposal.disambiguate.map((c) => /* @__PURE__ */ React.createElement(
+    /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: onClose, style: { position: "fixed", inset: 0, background: "rgba(8,12,10,0.5)", zIndex: STUDLIN_AI_DRAWER_BACKDROP_Z, opacity: open ? 1 : 0, pointerEvents: open ? "auto" : "none", transition: "opacity 0.25s" } }), /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 0, right: 0, height: "100vh", width: 400, maxWidth: "92vw", background: T.surface, borderLeft: `1px solid ${pp.border}`, boxShadow: "-24px 0 60px -20px rgba(0,0,0,0.5)", zIndex: STUDLIN_AI_DRAWER_PANEL_Z, display: "flex", flexDirection: "column", transform: open ? "translateX(0)" : "translateX(100%)", transition: "transform 0.28s cubic-bezier(.2,.85,.3,1)", pointerEvents: open ? "auto" : "none" } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "18px 18px 14px", borderBottom: `1px solid ${pp.border}`, display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: pp.text } }, "Studlin AI"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: pp.muted } }, "Ask, or tell me to add or move something")), /* @__PURE__ */ React.createElement("button", { onClick: onClose, style: { width: 30, height: 30, borderRadius: 8, border: `1px solid ${pp.border}`, background: pp.card2, color: pp.muted, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0 } }, Icon.xmark)), /* @__PURE__ */ React.createElement("div", { ref: scrollRef, style: { flex: 1, overflowY: "auto", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10 } }, messages.length === 0 && !loading && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: pp.muted, lineHeight: 1.6, marginTop: 10 } }, 'Ask something like "which day next week is busiest?" or "how should I study for my calc exam," paste your notes and ask for flashcards or a quiz, or tell me to add a task or move something on your calendar.'), messages.map((m, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "85%", display: "flex", flexDirection: "column", gap: 6 } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "9px 13px", borderRadius: 12, fontSize: 13, lineHeight: 1.5, background: m.role === "user" ? pp.card2 : T.lime + "14", color: pp.text, border: m.role === "user" ? `1px solid ${pp.border}` : `1px solid ${T.lime}33`, borderLeft: m.role === "ai" ? `3px solid ${STUDLIN_AI_MSG_KIND_ACCENT[m.kind] || T.lime}` : void 0 } }, m.text), m.proposal && m.proposal.disambiguate && !m.proposal.resolved && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, m.proposal.disambiguate.map((c) => /* @__PURE__ */ React.createElement(
       "button",
       {
         key: c.id,
@@ -19576,6 +19659,7 @@ function App() {
     syllabusScan: "Syllabus & schedule scans are a Pro feature.",
     screenshotScan: "Screenshot imports are a Pro feature.",
     studlinAiQna: "Studlin AI is a Pro feature.",
+    studyMaterialGen: "AI flashcards & practice quizzes are a Pro feature.",
     // 2026-08-22 intelligence audit fix: every reason above assumed the
     // student wasn't Pro yet -- wrong copy for an already-Pro student who
     // simply used a lot of a feature this month (the shared AI-spend

@@ -664,3 +664,82 @@ describe("studlinAiSessionTimelineSpec", () => {
     assert.equal(m.studlinAiSessionTimelineSpec({ ok: true, kind: "move_flex_task", moved: [] }), null);
   });
 });
+
+describe("buildGenerateStudyMaterialProposal", () => {
+  const LONG_MATERIAL =
+    "Mitochondria are the powerhouse of the cell. They produce ATP through cellular respiration, using oxygen to break down glucose into usable energy for every other process the cell performs, from protein synthesis to active transport across the membrane.";
+
+  test("too-short material is rejected before ever proposing anything", () => {
+    const m = loadStudlinModule();
+    const proposal = m.buildGenerateStudyMaterialProposal({ genFormat: "flashcards" }, "quiz me on chapter 3");
+    assert.equal(proposal.ok, false);
+    assert.match(proposal.label, /too short/);
+  });
+
+  test("real pasted material with no identifiable subject -> a real proposal, subject null", () => {
+    const m = loadStudlinModule();
+    const proposal = m.buildGenerateStudyMaterialProposal({ genFormat: "flashcards" }, LONG_MATERIAL);
+    assert.equal(proposal.ok, true);
+    assert.equal(proposal.kind, "generate_study_material");
+    assert.equal(proposal.genFormat, "flashcards");
+    assert.equal(proposal.subject, null);
+    assert.equal(proposal.materialText, LONG_MATERIAL);
+    assert.match(proposal.label, /Generate flashcards from this\?/);
+  });
+
+  test("material mentioning a real subject the student already has -> subject identified, label names it", () => {
+    const m = loadStudlinModule();
+    m.saveSubjects([{ id: "s1", label: "Biology" }]);
+    const proposal = m.buildGenerateStudyMaterialProposal({ genFormat: "quiz" }, "Biology notes: " + LONG_MATERIAL);
+    assert.equal(proposal.ok, true);
+    assert.equal(proposal.subject, "Biology");
+    assert.match(proposal.label, /Generate a practice quiz from this for Biology\?/);
+  });
+
+  test("genFormat defaults to flashcards for anything other than the literal string quiz", () => {
+    const m = loadStudlinModule();
+    const proposal = m.buildGenerateStudyMaterialProposal({ genFormat: null }, LONG_MATERIAL);
+    assert.equal(proposal.genFormat, "flashcards");
+  });
+});
+
+describe("matchSubjectInMaterialText", () => {
+  test("no subjects at all -> null, never throws", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.matchSubjectInMaterialText("some real material about photosynthesis"), null);
+  });
+
+  test("case-insensitive substring match against a real saved subject", () => {
+    const m = loadStudlinModule();
+    m.saveSubjects([{ id: "s1", label: "Chemistry" }]);
+    assert.equal(m.matchSubjectInMaterialText("my CHEMISTRY notes on covalent bonds"), "Chemistry");
+  });
+
+  test("no real subject mentioned -> null, not a false match", () => {
+    const m = loadStudlinModule();
+    m.saveSubjects([{ id: "s1", label: "Chemistry" }]);
+    assert.equal(m.matchSubjectInMaterialText("notes on covalent bonds and electronegativity"), null);
+  });
+});
+
+describe("buildStudlinAiActionProposal: generate_study_material dispatch", () => {
+  test("routes to buildGenerateStudyMaterialProposal with the raw text, not anything from parsed", () => {
+    const m = loadStudlinModule({ now: "2026-09-14T08:00:00" });
+    const prefs = m.getSchedulePreferences();
+    const parsed = { intent: "generate_study_material", genFormat: "quiz", title: null };
+    const rawText =
+      "Here's my notes: photosynthesis converts light energy into chemical energy stored in glucose, using chlorophyll in the chloroplast to capture photons from sunlight. The overall reaction consumes carbon dioxide and water, releasing oxygen as a byproduct of the light-dependent reactions.";
+    const proposal = m.buildStudlinAiActionProposal(parsed, [], [], prefs, null, rawText);
+    assert.equal(proposal.ok, true);
+    assert.equal(proposal.kind, "generate_study_material");
+    assert.equal(proposal.materialText, rawText);
+  });
+
+  test("no rawText passed (e.g. a disambiguation re-entry) -> rejected as too short, never throws", () => {
+    const m = loadStudlinModule({ now: "2026-09-14T08:00:00" });
+    const prefs = m.getSchedulePreferences();
+    const parsed = { intent: "generate_study_material", genFormat: "flashcards" };
+    const proposal = m.buildStudlinAiActionProposal(parsed, [], [], prefs, null, undefined);
+    assert.equal(proposal.ok, false);
+  });
+});
