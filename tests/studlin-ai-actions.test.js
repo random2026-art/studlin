@@ -35,6 +35,54 @@ describe("buildCreateTaskProposal", () => {
     assert.equal(proposal.tasks[0].deadline, "2026-09-25");
   });
 
+  test("taskKind:exam creates a real exam marker, not a study block", () => {
+    const m = loadStudlinModule({ now: "2026-09-14T08:00:00" });
+    const prefs = m.getSchedulePreferences();
+    const parsed = { title: "Chem Final", dueDate: "2026-09-20", taskKind: "exam" };
+    const proposal = m.buildCreateTaskProposal(parsed, [], [], prefs);
+    assert.equal(proposal.ok, true);
+    assert.equal(proposal.tasks[0].kind, "exam");
+    assert.equal(proposal.tasks[0].date, "2026-09-20");
+  });
+
+  test("taskKind:event with a real time creates a fixed busy block at that exact time", () => {
+    const m = loadStudlinModule({ now: "2026-09-14T08:00:00" });
+    const prefs = m.getSchedulePreferences();
+    const parsed = { title: "Dentist Appointment", dueDate: "2026-09-15", dueTime: "15:00", taskKind: "event" };
+    const proposal = m.buildCreateTaskProposal(parsed, [], [], prefs);
+    assert.equal(proposal.ok, true);
+    assert.equal(proposal.tasks[0].kind, "busy block");
+    assert.equal(proposal.tasks[0].date, "2026-09-15");
+    assert.equal(proposal.tasks[0].time, "15:00");
+  });
+
+  test("taskKind:reminder creates a reminder, not a scheduled work block", () => {
+    const m = loadStudlinModule({ now: "2026-09-14T08:00:00" });
+    const prefs = m.getSchedulePreferences();
+    const parsed = { title: "Email Professor", dueDate: "2026-09-15", taskKind: "reminder" };
+    const proposal = m.buildCreateTaskProposal(parsed, [], [], prefs);
+    assert.equal(proposal.ok, true);
+    assert.equal(proposal.tasks[0].kind, "reminder");
+  });
+
+  test("taskKind:project still produces a real marker even with no phases/outline given, degrading the same way a phase-less Brain Dump project does", () => {
+    const m = loadStudlinModule({ now: "2026-09-14T08:00:00" });
+    const prefs = m.getSchedulePreferences();
+    const parsed = { title: "History Project", dueDate: "2026-09-25", taskKind: "project" };
+    const proposal = m.buildCreateTaskProposal(parsed, [], [], prefs);
+    assert.equal(proposal.ok, true);
+    assert.ok(proposal.tasks.length >= 1);
+  });
+
+  test("an unrecognized taskKind defaults to study, never crashes or silently no-ops", () => {
+    const m = loadStudlinModule({ now: "2026-09-14T08:00:00" });
+    const prefs = m.getSchedulePreferences();
+    const parsed = { title: "Something", dueDate: "2026-09-20", taskKind: "bogus" };
+    const proposal = m.buildCreateTaskProposal(parsed, [], [], prefs);
+    assert.equal(proposal.ok, true);
+    assert.equal(proposal.tasks[0].kind, "study block");
+  });
+
   test("a study task with zero room before its own deadline degrades to a to-do instead of vanishing or violating the deadline", () => {
     const m = loadStudlinModule({ now: "2026-09-14T08:00:00" });
     const prefs = m.getSchedulePreferences();
