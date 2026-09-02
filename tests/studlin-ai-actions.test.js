@@ -567,3 +567,100 @@ describe("formatStudlinAiCoachingPrompt", () => {
     assert.match(prompt, /STUDENT'S MESSAGE: help me get motivated/);
   });
 });
+
+describe("buildCreateTaskProposal: exam creation now proposes real spaced study sessions", () => {
+  test("an exam 10+ days out gets more than one real session, not the flat default of exactly 1", () => {
+    const m = loadStudlinModule({ now: "2026-09-14T08:00:00" });
+    const prefs = m.getSchedulePreferences();
+    const parsed = { title: "Chem Final", dueDate: "2026-09-28", taskKind: "exam" };
+    const proposal = m.buildCreateTaskProposal(parsed, [], [], prefs);
+    assert.equal(proposal.ok, true);
+    const sessions = proposal.tasks.filter((t) => t.isExamPrepSession);
+    assert.ok(sessions.length > 1, "a 14-day runway should produce more than a single cram session");
+    sessions.forEach((s) => {
+      assert.equal(s.kind, "study block");
+      assert.ok(s.date <= "2026-09-28", "no session should be scheduled after the exam itself");
+    });
+  });
+
+  test("the proposal label includes a real session-count summary, not just the exam marker line", () => {
+    const m = loadStudlinModule({ now: "2026-09-14T08:00:00" });
+    const prefs = m.getSchedulePreferences();
+    const parsed = { title: "Chem Final", dueDate: "2026-09-28", taskKind: "exam" };
+    const proposal = m.buildCreateTaskProposal(parsed, [], [], prefs);
+    assert.match(proposal.label, /study session/);
+    assert.match(proposal.label, /scheduled between now and the exam/);
+  });
+
+  test("a non-exam create_task (study/todo/etc) never gets sessions proposed", () => {
+    const m = loadStudlinModule({ now: "2026-09-14T08:00:00" });
+    const prefs = m.getSchedulePreferences();
+    const parsed = { title: "Finish essay", dueDate: "2026-09-28", taskKind: "study" };
+    const proposal = m.buildCreateTaskProposal(parsed, [], [], prefs);
+    const sessions = proposal.tasks.filter((t) => t.isExamPrepSession);
+    assert.equal(sessions.length, 0);
+  });
+});
+
+describe("describeExamSessionPlan", () => {
+  test("no exam-prep sessions in the batch -> null", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.describeExamSessionPlan([{ kind: "exam", isExamPrepSession: undefined }], { heavyDayKeys: [] }), null);
+  });
+
+  test("real sessions -> a count summary, always present", () => {
+    const m = loadStudlinModule();
+    const tasks = [
+      { isExamPrepSession: true, date: "2026-09-16", time: "10:00", placementReason: null },
+      { isExamPrepSession: true, date: "2026-09-20", time: "10:00", placementReason: null },
+    ];
+    const summary = m.describeExamSessionPlan(tasks, { heavyDayKeys: [] });
+    assert.match(summary, /2 study sessions scheduled between now and the exam\./);
+  });
+
+  test("a session on a real heavy day gets flagged, not silently hidden", () => {
+    const m = loadStudlinModule();
+    const tasks = [
+      { isExamPrepSession: true, date: "2026-09-16", time: "10:00", placementReason: null },
+    ];
+    const summary = m.describeExamSessionPlan(tasks, { heavyDayKeys: ["2026-09-16"] });
+    assert.match(summary, /already busy day/);
+  });
+
+  test("no heavy-day overlap -> no false heads-up", () => {
+    const m = loadStudlinModule();
+    const tasks = [
+      { isExamPrepSession: true, date: "2026-09-16", time: "10:00", placementReason: null },
+    ];
+    const summary = m.describeExamSessionPlan(tasks, { heavyDayKeys: ["2026-09-20"] });
+    assert.doesNotMatch(summary, /already busy day/);
+  });
+});
+
+describe("studlinAiSessionTimelineSpec", () => {
+  test("a create_task proposal with real sessions returns them sorted chronologically", () => {
+    const m = loadStudlinModule();
+    const proposal = {
+      ok: true, kind: "create_task",
+      tasks: [
+        { isExamPrepSession: true, date: "2026-09-20", time: "10:00" },
+        { isExamPrepSession: true, date: "2026-09-16", time: "10:00" },
+      ],
+    };
+    const sessions = m.studlinAiSessionTimelineSpec(proposal);
+    assert.equal(sessions.length, 2);
+    assert.equal(sessions[0].date, "2026-09-16");
+    assert.equal(sessions[1].date, "2026-09-20");
+  });
+
+  test("a create_task proposal with no sessions returns null", () => {
+    const m = loadStudlinModule();
+    const proposal = { ok: true, kind: "create_task", tasks: [{ isExamPrepSession: false, date: "2026-09-16", time: "09:00" }] };
+    assert.equal(m.studlinAiSessionTimelineSpec(proposal), null);
+  });
+
+  test("a non-create_task proposal always returns null", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.studlinAiSessionTimelineSpec({ ok: true, kind: "move_flex_task", moved: [] }), null);
+  });
+});

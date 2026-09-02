@@ -4650,15 +4650,37 @@ function describeCreateProposal(task) {
   const when = task.time ? task.date + " " + task.time + (task.duration ? " (" + task.duration + " min)" : "") : task.date ? "due " + task.date : "no date yet";
   return 'Add "' + task.title + '" -- ' + when + "?";
 }
+function describeExamSessionPlan(tasks, digest) {
+  const sessions = (tasks || []).filter((t) => t.isExamPrepSession);
+  if (sessions.length === 0) return null;
+  const lines = [sessions.length + " study session" + (sessions.length !== 1 ? "s" : "") + " scheduled between now and the exam."];
+  const reasoned = sessions.filter((s) => s.placementReason).map((s) => fmtPlacementReason(s.placementReason, s.time));
+  if (reasoned.length > 0) lines.push(reasoned[0]);
+  const heavyDates = new Set(digest && digest.heavyDayKeys || []);
+  const onHeavyDay = sessions.filter((s) => heavyDates.has(s.date));
+  if (onHeavyDay.length > 0) lines.push(onHeavyDay.length + " session" + (onHeavyDay.length !== 1 ? "s land" : " lands") + " on an already busy day -- still fits, just a heads-up.");
+  return lines.join(" ");
+}
 const STUDLIN_AI_CREATE_TASK_KINDS = /* @__PURE__ */ new Set(["study", "todo", "event", "reminder", "exam", "project"]);
 function buildCreateTaskProposal(parsed, events, routines, prefs) {
   const kind = STUDLIN_AI_CREATE_TASK_KINDS.has(parsed.taskKind) ? parsed.taskKind : "study";
-  const item = { title: parsed.title, kind, dueDate: parsed.dueDate || null, dueTime: parsed.dueTime || null, durationMin: parsed.durationMin || null, phases: [], proposeSessions: false };
+  const isExam = kind === "exam";
+  let sessionCount;
+  if (isExam && parsed.dueDate) {
+    const daysUntil = Math.round((/* @__PURE__ */ new Date(parsed.dueDate + "T12:00:00") - /* @__PURE__ */ new Date(dayKey() + "T12:00:00")) / 864e5);
+    sessionCount = defaultSessionCountFor("major", null, daysUntil);
+  }
+  const item = { title: parsed.title, kind, dueDate: parsed.dueDate || null, dueTime: parsed.dueTime || null, durationMin: parsed.durationMin || null, phases: [], proposeSessions: isExam, sessionCount };
   const { tasks, unplaced } = planBrainDumpTasks([item], events, routines, prefs);
   if (tasks.length === 0) return { ok: false, label: `Couldn't find room for "` + parsed.title + '" -- try a different date.' };
   const primary = tasks[0];
   const degraded = unplaced.some((t) => t.title === primary.title);
-  return { ok: true, kind: "create_task", tasks, label: describeCreateProposal(primary) + (degraded ? " (no open slot found -- added as a to-do instead)" : "") };
+  let label = describeCreateProposal(primary) + (degraded ? " (no open slot found -- added as a to-do instead)" : "");
+  if (isExam) {
+    const sessionSummary = describeExamSessionPlan(tasks, assembleStudlinAiDigest(events, routines, prefs, dayKey()));
+    if (sessionSummary) label = label + " " + sessionSummary;
+  }
+  return { ok: true, kind: "create_task", tasks, label };
 }
 function buildDeleteProposal(parsed, forcedId) {
   const targetDate = parsed.targetDate || dayKey();
@@ -4721,6 +4743,12 @@ function studlinAiProposalPreviewSpec(proposal) {
     return { dateKey: m.newDate, proposedBlock: { title: m.title, time: m.newTime, duration: m.newDuration || 30 } };
   }
   return null;
+}
+function studlinAiSessionTimelineSpec(proposal) {
+  if (!proposal || !proposal.ok || proposal.kind !== "create_task") return null;
+  const sessions = (proposal.tasks || []).filter((t) => t.isExamPrepSession && t.date && t.time);
+  if (sessions.length === 0) return null;
+  return sessions.map((s) => ({ date: s.date, time: s.time })).sort((a, b) => a.date === b.date ? a.time < b.time ? -1 : 1 : a.date < b.date ? -1 : 1);
 }
 function commitStudlinAiTasks(tasks) {
   const events = lsGet("events", []);
@@ -10164,6 +10192,16 @@ function StudlinAiMiniDayPreview({ dateKey, proposedBlock }) {
     return /* @__PURE__ */ React.createElement("div", { key: ev.id, style: { position: "absolute", top: topPx, left: `calc(${leftPct}% + 1px)`, width: `calc(${widthPct}% - 2px)`, height: heightPx, borderRadius: 5, padding: "2px 6px", overflow: "hidden", boxSizing: "border-box", background: color + "22", border: ev.__proposed ? `1.5px dashed ${color}` : `1px solid ${color}55`, display: "flex", flexDirection: "column", justifyContent: "center" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9.5, fontWeight: 700, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.title), heightPx > 22 && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 8.5, color: T.muted } }, fmtClock12(ev.time)));
   })));
 }
+function StudlinAiMiniSessionTimeline({ sessions }) {
+  const pp = panelPalette();
+  if (!sessions || sessions.length === 0) return null;
+  return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, overflowX: "auto", marginTop: 6, paddingBottom: 2 } }, sessions.map((s, i) => {
+    const d = /* @__PURE__ */ new Date(s.date + "T12:00:00");
+    const wd = d.toLocaleDateString("en-US", { weekday: "short" });
+    const md = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    return /* @__PURE__ */ React.createElement("div", { key: i, style: { flexShrink: 0, minWidth: 52, textAlign: "center", padding: "6px 7px", borderRadius: 8, background: pp.card2, border: `1px solid ${T.lime}55` } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 8.5, color: pp.muted, fontWeight: 600, textTransform: "uppercase" } }, wd), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.text, fontWeight: 700 } }, md));
+  }));
+}
 function StudlinAiBubble({ onClick, hasProactive }) {
   return /* @__PURE__ */ React.createElement(
     "button",
@@ -10411,6 +10449,9 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
     ))), m.proposal && m.proposal.ok && !m.proposal.resolved && (() => {
       const spec = studlinAiProposalPreviewSpec(m.proposal);
       return spec ? /* @__PURE__ */ React.createElement(StudlinAiMiniDayPreview, { dateKey: spec.dateKey, proposedBlock: spec.proposedBlock }) : null;
+    })(), m.proposal && m.proposal.ok && !m.proposal.resolved && (() => {
+      const sessions = studlinAiSessionTimelineSpec(m.proposal);
+      return sessions ? /* @__PURE__ */ React.createElement(StudlinAiMiniSessionTimeline, { sessions }) : null;
     })(), m.proposal && m.proposal.ok && !m.proposal.resolved && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(
       "button",
       {

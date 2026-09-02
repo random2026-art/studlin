@@ -154,6 +154,7 @@ function loadStudlinModule(options) {
     "buildDeleteProposal","buildSetPeakHoursProposal","commitStudlinAiPeakHours","deriveStudlinAiProactiveSignal",
     "buildStudlinAiChatHistory","STUDLIN_AI_HISTORY_MAX_MESSAGES","studlinAiProposalPreviewSpec",
     "gatherStudlinAiCoachingContext","formatStudlinAiCoachingPrompt",
+    "describeExamSessionPlan","studlinAiSessionTimelineSpec",
     "getRoutineOverrides","saveRoutineOverrides","expandRoutineOccurrences",
     "findFragmentedRoutineGroups","mergeFragmentedRoutineGroup","mergeDuplicateRoutines",
     "getHolidays","saveHolidays","isHoliday","getWakeSleep","saveWakeSleep",

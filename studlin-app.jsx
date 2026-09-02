@@ -7451,27 +7451,64 @@ function describeCreateProposal(task){
   const when=task.time?(task.date+" "+task.time+(task.duration?" ("+task.duration+" min)":"")):(task.date?"due "+task.date:"no date yet");
   return"Add \""+task.title+"\" -- "+when+"?";
 }
+// Turns a batch of built tasks (from planBrainDumpTasks, exam branch)
+// into a plain-English summary of the real spaced study-session plan --
+// count/spacing plus, when the reliability engine actually changed
+// where a session landed, the SAME real reason text fmtPlacementReason
+// already generates elsewhere (never invented fresh for this: each
+// session's own placementReason comes straight from buildExamSessionEvents/
+// findReliableSlotFor). Also flags when a session lands on a day the
+// digest already knows is heavier than usual -- real data, not a guess.
+function describeExamSessionPlan(tasks,digest){
+  const sessions=(tasks||[]).filter(t=>t.isExamPrepSession);
+  if(sessions.length===0)return null;
+  const lines=[sessions.length+" study session"+(sessions.length!==1?"s":"")+" scheduled between now and the exam."];
+  const reasoned=sessions.filter(s=>s.placementReason).map(s=>fmtPlacementReason(s.placementReason,s.time));
+  if(reasoned.length>0)lines.push(reasoned[0]);
+  const heavyDates=new Set((digest&&digest.heavyDayKeys)||[]);
+  const onHeavyDay=sessions.filter(s=>heavyDates.has(s.date));
+  if(onHeavyDay.length>0)lines.push(onHeavyDay.length+" session"+(onHeavyDay.length!==1?"s land":" lands")+" on an already busy day -- still fits, just a heads-up.");
+  return lines.join(" ");
+}
 // Wraps planBrainDumpTasks at single-item granularity -- the exact same
 // call shape expandBrainDumpItem already proves safe and reusable.
 // taskKind mirrors Brain Dump's own item kinds (study/todo/event/
 // reminder/exam/project) -- unrecognized/missing defaults to "study",
-// the most common "add me a task" case. Exam prep sessions are
-// deliberately never auto-proposed here (proposeSessions stays false --
-// that's a real, separate decision with its own review UI in Prep, not
-// something to default to from one chat message) and project creation
-// always passes empty phases/outline -- buildAssignmentAttackBlockPair
-// already degrades a phase-less project to a real marker plus an
-// unphased Attack Block rather than failing (see its own comment),
-// exactly the same degrade a phase-less Brain Dump project gets.
+// the most common "add me a task" case. Project creation always passes
+// empty phases/outline -- buildAssignmentAttackBlockPair already
+// degrades a phase-less project to a real marker plus an unphased
+// Attack Block rather than failing (see its own comment), exactly the
+// same degrade a phase-less Brain Dump project gets.
+//
+// An exam DOES get real spaced study sessions proposed by default now
+// (proposeSessions:true) -- this was deliberately off in Phase 2
+// ("that's a real, separate decision... not something to default to
+// from one chat message"), reversed here on explicit request: a chat
+// assistant that can only log a due date and never actually help
+// prepare for it is the weak version of this feature. sessionCount is
+// derived the same real way the rest of the app already does
+// (defaultSessionCountFor, daysUntil-driven) rather than
+// planBrainDumpTasks' own flat fallback of 4.
 const STUDLIN_AI_CREATE_TASK_KINDS=new Set(["study","todo","event","reminder","exam","project"]);
 function buildCreateTaskProposal(parsed,events,routines,prefs){
   const kind=STUDLIN_AI_CREATE_TASK_KINDS.has(parsed.taskKind)?parsed.taskKind:"study";
-  const item={title:parsed.title,kind,dueDate:parsed.dueDate||null,dueTime:parsed.dueTime||null,durationMin:parsed.durationMin||null,phases:[],proposeSessions:false};
+  const isExam=kind==="exam";
+  let sessionCount;
+  if(isExam&&parsed.dueDate){
+    const daysUntil=Math.round((new Date(parsed.dueDate+"T12:00:00")-new Date(dayKey()+"T12:00:00"))/86400000);
+    sessionCount=defaultSessionCountFor("major",null,daysUntil);
+  }
+  const item={title:parsed.title,kind,dueDate:parsed.dueDate||null,dueTime:parsed.dueTime||null,durationMin:parsed.durationMin||null,phases:[],proposeSessions:isExam,sessionCount};
   const{tasks,unplaced}=planBrainDumpTasks([item],events,routines,prefs);
   if(tasks.length===0)return{ok:false,label:"Couldn't find room for \""+parsed.title+"\" -- try a different date."};
   const primary=tasks[0];
   const degraded=unplaced.some(t=>t.title===primary.title);
-  return{ok:true,kind:"create_task",tasks,label:describeCreateProposal(primary)+(degraded?" (no open slot found -- added as a to-do instead)":"")};
+  let label=describeCreateProposal(primary)+(degraded?" (no open slot found -- added as a to-do instead)":"");
+  if(isExam){
+    const sessionSummary=describeExamSessionPlan(tasks,assembleStudlinAiDigest(events,routines,prefs,dayKey()));
+    if(sessionSummary)label=label+" "+sessionSummary;
+  }
+  return{ok:true,kind:"create_task",tasks,label};
 }
 // Delete via chat. No new write logic at all -- the actual removal is
 // App()'s own deleteEventFromDetail (threaded down as onDeleteEvent),
@@ -7574,6 +7611,19 @@ function studlinAiProposalPreviewSpec(proposal){
     return{dateKey:m.newDate,proposedBlock:{title:m.title,time:m.newTime,duration:m.newDuration||30}};
   }
   return null;
+}
+// A create_task exam proposal (see buildCreateTaskProposal) can carry
+// several real spaced study sessions, not just the due-date marker --
+// the single-day mini preview above only ever shows one day, so this
+// pulls out the session dates for a horizontal timeline strip instead
+// (StudlinAiMiniSessionTimeline), sorted chronologically. Returns null
+// when there are no real sessions to show (a plain exam marker with no
+// sessions proposed, or any other proposal kind).
+function studlinAiSessionTimelineSpec(proposal){
+  if(!proposal||!proposal.ok||proposal.kind!=="create_task")return null;
+  const sessions=(proposal.tasks||[]).filter(t=>t.isExamPrepSession&&t.date&&t.time);
+  if(sessions.length===0)return null;
+  return sessions.map(s=>({date:s.date,time:s.time})).sort((a,b)=>a.date===b.date?(a.time<b.time?-1:1):(a.date<b.date?-1:1));
 }
 // Top-level commit helpers for the proposals above -- commitTasks and
 // confirmPausePlan (both CalendarTab closures) are unreachable from
@@ -16372,6 +16422,32 @@ function StudlinAiMiniDayPreview({dateKey,proposedBlock}){
     </div>
   );
 }
+// Horizontal strip of compact date chips for an exam proposal's real
+// spaced study sessions (see studlinAiSessionTimelineSpec/
+// buildCreateTaskProposal) -- "6 sessions between now and your exam"
+// reads as an actual shape at a glance instead of a sentence naming 6
+// dates. Deliberately its own small component rather than reusing
+// StudlinAiMiniDayPreview -- a day preview answers "where does this
+// land today," this answers "what does the whole plan look like."
+function StudlinAiMiniSessionTimeline({sessions}){
+  const pp=panelPalette();
+  if(!sessions||sessions.length===0)return null;
+  return (
+    <div style={{display:"flex",gap:6,overflowX:"auto",marginTop:6,paddingBottom:2}}>
+      {sessions.map((s,i)=>{
+        const d=new Date(s.date+"T12:00:00");
+        const wd=d.toLocaleDateString("en-US",{weekday:"short"});
+        const md=d.toLocaleDateString("en-US",{month:"short",day:"numeric"});
+        return (
+          <div key={i} style={{flexShrink:0,minWidth:52,textAlign:"center",padding:"6px 7px",borderRadius:8,background:pp.card2,border:`1px solid ${T.lime}55`}}>
+            <div style={{fontSize:8.5,color:pp.muted,fontWeight:600,textTransform:"uppercase"}}>{wd}</div>
+            <div style={{fontSize:10.5,color:T.text,fontWeight:700}}>{md}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 function StudlinAiBubble({onClick,hasProactive}){
   return (
@@ -16718,6 +16794,10 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
               {m.proposal&&m.proposal.ok&&!m.proposal.resolved&&(()=>{
                 const spec=studlinAiProposalPreviewSpec(m.proposal);
                 return spec?<StudlinAiMiniDayPreview dateKey={spec.dateKey} proposedBlock={spec.proposedBlock} />:null;
+              })()}
+              {m.proposal&&m.proposal.ok&&!m.proposal.resolved&&(()=>{
+                const sessions=studlinAiSessionTimelineSpec(m.proposal);
+                return sessions?<StudlinAiMiniSessionTimeline sessions={sessions} />:null;
               })()}
               {m.proposal&&m.proposal.ok&&!m.proposal.resolved&&(
                 <div style={{display:"flex",gap:8}}>
