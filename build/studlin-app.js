@@ -649,6 +649,30 @@ function courseItemCount(sub) {
   const matches = (item) => item.courseId === sub.id || item.subject === sub.label;
   return getWeeklyRoutine().filter(matches).length + lsGet("events", []).filter(matches).length;
 }
+function routineMeetingsOverlap(a, b) {
+  if (!a || !b || !a.days || !b.days) return false;
+  if (!a.days.some((d) => b.days.includes(d))) return false;
+  const aStart = timeToMinutes(a.startTime), aEnd = aStart + (a.duration || 0);
+  const bStart = timeToMinutes(b.startTime), bEnd = bStart + (b.duration || 0);
+  return aStart < bEnd && bStart < aEnd;
+}
+function newMeetingTimesForCourse(courseId, subjectLabel, meetingTimes, routine) {
+  const norm = normalizeCourseLabel(subjectLabel);
+  const existing = routine.filter((r) => r.kind === "class" && (r.courseId === courseId || !r.courseId && normalizeCourseLabel(r.subject || r.title || "") === norm));
+  return (meetingTimes || []).filter((mt) => !existing.some((r) => routineMeetingsOverlap(r, mt)));
+}
+function dedupCourseClassRoutines(routine, keepId) {
+  const mine = routine.filter((r) => r.kind === "class" && r.courseId === keepId);
+  const others = routine.filter((r) => !(r.kind === "class" && r.courseId === keepId));
+  const clusters = [];
+  mine.forEach((r) => {
+    const hit = clusters.find((c) => c.some((m) => routineMeetingsOverlap(m, r)));
+    if (hit) hit.push(r);
+    else clusters.push([r]);
+  });
+  const survivors = clusters.map((c) => c.reduce((a, b) => a.id < b.id ? a : b));
+  return [...others, ...survivors];
+}
 function mergeCourses(keepId, mergeIds) {
   const subjects = getSubjects();
   const keep = subjects.find((s) => s.id === keepId);
@@ -657,7 +681,8 @@ function mergeCourses(keepId, mergeIds) {
   if (mergeSubjects.length === 0) return null;
   const mergeLabels = new Set(mergeSubjects.map((s) => s.label));
   const matches = (item) => mergeIds.includes(item.courseId) || !item.courseId && mergeLabels.has(item.subject);
-  saveWeeklyRoutine(getWeeklyRoutine().map((r) => matches(r) ? { ...r, courseId: keepId, subject: keep.label } : r));
+  const reassignedRoutine = getWeeklyRoutine().map((r) => matches(r) ? { ...r, courseId: keepId, subject: keep.label } : r);
+  saveWeeklyRoutine(dedupCourseClassRoutines(reassignedRoutine, keepId));
   lsSet("events", lsGet("events", []).map((e) => matches(e) ? { ...e, courseId: keepId, subject: keep.label } : e));
   saveSubjects(subjects.filter((s) => !mergeIds.includes(s.id)));
   return { keep, merged: mergeSubjects };
@@ -12402,14 +12427,36 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     if (!hsReview || hsReview.length === 0) return;
     const valid = hsReview.filter((p) => p.subjectName.trim() && !p.isFree);
     const freeFromClasses = hsReview.filter((p) => p.subjectName.trim() && p.isFree);
-    const newSubjects = valid.map((p) => ({ id: "subj-" + Date.now() + "-" + Math.round(Math.random() * 1e3), label: p.subjectName.trim(), color: p.color, termEnd: termEnd || null, needsSyllabus: true }));
-    saveSubjects([...getSubjects(), ...newSubjects]);
-    const routineItems = valid.map((p, i) => {
+    let subjects = getSubjects();
+    const findExistingSubject = (label) => {
+      const exact = subjects.find((s) => s.label === label);
+      if (exact) return exact;
+      const norm = normalizeCourseLabel(label);
+      return subjects.find((s) => normalizeCourseLabel(s.label) === norm) || null;
+    };
+    let routine = getWeeklyRoutine();
+    const routineItems = [];
+    valid.forEach((p) => {
+      const label = p.subjectName.trim();
+      const match = findExistingSubject(label);
+      let subjId;
+      if (match) {
+        subjId = match.id;
+      } else {
+        const newSubj = { id: "subj-" + Date.now() + "-" + Math.round(Math.random() * 1e3), label, color: p.color, termEnd: termEnd || null, needsSyllabus: true };
+        subjects = [...subjects, newSubj];
+        subjId = newSubj.id;
+      }
       const dur = Math.max(15, timeToMinutes(p.endTime) - timeToMinutes(p.startTime));
-      return { id: "rt-" + Date.now() + "-" + i, title: p.subjectName.trim(), kind: "class", subject: p.subjectName.trim(), courseId: newSubjects[i].id, days: p.days, startTime: p.startTime, duration: dur };
+      const alreadyCovered = newMeetingTimesForCourse(subjId, label, [{ days: p.days, startTime: p.startTime, duration: dur }], routine).length === 0;
+      if (alreadyCovered) return;
+      const item = { id: "rt-" + Date.now() + "-" + Math.round(Math.random() * 1e3), title: label, kind: "class", subject: label, courseId: subjId, days: p.days, startTime: p.startTime, duration: dur };
+      routine = [...routine, item];
+      routineItems.push(item);
     });
+    saveSubjects(subjects);
     const freeItems = hsFreeReview.map((f) => ({ id: f.id, title: f.title, kind: "free", days: f.days, startTime: f.startTime, duration: f.duration })).concat(freeFromClasses.map((p, i) => ({ id: "free-manual-" + Date.now() + "-" + i, title: p.subjectName.trim(), kind: "free", days: p.days, startTime: p.startTime, duration: Math.max(15, timeToMinutes(p.endTime) - timeToMinutes(p.startTime)) })));
-    saveWeeklyRoutine([...getWeeklyRoutine(), ...routineItems, ...freeItems]);
+    saveWeeklyRoutine([...routine, ...freeItems]);
     newlyCommittedIdsRef.current.push(...routineItems.map((r) => r.id));
     if (schoolStart && schoolEnd) saveHsSchoolHours({ start: schoolStart, end: schoolEnd });
     if (termStart && termEnd) saveSchoolTerm({ start: termStart, end: termEnd });
@@ -12427,11 +12474,25 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
   const commitAllToCalendar = () => {
     if (windowInvalid) return;
     let subjects = getSubjects();
-    const withIds = pendingClasses.map((cls, i) => ({ ...cls, subjId: targetCourseId && i === 0 ? targetCourseId : "subj-" + Date.now() + "-" + Math.round(Math.random() * 1e3) + "-" + cls.id }));
+    const findExistingSubject = (label) => {
+      const exact = subjects.find((s) => s.label === label);
+      if (exact) return exact;
+      const norm = normalizeCourseLabel(label);
+      return subjects.find((s) => normalizeCourseLabel(s.label) === norm) || null;
+    };
+    const withIds = pendingClasses.map((cls, i) => {
+      const forced = targetCourseId && i === 0 ? subjects.find((s) => s.id === targetCourseId) : null;
+      const match = forced || findExistingSubject(cls.name);
+      return { ...cls, subjId: match ? match.id : "subj-" + Date.now() + "-" + Math.round(Math.random() * 1e3) + "-" + cls.id, isExisting: !!match };
+    });
     let routine = getWeeklyRoutine();
     withIds.forEach((cls) => {
-      if (cls.subjId === targetCourseId) {
+      if (cls.isExisting) {
         subjects = subjects.map((s) => s.id === cls.subjId ? { ...s, needsSyllabus: false } : s);
+        const freshMeetings = newMeetingTimesForCourse(cls.subjId, cls.name, cls.meetingTimes || [], routine);
+        const routineItems2 = freshMeetings.filter((mt) => mt.days.length > 0).map((mt) => ({ id: "rt-" + Date.now() + "-" + Math.round(Math.random() * 1e3), title: cls.name, kind: "class", subject: cls.name, courseId: cls.subjId, days: mt.days, startTime: mt.startTime, duration: mt.duration }));
+        newlyCommittedIdsRef.current.push(...routineItems2.map((r) => r.id));
+        routine = [...routine, ...routineItems2];
         return;
       }
       subjects = [...subjects, { id: cls.subjId, label: cls.name, color: cls.color, termEnd: termEnd || null, needsSyllabus: classNeedsSyllabus(cls.items) }];

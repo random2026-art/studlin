@@ -997,10 +997,67 @@ function courseItemCount(sub){
   const matches=(item)=>item.courseId===sub.id||item.subject===sub.label;
   return getWeeklyRoutine().filter(matches).length+lsGet("events",[]).filter(matches).length;
 }
+// Re-scanning a class you already scanned before used to always mint a
+// brand-new "class" routine row for every meeting time, stacking on top
+// of the old one(s) -- real report: a class scanned 4 times across
+// separate sessions ended up with 4 overlapping calendar blocks, since
+// each scan's OCR read the same real meeting slightly differently
+// ("7:55-9:10am" one pass, "8-9am" another). An exact startTime match
+// would miss that; day-of-week overlap + time-range overlap is what
+// actually identifies "this is the same real meeting," which is also
+// exactly what findFragmentedRoutineGroups (~1439) deliberately does NOT
+// handle for kind:"class" -- that function excludes class rows on
+// purpose (a real MWF lecture + a real TTh recitation are two
+// legitimately separate rows, and its own match key requires an exact
+// signature anyway). This is the narrower, courseId-scoped, overlap-based
+// check that's actually safe for "same course, same real time slot."
+function routineMeetingsOverlap(a,b){
+  if(!a||!b||!a.days||!b.days)return false;
+  if(!a.days.some(d=>b.days.includes(d)))return false;
+  const aStart=timeToMinutes(a.startTime),aEnd=aStart+(a.duration||0);
+  const bStart=timeToMinutes(b.startTime),bEnd=bStart+(b.duration||0);
+  return aStart<bEnd&&bStart<aEnd;
+}
+// Filters a scanned class's meetingTimes down to only the ones NOT
+// already covered by an existing kind:"class" row for that course --
+// the actual prevention step commitAllToCalendar/commitHsSchedule call
+// before adding new routine rows for a resolved (possibly pre-existing)
+// subject. The !r.courseId label-match fallback mirrors mergeCourses'
+// own `matches()` below, so legacy pre-courseId class rows are still
+// recognized. A genuinely new meeting time (a lab added in a later scan,
+// or a real schedule change to a non-overlapping time) is never blocked
+// -- only an actual repeat of an already-covered slot is filtered out.
+function newMeetingTimesForCourse(courseId,subjectLabel,meetingTimes,routine){
+  const norm=normalizeCourseLabel(subjectLabel);
+  const existing=routine.filter(r=>r.kind==="class"&&(r.courseId===courseId||(!r.courseId&&normalizeCourseLabel(r.subject||r.title||"")===norm)));
+  return (meetingTimes||[]).filter(mt=>!existing.some(r=>routineMeetingsOverlap(r,mt)));
+}
 // Reassigns everything pointing at any of mergeIds (by courseId, or by
 // label for legacy pre-courseId data) over to keepId, then removes the
 // now-empty duplicate subject records. One-way -- only ever called from
 // an explicit, confirmed student action.
+//
+// Also cleans up the actual cause of the visible symptom (overlapping
+// calendar blocks), not just the sidebar label: once everything is
+// reassigned to keepId, its own kind:"class" rows are clustered by
+// routineMeetingsOverlap and collapsed to one survivor per cluster --
+// without this, merging two duplicate courses left the duplicate
+// meeting-time rows themselves untouched, just now sharing one course
+// name. Oldest id survives (same convention mergeFragmentedRoutineGroup
+// already uses, ~1464 -- ids are Date.now()-based, so lexicographically
+// smallest is also the original, the one any real routineOverrides/
+// routineSkips history is more likely to already reference).
+function dedupCourseClassRoutines(routine,keepId){
+  const mine=routine.filter(r=>r.kind==="class"&&r.courseId===keepId);
+  const others=routine.filter(r=>!(r.kind==="class"&&r.courseId===keepId));
+  const clusters=[];
+  mine.forEach(r=>{
+    const hit=clusters.find(c=>c.some(m=>routineMeetingsOverlap(m,r)));
+    if(hit)hit.push(r);else clusters.push([r]);
+  });
+  const survivors=clusters.map(c=>c.reduce((a,b)=>a.id<b.id?a:b));
+  return [...others,...survivors];
+}
 function mergeCourses(keepId,mergeIds){
   const subjects=getSubjects();
   const keep=subjects.find(s=>s.id===keepId);
@@ -1009,7 +1066,8 @@ function mergeCourses(keepId,mergeIds){
   if(mergeSubjects.length===0)return null;
   const mergeLabels=new Set(mergeSubjects.map(s=>s.label));
   const matches=(item)=>mergeIds.includes(item.courseId)||(!item.courseId&&mergeLabels.has(item.subject));
-  saveWeeklyRoutine(getWeeklyRoutine().map(r=>matches(r)?{...r,courseId:keepId,subject:keep.label}:r));
+  const reassignedRoutine=getWeeklyRoutine().map(r=>matches(r)?{...r,courseId:keepId,subject:keep.label}:r);
+  saveWeeklyRoutine(dedupCourseClassRoutines(reassignedRoutine,keepId));
   lsSet("events",lsGet("events",[]).map(e=>matches(e)?{...e,courseId:keepId,subject:keep.label}:e));
   saveSubjects(subjects.filter(s=>!mergeIds.includes(s.id)));
   return {keep,merged:mergeSubjects};
@@ -19723,12 +19781,46 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     // commitAllToCalendar below) -- a bell-schedule photo/paste has no
     // assignment data in it at all, so every class committed here still
     // needs a real syllabus/assignment scan of its own.
-    const newSubjects=valid.map(p=>({id:"subj-"+Date.now()+"-"+Math.round(Math.random()*1000),label:p.subjectName.trim(),color:p.color,termEnd:termEnd||null,needsSyllabus:true}));
-    saveSubjects([...getSubjects(),...newSubjects]);
-    const routineItems=valid.map((p,i)=>{
+    //
+    // Resolves each period against a subject that already exists (exact/
+    // normalized label match) before minting a new one, and skips a
+    // period whose exact day/time is already covered by an existing
+    // class row for that subject -- same prevention commitAllToCalendar
+    // uses just below, for the identical reason: re-running a
+    // whole-schedule scan on a schedule already set up used to always
+    // mint a brand-new subject AND a brand-new class routine row per
+    // period, unconditionally, stacking duplicates on every re-scan. See
+    // routineMeetingsOverlap's own comment for why an overlap check
+    // (not an exact-string time match) is what actually catches a
+    // re-scan reading the same real period slightly differently.
+    let subjects=getSubjects();
+    const findExistingSubject=(label)=>{
+      const exact=subjects.find(s=>s.label===label);
+      if(exact)return exact;
+      const norm=normalizeCourseLabel(label);
+      return subjects.find(s=>normalizeCourseLabel(s.label)===norm)||null;
+    };
+    let routine=getWeeklyRoutine();
+    const routineItems=[];
+    valid.forEach(p=>{
+      const label=p.subjectName.trim();
+      const match=findExistingSubject(label);
+      let subjId;
+      if(match){
+        subjId=match.id;
+      }else{
+        const newSubj={id:"subj-"+Date.now()+"-"+Math.round(Math.random()*1000),label,color:p.color,termEnd:termEnd||null,needsSyllabus:true};
+        subjects=[...subjects,newSubj];
+        subjId=newSubj.id;
+      }
       const dur=Math.max(15,timeToMinutes(p.endTime)-timeToMinutes(p.startTime));
-      return {id:"rt-"+Date.now()+"-"+i,title:p.subjectName.trim(),kind:"class",subject:p.subjectName.trim(),courseId:newSubjects[i].id,days:p.days,startTime:p.startTime,duration:dur};
+      const alreadyCovered=newMeetingTimesForCourse(subjId,label,[{days:p.days,startTime:p.startTime,duration:dur}],routine).length===0;
+      if(alreadyCovered)return;
+      const item={id:"rt-"+Date.now()+"-"+Math.round(Math.random()*1000),title:label,kind:"class",subject:label,courseId:subjId,days:p.days,startTime:p.startTime,duration:dur};
+      routine=[...routine,item];
+      routineItems.push(item);
     });
+    saveSubjects(subjects);
     // Free periods, kind:"free" -- same routine kind WizardHsBuilder already
     // uses (:12754), so these plug straight into the existing scheduling
     // engine's free-period handling with no new logic. hsFreeReview may
@@ -19737,7 +19829,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     // manually flagged Free Period (freeFromClasses) join the same list.
     const freeItems=hsFreeReview.map(f=>({id:f.id,title:f.title,kind:"free",days:f.days,startTime:f.startTime,duration:f.duration}))
       .concat(freeFromClasses.map((p,i)=>({id:"free-manual-"+Date.now()+"-"+i,title:p.subjectName.trim(),kind:"free",days:p.days,startTime:p.startTime,duration:Math.max(15,timeToMinutes(p.endTime)-timeToMinutes(p.startTime))})));
-    saveWeeklyRoutine([...getWeeklyRoutine(),...routineItems,...freeItems]);
+    saveWeeklyRoutine([...routine,...freeItems]);
     // Real classes only (see newlyCommittedIdsRef's own comment) -- a free
     // period isn't something worth drawing the student's eye to the way a
     // newly added class block is.
@@ -19797,20 +19889,54 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     // shared finish housekeeping (schedule prefs, term, wake/sleep,
     // onFinish) run unconditionally.
     let subjects=getSubjects();
-    // Opened from an existing course's own "Import syllabus" action
-    // (targetCourseId set) -- attach to that exact course instead of
-    // minting a new, unrelated one. quickScan only ever produces one
-    // pending class per scan, so this only ever applies to the first.
-    const withIds=pendingClasses.map((cls,i)=>({...cls,subjId:(targetCourseId&&i===0)?targetCourseId:("subj-"+Date.now()+"-"+Math.round(Math.random()*1000)+"-"+cls.id)}));
+    // Resolves each pending class against a course that already exists --
+    // either the explicit targetCourseId (opened from an existing
+    // course's own "Import syllabus" action) or an exact/normalized
+    // label match against the student's real subjects, the same
+    // "auto-attach with no confirmation needed" precedent
+    // courseIdForLabelFuzzy/ensureSubjectsForClassRoutines already
+    // establish elsewhere. Matched against a running `subjects` list
+    // (not a fresh getSubjects() re-read), same staleness reasoning
+    // ensureSubjectsForClassRoutines documents -- two pending classes in
+    // one batch resolving to the same real course need the second one to
+    // see the match the first one already found, not the id this
+    // function is about to mint for it.
+    //
+    // Without this, re-scanning a class you already have (a second
+    // onboarding pass, or "Scan syllabus" run again later) always minted
+    // a brand-new subject and brand-new meeting-time rows on top of the
+    // old ones -- a real report showed one class scanned 4 separate
+    // times ending up as 4 sidebar entries with 4 overlapping calendar
+    // blocks. See routineMeetingsOverlap's own comment for why an exact
+    // startTime match wasn't the right prevention check either (two
+    // scans of the same real meeting rarely OCR to the identical string).
+    const findExistingSubject=(label)=>{
+      const exact=subjects.find(s=>s.label===label);
+      if(exact)return exact;
+      const norm=normalizeCourseLabel(label);
+      return subjects.find(s=>normalizeCourseLabel(s.label)===norm)||null;
+    };
+    const withIds=pendingClasses.map((cls,i)=>{
+      const forced=(targetCourseId&&i===0)?subjects.find(s=>s.id===targetCourseId):null;
+      const match=forced||findExistingSubject(cls.name);
+      return{...cls,subjId:match?match.id:("subj-"+Date.now()+"-"+Math.round(Math.random()*1000)+"-"+cls.id),isExisting:!!match};
+    });
     let routine=getWeeklyRoutine();
     withIds.forEach(cls=>{
-      if(cls.subjId===targetCourseId){
-        // Attaching a syllabus scan to a course that already exists (the
-        // quickScan+targetCourseId path from "Import syllabus"/"Scan
-        // assignments") -- don't duplicate the subject or its meeting
-        // time, just clear the needsSyllabus nudge flag now that real
-        // deadlines/sessions are about to be committed for it below.
+      if(cls.isExisting){
+        // Attaching a syllabus scan to a course that already exists --
+        // never duplicate the subject; only add whichever of its
+        // meeting times aren't already covered by a real existing
+        // kind:"class" row for this course (newMeetingTimesForCourse),
+        // so a genuinely new lab/recitation added in a later scan still
+        // lands, but a repeat of an already-covered slot doesn't. Also
+        // clears the needsSyllabus nudge flag now that real deadlines/
+        // sessions are about to be committed for it below.
         subjects=subjects.map(s=>s.id===cls.subjId?{...s,needsSyllabus:false}:s);
+        const freshMeetings=newMeetingTimesForCourse(cls.subjId,cls.name,cls.meetingTimes||[],routine);
+        const routineItems=freshMeetings.filter(mt=>mt.days.length>0).map(mt=>({id:"rt-"+Date.now()+"-"+Math.round(Math.random()*1000),title:cls.name,kind:"class",subject:cls.name,courseId:cls.subjId,days:mt.days,startTime:mt.startTime,duration:mt.duration}));
+        newlyCommittedIdsRef.current.push(...routineItems.map(r=>r.id));
+        routine=[...routine,...routineItems];
         return;
       }
       // A whole-schedule scan only ever asks the AI for exam dates (see
