@@ -16107,7 +16107,43 @@ function formatStudlinAiDigestForPrompt(question,digest,flags,profile){
 // askQuestion checks canUseStudlinAiQna, runAction checks
 // canUseBrainDump/canUseSmartReschedule depending on the resolved intent
 // -- see StudlinAiDrawer's askQuestion/runAction/confirmProposal below.
-async function classifyStudlinAiMessage(text){
+//
+// Real conversation memory -- every call used to send only the current
+// message, with zero awareness of anything said earlier in the same
+// conversation. Confirmed as the literal cause of a real failure: "help
+// me plan for it" had no way to resolve "it" to the exam named one
+// message earlier, because that earlier message was simply never sent.
+// Bounded to the most recent messages (not the whole conversation) to
+// keep token cost sane over a long session -- 8 messages is a handful
+// of real exchanges, enough for continuity without unbounded growth.
+//
+// Consecutive same-role entries get merged into one turn before
+// sending: this drawer can legitimately produce two "ai" messages back
+// to back with no user turn between them (a proposal card immediately
+// followed by its own "Done. X" confirmation -- Confirm is a button
+// tap, not a new chat message). The Claude API requires strict
+// user/assistant alternation; a raw back-to-back pair would be
+// rejected outright, not just read oddly.
+const STUDLIN_AI_HISTORY_MAX_MESSAGES=8;
+function buildStudlinAiChatHistory(messages){
+  const trimmed=messages.slice(-STUDLIN_AI_HISTORY_MAX_MESSAGES);
+  const merged=[];
+  trimmed.forEach(m=>{
+    const t=(m.text||"").trim();
+    if(!t)return;
+    const r=m.role==="ai"?"ai":"user";
+    const last=merged[merged.length-1];
+    if(last&&last.r===r)last.t=last.t+"\n"+t;
+    else merged.push({r,t});
+  });
+  // The API requires the message list to start on a user turn -- if
+  // trimming cut the window off mid-exchange (opening on an orphaned
+  // "ai" reply with no preceding user turn still in the kept window),
+  // drop it rather than send an invalid opening turn.
+  if(merged.length&&merged[0].r==="ai")merged.shift();
+  return merged;
+}
+async function classifyStudlinAiMessage(text,history){
   const today=dayKey();
   const tomorrow=dayKey(new Date(Date.now()+86400000));
   const nextWeekSameDay=dayKey(new Date(Date.now()+7*86400000));
@@ -16153,7 +16189,7 @@ async function classifyStudlinAiMessage(text){
   // it's the same "doesn't clearly match an action" case "unsupported"
   // already covers, and misreporting it as a connection issue would be
   // actively misleading (nothing was actually unreachable).
-  const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash",format:"studlin_ai_intent"})});
+  const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[...(history||[]),{r:"user",t:prompt}],model:"flash",format:"studlin_ai_intent"})});
   const data=await res.json();
   try{
     const raw=(data.reply||"").replace(/```json?|```/g,"").trim();
@@ -16214,14 +16250,13 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
   // the data they need to act on, so the card and the action stay in
   // sync by construction rather than by a second parallel copy of state.
   const [pendingIndex,setPendingIndex]=useState(null);
-  // Holds the original message text when classifyStudlinAiMessage says a
-  // request clearly wants an action but is missing something required
-  // (its "clarify" field, e.g. "When is that due?"). The next message is
-  // combined with this text and re-classified as one, rather than trying
-  // to fill in a single remembered field -- letting the model re-read
-  // everything together is simpler and safer than hand-merging partial
-  // JSON across turns.
-  const [pendingClarification,setPendingClarification]=useState(null);
+  // Whether the previous AI message was a clarifying question ("When is
+  // that due?") -- purely a UI hint (the input placeholder) now that
+  // real conversation history is sent on every call (see
+  // buildStudlinAiChatHistory): a short reply like "next Friday"
+  // resolves against the actual prior turns, so there's no need to
+  // hand-build a combined string the way this used to.
+  const [pendingClarification,setPendingClarification]=useState(false);
   // Which proactiveSignal (by kind+suggestedBucket) has already been
   // auto-seeded into the conversation -- prevents re-pushing the same
   // still-unresolved offer every time the drawer is reopened, while
@@ -16269,7 +16304,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
   // other AI feature in this app) -- Phase 1 shipped this ungated, the
   // one AI feature reachable by Free; Studlin AI is a Pro feature end to
   // end, this closes that gap rather than leaving Q&A as the exception.
-  const askQuestion=async(text)=>{
+  const askQuestion=async(text,history)=>{
     if(!canUseStudlinAiQna()){
       setPricingOpen(canUseStudlinAiQnaReason()==="free-tier"?"studlinAiQna":"aiUsageCap");
       setMessages(m=>[...m,{role:"ai",text:"Studlin AI needs Pro. I've opened the upgrade options."}]);
@@ -16290,7 +16325,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
     const digest=assembleStudlinAiDigest(events,routines,prefs,dayKey());
     const profile=gatherStudlinAiProfileSignals(flags,prefs);
     const promptText=formatStudlinAiDigestForPrompt(text,digest,flags,profile);
-    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:promptText}],model:"standard",format:"studlin_ai"})});
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[...(history||[]),{r:"user",t:promptText}],model:"standard",format:"studlin_ai"})});
     const data=await res.json();
     // Recorded right after the real API round-trip completes, regardless
     // of res.ok -- the cost is already spent at this point, same
@@ -16349,29 +16384,31 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
     // to decide on the one already showing before asking for anything
     // else.
     if(!text||loading||pendingIndex!=null)return;
+    // Built from `messages` before the setMessages call below commits --
+    // React keeps this closure's `messages` as whatever it was for this
+    // render regardless of when the setter is called within the same
+    // synchronous function body, so this naturally excludes the message
+    // being sent right now (it becomes the final turn, appended
+    // separately below) without needing to manually slice it off.
+    const history=buildStudlinAiChatHistory(messages);
     setMessages(m=>[...m,{role:"user",text}]);
     setInput("");
     setLoading(true);
-    // Answering a clarifying question ("When is that due?") on its own
-    // ("next Friday") wouldn't classify as an action -- combine it with
-    // what was originally asked so the classifier sees the whole request
-    // together, same as if the student had just said it all at once.
-    const combinedText=pendingClarification?(pendingClarification+". "+text):text;
-    setPendingClarification(null);
+    setPendingClarification(false);
     let parsed;
     try{
-      parsed=await classifyStudlinAiMessage(combinedText);
+      parsed=await classifyStudlinAiMessage(text,history);
     }catch(e){
       setMessages(m=>[...m,{role:"ai",text:"Couldn't reach Studlin AI. Check your connection and try again."}]);
       setLoading(false);
       return;
     }
     try{
-      if(parsed.kind==="question")await askQuestion(text);
+      if(parsed.kind==="question")await askQuestion(text,history);
       else if(parsed.kind==="unsupported"){
         if(parsed.clarify){
           setMessages(m=>[...m,{role:"ai",text:parsed.clarify}]);
-          setPendingClarification(combinedText);
+          setPendingClarification(true);
         }else{
           setMessages(m=>[...m,{role:"ai",text:"I can answer questions about your schedule, or help create, move, or delete a task. Try rephrasing that."}]);
         }

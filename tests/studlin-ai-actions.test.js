@@ -373,3 +373,71 @@ describe("deriveStudlinAiProactiveSignal", () => {
     assert.equal(signal.kind, "struggling_bucket");
   });
 });
+
+describe("buildStudlinAiChatHistory", () => {
+  test("maps role:ai/user to r:ai/user, {role,text} to {r,t}", () => {
+    const m = loadStudlinModule();
+    const history = m.buildStudlinAiChatHistory([
+      { role: "user", text: "hello" },
+      { role: "ai", text: "hi there" },
+    ]);
+    assert.equal(history.length, 2);
+    assert.equal(history[0].r, "user");
+    assert.equal(history[0].t, "hello");
+    assert.equal(history[1].r, "ai");
+    assert.equal(history[1].t, "hi there");
+  });
+
+  test("merges consecutive same-role messages into one turn, since the API requires strict alternation", () => {
+    const m = loadStudlinModule();
+    // A proposal message immediately followed by its own "Done. X" --
+    // two "ai" messages with no user turn between them, the exact real
+    // shape confirmProposal produces.
+    const history = m.buildStudlinAiChatHistory([
+      { role: "user", text: "add my chem essay" },
+      { role: "ai", text: "Add \"Chem Essay\"?" },
+      { role: "ai", text: "Done. Add \"Chem Essay\"" },
+    ]);
+    assert.equal(history.length, 2);
+    assert.equal(history[0].r, "user");
+    assert.equal(history[1].r, "ai");
+    assert.match(history[1].t, /Add "Chem Essay"\?/);
+    assert.match(history[1].t, /Done\./);
+  });
+
+  test("trims to the most recent STUDLIN_AI_HISTORY_MAX_MESSAGES messages", () => {
+    const m = loadStudlinModule();
+    const messages = [];
+    for (let i = 0; i < 20; i++) messages.push({ role: i % 2 === 0 ? "user" : "ai", text: "msg" + i });
+    const history = m.buildStudlinAiChatHistory(messages);
+    const totalKept = history.reduce((n, h) => n + h.t.split("\n").length, 0);
+    assert.equal(totalKept, m.STUDLIN_AI_HISTORY_MAX_MESSAGES);
+    assert.match(history[history.length - 1].t, /msg19$/);
+  });
+
+  test("drops an orphaned leading ai turn left over after trimming, since the API requires starting on a user turn", () => {
+    const m = loadStudlinModule();
+    const messages = [
+      { role: "user", text: "u1" },
+      { role: "ai", text: "a1" },
+      { role: "ai", text: "a1b" },
+      { role: "user", text: "u2" },
+    ];
+    // A max of 2 would keep only the trailing ["a1b","u2"] slice, whose
+    // first entry is "ai" -- must be dropped, not sent as an invalid
+    // opening turn.
+    const history = m.buildStudlinAiChatHistory(messages.slice(-2));
+    assert.equal(history[0].r, "user");
+  });
+
+  test("empty-text messages are skipped entirely", () => {
+    const m = loadStudlinModule();
+    const history = m.buildStudlinAiChatHistory([
+      { role: "user", text: "real message" },
+      { role: "ai", text: "" },
+      { role: "ai", text: "   " },
+    ]);
+    assert.equal(history.length, 1);
+    assert.equal(history[0].t, "real message");
+  });
+});

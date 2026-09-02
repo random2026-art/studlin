@@ -10003,7 +10003,22 @@ function formatStudlinAiDigestForPrompt(question, digest, flags, profile) {
   lines.push("STUDENT'S QUESTION: " + question);
   return lines.join("\n");
 }
-async function classifyStudlinAiMessage(text) {
+const STUDLIN_AI_HISTORY_MAX_MESSAGES = 8;
+function buildStudlinAiChatHistory(messages) {
+  const trimmed = messages.slice(-STUDLIN_AI_HISTORY_MAX_MESSAGES);
+  const merged = [];
+  trimmed.forEach((m) => {
+    const t = (m.text || "").trim();
+    if (!t) return;
+    const r = m.role === "ai" ? "ai" : "user";
+    const last = merged[merged.length - 1];
+    if (last && last.r === r) last.t = last.t + "\n" + t;
+    else merged.push({ r, t });
+  });
+  if (merged.length && merged[0].r === "ai") merged.shift();
+  return merged;
+}
+async function classifyStudlinAiMessage(text, history) {
   const today = dayKey();
   const tomorrow = dayKey(new Date(Date.now() + 864e5));
   const nextWeekSameDay = dayKey(new Date(Date.now() + 7 * 864e5));
@@ -10036,7 +10051,7 @@ Examples:
 "update my peak hours" (no specific time of day named at all) -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"peakHours":null,"clarify":"Which time of day -- morning, midday, afternoon, or evening?"}
 "add a task to finish my essay. When is that due? next Friday" (a combined follow-up, same student message thread) -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Finish essay","dueDate":"<the real date of next Friday>","dueTime":null,"durationMin":null,"taskKind":"study","peakHours":null,"clarify":null}
 "can you move my project" (no destination day given at all, not even "sometime") -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"peakHours":null,"clarify":"What day would you like it moved to?"}`;
-  const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt }], model: "flash", format: "studlin_ai_intent" }) });
+  const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [...history || [], { r: "user", t: prompt }], model: "flash", format: "studlin_ai_intent" }) });
   const data = await res.json();
   try {
     const raw = (data.reply || "").replace(/```json?|```/g, "").trim();
@@ -10085,7 +10100,7 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [pendingIndex, setPendingIndex] = useState(null);
-  const [pendingClarification, setPendingClarification] = useState(null);
+  const [pendingClarification, setPendingClarification] = useState(false);
   const [seededProactiveKey, setSeededProactiveKey] = useState(null);
   const scrollRef = useRef(null);
   useEffect(() => {
@@ -10112,7 +10127,7 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
       return next;
     });
   }, [open, proactiveSignal, seededProactiveKey]);
-  const askQuestion = async (text) => {
+  const askQuestion = async (text, history) => {
     if (!canUseStudlinAiQna()) {
       setPricingOpen(canUseStudlinAiQnaReason() === "free-tier" ? "studlinAiQna" : "aiUsageCap");
       setMessages((m) => [...m, { role: "ai", text: "Studlin AI needs Pro. I've opened the upgrade options." }]);
@@ -10126,7 +10141,7 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
     const digest = assembleStudlinAiDigest(events, routines, prefs, dayKey());
     const profile = gatherStudlinAiProfileSignals(flags, prefs);
     const promptText = formatStudlinAiDigestForPrompt(text, digest, flags, profile);
-    const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: promptText }], model: "standard", format: "studlin_ai" }) });
+    const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [...history || [], { r: "user", t: promptText }], model: "standard", format: "studlin_ai" }) });
     const data = await res.json();
     recordStudlinAiQnaUsage();
     if (!res.ok) {
@@ -10165,25 +10180,25 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
   const send = async () => {
     const text = input.trim();
     if (!text || loading || pendingIndex != null) return;
+    const history = buildStudlinAiChatHistory(messages);
     setMessages((m) => [...m, { role: "user", text }]);
     setInput("");
     setLoading(true);
-    const combinedText = pendingClarification ? pendingClarification + ". " + text : text;
-    setPendingClarification(null);
+    setPendingClarification(false);
     let parsed;
     try {
-      parsed = await classifyStudlinAiMessage(combinedText);
+      parsed = await classifyStudlinAiMessage(text, history);
     } catch (e) {
       setMessages((m) => [...m, { role: "ai", text: "Couldn't reach Studlin AI. Check your connection and try again." }]);
       setLoading(false);
       return;
     }
     try {
-      if (parsed.kind === "question") await askQuestion(text);
+      if (parsed.kind === "question") await askQuestion(text, history);
       else if (parsed.kind === "unsupported") {
         if (parsed.clarify) {
           setMessages((m) => [...m, { role: "ai", text: parsed.clarify }]);
-          setPendingClarification(combinedText);
+          setPendingClarification(true);
         } else {
           setMessages((m) => [...m, { role: "ai", text: "I can answer questions about your schedule, or help create, move, or delete a task. Try rephrasing that." }]);
         }
