@@ -221,12 +221,16 @@ describe("Fix 4: editing an exam's gradeWeightPercent alone now re-scores its al
 describe("Fix 5: reliability now learns from when a Lock-In session actually happened, not its scheduled time", () => {
   test("the Lock-In onComplete handler derives the bucket from Date.now() minus elapsed minutes, not timerTask.time (source-level regression guard -- this closure can't be invoked directly)", () => {
     assert.ok(SOURCE.includes('const actualStart=new Date(Date.now()-mins*60000);'), "onComplete must derive the real session start from the clock, not the scheduled time");
-    assert.ok(SOURCE.includes('logCompletionOutcome("done",actualStartTime,difficultyTierOf(timerTask),timerTask.id);'), "the timer completion path must log the derived actual-start bucket, not timerTask.time");
+    assert.ok(SOURCE.includes('logCompletionOutcome("done",actualStartTime,difficultyTierOf(timerTask),timerTask.id,timerTask.subject);'), "the timer completion path must log the derived actual-start bucket, not timerTask.time");
     // The other three completion paths (checkbox, checklist, manual-minutes
     // entry) have no real elapsed-time data to derive an actual start from
     // -- they must keep using the event's own scheduled time, unchanged.
-    assert.ok(SOURCE.includes('if(target&&target.time)logCompletionOutcome("done",target.time,difficultyTierOf(target),target.id);'), "markEventDone (checkbox) must still use the event's scheduled time");
-    assert.ok(SOURCE.includes('if(evTime)logCompletionOutcome("done",evTime,difficultyTierOf(target),taskId);'), "completeTaskWithMinutes must still use the scheduled time, unchanged by this fix");
+    // (2026-09-02: all four call sites also gained a trailing subject arg
+    // for the Insights subject×time-of-day reliability matrix -- these
+    // literals were updated to match, the scheduled-time behavior itself
+    // is what this guard is actually protecting and stayed unchanged.)
+    assert.ok(SOURCE.includes('if(target&&target.time)logCompletionOutcome("done",target.time,difficultyTierOf(target),target.id,target.subject);'), "markEventDone (checkbox) must still use the event's scheduled time");
+    assert.ok(SOURCE.includes('if(evTime)logCompletionOutcome("done",evTime,difficultyTierOf(target),taskId,target.subject);'), "completeTaskWithMinutes must still use the scheduled time, unchanged by this fix");
   });
 
   test("the actual-start formula this fix uses correctly crosses into a different hour bucket than the scheduled time would have (proves the derivation is meaningful, not a no-op)", () => {
