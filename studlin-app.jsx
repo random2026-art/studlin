@@ -23714,7 +23714,15 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
                 <NumField min={5} max={480} fallback={30} value={Math.max(5,timeToMinutes(endTime)-timeToMinutes(startTime))} onChange={v=>setEndTime(minutesToTime(timeToMinutes(startTime)+v))} style={{width:"100%"}} />
               </div>
             ):(!allDay&&(
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:5,padding:"7px 10px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,boxSizing:"border-box",flexShrink:0}}>
+              // Google Calendar-inspired polish: this row's own start/end
+              // inputs were already correct (never start+duration -- that
+              // was only ever the per-day override's problem, below). What
+              // wasn't right was the box around it -- background+border
+              // made a real control read identically to a pure read-only
+              // notice row elsewhere in the app. Dropped both, kept the
+              // padding tight, closer to Google's own plain icon+text time
+              // row (no box at all, just the clock icon for affordance).
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:5,padding:"6px 2px",boxSizing:"border-box",flexShrink:0}}>
                 <div style={{display:"flex",alignItems:"center",gap:5,minWidth:0}}>
                   <TimeInput value={startTime} onChange={setStartTime} bare />
                   <span style={{color:T.muted,fontSize:11,flexShrink:0}}>–</span>
@@ -23725,6 +23733,12 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
             ))}
           </div>
           {evKind==="habit"&&showDayFields&&<div style={{fontSize:11.5,color:T.muted,marginTop:-4}}>No fixed time — Studlin fits it in wherever there's room each day.</div>}
+          {/* Google Calendar puts location right under the time row, not
+              buried at the bottom of the form -- moved here from its old
+              spot after Commute (this is the SAME field/data, just
+              repositioned; ev.location already existed, it just read as
+              missing because nobody would scroll to find it). */}
+          <Input value={location} onChange={e=>setLocation(e.target.value)} placeholder="Location (optional)" style={{padding:"7px 10px",fontSize:12}} />
           {!editRoutine&&(
             <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11.5,color:T.muted,cursor:"pointer"}}>
               <input type="checkbox" checked={allDay} onChange={e=>setAllDay(e.target.checked)} /> All day
@@ -23768,14 +23782,42 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
                         <span style={{fontWeight:600,color:T.text}}>{ROUTINE_DOW[i]}</span>
                         <span style={{color:override?T.lime:T.muted}}>{override?fmt12(override.startTime)+" · "+override.duration+"m":"same as above"}</span>
                       </div>
-                      {editingThis&&(
-                        <div style={{display:"flex",gap:6,alignItems:"center",padding:"6px 8px",flexWrap:"wrap"}}>
-                          <TimeInput value={(override&&override.startTime)||startTime} onChange={v=>setDayTimes(dt=>({...dt,[i]:{startTime:v,duration:(override&&override.duration)||sharedDur}}))} />
-                          <NumField min={5} max={480} fallback={sharedDur} value={(override&&override.duration)||sharedDur} onChange={v=>setDayTimes(dt=>({...dt,[i]:{startTime:(override&&override.startTime)||startTime,duration:v}}))} style={{width:56}} />
-                          <span style={{fontSize:10.5,color:T.muted}}>min</span>
-                          {override&&<button type="button" onClick={()=>setDayTimes(dt=>{const n={...dt};delete n[i];return n;})} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:10.5,textDecoration:"underline"}}>Reset</button>}
-                        </div>
-                      )}
+                      {editingThis&&(()=>{
+                        // Google Calendar-inspired polish: this was the
+                        // actual start+duration offender in the screenshot
+                        // (a boxed hour select, minute select, AM/PM
+                        // select, and a separate "min" NumField -- 4
+                        // cramped boxes for one time range). Switched to
+                        // the same start-end TimeInput pair the shared row
+                        // above already uses, converting to duration only
+                        // at the point of writing dayTimes -- storage
+                        // shape (dayTimes[i]={startTime,duration}) is
+                        // completely unchanged, this is UI-layer only,
+                        // same "convert at the boundary" approach
+                        // WizardCollegeBuilder already established.
+                        const curStart=(override&&override.startTime)||startTime;
+                        const curDur=(override&&override.duration)||sharedDur;
+                        const curEnd=minutesToTime(timeToMinutes(curStart)+curDur);
+                        const setOverrideRange=(newStart,newEnd)=>{
+                          const dur=Math.max(5,timeToMinutes(newEnd)-timeToMinutes(newStart));
+                          setDayTimes(dt=>({...dt,[i]:{startTime:newStart,duration:dur}}));
+                        };
+                        return (
+                          // Borderless, same as the main time row above (not
+                          // boxed) -- keeping a box here while the primary
+                          // row lost its own would read as an inconsistent
+                          // half-measure inside one modal, not a deliberate
+                          // choice.
+                          <div style={{display:"flex",gap:6,alignItems:"center",padding:"6px 8px",flexWrap:"wrap"}}>
+                            <div style={{display:"flex",alignItems:"center",gap:5}}>
+                              <TimeInput value={curStart} onChange={v=>setOverrideRange(v,curEnd)} bare />
+                              <span style={{color:T.muted,fontSize:11}}>–</span>
+                              <TimeInput value={curEnd} onChange={v=>setOverrideRange(curStart,v)} bare />
+                            </div>
+                            {override&&<button type="button" onClick={()=>setDayTimes(dt=>{const n={...dt};delete n[i];return n;})} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:10.5,textDecoration:"underline"}}>Reset</button>}
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 })}
@@ -23803,7 +23845,6 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
                 style={{width:42,background:T.card2,border:`1px solid ${T.border}`,borderRadius:5,padding:"2px 5px",color:T.text,fontSize:11,fontFamily:T.font,outline:"none"}} /> min
             </span>
           </div>
-          <Input value={location} onChange={e=>setLocation(e.target.value)} placeholder="Location (optional)" style={{padding:"7px 10px",fontSize:12}} />
           {/* Live report: an on/off toggle whose own label swapped text
               with its state ("Fixed" while OFF, "Free" while ON) read to
               users as "flip this on to make it Fixed" -- backwards from
