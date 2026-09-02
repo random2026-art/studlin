@@ -6372,6 +6372,7 @@ const AI_CALL_COST_ESTIMATES={
   flashcardGen:0.033,quizGen:0.037,examPlanBuild:0.009,
   projectBreakdown:0.011,smartReschedule:0.001,brainDump:0.014,
   aiArrange:0.006,calendarClassify:0.03,sessionFocus:0.009,
+  studlinAiQna:0.02,
 };
 const PRO_MONTHLY_AI_SPEND_CEILING=3.5; // dollars -- safely under even the $4.99/mo annual price, leaving real margin for non-AI costs
 const getMonthlyAiSpend=makeMonthlyUsage("aiSpendMills");
@@ -6522,6 +6523,23 @@ const getBrainDumpUsage=makeMonthlyUsage("brainDumps");
 function canUseBrainDump(){if(!hasProAccess())return false;if(!underAiSpendCeiling())return false;return getBrainDumpUsage().count<effectiveProLimit(PRO_BRAIN_DUMP_LIMIT);}
 function recordBrainDump(){const u=getBrainDumpUsage();lsSet("brainDumps",{month:u.month,count:u.count+1});chargeAiSpend("brainDump");}
 function canUseBrainDumpReason(){return aiGateBlockReason(getBrainDumpUsage(),PRO_BRAIN_DUMP_LIMIT);}
+
+// Studlin AI Q&A -- the read-only calendar-assistant chat (StudlinAiDrawer)
+// shipped in Phase 1 with no gate at all, the one AI feature in this file
+// that was reachable by Free. Studlin AI is a Pro feature like everything
+// else here (confirmed directly, not assumed) -- this closes that gap
+// rather than leaving it as the one exception. Phase 2's write actions
+// (create/move through the same drawer) already gate through
+// canUseBrainDump/canUseSmartReschedule below; this is the missing piece
+// for the original Q&A path itself. ~$0.02/call (standard model, a
+// ~2.5k-token digest prompt in, up to 768 tokens out -- see
+// MAX_TOKENS_STUDLIN_AI in api/chat.js). Cap sized for ~$1.20/mo worst
+// case.
+const PRO_STUDLIN_AI_QNA_LIMIT=60;
+const getStudlinAiQnaUsage=makeMonthlyUsage("studlinAiQna");
+function canUseStudlinAiQna(){if(!hasProAccess())return false;if(!underAiSpendCeiling())return false;return getStudlinAiQnaUsage().count<effectiveProLimit(PRO_STUDLIN_AI_QNA_LIMIT);}
+function recordStudlinAiQnaUsage(){const u=getStudlinAiQnaUsage();lsSet("studlinAiQna",{month:u.month,count:u.count+1});chargeAiSpend("studlinAiQna");}
+function canUseStudlinAiQnaReason(){return aiGateBlockReason(getStudlinAiQnaUsage(),PRO_STUDLIN_AI_QNA_LIMIT);}
 
 // "Add Task with AI" (CalendarTab's aiArrange) -- the primary AI-scheduling
 // action in the main Add Task modal, real /api/chat cost (directly, and via
@@ -15956,19 +15974,13 @@ function formatStudlinAiDigestForPrompt(question,digest,flags,profile){
 // wrong known thing happening (or "unsupported"), never a hallucinated
 // calendar change.
 //
-// Deliberately UNGATED (no canUseX() check before this call) -- unlike
-// submitPauseCommand, which only ever serves the Pro-only Reschedule
-// feature, this same call also decides whether an incoming message is a
-// plain QUESTION, and Studlin AI's Q&A path has been reachable by every
-// signed-in user (free included) since Phase 1 shipped, no Pro gate.
-// Gating this call itself would silently take Q&A away from free users
-// as a side effect of adding write capability, which is a real, user-
-// facing regression a Phase 2 PR has no business making unilaterally --
-// see this branch's own notes on the still-open, deliberately-deferred
-// question of whether Q&A should eventually require Pro too. The
-// resolved action intents (create_task and the six move/bulk intents)
-// ARE gated, at the point they're about to run -- see StudlinAiDrawer's
-// send()/confirm() below.
+// Deliberately UNGATED itself (no canUseX() check before THIS call) --
+// it runs before the drawer even knows whether the message is a
+// question or an action, so it can't yet pick which gate applies. Every
+// real capability it routes to IS gated, right after this returns:
+// askQuestion checks canUseStudlinAiQna, runAction checks
+// canUseBrainDump/canUseSmartReschedule depending on the resolved intent
+// -- see StudlinAiDrawer's askQuestion/runAction/confirmProposal below.
 async function classifyStudlinAiMessage(text){
   const today=dayKey();
   const tomorrow=dayKey(new Date(Date.now()+86400000));
@@ -16041,10 +16053,18 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
     if(scrollRef.current)scrollRef.current.scrollTop=scrollRef.current.scrollHeight;
   },[messages,loading]);
 
-  // Phase 1's original read-only path, unchanged -- now only reached once
+  // Phase 1's original read-only path -- now only reached once
   // classifyStudlinAiMessage has decided the message is a real question,
-  // not an action request.
+  // not an action request. Gated on canUseStudlinAiQna (Pro, like every
+  // other AI feature in this app) -- Phase 1 shipped this ungated, the
+  // one AI feature reachable by Free; Studlin AI is a Pro feature end to
+  // end, this closes that gap rather than leaving Q&A as the exception.
   const askQuestion=async(text)=>{
+    if(!canUseStudlinAiQna()){
+      setPricingOpen(canUseStudlinAiQnaReason()==="free-tier"?"studlinAiQna":"aiUsageCap");
+      setMessages(m=>[...m,{role:"ai",text:"Studlin AI needs Pro. I've opened the upgrade options."}]);
+      return;
+    }
     // Read fresh at send time, not held in component state -- this
     // drawer is mounted once, globally, for the life of the tab, so a
     // stale snapshot taken at mount would silently drift from whatever
@@ -16062,6 +16082,11 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
     const promptText=formatStudlinAiDigestForPrompt(text,digest,flags,profile);
     const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:promptText}],model:"standard",format:"studlin_ai"})});
     const data=await res.json();
+    // Recorded right after the real API round-trip completes, regardless
+    // of res.ok -- the cost is already spent at this point, same
+    // convention submitPauseCommand's own recordSmartReschedule call
+    // already follows.
+    recordStudlinAiQnaUsage();
     if(!res.ok){
       setMessages(m=>[...m,{role:"ai",text:data.error||"Something went wrong. Try again."}]);
       return;
@@ -31415,6 +31440,7 @@ function App() {
     aiArrange:"AI scheduling is a Pro feature.",
     syllabusScan:"Syllabus & schedule scans are a Pro feature.",
     screenshotScan:"Screenshot imports are a Pro feature.",
+    studlinAiQna:"Studlin AI is a Pro feature.",
     // 2026-08-22 intelligence audit fix: every reason above assumed the
     // student wasn't Pro yet -- wrong copy for an already-Pro student who
     // simply used a lot of a feature this month (the shared AI-spend

@@ -15,8 +15,9 @@
 // shorter clock, so every per-feature AI cap stays a fraction of real
 // Pro's for the whole trial (see effectiveProLimit).
 //
-// hasProAccess/isReferralTrial/effectiveProLimit/getCreditLimit and all 12
-// canX gates + aiGateBlockReason are real top-level pure functions, tested
+// hasProAccess/isReferralTrial/effectiveProLimit/getCreditLimit and all 13
+// canX gates (12 original + canUseStudlinAiQna, added 2026-09-01) +
+// aiGateBlockReason are real top-level pure functions, tested
 // directly via the harness. The client-side grant trigger (acceptReq) and
 // the server-side grant/expiry logic (api/me.js, which needs the Firebase
 // Admin SDK this suite doesn't mock -- same established precedent as
@@ -167,11 +168,12 @@ describe("Every other Pro-gated feature was actually migrated off the old binary
       'function canUseAiArrange(){if(getPlan()==="Free")return false;',
       'function canClassifyCalendarImport(){if(getPlan()==="Free")return false;',
       'function canGenQuiz(){if(getPlan()==="Free")return false;',
+      'function canUseStudlinAiQna(){if(getPlan()==="Free")return false;',
     ];
     staleGates.forEach(snippet => assert.doesNotMatch(APP_SOURCE, new RegExp(snippet.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))));
   });
 
-  test("all 11 now check hasProAccess and cap through effectiveProLimit", () => {
+  test("all 12 now check hasProAccess and cap through effectiveProLimit", () => {
     ['canScanScreenshot,getScreenshotScanUsage,PRO_SCREENSHOT_SCAN_LIMIT',
      'canScanNote,getNoteScanUsage,PRO_NOTE_SCAN_LIMIT',
      'canGenFlashcards,getFlashcardGenUsage,PRO_FLASHCARD_GEN_LIMIT',
@@ -183,6 +185,7 @@ describe("Every other Pro-gated feature was actually migrated off the old binary
      'canUseAiArrange,getAiArrangeUsage,PRO_AI_ARRANGE_LIMIT',
      'canClassifyCalendarImport,getCalendarClassifyUsage,PRO_CALENDAR_CLASSIFY_LIMIT',
      'canGenQuiz,getQuizGenUsage,PRO_QUIZ_GEN_LIMIT',
+     'canUseStudlinAiQna,getStudlinAiQnaUsage,PRO_STUDLIN_AI_QNA_LIMIT',
     ].forEach(triple => {
       const [fn, usage, limit] = triple.split(',');
       const re = new RegExp(`function ${fn}\\(\\)\\{if\\(!hasProAccess\\(\\)\\)return false;if\\(!underAiSpendCeiling\\(\\)\\)return false;return ${usage}\\(\\)\\.count<effectiveProLimit\\(${limit}\\);\\}`);

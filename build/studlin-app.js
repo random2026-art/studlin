@@ -3927,7 +3927,8 @@ const AI_CALL_COST_ESTIMATES = {
   brainDump: 0.014,
   aiArrange: 6e-3,
   calendarClassify: 0.03,
-  sessionFocus: 9e-3
+  sessionFocus: 9e-3,
+  studlinAiQna: 0.02
 };
 const PRO_MONTHLY_AI_SPEND_CEILING = 3.5;
 const getMonthlyAiSpend = makeMonthlyUsage("aiSpendMills");
@@ -4084,6 +4085,21 @@ function recordBrainDump() {
 }
 function canUseBrainDumpReason() {
   return aiGateBlockReason(getBrainDumpUsage(), PRO_BRAIN_DUMP_LIMIT);
+}
+const PRO_STUDLIN_AI_QNA_LIMIT = 60;
+const getStudlinAiQnaUsage = makeMonthlyUsage("studlinAiQna");
+function canUseStudlinAiQna() {
+  if (!hasProAccess()) return false;
+  if (!underAiSpendCeiling()) return false;
+  return getStudlinAiQnaUsage().count < effectiveProLimit(PRO_STUDLIN_AI_QNA_LIMIT);
+}
+function recordStudlinAiQnaUsage() {
+  const u = getStudlinAiQnaUsage();
+  lsSet("studlinAiQna", { month: u.month, count: u.count + 1 });
+  chargeAiSpend("studlinAiQna");
+}
+function canUseStudlinAiQnaReason() {
+  return aiGateBlockReason(getStudlinAiQnaUsage(), PRO_STUDLIN_AI_QNA_LIMIT);
 }
 const PRO_AI_ARRANGE_LIMIT = 400;
 const getAiArrangeUsage = makeMonthlyUsage("aiArranges");
@@ -9997,6 +10013,11 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, loading]);
   const askQuestion = async (text) => {
+    if (!canUseStudlinAiQna()) {
+      setPricingOpen(canUseStudlinAiQnaReason() === "free-tier" ? "studlinAiQna" : "aiUsageCap");
+      setMessages((m) => [...m, { role: "ai", text: "Studlin AI needs Pro. I've opened the upgrade options." }]);
+      return;
+    }
     const events = lsGet("events", []);
     const routines = getWeeklyRoutine();
     const prefs = getSchedulePreferences();
@@ -10007,6 +10028,7 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
     const promptText = formatStudlinAiDigestForPrompt(text, digest, flags, profile);
     const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: promptText }], model: "standard", format: "studlin_ai" }) });
     const data = await res.json();
+    recordStudlinAiQnaUsage();
     if (!res.ok) {
       setMessages((m) => [...m, { role: "ai", text: data.error || "Something went wrong. Try again." }]);
       return;
@@ -19207,6 +19229,7 @@ function App() {
     aiArrange: "AI scheduling is a Pro feature.",
     syllabusScan: "Syllabus & schedule scans are a Pro feature.",
     screenshotScan: "Screenshot imports are a Pro feature.",
+    studlinAiQna: "Studlin AI is a Pro feature.",
     // 2026-08-22 intelligence audit fix: every reason above assumed the
     // student wasn't Pro yet -- wrong copy for an already-Pro student who
     // simply used a lot of a feature this month (the shared AI-spend

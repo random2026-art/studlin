@@ -155,6 +155,27 @@ describe("buildMoveFixedProposal / move_event dispatch", () => {
   });
 });
 
+describe("canUseStudlinAiQna (Q&A's Pro gate, closing the Phase 1 gap)", () => {
+  test("Free has no access at all, same as every other AI feature in this app", () => {
+    const m = loadStudlinModule();
+    m.setPlanLS("Free");
+    assert.equal(m.canUseStudlinAiQna(), false);
+    assert.equal(m.canUseStudlinAiQnaReason(), "free-tier");
+  });
+  test("Pro has access up to its own monthly cap", () => {
+    const m = loadStudlinModule();
+    m.setPlanLS("Pro");
+    assert.equal(m.canUseStudlinAiQna(), true);
+  });
+  test("recordStudlinAiQnaUsage advances the monthly counter that the gate reads", () => {
+    const m = loadStudlinModule();
+    m.setPlanLS("Pro");
+    assert.equal(m.getStudlinAiQnaUsage().count, 0);
+    m.recordStudlinAiQnaUsage();
+    assert.equal(m.getStudlinAiQnaUsage().count, 1);
+  });
+});
+
 describe("commit helpers", () => {
   test("commitStudlinAiTasks adds the new task(s) and persists them", () => {
     const m = loadStudlinModule({ now: "2026-09-14T08:00:00" });

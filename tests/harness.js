@@ -105,6 +105,7 @@ function loadStudlinModule(options) {
     "canUseSmartReschedule","recordSmartReschedule","getSmartRescheduleUsage","PRO_SMART_RESCHEDULE_LIMIT",
     "chargeAiSpend","underAiSpendCeiling","getMonthlyAiSpend","PRO_MONTHLY_AI_SPEND_CEILING","AI_CALL_COST_ESTIMATES",
     "canUseBrainDump","recordBrainDump","getBrainDumpUsage","PRO_BRAIN_DUMP_LIMIT",
+    "canUseStudlinAiQna","recordStudlinAiQnaUsage","getStudlinAiQnaUsage","PRO_STUDLIN_AI_QNA_LIMIT","canUseStudlinAiQnaReason",
     "canUseAiArrange","recordAiArrange","getAiArrangeUsage","PRO_AI_ARRANGE_LIMIT",
     "canClassifyCalendarImport","recordCalendarClassify","getCalendarClassifyUsage","PRO_CALENDAR_CLASSIFY_LIMIT",
     "removeGenericExamPrepSessions","examLinkedPrepData","applyExamTypeSwitchCleanup",
