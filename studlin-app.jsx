@@ -6806,6 +6806,26 @@ function computeBreathingRoom(mins){
 function setSchedulePreferences(prefs){
   lsSet("schedulePrefs",prefs);
 }
+// The one write step for the Calendar wizard's optional "personalize" step
+// (5 single-select preference chips -- session order, interleaving
+// tolerance, planning horizon, start timing, collision tie-break). Each
+// stays null if the student skipped/never answered that one -- same
+// "always present, individually empty" convention peakHourBuckets already
+// uses, not an all-or-nothing object that's sometimes absent. Collection
+// only: nothing in the placement/priority engine reads studyStylePrefs
+// yet -- that's real, separate follow-up work (the collisionPref answer in
+// particular is worded to match the exam-clustering priority signal
+// discussed separately, so it has a real preference to read once that
+// lands).
+function applyStudyStylePrefs(prefs,answers){
+  return {...prefs,studyStylePrefs:{
+    sessionOrder:(answers&&answers.sessionOrder)||null,
+    interleave:(answers&&answers.interleave)||null,
+    planningHorizon:(answers&&answers.planningHorizon)||null,
+    startTiming:(answers&&answers.startTiming)||null,
+    collisionPref:(answers&&answers.collisionPref)||null,
+  }};
+}
 
 // Helper: convert "HH:MM" to minutes since midnight
 function timeToMinutes(timeStr){
@@ -18586,7 +18606,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
 const ROUTINE_DOW=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const fmtTimeShort=(t)=>{if(!t)return "";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+" "+ap;};
 const wizardChipStyle=(sel)=>({padding:"7px 12px",borderRadius:8,fontSize:12,fontWeight:sel?600:400,cursor:"pointer",border:`1px solid ${sel?T.lime+"66":T.border}`,background:sel?T.lime+"14":"transparent",color:sel?T.lime:T.muted,fontFamily:T.font});
-const wizardStatusChipStyle=(sel)=>({flex:1,padding:"16px",borderRadius:12,fontSize:14,fontWeight:600,cursor:"pointer",border:`1.5px solid ${sel?T.lime:T.border}`,background:sel?T.lime+"14":T.card2,color:sel?T.lime:T.muted,fontFamily:T.font,textAlign:"center"});
+const wizardStatusChipStyle=(sel)=>({flex:1,padding:"16px",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",border:`1.5px solid ${sel?T.lime:T.border}`,background:sel?T.lime+"14":T.card2,color:sel?T.lime:T.muted,fontFamily:T.font,textAlign:"center"});
 const wizardSelectStyle={padding:"10px 8px",borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,fontSize:13,color:T.text,fontFamily:T.font,outline:"none"};
 const wizardAddBtnStyle={padding:"10px 16px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontSize:13,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"};
 
@@ -18833,7 +18853,15 @@ function RosterList({items,setItems,makeNewItem,addLabel}){
   );
 }
 
-const classSetupChoiceStyle={width:"100%",textAlign:"left",padding:"14px 16px",borderRadius:12,border:`1.5px solid ${T.border}`,background:T.card2,color:T.text,cursor:"pointer",fontFamily:T.font};
+// Radius unification (10px): wizardStatusChipStyle/classSetupChoiceStyle
+// are both wizard-exclusive (only ever used inside ClassSetupWizard), so
+// their own definitions were safe to adjust directly (was 12px on both).
+// subjectRowStyle/peakChipStyle below are NOT wizard-exclusive -- they're
+// shared across Settings/Calendar/elsewhere -- so those two stay at their
+// own original radius (6px/8px) and get a local borderRadius:10 override
+// only at this wizard's own call sites instead, same net visual result
+// without touching a shared component's default.
+const classSetupChoiceStyle={width:"100%",textAlign:"left",padding:"14px 16px",borderRadius:10,border:`1.5px solid ${T.border}`,background:T.card2,color:T.text,cursor:"pointer",fontFamily:T.font};
 
 // Shared by Class Setup Wizard's exam review step, Add Task, and Edit
 // Task -- one file/paste/link editor instead of three copies that could
@@ -19097,36 +19125,55 @@ function PhasesOutlineEditor({item,onChange,subject,onGateBlocked=()=>{},onNeeds
 // anyway. Same reasoning that already got peak-hours/difficulty cut from
 // the old InitWizard: inferred/deferred, still reachable in Settings for
 // anyone who wants it, one fewer screen for everyone else.
-const WIZARD_STEP_ORDER=["term","status","awake","classes","activities","calendarSync","finalReview"];
-// Phase 8: the named steps a fresh account walks through, shown as a
-// top progress stepper. "status" (HS/college fork) isn't its own labeled
-// step -- Shovel doesn't show one either -- it's the entry to "Courses",
-// same as "classes" itself. calendarSync/finalReview come after the
-// named steps but aren't part of the stepper (same as "window" wasn't,
-// before it got merged into "awake").
+const WIZARD_STEP_ORDER=["term","status","awake","personalize","classes","activities","calendarSync","finalReview"];
+// The named steps a fresh account walks through, shown as a top progress
+// stepper. "status" (HS/college fork) isn't its own labeled step -- it's
+// the entry to "Courses", same as "classes" itself. Every real step now
+// has an entry here (previously calendarSync/finalReview were left out
+// entirely, which made the whole stepper silently vanish for the last 2
+// of 7 steps -- confusing, looked like progress broke). "personalize"
+// gets its own segment, matching every other named step.
 const WIZARD_STEPPER=[
   {key:"term",label:"End of Term"},
   {key:"awake",label:"Awake time"},
+  {key:"personalize",label:"Study style"},
   {key:"status",label:"Courses"},
   {key:"classes",label:"Courses"},
   {key:"activities",label:"Activities"},
+  {key:"calendarSync",label:"Connect"},
+  {key:"finalReview",label:"Review"},
 ];
 const WizardStepper=({step})=>{
   const idx=WIZARD_STEPPER.findIndex(s=>s.key===step);
   if(idx<0)return null;
   // Collapse the two "Courses"-labeled entries (status+classes) into one
-  // dot for progress purposes, so the stepper reads as 6 steps, not 7.
+  // dot for progress purposes.
   const labels=[];
   WIZARD_STEPPER.forEach(s=>{if(labels[labels.length-1]?.label!==s.label)labels.push(s);});
   const activeLabelIdx=labels.findIndex(s=>s.label===WIZARD_STEPPER[idx].label);
   return (
-    <div style={{display:"flex",gap:16,padding:"20px 32px 0"}}>
-      {labels.map((s,i)=>(
-        <div key={s.key} style={{flex:1}}>
-          <div style={{fontSize:11,fontWeight:600,color:i<=activeLabelIdx?T.text:T.faint,marginBottom:6,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.label}</div>
-          <div style={{height:2,borderRadius:2,background:i<=activeLabelIdx?T.lime:T.border}} />
-        </div>
-      ))}
+    <div style={{padding:"20px 32px 0"}}>
+      {/* "Step X of Y" text plus a real completed/current/upcoming
+          distinction (checkmark, not just a colored bar) -- the old
+          stepper only ever showed "reached vs. not," so a student had no
+          sense of how much was actually left, and the indicator
+          disappearing entirely for the last 2 steps made it feel like
+          something had broken rather than that they were almost done. */}
+      <div style={{fontSize:11,fontWeight:600,color:T.faint,marginBottom:10}}>Step {activeLabelIdx+1} of {labels.length}</div>
+      <div style={{display:"flex",gap:16}}>
+        {labels.map((s,i)=>{
+          const done=i<activeLabelIdx,current=i===activeLabelIdx;
+          return (
+            <div key={s.key} style={{flex:1}}>
+              <div style={{display:"flex",alignItems:"center",gap:4,fontSize:11,fontWeight:600,color:done||current?T.text:T.faint,marginBottom:6,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                {done&&<span style={{color:T.lime}}>✓</span>}
+                {s.label}
+              </div>
+              <div style={{height:2,borderRadius:2,background:done||current?T.lime:T.border}} />
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 };
@@ -19225,6 +19272,17 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   const [expandedClassId,setExpandedClassId]=useState(null); // final drill-down review: which class is expanded
   const [expandedItemId,setExpandedItemId]=useState(null); // final drill-down review: which item within it is expanded
   const togglePeakBucket=(id)=>setPeakBuckets(prev=>prev.includes(id)?prev.filter(b=>b!==id):[...prev,id]);
+  // "personalize" step -- 5 optional single-select preference chips, see
+  // applyStudyStylePrefs. Each stays null until picked; clicking an
+  // already-selected chip deselects it back to null (a real "no
+  // preference," not just "hasn't answered yet" vs "picked no
+  // preference" -- there's no meaningful difference for either of those
+  // right now, so one null state covers both).
+  const [sessionOrderPref,setSessionOrderPref]=useState(null);
+  const [interleavePref,setInterleavePref]=useState(null);
+  const [planningHorizonPref,setPlanningHorizonPref]=useState(null);
+  const [startTimingPref,setStartTimingPref]=useState(null);
+  const [collisionPref,setCollisionPref]=useState(null);
 
   const persistPending=(next)=>{setPendingClasses(next);lsSet("classSetupPending",next);};
   // 2026-08-26 fix: onboarding's own Profile step already requires
@@ -19971,7 +20029,10 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     // a hardcoded "23:00" default -- so a stated "asleep at 2am" changed
     // nothing about how late Studlin would actually schedule. bedtime now
     // saved alongside the rest of this same commit.
-    setSchedulePreferences({...getSchedulePreferences(),workStartTime:workStart,workEndTime:workEnd,peakHourBuckets:peakBuckets,bedtime:sleepTime});
+    setSchedulePreferences(applyStudyStylePrefs(
+      {...getSchedulePreferences(),workStartTime:workStart,workEndTime:workEnd,peakHourBuckets:peakBuckets,bedtime:sleepTime},
+      {sessionOrder:sessionOrderPref,interleave:interleavePref,planningHorizon:planningHorizonPref,startTiming:startTimingPref,collisionPref}
+    ));
     // Latent bug fix (Phase 9d): `status` was a purely local UI branch
     // before this -- chosen at the very first step of this wizard, then
     // never actually written to the real profile, so Settings' own
@@ -20019,6 +20080,22 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
       {sub&&<div style={{fontSize:13,color:T.muted,lineHeight:1.5}}>{sub}</div>}
     </div>
   );
+  // One optional single-select preference question, reusing the same chip
+  // visual language as the Peak Focus Hours row right above it on the
+  // "awake" step (peakChipStyle, radius overridden to 10 the same way) --
+  // this is the one place peakChipStyle's multi-select toggle behavior
+  // doesn't apply, so selection/deselection is handled locally here
+  // instead of via togglePeakBucket.
+  const PrefChipRow=({label,value,onChange,options})=>(
+    <div style={{marginBottom:18}}>
+      <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>{label}</label>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        {options.map(opt=>(
+          <button key={opt.value} type="button" onClick={()=>onChange(value===opt.value?null:opt.value)} style={{...peakChipStyle(value===opt.value),borderRadius:10}}>{opt.label}</button>
+        ))}
+      </div>
+    </div>
+  );
 
   return (
     <div style={{position:"fixed",inset:0,zIndex:300,background:"rgba(8,12,10,0.97)",backdropFilter:"blur(10px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px 16px",overflowY:"auto"}}>
@@ -20036,8 +20113,14 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
               original cut-off. This floor doesn't affect longer steps
               (Awake time, Classes, etc.), which already exceed
               it and scroll normally within the parent's own
-              maxHeight:88vh cap. */}
-          <div style={{minHeight:210}}>
+              maxHeight:88vh cap. Vertically centering within the floor
+              (rather than top-aligning with dead space below) is what
+              actually kills the "cut off" read for short steps --
+              content that overflows the floor on a tall step just
+              renders top-down as normal, flex-centering a container
+              taller than its content has no effect once content exceeds
+              it. */}
+          <div style={{minHeight:210,display:"flex",flexDirection:"column",justifyContent:"center"}}>
 
           {step==="term"&&(<>
             <TitleSub title="When does this term run?" sub="Studlin stops expecting your classes outside these dates -- summer, before the term starts. You can always change this later in Settings." />
@@ -20070,13 +20153,46 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
               </label>
               <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                 {TIER0_HOUR_BUCKETS.map(b=>(
-                  <button key={b.id} type="button" onClick={()=>togglePeakBucket(b.id)} style={peakChipStyle(peakBuckets.includes(b.id))}>
+                  // borderRadius:10 overrides peakChipStyle's own default
+                  // (8px) here only -- peakChipStyle is a shared helper
+                  // used well beyond this wizard (Settings, elsewhere),
+                  // so its own definition stays untouched; this wizard's
+                  // own chip/card surfaces all converge on one radius
+                  // (10px) via local overrides like this instead.
+                  <button key={b.id} type="button" onClick={()=>togglePeakBucket(b.id)} style={{...peakChipStyle(peakBuckets.includes(b.id)),borderRadius:10}}>
                     {PEAK_BUCKET_LABELS[b.id]}
                     <span style={{opacity:0.7,marginLeft:4}}>{fmtClock12(minutesToTime(b.startMin))}–{fmtClock12(minutesToTime(b.endMin))}</span>
                   </button>
                 ))}
               </div>
             </div>
+          </>)}
+
+          {step==="personalize"&&(<>
+            <TitleSub title="A few more things (totally optional)" sub="Answer any of these and Studlin plans smarter around how you actually study. Skip it and Studlin just learns as you go instead." />
+            <PrefChipRow label="When you sit down to study" value={sessionOrderPref} onChange={setSessionOrderPref} options={[
+              {value:"hardest_first",label:"Hardest first"},
+              {value:"easy_first",label:"Warm up first"},
+              {value:"no_preference",label:"No preference"},
+            ]} />
+            <PrefChipRow label="Studying for a few things at once" value={interleavePref} onChange={setInterleavePref} options={[
+              {value:"one_at_a_time",label:"One at a time"},
+              {value:"mix_it_up",label:"Mix it up"},
+            ]} />
+            <PrefChipRow label="How far ahead you want to see your plan" value={planningHorizonPref} onChange={setPlanningHorizonPref} options={[
+              {value:"just_today",label:"Just today"},
+              {value:"this_week",label:"This week"},
+              {value:"whole_plan",label:"The whole plan"},
+            ]} />
+            <PrefChipRow label="Be honest -- when do you actually start?" value={startTimingPref} onChange={setStartTimingPref} options={[
+              {value:"way_ahead",label:"Way ahead"},
+              {value:"a_few_days_before",label:"A few days before"},
+              {value:"the_night_before",label:"The night before"},
+            ]} />
+            <PrefChipRow label="Two things collide on the same day" value={collisionPref} onChange={setCollisionPref} options={[
+              {value:"split_time",label:"Split time"},
+              {value:"finish_one_first",label:"Finish one first"},
+            ]} />
           </>)}
 
           {step==="status"&&(<>
@@ -20102,7 +20218,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
             {pendingClasses.length>0&&(
               <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:18}}>
                 {pendingClasses.map(cls=>(
-                  <div key={cls.id} onDoubleClick={()=>editPendingClass(cls)} style={{...subjectRowStyle(cls.color),cursor:"pointer"}}>
+                  <div key={cls.id} onDoubleClick={()=>editPendingClass(cls)} style={{...subjectRowStyle(cls.color),cursor:"pointer",borderRadius:10}}>
                     <div style={{flex:1,fontSize:13,fontWeight:600,color:T.text}}>{cls.name}</div>
                     <span style={{fontSize:10,color:T.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.04em"}}>Staged</span>
                     <button type="button" onClick={()=>editPendingClass(cls)} title="Edit" style={{background:"none",border:"none",color:T.muted,cursor:"pointer",display:"flex",padding:"2px 6px"}}>{Icon.pen}</button>
@@ -20581,7 +20697,11 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
               <Btn variant="subtle" onClick={()=>setStep(knowsStatus?"awake":"status")}>Skip</Btn>
               <Btn onClick={()=>setStep(knowsStatus?"awake":"status")}>Continue</Btn>
             </>)}
-            {step==="awake"&&(<Btn onClick={()=>setStep("classes")} disabled={windowInvalid} style={{opacity:windowInvalid?0.45:1}}>Continue</Btn>)}
+            {step==="awake"&&(<Btn onClick={()=>setStep("personalize")} disabled={windowInvalid} style={{opacity:windowInvalid?0.45:1}}>Continue</Btn>)}
+            {step==="personalize"&&(<>
+              <Btn variant="subtle" onClick={()=>setStep("classes")}>Skip</Btn>
+              <Btn onClick={()=>setStep("classes")}>Continue</Btn>
+            </>)}
             {step==="classes"&&addMode===null&&(
               <Btn onClick={()=>quickScan?setStep("finalReview"):setStep("activities")}>{(pendingClasses.length>0||hsClassesCommitted>0)?"Done adding classes":"Skip, I'll add classes later"}</Btn>
             )}
