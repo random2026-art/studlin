@@ -4329,6 +4329,27 @@ function applyStudyStylePrefs(prefs, answers) {
     collisionPref: answers && answers.collisionPref || null
   } };
 }
+function applySessionOrderPreference(sessions, sessionOrderPref) {
+  if (!sessionOrderPref || sessionOrderPref === "no_preference") return sessions;
+  const byDate = {};
+  sessions.forEach((s) => {
+    if (!s.time || !s.date) return;
+    (byDate[s.date] = byDate[s.date] || []).push(s);
+  });
+  const reassignedTime = {};
+  Object.values(byDate).forEach((dayGroup) => {
+    if (dayGroup.length < 2) return;
+    const times = [...dayGroup].map((s) => s.time).sort();
+    const byDifficulty = [...dayGroup].sort((a, b) => {
+      const da = a.difficulty || 500, db = b.difficulty || 500;
+      return sessionOrderPref === "hardest_first" ? db - da : da - db;
+    });
+    byDifficulty.forEach((s, i) => {
+      reassignedTime[s.id] = times[i];
+    });
+  });
+  return sessions.map((s) => reassignedTime[s.id] ? { ...s, time: reassignedTime[s.id] } : s);
+}
 function timeToMinutes(timeStr) {
   if (!timeStr) return 0;
   const [h, m] = timeStr.split(":").map(Number);
@@ -4700,7 +4721,8 @@ function buildCreateTaskProposal(parsed, events, routines, prefs) {
     sessionCount = defaultSessionCountFor("major", null, daysUntil);
   }
   const item = { title: parsed.title, kind, dueDate: parsed.dueDate || null, dueTime: parsed.dueTime || null, durationMin: parsed.durationMin || null, phases: [], proposeSessions: isExam, sessionCount };
-  const { tasks, unplaced } = planBrainDumpTasks([item], events, routines, prefs);
+  const { tasks: rawTasks, unplaced } = planBrainDumpTasks([item], events, routines, prefs);
+  const tasks = applySessionOrderPreference(rawTasks, prefs.studyStylePrefs && prefs.studyStylePrefs.sessionOrder);
   if (tasks.length === 0) return { ok: false, label: `Couldn't find room for "` + parsed.title + '" -- try a different date.' };
   const primary = tasks[0];
   const degraded = unplaced.some((t) => t.title === primary.title);

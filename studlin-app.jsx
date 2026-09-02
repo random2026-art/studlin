@@ -6870,6 +6870,35 @@ function applyStudyStylePrefs(prefs,answers){
     collisionPref:(answers&&answers.collisionPref)||null,
   }};
 }
+// The first real consumer of studyStylePrefs.sessionOrder (the Calendar
+// wizard's "hardest first" / "warm up first" personalize-step question --
+// collected but unused until now). Deliberately narrow and safe: this
+// never picks a NEW time slot and never touches findReliableSlotFor/
+// findSlotWithEviction at all -- every session passed in already has a
+// real, legally-placed `time` from whatever generated it (buildExamSessionEvents
+// via planBrainDumpTasks, here). All this does is REASSIGN which
+// already-legal time, among sessions landing on the SAME day, goes to
+// which session -- ranked by difficulty. A day with 0-1 sessions, or a
+// null/"no_preference" pref, is untouched. Because it only ever
+// redistributes times that were already independently proven legal for
+// that day, it can't introduce a conflict or violate a deadline that
+// wasn't already possible before this ran.
+function applySessionOrderPreference(sessions,sessionOrderPref){
+  if(!sessionOrderPref||sessionOrderPref==="no_preference")return sessions;
+  const byDate={};
+  sessions.forEach(s=>{if(!s.time||!s.date)return;(byDate[s.date]=byDate[s.date]||[]).push(s);});
+  const reassignedTime={};
+  Object.values(byDate).forEach(dayGroup=>{
+    if(dayGroup.length<2)return;
+    const times=[...dayGroup].map(s=>s.time).sort();
+    const byDifficulty=[...dayGroup].sort((a,b)=>{
+      const da=a.difficulty||500,db=b.difficulty||500;
+      return sessionOrderPref==="hardest_first"?db-da:da-db;
+    });
+    byDifficulty.forEach((s,i)=>{reassignedTime[s.id]=times[i];});
+  });
+  return sessions.map(s=>reassignedTime[s.id]?{...s,time:reassignedTime[s.id]}:s);
+}
 
 // Helper: convert "HH:MM" to minutes since midnight
 function timeToMinutes(timeStr){
@@ -7563,7 +7592,11 @@ function buildCreateTaskProposal(parsed,events,routines,prefs){
     sessionCount=defaultSessionCountFor("major",null,daysUntil);
   }
   const item={title:parsed.title,kind,dueDate:parsed.dueDate||null,dueTime:parsed.dueTime||null,durationMin:parsed.durationMin||null,phases:[],proposeSessions:isExam,sessionCount};
-  const{tasks,unplaced}=planBrainDumpTasks([item],events,routines,prefs);
+  const{tasks:rawTasks,unplaced}=planBrainDumpTasks([item],events,routines,prefs);
+  // Real consumer of studyStylePrefs.sessionOrder -- see
+  // applySessionOrderPreference's own comment. A no-op for anyone who
+  // skipped/never answered that wizard question (the common case today).
+  const tasks=applySessionOrderPreference(rawTasks,prefs.studyStylePrefs&&prefs.studyStylePrefs.sessionOrder);
   if(tasks.length===0)return{ok:false,label:"Couldn't find room for \""+parsed.title+"\" -- try a different date."};
   const primary=tasks[0];
   const degraded=unplaced.some(t=>t.title===primary.title);
