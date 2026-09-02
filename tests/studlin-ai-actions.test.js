@@ -441,3 +441,56 @@ describe("buildStudlinAiChatHistory", () => {
     assert.equal(history[0].t, "real message");
   });
 });
+
+describe("studlinAiProposalPreviewSpec", () => {
+  test("create_task with a real scheduled time returns a dateKey + proposedBlock", () => {
+    const m = loadStudlinModule();
+    const proposal = { ok: true, kind: "create_task", tasks: [{ title: "Chem Essay", date: "2026-09-20", time: "14:00", duration: 45 }] };
+    const spec = m.studlinAiProposalPreviewSpec(proposal);
+    assert.equal(spec.dateKey, "2026-09-20");
+    assert.equal(spec.proposedBlock.title, "Chem Essay");
+    assert.equal(spec.proposedBlock.time, "14:00");
+    assert.equal(spec.proposedBlock.duration, 45);
+  });
+
+  test("create_task with no real time (a due-date-only to-do) returns null -- nothing to visualize on a timeline", () => {
+    const m = loadStudlinModule();
+    const proposal = { ok: true, kind: "create_task", tasks: [{ title: "Lab Report", date: "2026-09-20", time: "", duration: 0 }] };
+    assert.equal(m.studlinAiProposalPreviewSpec(proposal), null);
+  });
+
+  test("move_flex_task returns the new date/time/duration", () => {
+    const m = loadStudlinModule();
+    const proposal = { ok: true, kind: "move_flex_task", moved: [{ id: "t1", title: "Chem HW", newDate: "2026-09-15", newTime: "09:00", duration: 30 }] };
+    const spec = m.studlinAiProposalPreviewSpec(proposal);
+    assert.equal(spec.dateKey, "2026-09-15");
+    assert.equal(spec.proposedBlock.time, "09:00");
+    assert.equal(spec.proposedBlock.duration, 30);
+  });
+
+  test("move_fixed with exactly one moved item returns a preview spec", () => {
+    const m = loadStudlinModule();
+    const proposal = { ok: true, kind: "move_fixed", pausePreview: { moved: [{ id: "g1", title: "Gym", newDate: "2026-09-15", newTime: "18:00", newDuration: 60 }] } };
+    const spec = m.studlinAiProposalPreviewSpec(proposal);
+    assert.equal(spec.dateKey, "2026-09-15");
+    assert.equal(spec.proposedBlock.duration, 60);
+  });
+
+  test("move_fixed with more than one moved item (a bulk shift) returns null -- out of scope for the mini preview", () => {
+    const m = loadStudlinModule();
+    const proposal = {
+      ok: true, kind: "move_fixed",
+      pausePreview: { moved: [
+        { id: "a", title: "A", newDate: "2026-09-15", newTime: "09:00" },
+        { id: "b", title: "B", newDate: "2026-09-16", newTime: "10:00" },
+      ] },
+    };
+    assert.equal(m.studlinAiProposalPreviewSpec(proposal), null);
+  });
+
+  test("a proposal that isn't ok, or is null, returns null", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.studlinAiProposalPreviewSpec(null), null);
+    assert.equal(m.studlinAiProposalPreviewSpec({ ok: false, label: "no" }), null);
+  });
+});

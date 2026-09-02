@@ -4643,7 +4643,7 @@ function buildMoveFlexTaskProposal(parsed, events, routines, prefs, forcedId) {
   const others = events.filter((e) => e.id !== matched.id);
   const slot = findLegalSlotOrNull(others, routines, prefs, destDate, matched.time || prefs.workStartTime, matched.duration || 30, matched.deadline || null);
   if (!slot) return { label: 'No open, on-time slot for "' + matched.title + '" on or before its deadline', moved: [], couldntMove: [{ id: matched.id, title: matched.title, deadline: matched.deadline || null }] };
-  return { label: "Move " + matched.title, moved: [{ id: matched.id, title: matched.title, oldDate: matched.date, oldTime: matched.time, newDate: slot.date, newTime: slot.time }], couldntMove: [] };
+  return { label: "Move " + matched.title, moved: [{ id: matched.id, title: matched.title, oldDate: matched.date, oldTime: matched.time, newDate: slot.date, newTime: slot.time, duration: matched.duration || 30 }], couldntMove: [] };
 }
 function describeCreateProposal(task) {
   if (!task) return "Add task";
@@ -4702,6 +4702,25 @@ function buildStudlinAiActionProposal(parsed, events, routines, prefs, forcedId)
   if (r.disambiguate) return { ok: false, disambiguate: r.disambiguate, label: r.label };
   if (r.moved.length === 0 && r.couldntMove.length === 0 && !r.skipRoutine) return { ok: false, label: "Nothing to move right now." };
   return { ok: true, kind: "move_fixed", pausePreview: r, label: r.label };
+}
+function studlinAiProposalPreviewSpec(proposal) {
+  if (!proposal || !proposal.ok) return null;
+  if (proposal.kind === "create_task") {
+    const primary = (proposal.tasks || [])[0];
+    if (!primary || !primary.time || !primary.date) return null;
+    return { dateKey: primary.date, proposedBlock: { title: primary.title, time: primary.time, duration: primary.duration || 30 } };
+  }
+  if (proposal.kind === "move_flex_task") {
+    const m = (proposal.moved || [])[0];
+    if (!m || !m.newTime || !m.newDate) return null;
+    return { dateKey: m.newDate, proposedBlock: { title: m.title, time: m.newTime, duration: m.duration || 30 } };
+  }
+  if (proposal.kind === "move_fixed" && proposal.pausePreview && proposal.pausePreview.moved && proposal.pausePreview.moved.length === 1) {
+    const m = proposal.pausePreview.moved[0];
+    if (!m.newTime || !m.newDate) return null;
+    return { dateKey: m.newDate, proposedBlock: { title: m.title, time: m.newTime, duration: m.newDuration || 30 } };
+  }
+  return null;
 }
 function commitStudlinAiTasks(tasks) {
   const events = lsGet("events", []);
@@ -10077,6 +10096,42 @@ function deriveStudlinAiProactiveSignal(strugglingBucketOffer, peakInsightOffer)
   if (peakInsightOffer) return { kind: "peak_hours", ...peakInsightOffer };
   return null;
 }
+function StudlinAiMiniDayPreview({ dateKey, proposedBlock }) {
+  const pp = panelPalette();
+  if (!dateKey) return null;
+  const events = lsGet("events", []).filter((ev) => ev.date === dateKey && ev.time && !isDuePill(ev) && ev.status !== "done");
+  const routineOccs = getRoutineOccurrencesForDate(dateKey).filter((o) => o.kind !== "free period" && o.time);
+  const subjects = getSubjects();
+  const colorFor = (ev) => {
+    const match = subjects.find((s) => s.id === ev.courseId || s.label === ev.subject);
+    return match && match.color ? match.color : T.muted;
+  };
+  const real = [...events, ...routineOccs].map((ev) => ({ ...ev, __proposed: false }));
+  const proposed = proposedBlock ? [{ id: "__proposed__", ...proposedBlock, __proposed: true }] : [];
+  const all = [...real, ...proposed];
+  if (all.length === 0) return null;
+  const starts = all.map((ev) => {
+    const p = ev.time.split(":").map(Number);
+    return p[0] * 60 + p[1];
+  });
+  const ends = all.map((ev, i) => starts[i] + (ev.duration || 30));
+  const spanStart = Math.max(0, Math.floor(Math.min(...starts) / 60) * 60 - 30);
+  const spanEnd = Math.min(1440, Math.ceil(Math.max(...ends) / 60) * 60 + 30);
+  const pxPerHr = 30;
+  const totalHeightPx = Math.max(20, spanEnd - spanStart) * (pxPerHr / 60);
+  const laidOut = layoutDayEvents(all);
+  return /* @__PURE__ */ React.createElement("div", { style: { position: "relative", height: Math.min(160, totalHeightPx), overflowY: totalHeightPx > 160 ? "auto" : "visible", marginTop: 6, border: `1px solid ${pp.border}`, borderRadius: 8, padding: "6px 8px", background: pp.card2 } }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative", height: totalHeightPx } }, laidOut.map(({ ev, col, totalCols, displayCol, displayTotalCols, start, hidden }) => {
+    if (hidden) return null;
+    const topPx = (start - spanStart) * (pxPerHr / 60);
+    const dur = ev.duration || 30;
+    const nextInCol = laidOut.filter((o) => o.col === col && o.start > start).sort((a, b) => a.start - b.start)[0];
+    const heightPx = Math.max(14, computeEventBlockHeightPx(dur, nextInCol ? nextInCol.start - start : null, pxPerHr));
+    const color = ev.__proposed ? T.lime : colorFor(ev);
+    const leftPct = displayCol / displayTotalCols * 100;
+    const widthPct = 100 / displayTotalCols;
+    return /* @__PURE__ */ React.createElement("div", { key: ev.id, style: { position: "absolute", top: topPx, left: `calc(${leftPct}% + 1px)`, width: `calc(${widthPct}% - 2px)`, height: heightPx, borderRadius: 5, padding: "2px 6px", overflow: "hidden", boxSizing: "border-box", background: color + "22", border: ev.__proposed ? `1.5px dashed ${color}` : `1px solid ${color}55`, display: "flex", flexDirection: "column", justifyContent: "center" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9.5, fontWeight: 700, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.title), heightPx > 22 && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 8.5, color: T.muted } }, fmtClock12(ev.time)));
+  })));
+}
 function StudlinAiBubble({ onClick, hasProactive }) {
   return /* @__PURE__ */ React.createElement(
     "button",
@@ -10300,7 +10355,10 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
       },
       c.title,
       c.time ? " -- " + c.time : ""
-    ))), m.proposal && m.proposal.ok && !m.proposal.resolved && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(
+    ))), m.proposal && m.proposal.ok && !m.proposal.resolved && (() => {
+      const spec = studlinAiProposalPreviewSpec(m.proposal);
+      return spec ? /* @__PURE__ */ React.createElement(StudlinAiMiniDayPreview, { dateKey: spec.dateKey, proposedBlock: spec.proposedBlock }) : null;
+    })(), m.proposal && m.proposal.ok && !m.proposal.resolved && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(
       "button",
       {
         onClick: () => confirmProposal(i),
