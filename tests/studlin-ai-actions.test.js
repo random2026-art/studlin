@@ -299,4 +299,77 @@ describe("commit helpers", () => {
     assert.equal(nextTarget.date, "2026-09-15");
     assert.equal(nextTarget.time, "14:00");
   });
+
+  test("commitStudlinAiPeakHours replaces peakHourBuckets with exactly the one requested bucket", () => {
+    const m = loadStudlinModule();
+    const prefs = { ...m.getSchedulePreferences(), peakHourBuckets: ["morning", "afternoon"] };
+    const next = m.commitStudlinAiPeakHours(prefs, "evening");
+    assert.equal(next.peakHourBuckets.length, 1);
+    assert.equal(next.peakHourBuckets[0], "evening");
+    const persisted = m.getSchedulePreferences().peakHourBuckets;
+    assert.equal(persisted.length, 1);
+    assert.equal(persisted[0], "evening");
+  });
+});
+
+describe("buildSetPeakHoursProposal", () => {
+  test("a valid, reachable bucket produces a real proposal with no warning", () => {
+    const m = loadStudlinModule();
+    const prefs = m.getSchedulePreferences(); // default work hours 10:00-18:00
+    const proposal = m.buildSetPeakHoursProposal({ peakHours: "midday" }, prefs);
+    assert.equal(proposal.ok, true);
+    assert.equal(proposal.kind, "set_peak_hours");
+    assert.equal(proposal.bucketId, "midday");
+    assert.doesNotMatch(proposal.label, /heads up/);
+  });
+
+  test("a bucket outside the declared work window is still allowed, but warns rather than silently pretending it's usable", () => {
+    const m = loadStudlinModule();
+    const prefs = m.getSchedulePreferences(); // evening (6-10pm) starts exactly at the default 18:00 work-end, so it doesn't overlap
+    const proposal = m.buildSetPeakHoursProposal({ peakHours: "evening" }, prefs);
+    assert.equal(proposal.ok, true);
+    assert.match(proposal.label, /heads up/);
+  });
+
+  test("already-set to exactly the requested bucket is a no-op, not a pointless proposal", () => {
+    const m = loadStudlinModule();
+    const prefs = { ...m.getSchedulePreferences(), peakHourBuckets: ["midday"] };
+    const proposal = m.buildSetPeakHoursProposal({ peakHours: "midday" }, prefs);
+    assert.equal(proposal.ok, false);
+    assert.match(proposal.label, /already set/);
+  });
+
+  test("an invalid/unrecognized bucket id never crashes, just fails cleanly", () => {
+    const m = loadStudlinModule();
+    const proposal = m.buildSetPeakHoursProposal({ peakHours: "overnight" }, m.getSchedulePreferences());
+    assert.equal(proposal.ok, false);
+  });
+});
+
+describe("deriveStudlinAiProactiveSignal", () => {
+  test("neither offer active -> null", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.deriveStudlinAiProactiveSignal(null, null), null);
+  });
+  test("only peakInsightOffer active -> kind:peak_hours, carries its fields through", () => {
+    const m = loadStudlinModule();
+    const offer = { currentBucket: "morning", currentPct: 0.4, suggestedBucket: "evening", suggestedPct: 0.8 };
+    const signal = m.deriveStudlinAiProactiveSignal(null, offer);
+    assert.equal(signal.kind, "peak_hours");
+    assert.equal(signal.suggestedBucket, "evening");
+  });
+  test("only strugglingBucketOffer active -> kind:struggling_bucket, carries its fields through", () => {
+    const m = loadStudlinModule();
+    const offer = { strugglingBucket: "afternoon", suggestedBucket: "morning", recentMissedCount: 4, recentWindow: 5 };
+    const signal = m.deriveStudlinAiProactiveSignal(offer, null);
+    assert.equal(signal.kind, "struggling_bucket");
+    assert.equal(signal.recentMissedCount, 4);
+  });
+  test("both active -> struggling_bucket wins, matching the app's own existing precedence", () => {
+    const m = loadStudlinModule();
+    const strugglingOffer = { strugglingBucket: "afternoon", suggestedBucket: "morning", recentMissedCount: 4, recentWindow: 5 };
+    const peakOffer = { currentBucket: "morning", currentPct: 0.4, suggestedBucket: "evening", suggestedPct: 0.8 };
+    const signal = m.deriveStudlinAiProactiveSignal(strugglingOffer, peakOffer);
+    assert.equal(signal.kind, "struggling_bucket");
+  });
 });
