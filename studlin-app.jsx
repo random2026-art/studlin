@@ -16554,7 +16554,18 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
             </div>
           ))}
           {loading&&(
-            <div style={{alignSelf:"flex-start",fontSize:12.5,color:pp.muted,padding:"9px 13px"}}>Thinking…</div>
+            // Three dots pulsing via the existing studlinPulse keyframe
+            // (defined in App()'s global <style>, previously unused
+            // anywhere in the file) instead of static "Thinking…" text --
+            // an animated indicator actually communicates "something is
+            // happening" the way a static label can't. Styled to match a
+            // real AI message bubble (same lime tint/border) so it reads
+            // as "a reply is forming here," not a disconnected label.
+            <div style={{alignSelf:"flex-start",display:"flex",gap:5,alignItems:"center",padding:"12px 15px",borderRadius:12,background:T.lime+"14",border:`1px solid ${T.lime}33`}}>
+              {[0,1,2].map(i=>(
+                <span key={i} style={{width:6,height:6,borderRadius:"50%",background:pp.muted,animation:"studlinPulse 1s ease-in-out infinite",animationDelay:(i*0.15)+"s"}} />
+              ))}
+            </div>
           )}
         </div>
         <div style={{padding:"12px 18px",borderTop:`1px solid ${pp.border}`,display:"flex",gap:8}}>
