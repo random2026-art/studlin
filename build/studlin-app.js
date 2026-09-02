@@ -1778,13 +1778,14 @@ function priorityTierOf(task) {
   const n = normalizeTaskVal(task && task.priority, 5);
   return Math.max(1, Math.min(5, Math.ceil(n * 5)));
 }
-function logCompletionOutcome(outcome, timeStr, tier, taskId) {
+function logCompletionOutcome(outcome, timeStr, tier, taskId, subject) {
   const bucket = hourBucket(timeStr);
   if (!bucket) return;
   const log = lsGet("completionLog", []);
   const entry = { bucket, outcome, t: Date.now() };
   if (tier) entry.tier = tier;
   if (taskId) entry.taskId = taskId;
+  if (subject) entry.subject = subject;
   log.push(entry);
   lsSet("completionLog", log);
 }
@@ -1816,6 +1817,25 @@ function getBucketReliability(bucket, tier) {
   }
   if (all.length < TIER0_MIN_BUCKET_SAMPLE) return null;
   return all.reduce((s, e) => s + completionCredit(e), 0) / all.length;
+}
+const MATRIX_MIN_SAMPLE = 4;
+function computeSubjectHourReliabilityMatrix(subjects) {
+  const log = lsGet("completionLog", []);
+  const bySubjectBucket = {};
+  log.forEach((e) => {
+    if (!e.subject || !e.bucket) return;
+    const key = e.subject + "|" + e.bucket;
+    (bySubjectBucket[key] = bySubjectBucket[key] || []).push(e);
+  });
+  return subjects.map((subject) => {
+    const cells = TIER0_HOUR_BUCKETS.map((b) => {
+      const entries = bySubjectBucket[subject + "|" + b.id] || [];
+      if (entries.length < MATRIX_MIN_SAMPLE) return { bucketId: b.id, rate: null, samples: entries.length };
+      const rate = entries.reduce((s, e) => s + completionCredit(e), 0) / entries.length;
+      return { bucketId: b.id, rate, samples: entries.length };
+    });
+    return { subject, cells };
+  }).filter((row) => row.cells.some((c) => c.rate !== null));
 }
 const STRUGGLING_BUCKET_RECENT_WINDOW = 5;
 const STRUGGLING_BUCKET_MIN_RECENT_MISSES = 4;
@@ -4958,7 +4978,7 @@ function todaysPlan() {
 function markEventDone(id) {
   const events = lsGet("events", []);
   const target = events.find((ev) => ev.id === id);
-  if (target && target.time) logCompletionOutcome("done", target.time, difficultyTierOf(target), target.id);
+  if (target && target.time) logCompletionOutcome("done", target.time, difficultyTierOf(target), target.id, target.subject);
   const next = events.map((ev) => {
     if (ev.id !== id) return ev;
     const { movedByStudlin, movedFrom, movedAt, ...rest } = ev;
@@ -5550,6 +5570,53 @@ function StudlinPrep({ setActive = () => {
     const p = k.split("-");
     return new Date(+p[0], +p[1] - 1, +p[2]).toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
   };
+  const ReadinessTrajectoryChart = ({ trajectory, todayKey }) => {
+    if (!trajectory || trajectory.length < 3) return null;
+    const today = todayKey || dayKey();
+    const maxVal = Math.max(1, ...trajectory.map((p) => p.plannedCumulative));
+    const w = 100, h = 100;
+    const pts = (key) => trajectory.map((p, i) => {
+      const x = trajectory.length > 1 ? i / (trajectory.length - 1) * w : 0;
+      const y = h - p[key] / maxVal * h;
+      return x + "," + y;
+    }).join(" ");
+    const todayIdx = trajectory.findIndex((p) => p.date >= today);
+    const todayX = trajectory.length > 1 ? Math.max(todayIdx, 0) / (trajectory.length - 1) * w : 0;
+    const atToday = trajectory[todayIdx >= 0 ? todayIdx : trajectory.length - 1];
+    const gap = atToday ? atToday.plannedCumulative - atToday.actualCumulative : 0;
+    return /* @__PURE__ */ React.createElement("div", { style: { marginTop: 14 } }, /* @__PURE__ */ React.createElement("svg", { viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: "none", style: { width: "100%", height: 70, display: "block" } }, /* @__PURE__ */ React.createElement("polyline", { points: pts("plannedCumulative"), fill: "none", stroke: T.border, strokeWidth: "1.5", strokeDasharray: "3,2", vectorEffect: "non-scaling-stroke" }), /* @__PURE__ */ React.createElement("polyline", { points: pts("actualCumulative"), fill: "none", stroke: T.lime, strokeWidth: "2", vectorEffect: "non-scaling-stroke" }), todayIdx >= 0 && /* @__PURE__ */ React.createElement("line", { x1: todayX, y1: 0, x2: todayX, y2: h, stroke: T.faint, strokeWidth: "1", strokeDasharray: "1,1", vectorEffect: "non-scaling-stroke" })), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 10.5, color: T.faint, marginTop: 4 } }, /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("span", { style: { display: "inline-block", width: 8, height: 2, background: T.border, marginRight: 4, verticalAlign: "middle" } }), "Planned pace"), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("span", { style: { display: "inline-block", width: 8, height: 2, background: T.lime, marginRight: 4, verticalAlign: "middle" } }), "Actual pace")), gap > 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.amber, marginTop: 6 } }, gap, " session", gap !== 1 ? "s" : "", " behind pace.") : /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.lime, marginTop: 6 } }, "Right on pace."));
+  };
+  const SubjectHourReliabilityMatrix = ({ rows }) => {
+    if (!rows || rows.length === 0) {
+      return /* @__PURE__ */ React.createElement("div", { style: { padding: "20px 16px", textAlign: "center", color: T.faint, fontSize: 12.5, border: `1px dashed ${T.border}`, borderRadius: 8 } }, "Studlin's still learning your patterns by subject and time of day \u2014 check back after a couple more weeks of real use.");
+    }
+    return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "110px repeat(4,1fr)", gap: 4, fontSize: 10, color: T.faint, textTransform: "uppercase", letterSpacing: "0.04em" } }, /* @__PURE__ */ React.createElement("span", null), TIER0_HOUR_BUCKETS.map((b) => /* @__PURE__ */ React.createElement("span", { key: b.id, style: { textAlign: "center" } }, PEAK_BUCKET_LABELS[b.id]))), rows.map((row) => /* @__PURE__ */ React.createElement("div", { key: row.subject, style: { display: "grid", gridTemplateColumns: "110px repeat(4,1fr)", gap: 4, alignItems: "center" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, row.subject), row.cells.map((cell) => {
+      const filled = cell.rate != null;
+      const bg = !filled ? T.card2 : cell.rate >= 0.7 ? T.lime : cell.rate >= 0.4 ? T.amber : T.red;
+      return /* @__PURE__ */ React.createElement(
+        "div",
+        {
+          key: cell.bucketId,
+          title: filled ? Math.round(cell.rate * 100) + "% reliable" : "Not enough data yet",
+          style: { height: 28, borderRadius: 6, background: bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10.5, fontWeight: 700, color: filled ? T.ink : T.faint, border: filled ? "none" : `1px dashed ${T.border}` }
+        },
+        filled ? Math.round(cell.rate * 100) + "%" : "--"
+      );
+    }))));
+  };
+  const AttentionBalanceBars = ({ rows }) => {
+    if (!rows || rows.length === 0) {
+      return /* @__PURE__ */ React.createElement("div", { style: { padding: "20px 16px", textAlign: "center", color: T.faint, fontSize: 12.5, border: `1px dashed ${T.border}`, borderRadius: 8 } }, "No timed study sessions yet \u2014 use the Lock-In Timer while you study and this fills in.");
+    }
+    const maxMinutes = Math.max(...rows.map((r) => r.minutesInvested), 1);
+    return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, lineHeight: 1.4 } }, "Based on timed study sessions only (Lock-In Timer) \u2014 a subject you study a lot without timing it will look emptier here than it really is."), rows.map((row) => {
+      const hrs = (row.minutesInvested / 60).toFixed(1);
+      const pct = Math.max(4, row.minutesInvested / maxMinutes * 100);
+      const urgent = row.daysUntilExam != null && row.daysUntilExam <= 7;
+      const neglected = urgent && row.minutesInvested < maxMinutes * 0.3;
+      return /* @__PURE__ */ React.createElement("div", { key: row.subject }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.text, fontWeight: 600 } }, row.subject), /* @__PURE__ */ React.createElement("span", { style: { color: T.muted } }, hrs, "h", row.daysUntilExam != null && /* @__PURE__ */ React.createElement("span", { style: { color: neglected ? T.red : T.faint, marginLeft: 8, fontWeight: neglected ? 700 : 400 } }, "\u2014 exam in " + row.daysUntilExam + "d"))), /* @__PURE__ */ React.createElement("div", { style: { height: 8, borderRadius: 99, background: T.card2, overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { height: "100%", width: pct + "%", borderRadius: 99, background: neglected ? T.red : T.lime } })));
+    }));
+  };
   const fmtRolloverClock = (t) => {
     if (!t) return "";
     const p = t.split(":");
@@ -6109,9 +6176,9 @@ function StudlinPrep({ setActive = () => {
       classes: [...new Set(allPracticeExams.map(peClassOf).filter(Boolean))]
     }
   };
-  const showTabToolbar = !(tab === "exams" && selectedExam);
+  const showTabToolbar = !(tab === "exams" && selectedExam) && tab !== "insights";
   const tt = TOOLBAR_TAB_STATE[tab];
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 20, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 2, background: T.card2, padding: 2, borderRadius: 4, width: "fit-content", flexWrap: "wrap" } }, [{ id: "exams", label: "Exams" }, { id: "assignments", label: "Assignments" }, { id: "projects", label: "Projects" }, { id: "flashcards", label: "Flashcards" }, { id: "practiceExams", label: "Practice Exams" }].map((v) => /* @__PURE__ */ React.createElement("button", { key: v.id, onClick: () => {
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 20, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 2, background: T.card2, padding: 2, borderRadius: 4, width: "fit-content", flexWrap: "wrap" } }, [{ id: "exams", label: "Exams" }, { id: "assignments", label: "Assignments" }, { id: "projects", label: "Projects" }, { id: "flashcards", label: "Flashcards" }, { id: "practiceExams", label: "Practice Exams" }, { id: "insights", label: "Insights" }].map((v) => /* @__PURE__ */ React.createElement("button", { key: v.id, onClick: () => {
     setTab(v.id);
     setSelectedExamId(null);
   }, style: { padding: "5px 12px", borderRadius: 4, fontSize: 12, fontWeight: tab === v.id ? 600 : 400, cursor: "pointer", background: tab === v.id ? T.card : "transparent", color: tab === v.id ? T.text : T.muted, border: "none", fontFamily: T.font, transition: "all 0.15s", whiteSpace: "nowrap" } }, v.label))), showTabToolbar && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(
@@ -6280,6 +6347,7 @@ function StudlinPrep({ setActive = () => {
     }))));
   })(), tab === "exams" && selectedExam && (() => {
     const readiness = computeExamReadiness(selectedExam, lsGet("events", []), dayKey());
+    const readinessTrajectory = computeReadinessTrajectory(selectedExam, lsGet("events", []), dayKey());
     const deck = allDecks.find((d) => deckLinkedToExam(d, selectedExam.id));
     const pes = allPracticeExams.filter((p) => p.examEventId === selectedExam.id);
     const examSessions = lsGet("events", []).filter((e) => e.dueEventId === selectedExam.id).sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
@@ -6406,7 +6474,7 @@ function StudlinPrep({ setActive = () => {
           style: { display: "inline-flex", fontSize: 11, fontWeight: 700, color: stateColor, background: stateColor + "14", border: `1px solid ${stateColor}44`, borderRadius: 6, padding: "4px 10px", cursor: "pointer" }
         },
         readiness.state.toUpperCase().replace("-", " ")
-      ), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, lineHeight: 1.5, marginTop: 8 } }, readiness.sentence), readinessExpanded && suggestion && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 6, padding: "10px 12px", borderRadius: 6, border: `1px solid ${T.border}`, background: T.card2, fontSize: 12, color: T.muted, lineHeight: 1.5 } }, suggestion), prep && prep.score != null ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, maxWidth: 220, height: 6, borderRadius: 99, background: T.card2, overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { height: "100%", width: prep.score + "%", background: prepColor, borderRadius: 99 } })), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11.5, fontWeight: 600, color: T.muted } }, prep.score, "% prepared")) : /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.faint, marginTop: 10 } }, "Not started yet"));
+      ), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, lineHeight: 1.5, marginTop: 8 } }, readiness.sentence), readinessExpanded && suggestion && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 6, padding: "10px 12px", borderRadius: 6, border: `1px solid ${T.border}`, background: T.card2, fontSize: 12, color: T.muted, lineHeight: 1.5 } }, suggestion), prep && prep.score != null ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, maxWidth: 220, height: 6, borderRadius: 99, background: T.card2, overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { height: "100%", width: prep.score + "%", background: prepColor, borderRadius: 99 } })), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11.5, fontWeight: 600, color: T.muted } }, prep.score, "% prepared")) : /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.faint, marginTop: 10 } }, "Not started yet"), /* @__PURE__ */ React.createElement(ReadinessTrajectoryChart, { trajectory: readinessTrajectory, todayKey: dayKey() }));
     })(), (() => {
       const suggestion = performanceConfidenceSuggestion(selectedExam);
       if (!suggestion) return null;
@@ -6523,6 +6591,13 @@ function StudlinPrep({ setActive = () => {
       const linkedExam = pe.examEventId ? lsGet("events", []).find((e) => e.id === pe.examEventId) : null;
       return /* @__PURE__ */ React.createElement("div", { key: pe.id, style: { padding: "12px 16px", borderRadius: 12, border: `1px solid ${T.border}`, background: T.card } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 14, marginBottom: linkedExam ? 8 : 0 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 600, color: T.white } }, pe.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginTop: 2 } }, pe.questions.length, " questions", lastAttempt ? " \xB7 last score " + lastAttempt.score + "/" + lastAttempt.total : " \xB7 not taken yet"))), linkedExam && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, fontWeight: 700, padding: "3px 8px", borderRadius: 99, background: T.lime + "14", color: T.lime, border: `1px solid ${T.lime}33` } }, "Exam: ", linkedExam.title, " \xB7 ", linkedExam.date)), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexShrink: 0, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => startPracticeExam(pe) }, "Take"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => setPeLinkExamId(pe.id) }, linkedExam ? "Change exam" : "+ Link to an exam"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setDeleteConfirm({ type: "pe", id: pe.id, name: pe.name }) }, "Delete")));
     }));
+  })(), tab === "insights" && (() => {
+    const allEvents = lsGet("events", []);
+    const today = dayKey();
+    const subjectLabels = userSubjects.map((s) => s.label);
+    const reliabilityRows = computeSubjectHourReliabilityMatrix(subjectLabels);
+    const balanceRows = computeAttentionBalance(allEvents, today);
+    return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 28 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 15, fontWeight: 700, color: T.white, marginBottom: 4 } }, "When you actually do your best work, by class"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 14, lineHeight: 1.5 } }, `Not just "you're a morning person" -- this breaks it down per class, since it's rarely the same for every subject.`), /* @__PURE__ */ React.createElement(SubjectHourReliabilityMatrix, { rows: reliabilityRows })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 15, fontWeight: 700, color: T.white, marginBottom: 4 } }, "Where your time is actually going"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 14, lineHeight: 1.5 } }, "Hours invested this term, next to how soon each subject's next exam actually is."), /* @__PURE__ */ React.createElement(AttentionBalanceBars, { rows: balanceRows })));
   })(), /* @__PURE__ */ React.createElement(
     Modal,
     {
@@ -8897,6 +8972,43 @@ function computeExamReadiness(examEvent, events, todayKey) {
   if (quizScore) sentence += " Last practice quiz: " + quizScore.score + "/" + quizScore.total + ".";
   else if (daysUntil <= EXAM_READINESS_SOON_DAYS) sentence += " No practice quiz taken yet.";
   return { state: base.state, daysUntil, sessionsTotal: total, sessionsDone: done, quizScore, sentence };
+}
+function computeReadinessTrajectory(examEvent, events, todayKey) {
+  if (!examEvent) return [];
+  const sessions = events.filter((e) => e.dueEventId === examEvent.id);
+  if (sessions.length === 0) return [];
+  const today = todayKey || dayKey();
+  const sorted = [...sessions].sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+  const firstDate = sorted[0].date;
+  const lastDate = [firstDate, examEvent.date, today].sort((a, b) => a < b ? -1 : a > b ? 1 : 0)[2];
+  const dates = [];
+  let cursor = firstDate;
+  while (cursor <= lastDate && dates.length <= 400) {
+    dates.push(cursor);
+    cursor = dayKey(new Date((/* @__PURE__ */ new Date(cursor + "T12:00:00")).getTime() + 864e5));
+  }
+  return dates.map((d) => {
+    const plannedCumulative = sorted.filter((s) => s.date <= d).length;
+    const actualCumulative = sorted.filter((s) => {
+      if (s.status !== "done") return false;
+      const completedDate = s.completedAt ? dayKey(new Date(s.completedAt)) : s.date;
+      return completedDate <= d;
+    }).length;
+    return { date: d, plannedCumulative, actualCumulative };
+  });
+}
+function computeAttentionBalance(events, todayKey) {
+  const today = todayKey || dayKey();
+  const bySubject = {};
+  events.forEach((ev) => {
+    if (!ev.subject || ev.status !== "done") return;
+    bySubject[ev.subject] = (bySubject[ev.subject] || 0) + (ev.timeSpent || ev.duration || 0);
+  });
+  return Object.keys(bySubject).map((subject) => {
+    const upcomingExam = events.filter((e) => e.kind === "exam" && e.subject === subject && e.status === "pending" && e.date >= today).sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0)[0] || null;
+    const daysUntilExam = upcomingExam ? Math.round((/* @__PURE__ */ new Date(upcomingExam.date + "T12:00:00") - /* @__PURE__ */ new Date(today + "T12:00:00")) / 864e5) : null;
+    return { subject, minutesInvested: bySubject[subject], daysUntilExam };
+  }).sort((a, b) => b.minutesInvested - a.minutesInvested);
 }
 const CONFIDENCE_TO_UNIT = { shaky: 0.2, okay: 0.6, solid: 1 };
 const RATING_UNIT = { 1: 0, 2: 0.25, 3: 0.5, 4: 0.75, 5: 1 };
@@ -18359,7 +18471,7 @@ function Dashboard({ setActive, seriousMode = false, rescheduleTask, setReschedu
   const toggleChecklistItem = (id) => {
     const all = lsGet("events", []);
     const target = all.find((ev) => ev.id === id);
-    if (target && target.status !== "done" && target.time) logCompletionOutcome("done", target.time, difficultyTierOf(target), target.id);
+    if (target && target.status !== "done" && target.time) logCompletionOutcome("done", target.time, difficultyTierOf(target), target.id, target.subject);
     const next = all.map((ev) => ev.id === id ? { ...ev, status: ev.status === "done" ? "pending" : "done", completedAt: ev.status === "done" ? null : Date.now() } : ev);
     lsSet("events", next);
     forcePlan((x) => x + 1);
@@ -18924,7 +19036,7 @@ function App() {
     const target = all.find((ev) => ev.id === taskId);
     if (!target) return;
     if (!target.timeSpent) logSession(mins, "Task: " + target.title);
-    if (evTime) logCompletionOutcome("done", evTime, difficultyTierOf(target), taskId);
+    if (evTime) logCompletionOutcome("done", evTime, difficultyTierOf(target), taskId, target.subject);
     const next = all.map((ev) => ev.id === taskId ? { ...ev, status: "done", timeSpent: mins, duration: mins, completedAt: Date.now() } : ev);
     setEvents(next);
     lsSet("events", next);
@@ -19715,7 +19827,7 @@ function App() {
     const newlyMissed = evs.filter((ev) => isTier0Missed(ev, today) && !missedLoggedKeys.has(ev.id + "|" + ev.date));
     if (newlyMissed.length > 0) {
       newlyMissed.forEach((ev) => {
-        logCompletionOutcome("missed", ev.time, difficultyTierOf(ev));
+        logCompletionOutcome("missed", ev.time, difficultyTierOf(ev), null, ev.subject);
         missedLoggedKeys.add(ev.id + "|" + ev.date);
       });
       lsSet("missedLoggedKeys", Array.from(missedLoggedKeys));
@@ -20037,7 +20149,7 @@ function App() {
         if (!alreadyClaimed) logSession(mins, "Task: " + timerTask.title);
         const actualStart = new Date(Date.now() - mins * 6e4);
         const actualStartTime = String(actualStart.getHours()).padStart(2, "0") + ":" + String(actualStart.getMinutes()).padStart(2, "0");
-        if (timerTask.time) logCompletionOutcome("done", actualStartTime, difficultyTierOf(timerTask), timerTask.id);
+        if (timerTask.time) logCompletionOutcome("done", actualStartTime, difficultyTierOf(timerTask), timerTask.id, timerTask.subject);
         let next = lsGet("events", []).map((ev) => ev.id === timerTask.id ? { ...ev, status: "done", timeSpent: mins, duration: mins, completedAt: Date.now() } : ev);
         if (timerTask.time) {
           const completedEndMins = timeToMinutes(timerTask.time) + mins;

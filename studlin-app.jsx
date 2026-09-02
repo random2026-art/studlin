@@ -2990,13 +2990,19 @@ function priorityTierOf(task){
 // the caller has one, so a later "how'd that go?" check-in answer (see
 // applyCheckInRating) can find this exact entry and upgrade it instead of
 // appending a second, double-counted row for the same completion.
-function logCompletionOutcome(outcome,timeStr,tier,taskId){
+// `subject` (optional, added for the Insights subject×time-of-day
+// reliability matrix — see computeSubjectHourReliabilityMatrix) is a real
+// data addition, not a refactor: old rows simply have no subject and are
+// invisible to that matrix, they still count exactly as before toward the
+// aggregate getBucketReliability signal.
+function logCompletionOutcome(outcome,timeStr,tier,taskId,subject){
   const bucket=hourBucket(timeStr);
   if(!bucket)return;
   const log=lsGet("completionLog",[]);
   const entry={bucket,outcome,t:Date.now()};
   if(tier)entry.tier=tier;
   if(taskId)entry.taskId=taskId;
+  if(subject)entry.subject=subject;
   log.push(entry);
   lsSet("completionLog",log);
 }
@@ -3057,6 +3063,44 @@ function getBucketReliability(bucket,tier){
   }
   if(all.length<TIER0_MIN_BUCKET_SAMPLE)return null;
   return all.reduce((s,e)=>s+completionCredit(e),0)/all.length;
+}
+// Minimum samples per subject×bucket cell before showing a real reliability
+// number instead of "not enough data yet" -- deliberately lower than
+// TIER0_MIN_BUCKET_SAMPLE (8), which guards the AGGREGATE bucket-wide
+// signal above. A subject×bucket cell is a much narrower slice of the
+// same completionLog (one class, one time window) -- holding it to the
+// same threshold as the aggregate would mean the Insights matrix stays
+// empty for months. 4 is a real floor, not zero -- still enough to reject
+// a single lucky/unlucky data point, just not as conservative as the
+// aggregate signal needs to be.
+const MATRIX_MIN_SAMPLE=4;
+// Same completionCredit/denominator convention getBucketReliability
+// already uses (entry.outcome contributes 0 for "missed", 0.25-1 for
+// "done" depending on rating), just sliced by subject as well as bucket.
+// Only usable on entries logCompletionOutcome has stamped a subject onto
+// -- older, subject-less rows are silently excluded rather than
+// misattributed, so this only ever builds forward from real data, never
+// fabricates retroactive history. Rows with zero real cells are dropped
+// entirely rather than rendered as an all-"--" row.
+function computeSubjectHourReliabilityMatrix(subjects){
+  const log=lsGet("completionLog",[]);
+  const bySubjectBucket={};
+  log.forEach(e=>{
+    if(!e.subject||!e.bucket)return;
+    const key=e.subject+"|"+e.bucket;
+    (bySubjectBucket[key]=bySubjectBucket[key]||[]).push(e);
+  });
+  return subjects
+    .map(subject=>{
+      const cells=TIER0_HOUR_BUCKETS.map(b=>{
+        const entries=bySubjectBucket[subject+"|"+b.id]||[];
+        if(entries.length<MATRIX_MIN_SAMPLE)return{bucketId:b.id,rate:null,samples:entries.length};
+        const rate=entries.reduce((s,e)=>s+completionCredit(e),0)/entries.length;
+        return{bucketId:b.id,rate,samples:entries.length};
+      });
+      return{subject,cells};
+    })
+    .filter(row=>row.cells.some(c=>c.rate!==null));
 }
 // A recent-streak detector, separate from getBucketReliability's all-time
 // aggregate — a student sliding lately deserves a nudge before enough bad
@@ -7992,7 +8036,7 @@ function todaysPlan(){
 function markEventDone(id){
   const events=lsGet("events",[]);
   const target=events.find(ev=>ev.id===id);
-  if(target&&target.time)logCompletionOutcome("done",target.time,difficultyTierOf(target),target.id);
+  if(target&&target.time)logCompletionOutcome("done",target.time,difficultyTierOf(target),target.id,target.subject);
   const next=events.map(ev=>{if(ev.id!==id)return ev;const {movedByStudlin,movedFrom,movedAt,...rest}=ev;return {...rest,status:"done",completedAt:Date.now()};});
   lsSet("events",next);
   return next;
@@ -8991,6 +9035,124 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   // own niceDate too. Short month (vs CalendarTab's long form) since this
   // feeds a single-line meta row that's already tight on space.
   const niceDate=(k)=>{const p=k.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"});};
+  // Real line chart -- planned vs. actual cumulative sessions over time,
+  // see computeReadinessTrajectory. Genuinely new (no line-chart primitive
+  // exists anywhere else in this file) -- a percentage-based viewBox so it
+  // scales to its container via CSS width alone, two polylines (dashed
+  // muted = planned, solid lime = actual), a faint vertical marker at
+  // today. Too few points to read as a real trend (a 1-2 session exam)
+  // falls back to nothing here -- the existing sessionsDone/sessionsTotal
+  // fraction above this already covers that case honestly.
+  const ReadinessTrajectoryChart=({trajectory,todayKey})=>{
+    if(!trajectory||trajectory.length<3)return null;
+    const today=todayKey||dayKey();
+    const maxVal=Math.max(1,...trajectory.map(p=>p.plannedCumulative));
+    const w=100,h=100;
+    const pts=(key)=>trajectory.map((p,i)=>{
+      const x=trajectory.length>1?(i/(trajectory.length-1))*w:0;
+      const y=h-(p[key]/maxVal)*h;
+      return x+","+y;
+    }).join(" ");
+    const todayIdx=trajectory.findIndex(p=>p.date>=today);
+    const todayX=trajectory.length>1?(Math.max(todayIdx,0)/(trajectory.length-1))*w:0;
+    const atToday=trajectory[todayIdx>=0?todayIdx:trajectory.length-1];
+    const gap=atToday?atToday.plannedCumulative-atToday.actualCumulative:0;
+    return (
+      <div style={{marginTop:14}}>
+        <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{width:"100%",height:70,display:"block"}}>
+          <polyline points={pts("plannedCumulative")} fill="none" stroke={T.border} strokeWidth="1.5" strokeDasharray="3,2" vectorEffect="non-scaling-stroke" />
+          <polyline points={pts("actualCumulative")} fill="none" stroke={T.lime} strokeWidth="2" vectorEffect="non-scaling-stroke" />
+          {todayIdx>=0&&<line x1={todayX} y1={0} x2={todayX} y2={h} stroke={T.faint} strokeWidth="1" strokeDasharray="1,1" vectorEffect="non-scaling-stroke" />}
+        </svg>
+        <div style={{display:"flex",justifyContent:"space-between",fontSize:10.5,color:T.faint,marginTop:4}}>
+          <span><span style={{display:"inline-block",width:8,height:2,background:T.border,marginRight:4,verticalAlign:"middle"}}/>Planned pace</span>
+          <span><span style={{display:"inline-block",width:8,height:2,background:T.lime,marginRight:4,verticalAlign:"middle"}}/>Actual pace</span>
+        </div>
+        {gap>0?(
+          <div style={{fontSize:12,color:T.amber,marginTop:6}}>{gap} session{gap!==1?"s":""} behind pace.</div>
+        ):(
+          <div style={{fontSize:12,color:T.lime,marginTop:6}}>Right on pace.</div>
+        )}
+      </div>
+    );
+  };
+  // Subject × time-of-day reliability grid, see
+  // computeSubjectHourReliabilityMatrix -- rows only include subjects with
+  // real logged history, individual cells fall back to a dashed "--" tile
+  // (never a fabricated 0%) below MATRIX_MIN_SAMPLE. Same lime/amber/red
+  // reliability-color convention the exam-detail preparedness bar already
+  // uses, not a new color language.
+  const SubjectHourReliabilityMatrix=({rows})=>{
+    if(!rows||rows.length===0){
+      return (
+        <div style={{padding:"20px 16px",textAlign:"center",color:T.faint,fontSize:12.5,border:`1px dashed ${T.border}`,borderRadius:8}}>
+          Studlin's still learning your patterns by subject and time of day — check back after a couple more weeks of real use.
+        </div>
+      );
+    }
+    return (
+      <div style={{display:"flex",flexDirection:"column",gap:6}}>
+        <div style={{display:"grid",gridTemplateColumns:"110px repeat(4,1fr)",gap:4,fontSize:10,color:T.faint,textTransform:"uppercase",letterSpacing:"0.04em"}}>
+          <span/>
+          {TIER0_HOUR_BUCKETS.map(b=><span key={b.id} style={{textAlign:"center"}}>{PEAK_BUCKET_LABELS[b.id]}</span>)}
+        </div>
+        {rows.map(row=>(
+          <div key={row.subject} style={{display:"grid",gridTemplateColumns:"110px repeat(4,1fr)",gap:4,alignItems:"center"}}>
+            <span style={{fontSize:12,color:T.text,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{row.subject}</span>
+            {row.cells.map(cell=>{
+              const filled=cell.rate!=null;
+              const bg=!filled?T.card2:cell.rate>=0.7?T.lime:cell.rate>=0.4?T.amber:T.red;
+              return (
+                <div key={cell.bucketId} title={filled?Math.round(cell.rate*100)+"% reliable":"Not enough data yet"}
+                  style={{height:28,borderRadius:6,background:bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10.5,fontWeight:700,color:filled?T.ink:T.faint,border:filled?"none":`1px dashed ${T.border}`}}>
+                  {filled?Math.round(cell.rate*100)+"%":"--"}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    );
+  };
+  // Horizontal bars, hours invested per subject next to how urgent that
+  // subject actually is right now (see computeAttentionBalance). Honest
+  // about its own blind spot right in the copy -- timeSpent only exists
+  // for timed (Lock-In Timer) sessions, so a subject studied a lot without
+  // ever starting the timer will look emptier here than it really is.
+  const AttentionBalanceBars=({rows})=>{
+    if(!rows||rows.length===0){
+      return (
+        <div style={{padding:"20px 16px",textAlign:"center",color:T.faint,fontSize:12.5,border:`1px dashed ${T.border}`,borderRadius:8}}>
+          No timed study sessions yet — use the Lock-In Timer while you study and this fills in.
+        </div>
+      );
+    }
+    const maxMinutes=Math.max(...rows.map(r=>r.minutesInvested),1);
+    return (
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
+        <div style={{fontSize:11,color:T.faint,lineHeight:1.4}}>Based on timed study sessions only (Lock-In Timer) — a subject you study a lot without timing it will look emptier here than it really is.</div>
+        {rows.map(row=>{
+          const hrs=(row.minutesInvested/60).toFixed(1);
+          const pct=Math.max(4,(row.minutesInvested/maxMinutes)*100);
+          const urgent=row.daysUntilExam!=null&&row.daysUntilExam<=7;
+          const neglected=urgent&&row.minutesInvested<maxMinutes*0.3;
+          return (
+            <div key={row.subject}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:4}}>
+                <span style={{color:T.text,fontWeight:600}}>{row.subject}</span>
+                <span style={{color:T.muted}}>{hrs}h{row.daysUntilExam!=null&&(
+                  <span style={{color:neglected?T.red:T.faint,marginLeft:8,fontWeight:neglected?700:400}}>{"— exam in "+row.daysUntilExam+"d"}</span>
+                )}</span>
+              </div>
+              <div style={{height:8,borderRadius:99,background:T.card2,overflow:"hidden"}}>
+                <div style={{height:"100%",width:pct+"%",borderRadius:99,background:neglected?T.red:T.lime}} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
   // App() has its own fmtRolloverClock -- the session timeline (Part B)
   // needs the same "h:mmAM/PM" formatting for session/exam times and had
   // no local copy of its own.
@@ -9824,7 +9986,11 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   // No toolbar on the exam detail sub-page (selectedExam) -- Group By/
   // search only make sense on a list view, and only Exams has a detail
   // sub-page to begin with.
-  const showTabToolbar=!(tab==="exams"&&selectedExam);
+  // "insights" has no class/group-by filter state in TOOLBAR_TAB_STATE
+  // (nothing to filter -- it's a small set of aggregate visuals, not a
+  // list) so it must be excluded here the same way the exam-detail
+  // sub-page already is, or tt below reads as undefined.
+  const showTabToolbar=!(tab==="exams"&&selectedExam)&&tab!=="insights";
   const tt=TOOLBAR_TAB_STATE[tab];
 
   return(
@@ -9840,7 +10006,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
           up at once). */}
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,marginBottom:20,flexWrap:"wrap"}}>
         <div style={{display:"flex",gap:2,background:T.card2,padding:2,borderRadius:4,width:"fit-content",flexWrap:"wrap"}}>
-          {[{id:"exams",label:"Exams"},{id:"assignments",label:"Assignments"},{id:"projects",label:"Projects"},{id:"flashcards",label:"Flashcards"},{id:"practiceExams",label:"Practice Exams"}].map(v=>(
+          {[{id:"exams",label:"Exams"},{id:"assignments",label:"Assignments"},{id:"projects",label:"Projects"},{id:"flashcards",label:"Flashcards"},{id:"practiceExams",label:"Practice Exams"},{id:"insights",label:"Insights"}].map(v=>(
             <button key={v.id} onClick={()=>{setTab(v.id);setSelectedExamId(null);}} style={{padding:"5px 12px",borderRadius:4,fontSize:12,fontWeight:tab===v.id?600:400,cursor:"pointer",background:tab===v.id?T.card:"transparent",color:tab===v.id?T.text:T.muted,border:"none",fontFamily:T.font,transition:"all 0.15s",whiteSpace:"nowrap"}}>{v.label}</button>
           ))}
         </div>
@@ -10116,6 +10282,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
 
       {tab==="exams"&&selectedExam&&(()=>{
         const readiness=computeExamReadiness(selectedExam,lsGet("events",[]),dayKey());
+        const readinessTrajectory=computeReadinessTrajectory(selectedExam,lsGet("events",[]),dayKey());
         const deck=allDecks.find(d=>deckLinkedToExam(d,selectedExam.id));
         const pes=allPracticeExams.filter(p=>p.examEventId===selectedExam.id);
         // Every session Studlin has ever scheduled for this exam, whatever
@@ -10382,6 +10549,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                   ):(
                     <div style={{fontSize:11.5,color:T.faint,marginTop:10}}>Not started yet</div>
                   )}
+                  <ReadinessTrajectoryChart trajectory={readinessTrajectory} todayKey={dayKey()} />
                 </div>
               );
             })()}
@@ -10704,6 +10872,34 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
               );
             })}
         </div>
+        );
+      })()}
+
+      {/* ── Insights -- a real dedicated space for the data Studlin already
+          computes but has never shown as more than a sentence: subject×
+          time-of-day reliability, hours invested vs. how urgent each
+          subject actually is. Deliberately its own tab rather than
+          bolted onto the Exams/Projects tables -- keeps those screens
+          scannable, gives this real depth a real home instead. ── */}
+      {tab==="insights"&&(()=>{
+        const allEvents=lsGet("events",[]);
+        const today=dayKey();
+        const subjectLabels=userSubjects.map(s=>s.label);
+        const reliabilityRows=computeSubjectHourReliabilityMatrix(subjectLabels);
+        const balanceRows=computeAttentionBalance(allEvents,today);
+        return (
+          <div style={{display:"flex",flexDirection:"column",gap:28}}>
+            <div>
+              <div style={{fontSize:15,fontWeight:700,color:T.white,marginBottom:4}}>When you actually do your best work, by class</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:14,lineHeight:1.5}}>Not just "you're a morning person" -- this breaks it down per class, since it's rarely the same for every subject.</div>
+              <SubjectHourReliabilityMatrix rows={reliabilityRows} />
+            </div>
+            <div>
+              <div style={{fontSize:15,fontWeight:700,color:T.white,marginBottom:4}}>Where your time is actually going</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:14,lineHeight:1.5}}>Hours invested this term, next to how soon each subject's next exam actually is.</div>
+              <AttentionBalanceBars rows={balanceRows} />
+            </div>
+          </div>
         );
       })()}
 
@@ -14163,6 +14359,69 @@ function computeExamReadiness(examEvent,events,todayKey){
   if(quizScore)sentence+=" Last practice quiz: "+quizScore.score+"/"+quizScore.total+".";
   else if(daysUntil<=EXAM_READINESS_SOON_DAYS)sentence+=" No practice quiz taken yet.";
   return {state:base.state,daysUntil,sessionsTotal:total,sessionsDone:done,quizScore,sentence};
+}
+
+// Same dueEventId-linked session set computeExamReadiness's own
+// sessionsTotal/sessionsDone counts (deliberately NOT narrowed to
+// isExamPrepSession only, which examPrepIntervalPosition elsewhere uses
+// for a different purpose -- this has to agree with the "3/5 sessions
+// done" fraction already shown on this same page, not a differently-
+// scoped subset that would silently disagree with it). Builds a real
+// day-by-day cumulative series -- planned (by each session's own
+// scheduled date) vs. actual (by completedAt when a session has one,
+// falling back to its scheduled date for the rare paths that don't
+// preserve completedAt on a copy) -- so a screen that only ever showed a
+// static fraction can show the shape of whether the student is ahead of
+// or behind their own plan, not just today's snapshot. Capped at 400
+// days as a defensive bound against a corrupted date range, same
+// "never trust an unbounded date loop" convention this file already
+// applies elsewhere (see e.g. CALENDAR_OVERLAP_SCAN_DAYS_AHEAD).
+function computeReadinessTrajectory(examEvent,events,todayKey){
+  if(!examEvent)return [];
+  const sessions=events.filter(e=>e.dueEventId===examEvent.id);
+  if(sessions.length===0)return [];
+  const today=todayKey||dayKey();
+  const sorted=[...sessions].sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
+  const firstDate=sorted[0].date;
+  const lastDate=[firstDate,examEvent.date,today].sort((a,b)=>a<b?-1:a>b?1:0)[2];
+  const dates=[];
+  let cursor=firstDate;
+  while(cursor<=lastDate&&dates.length<=400){
+    dates.push(cursor);
+    cursor=dayKey(new Date(new Date(cursor+"T12:00:00").getTime()+86400000));
+  }
+  return dates.map(d=>{
+    const plannedCumulative=sorted.filter(s=>s.date<=d).length;
+    const actualCumulative=sorted.filter(s=>{
+      if(s.status!=="done")return false;
+      const completedDate=s.completedAt?dayKey(new Date(s.completedAt)):s.date;
+      return completedDate<=d;
+    }).length;
+    return{date:d,plannedCumulative,actualCumulative};
+  });
+}
+
+// Per-subject hours actually invested (real timeSpent when the Lock-In
+// Timer was used, falling back to duration for anything manually checked
+// off -- the exact same field/fallback convention Weekly Wrapped's own
+// top-subject stat already uses, just widened from one week to
+// all-time-done) paired with how soon that subject's own next pending
+// exam actually is. Neither number alone says much; a long bar next to a
+// close deadline is the actual insight -- "you've put real time into X
+// but Y is what's actually coming up." Sorted by time invested,
+// descending, so the mismatch (if any) is easy to spot near the top.
+function computeAttentionBalance(events,todayKey){
+  const today=todayKey||dayKey();
+  const bySubject={};
+  events.forEach(ev=>{
+    if(!ev.subject||ev.status!=="done")return;
+    bySubject[ev.subject]=(bySubject[ev.subject]||0)+(ev.timeSpent||ev.duration||0);
+  });
+  return Object.keys(bySubject).map(subject=>{
+    const upcomingExam=events.filter(e=>e.kind==="exam"&&e.subject===subject&&e.status==="pending"&&e.date>=today).sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0)[0]||null;
+    const daysUntilExam=upcomingExam?Math.round((new Date(upcomingExam.date+"T12:00:00")-new Date(today+"T12:00:00"))/86400000):null;
+    return{subject,minutesInvested:bySubject[subject],daysUntilExam};
+  }).sort((a,b)=>b.minutesInvested-a.minutesInvested);
 }
 
 // Confidence check-in vocabulary -> 0-1, shared by computeSessionPriority
@@ -30145,7 +30404,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   const toggleChecklistItem=(id)=>{
     const all=lsGet("events",[]);
     const target=all.find(ev=>ev.id===id);
-    if(target&&target.status!=="done"&&target.time)logCompletionOutcome("done",target.time,difficultyTierOf(target),target.id);
+    if(target&&target.status!=="done"&&target.time)logCompletionOutcome("done",target.time,difficultyTierOf(target),target.id,target.subject);
     const next=all.map(ev=>ev.id===id?{...ev,status:ev.status==="done"?"pending":"done",completedAt:ev.status==="done"?null:Date.now()}:ev);
     lsSet("events",next);forcePlan(x=>x+1);
   };
@@ -31091,7 +31350,7 @@ function App() {
     const target=all.find(ev=>ev.id===taskId);
     if(!target)return;
     if(!target.timeSpent)logSession(mins,"Task: "+target.title);
-    if(evTime)logCompletionOutcome("done",evTime,difficultyTierOf(target),taskId);
+    if(evTime)logCompletionOutcome("done",evTime,difficultyTierOf(target),taskId,target.subject);
     // duration:mins -- same reasoning as TaskTimerModal's own onComplete
     // above: the block should span how long the session actually ran, not
     // the original estimate.
@@ -32259,7 +32518,7 @@ function App() {
     const newlyMissed=evs.filter(ev=>isTier0Missed(ev,today)&&!missedLoggedKeys.has(ev.id+"|"+ev.date));
     if(newlyMissed.length>0){
       newlyMissed.forEach(ev=>{
-        logCompletionOutcome("missed",ev.time,difficultyTierOf(ev));
+        logCompletionOutcome("missed",ev.time,difficultyTierOf(ev),null,ev.subject);
         missedLoggedKeys.add(ev.id+"|"+ev.date);
       });
       lsSet("missedLoggedKeys",Array.from(missedLoggedKeys));
@@ -32834,7 +33093,7 @@ function App() {
         // deliberately keep using the event's own scheduled time.
         const actualStart=new Date(Date.now()-mins*60000);
         const actualStartTime=String(actualStart.getHours()).padStart(2,"0")+":"+String(actualStart.getMinutes()).padStart(2,"0");
-        if(timerTask.time)logCompletionOutcome("done",actualStartTime,difficultyTierOf(timerTask),timerTask.id);
+        if(timerTask.time)logCompletionOutcome("done",actualStartTime,difficultyTierOf(timerTask),timerTask.id,timerTask.subject);
         // duration:mins (2026-08-26) -- beginTaskNow already retimes `time`
         // to when the session actually started; this closes the loop by
         // setting `duration` to how long it actually ran, so the block on
