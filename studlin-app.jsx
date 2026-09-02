@@ -21968,10 +21968,29 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
                 })}
               </div>
             </Field>
-            <div style={{display:"grid",gridTemplateColumns:isHabit?"1fr":"1fr 1fr",gap:12,marginBottom:14}}>
-              {!isHabit&&<Field label="Start time"><TimeInput value={startTime} onChange={setStartTime} /></Field>}
-              <Field label="Duration (minutes)"><NumField min={5} max={480} fallback={30} value={duration} onChange={setDuration} /></Field>
-            </div>
+            {/* Google Calendar-inspired polish: start+duration -> start-end.
+                duration stays the only real piece of state (nothing new
+                added) -- the end-time field just derives its displayed
+                value from startTime+duration and writes back into
+                duration on change, the same "compute at usage, convert
+                back at the boundary" shape NewEventModal's own habit-case
+                duration field (elsewhere in this file) already uses in
+                reverse. Editing start time alone naturally preserves the
+                current duration (the derived end shifts with it), same
+                as dragging an event in Google Calendar. */}
+            {isHabit?(
+              <div style={{marginBottom:14}}>
+                <Field label="Duration (minutes)"><NumField min={5} max={480} fallback={30} value={duration} onChange={setDuration} /></Field>
+              </div>
+            ):(
+              <Field label="Start – End">
+                <div style={{display:"flex",alignItems:"center",gap:5}}>
+                  <TimeInput value={startTime} onChange={setStartTime} />
+                  <span style={{color:T.muted,fontSize:11}}>–</span>
+                  <TimeInput value={minutesToTime(timeToMinutes(startTime)+duration)} onChange={v=>setDuration(Math.max(5,timeToMinutes(v)-timeToMinutes(startTime)))} />
+                </div>
+              </Field>
+            )}
             {/* Same inline label+pill row the New Task modal already uses
                 for a one-off event's commute buffer -- not meaningful for
                 a habit (no fixed time to commute to) or a free period. */}
@@ -23171,11 +23190,16 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
           ):(
             <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px"}}>
               <div style={{fontSize:11.5,color:T.muted,marginBottom:8}}>A specific time you'll work on this -- shows up on your calendar like any other block, drag/resize it same as usual.</div>
+              {/* Google Calendar-inspired polish: start+duration -> start-end.
+                  manualDuration stays the real persisted state (unchanged) --
+                  the end-time field derives its value from manualTime+
+                  manualDuration and writes back into manualDuration on
+                  change, same shape as every other conversion in this pass. */}
               <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
                 <Input type="date" value={manualDate} onChange={e=>setManualDate(e.target.value)} style={{width:140}} />
                 <TimeInput value={manualTime} onChange={setManualTime} />
-                <NumField min={5} max={480} fallback={30} value={manualDuration} onChange={setManualDuration} style={{width:56}} />
-                <span style={{fontSize:10.5,color:T.muted}}>min</span>
+                <span style={{color:T.muted,fontSize:11}}>–</span>
+                <TimeInput value={minutesToTime(timeToMinutes(manualTime)+manualDuration)} onChange={v=>setManualDuration(Math.max(5,timeToMinutes(v)-timeToMinutes(manualTime)))} />
               </div>
               <div style={{display:"flex",gap:8,marginTop:10}}>
                 <BtnSm onClick={addManualLinkedBlock} disabled={!manualDate}>Add block</BtnSm>
@@ -23293,8 +23317,17 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
         )}
       </>)}
       {deadlineErr&&<div style={{fontSize:12,color:T.red,marginTop:-8,marginBottom:14}}>{deadlineErr}</div>}
+      {/* Google Calendar-inspired polish: start+duration -> start-end.
+          Start time lives earlier in this form (the "time" field above,
+          BoxedTimeInput) -- not adjacent enough to this row to merge into
+          one combined start-end control without restructuring the whole
+          form's layout (a lot of exam/confidence/deadline content sits
+          between them), so this stays a separate field but now shows a
+          real End time instead of a raw minutes number. duration stays
+          the only real persisted state, same derive-and-write-back shape
+          as every other conversion in this pass. */}
       {kind!=="reminder"&&!asChecklist&&(
-        <Field label="Duration (minutes)"><NumField min={5} max={480} fallback={5} value={duration} onChange={setDuration} /></Field>
+        <Field label="End time"><BoxedTimeInput value={minutesToTime(timeToMinutes(time)+duration)} onChange={v=>setDuration(Math.max(5,timeToMinutes(v)-timeToMinutes(time)))} /></Field>
       )}
       {kind!=="exam"&&kind!=="class"&&kind!=="reminder"&&!asChecklist&&(
         <>
@@ -27906,7 +27939,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
 
         {isFixedKind&&(
           <>
-            <Field label="Duration (minutes)" hint="How long this occupies on your calendar"><NumField min={5} max={480} fallback={5} value={evDuration} onChange={setEvDuration} /></Field>
+            {/* Google Calendar-inspired polish: start+duration -> start-end.
+                Paired with the real Start time field right above this one
+                (evTime/setEvTime) -- evDuration stays the only real
+                persisted state, same derive-and-write-back shape as every
+                other conversion in this pass. */}
+            <Field label="End time" hint="How long this occupies on your calendar"><BoxedTimeInput value={minutesToTime(timeToMinutes(evTime)+evDuration)} onChange={v=>setEvDuration(Math.max(5,timeToMinutes(v)-timeToMinutes(evTime)))} /></Field>
             {/* C9 in the audit: same inline label+pill commute row the
                 recurring-routine edit modal already has -- this is the one
                 place a one-off appointment (not marked "Save to Weekly
