@@ -23033,14 +23033,22 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
         <Field label={asChecklist?"Due date (optional)":"Scheduled date"}><Input type="date" value={date} onChange={e=>{setDate(e.target.value);setDeadlineErr("");}} /></Field>
         {!asChecklist&&<Field label={kind==="reminder"?"Reminder time":"Start time"}><BoxedTimeInput value={time} onChange={setTime} /></Field>}
       </div>
+      {/* Google Calendar-inspired polish: these were pure read-only
+          notices (a status line plus one small text-link action) using
+          the exact same background+border+radius box as a real input
+          control like BoxedTimeInput -- nothing distinguished "you can
+          interact with this" from "this is just information." Plain
+          rows now (padding only, no box), matching Google's own
+          icon+text convention -- the embedded action link stays exactly
+          as clickable as before, it just isn't wrapped in a card anymore. */}
       {ev.userPinned&&(
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px",marginBottom:14,fontSize:12,color:T.muted}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 2px",marginBottom:10,fontSize:12,color:T.muted}}>
           <span>📌 Pinned. Studlin won't move this automatically.</span>
           <button type="button" onClick={()=>commit(allEvents.map(x=>x.id===ev.id?{...x,userPinned:false}:x))} style={{background:"none",border:"none",color:T.lime,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline"}}>Unpin</button>
         </div>
       )}
       {ev.movedByStudlin&&(
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px",marginBottom:14,fontSize:12,color:T.muted}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"6px 2px",marginBottom:10,fontSize:12,color:T.muted}}>
           <span>↻ Studlin moved this from {fmtMovedFrom(ev.movedFrom)}.{fmtMovedReasonSuffix(ev)}</span>
           <button type="button" onClick={()=>{
             const result=undoTier0Move(ev.id);
@@ -23071,14 +23079,14 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
         </div>
       )}
       {ev.placementReason&&(
-        <div style={{display:"flex",alignItems:"center",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px",marginBottom:14,fontSize:12,color:T.muted}}>
+        <div style={{display:"flex",alignItems:"center",padding:"6px 2px",marginBottom:10,fontSize:12,color:T.muted}}>
           <span>🕒 {fmtPlacementReason(ev.placementReason,ev.time)}</span>
         </div>
       )}
       {linkedSessions.length>0&&(()=>{
         const doneCount=linkedSessions.filter(s=>s.status==="done").length;
         return (
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px",marginBottom:14,fontSize:12,color:T.muted}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 2px",marginBottom:10,fontSize:12,color:T.muted}}>
             <span>Studlin scheduled {linkedSessions.length} prep session{linkedSessions.length!==1?"s":""} for this{doneCount>0?" ("+doneCount+" of "+linkedSessions.length+" done)":""}.</span>
             {doneCount<linkedSessions.length&&<button type="button" onClick={()=>setCancelConfirmOpen(true)} style={{background:"none",border:"none",color:T.red,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline"}}>Cancel sessions</button>}
           </div>
@@ -23092,11 +23100,18 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
       {kind!=="exam"&&linkedSessions.length>0&&(
         <div style={{marginBottom:14}}>
           <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>Scheduled blocks</div>
-          <div style={{display:"flex",flexDirection:"column",gap:6}}>
-            {linkedSessions.slice().sort((a,b)=>(a.date+a.time)<(b.date+b.time)?-1:1).map(s=>{
+          {/* Google Calendar-inspired polish: a genuine multi-item list
+              benefits from real visual separation to stay scannable
+              (unlike the single notice rows above, which needed none at
+              all) -- but a full box per row is heavier than the content
+              needs. Divider-only, same convention Settings' own Row
+              component already uses (borderBottom, no full card), one
+              outer border on the list itself instead of one per item. */}
+          <div style={{display:"flex",flexDirection:"column",border:`1px solid ${T.border}`,borderRadius:8,overflow:"hidden"}}>
+            {linkedSessions.slice().sort((a,b)=>(a.date+a.time)<(b.date+b.time)?-1:1).map((s,si)=>{
               const isPast=s.status==="pending"&&s.date&&s.date<dayKey();
               return (
-                <div key={s.id} style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 10px"}}>
+                <div key={s.id} style={{padding:"8px 10px",borderTop:si===0?"none":`1px solid ${T.border}`}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
                     <div onClick={()=>jumpToCalendar(s.id)} style={{cursor:"pointer",flex:1,minWidth:0}} title="Jump to calendar">
                       <div style={{fontSize:12,fontWeight:600,color:s.status==="done"?T.muted:T.text,textDecoration:s.status==="done"?"line-through":"none"}}>{s.date} · {s.time} · {s.duration||30}min</div>
