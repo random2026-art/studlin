@@ -98,7 +98,7 @@ function loadStudlinModule(options) {
     "T","applyTheme","ACCENTS",
     "getWorkWindowMinsFor","detectPeakHourInsight","dismissPeakHourInsight",
     "detectStrugglingBucket","dismissStrugglingBucket","TIER0_HOUR_BUCKETS","PEAK_BUCKET_LABELS",
-    "logCompletionOutcome","getBucketReliability","setSchedulePreferences",
+    "logCompletionOutcome","getBucketReliability","setSchedulePreferences","applyStudyStylePrefs",
     "applyCheckInRating","computeExamReadiness","canGenQuiz","recordQuizGen",
     "getQuizGenUsage","QUIZ_GEN_LIMIT","PRO_QUIZ_GEN_LIMIT","setPlanLS","shouldShowWeekBalanceNudge",
     "canBuildExamPlan","recordExamPlanBuild","getExamPlanUsage","EXAM_PLAN_LIMIT","PRO_EXAM_PLAN_LIMIT",
