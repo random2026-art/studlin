@@ -11856,6 +11856,7 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
           const highlightedByRoutineMode = editRoutineMode && isRoutine;
           const acceptanceSummary = ev.proposalMemberUids ? computeAcceptanceSummary(ev.proposalMemberUids, ev.proposalResponses) : null;
           const isPendingAcceptance = !!acceptanceSummary && !acceptanceSummary.allAccepted;
+          const isDeclined = !!acceptanceSummary && acceptanceSummary.declined > 0;
           const isSelected = !isRoutine && selectedEventId === ev.id;
           const isRoutineSelected = isRoutine && selectedRoutineKey === ev.routineId + "|" + ev.date;
           const isNewlyAdded = !!newItemHighlightIds && (newItemHighlightIds.has(ev.id) || ev.routineId && newItemHighlightIds.has(ev.routineId));
@@ -11921,7 +11922,7 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
             /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: subjectColor, borderRadius: "5px 0 0 5px" } }),
             !catchUpPending && over > 0 && /* @__PURE__ */ React.createElement("span", { title: over + "d overdue", style: { position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: "50%", background: T.red, boxShadow: "0 0 0 1.5px rgba(255,255,255,0.9)", zIndex: 1 } }),
             overflowCount > 0 && /* @__PURE__ */ React.createElement("span", { title: overflowCount + " more at this time \u2014 open the day to see them", style: { position: "absolute", bottom: 2, right: 2, fontSize: 8, fontWeight: 800, color: kindStyle.color, background: "rgba(0,0,0,0.18)", borderRadius: 8, padding: "1px 4px", lineHeight: 1.3, zIndex: 1 } }, "+", overflowCount),
-            isPendingAcceptance && /* @__PURE__ */ React.createElement("span", { title: acceptanceSummary.accepted + "/" + acceptanceSummary.total + " accepted", style: { position: "absolute", bottom: 2, left: 2, fontSize: 8, fontWeight: 800, color: kindStyle.color, background: "rgba(0,0,0,0.18)", borderRadius: 8, padding: "1px 4px", lineHeight: 1.3, zIndex: 1 } }, acceptanceSummary.accepted, "/", acceptanceSummary.total),
+            isPendingAcceptance && /* @__PURE__ */ React.createElement("span", { title: isDeclined ? "Declined" : acceptanceSummary.accepted + "/" + acceptanceSummary.total + " accepted", style: { position: "absolute", bottom: 2, left: 2, fontSize: 8, fontWeight: 800, color: isDeclined ? "#fff" : kindStyle.color, background: isDeclined ? T.red + "cc" : "rgba(0,0,0,0.18)", borderRadius: 8, padding: "1px 4px", lineHeight: 1.3, zIndex: 1 } }, isDeclined ? "Declined" : acceptanceSummary.accepted + "/" + acceptanceSummary.total),
             conflictTitles.length > 0 && /* @__PURE__ */ React.createElement("span", { title: "Overlaps with " + conflictTitles.join(", "), style: { position: "absolute", top: 2, left: 2, fontSize: 9, lineHeight: 1, zIndex: 1, filter: "drop-shadow(0 1px 1px rgba(0,0,0,0.35))" } }, "\u26A0\uFE0F"),
             /* @__PURE__ */ React.createElement("div", { style: { fontSize: 9.5, fontWeight: 700, color: kindStyle.color, lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, isExam ? "EXAM \xB7 " : "", ev.title),
             heightPx > 34 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 8.5, color: isStudy ? T.ink + "aa" : isWarningKind ? tokens.color.warning : tokens.color.textSecondary, marginTop: 1 } }, fmtTimeRange(String(Math.floor(effStartMin / 60)).padStart(2, "0") + ":" + String(effStartMin % 60).padStart(2, "0"), effDuration)),
@@ -13271,6 +13272,7 @@ function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf,
     const over = daysOverdue(ev);
     const acceptanceSummary = ev.proposalMemberUids ? computeAcceptanceSummary(ev.proposalMemberUids, ev.proposalResponses) : null;
     const isPendingAcceptance = !!acceptanceSummary && !acceptanceSummary.allAccepted;
+    const isDeclined = !!acceptanceSummary && acceptanceSummary.declined > 0;
     const color = ev.color || colorOf(ev.courseId || ev.subject);
     const isStudy = ev.kind === "study block";
     const isExam = ev.kind === "exam";
@@ -13300,7 +13302,7 @@ function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf,
       },
       !catchUpPending && over > 0 && /* @__PURE__ */ React.createElement("span", { title: over + "d overdue", style: { position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: "50%", background: T.red, boxShadow: `0 0 0 1.5px ${isExam ? T.ink : "#fff"}`, zIndex: 1 } }),
       overflowCount > 0 && /* @__PURE__ */ React.createElement("span", { title: overflowCount + " more at this time", style: { position: "absolute", bottom: 2, right: 2, fontSize: 8, fontWeight: 800, color: kindStyle.color, background: "rgba(0,0,0,0.18)", borderRadius: 8, padding: "1px 4px", lineHeight: 1.3, zIndex: 1 } }, "+", overflowCount),
-      isPendingAcceptance && /* @__PURE__ */ React.createElement("span", { title: acceptanceSummary.accepted + "/" + acceptanceSummary.total + " accepted", style: { position: "absolute", bottom: 2, left: 2, fontSize: 8, fontWeight: 800, color: kindStyle.color, background: "rgba(0,0,0,0.18)", borderRadius: 8, padding: "1px 4px", lineHeight: 1.3, zIndex: 1 } }, acceptanceSummary.accepted, "/", acceptanceSummary.total),
+      isPendingAcceptance && /* @__PURE__ */ React.createElement("span", { title: isDeclined ? "Declined" : acceptanceSummary.accepted + "/" + acceptanceSummary.total + " accepted", style: { position: "absolute", bottom: 2, left: 2, fontSize: 8, fontWeight: 800, color: isDeclined ? "#fff" : kindStyle.color, background: isDeclined ? T.red + "cc" : "rgba(0,0,0,0.18)", borderRadius: 8, padding: "1px 4px", lineHeight: 1.3, zIndex: 1 } }, isDeclined ? "Declined" : acceptanceSummary.accepted + "/" + acceptanceSummary.total),
       conflictTitles.length > 0 && /* @__PURE__ */ React.createElement("span", { title: "Overlaps with " + conflictTitles.join(", "), style: { position: "absolute", top: 2, left: 2, fontSize: 9, lineHeight: 1, zIndex: 1, filter: "drop-shadow(0 1px 1px rgba(0,0,0,0.35))" } }, "\u26A0\uFE0F"),
       /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, fontWeight: 700, color: kindStyle.color, lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: isDone ? "line-through" : "none" } }, isExam ? "EXAM \xB7 " : "", ev.title),
       heightPx > 34 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 9.5, color: isStudy ? T.ink + "aa" : isExam ? color : T.muted, marginTop: 2 } }, fmtTimeRange(ev.time, dur)),
@@ -17917,6 +17919,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
   const tog = (k) => setToggles((t) => {
     const n = { ...t, [k]: !t[k] };
     lsSet("settings", n);
+    if (k === "motion" && typeof document !== "undefined" && document.body) document.body.setAttribute("data-motion", n.motion ? "reduce" : "");
     return n;
   });
   const [sysPushStatus, setSysPushStatus] = useState(() => {
@@ -19130,7 +19133,7 @@ function Dashboard({ setActive, seriousMode = false, rescheduleTask, setReschedu
     const day = d.getDay();
     return (day === 0 || day === 1) && d.getHours() >= 18;
   })();
-  const [wrappedOpen, setWrappedOpen] = useState(() => isWrappedWindow && !lsGet("wrapped-dismissed-" + wrappedWeekKey, false));
+  const [wrappedOpen, setWrappedOpen] = useState(() => isWrappedWindow && lsGet("settings", {}).wrapped !== false && !lsGet("wrapped-dismissed-" + wrappedWeekKey, false));
   const dismissWrapped = () => {
     lsSet("wrapped-dismissed-" + wrappedWeekKey, true);
     setWrappedOpen(false);
@@ -19472,6 +19475,9 @@ function NotifPermModal({ onAllow = () => {
 }
 function App() {
   seedEventsIfStale();
+  useEffect(() => {
+    if (typeof document !== "undefined" && document.body) document.body.setAttribute("data-motion", lsGet("settings", {}).motion === true ? "reduce" : "");
+  }, []);
   const notifiedRef = useRef(/* @__PURE__ */ new Set());
   const [timerTask, setTimerTask] = useState(null);
   const [studlinAiOpen, setStudlinAiOpen] = useState(false);
@@ -20812,7 +20818,7 @@ function App() {
           }
         }
         lsSet("events", next);
-        if (timerTask.kind === "study block" && !timerTask.routineId) setExamCheckIn(timerTask);
+        if (timerTask.kind === "study block" && !timerTask.routineId && !timerTask.studySessionId) setExamCheckIn(timerTask);
       }
     }
   ), recoveredSession && !timerTask && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 76, right: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 320 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, "Looks like you were ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, recoveredSession.elapsedMins, "min"), ' into "', recoveredSession.task.title, '" \u2014 what happened?'), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: recoverMarkDone }, "Mark as done"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: recoverResume }, "Resume"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: recoverDiscard }, "Discard"))), catchUpBanner && (() => {
@@ -20940,6 +20946,7 @@ function App() {
         @media (prefers-reduced-motion: reduce) {
           [data-page], [data-page] > * { animation: none !important; }
         }
+        body[data-motion="reduce"] [data-page], body[data-motion="reduce"] [data-page] > * { animation: none !important; }
         body[data-density="Compact"] [data-page] { padding: 14px 22px !important; }
         body[data-density="Spacious"] [data-page] { padding: 38px 50px !important; }
 

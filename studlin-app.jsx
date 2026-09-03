@@ -19206,6 +19206,16 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   // for every other block on the grid.
                   const acceptanceSummary = ev.proposalMemberUids ? computeAcceptanceSummary(ev.proposalMemberUids, ev.proposalResponses) : null;
                   const isPendingAcceptance = !!acceptanceSummary && !acceptanceSummary.allAccepted;
+                  // Bug fix (found in an audit pass, 2026-09-03): a declined
+                  // proposal used to render identically to one still
+                  // genuinely awaiting a response (declined !== allAccepted,
+                  // same dimmed block + accepted-count badge forever) --
+                  // computeAcceptanceSummary already tracks a real declined
+                  // count, just never surfaced here. Purely visual --
+                  // doesn't touch/remove the block itself, so a proposer who
+                  // wants to keep it (renegotiate, propose a different time)
+                  // isn't forced into anything.
+                  const isDeclined = !!acceptanceSummary && acceptanceSummary.declined > 0;
                   const isSelected = !isRoutine && selectedEventId === ev.id;
                   const isRoutineSelected = isRoutine && selectedRoutineKey === (ev.routineId+"|"+ev.date);
                   // "Just added/imported" marker (see CalendarTab's own
@@ -19296,7 +19306,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                           moment allAccepted flips true on a refresh -- see
                           isPendingAcceptance above -- with nothing else to
                           clean up, the block is already rendering normally. */}
-                      {isPendingAcceptance&&<span title={acceptanceSummary.accepted+"/"+acceptanceSummary.total+" accepted"} style={{position:"absolute",bottom:2,left:2,fontSize:8,fontWeight:800,color:kindStyle.color,background:"rgba(0,0,0,0.18)",borderRadius:8,padding:"1px 4px",lineHeight:1.3,zIndex:1}}>{acceptanceSummary.accepted}/{acceptanceSummary.total}</span>}
+                      {isPendingAcceptance&&<span title={isDeclined?"Declined":acceptanceSummary.accepted+"/"+acceptanceSummary.total+" accepted"} style={{position:"absolute",bottom:2,left:2,fontSize:8,fontWeight:800,color:isDeclined?"#fff":kindStyle.color,background:isDeclined?T.red+"cc":"rgba(0,0,0,0.18)",borderRadius:8,padding:"1px 4px",lineHeight:1.3,zIndex:1}}>{isDeclined?"Declined":acceptanceSummary.accepted+"/"+acceptanceSummary.total}</span>}
                       {conflictTitles.length>0&&<span title={"Overlaps with "+conflictTitles.join(", ")} style={{position:"absolute",top:2,left:2,fontSize:9,lineHeight:1,zIndex:1,filter:"drop-shadow(0 1px 1px rgba(0,0,0,0.35))"}}>⚠️</span>}
                       <div style={{fontSize:9.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isExam?"EXAM · ":""}{ev.title}</div>
                       {heightPx > 34 && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isWarningKind?tokens.color.warning:tokens.color.textSecondary,marginTop:1}}>{fmtTimeRange(String(Math.floor(effStartMin/60)).padStart(2,"0")+":"+String(effStartMin%60).padStart(2,"0"),effDuration)}</div>}
@@ -21737,6 +21747,11 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
               // comment for why proposalMemberUids is the presence check.
               const acceptanceSummary=ev.proposalMemberUids?computeAcceptanceSummary(ev.proposalMemberUids,ev.proposalResponses):null;
               const isPendingAcceptance=!!acceptanceSummary&&!acceptanceSummary.allAccepted;
+              // Bug fix (found in an audit pass, 2026-09-03): same fix as
+              // WeeklyPlanner's identical badge -- a declined proposal used
+              // to look identical to one still genuinely awaiting a
+              // response.
+              const isDeclined=!!acceptanceSummary&&acceptanceSummary.declined>0;
               // Subject color always wins now -- see the matching comment in
               // WeeklyPlanner. Overdue is a small red dot, not a full recolor.
               const color=ev.color||colorOf(ev.courseId||ev.subject);
@@ -21785,7 +21800,7 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
                   style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:6,padding:"4px 8px",cursor:"pointer",overflow:"hidden",zIndex:3,opacity:(isPendingAcceptance||isDone)?0.6:1,boxSizing:"border-box",...kindStyle,...(newItemBoxShadow?{boxShadow:newItemBoxShadow}:{})}}>
                   {!catchUpPending&&over>0&&<span title={over+"d overdue"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:`0 0 0 1.5px ${isExam?T.ink:"#fff"}`,zIndex:1}} />}
                   {overflowCount>0&&<span title={overflowCount+" more at this time"} style={{position:"absolute",bottom:2,right:2,fontSize:8,fontWeight:800,color:kindStyle.color,background:"rgba(0,0,0,0.18)",borderRadius:8,padding:"1px 4px",lineHeight:1.3,zIndex:1}}>+{overflowCount}</span>}
-                  {isPendingAcceptance&&<span title={acceptanceSummary.accepted+"/"+acceptanceSummary.total+" accepted"} style={{position:"absolute",bottom:2,left:2,fontSize:8,fontWeight:800,color:kindStyle.color,background:"rgba(0,0,0,0.18)",borderRadius:8,padding:"1px 4px",lineHeight:1.3,zIndex:1}}>{acceptanceSummary.accepted}/{acceptanceSummary.total}</span>}
+                  {isPendingAcceptance&&<span title={isDeclined?"Declined":acceptanceSummary.accepted+"/"+acceptanceSummary.total+" accepted"} style={{position:"absolute",bottom:2,left:2,fontSize:8,fontWeight:800,color:isDeclined?"#fff":kindStyle.color,background:isDeclined?T.red+"cc":"rgba(0,0,0,0.18)",borderRadius:8,padding:"1px 4px",lineHeight:1.3,zIndex:1}}>{isDeclined?"Declined":acceptanceSummary.accepted+"/"+acceptanceSummary.total}</span>}
                   {conflictTitles.length>0&&<span title={"Overlaps with "+conflictTitles.join(", ")} style={{position:"absolute",top:2,left:2,fontSize:9,lineHeight:1,zIndex:1,filter:"drop-shadow(0 1px 1px rgba(0,0,0,0.35))"}}>⚠️</span>}
                   <div style={{fontSize:11.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textDecoration:isDone?"line-through":"none"}}>{isExam?"EXAM · ":""}{ev.title}</div>
                   {heightPx>34&&<div style={{fontSize:9.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:2}}>{fmtTimeRange(ev.time,dur)}</div>}
@@ -29234,7 +29249,16 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   };
   const [canvasSeeding,setCanvasSeeding]=useState(false);
   const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,analytics:false,onlineStatus:true,incognito:false,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false},...lsGet("settings",{})}));
-  const tog=k=>setToggles(t=>{const n={...t,[k]:!t[k]};lsSet("settings",n);return n;});
+  const tog=k=>setToggles(t=>{
+    const n={...t,[k]:!t[k]};
+    lsSet("settings",n);
+    // Instant feedback for "Reduce motion" -- App()'s own mount effect
+    // applies the same attribute on load, this just makes flipping the
+    // toggle while already in Settings take effect immediately instead of
+    // waiting for the next reload.
+    if(k==="motion"&&typeof document!=="undefined"&&document.body)document.body.setAttribute('data-motion',n.motion?'reduce':'');
+    return n;
+  });
   const [sysPushStatus,setSysPushStatus]=useState(()=>{
     if(typeof Notification==="undefined")return "unsupported";
     if(Notification.permission==="granted")return "granted";
@@ -31627,7 +31651,13 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   // once dismissed, but comes back fresh next week.
   const wrappedWeekKey=today.slice(0,4)+"-"+weekNo();
   const isWrappedWindow=(()=>{const d=new Date();const day=d.getDay();return(day===0||day===1)&&d.getHours()>=18;})();
-  const [wrappedOpen,setWrappedOpen]=useState(()=>isWrappedWindow&&!lsGet("wrapped-dismissed-"+wrappedWeekKey,false));
+  // Bug fix (found in an audit pass, 2026-09-03): the "Weekly Wrapped
+  // digest" Settings toggle (default true, same shape as every other
+  // Settings toggle -- see SettingsTab's toggles state) was never actually
+  // read anywhere -- turning it off didn't stop this popup. Settings has
+  // no shared state reaching Dashboard, so this reads localStorage
+  // directly, same as isIncognitoOn/isOnlineStatusOn already do.
+  const [wrappedOpen,setWrappedOpen]=useState(()=>isWrappedWindow&&lsGet("settings",{}).wrapped!==false&&!lsGet("wrapped-dismissed-"+wrappedWeekKey,false));
   const dismissWrapped=()=>{lsSet("wrapped-dismissed-"+wrappedWeekKey,true);setWrappedOpen(false);};
   return (
     <>
@@ -32277,6 +32307,18 @@ function NotifPermModal({onAllow=()=>{},onDeny=()=>{}}) {
 // ─── APP SHELL ────────────────────────────────────────────────────────────────
 function App() {
   seedEventsIfStale();
+  // Bug fix (found in an audit pass, 2026-09-03): the "Reduce motion"
+  // Settings toggle had no consumer anywhere -- only the OS-level
+  // prefers-reduced-motion media query (below, in the global <style>
+  // block) actually suppressed animations, independent of this toggle.
+  // Applied once here at real app mount (not module load, since this
+  // needs a real lsGet, not a raw localStorage parse) so it takes effect
+  // on every load, not just after visiting Settings -- SettingsTab's own
+  // toggle handler sets the same attribute immediately for instant
+  // feedback while the toggle is being flipped.
+  useEffect(()=>{
+    if(typeof document!=="undefined"&&document.body)document.body.setAttribute('data-motion',lsGet("settings",{}).motion===true?'reduce':'');
+  },[]);
   // Upcoming-task reminders — polls the live task list every 30s against
   // the real clock, rather than the old approach of arming a single
   // setTimeout at task-creation time. That old approach silently died on
@@ -34380,7 +34422,14 @@ function App() {
         // kind:"study block", but no real "confidence in material" concept
         // applies to a recurring habit, matching handleTaskCompleted's own
         // identical exclusion above.
-        if(timerTask.kind==="study block"&&!timerTask.routineId)setExamCheckIn(timerTask);
+        // Bug fix (found in an audit pass, 2026-09-03): !studySessionId
+        // excludes a co-op Lock-In joined via joinLockIn/joinLiveInvite --
+        // same kind:"study block" shape, but "How do you feel about the
+        // exam so far?" is nonsensical for a peer study session with no
+        // exam behind it at all. submitExamCheckIn already no-ops
+        // harmlessly with no matching examEvent, so nothing was actually
+        // broken by this besides the confusing prompt itself.
+        if(timerTask.kind==="study block"&&!timerTask.routineId&&!timerTask.studySessionId)setExamCheckIn(timerTask);
         // Modal stays open to show the XP/leaderboard reward summary — it
         // closes itself (setTimerTask(null) via onClose) once dismissed.
       }} />}
@@ -34768,6 +34817,7 @@ function App() {
         @media (prefers-reduced-motion: reduce) {
           [data-page], [data-page] > * { animation: none !important; }
         }
+        body[data-motion="reduce"] [data-page], body[data-motion="reduce"] [data-page] > * { animation: none !important; }
         body[data-density="Compact"] [data-page] { padding: 14px 22px !important; }
         body[data-density="Spacious"] [data-page] { padding: 38px 50px !important; }
 
