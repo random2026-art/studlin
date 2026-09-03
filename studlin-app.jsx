@@ -16927,6 +16927,75 @@ function StudlinAiMiniSessionTimeline({sessions}){
   );
 }
 
+// Studlin AI's system prompts explicitly invite markdown ("format with
+// markdown -- headers, bullets", coaching mode's "or a short list when a
+// breakdown helps"), but the chat bubble used to render raw text
+// (whiteSpace:"pre-wrap", m.text dropped straight into a div) with no
+// parsing at all -- every **bold**, ## header, and - bullet the model
+// wrote showed up as literal asterisks/pound signs/dashes cluttering the
+// reply instead of actually formatting it. Deliberately NOT a full
+// markdown engine (no nested lists, tables, links, code blocks) -- just
+// the handful of constructs the prompts actually ask for, matching what
+// this model's replies realistically contain. Returns React nodes
+// directly (never dangerouslySetInnerHTML) so there's no HTML-injection
+// surface to sanitize in the first place, real or AI-authored text alike.
+// Pure parsing step, split out from the JSX rendering below specifically
+// so it's unit-testable without a real React DOM -- same reasoning
+// validateMessageImages/imageValidationError already established
+// elsewhere in this app for keeping a pure core separate from its
+// rendering/IO shell. Returns plain data blocks:
+// {type:"header"|"p",text} | {type:"ul"|"ol",items:string[]} -- inline
+// **bold** stays unparsed at this layer (a plain string per block/item),
+// parsed only at render time.
+function parseStudlinAiMarkdown(text){
+  if(!text)return [];
+  const lines=text.split("\n");
+  const blocks=[];
+  let currentList=null;
+  const flushList=()=>{if(currentList){blocks.push(currentList);currentList=null;}};
+  lines.forEach(line=>{
+    const headerMatch=line.match(/^#{1,3}\s+(.*)/);
+    const ulMatch=line.match(/^[-*]\s+(.*)/);
+    const olMatch=line.match(/^\d+\.\s+(.*)/);
+    if(headerMatch){flushList();blocks.push({type:"header",text:headerMatch[1]});}
+    else if(ulMatch){
+      if(!currentList||currentList.type!=="ul"){flushList();currentList={type:"ul",items:[]};}
+      currentList.items.push(ulMatch[1]);
+    }else if(olMatch){
+      if(!currentList||currentList.type!=="ol"){flushList();currentList={type:"ol",items:[]};}
+      currentList.items.push(olMatch[1]);
+    }else if(line.trim()===""){flushList();}
+    else{flushList();blocks.push({type:"p",text:line});}
+  });
+  flushList();
+  return blocks;
+}
+// Studlin AI's system prompts explicitly invite markdown ("format with
+// markdown -- headers, bullets", coaching mode's "or a short list when a
+// breakdown helps"), but the chat bubble used to render raw text
+// (whiteSpace:"pre-wrap", m.text dropped straight into a div) with no
+// parsing at all -- every **bold**, ## header, and - bullet the model
+// wrote showed up as literal asterisks/pound signs/dashes cluttering the
+// reply instead of actually formatting it. Deliberately NOT a full
+// markdown engine (no nested lists, tables, links, code blocks) -- just
+// the handful of constructs the prompts actually ask for, matching what
+// this model's replies realistically contain. Returns React nodes
+// directly (never dangerouslySetInnerHTML) so there's no HTML-injection
+// surface to sanitize in the first place, real or AI-authored text alike.
+function renderStudlinAiMarkdown(text){
+  if(!text)return null;
+  const renderInline=(str,keyPrefix)=>str.split(/(\*\*[^*]+\*\*)/g).map((part,i)=>
+    (part.startsWith("**")&&part.endsWith("**")&&part.length>4)
+      ?<strong key={keyPrefix+"b"+i}>{part.slice(2,-2)}</strong>
+      :part
+  );
+  return parseStudlinAiMarkdown(text).map((b,i)=>{
+    if(b.type==="header")return <div key={i} style={{fontWeight:700,marginTop:i>0?8:0,marginBottom:2}}>{renderInline(b.text,"h"+i)}</div>;
+    if(b.type==="ul")return <ul key={i} style={{margin:"4px 0",paddingLeft:18}}>{b.items.map((it,ii)=><li key={ii} style={{marginBottom:2}}>{renderInline(it,"u"+i+"-"+ii)}</li>)}</ul>;
+    if(b.type==="ol")return <ol key={i} style={{margin:"4px 0",paddingLeft:18}}>{b.items.map((it,ii)=><li key={ii} style={{marginBottom:2}}>{renderInline(it,"o"+i+"-"+ii)}</li>)}</ol>;
+    return <div key={i} style={{marginTop:i>0?4:0}}>{renderInline(b.text,"p"+i)}</div>;
+  });
+}
 function StudlinAiBubble({onClick,hasProactive}){
   return (
     <button type="button" onClick={onClick} title="Ask Studlin AI about your schedule"
@@ -17334,8 +17403,8 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
           )}
           {messages.map((m,i)=>(
             <div key={i} style={{alignSelf:m.role==="user"?"flex-end":"flex-start",maxWidth:"85%",display:"flex",flexDirection:"column",gap:6}}>
-              <div style={{padding:"9px 13px",borderRadius:12,fontSize:13,lineHeight:1.5,background:m.role==="user"?pp.card2:T.lime+"14",color:pp.text,border:m.role==="user"?`1px solid ${pp.border}`:`1px solid ${T.lime}33`,borderLeft:m.role==="ai"?`3px solid ${STUDLIN_AI_MSG_KIND_ACCENT[m.kind]||T.lime}`:undefined}}>
-                {m.text}
+              <div style={{padding:"9px 13px",borderRadius:12,fontSize:13,lineHeight:1.5,background:m.role==="user"?pp.card2:T.lime+"14",color:pp.text,border:m.role==="user"?`1px solid ${pp.border}`:`1px solid ${T.lime}33`,borderLeft:m.role==="ai"?`3px solid ${STUDLIN_AI_MSG_KIND_ACCENT[m.kind]||T.lime}`:undefined,whiteSpace:m.role==="user"?"pre-wrap":undefined}}>
+                {m.role==="ai"?renderStudlinAiMarkdown(m.text):m.text}
               </div>
               {m.proposal&&m.proposal.disambiguate&&!m.proposal.resolved&&(
                 <div style={{display:"flex",flexDirection:"column",gap:6}}>
@@ -32213,7 +32282,7 @@ function SharedChatView({shareId}){
               ?<div style={{width:28,height:28,borderRadius:7,background:lime,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,color:"#0E1F18",fontSize:13,flexShrink:0,marginTop:2}}>S</div>
               :<div style={{width:28,height:28,borderRadius:"50%",background:lime+"22",border:`1px solid ${lime}44`,display:"flex",alignItems:"center",justifyContent:"center",color:lime,flexShrink:0,marginTop:2}}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
             }
-            <div style={{maxWidth:"80%",fontSize:14,lineHeight:1.75,color:text,background:m.r==="user"?card:"transparent",padding:m.r==="user"?"12px 16px":0,borderRadius:m.r==="user"?12:0,whiteSpace:"pre-wrap"}}>{m.t}</div>
+            <div style={{maxWidth:"80%",fontSize:14,lineHeight:1.75,color:text,background:m.r==="user"?card:"transparent",padding:m.r==="user"?"12px 16px":0,borderRadius:m.r==="user"?12:0,whiteSpace:m.r==="user"?"pre-wrap":undefined}}>{m.r==="ai"?renderStudlinAiMarkdown(m.t):m.t}</div>
           </div>
         ))}
         <div style={{marginTop:40,padding:"26px 22px",borderRadius:8,background:card,border:`1px solid rgba(255,255,255,0.07)`,textAlign:"center"}}>
