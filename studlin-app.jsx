@@ -22690,6 +22690,24 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   // entry points despite doing the exact same thing.
   const [examConfidence,setExamConfidence]=useState("okay");
   const [examSessionCountTouched,setExamSessionCountTouched]=useState(false);
+  // Same Advanced (importance/grade weight/hours) calibration the New Task
+  // modal already got -- this modal only ever READ ev.importanceLevel/
+  // ev.gradeWeightPercent, with no UI to actually set them on an existing
+  // exam. Seeded from `ev` below (unlike New Task modal, which always
+  // starts blank) since this is editing something that may already have
+  // real values.
+  const [examAdvancedOpen,setExamAdvancedOpen]=useState(false);
+  const [examImportanceLevel,setExamImportanceLevel]=useState("moderate");
+  const [examGradeWeightPercent,setExamGradeWeightPercent]=useState(null);
+  const [examHoursTarget,setExamHoursTarget]=useState("");
+  // Inline flashcard/practice-exam generation -- same New Task modal parity
+  // fix, applied here too. Always starts unchecked/blank on open (unlike
+  // Importance/Grade % above, generating a NEW deck/PE isn't something to
+  // silently re-offer just because a past one exists on this exam).
+  const [genFlashcards,setGenFlashcards]=useState(false);
+  const [genPE,setGenPE]=useState(false);
+  const [weaveCards,setWeaveCards]=useState(true);
+  const [weavePE,setWeavePE]=useState(true);
   const [projectPlan,setProjectPlan]=useState({phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false});
   // Manual "I'll set my own time" block, an alternative to Attack Block --
   // a plain event linked back to this assignment via dueEventId, same
@@ -22725,6 +22743,9 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
     setPaceProposal(null);setPaceDismissedState(isPaceNudgeDismissed(ev.id));
     setExamPlan({materialFiles:ev.sourceMaterials||[],materialLinks:ev.referenceLinks||[],materialOpen:false,pasteMaterialMode:false,pasteMaterialText:"",linkDraft:"",linkLabelDraft:"",proposeSessions:false,sessionCount:4});
     setExamConfidence("okay");setExamSessionCountTouched(false);
+    setExamImportanceLevel(ev.importanceLevel||"moderate");setExamGradeWeightPercent(ev.gradeWeightPercent??null);
+    setExamHoursTarget("");setExamAdvancedOpen(false);
+    setGenFlashcards(false);setGenPE(false);setWeaveCards(true);setWeavePE(true);
     setProjectPlan({phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false});
   },[eventId]);
   // Same "derive a default, never overwrite a manual edit" convention as
@@ -22734,9 +22755,9 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
     if(!ev||kind!=="exam"||!examPlan.proposeSessions||examSessionCountTouched)return;
     const materialCharCount=examPlan.materialFiles.map(f=>f.text||"").join("\n\n").length;
     const daysUntilExam=ev.date?Math.round((new Date(ev.date+"T12:00:00")-new Date(dayKey()+"T12:00:00"))/86400000):undefined;
-    const params=computeStudyPlanParams(ev.examWeight,25,examConfidence,materialCharCount,ev.importanceLevel,daysUntilExam,ev.gradeWeightPercent,ev.confidenceLog);
+    const params=computeStudyPlanParams(ev.examWeight,25,examConfidence,materialCharCount,examImportanceLevel,daysUntilExam,examGradeWeightPercent,ev.confidenceLog);
     if(params.sessionCount!==examPlan.sessionCount)setExamPlan(m=>({...m,sessionCount:params.sessionCount}));
-  },[ev,kind,examPlan.proposeSessions,examPlan.materialFiles,examConfidence,examSessionCountTouched]);
+  },[ev,kind,examPlan.proposeSessions,examPlan.materialFiles,examConfidence,examSessionCountTouched,examImportanceLevel,examGradeWeightPercent]);
 
   if(!eventId||!ev)return null;
 
@@ -22874,6 +22895,26 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   // through with no picker, unaffected. forcedAttackSlot is the candidate
   // the student chose (or null when there was nothing to choose between, or
   // no new Attack Block is being added this save at all).
+  // Same inline flashcard/practice-exam generation the New Task modal got --
+  // this modal has no local colorOf (never built a deck before), so the
+  // subject color comes straight from the SUBJ list already built above.
+  const genFlashcardDeckForThisExam=async(examTaskLike,materialText)=>{
+    if(!canGenFlashcards()){setPricingOpen(canGenFlashcardsReason()==="free-tier"?"studyMaterialGen":"aiUsageCap");return null;}
+    const cards=await generateFlashcardsFromText(materialText,examTaskLike.subject||"this exam",scaledFlashcardCount(materialText.length));
+    if(!cards||cards.length===0)return null;
+    recordFlashcardGen();
+    const color=(SUBJ.find(s=>s.value===examTaskLike.subject)||{}).color||T.lime;
+    const deck={id:String(Date.now()+Math.random()*1000),name:examTaskLike.title,count:cards.length,done:0,color,cards,examEventId:examTaskLike.id,examEventIds:[examTaskLike.id]};
+    lsSet("decks",[deck,...lsGet("decks",[])]);
+    return deck;
+  };
+  const genPracticeExamForThisExam=async(examTaskLike,materialText)=>{
+    if(!canGenQuiz()){setPricingOpen(canGenQuizReason()==="free-tier"?"studyMaterialGen":"aiUsageCap");return null;}
+    const questions=await generateQuizFromText(materialText,examTaskLike.subject||"this exam",scaledQuizCount(materialText.length));
+    if(!questions||questions.length===0)return null;
+    recordQuizGen();
+    return createPracticeExam(examTaskLike.title,examTaskLike.subject,examTaskLike.id,questions);
+  };
   const finishSave=(forcedAttackSlot)=>{
     const timeChanged=time!==ev.time||date!==ev.date;
     const prefs=getSchedulePreferences();
@@ -22925,7 +22966,9 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
         duration:asChecklist?0:duration,
         deadline:asChecklist?(date||null):(deadline||null),
         priority,difficulty,subject,courseId:courseIdForLabel(subject),kind,notes,checklist:asChecklist,isGeneralTask:asGeneralTask||undefined,...(timeChanged?{userPinned:true}:{}),
-        ...(kind==="exam"?{sourceMaterials:examPlan.materialFiles,referenceLinks:examPlan.materialLinks}:{}),
+        ...(kind==="exam"?{sourceMaterials:examPlan.materialFiles,referenceLinks:examPlan.materialLinks,
+          importanceLevel:examImportanceLevel,examWeight:examWeightFromImportance(examImportanceLevel),
+          ...(examGradeWeightPercent!=null?{gradeWeightPercent:examGradeWeightPercent}:{})}:{}),
         ...projectFieldPatch,
         ...examFieldPatch.patch,
         ...(requiresProjectDetail&&newProjPhases.length>0?{phases:newProjPhases.map((name,pi)=>({name,status:pi===0?"active":"pending"}))}:{}),
@@ -22965,8 +23008,13 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
       const baseDuration=suggestDurationFor(subject,"study block")||25;
       const materialCharCount=examPlan.materialFiles.map(f=>f.text||"").join("\n\n").length;
       const daysUntilExam=date?Math.round((new Date(date+"T12:00:00")-new Date(dayKey()+"T12:00:00"))/86400000):undefined;
-      const planParams=computeStudyPlanParams(ev.examWeight,baseDuration,examConfidence,materialCharCount,ev.importanceLevel,daysUntilExam,ev.gradeWeightPercent,ev.confidenceLog);
-      newExamSessions=buildExamSessionEvents(title.trim(),date,subject,examPlan.sessionCount||planParams.sessionCount,"edittask-exam-"+ev.id,next,routines,prefs,{dueEventId:ev.id},planParams.difficultyValue,planParams.sessionDuration,ev.examWeight,ev.confidenceLog);
+      const examWeight=examWeightFromImportance(examImportanceLevel);
+      const planParams=computeStudyPlanParams(examWeight,baseDuration,examConfidence,materialCharCount,examImportanceLevel,daysUntilExam,examGradeWeightPercent,ev.confidenceLog);
+      // Same applyHoursTarget Prep's own Build Study Plan and the New Task
+      // modal already use -- only ever adjusts per-session duration for the
+      // count already decided above, never invents/removes sessions.
+      const {sessionCount:hoursAdjSessionCount,sessionDuration:hoursAdjSessionDuration}=applyHoursTarget(examPlan.sessionCount||planParams.sessionCount,planParams.sessionDuration,parseFloat(examHoursTarget));
+      newExamSessions=buildExamSessionEvents(title.trim(),date,subject,hoursAdjSessionCount,"edittask-exam-"+ev.id,next,routines,prefs,{dueEventId:ev.id},planParams.difficultyValue,hoursAdjSessionDuration,examWeight,ev.confidenceLog);
       // Same real first-pass marker Prep's own Build Study Plan flow
       // already stamps -- session 0 of a real multi-session,
       // material-grounded plan is a genuine first pass, not a
@@ -22980,6 +23028,35 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
       next=next.concat(newExamSessions);
     }
     commit(next);
+    // Same fire-and-forget flashcard/practice-exam generation the New Task
+    // modal got -- fires after commit, never blocks save on an AI call.
+    // Only ever writes deckId/practiceExamId/interleavedReview onto the
+    // sessions just created, so it can't collide with anything else this
+    // save already wrote. Same storage shape (examEventId/examEventIds) as
+    // every deck/PE Prep creates, so existing cleanup paths need no changes.
+    if(kind==="exam"&&(genFlashcards||genPE)&&newExamSessions.length>0&&examPlan.materialFiles.length>0){
+      const materialText=examPlan.materialFiles.map(f=>f.text).join("\n\n");
+      const examTaskLike={id:ev.id,title:title.trim(),subject};
+      const sessionIds=newExamSessions.map(s=>s.id);
+      (async()=>{
+        const deck=genFlashcards?await genFlashcardDeckForThisExam(examTaskLike,materialText):null;
+        const pe=genPE?await genPracticeExamForThisExam(examTaskLike,materialText):null;
+        if(!deck&&!pe)return;
+        const patched=lsGet("events",[]).map(e=>{
+          const idx=sessionIds.indexOf(e.id);
+          if(idx<0)return e;
+          const isLast=idx===sessionIds.length-1;
+          return {...e,
+            ...(deck&&weaveCards?{deckId:deck.id,interleavedReview:true}:{}),
+            ...(pe&&weavePE&&isLast?{practiceExamId:pe.id,interleavedReview:true}:{})};
+        });
+        lsSet("events",patched);
+        if(onToast){
+          const label=(deck&&pe?"Flashcards and a practice exam":deck?"Flashcards":"A practice exam")+" ready for "+title.trim()+".";
+          onToast(label);
+        }
+      })();
+    }
     // Jump-and-highlight, same one-shot calendarHighlightIds relay the
     // calendar-import flows in SettingsTab already use (this modal is a
     // true sibling of [data-page], not always rendered inside CalendarTab,
@@ -23399,6 +23476,58 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
                     <NumField min={1} max={6} fallback={4} value={examPlan.sessionCount||4} onChange={v=>{setExamSessionCountTouched(true);setExamPlan(m=>({...m,sessionCount:v}));}} style={{width:48}} />
                     <span style={{fontSize:10.5,color:T.muted}}>{dates.length===0?"Too close to the exam to fit a session":dates.length+" session"+(dates.length!==1?"s":"")+": "+dates.join(", ")}</span>
                   </div>
+                  <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+                    <button type="button" onClick={()=>setExamAdvancedOpen(o=>!o)} style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"none",padding:0,cursor:"pointer",fontFamily:T.font,fontSize:11,fontWeight:600,color:T.muted}}>
+                      <span style={{display:"inline-block",transition:"transform 0.15s",transform:examAdvancedOpen?"rotate(90deg)":"none"}}>›</span>
+                      Advanced (importance, grade weight, hours)
+                    </button>
+                    {examAdvancedOpen&&(
+                      <div style={{marginTop:10,display:"flex",flexDirection:"column",gap:10}}>
+                        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                          <div style={{display:"flex",alignItems:"center",gap:6}}>
+                            <span style={{fontSize:11.5,color:T.muted}}>Importance:</span>
+                            <CustomSelect boxed fontSize={11.5} minWidth={100} value={examImportanceLevel}
+                              onChange={setExamImportanceLevel}
+                              options={[{value:"minor",label:"Minor"},{value:"moderate",label:"Moderate"},{value:"major",label:"Major"},{value:"critical",label:"Critical"}]} />
+                          </div>
+                          <div style={{display:"flex",alignItems:"center",gap:8}}>
+                            <span style={{fontSize:11.5,color:T.muted}}>% of grade (if you know it):</span>
+                            <Input type="number" min={0} max={100} step={1} value={examGradeWeightPercent??""}
+                              onChange={e=>setExamGradeWeightPercent(e.target.value===""?null:parseFloat(e.target.value))}
+                              placeholder="0" style={{width:56,fontSize:11.5,padding:"5px 8px"}} />
+                          </div>
+                        </div>
+                        <div style={{display:"flex",alignItems:"center",gap:8}}>
+                          <span style={{fontSize:11.5,color:T.muted}}>Hours to study for this (optional):</span>
+                          <Input type="number" min={0} step={0.5} value={examHoursTarget} onChange={e=>setExamHoursTarget(e.target.value)} placeholder="0" style={{width:60,fontSize:11.5,padding:"5px 8px"}} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  {hasMaterialForExamPlan&&(
+                    <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`,display:"flex",flexDirection:"column",gap:8}}>
+                      <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
+                        <input type="checkbox" checked={genFlashcards} onChange={e=>setGenFlashcards(e.target.checked)} />
+                        <span style={{fontSize:12.5,color:T.text}}>Also generate flashcards</span>
+                      </label>
+                      {genFlashcards&&(
+                        <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginLeft:24}}>
+                          <input type="checkbox" checked={weaveCards} onChange={e=>setWeaveCards(e.target.checked)} />
+                          <span style={{fontSize:12,color:T.muted}}>Review them as part of each session</span>
+                        </label>
+                      )}
+                      <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
+                        <input type="checkbox" checked={genPE} onChange={e=>setGenPE(e.target.checked)} />
+                        <span style={{fontSize:12.5,color:T.text}}>Also generate a practice exam</span>
+                      </label>
+                      {genPE&&(
+                        <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginLeft:24}}>
+                          <input type="checkbox" checked={weavePE} onChange={e=>setWeavePE(e.target.checked)} />
+                          <span style={{fontSize:12,color:T.muted}}>Use my last session to take it</span>
+                        </label>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })()}
@@ -24548,6 +24677,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const [evImportanceLevel,setEvImportanceLevel]=useState("moderate");
   const [evGradeWeightPercent,setEvGradeWeightPercent]=useState(null);
   const [evHoursTarget,setEvHoursTarget]=useState("");
+  // Inline flashcard/practice-exam generation -- previously only Prep's
+  // Build Study Plan could do this; New Task could attach material and
+  // build sessions but never generate a linked deck/quiz from them.
+  const [evGenFlashcards,setEvGenFlashcards]=useState(false);
+  const [evGenPE,setEvGenPE]=useState(false);
+  const [evWeaveCards,setEvWeaveCards]=useState(true);
+  const [evWeavePE,setEvWeavePE]=useState(true);
   // Project phases/checklist -- same shape PhasesOutlineEditor expects.
   const [evProjectPlan,setEvProjectPlan]=useState({phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false});
   // Add-collaborators picker for a project being created right now -- same
@@ -24575,6 +24711,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     setEvExamPlan({materialFiles:[],materialLinks:[],materialOpen:false,pasteMaterialMode:false,pasteMaterialText:"",linkDraft:"",linkLabelDraft:"",proposeSessions:false,sessionCount:4});
     setEvConfidence("okay");setEvSessionCountTouched(false);
     setEvAdvancedOpen(false);setEvImportanceLevel("moderate");setEvGradeWeightPercent(null);setEvHoursTarget("");
+    setEvGenFlashcards(false);setEvGenPE(false);setEvWeaveCards(true);setEvWeavePE(true);
     setEvProjectPlan({phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false});
     setEvCollabPickerOpen(false);setEvCollabCandidates([]);setEvCollabSelected([]);setEvCollabLoading(false);
     setEvLinkedExamId(null);setExamPickerOpen(false);
@@ -26257,6 +26394,28 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     const conflict=occupied.some(o=>!(tMins+duration<=o.start||tMins>=o.end));
     return conflict?findReliableSlotFor(events,routines,getSchedulePreferences(),date,time,duration,undefined,evDifficulty):{date,time,reason:null};
   };
+  // Inline flashcard/practice-exam generation for a brand-new exam --
+  // previously only Prep's Build Study Plan could do this (doGenDeckForExam/
+  // doGenPracticeExamForExam, component-local to StudlinPrep). Same
+  // gate-generate-record-build shape, just wired to this modal's own
+  // setPricingOpen/colorOf instead of Prep's setUpgradeModal/genMsg, and
+  // written fresh rather than lifted (those two stay Prep-local, untouched).
+  const genFlashcardDeckForNewExam=async(examTask,materialText)=>{
+    if(!canGenFlashcards()){setPricingOpen(canGenFlashcardsReason()==="free-tier"?"studyMaterialGen":"aiUsageCap");return null;}
+    const cards=await generateFlashcardsFromText(materialText,examTask.subject||"this exam",scaledFlashcardCount(materialText.length));
+    if(!cards||cards.length===0)return null;
+    recordFlashcardGen();
+    const deck={id:String(Date.now()+Math.random()*1000),name:examTask.title,count:cards.length,done:0,color:colorOf(examTask.subject),cards,examEventId:examTask.id,examEventIds:[examTask.id]};
+    lsSet("decks",[deck,...lsGet("decks",[])]);
+    return deck;
+  };
+  const genPracticeExamForNewExam=async(examTask,materialText)=>{
+    if(!canGenQuiz()){setPricingOpen(canGenQuizReason()==="free-tier"?"studyMaterialGen":"aiUsageCap");return null;}
+    const questions=await generateQuizFromText(materialText,examTask.subject||"this exam",scaledQuizCount(materialText.length));
+    if(!questions||questions.length===0)return null;
+    recordQuizGen();
+    return createPracticeExam(examTask.title,examTask.subject,examTask.id,questions);
+  };
   const saveManual=()=>{
     if(!evTitle.trim()||!evDate.trim()||!evTime.trim())return;
     if(evKind==="project"&&!evNotes.trim()){setEvDetailErr("Add a bit of detail so Studlin can suggest real phases, not a generic template.");return;}
@@ -26373,6 +26532,36 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           lsSet("events",patched);
           setEvents(patched);
         });
+      }
+      // Same fire-and-forget shape as the focuses patch just above -- never
+      // blocks save on an AI call, and never touches the fields that patch
+      // writes (notes) since this one only ever writes deckId/
+      // practiceExamId/interleavedReview, so the two resolving in either
+      // order can't clobber each other. Decks/practice exams created here
+      // use the exact same storage shape (examEventId/examEventIds) Prep's
+      // own doGenDeckForExam/doGenPracticeExamForExam already use, so every
+      // existing delete/regenerate/cleanup path handles them unchanged.
+      if(evExamPlan.proposeSessions&&evExamPlan.materialFiles.length>0&&(evGenFlashcards||evGenPE)){
+        const materialText=evExamPlan.materialFiles.map(f=>f.text).join("\n\n");
+        const sessionIds=tasks.slice(1).map(t=>t.id);
+        (async()=>{
+          const deck=evGenFlashcards?await genFlashcardDeckForNewExam(examTask,materialText):null;
+          const pe=evGenPE?await genPracticeExamForNewExam(examTask,materialText):null;
+          if(!deck&&!pe)return;
+          const patched=lsGet("events",[]).map(e=>{
+            const idx=sessionIds.indexOf(e.id);
+            if(idx<0)return e;
+            const isLast=idx===sessionIds.length-1;
+            return {...e,
+              ...(deck&&evWeaveCards?{deckId:deck.id,interleavedReview:true}:{}),
+              ...(pe&&evWeavePE&&isLast?{practiceExamId:pe.id,interleavedReview:true}:{})};
+          });
+          lsSet("events",patched);
+          setEvents(patched);
+          const label=(deck&&pe?"Flashcards and a practice exam":deck?"Flashcards":"A practice exam")+" ready for "+evTitle.trim()+".";
+          setDeadlineToast(label);
+          setTimeout(()=>setDeadlineToast(""),2800);
+        })();
       }
       return;
     }
@@ -28181,6 +28370,30 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                       </div>
                     )}
                   </div>
+                  {hasMaterialForEvPlan&&(
+                    <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`,display:"flex",flexDirection:"column",gap:8}}>
+                      <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
+                        <input type="checkbox" checked={evGenFlashcards} onChange={e=>setEvGenFlashcards(e.target.checked)} />
+                        <span style={{fontSize:12.5,color:T.text}}>Also generate flashcards</span>
+                      </label>
+                      {evGenFlashcards&&(
+                        <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginLeft:24}}>
+                          <input type="checkbox" checked={evWeaveCards} onChange={e=>setEvWeaveCards(e.target.checked)} />
+                          <span style={{fontSize:12,color:T.muted}}>Review them as part of each session</span>
+                        </label>
+                      )}
+                      <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
+                        <input type="checkbox" checked={evGenPE} onChange={e=>setEvGenPE(e.target.checked)} />
+                        <span style={{fontSize:12.5,color:T.text}}>Also generate a practice exam</span>
+                      </label>
+                      {evGenPE&&(
+                        <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginLeft:24}}>
+                          <input type="checkbox" checked={evWeavePE} onChange={e=>setEvWeavePE(e.target.checked)} />
+                          <span style={{fontSize:12,color:T.muted}}>Use my last session to take it</span>
+                        </label>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })()}

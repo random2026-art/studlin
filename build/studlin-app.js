@@ -13756,6 +13756,14 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
   const [examPlan, setExamPlan] = useState({ materialFiles: [], materialLinks: [], materialOpen: false, pasteMaterialMode: false, pasteMaterialText: "", linkDraft: "", linkLabelDraft: "", proposeSessions: false, sessionCount: 4 });
   const [examConfidence, setExamConfidence] = useState("okay");
   const [examSessionCountTouched, setExamSessionCountTouched] = useState(false);
+  const [examAdvancedOpen, setExamAdvancedOpen] = useState(false);
+  const [examImportanceLevel, setExamImportanceLevel] = useState("moderate");
+  const [examGradeWeightPercent, setExamGradeWeightPercent] = useState(null);
+  const [examHoursTarget, setExamHoursTarget] = useState("");
+  const [genFlashcards, setGenFlashcards] = useState(false);
+  const [genPE, setGenPE] = useState(false);
+  const [weaveCards, setWeaveCards] = useState(true);
+  const [weavePE, setWeavePE] = useState(true);
   const [projectPlan, setProjectPlan] = useState({ phases: void 0, phasesLoading: false, outline: void 0, outlineLoading: false });
   const [addManualBlock, setAddManualBlock] = useState(false);
   const [manualDate, setManualDate] = useState("");
@@ -13795,15 +13803,23 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
     setExamPlan({ materialFiles: ev.sourceMaterials || [], materialLinks: ev.referenceLinks || [], materialOpen: false, pasteMaterialMode: false, pasteMaterialText: "", linkDraft: "", linkLabelDraft: "", proposeSessions: false, sessionCount: 4 });
     setExamConfidence("okay");
     setExamSessionCountTouched(false);
+    setExamImportanceLevel(ev.importanceLevel || "moderate");
+    setExamGradeWeightPercent(ev.gradeWeightPercent ?? null);
+    setExamHoursTarget("");
+    setExamAdvancedOpen(false);
+    setGenFlashcards(false);
+    setGenPE(false);
+    setWeaveCards(true);
+    setWeavePE(true);
     setProjectPlan({ phases: void 0, phasesLoading: false, outline: void 0, outlineLoading: false });
   }, [eventId]);
   useEffect(() => {
     if (!ev || kind !== "exam" || !examPlan.proposeSessions || examSessionCountTouched) return;
     const materialCharCount = examPlan.materialFiles.map((f) => f.text || "").join("\n\n").length;
     const daysUntilExam = ev.date ? Math.round((/* @__PURE__ */ new Date(ev.date + "T12:00:00") - /* @__PURE__ */ new Date(dayKey() + "T12:00:00")) / 864e5) : void 0;
-    const params = computeStudyPlanParams(ev.examWeight, 25, examConfidence, materialCharCount, ev.importanceLevel, daysUntilExam, ev.gradeWeightPercent, ev.confidenceLog);
+    const params = computeStudyPlanParams(ev.examWeight, 25, examConfidence, materialCharCount, examImportanceLevel, daysUntilExam, examGradeWeightPercent, ev.confidenceLog);
     if (params.sessionCount !== examPlan.sessionCount) setExamPlan((m) => ({ ...m, sessionCount: params.sessionCount }));
-  }, [ev, kind, examPlan.proposeSessions, examPlan.materialFiles, examConfidence, examSessionCountTouched]);
+  }, [ev, kind, examPlan.proposeSessions, examPlan.materialFiles, examConfidence, examSessionCountTouched, examImportanceLevel, examGradeWeightPercent]);
   if (!eventId || !ev) return null;
   const linkedSessions = allEvents.filter((e) => e.dueEventId === ev.id);
   const chainIdForReschedule = (allEvents.find((e) => e.dueEventId === ev.id && e.attackChainId && e.status === "pending") || {}).attackChainId || null;
@@ -13934,6 +13950,29 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
     setCollabPickerOpen(false);
     onToast && onToast("Invite sent \u2014 it'll appear on their calendar once they accept.");
   };
+  const genFlashcardDeckForThisExam = async (examTaskLike, materialText) => {
+    if (!canGenFlashcards()) {
+      setPricingOpen(canGenFlashcardsReason() === "free-tier" ? "studyMaterialGen" : "aiUsageCap");
+      return null;
+    }
+    const cards = await generateFlashcardsFromText(materialText, examTaskLike.subject || "this exam", scaledFlashcardCount(materialText.length));
+    if (!cards || cards.length === 0) return null;
+    recordFlashcardGen();
+    const color = (SUBJ.find((s) => s.value === examTaskLike.subject) || {}).color || T.lime;
+    const deck = { id: String(Date.now() + Math.random() * 1e3), name: examTaskLike.title, count: cards.length, done: 0, color, cards, examEventId: examTaskLike.id, examEventIds: [examTaskLike.id] };
+    lsSet("decks", [deck, ...lsGet("decks", [])]);
+    return deck;
+  };
+  const genPracticeExamForThisExam = async (examTaskLike, materialText) => {
+    if (!canGenQuiz()) {
+      setPricingOpen(canGenQuizReason() === "free-tier" ? "studyMaterialGen" : "aiUsageCap");
+      return null;
+    }
+    const questions = await generateQuizFromText(materialText, examTaskLike.subject || "this exam", scaledQuizCount(materialText.length));
+    if (!questions || questions.length === 0) return null;
+    recordQuizGen();
+    return createPracticeExam(examTaskLike.title, examTaskLike.subject, examTaskLike.id, questions);
+  };
   const finishSave = (forcedAttackSlot) => {
     const timeChanged = time !== ev.time || date !== ev.date;
     const prefs = getSchedulePreferences();
@@ -13968,7 +14007,13 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
         checklist: asChecklist,
         isGeneralTask: asGeneralTask || void 0,
         ...timeChanged ? { userPinned: true } : {},
-        ...kind === "exam" ? { sourceMaterials: examPlan.materialFiles, referenceLinks: examPlan.materialLinks } : {},
+        ...kind === "exam" ? {
+          sourceMaterials: examPlan.materialFiles,
+          referenceLinks: examPlan.materialLinks,
+          importanceLevel: examImportanceLevel,
+          examWeight: examWeightFromImportance(examImportanceLevel),
+          ...examGradeWeightPercent != null ? { gradeWeightPercent: examGradeWeightPercent } : {}
+        } : {},
         ...projectFieldPatch,
         ...examFieldPatch.patch,
         ...requiresProjectDetail && newProjPhases.length > 0 ? { phases: newProjPhases.map((name, pi) => ({ name, status: pi === 0 ? "active" : "pending" })) } : {},
@@ -13999,14 +14044,41 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
       const baseDuration = suggestDurationFor(subject, "study block") || 25;
       const materialCharCount = examPlan.materialFiles.map((f) => f.text || "").join("\n\n").length;
       const daysUntilExam = date ? Math.round((/* @__PURE__ */ new Date(date + "T12:00:00") - /* @__PURE__ */ new Date(dayKey() + "T12:00:00")) / 864e5) : void 0;
-      const planParams = computeStudyPlanParams(ev.examWeight, baseDuration, examConfidence, materialCharCount, ev.importanceLevel, daysUntilExam, ev.gradeWeightPercent, ev.confidenceLog);
-      newExamSessions = buildExamSessionEvents(title.trim(), date, subject, examPlan.sessionCount || planParams.sessionCount, "edittask-exam-" + ev.id, next, routines, prefs, { dueEventId: ev.id }, planParams.difficultyValue, planParams.sessionDuration, ev.examWeight, ev.confidenceLog);
+      const examWeight = examWeightFromImportance(examImportanceLevel);
+      const planParams = computeStudyPlanParams(examWeight, baseDuration, examConfidence, materialCharCount, examImportanceLevel, daysUntilExam, examGradeWeightPercent, ev.confidenceLog);
+      const { sessionCount: hoursAdjSessionCount, sessionDuration: hoursAdjSessionDuration } = applyHoursTarget(examPlan.sessionCount || planParams.sessionCount, planParams.sessionDuration, parseFloat(examHoursTarget));
+      newExamSessions = buildExamSessionEvents(title.trim(), date, subject, hoursAdjSessionCount, "edittask-exam-" + ev.id, next, routines, prefs, { dueEventId: ev.id }, planParams.difficultyValue, hoursAdjSessionDuration, examWeight, ev.confidenceLog);
       if (materialCharCount > 0 && newExamSessions.length > 1) {
         newExamSessions = newExamSessions.map((s, i) => i === 0 ? { ...s, isDiagnosticFirstPass: true, notes: "First pass \u2014 read through your material for " + (subject || title.trim()) + "." } : s);
       }
       next = next.concat(newExamSessions);
     }
     commit(next);
+    if (kind === "exam" && (genFlashcards || genPE) && newExamSessions.length > 0 && examPlan.materialFiles.length > 0) {
+      const materialText = examPlan.materialFiles.map((f) => f.text).join("\n\n");
+      const examTaskLike = { id: ev.id, title: title.trim(), subject };
+      const sessionIds = newExamSessions.map((s) => s.id);
+      (async () => {
+        const deck = genFlashcards ? await genFlashcardDeckForThisExam(examTaskLike, materialText) : null;
+        const pe = genPE ? await genPracticeExamForThisExam(examTaskLike, materialText) : null;
+        if (!deck && !pe) return;
+        const patched = lsGet("events", []).map((e) => {
+          const idx = sessionIds.indexOf(e.id);
+          if (idx < 0) return e;
+          const isLast = idx === sessionIds.length - 1;
+          return {
+            ...e,
+            ...deck && weaveCards ? { deckId: deck.id, interleavedReview: true } : {},
+            ...pe && weavePE && isLast ? { practiceExamId: pe.id, interleavedReview: true } : {}
+          };
+        });
+        lsSet("events", patched);
+        if (onToast) {
+          const label = (deck && pe ? "Flashcards and a practice exam" : deck ? "Flashcards" : "A practice exam") + " ready for " + title.trim() + ".";
+          onToast(label);
+        }
+      })();
+    }
     if (attackPair || newExamSessions.length > 0) {
       const newIds = [...attackPair ? [attackPair.marker.id, attackPair.task.id] : [], ...newExamSessions.map((s) => s.id)];
       lsSet("calendarHighlightIds", { ids: newIds, setAt: Date.now() });
@@ -14194,7 +14266,29 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
       )))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement(NumField, { min: 1, max: 6, fallback: 4, value: examPlan.sessionCount || 4, onChange: (v) => {
         setExamSessionCountTouched(true);
         setExamPlan((m) => ({ ...m, sessionCount: v }));
-      }, style: { width: 48 } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: T.muted } }, dates.length === 0 ? "Too close to the exam to fit a session" : dates.length + " session" + (dates.length !== 1 ? "s" : "") + ": " + dates.join(", "))));
+      }, style: { width: 48 } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: T.muted } }, dates.length === 0 ? "Too close to the exam to fit a session" : dates.length + " session" + (dates.length !== 1 ? "s" : "") + ": " + dates.join(", "))), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10, paddingTop: 10, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setExamAdvancedOpen((o) => !o), style: { display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: T.font, fontSize: 11, fontWeight: 600, color: T.muted } }, /* @__PURE__ */ React.createElement("span", { style: { display: "inline-block", transition: "transform 0.15s", transform: examAdvancedOpen ? "rotate(90deg)" : "none" } }, "\u203A"), "Advanced (importance, grade weight, hours)"), examAdvancedOpen && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10, display: "flex", flexDirection: "column", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11.5, color: T.muted } }, "Importance:"), /* @__PURE__ */ React.createElement(
+        CustomSelect,
+        {
+          boxed: true,
+          fontSize: 11.5,
+          minWidth: 100,
+          value: examImportanceLevel,
+          onChange: setExamImportanceLevel,
+          options: [{ value: "minor", label: "Minor" }, { value: "moderate", label: "Moderate" }, { value: "major", label: "Major" }, { value: "critical", label: "Critical" }]
+        }
+      )), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11.5, color: T.muted } }, "% of grade (if you know it):"), /* @__PURE__ */ React.createElement(
+        Input,
+        {
+          type: "number",
+          min: 0,
+          max: 100,
+          step: 1,
+          value: examGradeWeightPercent ?? "",
+          onChange: (e) => setExamGradeWeightPercent(e.target.value === "" ? null : parseFloat(e.target.value)),
+          placeholder: "0",
+          style: { width: 56, fontSize: 11.5, padding: "5px 8px" }
+        }
+      ))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11.5, color: T.muted } }, "Hours to study for this (optional):"), /* @__PURE__ */ React.createElement(Input, { type: "number", min: 0, step: 0.5, value: examHoursTarget, onChange: (e) => setExamHoursTarget(e.target.value), placeholder: "0", style: { width: 60, fontSize: 11.5, padding: "5px 8px" } })))), hasMaterialForExamPlan && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10, paddingTop: 10, borderTop: `1px solid ${T.border}`, display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: genFlashcards, onChange: (e) => setGenFlashcards(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, "Also generate flashcards")), genFlashcards && /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginLeft: 24 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: weaveCards, onChange: (e) => setWeaveCards(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Review them as part of each session")), /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: genPE, onChange: (e) => setGenPE(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, "Also generate a practice exam")), genPE && /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginLeft: 24 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: weavePE, onChange: (e) => setWeavePE(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Use my last session to take it"))));
     })()), linkedSessions.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 14 } }, "Manage all sessions for this exam \u2014 edit, add, or remove any of them \u2014 in Studlin Prep.")),
     deadlineErr && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: -8, marginBottom: 14 } }, deadlineErr),
     kind !== "reminder" && !asChecklist && /* @__PURE__ */ React.createElement(Field, { label: "End time" }, /* @__PURE__ */ React.createElement(BoxedTimeInput, { value: minutesToTime(timeToMinutes(time) + duration), onChange: (v) => setDuration(Math.max(5, timeToMinutes(v) - timeToMinutes(time))) })),
@@ -14727,6 +14821,10 @@ function CalendarTab({ setActive = () => {
   const [evImportanceLevel, setEvImportanceLevel] = useState("moderate");
   const [evGradeWeightPercent, setEvGradeWeightPercent] = useState(null);
   const [evHoursTarget, setEvHoursTarget] = useState("");
+  const [evGenFlashcards, setEvGenFlashcards] = useState(false);
+  const [evGenPE, setEvGenPE] = useState(false);
+  const [evWeaveCards, setEvWeaveCards] = useState(true);
+  const [evWeavePE, setEvWeavePE] = useState(true);
   const [evProjectPlan, setEvProjectPlan] = useState({ phases: void 0, phasesLoading: false, outline: void 0, outlineLoading: false });
   const [evCollabPickerOpen, setEvCollabPickerOpen] = useState(false);
   const [evCollabCandidates, setEvCollabCandidates] = useState([]);
@@ -14753,6 +14851,10 @@ function CalendarTab({ setActive = () => {
     setEvImportanceLevel("moderate");
     setEvGradeWeightPercent(null);
     setEvHoursTarget("");
+    setEvGenFlashcards(false);
+    setEvGenPE(false);
+    setEvWeaveCards(true);
+    setEvWeavePE(true);
     setEvProjectPlan({ phases: void 0, phasesLoading: false, outline: void 0, outlineLoading: false });
     setEvCollabPickerOpen(false);
     setEvCollabCandidates([]);
@@ -16056,6 +16158,28 @@ function CalendarTab({ setActive = () => {
     const conflict = occupied.some((o) => !(tMins + duration <= o.start || tMins >= o.end));
     return conflict ? findReliableSlotFor(events, routines, getSchedulePreferences(), date, time, duration, void 0, evDifficulty) : { date, time, reason: null };
   };
+  const genFlashcardDeckForNewExam = async (examTask, materialText) => {
+    if (!canGenFlashcards()) {
+      setPricingOpen(canGenFlashcardsReason() === "free-tier" ? "studyMaterialGen" : "aiUsageCap");
+      return null;
+    }
+    const cards = await generateFlashcardsFromText(materialText, examTask.subject || "this exam", scaledFlashcardCount(materialText.length));
+    if (!cards || cards.length === 0) return null;
+    recordFlashcardGen();
+    const deck = { id: String(Date.now() + Math.random() * 1e3), name: examTask.title, count: cards.length, done: 0, color: colorOf(examTask.subject), cards, examEventId: examTask.id, examEventIds: [examTask.id] };
+    lsSet("decks", [deck, ...lsGet("decks", [])]);
+    return deck;
+  };
+  const genPracticeExamForNewExam = async (examTask, materialText) => {
+    if (!canGenQuiz()) {
+      setPricingOpen(canGenQuizReason() === "free-tier" ? "studyMaterialGen" : "aiUsageCap");
+      return null;
+    }
+    const questions = await generateQuizFromText(materialText, examTask.subject || "this exam", scaledQuizCount(materialText.length));
+    if (!questions || questions.length === 0) return null;
+    recordQuizGen();
+    return createPracticeExam(examTask.title, examTask.subject, examTask.id, questions);
+  };
   const saveManual = () => {
     if (!evTitle.trim() || !evDate.trim() || !evTime.trim()) return;
     if (evKind === "project" && !evNotes.trim()) {
@@ -16127,6 +16251,30 @@ function CalendarTab({ setActive = () => {
           lsSet("events", patched);
           setEvents2(patched);
         });
+      }
+      if (evExamPlan.proposeSessions && evExamPlan.materialFiles.length > 0 && (evGenFlashcards || evGenPE)) {
+        const materialText = evExamPlan.materialFiles.map((f) => f.text).join("\n\n");
+        const sessionIds = tasks2.slice(1).map((t) => t.id);
+        (async () => {
+          const deck = evGenFlashcards ? await genFlashcardDeckForNewExam(examTask, materialText) : null;
+          const pe = evGenPE ? await genPracticeExamForNewExam(examTask, materialText) : null;
+          if (!deck && !pe) return;
+          const patched = lsGet("events", []).map((e) => {
+            const idx = sessionIds.indexOf(e.id);
+            if (idx < 0) return e;
+            const isLast = idx === sessionIds.length - 1;
+            return {
+              ...e,
+              ...deck && evWeaveCards ? { deckId: deck.id, interleavedReview: true } : {},
+              ...pe && evWeavePE && isLast ? { practiceExamId: pe.id, interleavedReview: true } : {}
+            };
+          });
+          lsSet("events", patched);
+          setEvents2(patched);
+          const label = (deck && pe ? "Flashcards and a practice exam" : deck ? "Flashcards" : "A practice exam") + " ready for " + evTitle.trim() + ".";
+          setDeadlineToast(label);
+          setTimeout(() => setDeadlineToast(""), 2800);
+        })();
       }
       return;
     }
@@ -17355,7 +17503,7 @@ Examples:
           placeholder: "0",
           style: { width: 56, fontSize: 11.5, padding: "5px 8px" }
         }
-      ))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11.5, color: T.muted } }, "Hours to study for this (optional):"), /* @__PURE__ */ React.createElement(Input, { type: "number", min: 0, step: 0.5, value: evHoursTarget, onChange: (e) => setEvHoursTarget(e.target.value), placeholder: "0", style: { width: 60, fontSize: 11.5, padding: "5px 8px" } })))));
+      ))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11.5, color: T.muted } }, "Hours to study for this (optional):"), /* @__PURE__ */ React.createElement(Input, { type: "number", min: 0, step: 0.5, value: evHoursTarget, onChange: (e) => setEvHoursTarget(e.target.value), placeholder: "0", style: { width: 60, fontSize: 11.5, padding: "5px 8px" } })))), hasMaterialForEvPlan && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10, paddingTop: 10, borderTop: `1px solid ${T.border}`, display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: evGenFlashcards, onChange: (e) => setEvGenFlashcards(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, "Also generate flashcards")), evGenFlashcards && /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginLeft: 24 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: evWeaveCards, onChange: (e) => setEvWeaveCards(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Review them as part of each session")), /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: evGenPE, onChange: (e) => setEvGenPE(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, "Also generate a practice exam")), evGenPE && /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginLeft: 24 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: evWeavePE, onChange: (e) => setEvWeavePE(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Use my last session to take it"))));
     })())),
     isProjectKind && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "Describe what you want to do", hint: "A sentence or two is enough \u2014 Studlin uses this to suggest phases and a checklist." }, /* @__PURE__ */ React.createElement(Textarea, { id: "newevent-detail-notes", placeholder: "e.g. Build a working demo, write a report, present to the class by the deadline.", value: evNotes, onChange: (ev) => {
       setEvNotes(ev.target.value);
