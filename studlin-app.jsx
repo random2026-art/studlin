@@ -8992,6 +8992,13 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   // that other, unrelated instance of the same idea.
   const [buildPlanConfidence,setBuildPlanConfidence]=useState("okay");
   const [buildPlanMaterialOpen,setBuildPlanMaterialOpen]=useState(false);
+  // Collapsed by default -- importance/grade-weight/flashcard+PE toggles/
+  // hours target all have a sensible default already (importance derives
+  // from exam type, hours target is a no-op blank), so a student who just
+  // wants a plan sees almost nothing to fill in. Same "advanced, optional,
+  // real skip" shape the Calendar wizard's own personalize step already
+  // uses elsewhere in this file.
+  const [buildPlanFineTuneOpen,setBuildPlanFineTuneOpen]=useState(false);
   // "Create manually" -- the other half of the choice step (Phase 4).
   // Each row is {text, date, time, duration}: date+time filled in creates
   // a normally-scheduled session right away (validated the same
@@ -9353,6 +9360,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
     setBuildPlanPreview(null);
     setBuildPlanGenFlashcards(false);setBuildPlanGenPE(false);setBuildPlanWeaveCards(true);setBuildPlanWeavePE(true);setBuildPlanHoursTarget("");setBuildPlanFocuses([]);
     setBuildPlanMaterialOpen(!hasMaterial);
+    setBuildPlanFineTuneOpen(false);
     // Pre-fill confidence from the exam's own history -- real correction:
     // this used to reset to a blank slate every time, so "Redo study
     // plan" never actually showed you what you'd said last time.
@@ -9368,6 +9376,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   const closeBuildPlan=()=>{
     setBuildPlanExamId(null);setBuildPlanStep("choice");setBuildPlanGeneric(false);setBuildPlanPreview(null);
     setBuildPlanGenFlashcards(false);setBuildPlanGenPE(false);setBuildPlanWeaveCards(true);setBuildPlanWeavePE(true);setBuildPlanHoursTarget("");setBuildPlanFocuses([]);
+    setBuildPlanFineTuneOpen(false);
     setManualSessionRows([]);
   };
   // Persists whatever material the student added in the modal's own
@@ -9645,7 +9654,19 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
         if(weavePE&&isLast){extra.practiceExamId=genPE.id;extra.interleavedReview=true;}
         const focus=buildPlanFocuses[i]||"";
         let notes=null;
+        // First-pass diagnosis (real, not a self-report): session 0 of a
+        // real multi-session, material-grounded plan is framed as an
+        // actual first pass through the material, not a topic-specific
+        // block -- there's nothing meaningful to target yet on session 1,
+        // that's the whole point. isDiagnosticFirstPass is a real data
+        // marker for the next phase (a check after this session completes,
+        // regenerating sessions 2+ from what it reveals) -- not consumed
+        // anywhere yet, deliberately additive so this ships without
+        // promising the follow-through it doesn't have yet.
+        const isFirstPassSession=i===0&&placedSessions.length>1;
+        if(isFirstPassSession){extra.isDiagnosticFirstPass=true;}
         if(weavePE&&isLast)notes=weaveCards?"Review flashcards, then take your practice exam.":"Take your practice exam for this material.";
+        else if(isFirstPassSession)notes="First pass — read through your material for "+(buildPlanExam.subject||buildPlanExam.title)+"."+(focus?" "+focus:"");
         else if(weaveCards)notes="Review flashcards first"+(focus?", then: "+focus:".");
         else if(focus)notes=focus;
         if(Object.keys(extra).length===0&&notes===null)return s;
@@ -11089,7 +11110,12 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
         title={buildPlanExam&&lsGet("events",[]).some(e=>e.dueEventId===buildPlanExam.id)?"Redo study plan":"Build study plan"}
         sub={buildPlanExam?buildPlanExam.title:""} width={520}
         footer={buildPlanStep==="preview"?<><Btn variant="subtle" onClick={closeBuildPlan}>Cancel</Btn><Btn onClick={commitBuildPlan} disabled={buildPlanLoading}>{buildPlanLoading?"Building…":"Confirm plan"}</Btn></>
-          :buildPlanStep==="manual"?<><Btn variant="subtle" onClick={closeBuildPlan}>Cancel</Btn><Btn onClick={commitManualSessions}>Add session{manualSessionRows.filter(r=>r.text.trim()).length!==1?"s":""}</Btn></>
+          // Manual now gets a real review step too, same as the generated
+          // path always had -- committing straight from the entry form
+          // with no undo was the one real gap the generated path didn't
+          // share.
+          :buildPlanStep==="manual"?<><Btn variant="subtle" onClick={closeBuildPlan}>Cancel</Btn><Btn onClick={()=>setBuildPlanStep("manual-preview")} disabled={manualSessionRows.filter(r=>r.text.trim()).length===0}>Review</Btn></>
+          :buildPlanStep==="manual-preview"?<><Btn variant="subtle" onClick={()=>setBuildPlanStep("manual")}>← Back</Btn><Btn onClick={commitManualSessions}>Add session{manualSessionRows.filter(r=>r.text.trim()).length!==1?"s":""}</Btn></>
           :buildPlanStep==="confidence"?<><Btn variant="subtle" onClick={closeBuildPlan}>Cancel</Btn><Btn onClick={generatePreview}>Generate Plan</Btn></>
           :<Btn variant="subtle" onClick={closeBuildPlan}>Cancel</Btn>}>
         {/* Correction round (2026-07-31): exactly 2 choices -- the old
@@ -11136,6 +11162,25 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
             <button type="button" onClick={addManualSessionRow} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>+ Add another session</button>
           </div>
         )}
+        {/* Real review step for the manual path, same as the generated
+            path always had -- read-only summary of exactly what "Add
+            session(s)" is about to commit, with a real way back to fix
+            something first instead of committing blind. */}
+        {buildPlanExam&&buildPlanStep==="manual-preview"&&(
+          <div>
+            <div style={{fontSize:13,color:T.text,lineHeight:1.6,marginBottom:14}}>
+              {manualSessionRows.filter(r=>r.text.trim()).length} session{manualSessionRows.filter(r=>r.text.trim()).length!==1?"s":""} ready to add. Go back to change anything.
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {manualSessionRows.filter(r=>r.text.trim()).map((row,i)=>(
+                <div key={i} style={{padding:"10px 12px",background:T.card2,borderRadius:8}}>
+                  <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:2}}>{row.text}</div>
+                  <div style={{fontSize:11,color:T.muted}}>{row.date&&row.time?row.date+" · "+row.time+" · "+(row.duration||25)+" min":"Not scheduled yet -- drag it onto the calendar later"}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         {/* Correction round: one calibration screen with everything on it
             -- impact, confidence, material (collapsible, optional), the
             flashcard/PE toggles, and the hours target. Replaces the old
@@ -11144,7 +11189,17 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
             the material section below is empty, not a separate earlier
             choice. Impact writes straight through to the exam
             (patchExam), so it's also automatically what Redo pre-fills. */}
-        {buildPlanExam&&buildPlanStep==="confidence"&&(
+        {buildPlanExam&&buildPlanStep==="confidence"&&(()=>{
+          // Real material grounds a real first-pass diagnosis instead of a
+          // self-report -- "how confident are you" is a guess; a genuine
+          // first pass through the actual material, checked afterward,
+          // isn't. Only kicks in once material's actually attached (a cold
+          // quiz on unstudied material would just measure "haven't seen
+          // this," not real weak spots -- the earlier, rejected version of
+          // this idea). No material -> the confidence buttons stay exactly
+          // as they always have; this is additive, not a replacement.
+          const hasMaterialForPlan=fileTexts.length>0||materialLinks.length>0;
+          return (
           <div>
             <div style={{marginBottom:16}}>
               <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:6}}>What kind of exam is this?</div>
@@ -11153,8 +11208,8 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                   <button key={v} type="button" onClick={()=>{
                     // Picking a type silently derives an importance level
                     // (and the legacy examWeight every other consumer still
-                    // reads) -- the level itself shows right below as an
-                    // editable pill, not a second required question.
+                    // reads) -- editable in Fine-tune below, not a second
+                    // required question.
                     const level=EXAM_TYPE_TO_IMPORTANCE[v]||"moderate";
                     patchExam(buildPlanExam.id,{examType:v,importanceLevel:level,examWeight:examWeightFromImportance(level)});
                   }}
@@ -11163,37 +11218,23 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                       border:`1px solid ${buildPlanExam.examType===v?T.lime+"44":T.border}`}}>{label}</button>
                 ))}
               </div>
-              {buildPlanExam.examType&&(<>
-                <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginTop:12,marginBottom:6}}>Importance</div>
-                <div style={{display:"flex",gap:6}}>
-                  {[["minor","Minor"],["moderate","Moderate"],["major","Major"],["critical","Critical"]].map(([v,label])=>{
-                    const active=(buildPlanExam.importanceLevel||"moderate")===v;
-                    return (
-                      <button key={v} type="button" onClick={()=>patchExam(buildPlanExam.id,{importanceLevel:v,examWeight:examWeightFromImportance(v)})}
-                        style={{flex:1,padding:"6px",borderRadius:7,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,
-                          background:active?T.lime+"14":T.card2,color:active?T.lime:T.muted,
-                          border:`1px solid ${active?T.lime+"44":T.border}`}}>{label}</button>
-                    );
-                  })}
-                </div>
-                <div style={{display:"flex",alignItems:"center",gap:8,marginTop:8}}>
-                  <span style={{fontSize:11.5,color:T.muted}}>% of grade (if you know it):</span>
-                  <Input type="number" min={0} max={100} step={1} value={buildPlanExam.gradeWeightPercent??""}
-                    onChange={e=>patchExam(buildPlanExam.id,{gradeWeightPercent:e.target.value===""?null:parseFloat(e.target.value)})}
-                    placeholder="0" style={{width:56,fontSize:11.5,padding:"5px 8px"}} />
-                </div>
-              </>)}
             </div>
             <div style={{marginBottom:16}}>
-              <div style={{fontSize:12,color:T.muted,marginBottom:6}}>How confident are you on this material?</div>
-              <div style={{display:"flex",gap:8}}>
-                {["shaky","okay","solid"].map(level=>(
-                  <button key={level} type="button" onClick={()=>setBuildPlanConfidence(level)}
-                    style={{flex:1,padding:"8px",borderRadius:7,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,textTransform:"capitalize",
-                      background:buildPlanConfidence===level?T.lime+"14":T.card2,color:buildPlanConfidence===level?T.lime:T.muted,
-                      border:`1px solid ${buildPlanConfidence===level?T.lime+"44":T.border}`}}>{level}</button>
-                ))}
-              </div>
+              {hasMaterialForPlan?(
+                <div style={{fontSize:12.5,color:T.text,lineHeight:1.5,background:T.card2,borderRadius:8,padding:"10px 12px"}}>
+                  Studlin will start with a real first pass through your material, then a quick check after it tells Studlin what actually needs more work -- not a guess.
+                </div>
+              ):(<>
+                <div style={{fontSize:12,color:T.muted,marginBottom:6}}>How confident are you on this material?</div>
+                <div style={{display:"flex",gap:8}}>
+                  {["shaky","okay","solid"].map(level=>(
+                    <button key={level} type="button" onClick={()=>setBuildPlanConfidence(level)}
+                      style={{flex:1,padding:"8px",borderRadius:7,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,textTransform:"capitalize",
+                        background:buildPlanConfidence===level?T.lime+"14":T.card2,color:buildPlanConfidence===level?T.lime:T.muted,
+                        border:`1px solid ${buildPlanConfidence===level?T.lime+"44":T.border}`}}>{level}</button>
+                  ))}
+                </div>
+              </>)}
             </div>
             <div style={{marginBottom:16}}>
               {!buildPlanMaterialOpen?(
@@ -11247,34 +11288,69 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                 </div>
               )}
             </div>
-            <div style={{borderTop:`1px solid ${T.border}`,paddingTop:14,display:"flex",flexDirection:"column",gap:10}}>
-              <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
-                <input type="checkbox" checked={buildPlanGenFlashcards} onChange={e=>setBuildPlanGenFlashcards(e.target.checked)} />
-                <span style={{fontSize:12.5,color:T.text}}>Also generate flashcards</span>
-              </label>
-              {buildPlanGenFlashcards&&(
-                <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginLeft:24}}>
-                  <input type="checkbox" checked={buildPlanWeaveCards} onChange={e=>setBuildPlanWeaveCards(e.target.checked)} />
-                  <span style={{fontSize:12,color:T.muted}}>Review them as part of each session</span>
-                </label>
+            <div style={{borderTop:`1px solid ${T.border}`,paddingTop:12}}>
+              {/* Collapsed by default -- importance already has a sensible
+                  default from exam type, hours/flashcard/PE all default to
+                  off/blank/no-op. A student who just wants a plan sees one
+                  button here, not five more fields. */}
+              <button type="button" onClick={()=>setBuildPlanFineTuneOpen(o=>!o)} style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"none",padding:0,cursor:"pointer",fontFamily:T.font,fontSize:12,fontWeight:600,color:T.muted}}>
+                <span style={{display:"inline-block",transition:"transform 0.15s",transform:buildPlanFineTuneOpen?"rotate(90deg)":"none"}}>›</span>
+                Fine-tune (optional)
+              </button>
+              {buildPlanFineTuneOpen&&(
+                <div style={{marginTop:12,display:"flex",flexDirection:"column",gap:10}}>
+                  {buildPlanExam.examType&&(<>
+                    <div>
+                      <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:6}}>Importance</div>
+                      <div style={{display:"flex",gap:6}}>
+                        {[["minor","Minor"],["moderate","Moderate"],["major","Major"],["critical","Critical"]].map(([v,label])=>{
+                          const active=(buildPlanExam.importanceLevel||"moderate")===v;
+                          return (
+                            <button key={v} type="button" onClick={()=>patchExam(buildPlanExam.id,{importanceLevel:v,examWeight:examWeightFromImportance(v)})}
+                              style={{flex:1,padding:"6px",borderRadius:7,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,
+                                background:active?T.lime+"14":T.card2,color:active?T.lime:T.muted,
+                                border:`1px solid ${active?T.lime+"44":T.border}`}}>{label}</button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <span style={{fontSize:11.5,color:T.muted}}>% of grade (if you know it):</span>
+                      <Input type="number" min={0} max={100} step={1} value={buildPlanExam.gradeWeightPercent??""}
+                        onChange={e=>patchExam(buildPlanExam.id,{gradeWeightPercent:e.target.value===""?null:parseFloat(e.target.value)})}
+                        placeholder="0" style={{width:56,fontSize:11.5,padding:"5px 8px"}} />
+                    </div>
+                  </>)}
+                  <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
+                    <input type="checkbox" checked={buildPlanGenFlashcards} onChange={e=>setBuildPlanGenFlashcards(e.target.checked)} />
+                    <span style={{fontSize:12.5,color:T.text}}>Also generate flashcards</span>
+                  </label>
+                  {buildPlanGenFlashcards&&(
+                    <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginLeft:24}}>
+                      <input type="checkbox" checked={buildPlanWeaveCards} onChange={e=>setBuildPlanWeaveCards(e.target.checked)} />
+                      <span style={{fontSize:12,color:T.muted}}>Review them as part of each session</span>
+                    </label>
+                  )}
+                  <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
+                    <input type="checkbox" checked={buildPlanGenPE} onChange={e=>setBuildPlanGenPE(e.target.checked)} />
+                    <span style={{fontSize:12.5,color:T.text}}>Also generate a practice exam</span>
+                  </label>
+                  {buildPlanGenPE&&(
+                    <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginLeft:24}}>
+                      <input type="checkbox" checked={buildPlanWeavePE} onChange={e=>setBuildPlanWeavePE(e.target.checked)} />
+                      <span style={{fontSize:12,color:T.muted}}>Use my last session to take it</span>
+                    </label>
+                  )}
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:12,color:T.muted}}>Hours to study for this (optional):</span>
+                    <Input type="number" min={0} step={0.5} value={buildPlanHoursTarget} onChange={e=>setBuildPlanHoursTarget(e.target.value)} placeholder="0" style={{width:60}} />
+                  </div>
+                </div>
               )}
-              <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
-                <input type="checkbox" checked={buildPlanGenPE} onChange={e=>setBuildPlanGenPE(e.target.checked)} />
-                <span style={{fontSize:12.5,color:T.text}}>Also generate a practice exam</span>
-              </label>
-              {buildPlanGenPE&&(
-                <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginLeft:24}}>
-                  <input type="checkbox" checked={buildPlanWeavePE} onChange={e=>setBuildPlanWeavePE(e.target.checked)} />
-                  <span style={{fontSize:12,color:T.muted}}>Use my last session to take it</span>
-                </label>
-              )}
-              <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
-                <span style={{fontSize:12,color:T.muted}}>Hours to study for this (optional):</span>
-                <Input type="number" min={0} step={0.5} value={buildPlanHoursTarget} onChange={e=>setBuildPlanHoursTarget(e.target.value)} placeholder="0" style={{width:60}} />
-              </div>
             </div>
           </div>
-        )}
+          );
+        })()}
         {buildPlanExam&&buildPlanStep==="generating"&&(
           // The real "thinking" pause -- see generatePreview's minDelay/
           // Promise.all. Nothing about the plan (session count, duration,

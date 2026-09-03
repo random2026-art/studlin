@@ -5511,6 +5511,7 @@ function StudlinPrep({ setActive = () => {
   const [buildPlanOverrides, setBuildPlanOverrides] = useState([]);
   const [buildPlanConfidence, setBuildPlanConfidence] = useState("okay");
   const [buildPlanMaterialOpen, setBuildPlanMaterialOpen] = useState(false);
+  const [buildPlanFineTuneOpen, setBuildPlanFineTuneOpen] = useState(false);
   const [manualSessionRows, setManualSessionRows] = useState([]);
   const addManualSessionRow = () => setManualSessionRows((rows) => [...rows, { text: "", date: "", time: "", duration: 25 }]);
   const openManualSessions = () => {
@@ -5737,6 +5738,7 @@ function StudlinPrep({ setActive = () => {
     setBuildPlanHoursTarget("");
     setBuildPlanFocuses([]);
     setBuildPlanMaterialOpen(!hasMaterial);
+    setBuildPlanFineTuneOpen(false);
     const log = exam.confidenceLog || [];
     setBuildPlanConfidence(log.length > 0 ? confidenceZoneOf(log[log.length - 1]) : "okay");
     const hasSessions = lsGet("events", []).some((e) => e.dueEventId === exam.id);
@@ -5753,6 +5755,7 @@ function StudlinPrep({ setActive = () => {
     setBuildPlanWeavePE(true);
     setBuildPlanHoursTarget("");
     setBuildPlanFocuses([]);
+    setBuildPlanFineTuneOpen(false);
     setManualSessionRows([]);
   };
   const persistBuildPlanMaterial = () => {
@@ -5884,7 +5887,12 @@ function StudlinPrep({ setActive = () => {
         }
         const focus = buildPlanFocuses[i] || "";
         let notes = null;
+        const isFirstPassSession = i === 0 && placedSessions.length > 1;
+        if (isFirstPassSession) {
+          extra.isDiagnosticFirstPass = true;
+        }
         if (weavePE && isLast) notes = weaveCards ? "Review flashcards, then take your practice exam." : "Take your practice exam for this material.";
+        else if (isFirstPassSession) notes = "First pass \u2014 read through your material for " + (buildPlanExam.subject || buildPlanExam.title) + "." + (focus ? " " + focus : "");
         else if (weaveCards) notes = "Review flashcards first" + (focus ? ", then: " + focus : ".");
         else if (focus) notes = focus;
         if (Object.keys(extra).length === 0 && notes === null) return s;
@@ -6701,7 +6709,7 @@ function StudlinPrep({ setActive = () => {
       title: buildPlanExam && lsGet("events", []).some((e) => e.dueEventId === buildPlanExam.id) ? "Redo study plan" : "Build study plan",
       sub: buildPlanExam ? buildPlanExam.title : "",
       width: 520,
-      footer: buildPlanStep === "preview" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeBuildPlan }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: commitBuildPlan, disabled: buildPlanLoading }, buildPlanLoading ? "Building\u2026" : "Confirm plan")) : buildPlanStep === "manual" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeBuildPlan }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: commitManualSessions }, "Add session", manualSessionRows.filter((r) => r.text.trim()).length !== 1 ? "s" : "")) : buildPlanStep === "confidence" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeBuildPlan }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: generatePreview }, "Generate Plan")) : /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeBuildPlan }, "Cancel")
+      footer: buildPlanStep === "preview" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeBuildPlan }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: commitBuildPlan, disabled: buildPlanLoading }, buildPlanLoading ? "Building\u2026" : "Confirm plan")) : buildPlanStep === "manual" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeBuildPlan }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setBuildPlanStep("manual-preview"), disabled: manualSessionRows.filter((r) => r.text.trim()).length === 0 }, "Review")) : buildPlanStep === "manual-preview" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setBuildPlanStep("manual") }, "\u2190 Back"), /* @__PURE__ */ React.createElement(Btn, { onClick: commitManualSessions }, "Add session", manualSessionRows.filter((r) => r.text.trim()).length !== 1 ? "s" : "")) : buildPlanStep === "confidence" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeBuildPlan }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: generatePreview }, "Generate Plan")) : /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeBuildPlan }, "Cancel")
     },
     buildPlanExam && buildPlanStep === "choice" && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, lineHeight: 1.6, marginBottom: 18 } }, "Studlin can build the plan for you. Or you can lay it out yourself."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: () => setBuildPlanStep("confidence"), style: { width: "100%", justifyContent: "center" } }, "Studlin generates"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: openManualSessions, style: { width: "100%", justifyContent: "center" } }, "Create manually"))),
     buildPlanExam && buildPlanStep === "manual" && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, lineHeight: 1.6, marginBottom: 14 } }, "What do you want to study each session? Fill in a time to schedule it now, or leave it blank. You'll be able to drag it onto the calendar later."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 } }, manualSessionRows.map((row, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { padding: "10px", background: T.card2, borderRadius: 8, display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Session ", i + 1), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center" } }, /* @__PURE__ */ React.createElement(
@@ -6713,98 +6721,102 @@ function StudlinPrep({ setActive = () => {
         style: { flex: 1, fontSize: 12.5 }
       }
     ), manualSessionRows.length > 1 && /* @__PURE__ */ React.createElement("button", { onClick: () => setManualSessionRows((rows) => rows.filter((_, ri) => ri !== i)), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 14, lineHeight: 1 } }, "\xD7")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Input, { type: "date", value: row.date, onChange: (e) => setManualSessionRows((rows) => rows.map((r, ri) => ri === i ? { ...r, date: e.target.value } : r)), style: { width: 140 } }), /* @__PURE__ */ React.createElement(TimeInput, { value: row.time, onChange: (v) => setManualSessionRows((rows) => rows.map((r, ri) => ri === i ? { ...r, time: v } : r)) }), /* @__PURE__ */ React.createElement(NumField, { min: 5, max: 240, fallback: 25, value: row.duration, onChange: (v) => setManualSessionRows((rows) => rows.map((r, ri) => ri === i ? { ...r, duration: v } : r)), style: { width: 56 } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: T.muted } }, "min"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10, color: T.faint } }, row.date && row.time ? "" : "leave blank to schedule later"))))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addManualSessionRow, style: { background: "none", border: "none", color: T.muted, fontSize: 12, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, "+ Add another session")),
-    buildPlanExam && buildPlanStep === "confidence" && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, marginBottom: 6 } }, "What kind of exam is this?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } }, [["quiz", "Quiz"], ["midterm", "Midterm"], ["final", "Final"], ["project", "Project"], ["other", "Other"]].map(([v, label]) => /* @__PURE__ */ React.createElement(
-      "button",
-      {
-        key: v,
-        type: "button",
-        onClick: () => {
-          const level = EXAM_TYPE_TO_IMPORTANCE[v] || "moderate";
-          patchExam(buildPlanExam.id, { examType: v, importanceLevel: level, examWeight: examWeightFromImportance(level) });
-        },
-        style: {
-          padding: "7px 12px",
-          borderRadius: 7,
-          fontSize: 12,
-          fontWeight: 600,
-          cursor: "pointer",
-          fontFamily: T.font,
-          background: buildPlanExam.examType === v ? T.lime + "14" : T.card2,
-          color: buildPlanExam.examType === v ? T.lime : T.muted,
-          border: `1px solid ${buildPlanExam.examType === v ? T.lime + "44" : T.border}`
-        }
-      },
-      label
-    ))), buildPlanExam.examType && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, marginTop: 12, marginBottom: 6 } }, "Importance"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6 } }, [["minor", "Minor"], ["moderate", "Moderate"], ["major", "Major"], ["critical", "Critical"]].map(([v, label]) => {
-      const active = (buildPlanExam.importanceLevel || "moderate") === v;
-      return /* @__PURE__ */ React.createElement(
+    buildPlanExam && buildPlanStep === "manual-preview" && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, lineHeight: 1.6, marginBottom: 14 } }, manualSessionRows.filter((r) => r.text.trim()).length, " session", manualSessionRows.filter((r) => r.text.trim()).length !== 1 ? "s" : "", " ready to add. Go back to change anything."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, manualSessionRows.filter((r) => r.text.trim()).map((row, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { padding: "10px 12px", background: T.card2, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, marginBottom: 2 } }, row.text), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted } }, row.date && row.time ? row.date + " \xB7 " + row.time + " \xB7 " + (row.duration || 25) + " min" : "Not scheduled yet -- drag it onto the calendar later"))))),
+    buildPlanExam && buildPlanStep === "confidence" && (() => {
+      const hasMaterialForPlan = fileTexts.length > 0 || materialLinks.length > 0;
+      return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, marginBottom: 6 } }, "What kind of exam is this?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } }, [["quiz", "Quiz"], ["midterm", "Midterm"], ["final", "Final"], ["project", "Project"], ["other", "Other"]].map(([v, label]) => /* @__PURE__ */ React.createElement(
         "button",
         {
           key: v,
           type: "button",
-          onClick: () => patchExam(buildPlanExam.id, { importanceLevel: v, examWeight: examWeightFromImportance(v) }),
+          onClick: () => {
+            const level = EXAM_TYPE_TO_IMPORTANCE[v] || "moderate";
+            patchExam(buildPlanExam.id, { examType: v, importanceLevel: level, examWeight: examWeightFromImportance(level) });
+          },
           style: {
-            flex: 1,
-            padding: "6px",
+            padding: "7px 12px",
             borderRadius: 7,
-            fontSize: 11.5,
+            fontSize: 12,
             fontWeight: 600,
             cursor: "pointer",
             fontFamily: T.font,
-            background: active ? T.lime + "14" : T.card2,
-            color: active ? T.lime : T.muted,
-            border: `1px solid ${active ? T.lime + "44" : T.border}`
+            background: buildPlanExam.examType === v ? T.lime + "14" : T.card2,
+            color: buildPlanExam.examType === v ? T.lime : T.muted,
+            border: `1px solid ${buildPlanExam.examType === v ? T.lime + "44" : T.border}`
           }
         },
         label
-      );
-    })), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11.5, color: T.muted } }, "% of grade (if you know it):"), /* @__PURE__ */ React.createElement(
-      Input,
-      {
-        type: "number",
-        min: 0,
-        max: 100,
-        step: 1,
-        value: buildPlanExam.gradeWeightPercent ?? "",
-        onChange: (e) => patchExam(buildPlanExam.id, { gradeWeightPercent: e.target.value === "" ? null : parseFloat(e.target.value) }),
-        placeholder: "0",
-        style: { width: 56, fontSize: 11.5, padding: "5px 8px" }
-      }
-    )))), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 6 } }, "How confident are you on this material?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, ["shaky", "okay", "solid"].map((level) => /* @__PURE__ */ React.createElement(
-      "button",
-      {
-        key: level,
-        type: "button",
-        onClick: () => setBuildPlanConfidence(level),
-        style: {
-          flex: 1,
-          padding: "8px",
-          borderRadius: 7,
-          fontSize: 12.5,
-          fontWeight: 600,
-          cursor: "pointer",
-          fontFamily: T.font,
-          textTransform: "capitalize",
-          background: buildPlanConfidence === level ? T.lime + "14" : T.card2,
-          color: buildPlanConfidence === level ? T.lime : T.muted,
-          border: `1px solid ${buildPlanConfidence === level ? T.lime + "44" : T.border}`
+      )))), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 16 } }, hasMaterialForPlan ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, lineHeight: 1.5, background: T.card2, borderRadius: 8, padding: "10px 12px" } }, "Studlin will start with a real first pass through your material, then a quick check after it tells Studlin what actually needs more work -- not a guess.") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 6 } }, "How confident are you on this material?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, ["shaky", "okay", "solid"].map((level) => /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          key: level,
+          type: "button",
+          onClick: () => setBuildPlanConfidence(level),
+          style: {
+            flex: 1,
+            padding: "8px",
+            borderRadius: 7,
+            fontSize: 12.5,
+            fontWeight: 600,
+            cursor: "pointer",
+            fontFamily: T.font,
+            textTransform: "capitalize",
+            background: buildPlanConfidence === level ? T.lime + "14" : T.card2,
+            color: buildPlanConfidence === level ? T.lime : T.muted,
+            border: `1px solid ${buildPlanConfidence === level ? T.lime + "44" : T.border}`
+          }
+        },
+        level
+      ))))), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 16 } }, !buildPlanMaterialOpen ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setBuildPlanMaterialOpen(true), style: { flexShrink: 0, padding: "6px 12px", borderRadius: 7, border: `1px solid ${T.lime}44`, background: T.lime + "14", color: T.lime, fontSize: 12, fontWeight: 600, fontFamily: T.font, cursor: "pointer" } }, fileTexts.length > 0 || materialLinks.length > 0 ? "Edit study material" : "+ Add study material"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, fileTexts.length > 0 || materialLinks.length > 0 ? fileTexts.length + materialLinks.length + " material item" + (fileTexts.length + materialLinks.length !== 1 ? "s" : "") : "No material added -- Studlin can build a real, focused plan instead of generic review blocks")) : /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("input", { type: "file", ref: fileInputRef, onChange: handlePrepFile, accept: ".txt,.md,.pdf,.docx,.png,.jpg,.jpeg,.webp,.gif", style: { display: "none" }, multiple: true }), extractProgress ? /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 8 } }, /* @__PURE__ */ React.createElement(ExtractionProgress, { ...extractProgress })) : /* @__PURE__ */ React.createElement("div", { onClick: () => fileInputRef.current && fileInputRef.current.click(), style: { border: `1px dashed ${T.borderHover}`, borderRadius: 10, padding: 14, textAlign: "center", background: T.card2, cursor: "pointer", marginBottom: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.text, fontWeight: 500 } }, "Click to upload: PDF, DOCX, or TXT")), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setPasteMode((m) => !m), style: { width: "100%", textAlign: "center", padding: "7px", borderRadius: 8, border: `1px dashed ${T.borderHover}`, background: "transparent", color: T.muted, cursor: "pointer", fontFamily: T.font, fontSize: 11.5, marginBottom: pasteMode ? 8 : 10 } }, pasteMode ? "Upload a file instead" : "Or paste text instead"), pasteMode && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 10 } }, /* @__PURE__ */ React.createElement(
+        "textarea",
+        {
+          value: pasteText,
+          onChange: (e) => setPasteText(e.target.value),
+          placeholder: "Paste your notes or material here",
+          rows: 4,
+          style: { width: "100%", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 10, padding: "10px 12px", color: T.text, fontSize: 12.5, fontFamily: T.font, outline: "none", resize: "vertical", boxSizing: "border-box" }
         }
-      },
-      level
-    )))), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 16 } }, !buildPlanMaterialOpen ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setBuildPlanMaterialOpen(true), style: { flexShrink: 0, padding: "6px 12px", borderRadius: 7, border: `1px solid ${T.lime}44`, background: T.lime + "14", color: T.lime, fontSize: 12, fontWeight: 600, fontFamily: T.font, cursor: "pointer" } }, fileTexts.length > 0 || materialLinks.length > 0 ? "Edit study material" : "+ Add study material"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, fileTexts.length > 0 || materialLinks.length > 0 ? fileTexts.length + materialLinks.length + " material item" + (fileTexts.length + materialLinks.length !== 1 ? "s" : "") : "No material added -- Studlin can build a real, focused plan instead of generic review blocks")) : /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("input", { type: "file", ref: fileInputRef, onChange: handlePrepFile, accept: ".txt,.md,.pdf,.docx,.png,.jpg,.jpeg,.webp,.gif", style: { display: "none" }, multiple: true }), extractProgress ? /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 8 } }, /* @__PURE__ */ React.createElement(ExtractionProgress, { ...extractProgress })) : /* @__PURE__ */ React.createElement("div", { onClick: () => fileInputRef.current && fileInputRef.current.click(), style: { border: `1px dashed ${T.borderHover}`, borderRadius: 10, padding: 14, textAlign: "center", background: T.card2, cursor: "pointer", marginBottom: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.text, fontWeight: 500 } }, "Click to upload: PDF, DOCX, or TXT")), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setPasteMode((m) => !m), style: { width: "100%", textAlign: "center", padding: "7px", borderRadius: 8, border: `1px dashed ${T.borderHover}`, background: "transparent", color: T.muted, cursor: "pointer", fontFamily: T.font, fontSize: 11.5, marginBottom: pasteMode ? 8 : 10 } }, pasteMode ? "Upload a file instead" : "Or paste text instead"), pasteMode && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 10 } }, /* @__PURE__ */ React.createElement(
-      "textarea",
-      {
-        value: pasteText,
-        onChange: (e) => setPasteText(e.target.value),
-        placeholder: "Paste your notes or material here",
-        rows: 4,
-        style: { width: "100%", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 10, padding: "10px 12px", color: T.text, fontSize: 12.5, fontFamily: T.font, outline: "none", resize: "vertical", boxSizing: "border-box" }
-      }
-    ), /* @__PURE__ */ React.createElement(Btn, { onClick: () => {
-      setFileTexts((prev) => [...prev, { name: "Pasted text", ...finalizeExtractedText(pasteText) }]);
-      setPasteText("");
-      setPasteMode(false);
-    }, disabled: !pasteText.trim(), style: { marginTop: 8, width: "100%", justifyContent: "center", opacity: pasteText.trim() ? 1 : 0.45 } }, "Add pasted text")), fileTexts.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 } }, fileTexts.map((f) => /* @__PURE__ */ React.createElement("div", { key: f.name, style: { display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 12, padding: "6px 10px", background: T.card2, borderRadius: 8, gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 } }, f.name), /* @__PURE__ */ React.createElement("button", { onClick: () => removePrepFile(f.name), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 14, lineHeight: 1, flexShrink: 0 } }, "\xD7")))), (fileTexts.length > 0 || materialLinks.length > 0) && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setBuildPlanMaterialOpen(false), style: { background: "none", border: "none", color: T.muted, fontSize: 11.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, "Done"))), /* @__PURE__ */ React.createElement("div", { style: { borderTop: `1px solid ${T.border}`, paddingTop: 14, display: "flex", flexDirection: "column", gap: 10 } }, /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanGenFlashcards, onChange: (e) => setBuildPlanGenFlashcards(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, "Also generate flashcards")), buildPlanGenFlashcards && /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginLeft: 24 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanWeaveCards, onChange: (e) => setBuildPlanWeaveCards(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Review them as part of each session")), /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanGenPE, onChange: (e) => setBuildPlanGenPE(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, "Also generate a practice exam")), buildPlanGenPE && /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginLeft: 24 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanWeavePE, onChange: (e) => setBuildPlanWeavePE(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Use my last session to take it")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 4 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Hours to study for this (optional):"), /* @__PURE__ */ React.createElement(Input, { type: "number", min: 0, step: 0.5, value: buildPlanHoursTarget, onChange: (e) => setBuildPlanHoursTarget(e.target.value), placeholder: "0", style: { width: 60 } })))),
+      ), /* @__PURE__ */ React.createElement(Btn, { onClick: () => {
+        setFileTexts((prev) => [...prev, { name: "Pasted text", ...finalizeExtractedText(pasteText) }]);
+        setPasteText("");
+        setPasteMode(false);
+      }, disabled: !pasteText.trim(), style: { marginTop: 8, width: "100%", justifyContent: "center", opacity: pasteText.trim() ? 1 : 0.45 } }, "Add pasted text")), fileTexts.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 } }, fileTexts.map((f) => /* @__PURE__ */ React.createElement("div", { key: f.name, style: { display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 12, padding: "6px 10px", background: T.card2, borderRadius: 8, gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 } }, f.name), /* @__PURE__ */ React.createElement("button", { onClick: () => removePrepFile(f.name), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 14, lineHeight: 1, flexShrink: 0 } }, "\xD7")))), (fileTexts.length > 0 || materialLinks.length > 0) && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setBuildPlanMaterialOpen(false), style: { background: "none", border: "none", color: T.muted, fontSize: 11.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, "Done"))), /* @__PURE__ */ React.createElement("div", { style: { borderTop: `1px solid ${T.border}`, paddingTop: 12 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setBuildPlanFineTuneOpen((o) => !o), style: { display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: T.font, fontSize: 12, fontWeight: 600, color: T.muted } }, /* @__PURE__ */ React.createElement("span", { style: { display: "inline-block", transition: "transform 0.15s", transform: buildPlanFineTuneOpen ? "rotate(90deg)" : "none" } }, "\u203A"), "Fine-tune (optional)"), buildPlanFineTuneOpen && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12, display: "flex", flexDirection: "column", gap: 10 } }, buildPlanExam.examType && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, marginBottom: 6 } }, "Importance"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6 } }, [["minor", "Minor"], ["moderate", "Moderate"], ["major", "Major"], ["critical", "Critical"]].map(([v, label]) => {
+        const active = (buildPlanExam.importanceLevel || "moderate") === v;
+        return /* @__PURE__ */ React.createElement(
+          "button",
+          {
+            key: v,
+            type: "button",
+            onClick: () => patchExam(buildPlanExam.id, { importanceLevel: v, examWeight: examWeightFromImportance(v) }),
+            style: {
+              flex: 1,
+              padding: "6px",
+              borderRadius: 7,
+              fontSize: 11.5,
+              fontWeight: 600,
+              cursor: "pointer",
+              fontFamily: T.font,
+              background: active ? T.lime + "14" : T.card2,
+              color: active ? T.lime : T.muted,
+              border: `1px solid ${active ? T.lime + "44" : T.border}`
+            }
+          },
+          label
+        );
+      }))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11.5, color: T.muted } }, "% of grade (if you know it):"), /* @__PURE__ */ React.createElement(
+        Input,
+        {
+          type: "number",
+          min: 0,
+          max: 100,
+          step: 1,
+          value: buildPlanExam.gradeWeightPercent ?? "",
+          onChange: (e) => patchExam(buildPlanExam.id, { gradeWeightPercent: e.target.value === "" ? null : parseFloat(e.target.value) }),
+          placeholder: "0",
+          style: { width: 56, fontSize: 11.5, padding: "5px 8px" }
+        }
+      ))), /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanGenFlashcards, onChange: (e) => setBuildPlanGenFlashcards(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, "Also generate flashcards")), buildPlanGenFlashcards && /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginLeft: 24 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanWeaveCards, onChange: (e) => setBuildPlanWeaveCards(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Review them as part of each session")), /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanGenPE, onChange: (e) => setBuildPlanGenPE(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, "Also generate a practice exam")), buildPlanGenPE && /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginLeft: 24 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanWeavePE, onChange: (e) => setBuildPlanWeavePE(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Use my last session to take it")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Hours to study for this (optional):"), /* @__PURE__ */ React.createElement(Input, { type: "number", min: 0, step: 0.5, value: buildPlanHoursTarget, onChange: (e) => setBuildPlanHoursTarget(e.target.value), placeholder: "0", style: { width: 60 } })))));
+    })(),
     buildPlanExam && buildPlanStep === "generating" && // The real "thinking" pause -- see generatePreview's minDelay/
     // Promise.all. Nothing about the plan (session count, duration,
     // dates) is computed or shown until this resolves, so the
