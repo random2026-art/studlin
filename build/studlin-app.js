@@ -1646,8 +1646,13 @@ function findSlotWithEviction(events, routines, prefs, desiredDate, desiredTime,
   if (!isImminent || dayHasRoomFor(events, routines, prefs, desiredDate, duration, desiredTime)) {
     return { events, placement: findLegalSlotOrNull(events, routines, prefs, desiredDate, desiredTime, duration, deadlineKey) };
   }
+  const isSessionMovable = (e) => {
+    if (!e.dueEventId) return true;
+    const exam = events.find((x) => x.id === e.dueEventId);
+    return !(exam && exam.sessionsMovable === false);
+  };
   const candidates = events.filter(
-    (e) => e.date === desiredDate && e.kind === "study block" && e.status === "pending" && !isCoopStudySession(e) && (!e.deadline || daysUntilDeadline(e) > 7) && (e.reshuffleCount || 0) < RESHUFFLE_ESCALATE_THRESHOLD
+    (e) => e.date === desiredDate && e.kind === "study block" && e.status === "pending" && !isCoopStudySession(e) && (!e.deadline || daysUntilDeadline(e) > 7) && (e.reshuffleCount || 0) < RESHUFFLE_ESCALATE_THRESHOLD && isSessionMovable(e)
   ).sort((a, b) => {
     const pa = (a.priority ?? 500) + (a.reshuffleCount || 0) * RESHUFFLE_PENALTY;
     const pb = (b.priority ?? 500) + (b.reshuffleCount || 0) * RESHUFFLE_PENALTY;
@@ -5857,7 +5862,7 @@ function StudlinPrep({ setActive = () => {
       genPE = await doGenPracticeExamForExam();
     }
     const events = removeGenericExamPrepSessions(lsGet("events", []), buildPlanExam.id);
-    const sessions = buildExamSessionEvents(buildPlanExam.title, buildPlanExam.date, buildPlanExam.subject, buildPlanPreview.sessionCount, "prep-" + buildPlanExam.id + "-" + Date.now(), events, routines, prefs, { dueEventId: buildPlanExam.id }, buildPlanPreview.difficultyValue, buildPlanPreview.sessionDuration, buildPlanExam.examWeight, buildPlanExam.confidenceLog);
+    const sessions = buildExamSessionEvents(buildPlanExam.title, buildPlanExam.date, buildPlanExam.subject, buildPlanPreview.sessionCount, "prep-" + buildPlanExam.id + "-" + Date.now(), events, routines, prefs, { dueEventId: buildPlanExam.id }, buildPlanPreview.difficultyValue, buildPlanPreview.sessionDuration, buildPlanExam.examWeight, buildPlanExam.confidenceLog, buildPlanExam.importanceLevel, buildPlanExam.gradeWeightPercent);
     const requestedCount = buildPlanPreview.sessionCount;
     let working = events.concat(sessions);
     const placedSessions = sessions.map((s, i) => {
@@ -7185,6 +7190,7 @@ function Flashcards({ setActive = () => {
     const next = deckList.filter((d) => d.id !== id);
     setDeckList(next);
     lsSet("decks", next);
+    lsSet("events", lsGet("events", []).filter((e) => e.deckId !== id));
     if (studyDeck && studyDeck.id === id) {
       setStudyDeck(null);
       setTab("decks");
@@ -9248,11 +9254,11 @@ function restampSessionPriorities(examId) {
   });
   lsSet("events", next);
 }
-function buildExamSessionEvents(examTitle, examDate, subject, count, idPrefix, working, routines, prefs, extraFields, difficulty, durationOverride, examWeight, confidenceLog) {
+function buildExamSessionEvents(examTitle, examDate, subject, count, idPrefix, working, routines, prefs, extraFields, difficulty, durationOverride, examWeight, confidenceLog, importanceLevel, gradeWeightPercent) {
   const dates = computeReviewDates(examDate, dayKey(), count);
   const duration = durationOverride || suggestDurationFor(subject, "study block") || 25;
   const nearbyExamCount = working.filter((e) => e.kind === "exam" && e.status !== "done" && e.date && !(e.date === examDate && e.title === examTitle) && Math.abs(Math.round((/* @__PURE__ */ new Date(e.date + "T12:00:00") - /* @__PURE__ */ new Date(examDate + "T12:00:00")) / 864e5)) <= EXAM_CLUSTER_WINDOW_DAYS).length;
-  const sessionPriority = computeSessionPriority({ difficulty, examWeight, confidenceLog, date: examDate }, dayKey(), nearbyExamCount);
+  const sessionPriority = computeSessionPriority({ difficulty, examWeight, confidenceLog, date: examDate, importanceLevel, gradeWeightPercent }, dayKey(), nearbyExamCount);
   let localWorking = working;
   const built = [];
   dates.forEach((date, si) => {
@@ -9551,7 +9557,7 @@ function buildSyllabusEventBatch(existing, noteId, tag, items, sourceMaterial, r
   items.forEach((it, i) => {
     if (isDuplicate[i]) return;
     if (it.kind !== "exam" || !it.proposeSessions || it.noDate) return;
-    const sessions = buildExamSessionEvents(it.title, it.date, tag, it.sessionCount || 4, "examrev-" + noteId + "-" + i, working, routines, prefs, { noteId, dueEventId: markerEvents[i].id }, it.difficulty, void 0, markerEvents[i].examWeight, markerEvents[i].confidenceLog);
+    const sessions = buildExamSessionEvents(it.title, it.date, tag, it.sessionCount || 4, "examrev-" + noteId + "-" + i, working, routines, prefs, { noteId, dueEventId: markerEvents[i].id }, it.difficulty, void 0, markerEvents[i].examWeight, markerEvents[i].confidenceLog, markerEvents[i].importanceLevel, markerEvents[i].gradeWeightPercent);
     examSessionEvents = examSessionEvents.concat(sessions);
     working = working.concat(sessions);
   });
@@ -14055,7 +14061,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
       const examWeight = examWeightFromImportance(examImportanceLevel);
       const planParams = computeStudyPlanParams(examWeight, baseDuration, examConfidence, materialCharCount, examImportanceLevel, daysUntilExam, examGradeWeightPercent, ev.confidenceLog);
       const { sessionCount: hoursAdjSessionCount, sessionDuration: hoursAdjSessionDuration } = applyHoursTarget(examPlan.sessionCount || planParams.sessionCount, planParams.sessionDuration, parseFloat(examHoursTarget));
-      newExamSessions = buildExamSessionEvents(title.trim(), date, subject, hoursAdjSessionCount, "edittask-exam-" + ev.id, next, routines, prefs, { dueEventId: ev.id }, planParams.difficultyValue, hoursAdjSessionDuration, examWeight, ev.confidenceLog);
+      newExamSessions = buildExamSessionEvents(title.trim(), date, subject, hoursAdjSessionCount, "edittask-exam-" + ev.id, next, routines, prefs, { dueEventId: ev.id }, planParams.difficultyValue, hoursAdjSessionDuration, examWeight, ev.confidenceLog, examImportanceLevel, examGradeWeightPercent);
       if (materialCharCount > 0 && newExamSessions.length > 1) {
         newExamSessions = newExamSessions.map((s, i) => i === 0 ? { ...s, isDiagnosticFirstPass: true, notes: "First pass \u2014 read through your material for " + (subject || title.trim()) + "." } : s);
       }
@@ -14971,8 +14977,8 @@ function CalendarTab({ setActive = () => {
   const [deleteUndoToast, setDeleteUndoToast] = useState("");
   const [fillPrompt, setFillPrompt] = useState(null);
   const deleteEventWithUndo = (ev) => {
-    removeEvent(ev.id);
-    setDeleteUndoSnapshot(ev);
+    const examCleanup = removeEvent(ev.id);
+    setDeleteUndoSnapshot({ event: ev, ...examCleanup || {} });
     setDeleteUndoToast(`Deleted "${ev.title}"`);
     setTimeout(() => {
       setDeleteUndoToast("");
@@ -14985,9 +14991,17 @@ function CalendarTab({ setActive = () => {
   };
   const undoDelete = () => {
     if (!deleteUndoSnapshot) return;
-    const next = [...lsGet("events", []), deleteUndoSnapshot];
-    setEvents2(next);
-    lsSet("events", next);
+    const { event, prevEvents, prevDecks, prevPracticeExams } = deleteUndoSnapshot;
+    if (prevEvents) {
+      setEvents2(prevEvents);
+      lsSet("events", prevEvents);
+      lsSet("decks", prevDecks);
+      lsSet("practiceExams", prevPracticeExams);
+    } else {
+      const next = [...lsGet("events", []), event];
+      setEvents2(next);
+      lsSet("events", next);
+    }
     setDeleteUndoSnapshot(null);
     setDeleteUndoToast("");
   };
@@ -16236,7 +16250,7 @@ function CalendarTab({ setActive = () => {
         const daysUntilExam = examTask.date ? Math.round((/* @__PURE__ */ new Date(examTask.date + "T12:00:00") - /* @__PURE__ */ new Date(dayKey() + "T12:00:00")) / 864e5) : void 0;
         const planParams = computeStudyPlanParams(examTask.examWeight, baseDuration, evConfidence, materialCharCount, examTask.importanceLevel, daysUntilExam, examTask.gradeWeightPercent, examTask.confidenceLog);
         const { sessionCount: hoursAdjSessionCount, sessionDuration: hoursAdjSessionDuration } = applyHoursTarget(evExamPlan.sessionCount || planParams.sessionCount, planParams.sessionDuration, parseFloat(evHoursTarget));
-        let sessions = buildExamSessionEvents(evTitle.trim(), slot.date, subj, hoursAdjSessionCount, "addtask-exam-" + examTask.id, events.concat([examTask]), routines, getSchedulePreferences(), { dueEventId: examTask.id }, planParams.difficultyValue, hoursAdjSessionDuration, examTask.examWeight, examTask.confidenceLog);
+        let sessions = buildExamSessionEvents(evTitle.trim(), slot.date, subj, hoursAdjSessionCount, "addtask-exam-" + examTask.id, events.concat([examTask]), routines, getSchedulePreferences(), { dueEventId: examTask.id }, planParams.difficultyValue, hoursAdjSessionDuration, examTask.examWeight, examTask.confidenceLog, examTask.importanceLevel, examTask.gradeWeightPercent);
         if (materialCharCount > 0 && sessions.length > 1) {
           sessions = sessions.map((s, i) => i === 0 ? { ...s, isDiagnosticFirstPass: true, notes: "First pass \u2014 read through your material for " + (subj || evTitle.trim()) + "." } : s);
         }
@@ -16471,9 +16485,17 @@ function CalendarTab({ setActive = () => {
   };
   const removeEvent = (id) => {
     const ev = events.find((e) => e.id === id);
-    const next = events.filter((e) => e.id !== id);
+    const isExam = ev && ev.kind === "exam";
+    const prevDecks = isExam ? lsGet("decks", []) : null;
+    const prevPracticeExams = isExam ? lsGet("practiceExams", []) : null;
+    const cleanup = isExam ? applyExamTypeSwitchCleanup(events, ev.id, prevDecks, prevPracticeExams) : null;
+    const next = (cleanup ? cleanup.events : events).filter((e) => e.id !== id);
     setEvents2(next);
     lsSet("events", next);
+    if (cleanup) {
+      lsSet("decks", cleanup.decks);
+      lsSet("practiceExams", cleanup.practiceExams);
+    }
     if (ev && ev.assignmentId && !next.some((e) => e.assignmentId === ev.assignmentId)) {
       fsdb().collection("assignments").doc(ev.assignmentId).update({ status: "abandoned", updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).catch(() => {
       });
@@ -16489,6 +16511,7 @@ function CalendarTab({ setActive = () => {
         });
       }
     }
+    return isExam ? { prevEvents: events, prevDecks, prevPracticeExams } : null;
   };
   const moveEvent = (id, newDate, newTime) => {
     const ev = events.find((e) => e.id === id);
@@ -20132,10 +20155,19 @@ function App() {
   const [eventDeleteUndoSnapshot, setEventDeleteUndoSnapshot] = useState(null);
   const [eventDeleteUndoToast, setEventDeleteUndoToast] = useState("");
   const deleteEventFromDetail = (ev) => {
-    const next = lsGet("events", []).filter((e) => e.id !== ev.id);
+    const events = lsGet("events", []);
+    const isExam = ev.kind === "exam";
+    const prevDecks = isExam ? lsGet("decks", []) : null;
+    const prevPracticeExams = isExam ? lsGet("practiceExams", []) : null;
+    const cleanup = isExam ? applyExamTypeSwitchCleanup(events, ev.id, prevDecks, prevPracticeExams) : null;
+    const next = (cleanup ? cleanup.events : events).filter((e) => e.id !== ev.id);
     lsSet("events", next);
     if (calendarSetEventsRef.current) calendarSetEventsRef.current(next);
-    setEventDeleteUndoSnapshot(ev);
+    if (cleanup) {
+      lsSet("decks", cleanup.decks);
+      lsSet("practiceExams", cleanup.practiceExams);
+    }
+    setEventDeleteUndoSnapshot({ event: ev, ...cleanup ? { prevEvents: events, prevDecks, prevPracticeExams } : {} });
     setEventDeleteUndoToast(`Deleted "${ev.title}"`);
     setTimeout(() => {
       setEventDeleteUndoToast("");
@@ -20144,9 +20176,17 @@ function App() {
   };
   const undoEventDeleteFromDetail = () => {
     if (!eventDeleteUndoSnapshot) return;
-    const next = [...lsGet("events", []), eventDeleteUndoSnapshot];
-    lsSet("events", next);
-    if (calendarSetEventsRef.current) calendarSetEventsRef.current(next);
+    const { event, prevEvents, prevDecks, prevPracticeExams } = eventDeleteUndoSnapshot;
+    if (prevEvents) {
+      lsSet("events", prevEvents);
+      if (calendarSetEventsRef.current) calendarSetEventsRef.current(prevEvents);
+      lsSet("decks", prevDecks);
+      lsSet("practiceExams", prevPracticeExams);
+    } else {
+      const next = [...lsGet("events", []), event];
+      lsSet("events", next);
+      if (calendarSetEventsRef.current) calendarSetEventsRef.current(next);
+    }
     setEventDeleteUndoSnapshot(null);
     setEventDeleteUndoToast("");
   };

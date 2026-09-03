@@ -1219,6 +1219,48 @@ describe("findSlotWithEviction", () => {
     const evictedIds = result.events.filter((e) => e.movedByStudlin).map((e) => e.id);
     assert.ok(!evictedIds.includes("escalated"), "a session at the escalation threshold must never be silently evicted again");
   });
+
+  test("a session linked to an exam with sessionsMovable:false is never evicted, even as the obvious lowest-priority candidate (regression: the Flex/Rigid dropdown had zero consumer anywhere)", () => {
+    const m = loadStudlinModule();
+    const today = m.dayKey();
+    const rigidExam = { id: "exam-rigid", title: "Rigid Exam", kind: "exam", date: today, sessionsMovable: false, status: "pending" };
+    const packed = [rigidExam];
+    let t = 9 * 60;
+    let idx = 0;
+    while (t + 30 <= 20 * 60) {
+      const time = `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+      if (idx === 0) {
+        // Lowest possible priority -- would always be evicted first if the
+        // toggle had no effect.
+        packed.push({ id: "rigid-session", title: "Study: Rigid Exam", date: today, time, kind: "study block", duration: 30, status: "pending", deadline: null, priority: 1, dueEventId: "exam-rigid" });
+      } else if (idx === 1) {
+        packed.push({ id: "flexible-session", title: "Study: Other Exam", date: today, time, kind: "study block", duration: 30, status: "pending", deadline: null, priority: 200, dueEventId: "exam-flexible" });
+      } else {
+        packed.push({ id: "pack-" + idx, title: "Filler " + idx, date: today, time, kind: "study block", duration: 30, status: "pending", deadline: null, priority: 500 });
+      }
+      t += 30; idx++;
+    }
+    const result = m.findSlotWithEviction(packed, [], DEFAULT_PREFS, today, "09:00", 30, today);
+    const evictedIds = result.events.filter((e) => e.movedByStudlin).map((e) => e.id);
+    assert.ok(!evictedIds.includes("rigid-session"), "a session linked to a Rigid exam must never be evicted");
+    assert.ok(evictedIds.includes("flexible-session"), "a session linked to an exam without sessionsMovable:false should still evict normally, lowest-priority-eligible-candidate first");
+  });
+
+  test("a session with no dueEventId, or one whose linked exam never set sessionsMovable, computes byte-identically to before this fix", () => {
+    const m = loadStudlinModule();
+    const today = m.dayKey();
+    const packed = [];
+    let t = 9 * 60;
+    let idx = 0;
+    while (t + 30 <= 20 * 60) {
+      const time = `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+      packed.push({ id: "pack-" + idx, title: "Filler " + idx, date: today, time, kind: "study block", duration: 30, status: "pending", deadline: null });
+      t += 30; idx++;
+    }
+    const result = m.findSlotWithEviction(packed, [], DEFAULT_PREFS, today, "09:00", 30, today);
+    const evicted = result.events.filter((e) => e.movedByStudlin);
+    assert.ok(evicted.length >= 1, "eviction with no dueEventId anywhere in the pool must still work exactly as before");
+  });
 });
 
 describe("undoTier0Move (regression: restored a task to its original slot with no re-check, silently overlapping anything that had since landed there)", () => {

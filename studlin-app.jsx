@@ -2626,8 +2626,21 @@ function findSlotWithEviction(events,routines,prefs,desiredDate,desiredTime,dura
     return {events,placement:findLegalSlotOrNull(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey)};
   }
 
+  // Bug fix (found in an audit pass, 2026-09-03): the exam-row Flex/Rigid
+  // dropdown (sessionsMovable, patched via patchExam) has existed with no
+  // consumer anywhere -- setting an exam to "Rigid" had zero effect,
+  // despite its own adjacent comment stating exactly this intent: "whether
+  // Studlin can auto-shuffle THIS exam's already-scheduled study
+  // sessions." This is that one real consumer. Undefined (every exam that
+  // predates the toggle, or never touched it) computes byte-identically to
+  // before -- only an explicit false excludes a session from eviction.
+  const isSessionMovable=(e)=>{
+    if(!e.dueEventId)return true;
+    const exam=events.find(x=>x.id===e.dueEventId);
+    return !(exam&&exam.sessionsMovable===false);
+  };
   const candidates=events.filter(e=>e.date===desiredDate&&e.kind==="study block"&&e.status==="pending"&&
-    !isCoopStudySession(e)&&(!e.deadline||daysUntilDeadline(e)>7)&&(e.reshuffleCount||0)<RESHUFFLE_ESCALATE_THRESHOLD
+    !isCoopStudySession(e)&&(!e.deadline||daysUntilDeadline(e)>7)&&(e.reshuffleCount||0)<RESHUFFLE_ESCALATE_THRESHOLD&&isSessionMovable(e)
   ).sort((a,b)=>{
     // Priority-first (lowest evicted first) now that sessions actually
     // carry a real, current priority (see computeSessionPriority/
@@ -9603,7 +9616,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
       genPE=await doGenPracticeExamForExam();
     }
     const events=removeGenericExamPrepSessions(lsGet("events",[]),buildPlanExam.id);
-    const sessions=buildExamSessionEvents(buildPlanExam.title,buildPlanExam.date,buildPlanExam.subject,buildPlanPreview.sessionCount,"prep-"+buildPlanExam.id+"-"+Date.now(),events,routines,prefs,{dueEventId:buildPlanExam.id},buildPlanPreview.difficultyValue,buildPlanPreview.sessionDuration,buildPlanExam.examWeight,buildPlanExam.confidenceLog);
+    const sessions=buildExamSessionEvents(buildPlanExam.title,buildPlanExam.date,buildPlanExam.subject,buildPlanPreview.sessionCount,"prep-"+buildPlanExam.id+"-"+Date.now(),events,routines,prefs,{dueEventId:buildPlanExam.id},buildPlanPreview.difficultyValue,buildPlanPreview.sessionDuration,buildPlanExam.examWeight,buildPlanExam.confidenceLog,buildPlanExam.importanceLevel,buildPlanExam.gradeWeightPercent);
     // buildExamSessionEvents can still place fewer sessions than requested
     // (findReliableSlotFor comes back empty for a given date -- a packed
     // calendar with no legal slot before the exam) even after the preview
@@ -11960,7 +11973,16 @@ function Flashcards({setActive=()=>{}}={}) {
   };
 
   const addCard=()=>{if(!cQ.trim())return;setDraft(d=>[...d,{q:cQ.trim(),a:cA.trim()||"(no answer)"}]);setCQ("");setCA("");};
-  const deleteDeck=(id)=>{const next=deckList.filter(d=>d.id!==id);setDeckList(next);lsSet("decks",next);if(studyDeck&&studyDeck.id===id){setStudyDeck(null);setTab("decks");}};
+  // Bug fix (found in an audit pass, 2026-09-03): this tab's own delete
+  // never touched `events`, unlike the two Prep-side deck-delete paths on
+  // the exact same storage (deleteDeckFully for "All Flashcards",
+  // deleteDeckAndSessions for a per-exam page) -- a deck deleted from here
+  // (rather than from within Studlin Prep) left any interleaved/linked
+  // review session still on the calendar, pointing at a deckId that no
+  // longer resolves. Same unconditional filter deleteDeckFully already
+  // uses -- a deck's own linked sessions never belong to more than one
+  // deck, so no examId-scoping needed here either.
+  const deleteDeck=(id)=>{const next=deckList.filter(d=>d.id!==id);setDeckList(next);lsSet("decks",next);lsSet("events",lsGet("events",[]).filter(e=>e.deckId!==id));if(studyDeck&&studyDeck.id===id){setStudyDeck(null);setTab("decks");}};
   const [sendDeckOpen,setSendDeckOpen]=useState(false);
   const [sendDeckTarget,setSendDeckTarget]=useState("");
   const [sendDeckSelectedUid,setSendDeckSelectedUid]=useState(null);
@@ -14991,17 +15013,24 @@ function restampSessionPriorities(examId){
 // here the way Attack Blocks get one — that curve already refuses to
 // propose anything for the too-far-out portion of the timeline on its own.
 // Caller merges the returned events into its own working array/lsSet.
-function buildExamSessionEvents(examTitle,examDate,subject,count,idPrefix,working,routines,prefs,extraFields,difficulty,durationOverride,examWeight,confidenceLog){
+function buildExamSessionEvents(examTitle,examDate,subject,count,idPrefix,working,routines,prefs,extraFields,difficulty,durationOverride,examWeight,confidenceLog,importanceLevel,gradeWeightPercent){
   const dates=computeReviewDates(examDate,dayKey(),count);
   // durationOverride lets the study-plan calibration (Prep redesign Part C)
   // scale minutes per session by confidence level -- every existing caller
   // omits it and keeps today's suggestDurationFor-or-25 behavior unchanged.
   const duration=durationOverride||suggestDurationFor(subject,"study block")||25;
-  // examWeight/confidenceLog are optional trailing params (new) -- every
-  // caller either has the real exam object in scope (just needs a small
-  // .examWeight/.confidenceLog addition to the call) or genuinely doesn't
-  // have them (a brand-new exam with no history yet), in which case
-  // computeSessionPriority's own defaults apply cleanly.
+  // examWeight/confidenceLog/importanceLevel/gradeWeightPercent are
+  // optional trailing params -- every caller either has the real exam
+  // object in scope (just needs a small field addition to the call) or
+  // genuinely doesn't have them (a brand-new exam with no history yet), in
+  // which case computeSessionPriority's own defaults apply cleanly.
+  // Bug fix (found in an audit pass, 2026-09-03): importanceLevel/
+  // gradeWeightPercent were never threaded through here even after they
+  // existed on the exam object at 3 of 5 call sites (Edit Task modal, New
+  // Task modal, syllabus review) -- a session's stamped priority always
+  // fell back to the coarse legacy examWeight bucket at creation time,
+  // only picking up the richer signal later if something (a confidence
+  // check-in, an exam-table edit) triggered restampSessionPriorities.
   // Exam-clustering nudge (see examClusterNudgeFor) -- working already
   // includes the exam being scheduled (every real caller merges it in
   // before calling this), so self-exclusion has to go by date+title match
@@ -15011,7 +15040,7 @@ function buildExamSessionEvents(examTitle,examDate,subject,count,idPrefix,workin
   const nearbyExamCount=working.filter(e=>e.kind==="exam"&&e.status!=="done"&&e.date&&
     !(e.date===examDate&&e.title===examTitle)&&
     Math.abs(Math.round((new Date(e.date+"T12:00:00")-new Date(examDate+"T12:00:00"))/86400000))<=EXAM_CLUSTER_WINDOW_DAYS).length;
-  const sessionPriority=computeSessionPriority({difficulty,examWeight,confidenceLog,date:examDate},dayKey(),nearbyExamCount);
+  const sessionPriority=computeSessionPriority({difficulty,examWeight,confidenceLog,date:examDate,importanceLevel,gradeWeightPercent},dayKey(),nearbyExamCount);
   let localWorking=working;
   const built=[];
   dates.forEach((date,si)=>{
@@ -15493,7 +15522,7 @@ function buildSyllabusEventBatch(existing,noteId,tag,items,sourceMaterial,routin
   items.forEach((it,i)=>{
     if(isDuplicate[i])return;
     if(it.kind!=="exam"||!it.proposeSessions||it.noDate)return;
-    const sessions=buildExamSessionEvents(it.title,it.date,tag,it.sessionCount||4,"examrev-"+noteId+"-"+i,working,routines,prefs,{noteId,dueEventId:markerEvents[i].id},it.difficulty,undefined,markerEvents[i].examWeight,markerEvents[i].confidenceLog);
+    const sessions=buildExamSessionEvents(it.title,it.date,tag,it.sessionCount||4,"examrev-"+noteId+"-"+i,working,routines,prefs,{noteId,dueEventId:markerEvents[i].id},it.difficulty,undefined,markerEvents[i].examWeight,markerEvents[i].confidenceLog,markerEvents[i].importanceLevel,markerEvents[i].gradeWeightPercent);
     examSessionEvents=examSessionEvents.concat(sessions);working=working.concat(sessions);
   });
   // Stamped on every produced event as a final pass (rather than threading
@@ -23049,7 +23078,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
       // modal already use -- only ever adjusts per-session duration for the
       // count already decided above, never invents/removes sessions.
       const {sessionCount:hoursAdjSessionCount,sessionDuration:hoursAdjSessionDuration}=applyHoursTarget(examPlan.sessionCount||planParams.sessionCount,planParams.sessionDuration,parseFloat(examHoursTarget));
-      newExamSessions=buildExamSessionEvents(title.trim(),date,subject,hoursAdjSessionCount,"edittask-exam-"+ev.id,next,routines,prefs,{dueEventId:ev.id},planParams.difficultyValue,hoursAdjSessionDuration,examWeight,ev.confidenceLog);
+      newExamSessions=buildExamSessionEvents(title.trim(),date,subject,hoursAdjSessionCount,"edittask-exam-"+ev.id,next,routines,prefs,{dueEventId:ev.id},planParams.difficultyValue,hoursAdjSessionDuration,examWeight,ev.confidenceLog,examImportanceLevel,examGradeWeightPercent);
       // Same real first-pass marker Prep's own Build Study Plan flow
       // already stamps -- session 0 of a real multi-session,
       // material-grounded plan is a genuine first pass, not a
@@ -24905,8 +24934,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // something with.
   const [fillPrompt,setFillPrompt]=useState(null); // {date,time,duration,suggestions}
   const deleteEventWithUndo=(ev)=>{
-    removeEvent(ev.id);
-    setDeleteUndoSnapshot(ev);
+    // examCleanup is only non-null when ev.kind==="exam" -- see removeEvent's
+    // own comment. Bundling it into the snapshot lets undoDelete do a full
+    // restore (the exam AND every prep session/deck/practice exam that got
+    // cleaned up alongside it), not just resurrect the exam event on its own.
+    const examCleanup=removeEvent(ev.id);
+    setDeleteUndoSnapshot({event:ev,...(examCleanup||{})});
     setDeleteUndoToast(`Deleted "${ev.title}"`);
     setTimeout(()=>{setDeleteUndoToast("");setDeleteUndoSnapshot(null);},5000);
     if((ev.duration||0)>=15){
@@ -24916,8 +24949,14 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   };
   const undoDelete=()=>{
     if(!deleteUndoSnapshot)return;
-    const next=[...lsGet("events",[]),deleteUndoSnapshot];
-    setEvents(next);lsSet("events",next);
+    const {event,prevEvents,prevDecks,prevPracticeExams}=deleteUndoSnapshot;
+    if(prevEvents){
+      setEvents(prevEvents);lsSet("events",prevEvents);
+      lsSet("decks",prevDecks);lsSet("practiceExams",prevPracticeExams);
+    }else{
+      const next=[...lsGet("events",[]),event];
+      setEvents(next);lsSet("events",next);
+    }
     setDeleteUndoSnapshot(null);setDeleteUndoToast("");
   };
   // Same snapshot-and-toast shape as delete above, for moveEvent (drag to a
@@ -26511,7 +26550,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         // ever adjusts per-session duration for the count already decided
         // above, never invents/removes sessions.
         const {sessionCount:hoursAdjSessionCount,sessionDuration:hoursAdjSessionDuration}=applyHoursTarget(evExamPlan.sessionCount||planParams.sessionCount,planParams.sessionDuration,parseFloat(evHoursTarget));
-        let sessions=buildExamSessionEvents(evTitle.trim(),slot.date,subj,hoursAdjSessionCount,"addtask-exam-"+examTask.id,events.concat([examTask]),routines,getSchedulePreferences(),{dueEventId:examTask.id},planParams.difficultyValue,hoursAdjSessionDuration,examTask.examWeight,examTask.confidenceLog);
+        let sessions=buildExamSessionEvents(evTitle.trim(),slot.date,subj,hoursAdjSessionCount,"addtask-exam-"+examTask.id,events.concat([examTask]),routines,getSchedulePreferences(),{dueEventId:examTask.id},planParams.difficultyValue,hoursAdjSessionDuration,examTask.examWeight,examTask.confidenceLog,examTask.importanceLevel,examTask.gradeWeightPercent);
         // Same real first-pass marker Prep's own Build Study Plan flow and
         // EventDetailModal's exam-plan section already stamp -- now drives
         // a real check on completion (see App()'s handleTaskCompleted/
@@ -26786,8 +26825,23 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   };
   const removeEvent=(id)=>{
     const ev=events.find(e=>e.id===id);
-    const next=events.filter(e=>e.id!==id);
+    // Bug fix (found in an audit pass, 2026-09-03): deleting an exam
+    // outright left every linked "Study: X" prep session, flashcard deck,
+    // and practice exam permanently dangling -- applyExamTypeSwitchCleanup
+    // already exists for exactly this cleanup (unlink/delete decks,
+    // delete practice exams, remove pending prep sessions) but was only
+    // ever wired to the "switch an exam's Type away from Exam" path, not
+    // an outright delete, even though delete is the far more common
+    // action. Returns the pre-cleanup snapshot so deleteEventWithUndo/
+    // undoDelete can do a full restore, not just resurrect the exam event
+    // itself with its prep work still gone.
+    const isExam=ev&&ev.kind==="exam";
+    const prevDecks=isExam?lsGet("decks",[]):null;
+    const prevPracticeExams=isExam?lsGet("practiceExams",[]):null;
+    const cleanup=isExam?applyExamTypeSwitchCleanup(events,ev.id,prevDecks,prevPracticeExams):null;
+    const next=(cleanup?cleanup.events:events).filter(e=>e.id!==id);
     setEvents(next);lsSet("events",next);
+    if(cleanup){lsSet("decks",cleanup.decks);lsSet("practiceExams",cleanup.practiceExams);}
     // If that was the last block tied to an assignment, the assignment doc
     // would otherwise silently orphan in "pending" forever — mark it
     // abandoned instead. No-op for the overwhelming majority of deletes,
@@ -26815,6 +26869,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         }).catch(()=>{});
       }
     }
+    return isExam?{prevEvents:events,prevDecks,prevPracticeExams}:null;
   };
   const moveEvent=(id,newDate,newTime)=>{
     const ev=events.find(e=>e.id===id);
@@ -33225,17 +33280,35 @@ function App() {
   // lsSet("events",...) + calendarSetEventsRef sync either way.
   const [eventDeleteUndoSnapshot,setEventDeleteUndoSnapshot]=useState(null);
   const [eventDeleteUndoToast,setEventDeleteUndoToast]=useState("");
+  // Same exam-aware cleanup fix as CalendarTab's own removeEvent/
+  // deleteEventWithUndo -- deleting an exam through this modal (Dashboard's
+  // path to Delete, or Calendar's when routed through EventDetailModal)
+  // used to leave every linked prep session/deck/practice exam dangling.
+  // applyExamTypeSwitchCleanup already exists for exactly this, previously
+  // only wired to the "switch Type away from Exam" path.
   const deleteEventFromDetail=(ev)=>{
-    const next=lsGet("events",[]).filter(e=>e.id!==ev.id);
+    const events=lsGet("events",[]);
+    const isExam=ev.kind==="exam";
+    const prevDecks=isExam?lsGet("decks",[]):null;
+    const prevPracticeExams=isExam?lsGet("practiceExams",[]):null;
+    const cleanup=isExam?applyExamTypeSwitchCleanup(events,ev.id,prevDecks,prevPracticeExams):null;
+    const next=(cleanup?cleanup.events:events).filter(e=>e.id!==ev.id);
     lsSet("events",next);if(calendarSetEventsRef.current)calendarSetEventsRef.current(next);
-    setEventDeleteUndoSnapshot(ev);
+    if(cleanup){lsSet("decks",cleanup.decks);lsSet("practiceExams",cleanup.practiceExams);}
+    setEventDeleteUndoSnapshot({event:ev,...(cleanup?{prevEvents:events,prevDecks,prevPracticeExams}:{})});
     setEventDeleteUndoToast(`Deleted "${ev.title}"`);
     setTimeout(()=>{setEventDeleteUndoToast("");setEventDeleteUndoSnapshot(null);},5000);
   };
   const undoEventDeleteFromDetail=()=>{
     if(!eventDeleteUndoSnapshot)return;
-    const next=[...lsGet("events",[]),eventDeleteUndoSnapshot];
-    lsSet("events",next);if(calendarSetEventsRef.current)calendarSetEventsRef.current(next);
+    const {event,prevEvents,prevDecks,prevPracticeExams}=eventDeleteUndoSnapshot;
+    if(prevEvents){
+      lsSet("events",prevEvents);if(calendarSetEventsRef.current)calendarSetEventsRef.current(prevEvents);
+      lsSet("decks",prevDecks);lsSet("practiceExams",prevPracticeExams);
+    }else{
+      const next=[...lsGet("events",[]),event];
+      lsSet("events",next);if(calendarSetEventsRef.current)calendarSetEventsRef.current(next);
+    }
     setEventDeleteUndoSnapshot(null);setEventDeleteUndoToast("");
   };
   // EventDetailModal -- same true-sibling-of-[data-page] treatment as

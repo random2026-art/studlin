@@ -61,19 +61,48 @@ describe("EventDetailModal: Delete button + confirm modal", () => {
 
 describe("App(): delete-with-undo wiring for EventDetailModal (mirrors CalendarTab's proven deleteEventWithUndo pattern)", () => {
   test("deleteEventFromDetail removes the event from storage and syncs CalendarTab's own local state via calendarSetEventsRef", () => {
-    assert.match(SOURCE, /const deleteEventFromDetail=\(ev\)=>\{\s*const next=lsGet\("events",\[\]\)\.filter\(e=>e\.id!==ev\.id\);\s*lsSet\("events",next\);if\(calendarSetEventsRef\.current\)calendarSetEventsRef\.current\(next\);/);
+    assert.match(SOURCE, /const deleteEventFromDetail=\(ev\)=>\{\s*const events=lsGet\("events",\[\]\);\s*const isExam=ev\.kind==="exam";[\s\S]*?const next=\(cleanup\?cleanup\.events:events\)\.filter\(e=>e\.id!==ev\.id\);\s*lsSet\("events",next\);if\(calendarSetEventsRef\.current\)calendarSetEventsRef\.current\(next\);/);
+  });
+
+  // 2026-09-03 bug fix: deleting an exam used to leave every linked prep
+  // session/deck/practice exam permanently dangling -- see removeEvent's
+  // own identical fix in CalendarTab for the full rationale.
+  // applyExamTypeSwitchCleanup already existed for exactly this cleanup,
+  // previously only wired to the "switch Type away from Exam" path.
+  test("an exam delete runs applyExamTypeSwitchCleanup before removing the event, and writes the resulting decks/practiceExams back to storage", () => {
+    const idx = SOURCE.indexOf("const deleteEventFromDetail=");
+    const body = SOURCE.slice(idx, idx + 700);
+    assert.match(body, /const isExam=ev\.kind==="exam";/);
+    assert.match(body, /const cleanup=isExam\?applyExamTypeSwitchCleanup\(events,ev\.id,prevDecks,prevPracticeExams\):null;/);
+    assert.match(body, /if\(cleanup\)\{lsSet\("decks",cleanup\.decks\);lsSet\("practiceExams",cleanup\.practiceExams\);\}/);
+  });
+
+  test("a non-exam delete is unaffected -- isExam is false, cleanup stays null, next just filters the plain events array", () => {
+    const idx = SOURCE.indexOf("const deleteEventFromDetail=");
+    const body = SOURCE.slice(idx, idx + 700);
+    assert.match(body, /const prevDecks=isExam\?lsGet\("decks",\[\]\):null;/);
+    assert.match(body, /const prevPracticeExams=isExam\?lsGet\("practiceExams",\[\]\):null;/);
   });
 
   test("deleting shows an undo toast that clears itself after 5 seconds, same timing as the calendar grid's own delete-undo", () => {
     const idx = SOURCE.indexOf("const deleteEventFromDetail=");
-    const body = SOURCE.slice(idx, idx + 700);
-    assert.match(body, /setEventDeleteUndoSnapshot\(ev\);/);
+    const body = SOURCE.slice(idx, idx + 900);
+    assert.match(body, /setEventDeleteUndoSnapshot\(\{event:ev,\.\.\.\(cleanup\?\{prevEvents:events,prevDecks,prevPracticeExams\}:\{\}\)\}\);/);
     assert.match(body, /setEventDeleteUndoToast\(`Deleted "\$\{ev\.title\}"`\);/);
     assert.match(body, /setTimeout\(\(\)=>\{setEventDeleteUndoToast\(""\);setEventDeleteUndoSnapshot\(null\);\},5000\);/);
   });
 
-  test("undoEventDeleteFromDetail restores the exact deleted event back into storage", () => {
-    assert.match(SOURCE, /const undoEventDeleteFromDetail=\(\)=>\{\s*if\(!eventDeleteUndoSnapshot\)return;\s*const next=\[\.\.\.lsGet\("events",\[\]\),eventDeleteUndoSnapshot\];\s*lsSet\("events",next\);if\(calendarSetEventsRef\.current\)calendarSetEventsRef\.current\(next\);/);
+  test("undoEventDeleteFromDetail restores the exact deleted event back into storage when there's no exam cleanup to reverse", () => {
+    const idx = SOURCE.indexOf("const undoEventDeleteFromDetail=");
+    const body = SOURCE.slice(idx, idx + 700);
+    assert.match(body, /const \{event,prevEvents,prevDecks,prevPracticeExams\}=eventDeleteUndoSnapshot;/);
+    assert.match(body, /const next=\[\.\.\.lsGet\("events",\[\]\),event\];\s*lsSet\("events",next\);if\(calendarSetEventsRef\.current\)calendarSetEventsRef\.current\(next\);/);
+  });
+
+  test("undoEventDeleteFromDetail does a full restore (events + decks + practiceExams) when the delete cleaned up an exam's linked prep data", () => {
+    const idx = SOURCE.indexOf("const undoEventDeleteFromDetail=");
+    const body = SOURCE.slice(idx, idx + 700);
+    assert.match(body, /if\(prevEvents\)\{\s*lsSet\("events",prevEvents\);if\(calendarSetEventsRef\.current\)calendarSetEventsRef\.current\(prevEvents\);\s*lsSet\("decks",prevDecks\);lsSet\("practiceExams",prevPracticeExams\);/);
   });
 
   test("EventDetailModal's render site passes the real handler, not the default no-op", () => {
