@@ -3320,6 +3320,13 @@ async function upsertProfile(extra = {}) {
     status,
     total_minutes_focused: getTotalMinutesFocused(),
     streak: getStreak(),
+    // Bug fix, 2026-09-03: Incognito Mode's own copy promised "you'll
+    // appear offline everywhere" but there was no channel at all for a
+    // friend to ever learn you're incognito -- isIncognitoOn() only ever
+    // read local settings, never synced anywhere. This is that channel.
+    // profiles/{userId} write rule is a plain owner-check with no field
+    // allowlist, so this needs no firestore.rules change.
+    incognito: isIncognitoOn(),
     updatedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
   try {
@@ -8351,7 +8358,11 @@ function FriendsChat({ onFriendRequestSent, onActiveChatChange, initialTarget, o
     s: d && d.school || "",
     p: d && d.picUrl || "",
     online: false,
-    presence: { state: "idle" }
+    presence: { state: "idle" },
+    // Bug fix, 2026-09-03: this is the field presenceInfo's own incognito
+    // param needs to actually suppress a friend's live-session reveal --
+    // upsertProfile now writes it, this is the read side.
+    incognito: !!(d && d.incognito)
   });
   const mySchool = (getProfile().school || getProfile().affiliation || "").trim();
   const [classmates, setClassmates] = useState([]);
@@ -8768,7 +8779,7 @@ function FriendsChat({ onFriendRequestSent, onActiveChatChange, initialTarget, o
       }, style: { width: 32, height: 32, borderRadius: 9, border: `1px solid ${T.border}`, background: T.card2, color: T.lime, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0 } }, Icon.msgSquare));
     }
     const u = row.user;
-    const pr = presenceInfo(u, { liveSession: liveSessionFor(u.uid) });
+    const pr = presenceInfo(u, { incognito: !!u.incognito, liveSession: liveSessionFor(u.uid) });
     const revealed = joinRevealFor === u.h;
     return /* @__PURE__ */ React.createElement("div", { key: row.key, style: { display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderBottom: i < inboxShown.length - 1 ? `1px solid ${T.border}` : "none" } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setChatTarget({ kind: "dm", user: u }), style: { position: "relative", flexShrink: 0, cursor: "pointer" } }, /* @__PURE__ */ React.createElement(Av, { initials: u.n.split(" ").map((x) => x[0]).join(""), color: T.lime, size: 34, picUrl: u.p || "" }), /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", bottom: 0, right: 0, width: 9, height: 9, borderRadius: "50%", background: pr.color, border: `2px solid ${T.card}` } })), /* @__PURE__ */ React.createElement("div", { onClick: () => setChatTarget({ kind: "dm", user: u }), style: { flex: 1, minWidth: 0, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white } }, u.n), /* @__PURE__ */ React.createElement("div", { onClick: (e) => {
       if (pr.joinable) {
@@ -17972,6 +17983,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     const n = { ...t, [k]: !t[k] };
     lsSet("settings", n);
     if (k === "motion" && typeof document !== "undefined" && document.body) document.body.setAttribute("data-motion", n.motion ? "reduce" : "");
+    if (k === "incognito") upsertProfile();
     return n;
   });
   const [sysPushStatus, setSysPushStatus] = useState(() => {
@@ -20374,7 +20386,14 @@ function App() {
         if (seenLiveRef.current.has(s.id)) return;
         if (!s.startedAt || Date.now() - s.startedAt > LIVE_INVITE_MAX_AGE_MS) return;
         seenLiveRef.current.add(s.id);
-        setLiveInvite(s);
+        (async () => {
+          try {
+            const starterDoc = s.startedBy ? await fsdb().collection("profiles").doc(s.startedBy).get() : null;
+            if (starterDoc && starterDoc.exists && starterDoc.data().incognito === true) return;
+          } catch (e) {
+          }
+          setLiveInvite(s);
+        })();
       });
     }, () => {
     });

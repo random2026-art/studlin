@@ -5340,6 +5340,13 @@ async function upsertProfile(extra={}){
     status,
     total_minutes_focused:getTotalMinutesFocused(),
     streak:getStreak(),
+    // Bug fix, 2026-09-03: Incognito Mode's own copy promised "you'll
+    // appear offline everywhere" but there was no channel at all for a
+    // friend to ever learn you're incognito -- isIncognitoOn() only ever
+    // read local settings, never synced anywhere. This is that channel.
+    // profiles/{userId} write rule is a plain owner-check with no field
+    // allowlist, so this needs no firestore.rules change.
+    incognito:isIncognitoOn(),
     updatedAt:new Date().toISOString(),
   };
   try{await fsdb().collection('profiles').doc(u.uid).set(data,{merge:true});}catch(e){}
@@ -13578,6 +13585,10 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
     p:(d&&d.picUrl)||"",
     online:false,
     presence:{state:"idle"},
+    // Bug fix, 2026-09-03: this is the field presenceInfo's own incognito
+    // param needs to actually suppress a friend's live-session reveal --
+    // upsertProfile now writes it, this is the read side.
+    incognito:!!(d&&d.incognito),
   });
 
   // ── Classmates at my school — real, auto-populated, replaces the old
@@ -14024,7 +14035,11 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
                   );
                 }
                 const u=row.user;
-                const pr=presenceInfo(u,{liveSession:liveSessionFor(u.uid)});
+                // Bug fix, 2026-09-03: this call never passed incognito at
+                // all, so presenceInfo's own suppression branch (line ~13505)
+                // was dead -- a friend's "Locking In: X -- tap to join"
+                // reveal showed regardless of their Incognito setting.
+                const pr=presenceInfo(u,{incognito:!!u.incognito,liveSession:liveSessionFor(u.uid)});
                 const revealed=joinRevealFor===u.h;
                 return (
                   <div key={row.key} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<inboxShown.length-1?`1px solid ${T.border}`:"none"}}>
@@ -29326,6 +29341,12 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     // toggle while already in Settings take effect immediately instead of
     // waiting for the next reload.
     if(k==="motion"&&typeof document!=="undefined"&&document.body)document.body.setAttribute('data-motion',n.motion?'reduce':'');
+    // Same instant-effect reasoning as motion above -- upsertProfile's own
+    // triggers (streak touch, session log, app mount) are sparse, so
+    // without this a friend's client could still see you as visible for a
+    // while after you flip Incognito on, contradicting "completely masks"
+    // right when it matters (you're about to start studying).
+    if(k==="incognito")upsertProfile();
     return n;
   });
   const [sysPushStatus,setSysPushStatus]=useState(()=>{
@@ -33642,7 +33663,18 @@ function App() {
           if(seenLiveRef.current.has(s.id))return; // already surfaced this one
           if(!s.startedAt||Date.now()-s.startedAt>LIVE_INVITE_MAX_AGE_MS)return; // stale/stuck, not really live
           seenLiveRef.current.add(s.id);
-          setLiveInvite(s);
+          // Bug fix, 2026-09-03: Incognito Mode's own copy promises "won't
+          // receive Join Lock-In requests," but this popup fired regardless
+          // of whether the session's starter had it on -- nothing here ever
+          // checked. One extra profile read, only for a session that's
+          // actually about to surface (not a hot path).
+          (async()=>{
+            try{
+              const starterDoc=s.startedBy?await fsdb().collection('profiles').doc(s.startedBy).get():null;
+              if(starterDoc&&starterDoc.exists&&starterDoc.data().incognito===true)return;
+            }catch(e){}
+            setLiveInvite(s);
+          })();
         });
       },()=>{});
     return unsub;
