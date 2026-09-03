@@ -24536,6 +24536,18 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // that it had its own competing one.
   const [evConfidence,setEvConfidence]=useState("okay");
   const [evSessionCountTouched,setEvSessionCountTouched]=useState(false);
+  // Importance/grade-weight/hours-target -- the same calibration Studlin
+  // Prep's Build Study Plan collects, missing here entirely before now.
+  // computeStudyPlanParams was silently called with undefined
+  // importanceLevel/gradeWeightPercent every time an exam got its sessions
+  // from this modal (the *most*-used exam-creation entry point, not an
+  // edge case) -- a real gap, not just a UI omission. Tucked into a
+  // collapsible "Advanced" section since, unlike Prep's screen, nothing
+  // here is being hidden that used to be visible -- this is genuinely new.
+  const [evAdvancedOpen,setEvAdvancedOpen]=useState(false);
+  const [evImportanceLevel,setEvImportanceLevel]=useState("moderate");
+  const [evGradeWeightPercent,setEvGradeWeightPercent]=useState(null);
+  const [evHoursTarget,setEvHoursTarget]=useState("");
   // Project phases/checklist -- same shape PhasesOutlineEditor expects.
   const [evProjectPlan,setEvProjectPlan]=useState({phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false});
   // Add-collaborators picker for a project being created right now -- same
@@ -24562,6 +24574,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const resetTypeExtras=()=>{
     setEvExamPlan({materialFiles:[],materialLinks:[],materialOpen:false,pasteMaterialMode:false,pasteMaterialText:"",linkDraft:"",linkLabelDraft:"",proposeSessions:false,sessionCount:4});
     setEvConfidence("okay");setEvSessionCountTouched(false);
+    setEvAdvancedOpen(false);setEvImportanceLevel("moderate");setEvGradeWeightPercent(null);setEvHoursTarget("");
     setEvProjectPlan({phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false});
     setEvCollabPickerOpen(false);setEvCollabCandidates([]);setEvCollabSelected([]);setEvCollabLoading(false);
     setEvLinkedExamId(null);setExamPickerOpen(false);
@@ -26286,6 +26299,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       const slot=resolveManualSlot(evDate,evTime,evDuration);
       if(!slot){setDeadlineToast("That time conflicts and there's no open slot before the deadline.");setTimeout(()=>setDeadlineToast(""),2800);return;}
       const examTask={...buildTask(slot.date,slot.time),placementReason:slot.reason||null,
+        importanceLevel:evImportanceLevel,examWeight:examWeightFromImportance(evImportanceLevel),
+        ...(evGradeWeightPercent!=null?{gradeWeightPercent:evGradeWeightPercent}:{}),
         ...(evExamPlan.materialFiles.length>0?{sourceMaterials:evExamPlan.materialFiles}:{}),
         ...(evExamPlan.materialLinks.length>0?{referenceLinks:evExamPlan.materialLinks}:{})};
       let tasks=[examTask];
@@ -26300,7 +26315,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         const materialCharCount=evExamPlan.materialFiles.map(f=>f.text||"").join("\n\n").length;
         const daysUntilExam=examTask.date?Math.round((new Date(examTask.date+"T12:00:00")-new Date(dayKey()+"T12:00:00"))/86400000):undefined;
         const planParams=computeStudyPlanParams(examTask.examWeight,baseDuration,evConfidence,materialCharCount,examTask.importanceLevel,daysUntilExam,examTask.gradeWeightPercent,examTask.confidenceLog);
-        let sessions=buildExamSessionEvents(evTitle.trim(),slot.date,subj,evExamPlan.sessionCount||planParams.sessionCount,"addtask-exam-"+examTask.id,events.concat([examTask]),routines,getSchedulePreferences(),{dueEventId:examTask.id},planParams.difficultyValue,planParams.sessionDuration,examTask.examWeight,examTask.confidenceLog);
+        // Same applyHoursTarget Prep's own Build Study Plan uses -- only
+        // ever adjusts per-session duration for the count already decided
+        // above, never invents/removes sessions.
+        const {sessionCount:hoursAdjSessionCount,sessionDuration:hoursAdjSessionDuration}=applyHoursTarget(evExamPlan.sessionCount||planParams.sessionCount,planParams.sessionDuration,parseFloat(evHoursTarget));
+        let sessions=buildExamSessionEvents(evTitle.trim(),slot.date,subj,hoursAdjSessionCount,"addtask-exam-"+examTask.id,events.concat([examTask]),routines,getSchedulePreferences(),{dueEventId:examTask.id},planParams.difficultyValue,hoursAdjSessionDuration,examTask.examWeight,examTask.confidenceLog);
         // Same real first-pass marker Prep's own Build Study Plan flow and
         // EventDetailModal's exam-plan section already stamp -- inert data
         // marker for now, the post-completion check/regeneration is
@@ -28134,6 +28153,34 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                       </div>
                     );
                   })()}
+                  <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+                    <button type="button" onClick={()=>setEvAdvancedOpen(o=>!o)} style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"none",padding:0,cursor:"pointer",fontFamily:T.font,fontSize:11,fontWeight:600,color:T.muted}}>
+                      <span style={{display:"inline-block",transition:"transform 0.15s",transform:evAdvancedOpen?"rotate(90deg)":"none"}}>›</span>
+                      Advanced (importance, grade weight, hours)
+                    </button>
+                    {evAdvancedOpen&&(
+                      <div style={{marginTop:10,display:"flex",flexDirection:"column",gap:10}}>
+                        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                          <div style={{display:"flex",alignItems:"center",gap:6}}>
+                            <span style={{fontSize:11.5,color:T.muted}}>Importance:</span>
+                            <CustomSelect boxed fontSize={11.5} minWidth={100} value={evImportanceLevel}
+                              onChange={setEvImportanceLevel}
+                              options={[{value:"minor",label:"Minor"},{value:"moderate",label:"Moderate"},{value:"major",label:"Major"},{value:"critical",label:"Critical"}]} />
+                          </div>
+                          <div style={{display:"flex",alignItems:"center",gap:8}}>
+                            <span style={{fontSize:11.5,color:T.muted}}>% of grade (if you know it):</span>
+                            <Input type="number" min={0} max={100} step={1} value={evGradeWeightPercent??""}
+                              onChange={e=>setEvGradeWeightPercent(e.target.value===""?null:parseFloat(e.target.value))}
+                              placeholder="0" style={{width:56,fontSize:11.5,padding:"5px 8px"}} />
+                          </div>
+                        </div>
+                        <div style={{display:"flex",alignItems:"center",gap:8}}>
+                          <span style={{fontSize:11.5,color:T.muted}}>Hours to study for this (optional):</span>
+                          <Input type="number" min={0} step={0.5} value={evHoursTarget} onChange={e=>setEvHoursTarget(e.target.value)} placeholder="0" style={{width:60,fontSize:11.5,padding:"5px 8px"}} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               );
             })()}

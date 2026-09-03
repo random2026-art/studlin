@@ -14723,6 +14723,10 @@ function CalendarTab({ setActive = () => {
   const [examPickerOpen, setExamPickerOpen] = useState(false);
   const [evConfidence, setEvConfidence] = useState("okay");
   const [evSessionCountTouched, setEvSessionCountTouched] = useState(false);
+  const [evAdvancedOpen, setEvAdvancedOpen] = useState(false);
+  const [evImportanceLevel, setEvImportanceLevel] = useState("moderate");
+  const [evGradeWeightPercent, setEvGradeWeightPercent] = useState(null);
+  const [evHoursTarget, setEvHoursTarget] = useState("");
   const [evProjectPlan, setEvProjectPlan] = useState({ phases: void 0, phasesLoading: false, outline: void 0, outlineLoading: false });
   const [evCollabPickerOpen, setEvCollabPickerOpen] = useState(false);
   const [evCollabCandidates, setEvCollabCandidates] = useState([]);
@@ -14745,6 +14749,10 @@ function CalendarTab({ setActive = () => {
     setEvExamPlan({ materialFiles: [], materialLinks: [], materialOpen: false, pasteMaterialMode: false, pasteMaterialText: "", linkDraft: "", linkLabelDraft: "", proposeSessions: false, sessionCount: 4 });
     setEvConfidence("okay");
     setEvSessionCountTouched(false);
+    setEvAdvancedOpen(false);
+    setEvImportanceLevel("moderate");
+    setEvGradeWeightPercent(null);
+    setEvHoursTarget("");
     setEvProjectPlan({ phases: void 0, phasesLoading: false, outline: void 0, outlineLoading: false });
     setEvCollabPickerOpen(false);
     setEvCollabCandidates([]);
@@ -16082,6 +16090,9 @@ function CalendarTab({ setActive = () => {
       const examTask = {
         ...buildTask(slot.date, slot.time),
         placementReason: slot.reason || null,
+        importanceLevel: evImportanceLevel,
+        examWeight: examWeightFromImportance(evImportanceLevel),
+        ...evGradeWeightPercent != null ? { gradeWeightPercent: evGradeWeightPercent } : {},
         ...evExamPlan.materialFiles.length > 0 ? { sourceMaterials: evExamPlan.materialFiles } : {},
         ...evExamPlan.materialLinks.length > 0 ? { referenceLinks: evExamPlan.materialLinks } : {}
       };
@@ -16092,7 +16103,8 @@ function CalendarTab({ setActive = () => {
         const materialCharCount = evExamPlan.materialFiles.map((f) => f.text || "").join("\n\n").length;
         const daysUntilExam = examTask.date ? Math.round((/* @__PURE__ */ new Date(examTask.date + "T12:00:00") - /* @__PURE__ */ new Date(dayKey() + "T12:00:00")) / 864e5) : void 0;
         const planParams = computeStudyPlanParams(examTask.examWeight, baseDuration, evConfidence, materialCharCount, examTask.importanceLevel, daysUntilExam, examTask.gradeWeightPercent, examTask.confidenceLog);
-        let sessions = buildExamSessionEvents(evTitle.trim(), slot.date, subj, evExamPlan.sessionCount || planParams.sessionCount, "addtask-exam-" + examTask.id, events.concat([examTask]), routines, getSchedulePreferences(), { dueEventId: examTask.id }, planParams.difficultyValue, planParams.sessionDuration, examTask.examWeight, examTask.confidenceLog);
+        const { sessionCount: hoursAdjSessionCount, sessionDuration: hoursAdjSessionDuration } = applyHoursTarget(evExamPlan.sessionCount || planParams.sessionCount, planParams.sessionDuration, parseFloat(evHoursTarget));
+        let sessions = buildExamSessionEvents(evTitle.trim(), slot.date, subj, hoursAdjSessionCount, "addtask-exam-" + examTask.id, events.concat([examTask]), routines, getSchedulePreferences(), { dueEventId: examTask.id }, planParams.difficultyValue, hoursAdjSessionDuration, examTask.examWeight, examTask.confidenceLog);
         if (materialCharCount > 0 && sessions.length > 1) {
           sessions = sessions.map((s, i) => i === 0 ? { ...s, isDiagnosticFirstPass: true, notes: "First pass \u2014 read through your material for " + (subj || evTitle.trim()) + "." } : s);
         }
@@ -17321,7 +17333,29 @@ Examples:
           setEvSessionCountTouched(true);
           setEvExamPlan((m) => ({ ...m, sessionCount: (m.sessionCount || 4) - 1 }));
         }, style: { background: "none", border: "none", color: T.amber, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, textDecoration: "underline", flexShrink: 0, padding: 0 } }, "Spread out"));
-      })());
+      })(), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10, paddingTop: 10, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setEvAdvancedOpen((o) => !o), style: { display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: T.font, fontSize: 11, fontWeight: 600, color: T.muted } }, /* @__PURE__ */ React.createElement("span", { style: { display: "inline-block", transition: "transform 0.15s", transform: evAdvancedOpen ? "rotate(90deg)" : "none" } }, "\u203A"), "Advanced (importance, grade weight, hours)"), evAdvancedOpen && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10, display: "flex", flexDirection: "column", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11.5, color: T.muted } }, "Importance:"), /* @__PURE__ */ React.createElement(
+        CustomSelect,
+        {
+          boxed: true,
+          fontSize: 11.5,
+          minWidth: 100,
+          value: evImportanceLevel,
+          onChange: setEvImportanceLevel,
+          options: [{ value: "minor", label: "Minor" }, { value: "moderate", label: "Moderate" }, { value: "major", label: "Major" }, { value: "critical", label: "Critical" }]
+        }
+      )), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11.5, color: T.muted } }, "% of grade (if you know it):"), /* @__PURE__ */ React.createElement(
+        Input,
+        {
+          type: "number",
+          min: 0,
+          max: 100,
+          step: 1,
+          value: evGradeWeightPercent ?? "",
+          onChange: (e) => setEvGradeWeightPercent(e.target.value === "" ? null : parseFloat(e.target.value)),
+          placeholder: "0",
+          style: { width: 56, fontSize: 11.5, padding: "5px 8px" }
+        }
+      ))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11.5, color: T.muted } }, "Hours to study for this (optional):"), /* @__PURE__ */ React.createElement(Input, { type: "number", min: 0, step: 0.5, value: evHoursTarget, onChange: (e) => setEvHoursTarget(e.target.value), placeholder: "0", style: { width: 60, fontSize: 11.5, padding: "5px 8px" } })))));
     })())),
     isProjectKind && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "Describe what you want to do", hint: "A sentence or two is enough \u2014 Studlin uses this to suggest phases and a checklist." }, /* @__PURE__ */ React.createElement(Textarea, { id: "newevent-detail-notes", placeholder: "e.g. Build a working demo, write a report, present to the class by the deadline.", value: evNotes, onChange: (ev) => {
       setEvNotes(ev.target.value);
