@@ -22988,6 +22988,16 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
       const daysUntilExam=date?Math.round((new Date(date+"T12:00:00")-new Date(dayKey()+"T12:00:00"))/86400000):undefined;
       const planParams=computeStudyPlanParams(ev.examWeight,baseDuration,examConfidence,materialCharCount,ev.importanceLevel,daysUntilExam,ev.gradeWeightPercent,ev.confidenceLog);
       newExamSessions=buildExamSessionEvents(title.trim(),date,subject,examPlan.sessionCount||planParams.sessionCount,"edittask-exam-"+ev.id,next,routines,prefs,{dueEventId:ev.id},planParams.difficultyValue,planParams.sessionDuration,ev.examWeight,ev.confidenceLog);
+      // Same real first-pass marker Prep's own Build Study Plan flow
+      // already stamps -- session 0 of a real multi-session,
+      // material-grounded plan is a genuine first pass, not a
+      // topic-specific block. isDiagnosticFirstPass stays an inert data
+      // marker here too (same deliberate scoping as Prep's own version --
+      // the actual post-completion check/regeneration is separate,
+      // follow-up work, not built yet).
+      if(materialCharCount>0&&newExamSessions.length>1){
+        newExamSessions=newExamSessions.map((s,i)=>i===0?{...s,isDiagnosticFirstPass:true,notes:"First pass — read through your material for "+(subject||title.trim())+"."}:s);
+      }
       next=next.concat(newExamSessions);
     }
     commit(next);
@@ -23383,17 +23393,29 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
             </div>
             {examPlan.proposeSessions&&(()=>{
               const dates=date?computeReviewDates(date,dayKey(),examPlan.sessionCount||4):[];
+              // Google Calendar-inspired polish, extended (2026-09-03) --
+              // same real first-pass diagnosis Prep's own Build Study Plan
+              // flow already got: real material grounds real framing
+              // instead of a self-report. No material -> confidence
+              // buttons stay exactly as before, unchanged.
+              const hasMaterialForExamPlan=(examPlan.materialFiles&&examPlan.materialFiles.length>0)||(examPlan.materialLinks&&examPlan.materialLinks.length>0);
               return (
                 <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
-                  <div style={{fontSize:10.5,color:T.muted,marginBottom:6}}>How confident are you on this material?</div>
-                  <div style={{display:"flex",gap:6,marginBottom:12}}>
-                    {["shaky","okay","solid"].map(level=>(
-                      <button key={level} type="button" onClick={()=>setExamConfidence(level)}
-                        style={{flex:1,padding:"7px",borderRadius:7,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,textTransform:"capitalize",
-                          background:examConfidence===level?T.lime+"14":T.card,color:examConfidence===level?T.lime:T.muted,
-                          border:`1px solid ${examConfidence===level?T.lime+"44":T.border}`}}>{level}</button>
-                    ))}
-                  </div>
+                  {hasMaterialForExamPlan?(
+                    <div style={{fontSize:11,color:T.text,lineHeight:1.5,marginBottom:12}}>
+                      Studlin will start with a real first pass through your material, then a quick check after it tells Studlin what actually needs more work.
+                    </div>
+                  ):(<>
+                    <div style={{fontSize:10.5,color:T.muted,marginBottom:6}}>How confident are you on this material?</div>
+                    <div style={{display:"flex",gap:6,marginBottom:12}}>
+                      {["shaky","okay","solid"].map(level=>(
+                        <button key={level} type="button" onClick={()=>setExamConfidence(level)}
+                          style={{flex:1,padding:"7px",borderRadius:7,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,textTransform:"capitalize",
+                            background:examConfidence===level?T.lime+"14":T.card,color:examConfidence===level?T.lime:T.muted,
+                            border:`1px solid ${examConfidence===level?T.lime+"44":T.border}`}}>{level}</button>
+                      ))}
+                    </div>
+                  </>)}
                   <div style={{display:"flex",alignItems:"center",gap:8}}>
                     <NumField min={1} max={6} fallback={4} value={examPlan.sessionCount||4} onChange={v=>{setExamSessionCountTouched(true);setExamPlan(m=>({...m,sessionCount:v}));}} style={{width:48}} />
                     <span style={{fontSize:10.5,color:T.muted}}>{dates.length===0?"Too close to the exam to fit a session":dates.length+" session"+(dates.length!==1?"s":"")+": "+dates.join(", ")}</span>
@@ -26299,7 +26321,14 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         const materialCharCount=evExamPlan.materialFiles.map(f=>f.text||"").join("\n\n").length;
         const daysUntilExam=examTask.date?Math.round((new Date(examTask.date+"T12:00:00")-new Date(dayKey()+"T12:00:00"))/86400000):undefined;
         const planParams=computeStudyPlanParams(examTask.examWeight,baseDuration,evConfidence,materialCharCount,examTask.importanceLevel,daysUntilExam,examTask.gradeWeightPercent,examTask.confidenceLog);
-        const sessions=buildExamSessionEvents(evTitle.trim(),slot.date,subj,evExamPlan.sessionCount||planParams.sessionCount,"addtask-exam-"+examTask.id,events.concat([examTask]),routines,getSchedulePreferences(),{dueEventId:examTask.id},planParams.difficultyValue,planParams.sessionDuration,examTask.examWeight,examTask.confidenceLog);
+        let sessions=buildExamSessionEvents(evTitle.trim(),slot.date,subj,evExamPlan.sessionCount||planParams.sessionCount,"addtask-exam-"+examTask.id,events.concat([examTask]),routines,getSchedulePreferences(),{dueEventId:examTask.id},planParams.difficultyValue,planParams.sessionDuration,examTask.examWeight,examTask.confidenceLog);
+        // Same real first-pass marker Prep's own Build Study Plan flow and
+        // EventDetailModal's exam-plan section already stamp -- inert data
+        // marker for now, the post-completion check/regeneration is
+        // separate follow-up work, not built yet.
+        if(materialCharCount>0&&sessions.length>1){
+          sessions=sessions.map((s,i)=>i===0?{...s,isDiagnosticFirstPass:true,notes:"First pass — read through your material for "+(subj||evTitle.trim())+"."}:s);
+        }
         tasks=tasks.concat(sessions);
       }
       commitTasks(tasks,{userPinned:true});
@@ -28079,23 +28108,28 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             </div>
             {evExamPlan.proposeSessions&&(()=>{
               const dates=evDate?computeReviewDates(evDate,dayKey(),evExamPlan.sessionCount||4):[];
+              // Google Calendar-inspired polish, extended (2026-09-03) --
+              // same real first-pass diagnosis as Prep's Build Study Plan
+              // and EventDetailModal's own exam-plan section. No material
+              // -> confidence buttons stay exactly as before, unchanged.
+              const hasMaterialForEvPlan=(evExamPlan.materialFiles&&evExamPlan.materialFiles.length>0)||(evExamPlan.materialLinks&&evExamPlan.materialLinks.length>0);
               return (
                 <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
-                  {/* Same "How confident are you on this material?" question
-                      Studlin Prep's Build Study Plan asks -- used to be a
-                      generic Easy/Hard slider here with no relationship to
-                      the session count next to it. Confidence now drives
-                      both count and per-session length together
-                      (computeStudyPlanParams), same as Prep. */}
-                  <div style={{fontSize:10.5,color:T.muted,marginBottom:6}}>How confident are you on this material?</div>
-                  <div style={{display:"flex",gap:6,marginBottom:12}}>
-                    {["shaky","okay","solid"].map(level=>(
-                      <button key={level} type="button" onClick={()=>setEvConfidence(level)}
-                        style={{flex:1,padding:"7px",borderRadius:7,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,textTransform:"capitalize",
-                          background:evConfidence===level?T.lime+"14":T.card,color:evConfidence===level?T.lime:T.muted,
-                          border:`1px solid ${evConfidence===level?T.lime+"44":T.border}`}}>{level}</button>
-                    ))}
-                  </div>
+                  {hasMaterialForEvPlan?(
+                    <div style={{fontSize:11,color:T.text,lineHeight:1.5,marginBottom:12}}>
+                      Studlin will start with a real first pass through your material, then a quick check after it tells Studlin what actually needs more work.
+                    </div>
+                  ):(<>
+                    <div style={{fontSize:10.5,color:T.muted,marginBottom:6}}>How confident are you on this material?</div>
+                    <div style={{display:"flex",gap:6,marginBottom:12}}>
+                      {["shaky","okay","solid"].map(level=>(
+                        <button key={level} type="button" onClick={()=>setEvConfidence(level)}
+                          style={{flex:1,padding:"7px",borderRadius:7,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,textTransform:"capitalize",
+                            background:evConfidence===level?T.lime+"14":T.card,color:evConfidence===level?T.lime:T.muted,
+                            border:`1px solid ${evConfidence===level?T.lime+"44":T.border}`}}>{level}</button>
+                      ))}
+                    </div>
+                  </>)}
                   <div style={{display:"flex",alignItems:"center",gap:8}}>
                     <NumField min={1} max={6} fallback={4} value={evExamPlan.sessionCount||4} onChange={v=>{setEvSessionCountTouched(true);setEvExamPlan(m=>({...m,sessionCount:v}));}} style={{width:48}} />
                     <span style={{fontSize:10.5,color:T.muted}}>{!evDate?"Pick a date above first":dates.length===0?"Too close to the exam to fit a session":dates.length+" session"+(dates.length!==1?"s":"")+": "+dates.join(", ")}</span>
