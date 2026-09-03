@@ -143,6 +143,7 @@ function loadStudlinModule(options) {
     "logCatchUpEvent","computeStudyPlanParams","materialVolumeBonus","STUDY_PLAN_CONFIDENCE_LEVELS","defaultSessionCountFor",
     "suggestDurationFor","difficultyTierOf","TIER0_MIN_BUCKET_SAMPLE","IMPORTANCE_TO_DURATION_MULTIPLIER",
     "gradeWeightNudgeFor","isConfidenceStreak","scoreTierFromPercent","SCORE_TIER_LABEL","subjectOutcomeNudge","completionCredit",
+    "examClusterNudgeFor","EXAM_CLUSTER_WINDOW_DAYS",
     "getSubjects","saveSubjects","courseIdForLabel","backfillCourseIds",
     "nextAvailableSubjectColor","SUBJECT_COLORS",
     "deleteCourseWithCascade","undoCourseDelete",

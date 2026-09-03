@@ -314,3 +314,78 @@ describe("restampSessionPriorities", () => {
     assert.doesNotThrow(() => m.restampSessionPriorities("does-not-exist"));
   });
 });
+
+describe("examClusterNudgeFor + computeSessionPriority's 3rd arg (\"banana\" fix -- exam-clustering-aware priority)", () => {
+  test("examClusterNudgeFor is 0 with no nearby exams", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.examClusterNudgeFor(0), 0);
+    assert.equal(m.examClusterNudgeFor(undefined), 0);
+  });
+
+  test("examClusterNudgeFor grows with more nearby exams, capped at 0.15 -- same cap urgencyNudge/gradeWeightNudge use", () => {
+    const m = loadStudlinModule();
+    assert.ok(m.examClusterNudgeFor(1) > 0);
+    assert.ok(m.examClusterNudgeFor(2) > m.examClusterNudgeFor(1));
+    assert.equal(m.examClusterNudgeFor(10), 0.15);
+  });
+
+  test("computeSessionPriority omitting the 3rd arg computes byte-identically to before this fix", () => {
+    const m = loadStudlinModule({ now: "2026-08-08T12:00:00" });
+    const e = exam({ date: "2026-08-10", examWeight: "major", confidenceLog: ["shaky"], difficulty: 900 });
+    const withoutArg = m.computeSessionPriority(e, "2026-08-08");
+    const withZero = m.computeSessionPriority(e, "2026-08-08", 0);
+    assert.equal(withoutArg, withZero);
+  });
+
+  test("a nonzero nearbyExamCount raises priority over the same exam with none nearby", () => {
+    const m = loadStudlinModule({ now: "2026-08-08T12:00:00" });
+    const e = exam({ date: "2026-08-10", examWeight: "major", confidenceLog: ["okay"], difficulty: 500 });
+    const isolated = m.computeSessionPriority(e, "2026-08-08", 0);
+    const clustered = m.computeSessionPriority(e, "2026-08-08", 2);
+    assert.ok(clustered > isolated, "an exam with 2 nearby competing exams should score higher than the same exam alone");
+  });
+
+  test("EXAM_CLUSTER_WINDOW_DAYS is 3", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.EXAM_CLUSTER_WINDOW_DAYS, 3);
+  });
+});
+
+describe("restampSessionPriorities picks up exam clustering from live events", () => {
+  test("an exam 2 days from another pending exam gets a higher restamped priority than one with nothing nearby", () => {
+    const m = loadStudlinModule({ now: "2026-08-01T12:00:00" });
+    const clustered = exam({ id: "exam-clustered", date: "2026-08-10", examWeight: "major", confidenceLog: ["okay"] });
+    const neighbor = exam({ id: "exam-neighbor", date: "2026-08-12", examWeight: "major", confidenceLog: ["okay"] });
+    m.lsSet("events", [
+      clustered, neighbor,
+      session({ id: "sess-clustered", dueEventId: "exam-clustered", status: "pending" }),
+    ]);
+    m.restampSessionPriorities("exam-clustered");
+    const clusteredPriority = m.lsGet("events", []).find(e => e.id === "sess-clustered").priority;
+
+    const isolated = exam({ id: "exam-isolated", date: "2026-08-10", examWeight: "major", confidenceLog: ["okay"] });
+    m.lsSet("events", [
+      isolated,
+      session({ id: "sess-isolated", dueEventId: "exam-isolated", status: "pending" }),
+    ]);
+    m.restampSessionPriorities("exam-isolated");
+    const isolatedPriority = m.lsGet("events", []).find(e => e.id === "sess-isolated").priority;
+
+    assert.ok(clusteredPriority > isolatedPriority, "clustered=" + clusteredPriority + " should exceed isolated=" + isolatedPriority);
+  });
+
+  test("a done neighboring exam and a >3-day-away exam don't count as clustering", () => {
+    const m = loadStudlinModule({ now: "2026-08-01T12:00:00" });
+    const e = exam({ id: "exam-main", date: "2026-08-10", examWeight: "major", confidenceLog: ["okay"] });
+    const farAway = exam({ id: "exam-far", date: "2026-08-20", examWeight: "major" });
+    const doneNearby = exam({ id: "exam-done", date: "2026-08-11", examWeight: "major", status: "done" });
+    m.lsSet("events", [
+      e, farAway, doneNearby,
+      session({ id: "sess-main", dueEventId: "exam-main", status: "pending" }),
+    ]);
+    m.restampSessionPriorities("exam-main");
+    const withNoise = m.lsGet("events", []).find(ev => ev.id === "sess-main").priority;
+    const expected = m.computeSessionPriority(e, "2026-08-01", 0);
+    assert.equal(withNoise, expected, "a far-away exam and a done exam must not contribute to the cluster nudge");
+  });
+});

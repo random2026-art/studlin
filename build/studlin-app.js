@@ -2597,11 +2597,12 @@ function normalizeOutlineDraft(outline) {
     return text ? { text, done: false, ...dueDate ? { dueDate } : {} } : null;
   }).filter(Boolean);
 }
-async function proposeSessionFocuses(examTitle, materialText, sessionCount, subject) {
+async function proposeSessionFocuses(examTitle, materialText, sessionCount, subject, weakTopicsFocus) {
   if (!materialText || !materialText.trim()) return null;
   if (!canAddSessionFocus()) return null;
   try {
-    const prompt = "A student has " + sessionCount + ' spaced study session(s) counting down to their exam: "' + examTitle + '"' + (subject ? " (" + subject + ")" : "") + ". Here's their study material:\n\n" + materialText.slice(0, 6e3) + "\n\nWrite exactly " + sessionCount + ` short study-focus labels, one per session, in the order the sessions happen (earliest first, working toward full review by the last one). Keep each one under 8 words -- a quick label a student can read in passing, like "Ch 4-6: cell structure" or "Unit 3 practice problems", not a full descriptive sentence. Ground every label in real topics, chapters, or sections that actually appear in the material above. Never use an em dash or semicolon to connect ideas. Use a colon, "and", or just cut one instead. If the material doesn't give you enough to write ` + sessionCount + ` genuinely distinct, specific labels, don't pad with generic filler like "General review" -- respond with {"focuses":[]} instead. Respond with ONLY valid JSON, no markdown fences, no commentary: {"focuses":["Ch 4-6: cell structure","Ch 7-8: energy and metabolism"]}`;
+    const weakTopicsInstruction = weakTopicsFocus ? " The student's first pass showed these topics need extra attention: " + weakTopicsFocus + ". Weight the session labels toward those, without ignoring the rest of the material entirely." : "";
+    const prompt = "A student has " + sessionCount + ' spaced study session(s) counting down to their exam: "' + examTitle + '"' + (subject ? " (" + subject + ")" : "") + "." + weakTopicsInstruction + " Here's their study material:\n\n" + materialText.slice(0, 6e3) + "\n\nWrite exactly " + sessionCount + ` short study-focus labels, one per session, in the order the sessions happen (earliest first, working toward full review by the last one). Keep each one under 8 words -- a quick label a student can read in passing, like "Ch 4-6: cell structure" or "Unit 3 practice problems", not a full descriptive sentence. Ground every label in real topics, chapters, or sections that actually appear in the material above. Never use an em dash or semicolon to connect ideas. Use a colon, "and", or just cut one instead. If the material doesn't give you enough to write ` + sessionCount + ` genuinely distinct, specific labels, don't pad with generic filler like "General review" -- respond with {"focuses":[]} instead. Respond with ONLY valid JSON, no markdown fences, no commentary: {"focuses":["Ch 4-6: cell structure","Ch 7-8: energy and metabolism"]}`;
     const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt }], model: "standard", format: "json" }) });
     recordSessionFocus();
     const data = await res.json();
@@ -3720,6 +3721,10 @@ function computeReviewDates(examDateKey, todayKey, desiredCount) {
     d.setDate(d.getDate() - o);
     return dayKey(d);
   }).sort();
+}
+const EXAM_CLUSTER_WINDOW_DAYS = 3;
+function examClusterNudgeFor(nearbyExamCount) {
+  return nearbyExamCount > 0 ? Math.min(0.15, nearbyExamCount * 0.08) : 0;
 }
 function gradeWeightNudgeFor(gradeWeightPercent) {
   return gradeWeightPercent != null ? Math.max(-0.15, Math.min(0.15, (gradeWeightPercent - 20) / 200)) : 0;
@@ -9146,14 +9151,15 @@ function withDerivedExamImportance(it) {
   return { ...it, importanceLevel: level, examWeight: examWeightFromImportance(level) };
 }
 const SESSION_PRIORITY_URGENCY_HORIZON_DAYS = 21;
-function computeSessionPriority(examLike, todayKey) {
+function computeSessionPriority(examLike, todayKey, nearbyExamCount) {
   if (!examLike) return 500;
   const today = todayKey || dayKey();
   const difficultyNorm = normalizeTaskVal(examLike.difficulty, 5);
   const daysUntil = examLike.date ? Math.round((/* @__PURE__ */ new Date(examLike.date + "T12:00:00") - /* @__PURE__ */ new Date(today + "T12:00:00")) / 864e5) : null;
   const dateUrgency = daysUntil == null ? 0.5 : Math.max(0, Math.min(1, 1 - daysUntil / SESSION_PRIORITY_URGENCY_HORIZON_DAYS));
   const urgencyNudge = examLike.priority != null ? Math.max(-0.15, Math.min(0.15, (examLike.priority - 500) / 2e3)) : 0;
-  const urgency = Math.max(0, Math.min(1, dateUrgency + urgencyNudge));
+  const clusterNudge = examClusterNudgeFor(nearbyExamCount);
+  const urgency = Math.max(0, Math.min(1, dateUrgency + urgencyNudge + clusterNudge));
   const baseImpact = examLike.importanceLevel ? IMPORTANCE_TO_IMPACT[examLike.importanceLevel] ?? IMPORTANCE_TO_IMPACT.major : EXAM_WEIGHT_TO_IMPACT[examLike.examWeight] ?? EXAM_WEIGHT_TO_IMPACT.major;
   const gradeWeightNudge = gradeWeightNudgeFor(examLike.gradeWeightPercent);
   const impact = Math.max(0, Math.min(1, baseImpact + gradeWeightNudge));
@@ -9233,7 +9239,8 @@ function restampSessionPriorities(examId) {
   const all = lsGet("events", []);
   const exam = all.find((e) => e.id === examId);
   if (!exam) return;
-  const sessionPriority = computeSessionPriority(exam, dayKey());
+  const nearbyExamCount = exam.date ? all.filter((e) => e.kind === "exam" && e.id !== examId && e.status !== "done" && e.date && Math.abs(Math.round((/* @__PURE__ */ new Date(e.date + "T12:00:00") - /* @__PURE__ */ new Date(exam.date + "T12:00:00")) / 864e5)) <= EXAM_CLUSTER_WINDOW_DAYS).length : 0;
+  const sessionPriority = computeSessionPriority(exam, dayKey(), nearbyExamCount);
   const next = all.map((e) => {
     if (e.id === examId) return { ...e, priority: sessionPriority };
     if (e.dueEventId === examId && e.status === "pending" && e.isExamPrepSession && e.priorityAutoManaged !== false) return { ...e, priority: sessionPriority };
@@ -9244,7 +9251,8 @@ function restampSessionPriorities(examId) {
 function buildExamSessionEvents(examTitle, examDate, subject, count, idPrefix, working, routines, prefs, extraFields, difficulty, durationOverride, examWeight, confidenceLog) {
   const dates = computeReviewDates(examDate, dayKey(), count);
   const duration = durationOverride || suggestDurationFor(subject, "study block") || 25;
-  const sessionPriority = computeSessionPriority({ difficulty, examWeight, confidenceLog, date: examDate }, dayKey());
+  const nearbyExamCount = working.filter((e) => e.kind === "exam" && e.status !== "done" && e.date && !(e.date === examDate && e.title === examTitle) && Math.abs(Math.round((/* @__PURE__ */ new Date(e.date + "T12:00:00") - /* @__PURE__ */ new Date(examDate + "T12:00:00")) / 864e5)) <= EXAM_CLUSTER_WINDOW_DAYS).length;
+  const sessionPriority = computeSessionPriority({ difficulty, examWeight, confidenceLog, date: examDate }, dayKey(), nearbyExamCount);
   let localWorking = working;
   const built = [];
   dates.forEach((date, si) => {
@@ -19676,6 +19684,8 @@ function App() {
   };
   const [examCheckIn, setExamCheckIn] = useState(null);
   const [examPrepSuggestion, setExamPrepSuggestion] = useState(null);
+  const [diagnosticQuiz, setDiagnosticQuiz] = useState(null);
+  const diagnosticQuizTaskIdRef = useRef(null);
   const [projectCheckInTaskId, setProjectCheckInTaskId] = useState(null);
   useEffect(() => {
     const myUid2 = firebase.auth().currentUser?.uid;
@@ -19703,7 +19713,58 @@ function App() {
     const task = events.find((e) => e.id === taskId);
     if (!task) return;
     if (shouldOfferProjectCheckIn(task, events)) setProjectCheckInTaskId(taskId);
-    else if (task.kind === "study block" && !task.routineId) setExamCheckIn(task);
+    else if (task.kind === "study block" && !task.routineId) {
+      const examEvent = task.dueEventId ? events.find((e) => e.id === task.dueEventId) : null;
+      if (task.isDiagnosticFirstPass) {
+        lsSet("events", lsGet("events", []).map((e) => e.id === task.id ? { ...e, isDiagnosticFirstPass: false } : e));
+      }
+      const materialText = examEvent ? (examEvent.sourceMaterials || []).filter((f) => f.text && f.text.trim()).map((f) => f.text).join("\n\n") : "";
+      if (task.isDiagnosticFirstPass && examEvent && materialText.trim() && canGenQuiz()) {
+        startDiagnosticQuiz(task, examEvent, materialText);
+      } else {
+        setExamCheckIn(task);
+      }
+    }
+  };
+  const startDiagnosticQuiz = async (task, examEvent, materialText) => {
+    diagnosticQuizTaskIdRef.current = task.id;
+    setDiagnosticQuiz({ stage: "loading", task, examEvent, materialText });
+    const minDelay = new Promise((r) => setTimeout(r, 900));
+    const [questions] = await Promise.all([generateQuizFromText(materialText, examEvent.subject, 8), minDelay]);
+    if (diagnosticQuizTaskIdRef.current !== task.id) return;
+    if (!questions || questions.length === 0) {
+      setDiagnosticQuiz(null);
+      setExamCheckIn(task);
+      return;
+    }
+    recordQuizGen();
+    setDiagnosticQuiz({ stage: "taking", task, examEvent, materialText, questions, idx: 0, picked: null, answers: Array(questions.length).fill(null) });
+  };
+  const finishDiagnosticQuiz = () => {
+    if (!diagnosticQuiz) return;
+    const { task, examEvent, materialText, questions, answers } = diagnosticQuiz;
+    const score = questions.reduce((s, q, i) => s + (answers[i] === q.answerIndex ? 1 : 0), 0);
+    const total = questions.length;
+    const wrongTopics = wrongTopicsFor(questions, answers);
+    const pct = total > 0 ? score / total : 0;
+    const rating = pct >= 0.95 ? 5 : pct >= 0.8 ? 4 : pct >= 0.6 ? 3 : pct >= 0.4 ? 2 : 1;
+    submitExamCheckIn(rating, task);
+    if (wrongTopics.length > 0) regenerateRemainingSessionFocuses(examEvent, materialText, wrongTopics);
+    setDiagnosticQuiz((d) => d && { ...d, stage: "done", score, total, wrongTopics });
+  };
+  const regenerateRemainingSessionFocuses = (examEvent, materialText, wrongTopics) => {
+    if (!materialText.trim()) return;
+    const pending = lsGet("events", []).filter((e) => e.dueEventId === examEvent.id && e.isExamPrepSession && e.status === "pending" && !e.deckId && !e.practiceExamId).sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+    if (pending.length === 0) return;
+    proposeSessionFocuses(examEvent.title, materialText, pending.length, examEvent.subject, wrongTopics.join(", ")).then((focuses) => {
+      if (!focuses) return;
+      const ids = pending.map((s) => s.id);
+      const patched = lsGet("events", []).map((e) => {
+        const idx = ids.indexOf(e.id);
+        return idx >= 0 && focuses[idx] ? { ...e, notes: focuses[idx] } : e;
+      });
+      lsSet("events", patched);
+    });
   };
   const queueInsightNudge = (kind, payload) => {
     lsSet("queuedInsightNudges", [...lsGet("queuedInsightNudges", []), { kind, payload, queuedAt: Date.now() }]);
@@ -19718,12 +19779,13 @@ function App() {
     if (latest.prepPromptBatch) setPrepPromptBatch(latest.prepPromptBatch);
     lsSet("queuedInsightNudges", []);
   };
-  const submitExamCheckIn = (rating) => {
-    if (!examCheckIn) return;
-    applyCheckInRating(examCheckIn.id, rating);
+  const submitExamCheckIn = (rating, taskOverride) => {
+    const ci = taskOverride || examCheckIn;
+    if (!ci) return;
+    applyCheckInRating(ci.id, rating);
     const events = lsGet("events", []);
-    const examEvent = examCheckIn.dueEventId ? events.find((e) => e.id === examCheckIn.dueEventId) : null;
-    setExamCheckIn(null);
+    const examEvent = ci.dueEventId ? events.find((e) => e.id === ci.dueEventId) : null;
+    if (!taskOverride) setExamCheckIn(null);
     if (!examEvent) return;
     const updatedExam = { ...examEvent, confidenceLog: [...examEvent.confidenceLog || [], rating] };
     const nextEvents = events.map((e) => e.id === examEvent.id ? updatedExam : e);
@@ -20774,7 +20836,35 @@ function App() {
       setActive("calendar");
       setScheduleChangeAlerts([]);
     }, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Open Calendar"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: () => setScheduleChangeAlerts([]), style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Dismiss")));
-  })(), coopCancelAlerts.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("strong", { style: { color: T.amber } }, coopCancelAlerts.length, " study session", coopCancelAlerts.length !== 1 ? "s" : ""), " cancelled:"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 4, maxHeight: 220, overflowY: "auto" } }, coopCancelAlerts.map((a) => /* @__PURE__ */ React.createElement("div", { key: a.sessionId, style: { padding: "8px 9px", background: T.card2, borderRadius: 8, fontSize: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { color: T.text, marginBottom: 6 } }, a.byName, ' cancelled "', a.title, '" \u2014 ', a.date === dayKey() ? "today" : a.date, " ", fmtRolloverClock(a.time)), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement("button", { onClick: () => removeCoopCancelAlert(a.sessionId), style: { background: "none", border: `1px solid ${T.border}`, borderRadius: 6, color: T.muted, cursor: "pointer", fontSize: 11, padding: "5px 8px", fontFamily: T.font } }, "Remove from my calendar"), /* @__PURE__ */ React.createElement("button", { onClick: () => keepCoopCancelAlert(a.sessionId), style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, textDecoration: "underline" } }, "Keep it anyway")))))), bottomRightSlot === "promptBatch" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: STUDLIN_AI_BUBBLE_CLEARANCE, right: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, "Due soon. Want Studlin to find prep time for these?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 12, maxHeight: 200, overflowY: "auto" } }, prepPromptBatch.map((m) => /* @__PURE__ */ React.createElement("div", { key: m.id, style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, fontSize: 12, padding: "6px 9px", background: T.card2, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, m.title), /* @__PURE__ */ React.createElement("div", { style: { color: T.muted, fontSize: 10.5 } }, "Due ", m.date)), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexShrink: 0 } }, /* @__PURE__ */ React.createElement("button", { onClick: () => acceptPrepPrompt(m), style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, textDecoration: "underline", padding: 0 } }, "Schedule"), /* @__PURE__ */ React.createElement("button", { onClick: () => declinePrepPrompt(m), style: { background: "none", border: "none", color: T.muted, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, padding: 0 } }, "Not now"))))), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: declineAllPrepPrompts, style: { padding: "7px 14px", fontSize: 12, width: "100%", justifyContent: "center" } }, "Dismiss all")), bottomRightSlot === "autoToast" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: STUDLIN_AI_BUBBLE_CLEARANCE, right: 20, zIndex: 999, padding: "11px 18px", borderRadius: 10, background: T.teal, color: "#fff", fontSize: 13, fontWeight: 600, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, prepAutoToast), bottomRightSlot === "error" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: STUDLIN_AI_BUBBLE_CLEARANCE, right: 20, zIndex: 1001, padding: "11px 18px", borderRadius: 10, background: T.red, color: "#fff", fontSize: 13, fontWeight: 600, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, lockInErrorToast), /* @__PURE__ */ React.createElement(Modal, { open: !!examCheckIn, onClose: () => setExamCheckIn(null), title: "How do you feel about the exam so far?", width: 380 }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, EXAM_CHECKIN_SCALE.map((opt) => /* @__PURE__ */ React.createElement(Btn, { key: opt.value, variant: "ghost", onClick: () => submitExamCheckIn(opt.value), style: { width: "100%", justifyContent: "center" } }, opt.label)))), /* @__PURE__ */ React.createElement(ProjectCheckInModal, { taskId: projectCheckInTaskId, onClose: () => setProjectCheckInTaskId(null), onToast: (msg) => {
+  })(), coopCancelAlerts.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("strong", { style: { color: T.amber } }, coopCancelAlerts.length, " study session", coopCancelAlerts.length !== 1 ? "s" : ""), " cancelled:"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 4, maxHeight: 220, overflowY: "auto" } }, coopCancelAlerts.map((a) => /* @__PURE__ */ React.createElement("div", { key: a.sessionId, style: { padding: "8px 9px", background: T.card2, borderRadius: 8, fontSize: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { color: T.text, marginBottom: 6 } }, a.byName, ' cancelled "', a.title, '" \u2014 ', a.date === dayKey() ? "today" : a.date, " ", fmtRolloverClock(a.time)), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement("button", { onClick: () => removeCoopCancelAlert(a.sessionId), style: { background: "none", border: `1px solid ${T.border}`, borderRadius: 6, color: T.muted, cursor: "pointer", fontSize: 11, padding: "5px 8px", fontFamily: T.font } }, "Remove from my calendar"), /* @__PURE__ */ React.createElement("button", { onClick: () => keepCoopCancelAlert(a.sessionId), style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, textDecoration: "underline" } }, "Keep it anyway")))))), bottomRightSlot === "promptBatch" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: STUDLIN_AI_BUBBLE_CLEARANCE, right: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, "Due soon. Want Studlin to find prep time for these?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 12, maxHeight: 200, overflowY: "auto" } }, prepPromptBatch.map((m) => /* @__PURE__ */ React.createElement("div", { key: m.id, style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, fontSize: 12, padding: "6px 9px", background: T.card2, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, m.title), /* @__PURE__ */ React.createElement("div", { style: { color: T.muted, fontSize: 10.5 } }, "Due ", m.date)), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexShrink: 0 } }, /* @__PURE__ */ React.createElement("button", { onClick: () => acceptPrepPrompt(m), style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, textDecoration: "underline", padding: 0 } }, "Schedule"), /* @__PURE__ */ React.createElement("button", { onClick: () => declinePrepPrompt(m), style: { background: "none", border: "none", color: T.muted, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, padding: 0 } }, "Not now"))))), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: declineAllPrepPrompts, style: { padding: "7px 14px", fontSize: 12, width: "100%", justifyContent: "center" } }, "Dismiss all")), bottomRightSlot === "autoToast" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: STUDLIN_AI_BUBBLE_CLEARANCE, right: 20, zIndex: 999, padding: "11px 18px", borderRadius: 10, background: T.teal, color: "#fff", fontSize: 13, fontWeight: 600, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, prepAutoToast), bottomRightSlot === "error" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: STUDLIN_AI_BUBBLE_CLEARANCE, right: 20, zIndex: 1001, padding: "11px 18px", borderRadius: 10, background: T.red, color: "#fff", fontSize: 13, fontWeight: 600, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, lockInErrorToast), /* @__PURE__ */ React.createElement(Modal, { open: !!examCheckIn, onClose: () => setExamCheckIn(null), title: "How do you feel about the exam so far?", width: 380 }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, EXAM_CHECKIN_SCALE.map((opt) => /* @__PURE__ */ React.createElement(Btn, { key: opt.value, variant: "ghost", onClick: () => submitExamCheckIn(opt.value), style: { width: "100%", justifyContent: "center" } }, opt.label)))), /* @__PURE__ */ React.createElement(Modal, { open: !!diagnosticQuiz, onClose: () => {
+    diagnosticQuizTaskIdRef.current = null;
+    setDiagnosticQuiz(null);
+  }, title: diagnosticQuiz?.examEvent?.title || "Quick check", width: 420 }, diagnosticQuiz && diagnosticQuiz.stage === "loading" && /* @__PURE__ */ React.createElement(ExtractionProgress, { fileName: diagnosticQuiz.examEvent.title, stage: "analyze", analyzeLabel: "Let's see what needs another look..." }), diagnosticQuiz && diagnosticQuiz.stage === "taking" && (() => {
+    const q = diagnosticQuiz.questions[diagnosticQuiz.idx];
+    const picked = diagnosticQuiz.picked;
+    const isLast = diagnosticQuiz.idx >= diagnosticQuiz.questions.length - 1;
+    return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginBottom: 8 } }, "Question ", diagnosticQuiz.idx + 1, " of ", diagnosticQuiz.questions.length), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: T.white, marginBottom: 14, lineHeight: 1.5 } }, q.q), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, q.choices.map((opt, i) => {
+      const show = picked != null;
+      const isCorrect = i === q.answerIndex;
+      let border = T.border, bg = T.card2, color = T.text;
+      if (show && isCorrect) {
+        border = T.teal;
+        bg = T.teal + "18";
+        color = T.teal;
+      } else if (show && picked === i && !isCorrect) {
+        border = T.red;
+        bg = T.red + "14";
+        color = T.red;
+      }
+      return /* @__PURE__ */ React.createElement("button", { key: i, disabled: picked != null, onClick: () => setDiagnosticQuiz((d) => ({ ...d, picked: i, answers: d.answers.map((a, ai) => ai === d.idx ? i : a) })), style: { textAlign: "left", padding: "10px 14px", borderRadius: 8, border: `1px solid ${border}`, background: bg, color, cursor: picked != null ? "default" : "pointer", fontFamily: T.font, fontSize: 13 } }, opt);
+    })), picked != null && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 16, display: "flex", justifyContent: "flex-end" } }, /* @__PURE__ */ React.createElement(Btn, { onClick: () => {
+      if (isLast) finishDiagnosticQuiz();
+      else setDiagnosticQuiz((d) => ({ ...d, idx: d.idx + 1, picked: null }));
+    } }, isLast ? "See results" : "Next question \u2192")));
+  })(), diagnosticQuiz && diagnosticQuiz.stage === "done" && /* @__PURE__ */ React.createElement("div", { style: { padding: "12px 0", textAlign: "center" } }, diagnosticQuiz.wrongTopics && diagnosticQuiz.wrongTopics.length > 0 ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: T.text, marginBottom: 8, lineHeight: 1.5 } }, "You've got a good handle on most of this."), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginBottom: 16, lineHeight: 1.5 } }, "A closer look coming up for: ", diagnosticQuiz.wrongTopics.join(", "))) : /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: T.text, marginBottom: 16, lineHeight: 1.5 } }, "Solid first pass -- nothing stood out as shaky."), /* @__PURE__ */ React.createElement(Btn, { onClick: () => {
+    diagnosticQuizTaskIdRef.current = null;
+    setDiagnosticQuiz(null);
+  }, style: { width: "100%", justifyContent: "center" } }, "Done"))), /* @__PURE__ */ React.createElement(ProjectCheckInModal, { taskId: projectCheckInTaskId, onClose: () => setProjectCheckInTaskId(null), onToast: (msg) => {
     setDashToast(msg);
     setTimeout(() => setDashToast(""), 2800);
   } }), bottomRightSlot === "suggestion" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: STUDLIN_AI_BUBBLE_CLEARANCE, right: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 360 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, marginBottom: 12, lineHeight: 1.5 } }, examPrepSuggestion.reason), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, ["shorten", "extend", "drop-remaining", "pull-closer", "shaky-packed"].includes(examPrepSuggestion.type) && /* @__PURE__ */ React.createElement(Btn, { onClick: acceptExamPrepSuggestion, style: { flex: 1, justifyContent: "center", fontSize: 12, padding: "7px 14px" } }, examPrepSuggestion.type === "shorten" ? "Shorten it" : examPrepSuggestion.type === "extend" ? "Extend it" : examPrepSuggestion.type === "drop-remaining" ? "Drop them" : examPrepSuggestion.type === "shaky-packed" ? "Fit it in anyway" : "Move it closer"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: dismissExamPrepSuggestion, style: { flex: 1, justifyContent: "center", fontSize: 12, padding: "7px 14px" } }, ["ahead-of-pace", "last-session"].includes(examPrepSuggestion.type) ? "Got it" : "Leave it"))), strugglingBucketOffer && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10, lineHeight: 1.5 } }, "Your ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.amber } }, PEAK_BUCKET_LABELS[strugglingBucketOffer.strugglingBucket].toLowerCase()), " tasks haven't been sticking \u2014 ", strugglingBucketOffer.recentMissedCount, " of your last ", strugglingBucketOffer.recentWindow, " were missed. Default new tasks to ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, PEAK_BUCKET_LABELS[strugglingBucketOffer.suggestedBucket].toLowerCase()), " instead?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: acceptStrugglingBucketOffer, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Switch to ", PEAK_BUCKET_LABELS[strugglingBucketOffer.suggestedBucket]), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: declineStrugglingBucketOffer, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Not now"))), peakInsightOffer && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10, lineHeight: 1.5 } }, "Looks like you actually finish more ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, PEAK_BUCKET_LABELS[peakInsightOffer.suggestedBucket].toLowerCase()), " tasks (", Math.round(peakInsightOffer.suggestedPct * 100), "%) than ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.amber } }, PEAK_BUCKET_LABELS[peakInsightOffer.currentBucket].toLowerCase()), " ones (", Math.round(peakInsightOffer.currentPct * 100), "%) \u2014 update your peak hours?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: acceptPeakHourInsight, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Switch to ", PEAK_BUCKET_LABELS[peakInsightOffer.suggestedBucket]), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: declinePeakHourInsight, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Not now"))), expiredPending.length > 0 && !calendarWizardOpen && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 76, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("strong", { style: { color: T.red } }, expiredPending.length, " task", expiredPending.length !== 1 ? "s" : ""), " missed ", expiredPending.length !== 1 ? "their" : "its", " deadline without being finished."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 12, maxHeight: 160, overflowY: "auto" } }, expiredPending.map((ev) => /* @__PURE__ */ React.createElement("div", { key: ev.id, style: { fontSize: 12, padding: "6px 9px", background: T.card2, borderRadius: 8, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.title))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: clearExpiredPending, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Clear them"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: () => setExpiredPending([]), style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Keep them"))), headsUpEvent && !timerTask && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "12px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 300, display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, /* @__PURE__ */ React.createElement("strong", null, headsUpEvent.title), " starts soon \u2014 ", fmtRolloverClock(headsUpEvent.time), "."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {

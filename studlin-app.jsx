@@ -4319,11 +4319,19 @@ function normalizeOutlineDraft(outline){
 // upstream MATERIAL_TEXT_CAP) since combined multi-file material can
 // still run large and this call only needs enough to ground short focus
 // lines, not the whole document.
-async function proposeSessionFocuses(examTitle,materialText,sessionCount,subject){
+// weakTopicsFocus (optional, 5th param): the real regeneration case --
+// session 1's actual diagnostic quiz revealed specific weak topics
+// (wrongTopicsFor's output, joined into one string), so sessions 2+'s
+// labels should weight toward those instead of generating fresh generic
+// labels. Every existing caller omits it -- unused means byte-identical
+// prompt/behavior to before this param existed, same shape
+// generateQuizFromText's own `focus` param already established.
+async function proposeSessionFocuses(examTitle,materialText,sessionCount,subject,weakTopicsFocus){
   if(!materialText||!materialText.trim())return null;
   if(!canAddSessionFocus())return null;
   try{
-    const prompt="A student has "+sessionCount+" spaced study session(s) counting down to their exam: \""+examTitle+"\""+(subject?" ("+subject+")":"")+". "+
+    const weakTopicsInstruction=weakTopicsFocus?" The student's first pass showed these topics need extra attention: "+weakTopicsFocus+". Weight the session labels toward those, without ignoring the rest of the material entirely.":"";
+    const prompt="A student has "+sessionCount+" spaced study session(s) counting down to their exam: \""+examTitle+"\""+(subject?" ("+subject+")":"")+"."+weakTopicsInstruction+" "+
       "Here's their study material:\n\n"+materialText.slice(0,6000)+"\n\n"+
       "Write exactly "+sessionCount+" short study-focus labels, one per session, in the order the sessions happen (earliest first, working toward full review by the last one). "+
       "Keep each one under 8 words -- a quick label a student can read in passing, like \"Ch 4-6: cell structure\" or \"Unit 3 practice problems\", not a full descriptive sentence. "+
@@ -5931,6 +5939,20 @@ function computeReviewDates(examDateKey,todayKey,desiredCount){
 // number can never overwhelm the tuned confidence/importance signal it's
 // nudging. Missing (the common case for a manually-entered exam) is a
 // pure 0 no-op.
+// "banana" fix (scoped 2026-09-02, built 2026-09-03): the scheduling
+// engine used to treat every exam's urgency in total isolation -- two
+// exams 3 days apart compound real pressure, but nothing reflected that,
+// so a session could get repeatedly evicted just for being a few days
+// further out than a competing exam. Same bounded-nudge shape as
+// gradeWeightNudgeFor/urgencyNudge below: 0 when there's nothing nearby
+// (every pre-existing exam, and every call site that doesn't pass a
+// count, computes byte-identically to before), capped at the same ±0.15
+// the other two nudges use so no single signal can overwhelm the tuned
+// base formula.
+const EXAM_CLUSTER_WINDOW_DAYS=3;
+function examClusterNudgeFor(nearbyExamCount){
+  return nearbyExamCount>0?Math.min(0.15,nearbyExamCount*0.08):0;
+}
 function gradeWeightNudgeFor(gradeWeightPercent){
   return gradeWeightPercent!=null?Math.max(-0.15,Math.min(0.15,(gradeWeightPercent-20)/200)):0;
 }
@@ -9655,11 +9677,10 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
         // real multi-session, material-grounded plan is framed as an
         // actual first pass through the material, not a topic-specific
         // block -- there's nothing meaningful to target yet on session 1,
-        // that's the whole point. isDiagnosticFirstPass is a real data
-        // marker for the next phase (a check after this session completes,
-        // regenerating sessions 2+ from what it reveals) -- not consumed
-        // anywhere yet, deliberately additive so this ships without
-        // promising the follow-through it doesn't have yet.
+        // that's the whole point. isDiagnosticFirstPass now drives a real
+        // check when this session completes (App()'s handleTaskCompleted/
+        // startDiagnosticQuiz, 2026-09-03), which regenerates sessions 2+'s
+        // focus from what it reveals -- see regenerateRemainingSessionFocuses.
         const isFirstPassSession=i===0&&placedSessions.length>1;
         if(isFirstPassSession){extra.isDiagnosticFirstPass=true;}
         if(weavePE&&isLast)notes=weaveCards?"Review flashcards, then take your practice exam.":"Take your practice exam for this material.";
@@ -14771,7 +14792,7 @@ const SESSION_PRIORITY_URGENCY_HORIZON_DAYS=21;
 // stored exam event -- callers that only have those four raw fields in
 // scope (buildExamSessionEvents) can pass a plain object built on the
 // spot rather than needing the real exam record.
-function computeSessionPriority(examLike,todayKey){
+function computeSessionPriority(examLike,todayKey,nearbyExamCount){
   if(!examLike)return 500;
   const today=todayKey||dayKey();
   const difficultyNorm=normalizeTaskVal(examLike.difficulty,5);
@@ -14792,7 +14813,8 @@ function computeSessionPriority(examLike,todayKey){
   // urgency by up to the same ±0.15 gradeWeightNudge caps itself at, never
   // fully overriding the real days-until-exam signal.
   const urgencyNudge=examLike.priority!=null?Math.max(-0.15,Math.min(0.15,(examLike.priority-500)/2000)):0;
-  const urgency=Math.max(0,Math.min(1,dateUrgency+urgencyNudge));
+  const clusterNudge=examClusterNudgeFor(nearbyExamCount);
+  const urgency=Math.max(0,Math.min(1,dateUrgency+urgencyNudge+clusterNudge));
   // importanceLevel (new, richer signal) is checked first when present;
   // anything without it (every exam that predates this field) computes
   // byte-identically to before via the legacy examWeight table.
@@ -14942,7 +14964,11 @@ function restampSessionPriorities(examId){
   const all=lsGet("events",[]);
   const exam=all.find(e=>e.id===examId);
   if(!exam)return;
-  const sessionPriority=computeSessionPriority(exam,dayKey());
+  // Exam-clustering nudge (see examClusterNudgeFor) -- how many other
+  // still-pending exams sit within EXAM_CLUSTER_WINDOW_DAYS of this one.
+  const nearbyExamCount=exam.date?all.filter(e=>e.kind==="exam"&&e.id!==examId&&e.status!=="done"&&e.date&&
+    Math.abs(Math.round((new Date(e.date+"T12:00:00")-new Date(exam.date+"T12:00:00"))/86400000))<=EXAM_CLUSTER_WINDOW_DAYS).length:0;
+  const sessionPriority=computeSessionPriority(exam,dayKey(),nearbyExamCount);
   const next=all.map(e=>{
     // The exam's own priority field (read by the exam list's "Urgency"
     // column) used to only ever get set to a hardcoded 5 at creation and
@@ -14976,7 +15002,16 @@ function buildExamSessionEvents(examTitle,examDate,subject,count,idPrefix,workin
   // .examWeight/.confidenceLog addition to the call) or genuinely doesn't
   // have them (a brand-new exam with no history yet), in which case
   // computeSessionPriority's own defaults apply cleanly.
-  const sessionPriority=computeSessionPriority({difficulty,examWeight,confidenceLog,date:examDate},dayKey());
+  // Exam-clustering nudge (see examClusterNudgeFor) -- working already
+  // includes the exam being scheduled (every real caller merges it in
+  // before calling this), so self-exclusion has to go by date+title match
+  // rather than id (this function never receives the exam's own id) --
+  // only under-counts by 1 in the rare case of two same-titled exams on
+  // the same date, never over-counts.
+  const nearbyExamCount=working.filter(e=>e.kind==="exam"&&e.status!=="done"&&e.date&&
+    !(e.date===examDate&&e.title===examTitle)&&
+    Math.abs(Math.round((new Date(e.date+"T12:00:00")-new Date(examDate+"T12:00:00"))/86400000))<=EXAM_CLUSTER_WINDOW_DAYS).length;
+  const sessionPriority=computeSessionPriority({difficulty,examWeight,confidenceLog,date:examDate},dayKey(),nearbyExamCount);
   let localWorking=working;
   const built=[];
   dates.forEach((date,si)=>{
@@ -23018,10 +23053,8 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
       // Same real first-pass marker Prep's own Build Study Plan flow
       // already stamps -- session 0 of a real multi-session,
       // material-grounded plan is a genuine first pass, not a
-      // topic-specific block. isDiagnosticFirstPass stays an inert data
-      // marker here too (same deliberate scoping as Prep's own version --
-      // the actual post-completion check/regeneration is separate,
-      // follow-up work, not built yet).
+      // topic-specific block. Now drives a real check on completion (see
+      // App()'s handleTaskCompleted/startDiagnosticQuiz).
       if(materialCharCount>0&&newExamSessions.length>1){
         newExamSessions=newExamSessions.map((s,i)=>i===0?{...s,isDiagnosticFirstPass:true,notes:"First pass — read through your material for "+(subject||title.trim())+"."}:s);
       }
@@ -26480,9 +26513,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         const {sessionCount:hoursAdjSessionCount,sessionDuration:hoursAdjSessionDuration}=applyHoursTarget(evExamPlan.sessionCount||planParams.sessionCount,planParams.sessionDuration,parseFloat(evHoursTarget));
         let sessions=buildExamSessionEvents(evTitle.trim(),slot.date,subj,hoursAdjSessionCount,"addtask-exam-"+examTask.id,events.concat([examTask]),routines,getSchedulePreferences(),{dueEventId:examTask.id},planParams.difficultyValue,hoursAdjSessionDuration,examTask.examWeight,examTask.confidenceLog);
         // Same real first-pass marker Prep's own Build Study Plan flow and
-        // EventDetailModal's exam-plan section already stamp -- inert data
-        // marker for now, the post-completion check/regeneration is
-        // separate follow-up work, not built yet.
+        // EventDetailModal's exam-plan section already stamp -- now drives
+        // a real check on completion (see App()'s handleTaskCompleted/
+        // startDiagnosticQuiz).
         if(materialCharCount>0&&sessions.length>1){
           sessions=sessions.map((s,i)=>i===0?{...s,isDiagnosticFirstPass:true,notes:"First pass — read through your material for "+(subj||evTitle.trim())+"."}:s);
         }
@@ -32567,6 +32600,26 @@ function App() {
   // new branch called out inline.
   const [examCheckIn,setExamCheckIn]=useState(null);
   const [examPrepSuggestion,setExamPrepSuggestion]=useState(null);
+  // The real "smart" half of Smart Study Plan Flow -- isDiagnosticFirstPass
+  // (stamped on session 1 of any real multi-session, material-grounded
+  // exam plan by all 3 creation flows) was inert until now. When that
+  // session completes, this replaces the plain "how confident are you"
+  // self-report with a real short quiz -- reusing generateQuizFromText as
+  // a genuine check on what a real first pass actually surfaced, instead
+  // of asking the student to self-report before they've even reviewed the
+  // material once. null | {stage:"loading"|"taking"|"done", task,
+  // examEvent, materialText, questions, idx, picked, answers, score,
+  // total, wrongTopics}. Deliberately independent of Prep's own takingQuiz
+  // state (10070ish) -- same visual idea, not a shared component, since
+  // refactoring Prep's already-working practice-exam UI for this would be
+  // real regression risk for no benefit here.
+  const [diagnosticQuiz,setDiagnosticQuiz]=useState(null);
+  // Tracks which task's diagnostic quiz is actually still live -- refs
+  // (unlike the diagnosticQuiz state itself, captured stale in
+  // startDiagnosticQuiz's async closure) always read current. Lets the
+  // in-flight generateQuizFromText call notice the student already closed
+  // the loading modal and skip resurrecting it once it resolves.
+  const diagnosticQuizTaskIdRef=useRef(null);
   // Same "how'd it go" idea as examCheckIn above, but for Attack-Block/
   // project-linked tasks -- these get the richer outline+percent check-in
   // (ProjectCheckInModal) instead of the plain solid/okay/shaky one, since
@@ -32622,7 +32675,90 @@ function App() {
     // a materialized daily habit (materializeHabitsForDate) also carries
     // kind:"study block", but "how'd it go, how confident do you feel"
     // has no real meaning for a recurring habit with no material at all.
-    else if(task.kind==="study block"&&!task.routineId)setExamCheckIn(task);
+    else if(task.kind==="study block"&&!task.routineId){
+      const examEvent=task.dueEventId?events.find(e=>e.id===task.dueEventId):null;
+      if(task.isDiagnosticFirstPass){
+        // Clear the marker the instant it's seen, unconditionally --
+        // regardless of whether the quiz path below actually runs. This is
+        // what makes the diagnostic check genuinely single-fire: uncrossing
+        // this session's completion (uncrossDone/uncrossEventDone) resets
+        // status back to "pending" but never touched this marker, so
+        // redoing session 1 without this clear would re-trigger the quiz
+        // every time.
+        lsSet("events",lsGet("events",[]).map(e=>e.id===task.id?{...e,isDiagnosticFirstPass:false}:e));
+      }
+      const materialText=examEvent?(examEvent.sourceMaterials||[]).filter(f=>f.text&&f.text.trim()).map(f=>f.text).join("\n\n"):"";
+      if(task.isDiagnosticFirstPass&&examEvent&&materialText.trim()&&canGenQuiz()){
+        startDiagnosticQuiz(task,examEvent,materialText);
+      }else{
+        setExamCheckIn(task);
+      }
+    }
+  };
+  // Generates the real "let's see what needs another look" check that
+  // replaces the plain confidence self-report when session 1 of a real,
+  // material-grounded plan just finished. No `focus` param on this
+  // generateQuizFromText call -- this IS the first check, not a follow-up
+  // (that param stays reserved for a genuine second-pass quiz elsewhere).
+  // Falls back to the plain examCheckIn self-report on any failure --
+  // never blocks task completion on an AI call succeeding.
+  const startDiagnosticQuiz=async(task,examEvent,materialText)=>{
+    diagnosticQuizTaskIdRef.current=task.id;
+    setDiagnosticQuiz({stage:"loading",task,examEvent,materialText});
+    const minDelay=new Promise(r=>setTimeout(r,900));
+    const [questions]=await Promise.all([generateQuizFromText(materialText,examEvent.subject,8),minDelay]);
+    // Guard against the student closing the loading modal before this
+    // resolves -- without this, the async response would resurrect a
+    // modal the student already dismissed. diagnosticQuizTaskIdRef (unlike
+    // the diagnosticQuiz state itself) always reads current, so this
+    // correctly notices a dismiss that happened after this call started.
+    if(diagnosticQuizTaskIdRef.current!==task.id)return;
+    if(!questions||questions.length===0){setDiagnosticQuiz(null);setExamCheckIn(task);return;}
+    recordQuizGen();
+    setDiagnosticQuiz({stage:"taking",task,examEvent,materialText,questions,idx:0,picked:null,answers:Array(questions.length).fill(null)});
+  };
+  // Runs once the last question is answered -- same "read current state
+  // straight from closure" pattern Prep's own finishPracticeExam uses
+  // (10092), safe here for the same reason: this only ever fires from the
+  // "See results" click, a separate click from the one that recorded the
+  // final answer, so the component has already re-rendered with it by
+  // then. Scores the quiz, maps the result onto the real 1-5
+  // EXAM_CHECKIN_SCALE (not the old shaky/okay/solid strings), and reuses
+  // submitExamCheckIn's existing pipeline (confidenceLog/
+  // restampSessionPriorities/evaluateExamPrepAdjustment) instead of
+  // duplicating it.
+  const finishDiagnosticQuiz=()=>{
+    if(!diagnosticQuiz)return;
+    const {task,examEvent,materialText,questions,answers}=diagnosticQuiz;
+    const score=questions.reduce((s,q,i)=>s+(answers[i]===q.answerIndex?1:0),0);
+    const total=questions.length;
+    const wrongTopics=wrongTopicsFor(questions,answers);
+    const pct=total>0?score/total:0;
+    const rating=pct>=0.95?5:pct>=0.8?4:pct>=0.6?3:pct>=0.4?2:1;
+    submitExamCheckIn(rating,task);
+    if(wrongTopics.length>0)regenerateRemainingSessionFocuses(examEvent,materialText,wrongTopics);
+    setDiagnosticQuiz(d=>d&&({...d,stage:"done",score,total,wrongTopics}));
+  };
+  // The other half of the diagnostic loop: feeds what session 1's real
+  // check actually revealed into sessions 2+'s focus, instead of leaving
+  // them as whatever generic labels got written at plan-creation time.
+  // Same fire-and-forget lsGet/map-by-id/lsSet+setEvents shape already
+  // used 3x elsewhere in this file for proposeSessionFocuses.
+  const regenerateRemainingSessionFocuses=(examEvent,materialText,wrongTopics)=>{
+    if(!materialText.trim())return;
+    const pending=lsGet("events",[])
+      .filter(e=>e.dueEventId===examEvent.id&&e.isExamPrepSession&&e.status==="pending"&&!e.deckId&&!e.practiceExamId)
+      .sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
+    if(pending.length===0)return;
+    proposeSessionFocuses(examEvent.title,materialText,pending.length,examEvent.subject,wrongTopics.join(", ")).then(focuses=>{
+      if(!focuses)return;
+      const ids=pending.map(s=>s.id);
+      const patched=lsGet("events",[]).map(e=>{
+        const idx=ids.indexOf(e.id);
+        return idx>=0&&focuses[idx]?{...e,notes:focuses[idx]}:e;
+      });
+      lsSet("events",patched);
+    });
   };
   // Queues an insight-style nudge to storage instead of showing it live
   // while a Catch Me Up recovery banner is pending, per Part 2's "insight
@@ -32653,16 +32789,21 @@ function App() {
     if(latest.prepPromptBatch)setPrepPromptBatch(latest.prepPromptBatch);
     lsSet("queuedInsightNudges",[]);
   };
-  const submitExamCheckIn=(rating)=>{
-    if(!examCheckIn)return;
+  // taskOverride: the diagnostic-quiz flow passes the just-completed task
+  // directly and owns its own diagnosticQuiz modal state instead (skips
+  // setExamCheckIn(null) below) -- every existing caller omits it and
+  // keeps reading/clearing examCheckIn exactly as before.
+  const submitExamCheckIn=(rating,taskOverride)=>{
+    const ci=taskOverride||examCheckIn;
+    if(!ci)return;
     // Always upgrades this session's own completionLog row with the
     // rating (see applyCheckInRating) so the scheduling-reliability signal
     // reflects how it actually went, not just that it got marked done —
     // this part applies to every flexible study block, exam-linked or not.
-    applyCheckInRating(examCheckIn.id,rating);
+    applyCheckInRating(ci.id,rating);
     const events=lsGet("events",[]);
-    const examEvent=examCheckIn.dueEventId?events.find(e=>e.id===examCheckIn.dueEventId):null;
-    setExamCheckIn(null);
+    const examEvent=ci.dueEventId?events.find(e=>e.id===ci.dueEventId):null;
+    if(!taskOverride)setExamCheckIn(null);
     // Everything below here is exam-prep-specific pacing (shorten/drop/
     // pull-closer remaining sessions) — a plain (non-exam-linked) study
     // block has nothing to pace, so it stops here.
@@ -34378,6 +34519,60 @@ function App() {
             <Btn key={opt.value} variant="ghost" onClick={()=>submitExamCheckIn(opt.value)} style={{width:"100%",justifyContent:"center"}}>{opt.label}</Btn>
           ))}
         </div>
+      </Modal>
+      {/* The real "smart" half of Smart Study Plan Flow -- replaces the
+          plain confidence self-report above with an actual check, only
+          when session 1 of a real, material-grounded plan just finished.
+          Independent modal/state from Prep's own takingQuiz (see
+          diagnosticQuiz's own comment for why). */}
+      <Modal open={!!diagnosticQuiz} onClose={()=>{diagnosticQuizTaskIdRef.current=null;setDiagnosticQuiz(null);}} title={diagnosticQuiz?.examEvent?.title||"Quick check"} width={420}>
+        {diagnosticQuiz&&diagnosticQuiz.stage==="loading"&&(
+          <ExtractionProgress fileName={diagnosticQuiz.examEvent.title} stage="analyze" analyzeLabel="Let's see what needs another look..." />
+        )}
+        {diagnosticQuiz&&diagnosticQuiz.stage==="taking"&&(()=>{
+          const q=diagnosticQuiz.questions[diagnosticQuiz.idx];
+          const picked=diagnosticQuiz.picked;
+          const isLast=diagnosticQuiz.idx>=diagnosticQuiz.questions.length-1;
+          return(
+            <div>
+              <div style={{fontSize:11,color:T.muted,marginBottom:8}}>Question {diagnosticQuiz.idx+1} of {diagnosticQuiz.questions.length}</div>
+              <div style={{fontSize:14,fontWeight:600,color:T.white,marginBottom:14,lineHeight:1.5}}>{q.q}</div>
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {q.choices.map((opt,i)=>{
+                  const show=picked!=null;
+                  const isCorrect=i===q.answerIndex;
+                  let border=T.border,bg=T.card2,color=T.text;
+                  if(show&&isCorrect){border=T.teal;bg=T.teal+"18";color=T.teal;}
+                  else if(show&&picked===i&&!isCorrect){border=T.red;bg=T.red+"14";color=T.red;}
+                  return(
+                    <button key={i} disabled={picked!=null} onClick={()=>setDiagnosticQuiz(d=>({...d,picked:i,answers:d.answers.map((a,ai)=>ai===d.idx?i:a)}))} style={{textAlign:"left",padding:"10px 14px",borderRadius:8,border:`1px solid ${border}`,background:bg,color,cursor:picked!=null?"default":"pointer",fontFamily:T.font,fontSize:13}}>{opt}</button>
+                  );
+                })}
+              </div>
+              {picked!=null&&(
+                <div style={{marginTop:16,display:"flex",justifyContent:"flex-end"}}>
+                  <Btn onClick={()=>{
+                    if(isLast)finishDiagnosticQuiz();
+                    else setDiagnosticQuiz(d=>({...d,idx:d.idx+1,picked:null}));
+                  }}>{isLast?"See results":"Next question →"}</Btn>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+        {diagnosticQuiz&&diagnosticQuiz.stage==="done"&&(
+          <div style={{padding:"12px 0",textAlign:"center"}}>
+            {diagnosticQuiz.wrongTopics&&diagnosticQuiz.wrongTopics.length>0?(
+              <>
+                <div style={{fontSize:14,fontWeight:600,color:T.text,marginBottom:8,lineHeight:1.5}}>You've got a good handle on most of this.</div>
+                <div style={{fontSize:12.5,color:T.muted,marginBottom:16,lineHeight:1.5}}>A closer look coming up for: {diagnosticQuiz.wrongTopics.join(", ")}</div>
+              </>
+            ):(
+              <div style={{fontSize:14,fontWeight:600,color:T.text,marginBottom:16,lineHeight:1.5}}>Solid first pass -- nothing stood out as shaky.</div>
+            )}
+            <Btn onClick={()=>{diagnosticQuizTaskIdRef.current=null;setDiagnosticQuiz(null);}} style={{width:"100%",justifyContent:"center"}}>Done</Btn>
+          </div>
+        )}
       </Modal>
       <ProjectCheckInModal taskId={projectCheckInTaskId} onClose={()=>setProjectCheckInTaskId(null)} onToast={(msg)=>{setDashToast(msg);setTimeout(()=>setDashToast(""),2800);}} />
       {bottomRightSlot==="suggestion"&&(
