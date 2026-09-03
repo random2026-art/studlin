@@ -5511,7 +5511,6 @@ function StudlinPrep({ setActive = () => {
   const [buildPlanOverrides, setBuildPlanOverrides] = useState([]);
   const [buildPlanConfidence, setBuildPlanConfidence] = useState("okay");
   const [buildPlanMaterialOpen, setBuildPlanMaterialOpen] = useState(false);
-  const [buildPlanFineTuneOpen, setBuildPlanFineTuneOpen] = useState(false);
   const [manualSessionRows, setManualSessionRows] = useState([]);
   const addManualSessionRow = () => setManualSessionRows((rows) => [...rows, { text: "", date: "", time: "", duration: 25 }]);
   const openManualSessions = () => {
@@ -5738,7 +5737,6 @@ function StudlinPrep({ setActive = () => {
     setBuildPlanHoursTarget("");
     setBuildPlanFocuses([]);
     setBuildPlanMaterialOpen(!hasMaterial);
-    setBuildPlanFineTuneOpen(false);
     const log = exam.confidenceLog || [];
     setBuildPlanConfidence(log.length > 0 ? confidenceZoneOf(log[log.length - 1]) : "okay");
     const hasSessions = lsGet("events", []).some((e) => e.dueEventId === exam.id);
@@ -5755,7 +5753,6 @@ function StudlinPrep({ setActive = () => {
     setBuildPlanWeavePE(true);
     setBuildPlanHoursTarget("");
     setBuildPlanFocuses([]);
-    setBuildPlanFineTuneOpen(false);
     setManualSessionRows([]);
   };
   const persistBuildPlanMaterial = () => {
@@ -6780,30 +6777,17 @@ function StudlinPrep({ setActive = () => {
         setFileTexts((prev) => [...prev, { name: "Pasted text", ...finalizeExtractedText(pasteText) }]);
         setPasteText("");
         setPasteMode(false);
-      }, disabled: !pasteText.trim(), style: { marginTop: 8, width: "100%", justifyContent: "center", opacity: pasteText.trim() ? 1 : 0.45 } }, "Add pasted text")), fileTexts.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 } }, fileTexts.map((f) => /* @__PURE__ */ React.createElement("div", { key: f.name, style: { display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 12, padding: "6px 10px", background: T.card2, borderRadius: 8, gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 } }, f.name), /* @__PURE__ */ React.createElement("button", { onClick: () => removePrepFile(f.name), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 14, lineHeight: 1, flexShrink: 0 } }, "\xD7")))), (fileTexts.length > 0 || materialLinks.length > 0) && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setBuildPlanMaterialOpen(false), style: { background: "none", border: "none", color: T.muted, fontSize: 11.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, "Done"))), /* @__PURE__ */ React.createElement("div", { style: { borderTop: `1px solid ${T.border}`, paddingTop: 12 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setBuildPlanFineTuneOpen((o) => !o), style: { display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: T.font, fontSize: 12, fontWeight: 600, color: T.muted } }, /* @__PURE__ */ React.createElement("span", { style: { display: "inline-block", transition: "transform 0.15s", transform: buildPlanFineTuneOpen ? "rotate(90deg)" : "none" } }, "\u203A"), "Fine-tune (optional)"), buildPlanFineTuneOpen && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12, display: "flex", flexDirection: "column", gap: 10 } }, buildPlanExam.examType && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, marginBottom: 6 } }, "Importance"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6 } }, [["minor", "Minor"], ["moderate", "Moderate"], ["major", "Major"], ["critical", "Critical"]].map(([v, label]) => {
-        const active = (buildPlanExam.importanceLevel || "moderate") === v;
-        return /* @__PURE__ */ React.createElement(
-          "button",
-          {
-            key: v,
-            type: "button",
-            onClick: () => patchExam(buildPlanExam.id, { importanceLevel: v, examWeight: examWeightFromImportance(v) }),
-            style: {
-              flex: 1,
-              padding: "6px",
-              borderRadius: 7,
-              fontSize: 11.5,
-              fontWeight: 600,
-              cursor: "pointer",
-              fontFamily: T.font,
-              background: active ? T.lime + "14" : T.card2,
-              color: active ? T.lime : T.muted,
-              border: `1px solid ${active ? T.lime + "44" : T.border}`
-            }
-          },
-          label
-        );
-      }))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11.5, color: T.muted } }, "% of grade (if you know it):"), /* @__PURE__ */ React.createElement(
+      }, disabled: !pasteText.trim(), style: { marginTop: 8, width: "100%", justifyContent: "center", opacity: pasteText.trim() ? 1 : 0.45 } }, "Add pasted text")), fileTexts.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 } }, fileTexts.map((f) => /* @__PURE__ */ React.createElement("div", { key: f.name, style: { display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 12, padding: "6px 10px", background: T.card2, borderRadius: 8, gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 } }, f.name), /* @__PURE__ */ React.createElement("button", { onClick: () => removePrepFile(f.name), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 14, lineHeight: 1, flexShrink: 0 } }, "\xD7")))), (fileTexts.length > 0 || materialLinks.length > 0) && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setBuildPlanMaterialOpen(false), style: { background: "none", border: "none", color: T.muted, fontSize: 11.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, "Done"))), /* @__PURE__ */ React.createElement("div", { style: { borderTop: `1px solid ${T.border}`, paddingTop: 12, display: "flex", flexDirection: "column", gap: 10 } }, buildPlanExam.examType && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11.5, color: T.muted } }, "Importance:"), /* @__PURE__ */ React.createElement(
+        CustomSelect,
+        {
+          boxed: true,
+          fontSize: 11.5,
+          minWidth: 100,
+          value: buildPlanExam.importanceLevel || "moderate",
+          onChange: (v) => patchExam(buildPlanExam.id, { importanceLevel: v, examWeight: examWeightFromImportance(v) }),
+          options: [{ value: "minor", label: "Minor" }, { value: "moderate", label: "Moderate" }, { value: "major", label: "Major" }, { value: "critical", label: "Critical" }]
+        }
+      )), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11.5, color: T.muted } }, "% of grade (if you know it):"), /* @__PURE__ */ React.createElement(
         Input,
         {
           type: "number",
@@ -6815,7 +6799,7 @@ function StudlinPrep({ setActive = () => {
           placeholder: "0",
           style: { width: 56, fontSize: 11.5, padding: "5px 8px" }
         }
-      ))), /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanGenFlashcards, onChange: (e) => setBuildPlanGenFlashcards(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, "Also generate flashcards")), buildPlanGenFlashcards && /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginLeft: 24 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanWeaveCards, onChange: (e) => setBuildPlanWeaveCards(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Review them as part of each session")), /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanGenPE, onChange: (e) => setBuildPlanGenPE(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, "Also generate a practice exam")), buildPlanGenPE && /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginLeft: 24 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanWeavePE, onChange: (e) => setBuildPlanWeavePE(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Use my last session to take it")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Hours to study for this (optional):"), /* @__PURE__ */ React.createElement(Input, { type: "number", min: 0, step: 0.5, value: buildPlanHoursTarget, onChange: (e) => setBuildPlanHoursTarget(e.target.value), placeholder: "0", style: { width: 60 } })))));
+      ))), /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanGenFlashcards, onChange: (e) => setBuildPlanGenFlashcards(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, "Also generate flashcards")), buildPlanGenFlashcards && /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginLeft: 24 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanWeaveCards, onChange: (e) => setBuildPlanWeaveCards(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Review them as part of each session")), /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanGenPE, onChange: (e) => setBuildPlanGenPE(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, "Also generate a practice exam")), buildPlanGenPE && /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginLeft: 24 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanWeavePE, onChange: (e) => setBuildPlanWeavePE(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Use my last session to take it")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Hours to study for this (optional):"), /* @__PURE__ */ React.createElement(Input, { type: "number", min: 0, step: 0.5, value: buildPlanHoursTarget, onChange: (e) => setBuildPlanHoursTarget(e.target.value), placeholder: "0", style: { width: 60 } }))));
     })(),
     buildPlanExam && buildPlanStep === "generating" && // The real "thinking" pause -- see generatePreview's minDelay/
     // Promise.all. Nothing about the plan (session count, duration,

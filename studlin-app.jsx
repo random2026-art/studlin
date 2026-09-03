@@ -8998,7 +8998,6 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   // wants a plan sees almost nothing to fill in. Same "advanced, optional,
   // real skip" shape the Calendar wizard's own personalize step already
   // uses elsewhere in this file.
-  const [buildPlanFineTuneOpen,setBuildPlanFineTuneOpen]=useState(false);
   // "Create manually" -- the other half of the choice step (Phase 4).
   // Each row is {text, date, time, duration}: date+time filled in creates
   // a normally-scheduled session right away (validated the same
@@ -9360,7 +9359,6 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
     setBuildPlanPreview(null);
     setBuildPlanGenFlashcards(false);setBuildPlanGenPE(false);setBuildPlanWeaveCards(true);setBuildPlanWeavePE(true);setBuildPlanHoursTarget("");setBuildPlanFocuses([]);
     setBuildPlanMaterialOpen(!hasMaterial);
-    setBuildPlanFineTuneOpen(false);
     // Pre-fill confidence from the exam's own history -- real correction:
     // this used to reset to a blank slate every time, so "Redo study
     // plan" never actually showed you what you'd said last time.
@@ -9376,7 +9374,6 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   const closeBuildPlan=()=>{
     setBuildPlanExamId(null);setBuildPlanStep("choice");setBuildPlanGeneric(false);setBuildPlanPreview(null);
     setBuildPlanGenFlashcards(false);setBuildPlanGenPE(false);setBuildPlanWeaveCards(true);setBuildPlanWeavePE(true);setBuildPlanHoursTarget("");setBuildPlanFocuses([]);
-    setBuildPlanFineTuneOpen(false);
     setManualSessionRows([]);
   };
   // Persists whatever material the student added in the modal's own
@@ -11288,65 +11285,47 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                 </div>
               )}
             </div>
-            <div style={{borderTop:`1px solid ${T.border}`,paddingTop:12}}>
-              {/* Collapsed by default -- importance already has a sensible
-                  default from exam type, hours/flashcard/PE all default to
-                  off/blank/no-op. A student who just wants a plan sees one
-                  button here, not five more fields. */}
-              <button type="button" onClick={()=>setBuildPlanFineTuneOpen(o=>!o)} style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"none",padding:0,cursor:"pointer",fontFamily:T.font,fontSize:12,fontWeight:600,color:T.muted}}>
-                <span style={{display:"inline-block",transition:"transform 0.15s",transform:buildPlanFineTuneOpen?"rotate(90deg)":"none"}}>›</span>
-                Fine-tune (optional)
-              </button>
-              {buildPlanFineTuneOpen&&(
-                <div style={{marginTop:12,display:"flex",flexDirection:"column",gap:10}}>
-                  {buildPlanExam.examType&&(<>
-                    <div>
-                      <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:6}}>Importance</div>
-                      <div style={{display:"flex",gap:6}}>
-                        {[["minor","Minor"],["moderate","Moderate"],["major","Major"],["critical","Critical"]].map(([v,label])=>{
-                          const active=(buildPlanExam.importanceLevel||"moderate")===v;
-                          return (
-                            <button key={v} type="button" onClick={()=>patchExam(buildPlanExam.id,{importanceLevel:v,examWeight:examWeightFromImportance(v)})}
-                              style={{flex:1,padding:"6px",borderRadius:7,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,
-                                background:active?T.lime+"14":T.card2,color:active?T.lime:T.muted,
-                                border:`1px solid ${active?T.lime+"44":T.border}`}}>{label}</button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                    <div style={{display:"flex",alignItems:"center",gap:8}}>
-                      <span style={{fontSize:11.5,color:T.muted}}>% of grade (if you know it):</span>
-                      <Input type="number" min={0} max={100} step={1} value={buildPlanExam.gradeWeightPercent??""}
-                        onChange={e=>patchExam(buildPlanExam.id,{gradeWeightPercent:e.target.value===""?null:parseFloat(e.target.value)})}
-                        placeholder="0" style={{width:56,fontSize:11.5,padding:"5px 8px"}} />
-                    </div>
-                  </>)}
-                  <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
-                    <input type="checkbox" checked={buildPlanGenFlashcards} onChange={e=>setBuildPlanGenFlashcards(e.target.checked)} />
-                    <span style={{fontSize:12.5,color:T.text}}>Also generate flashcards</span>
-                  </label>
-                  {buildPlanGenFlashcards&&(
-                    <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginLeft:24}}>
-                      <input type="checkbox" checked={buildPlanWeaveCards} onChange={e=>setBuildPlanWeaveCards(e.target.checked)} />
-                      <span style={{fontSize:12,color:T.muted}}>Review them as part of each session</span>
-                    </label>
-                  )}
-                  <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
-                    <input type="checkbox" checked={buildPlanGenPE} onChange={e=>setBuildPlanGenPE(e.target.checked)} />
-                    <span style={{fontSize:12.5,color:T.text}}>Also generate a practice exam</span>
-                  </label>
-                  {buildPlanGenPE&&(
-                    <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginLeft:24}}>
-                      <input type="checkbox" checked={buildPlanWeavePE} onChange={e=>setBuildPlanWeavePE(e.target.checked)} />
-                      <span style={{fontSize:12,color:T.muted}}>Use my last session to take it</span>
-                    </label>
-                  )}
+            <div style={{borderTop:`1px solid ${T.border}`,paddingTop:12,display:"flex",flexDirection:"column",gap:10}}>
+              {buildPlanExam.examType&&(
+                <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{fontSize:11.5,color:T.muted}}>Importance:</span>
+                    <CustomSelect boxed fontSize={11.5} minWidth={100} value={buildPlanExam.importanceLevel||"moderate"}
+                      onChange={v=>patchExam(buildPlanExam.id,{importanceLevel:v,examWeight:examWeightFromImportance(v)})}
+                      options={[{value:"minor",label:"Minor"},{value:"moderate",label:"Moderate"},{value:"major",label:"Major"},{value:"critical",label:"Critical"}]} />
+                  </div>
                   <div style={{display:"flex",alignItems:"center",gap:8}}>
-                    <span style={{fontSize:12,color:T.muted}}>Hours to study for this (optional):</span>
-                    <Input type="number" min={0} step={0.5} value={buildPlanHoursTarget} onChange={e=>setBuildPlanHoursTarget(e.target.value)} placeholder="0" style={{width:60}} />
+                    <span style={{fontSize:11.5,color:T.muted}}>% of grade (if you know it):</span>
+                    <Input type="number" min={0} max={100} step={1} value={buildPlanExam.gradeWeightPercent??""}
+                      onChange={e=>patchExam(buildPlanExam.id,{gradeWeightPercent:e.target.value===""?null:parseFloat(e.target.value)})}
+                      placeholder="0" style={{width:56,fontSize:11.5,padding:"5px 8px"}} />
                   </div>
                 </div>
               )}
+              <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
+                <input type="checkbox" checked={buildPlanGenFlashcards} onChange={e=>setBuildPlanGenFlashcards(e.target.checked)} />
+                <span style={{fontSize:12.5,color:T.text}}>Also generate flashcards</span>
+              </label>
+              {buildPlanGenFlashcards&&(
+                <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginLeft:24}}>
+                  <input type="checkbox" checked={buildPlanWeaveCards} onChange={e=>setBuildPlanWeaveCards(e.target.checked)} />
+                  <span style={{fontSize:12,color:T.muted}}>Review them as part of each session</span>
+                </label>
+              )}
+              <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
+                <input type="checkbox" checked={buildPlanGenPE} onChange={e=>setBuildPlanGenPE(e.target.checked)} />
+                <span style={{fontSize:12.5,color:T.text}}>Also generate a practice exam</span>
+              </label>
+              {buildPlanGenPE&&(
+                <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginLeft:24}}>
+                  <input type="checkbox" checked={buildPlanWeavePE} onChange={e=>setBuildPlanWeavePE(e.target.checked)} />
+                  <span style={{fontSize:12,color:T.muted}}>Use my last session to take it</span>
+                </label>
+              )}
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:12,color:T.muted}}>Hours to study for this (optional):</span>
+                <Input type="number" min={0} step={0.5} value={buildPlanHoursTarget} onChange={e=>setBuildPlanHoursTarget(e.target.value)} placeholder="0" style={{width:60}} />
+              </div>
             </div>
           </div>
           );
