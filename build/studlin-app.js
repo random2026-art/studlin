@@ -3898,6 +3898,30 @@ function dayWorkloadTier(minutes) {
   if (minutes >= DAY_WORKLOAD_MODERATE_MINS) return "moderate";
   return "light";
 }
+function computeWeekAheadSummary(events, weekStartKey) {
+  const all = events || [];
+  const endDate = /* @__PURE__ */ new Date(weekStartKey + "T12:00:00");
+  endDate.setDate(endDate.getDate() + 6);
+  const endKey = dayKey(endDate);
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const d = /* @__PURE__ */ new Date(weekStartKey + "T12:00:00");
+    d.setDate(d.getDate() + i);
+    const key = dayKey(d);
+    const mins = dayWorkloadMinutes(all.filter((e) => e.date === key && e.status !== "done"));
+    days.push({ date: key, minutes: mins, tier: dayWorkloadTier(mins) });
+  }
+  const dueItems = all.filter((e) => (e.kind === "exam" || e.kind === "deadline") && !e.checklist && !isProjectMarker(e) && e.date && e.date >= weekStartKey && e.date <= endKey).sort((a, b) => a.date.localeCompare(b.date));
+  const busiestDay = days.reduce((a, b) => b.minutes > a.minutes ? b : a, days[0] || { date: weekStartKey, minutes: 0, tier: "light" });
+  const unpreparedExams = dueItems.filter((e) => {
+    if (e.kind !== "exam") return false;
+    const hasSessions = all.some((s) => s.dueEventId === e.id);
+    const hasMaterial = e.sourceMaterials && e.sourceMaterials.length > 0 || e.referenceLinks && e.referenceLinks.length > 0;
+    return !hasSessions && !hasMaterial;
+  });
+  const isChillWeek = dueItems.length === 0 && days.every((d) => d.tier === "light");
+  return { days, dueItems, busiestDay, unpreparedExams, isChillWeek };
+}
 const MONTH_HEAVY_RELATIVE_RATIO = 1.4;
 const MONTH_HEAVY_MIN_ABSOLUTE_MINS = 90;
 function computeMonthHeavyDays(dayMinutesEntries) {
@@ -19174,6 +19198,12 @@ function Dashboard({ setActive, seriousMode = false, rescheduleTask, setReschedu
     }
     return arr;
   })();
+  const nextWeekStartKey = (() => {
+    const d = new Date(weekDays7[0]);
+    d.setDate(d.getDate() + 7);
+    return dayKey(d);
+  })();
+  const weekAheadSummary = computeWeekAheadSummary(allEvents, nextWeekStartKey);
   const doneThisWeek = allEvents.filter((ev) => ev.status === "done" && ev.date >= dayKey(weekDays7[0]));
   const tasksCompletedTotal = doneThisWeek.length;
   const subjMinutes = {};
@@ -19298,7 +19328,13 @@ function Dashboard({ setActive, seriousMode = false, rescheduleTask, setReschedu
     { ln: "Focus hours", vn: fmtH(weeklyFocusMin) || "0m" },
     { ln: "Top subject", vn: topSubjectThisWeek || "\u2014" },
     { ln: "Tasks completed", vn: tasksCompletedTotal }
-  ].map((ins, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { background: "rgba(246,241,230,0.05)", borderRadius: 10, padding: "9px 12px", display: "flex", justifyContent: "space-between", alignItems: "center" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: "rgba(246,241,230,0.55)", fontFamily: T.mono, letterSpacing: "0.04em", textTransform: "uppercase" } }, ins.ln), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.hand, fontSize: 20, fontWeight: 600, color: T.lime } }, ins.vn)))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginTop: 12, marginBottom: 20 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, padding: "5px 10px", background: "rgba(246,241,230,0.08)", border: "1px solid rgba(246,241,230,0.14)", borderRadius: 5, color: T.cream, fontWeight: 600 } }, realStreak, "-day streak")), /* @__PURE__ */ React.createElement("button", { onClick: dismissWrapped, style: { width: "100%", padding: "11px 0", borderRadius: 6, background: T.lime, color: T.ink, border: "none", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: T.font } }, "Done"))));
+  ].map((ins, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { background: "rgba(246,241,230,0.05)", borderRadius: 10, padding: "9px 12px", display: "flex", justifyContent: "space-between", alignItems: "center" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: "rgba(246,241,230,0.55)", fontFamily: T.mono, letterSpacing: "0.04em", textTransform: "uppercase" } }, ins.ln), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.hand, fontSize: 20, fontWeight: 600, color: T.lime } }, ins.vn)))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginTop: 12, marginBottom: 20 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, padding: "5px 10px", background: "rgba(246,241,230,0.08)", border: "1px solid rgba(246,241,230,0.14)", borderRadius: 5, color: T.cream, fontWeight: 600 } }, realStreak, "-day streak")), /* @__PURE__ */ React.createElement("div", { style: { borderTop: "1px solid rgba(246,241,230,0.12)", paddingTop: 16, marginTop: -8, marginBottom: 20 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontFamily: T.mono, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(246,241,230,0.55)", marginBottom: 10 } }, "Your Week Ahead"), weekAheadSummary.isChillWeek ? /* @__PURE__ */ React.createElement("div", { style: { background: "rgba(246,241,230,0.05)", borderRadius: 10, padding: "14px", fontSize: 12.5, color: "rgba(246,241,230,0.8)", lineHeight: 1.5 } }, "Nothing major on the calendar next week -- a good one to get ahead, or just breathe.") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.cream, lineHeight: 1.5, marginBottom: 12 } }, weekAheadSummary.dueItems.length > 0 ? weekAheadSummary.dueItems.length + " thing" + (weekAheadSummary.dueItems.length !== 1 ? "s" : "") + " due next week" : "Nothing due next week", weekAheadSummary.busiestDay.minutes > 0 ? " -- " + (/* @__PURE__ */ new Date(weekAheadSummary.busiestDay.date + "T12:00:00")).toLocaleDateString("en-US", { weekday: "long" }) + " is your busiest day (" + fmtH(weekAheadSummary.busiestDay.minutes) + " scheduled)." : "."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "flex-end", gap: 6, height: 44, marginBottom: 14 } }, weekAheadSummary.days.map((d, i) => {
+    const maxMins = Math.max.apply(null, weekAheadSummary.days.map((x) => x.minutes).concat([1]));
+    const h = d.minutes > 0 ? Math.max(4, Math.round(d.minutes / maxMins * 32)) : 0;
+    const barColor = d.tier === "heavy" ? T.amber : d.tier === "moderate" ? "rgba(246,241,230,0.4)" : "rgba(246,241,230,0.18)";
+    const lab = (/* @__PURE__ */ new Date(d.date + "T12:00:00")).toLocaleDateString("en-US", { weekday: "short" }).slice(0, 1).toUpperCase();
+    return /* @__PURE__ */ React.createElement("div", { key: i, style: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 } }, /* @__PURE__ */ React.createElement("div", { style: { width: "100%", display: "flex", flexDirection: "column", justifyContent: "flex-end", height: 32 } }, d.minutes > 0 ? /* @__PURE__ */ React.createElement("div", { style: { width: "100%", height: h, background: barColor, borderRadius: "3px 3px 0 0" } }) : /* @__PURE__ */ React.createElement("div", { style: { width: "100%", height: 3, background: "rgba(246,241,230,0.10)", borderRadius: 2 } })), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, fontFamily: T.mono, color: "rgba(246,241,230,0.4)" } }, lab));
+  })), weekAheadSummary.dueItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: weekAheadSummary.unpreparedExams.length > 0 ? 12 : 0 } }, weekAheadSummary.dueItems.slice(0, 4).map((item) => /* @__PURE__ */ React.createElement("div", { key: item.id, style: { display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(246,241,230,0.05)", borderRadius: 8, padding: "7px 10px", fontSize: 12 } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.cream, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 } }, item.kind === "exam" ? "EXAM \xB7 " : "", item.title), /* @__PURE__ */ React.createElement("span", { style: { color: "rgba(246,241,230,0.5)", fontFamily: T.mono, fontSize: 10.5, flexShrink: 0, marginLeft: 8 } }, (/* @__PURE__ */ new Date(item.date + "T12:00:00")).toLocaleDateString("en-US", { weekday: "short" }))))), weekAheadSummary.unpreparedExams.map((e) => /* @__PURE__ */ React.createElement("div", { key: e.id, style: { fontSize: 12, color: T.amber, background: "rgba(216,155,60,0.12)", border: `1px solid ${T.amber}44`, borderRadius: 8, padding: "8px 10px", marginTop: 6, lineHeight: 1.4 } }, e.title, " is ", (/* @__PURE__ */ new Date(e.date + "T12:00:00")).toLocaleDateString("en-US", { weekday: "long" }), " and you haven't started studying yet.")))), /* @__PURE__ */ React.createElement("button", { onClick: dismissWrapped, style: { width: "100%", padding: "11px 0", borderRadius: 6, background: T.lime, color: T.ink, border: "none", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: T.font } }, "Done"))));
 }
 function FeedbackPage() {
   const [category, setCategory] = useState(null);

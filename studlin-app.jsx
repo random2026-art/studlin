@@ -6382,6 +6382,39 @@ function dayWorkloadTier(minutes){
   if(minutes>=DAY_WORKLOAD_MODERATE_MINS)return "moderate";
   return "light";
 }
+// Weekly Wrapped's forward-looking half (2026-09-03) -- the existing
+// Sunday/Monday popup only ever recapped the week that just ended; this
+// answers "what's coming" using the exact same dayWorkloadMinutes/
+// dayWorkloadTier the Month grid's own capacity bar already uses, not a
+// new metric. weekStartKey is the upcoming week's Monday (dayKey format).
+// unpreparedExams deliberately checks for a real plan (linked sessions OR
+// attached material), not "has anything been completed yet" -- an exam
+// later in the window with a real plan queued for later days isn't
+// behind just because nothing's happened yet chronologically; one with
+// literally nothing set up at all is the actual signal worth a heads-up.
+function computeWeekAheadSummary(events,weekStartKey){
+  const all=events||[];
+  const endDate=new Date(weekStartKey+"T12:00:00");endDate.setDate(endDate.getDate()+6);
+  const endKey=dayKey(endDate);
+  const days=[];
+  for(let i=0;i<7;i++){
+    const d=new Date(weekStartKey+"T12:00:00");d.setDate(d.getDate()+i);
+    const key=dayKey(d);
+    const mins=dayWorkloadMinutes(all.filter(e=>e.date===key&&e.status!=="done"));
+    days.push({date:key,minutes:mins,tier:dayWorkloadTier(mins)});
+  }
+  const dueItems=all.filter(e=>(e.kind==="exam"||e.kind==="deadline")&&!e.checklist&&!isProjectMarker(e)&&e.date&&e.date>=weekStartKey&&e.date<=endKey)
+    .sort((a,b)=>a.date.localeCompare(b.date));
+  const busiestDay=days.reduce((a,b)=>b.minutes>a.minutes?b:a,days[0]||{date:weekStartKey,minutes:0,tier:"light"});
+  const unpreparedExams=dueItems.filter(e=>{
+    if(e.kind!=="exam")return false;
+    const hasSessions=all.some(s=>s.dueEventId===e.id);
+    const hasMaterial=(e.sourceMaterials&&e.sourceMaterials.length>0)||(e.referenceLinks&&e.referenceLinks.length>0);
+    return !hasSessions&&!hasMaterial;
+  });
+  const isChillWeek=dueItems.length===0&&days.every(d=>d.tier==="light");
+  return {days,dueItems,busiestDay,unpreparedExams,isChillWeek};
+}
 // The Month grid's own capacity bar (see its render site) used to fire
 // off the same fixed DAY_WORKLOAD_HEAVY_MINS threshold above -- but a
 // normal full course load crosses 4 hours scheduled on almost every
@@ -31693,6 +31726,11 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   // Real session activity for the last 7 days
   const allSessions=lsGet("sessions",[]);
   const weekDays7=(()=>{const arr=[];const now=new Date();const dow=(now.getDay()+6)%7;const mon=new Date(now);mon.setDate(now.getDate()-dow);for(let i=0;i<7;i++){const d=new Date(mon);d.setDate(mon.getDate()+i);arr.push(d);}return arr;})();
+  // Weekly Wrapped's forward-looking half -- weekDays7 above is the week
+  // that just ended (Wrapped fires Sunday/Monday evening), so "next week"
+  // starts exactly 7 days after weekDays7's own Monday.
+  const nextWeekStartKey=(()=>{const d=new Date(weekDays7[0]);d.setDate(d.getDate()+7);return dayKey(d);})();
+  const weekAheadSummary=computeWeekAheadSummary(allEvents,nextWeekStartKey);
   // Shared by the Wrapped stat below and the top-subject computation right
   // after it. Replaces the old "Words written" stat, which only counted
   // words from the essay-writing tool specifically -- anyone who'd never
@@ -32055,6 +32093,59 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
           )}
           <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:12,marginBottom:20}}>
             <span style={{fontSize:10.5,padding:"5px 10px",background:"rgba(246,241,230,0.08)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:5,color:T.cream,fontWeight:600}}>{realStreak}-day streak</span>
+          </div>
+          {/* Weekly Wrapped's forward-looking half -- everything above this
+              line recaps the week that just ended; this looks ahead to the
+              one starting tomorrow/today. isChillWeek gets the same soft,
+              encouraging treatment the backward-looking empty-state above
+              already established, rather than an empty section that just
+              vanishes and reads as broken. unpreparedExams is a real,
+              specific heads-up (a plan-less exam this week), not a vague
+              nag -- named exactly what's missing. */}
+          <div style={{borderTop:"1px solid rgba(246,241,230,0.12)",paddingTop:16,marginTop:-8,marginBottom:20}}>
+            <div style={{fontSize:11,fontFamily:T.mono,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)",marginBottom:10}}>Your Week Ahead</div>
+            {weekAheadSummary.isChillWeek?(
+              <div style={{background:"rgba(246,241,230,0.05)",borderRadius:10,padding:"14px",fontSize:12.5,color:"rgba(246,241,230,0.8)",lineHeight:1.5}}>Nothing major on the calendar next week -- a good one to get ahead, or just breathe.</div>
+            ):(<>
+              <div style={{fontSize:12.5,color:T.cream,lineHeight:1.5,marginBottom:12}}>
+                {weekAheadSummary.dueItems.length>0?weekAheadSummary.dueItems.length+" thing"+(weekAheadSummary.dueItems.length!==1?"s":"")+" due next week":"Nothing due next week"}
+                {weekAheadSummary.busiestDay.minutes>0?" -- "+new Date(weekAheadSummary.busiestDay.date+"T12:00:00").toLocaleDateString("en-US",{weekday:"long"})+" is your busiest day ("+fmtH(weekAheadSummary.busiestDay.minutes)+" scheduled).":"."}
+              </div>
+              <div style={{display:"flex",alignItems:"flex-end",gap:6,height:44,marginBottom:14}}>
+                {weekAheadSummary.days.map((d,i)=>{
+                  const maxMins=Math.max.apply(null,weekAheadSummary.days.map(x=>x.minutes).concat([1]));
+                  const h=d.minutes>0?Math.max(4,Math.round(d.minutes/maxMins*32)):0;
+                  const barColor=d.tier==="heavy"?T.amber:d.tier==="moderate"?"rgba(246,241,230,0.4)":"rgba(246,241,230,0.18)";
+                  const lab=new Date(d.date+"T12:00:00").toLocaleDateString("en-US",{weekday:"short"}).slice(0,1).toUpperCase();
+                  return(
+                    <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+                      <div style={{width:"100%",display:"flex",flexDirection:"column",justifyContent:"flex-end",height:32}}>
+                        {d.minutes>0
+                          ?<div style={{width:"100%",height:h,background:barColor,borderRadius:"3px 3px 0 0"}} />
+                          :<div style={{width:"100%",height:3,background:"rgba(246,241,230,0.10)",borderRadius:2}} />
+                        }
+                      </div>
+                      <span style={{fontSize:9,fontFamily:T.mono,color:"rgba(246,241,230,0.4)"}}>{lab}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              {weekAheadSummary.dueItems.length>0&&(
+                <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:weekAheadSummary.unpreparedExams.length>0?12:0}}>
+                  {weekAheadSummary.dueItems.slice(0,4).map(item=>(
+                    <div key={item.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"rgba(246,241,230,0.05)",borderRadius:8,padding:"7px 10px",fontSize:12}}>
+                      <span style={{color:T.cream,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{item.kind==="exam"?"EXAM · ":""}{item.title}</span>
+                      <span style={{color:"rgba(246,241,230,0.5)",fontFamily:T.mono,fontSize:10.5,flexShrink:0,marginLeft:8}}>{new Date(item.date+"T12:00:00").toLocaleDateString("en-US",{weekday:"short"})}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {weekAheadSummary.unpreparedExams.map(e=>(
+                <div key={e.id} style={{fontSize:12,color:T.amber,background:"rgba(216,155,60,0.12)",border:`1px solid ${T.amber}44`,borderRadius:8,padding:"8px 10px",marginTop:6,lineHeight:1.4}}>
+                  {e.title} is {new Date(e.date+"T12:00:00").toLocaleDateString("en-US",{weekday:"long"})} and you haven't started studying yet.
+                </div>
+              ))}
+            </>)}
           </div>
           <button onClick={dismissWrapped} style={{width:"100%",padding:"11px 0",borderRadius:6,background:T.lime,color:T.ink,border:"none",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Done</button>
         </div>
