@@ -352,29 +352,55 @@ describe("buildSetPeakHoursProposal", () => {
 });
 
 describe("deriveStudlinAiProactiveSignal", () => {
-  test("neither offer active -> null", () => {
+  // Bug fix, 2026-09-04: signature grew a third param (unscheduledDueSoonOffer,
+  // in the middle) when the "unscheduled due soon" proactive nudge was added.
+  // Every test below updated to the new 3-arg call shape.
+  test("no offers active -> null", () => {
     const m = loadStudlinModule();
-    assert.equal(m.deriveStudlinAiProactiveSignal(null, null), null);
+    assert.equal(m.deriveStudlinAiProactiveSignal(null, null, null), null);
   });
   test("only peakInsightOffer active -> kind:peak_hours, carries its fields through", () => {
     const m = loadStudlinModule();
     const offer = { currentBucket: "morning", currentPct: 0.4, suggestedBucket: "evening", suggestedPct: 0.8 };
-    const signal = m.deriveStudlinAiProactiveSignal(null, offer);
+    const signal = m.deriveStudlinAiProactiveSignal(null, null, offer);
     assert.equal(signal.kind, "peak_hours");
     assert.equal(signal.suggestedBucket, "evening");
   });
   test("only strugglingBucketOffer active -> kind:struggling_bucket, carries its fields through", () => {
     const m = loadStudlinModule();
     const offer = { strugglingBucket: "afternoon", suggestedBucket: "morning", recentMissedCount: 4, recentWindow: 5 };
-    const signal = m.deriveStudlinAiProactiveSignal(offer, null);
+    const signal = m.deriveStudlinAiProactiveSignal(offer, null, null);
     assert.equal(signal.kind, "struggling_bucket");
     assert.equal(signal.recentMissedCount, 4);
   });
-  test("both active -> struggling_bucket wins, matching the app's own existing precedence", () => {
+  test("only unscheduledDueSoonOffer active -> kind:unscheduled_due_soon, carries its fields through", () => {
+    const m = loadStudlinModule();
+    const offer = { count: 2, titles: ["Essay", "Lab report"], ids: ["e1", "e2"], nearestDate: "2026-09-06" };
+    const signal = m.deriveStudlinAiProactiveSignal(null, offer, null);
+    assert.equal(signal.kind, "unscheduled_due_soon");
+    assert.equal(signal.count, 2);
+    assert.equal(signal.nearestDate, "2026-09-06");
+  });
+  test("strugglingBucketOffer + unscheduledDueSoonOffer both active -> struggling_bucket wins", () => {
     const m = loadStudlinModule();
     const strugglingOffer = { strugglingBucket: "afternoon", suggestedBucket: "morning", recentMissedCount: 4, recentWindow: 5 };
+    const dueSoonOffer = { count: 1, titles: ["Essay"], ids: ["e1"], nearestDate: "2026-09-06" };
+    const signal = m.deriveStudlinAiProactiveSignal(strugglingOffer, dueSoonOffer, null);
+    assert.equal(signal.kind, "struggling_bucket");
+  });
+  test("unscheduledDueSoonOffer + peakInsightOffer both active -> unscheduled_due_soon wins (time-sensitive beats an evergreen pattern)", () => {
+    const m = loadStudlinModule();
+    const dueSoonOffer = { count: 1, titles: ["Essay"], ids: ["e1"], nearestDate: "2026-09-06" };
     const peakOffer = { currentBucket: "morning", currentPct: 0.4, suggestedBucket: "evening", suggestedPct: 0.8 };
-    const signal = m.deriveStudlinAiProactiveSignal(strugglingOffer, peakOffer);
+    const signal = m.deriveStudlinAiProactiveSignal(null, dueSoonOffer, peakOffer);
+    assert.equal(signal.kind, "unscheduled_due_soon");
+  });
+  test("all three active -> struggling_bucket still wins at the top of the precedence chain", () => {
+    const m = loadStudlinModule();
+    const strugglingOffer = { strugglingBucket: "afternoon", suggestedBucket: "morning", recentMissedCount: 4, recentWindow: 5 };
+    const dueSoonOffer = { count: 1, titles: ["Essay"], ids: ["e1"], nearestDate: "2026-09-06" };
+    const peakOffer = { currentBucket: "morning", currentPct: 0.4, suggestedBucket: "evening", suggestedPct: 0.8 };
+    const signal = m.deriveStudlinAiProactiveSignal(strugglingOffer, dueSoonOffer, peakOffer);
     assert.equal(signal.kind, "struggling_bucket");
   });
 });

@@ -3227,6 +3227,48 @@ function dismissPeakHourInsight(bucketId){
   dismissed[bucketId]=Date.now();
   lsSet("peakInsightDismissed",dismissed);
 }
+// Third proactive signal, 2026-09-04 -- Studlin AI chat feature request:
+// "3 things due Thursday, 2 unscheduled -- want me to fix that?" surfacing
+// unprompted, not just when asked. Deliberately conservative to avoid
+// nagging/false positives.
+//
+// IMPORTANT, verified against buildSyllabusEventBatch (the real marker-
+// creation code) before shipping: a due-date marker's own `time` field is
+// NOT a reliable "has this been scheduled" signal -- every non-noDate
+// deadline marker gets time:"23:59" as a fixed placeholder regardless of
+// whether any real work time exists for it (duration:null on the marker
+// itself always). Actual scheduled work lives in SEPARATE "study block"
+// events linked back via dueEventId (see regenerateRemainingSessionFocuses
+// and others for the same pattern) -- so "unscheduled" really means "no
+// linked, still-pending session exists at all", not "!ev.time". Also
+// excludes: checklist:true (an explicit "just track the date, don't
+// schedule time for it" request -- offering to schedule THAT would go
+// against what the student already asked for) and isProjectMarker
+// (projects already have their own phase/outline tracking surface, this
+// nudge is about plain assignments falling through the cracks).
+const UNSCHEDULED_DUE_SOON_WINDOW_DAYS=3;
+const UNSCHEDULED_DUE_SOON_COOLDOWN_MS=2*86400000; // 2 days -- shorter than struggling-bucket/peak-hour's 14-day cooldowns, since THIS signal's underlying items genuinely change day to day (a decline today shouldn't suppress a real new one appearing in two days), not a stable behavioral pattern worth a long cooldown.
+function detectUnscheduledDueSoon(events,todayKey){
+  const dismissedAt=lsGet("unscheduledDueSoonDismissedAt",0);
+  if(Date.now()-dismissedAt<UNSCHEDULED_DUE_SOON_COOLDOWN_MS)return null;
+  const all=events||[];
+  const end=(()=>{const d=new Date(todayKey+"T12:00:00");d.setDate(d.getDate()+UNSCHEDULED_DUE_SOON_WINDOW_DAYS);return dayKey(d);})();
+  const hasLinkedSession=id=>all.some(e=>e.dueEventId===id&&e.status!=="done");
+  const candidates=all.filter(ev=>{
+    if(ev.kind!=="deadline"||ev.status!=="pending"||ev.checklist||isProjectMarker(ev))return false;
+    const dueRef=ev.deadline||ev.date;
+    if(!dueRef||dueRef<todayKey||dueRef>end)return false;
+    return !hasLinkedSession(ev.id);
+  }).sort((a,b)=>{
+    const da=a.deadline||a.date,db=b.deadline||b.date;
+    return da<db?-1:da>db?1:0;
+  });
+  if(candidates.length===0)return null;
+  return {count:candidates.length,titles:candidates.map(e=>e.title),ids:candidates.map(e=>e.id),nearestDate:candidates[0].deadline||candidates[0].date};
+}
+function dismissUnscheduledDueSoon(){
+  lsSet("unscheduledDueSoonDismissedAt",Date.now());
+}
 // Append-only log of every accept/dismiss/edit decision a student makes on
 // a Studlin-generated suggestion (peak-hour insight, struggling bucket,
 // week balance, exam-prep pacing, and eventually Tier 0's own ask-mode) --
@@ -3925,6 +3967,38 @@ function fmtPlacementReason(reason,timeStr){
   if(reason.type==="deadlineDriven")return "Moved before its "+reason.deadlineDay+" deadline.";
   if(reason.type==="deferred")return "You chose to push this to next week.";
   if(reason.type==="manualOverride")return "You picked this time yourself.";
+  return "";
+}
+// Studlin AI chat feature, 2026-09-04: a lightweight, HONEST reason for a
+// plain move/retime/create proposal in chat. Deliberately NOT reusing
+// fmtPlacementReason's own richer reason vocabulary above (peak-hour/
+// reliability scoring) -- those reasons only exist because findTier0Slot
+// actually computed them. Chat's move_fixed/move_flex_task proposals go
+// through computePausePlan/buildMoveFlexTaskProposal instead, which call
+// the plain findFixedEventSlot/findLegalSlotOrNull "first legal opening"
+// scanner -- it never scores peak hours or reliability, so claiming it did
+// would be inventing a reason the engine didn't actually use. This only
+// ever states something already true from the data the proposal itself
+// computed: a real displaced neighbor, or real adjacency to another event
+// on the same day after placement. Empty string (append nothing) when
+// neither applies -- no reason beats a fabricated one.
+function inferChatMoveReason(dayEvents,newTime,newDuration,excludeId,displacedTitle){
+  if(displacedTitle)return "moved "+displacedTitle+" to fit";
+  if(!newTime)return "";
+  const ADJACENT_GAP_MINS=15;
+  const others=(dayEvents||[]).filter(e=>e.id!==excludeId&&e.time);
+  const newStart=timeToMinutes(newTime);
+  const newEnd=newStart+(newDuration||30);
+  const rightAfter=others.filter(e=>{
+    const s=timeToMinutes(e.time);
+    return s>=newEnd&&s-newEnd<=ADJACENT_GAP_MINS;
+  }).sort((a,b)=>timeToMinutes(a.time)-timeToMinutes(b.time))[0];
+  if(rightAfter)return "right before your "+rightAfter.title+" at "+fmtClock12(rightAfter.time);
+  const rightBefore=others.filter(e=>{
+    const s=timeToMinutes(e.time),d=e.duration||30;
+    return s+d<=newStart&&newStart-(s+d)<=ADJACENT_GAP_MINS;
+  }).sort((a,b)=>timeToMinutes(b.time)-timeToMinutes(a.time))[0];
+  if(rightBefore)return "right after your "+rightBefore.title;
   return "";
 }
 // A Tier 0 move's reasoning was already computed by findTier0Slot's own
@@ -7706,7 +7780,7 @@ function describeCreateProposal(task){
 // message, so the chat literally said e.g. "Done. Delete "Chem Notes"
 // from 2026-09-08?" even though the action had already finished. Strips
 // the trailing "?" and turns the leading imperative into a completed one.
-function pastTenseProposalLabel(label,moved){
+function pastTenseProposalLabel(label,moved,reason){
   if(!label)return label;
   let s=label.replace(/\?$/,"");
   let isMove=false;
@@ -7723,10 +7797,15 @@ function pastTenseProposalLabel(label,moved){
   // shown right before confirming already had the real destination (see
   // StudlinAiMiniDayPreview, only rendered pre-confirm). Appends it here
   // from the same `moved` data the proposal itself already computed.
+  //
+  // `reason` (optional, 2026-09-04 feature): a short, honest clause from
+  // inferChatMoveReason -- e.g. "right before your Track Practice" or
+  // "moved Gym to fit" -- folded in before the final period so it reads
+  // as one sentence, not a bolted-on parenthetical.
   if(isMove&&moved&&moved.length>0&&moved[0].newDate){
     const d=new Date(moved[0].newDate+"T12:00:00");
     const dateLabel=d.toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"});
-    s+=" to "+dateLabel+(moved[0].newTime?" at "+fmtClock12(moved[0].newTime):"")+".";
+    s+=" to "+dateLabel+(moved[0].newTime?" at "+fmtClock12(moved[0].newTime):"")+(reason?", "+reason:"")+".";
   }
   return s;
 }
@@ -8440,6 +8519,78 @@ function getUserName(){
   }catch(e){return "Student";}
 }
 function saveProfile(p){lsSet("profile",p);}
+// Studlin AI's persistent cross-session memory (2026-09-04 feature) -- a
+// short, capped list of durable facts/preferences the AI has learned
+// about this student, surviving a drawer close/reload/device switch,
+// unlike the chat transcript itself (StudlinAiDrawer's `messages` is pure
+// in-memory state, never persisted -- see its own useState([])).
+//
+// Deliberately the lighter `profiles`-style single-owner-doc pattern, not
+// the full DataStore sync machinery (offline queue, debounce, per-item
+// conflict merge) events/notes/decks use -- this is one small,
+// infrequently-updated list per user, not a large frequently-edited
+// collection, so that machinery would be real unneeded complexity here.
+// Stored in its OWN doc (aiMemory/{uid}, see firestore.rules), not folded
+// into profiles/{uid} -- profiles is the public classmate directory, and
+// a personal fact like "hates morning workouts" must never be readable
+// by anyone but the owner.
+const AI_MEMORY_FACT_CAP=20;
+function getAiMemory(){return lsGet("aiMemory",{facts:[],updatedAt:null});}
+function saveAiMemory(mem){lsSet("aiMemory",mem);}
+// Fire-and-forget push to Firestore, mirroring upsertProfile's own shape
+// exactly (same set(...,{merge:true}) pattern, same silent-catch -- a
+// failed background sync here is no worse than upsertProfile's own
+// established precedent, and blocking on it would be a real regression
+// for a feature nobody's waiting on).
+async function pushAiMemory(mem){
+  const u=firebase.auth().currentUser;
+  if(!u)return;
+  try{await fsdb().collection('aiMemory').doc(u.uid).set({facts:mem.facts||[],updatedAt:new Date().toISOString()},{merge:true});}catch(e){}
+}
+// One-time pull on auth -- NEW relative to every other single-owner-doc
+// pattern in this file (upsertProfile is push-only; getProfile/saveProfile
+// never round-trip Firestore at all). Without this, a fact learned on one
+// device would never reach a second one. Remote wins outright on a real
+// conflict (whole-array field, infrequent writes, one person -- the
+// per-item newest-wins merge DataStore needs for a large shared-ish
+// collection is real overkill here).
+async function hydrateAiMemoryOnAuth(){
+  const u=firebase.auth().currentUser;
+  if(!u)return;
+  try{
+    const doc=await fsdb().collection('aiMemory').doc(u.uid).get();
+    if(doc.exists){
+      const data=doc.data();
+      saveAiMemory({facts:Array.isArray(data.facts)?data.facts:[],updatedAt:data.updatedAt||null});
+    }
+  }catch(e){}
+}
+// Merges newly-extracted fact strings into existing memory -- skips a
+// near-duplicate of something already remembered (same normalized text,
+// or one string containing the other -- catches "hates morning workouts"
+// vs "Hates morning workouts specifically"), then drops the OLDEST facts
+// first if the merge would exceed the cap, so memory stays bounded
+// without ever silently dropping something just learned. Returns the new
+// memory object; caller is responsible for actually calling
+// saveAiMemory/pushAiMemory with it (kept pure/testable, no I/O here).
+function mergeAiMemoryFacts(existingMem,newFactTexts){
+  const existing=(existingMem&&existingMem.facts)||[];
+  const norm=s=>(s||"").trim().toLowerCase();
+  const isDupe=text=>{
+    const nt=norm(text);
+    if(!nt)return true;
+    return existing.some(f=>{const nf=norm(f.text);return nf===nt||nf.includes(nt)||nt.includes(nf);});
+  };
+  const added=(newFactTexts||[]).map(t=>(t||"").trim()).filter(t=>t&&!isDupe(t)).map(text=>({text,addedAt:Date.now()}));
+  if(added.length===0)return existingMem||{facts:[],updatedAt:null};
+  let facts=[...existing,...added];
+  if(facts.length>AI_MEMORY_FACT_CAP)facts=facts.slice(facts.length-AI_MEMORY_FACT_CAP);
+  return {facts,updatedAt:new Date().toISOString()};
+}
+function removeAiMemoryFact(mem,index){
+  const facts=(mem.facts||[]).filter((_,i)=>i!==index);
+  return {facts,updatedAt:new Date().toISOString()};
+}
 function seedEventsIfStale(){
   return;
   const ev=lsGet("events",null); const tk=dayKey();
@@ -16887,6 +17038,16 @@ function gatherStudlinAiProfileSignals(flags,prefs){
   if(flags.needsConfidence)profile.confidenceInsight=confidenceOutcomeInsight();
   return profile;
 }
+// Persistent AI memory, 2026-09-04 feature: one line, shared by all three
+// Studlin AI prompt builders, listing whatever durable facts have been
+// captured so far (see getAiMemory/mergeAiMemoryFacts). Empty string when
+// there's nothing yet -- an empty "PREFERENCES:" line would read to the
+// model as "the student has no preferences," not "none captured yet."
+function formatAiMemoryForPrompt(){
+  const facts=(getAiMemory().facts||[]).map(f=>f.text);
+  if(facts.length===0)return "";
+  return "STUDENT'S OWN STATED PREFERENCES (real things they've told Studlin AI before, still true unless today's message says otherwise): "+facts.join("; ")+".";
+}
 // Turns the digest + whichever profile signals were gathered into the
 // actual text sent to the model -- one short, pre-written sentence per
 // included signal (authored once, centrally, here) rather than raw
@@ -16900,6 +17061,8 @@ function gatherStudlinAiProfileSignals(flags,prefs){
 function formatStudlinAiDigestForPrompt(question,digest,flags,profile){
   const lines=["DIGEST (real data about this student -- the ONLY source of truth; never invent beyond this):"];
   lines.push("Today: "+digest.todayKey+" ("+currentClockLabel()+" right now). Schedule window shown below: "+digest.todayKey+" through "+digest.windowEndKey+".");
+  const memLine=formatAiMemoryForPrompt();
+  if(memLine)lines.push(memLine);
 
   if(flags.needsWorkload){
     if(digest.busiestDay)lines.push("Busiest day in this window: "+digest.busiestDay.date+" ("+digest.busiestDay.workloadMinutes+" minutes scheduled).");
@@ -16989,6 +17152,8 @@ function formatStudlinAiCoachingPrompt(question,context){
   const{digest,subject,subjectNudge,examReadiness,confidenceInsight}=context;
   const lines=["CONTEXT (real data about this student -- ground your advice in this, never invent beyond it):"];
   lines.push("Today: "+digest.todayKey+" ("+currentClockLabel()+" right now).");
+  const memLine=formatAiMemoryForPrompt();
+  if(memLine)lines.push(memLine);
   if(digest.heavyDayKeys.length>0)lines.push("Heavier-than-usual days in the next two weeks: "+digest.heavyDayKeys.join(", ")+".");
   if(digest.overdue.length>0)lines.push(digest.overdue.length+" overdue item(s) right now: "+digest.overdue.map(o=>o.title).join(", ")+".");
   if(subject){
@@ -17063,7 +17228,8 @@ async function classifyStudlinAiMessage(text,history){
   const nextWeekSameDay=dayKey(new Date(Date.now()+7*86400000));
   const weekday=new Date().toLocaleDateString("en-US",{weekday:"long"});
   const nowTime=currentClockLabel();
-  const prompt="You are a message router for a student calendar assistant chat. Today is "+weekday+", "+today+". The current time right now is "+nowTime+". The student typed: \""+text+"\". Decide whether this is a QUESTION about their existing schedule/study history (a real number/fact), a COACHING ask (wants real study-strategy help, not a fact), an ACTION request (create something new, move/reschedule something that already exists, or turn pasted study material into flashcards/a quiz), or unsupported. Respond with ONLY this JSON, no markdown fences, no explanation:\n"+
+  const memLine=formatAiMemoryForPrompt();
+  const prompt="You are a message router for a student calendar assistant chat. Today is "+weekday+", "+today+". The current time right now is "+nowTime+". "+(memLine?memLine+" ":"")+"The student typed: \""+text+"\". Decide whether this is a QUESTION about their existing schedule/study history (a real number/fact), a COACHING ask (wants real study-strategy help, not a fact), an ACTION request (create something new, move/reschedule something that already exists, or turn pasted study material into flashcards/a quiz), or unsupported. Respond with ONLY this JSON, no markdown fences, no explanation:\n"+
     "{\"kind\":\"question\"|\"coaching\"|\"action\"|\"unsupported\",\"intent\":\"create_task\"|\"delete_task\"|\"set_peak_hours\"|\"shift\"|\"clear_day\"|\"clear_week\"|\"skip_class\"|\"move_event\"|\"retime_event\"|\"move_flex_task\"|\"generate_study_material\"|null,\"days\":<integer 1-14 or null>,\"date\":\"YYYY-MM-DD or null\",\"target\":\"<short name of the specific existing item, or null>\",\"targetDate\":\"YYYY-MM-DD or null\",\"destDate\":\"YYYY-MM-DD or null\",\"newStart\":\"HH:MM 24h or null\",\"newDuration\":<integer minutes or null>,\"title\":\"<short name of the NEW item to create, or null>\",\"dueDate\":\"YYYY-MM-DD or null\",\"dueTime\":\"HH:MM 24h or null\",\"durationMin\":<integer minutes or null>,\"taskKind\":\"study\"|\"todo\"|\"event\"|\"reminder\"|\"exam\"|\"project\"|null,\"genFormat\":\"flashcards\"|\"quiz\"|null,\"peakHours\":\"morning\"|\"midday\"|\"afternoon\"|\"evening\"|null,\"clarify\":\"<a short, specific question, or null>\"}\n"+
     "Rules: \"question\" is asking for a real FACT about their schedule/workload/streak/pace/productivity (a number, a date, a yes/no). \"coaching\" is asking for real help or a plan -- \"how should I study for X,\" \"help me prepare,\" \"where do I start,\" \"I'm stressed about Y and don't know the material\" -- wanting strategy/advice, not a fact, and not (yet) asking to add/move anything. Neither ever changes anything -- leave intent and every other field null for both. \"unsupported\" covers anything ambiguous, multi-step, deleting/cancelling MULTIPLE things or an entire day/week/recurring routine, or that doesn't clearly match one action below -- never guess. Deleting exactly ONE clearly-named item uses delete_task instead, not unsupported.\n"+
     "\"clarify\": if the message clearly WANTS one of the actions below but is missing something required to do it (no title for a new item, no clear name for what to move/retime/delete, no day count for \"shift\"), set kind to \"unsupported\", intent to null, and \"clarify\" to ONE short, specific question asking for exactly the missing thing (e.g. \"When is that due?\" or \"Which day would you like it moved to?\"). Leave \"clarify\" null for every other case -- genuinely off-topic, too vague to guess the intended action at all, multi-step, or a bulk/destructive request. Never set clarify when kind is \"question\", \"coaching\", or \"action\".\n"+
@@ -17154,8 +17320,14 @@ async function classifyStudlinAiMessage(text,history){
 // not an inline ternary in App(), so the precedence is named/testable
 // and so a future proactive signal (catch-up, attack-block risk) has an
 // obvious place to slot in.
-function deriveStudlinAiProactiveSignal(strugglingBucketOffer,peakInsightOffer){
+// unscheduledDueSoonOffer added 2026-09-04 -- placed above peakInsightOffer
+// (a well-sampled, evergreen behavioral pattern with no real urgency) but
+// below strugglingBucketOffer (an established, already-prioritized recent-
+// miss signal) since it reflects genuinely time-sensitive unscheduled work,
+// not a stable pattern. See its own detectUnscheduledDueSoon comment.
+function deriveStudlinAiProactiveSignal(strugglingBucketOffer,unscheduledDueSoonOffer,peakInsightOffer){
   if(strugglingBucketOffer)return{kind:"struggling_bucket",...strugglingBucketOffer};
+  if(unscheduledDueSoonOffer)return{kind:"unscheduled_due_soon",...unscheduledDueSoonOffer};
   if(peakInsightOffer)return{kind:"peak_hours",...peakInsightOffer};
   return null;
 }
@@ -17364,6 +17536,12 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
   // still surfacing a genuinely NEW/different signal even if the
   // conversation already has messages in it from an earlier one.
   const [seededProactiveKey,setSeededProactiveKey]=useState(null);
+  // Persistent-memory extraction toast (see the drawer-close effect below)
+  // -- shown once, briefly, the first time a real fact actually gets
+  // captured in a given open/close cycle. No toast on the common "nothing
+  // durable came up" case -- silence there is correct, not a bug.
+  const [memoryToast,setMemoryToast]=useState("");
+  const extractedThisSessionRef=useRef(false);
   const scrollRef=useRef(null);
 
   useEffect(()=>{
@@ -17385,19 +17563,68 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
   // so the two surfaces read as the same voice, not a rewritten one.
   useEffect(()=>{
     if(!open||!proactiveSignal)return;
-    const key=proactiveSignal.kind+":"+proactiveSignal.suggestedBucket;
+    // Bug fix, 2026-09-04: key used to always be kind+":"+suggestedBucket
+    // -- the new unscheduled_due_soon signal has no suggestedBucket (it's
+    // keyed by nearestDate+count instead), so this branches by kind now
+    // rather than assuming every signal shares the same shape.
+    const key=proactiveSignal.kind==="unscheduled_due_soon"
+      ?("unscheduled_due_soon:"+proactiveSignal.nearestDate+":"+proactiveSignal.count)
+      :(proactiveSignal.kind+":"+proactiveSignal.suggestedBucket);
     if(key===seededProactiveKey)return;
     setSeededProactiveKey(key);
     const text=proactiveSignal.kind==="struggling_bucket"
       ?("Your "+PEAK_BUCKET_LABELS[proactiveSignal.strugglingBucket].toLowerCase()+" tasks haven't been sticking -- "+proactiveSignal.recentMissedCount+" of your last "+proactiveSignal.recentWindow+" were missed. Want me to default new tasks to "+PEAK_BUCKET_LABELS[proactiveSignal.suggestedBucket].toLowerCase()+" instead?")
+      :proactiveSignal.kind==="unscheduled_due_soon"
+      ?("You've got "+proactiveSignal.count+" thing"+(proactiveSignal.count!==1?"s":"")+" due by "+proactiveSignal.nearestDate+" with no time scheduled yet"+(proactiveSignal.titles&&proactiveSignal.titles.length>0?" ("+proactiveSignal.titles.slice(0,3).join(", ")+(proactiveSignal.titles.length>3?", ...":"")+")":"")+". Want me to take you there so you can get them on the calendar?")
       :("Looks like you actually finish more "+PEAK_BUCKET_LABELS[proactiveSignal.suggestedBucket].toLowerCase()+" tasks ("+Math.round(proactiveSignal.suggestedPct*100)+"%) than "+PEAK_BUCKET_LABELS[proactiveSignal.currentBucket].toLowerCase()+" ones ("+Math.round(proactiveSignal.currentPct*100)+"%). Want me to update your peak hours?");
-    const label="Switch to "+PEAK_BUCKET_LABELS[proactiveSignal.suggestedBucket];
+    const label=proactiveSignal.kind==="unscheduled_due_soon"?"Take me there":"Switch to "+PEAK_BUCKET_LABELS[proactiveSignal.suggestedBucket];
     setMessages(m=>{
       const next=[...m,{role:"ai",text,kind:"proposal",proposal:{ok:true,source:"proactive",signal:proactiveSignal,label}}];
       setPendingIndex(next.length-1);
       return next;
     });
   },[open,proactiveSignal,seededProactiveKey]);
+
+  // Persistent memory extraction, 2026-09-04 feature: fires once when the
+  // drawer closes after a real conversation, not on every message --
+  // extraction is a real (cheap) AI call, no reason to fire it more than
+  // once per open/close cycle. StudlinAiDrawer previously had NO close
+  // hook at all -- onClose was just passed straight through as a prop
+  // with nothing internal reacting to it (confirmed before building this,
+  // not assumed). Silent on failure/empty-result, matching sendMessage's
+  // own fire-and-forget precedent elsewhere in this file -- never blocks
+  // the drawer from closing, and "nothing durable came up" (the common
+  // case) is correct behavior, not something to show an error for.
+  useEffect(()=>{
+    if(open){extractedThisSessionRef.current=false;return;}
+    if(extractedThisSessionRef.current)return;
+    if(!messages.some(m=>m.role==="user"))return;
+    extractedThisSessionRef.current=true;
+    (async()=>{
+      // Memory is an extension of Studlin AI chat, same Pro gate as the
+      // rest of it -- not a separate free feature.
+      if(!canUseStudlinAiQna())return;
+      const transcript=messages.filter(m=>m.role==="user"||m.role==="ai").slice(-20)
+        .map(m=>(m.role==="user"?"Student: ":"Studlin: ")+(m.text||"")).join("\n");
+      if(!transcript.trim())return;
+      const prompt="Given this conversation between a student and their study assistant, list 0-3 short, durable facts or standing preferences about the student worth remembering long-term (e.g. \"prefers evening workouts\", \"has a part-time job on weekends\") -- real, standing facts about how they live/study/prefer things, NOT one-off scheduling requests, NOT anything already obvious from a single task, NOT a fact about a class/assignment that will stop being relevant once the term ends. If nothing durable came up, return an empty list -- don't strain to find something. Respond with ONLY this JSON, no markdown fences, no explanation: {\"facts\":[\"...\"]}\n\nCONVERSATION:\n"+transcript;
+      try{
+        const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash",format:"json"})});
+        if(!res.ok)return;
+        const data=await res.json();
+        const raw=(data.reply||"").replace(/```json?|```/g,"").trim();
+        const parsed=JSON.parse(raw);
+        if(!parsed||!Array.isArray(parsed.facts)||parsed.facts.length===0)return;
+        const existingMem=getAiMemory();
+        const nextMem=mergeAiMemoryFacts(existingMem,parsed.facts);
+        if(nextMem.facts.length===(existingMem.facts||[]).length)return; // every candidate was a near-duplicate of something already remembered
+        saveAiMemory(nextMem);
+        pushAiMemory(nextMem);
+        setMemoryToast("Studlin AI remembered something new");
+        setTimeout(()=>setMemoryToast(""),3500);
+      }catch(e){}
+    })();
+  },[open,messages]);
 
   // Phase 1's original read-only path -- now only reached once
   // classifyStudlinAiMessage has decided the message is a real question,
@@ -17695,9 +17922,24 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
       recordSmartReschedule();
     }else return;
     if(next)onEventsCommitted(next);
+    // Bug fix, 2026-09-04 -- Studlin AI chat feature: honest "why" for a
+    // move/retime confirmation, using the REAL post-commit state (`next`)
+    // so it reflects what actually happened, not a guess. Only for
+    // move_fixed/move_flex_task -- create_task/delete_task/set_peak_hours
+    // have no comparable "placed relative to X" concept. Merges in that
+    // day's routine occurrences too (a real class/habit can be the
+    // adjacent thing just as much as a one-off event can).
+    let moveReason="";
+    if((proposal.kind==="move_fixed"||proposal.kind==="move_flex_task")&&proposal.moved&&proposal.moved.length>0&&next){
+      const primary=proposal.moved[0];
+      const displaced=proposal.moved.length>1?proposal.moved[1]:null;
+      const dayEvents=next.filter(e=>e.date===primary.newDate&&e.id!==primary.id&&e.time)
+        .concat(getRoutineOccurrencesForDate(primary.newDate));
+      moveReason=inferChatMoveReason(dayEvents,primary.newTime,primary.newDuration||primary.duration,primary.id,displaced?displaced.title:null);
+    }
     setMessages(m=>{
       const withResolved=m.map((mm,i)=>i===idx?{...mm,proposal:{...mm.proposal,resolved:"confirmed"}}:mm);
-      return [...withResolved,{role:"ai",text:"Done. "+pastTenseProposalLabel(proposal.label,proposal.moved)}];
+      return [...withResolved,{role:"ai",text:"Done. "+pastTenseProposalLabel(proposal.label,proposal.moved,moveReason)}];
     });
     setPendingIndex(null);
   };
@@ -17791,6 +18033,16 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
             style={{padding:"9px 14px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontWeight:600,fontSize:13,cursor:"pointer",opacity:(!input.trim()||loading||pendingIndex!=null)?0.5:1,flexShrink:0}}>Send</button>
         </div>
       </div>
+      {/* Bug fix, 2026-09-04: this drawer stays mounted at all times (see
+          the panel div's own transform:open?...:"translateX(100%)" --
+          slide, not unmount), and the memory-extraction effect only fires
+          once `open` has already gone false. A toast placed INSIDE the
+          sliding panel above would render off-screen right when it's
+          supposed to appear. Positioned as an independent sibling instead
+          so it's visible regardless of the drawer's own open state. */}
+      {memoryToast&&(
+        <div style={{position:"fixed",bottom:22,right:22,zIndex:STUDLIN_AI_DRAWER_PANEL_Z+1,padding:"10px 16px",background:T.ink,color:T.lime,borderRadius:10,fontSize:12.5,fontWeight:600,boxShadow:"0 16px 40px -12px rgba(0,0,0,0.5)",animation:"studlinPop 0.2s cubic-bezier(.2,.85,.3,1)"}}>{memoryToast}</div>
+      )}
     </>,
     document.body
   );
@@ -30694,6 +30946,11 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   const [confirmRemoveSubjId,setConfirmRemoveSubjId]=useState(null);
   const [courseDeleteSnapshots,setCourseDeleteSnapshots]=useState(null);
   const [courseDeleteToast,setCourseDeleteToast]=useState("");
+  const [aiMemoryFacts,setAiMemoryFacts]=useState(()=>getAiMemory().facts||[]);
+  const [confirmRemoveFactIdx,setConfirmRemoveFactIdx]=useState(null);
+  const [confirmClearMemory,setConfirmClearMemory]=useState(false);
+  const removeAiFact=(idx)=>{const next=removeAiMemoryFact(getAiMemory(),idx);saveAiMemory(next);pushAiMemory(next);setAiMemoryFacts(next.facts);setConfirmRemoveFactIdx(null);};
+  const clearAiMemory=()=>{const next={facts:[],updatedAt:new Date().toISOString()};saveAiMemory(next);pushAiMemory(next);setAiMemoryFacts([]);setConfirmClearMemory(false);};
   const countLinkedForSubject=(sub)=>{
     const matches=(item)=>item.courseId===sub.id||item.subject===sub.label;
     return getWeeklyRoutine().filter(matches).length+lsGet("events",[]).filter(matches).length;
@@ -31007,6 +31264,39 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                 <Btn variant="subtle" onClick={downloadChatHistory} disabled={chatHistoryLoading}>{chatHistoryLoading?"Preparing…":"Download chat history"}</Btn>
                 <Btn variant="subtle">Privacy policy</Btn>
               </div>
+            </Card>
+            <Card style={{marginBottom:12}}>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>What Studlin AI remembers</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Standing preferences it's picked up from your chats — not one-off requests, just things worth not re-explaining every time.</div>
+              {aiMemoryFacts.length===0?(
+                <div style={{fontSize:12.5,color:T.muted,padding:"16px 0",textAlign:"center",borderTop:`1px solid ${T.border}`}}>Nothing remembered yet. It'll pick things up naturally as you chat.</div>
+              ):(
+                aiMemoryFacts.map((f,i)=>(
+                  <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,marginBottom:8}}>
+                    {confirmRemoveFactIdx===i?(<>
+                      <span style={{fontSize:12.5,color:T.text,flex:1}}>Forget this?</span>
+                      <Btn variant="danger" onClick={()=>removeAiFact(i)}>Forget</Btn>
+                      <Btn variant="subtle" onClick={()=>setConfirmRemoveFactIdx(null)}>Cancel</Btn>
+                    </>):(<>
+                      <span style={{fontSize:12.5,color:T.text,flex:1}}>{f.text}</span>
+                      <button onClick={()=>setConfirmRemoveFactIdx(i)} style={{background:"none",border:`1px solid ${T.border}`,color:T.muted,cursor:"pointer",borderRadius:6,padding:"4px 10px",fontSize:12,fontFamily:T.font,flexShrink:0}}>Remove</button>
+                    </>)}
+                  </div>
+                ))
+              )}
+              {aiMemoryFacts.length>0&&(
+                <div style={{marginTop:6}}>
+                  {confirmClearMemory?(
+                    <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                      <span style={{fontSize:12,color:T.muted}}>Forget everything Studlin AI remembers about you?</span>
+                      <Btn variant="danger" onClick={clearAiMemory}>Yes, clear all</Btn>
+                      <Btn variant="subtle" onClick={()=>setConfirmClearMemory(false)}>Cancel</Btn>
+                    </div>
+                  ):(
+                    <Btn variant="subtle" onClick={()=>setConfirmClearMemory(true)}>Clear all</Btn>
+                  )}
+                </div>
+              )}
             </Card>
             <Card>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:10}}>Account security</div>
@@ -32888,6 +33178,7 @@ function AuthGate(){
         DataStore.notes.hydrateOnAuth();
         DataStore.practiceExams.hydrateOnAuth();
         DataStore.timerLogs.hydrateOnAuth();
+        hydrateAiMemoryOnAuth();
         // "onboarded" otherwise lives only in this browser's localStorage —
         // if it's not already set here, wait for the profile fetch (which
         // reconciles it against the account's own record) before mounting
@@ -33213,14 +33504,20 @@ function App() {
   // well-sampled gap between the declared peak bucket and a better-
   // performing one, not a recent miss streak. {currentBucket,suggestedBucket,...} or null.
   const [peakInsightOffer,setPeakInsightOffer]=useState(null);
+  // Third proactive signal, chat-only -- see detectUnscheduledDueSoon's own
+  // comment. Deliberately does NOT get a bottom-left dashboard banner like
+  // the two above (that UI wasn't asked for and would compete with them
+  // for the same fixed corner) -- this state exists purely to feed
+  // studlinAiProactive below, so Studlin AI chat can surface it. {count,
+  // titles,ids,nearestDate} or null.
+  const [unscheduledDueSoonOffer,setUnscheduledDueSoonOffer]=useState(null);
   // Studlin AI's own proactive surface -- a second, additional place
-  // (the chat bubble badge) reflecting whichever of the two offers
-  // above is currently live, without duplicating their detection or
-  // touching the existing bottom-left banners at all. Plain per-render
-  // derivation, not new state -- see deriveStudlinAiProactiveSignal's
-  // own comment for why the precedence mirrors the daily-tick effect
-  // exactly.
-  const studlinAiProactive=deriveStudlinAiProactiveSignal(strugglingBucketOffer,peakInsightOffer);
+  // (the chat bubble badge) reflecting whichever offer above is currently
+  // live, without duplicating their detection or touching the existing
+  // bottom-left banners at all. Plain per-render derivation, not new
+  // state -- see deriveStudlinAiProactiveSignal's own comment for why the
+  // precedence mirrors the daily-tick effect exactly.
+  const studlinAiProactive=deriveStudlinAiProactiveSignal(strugglingBucketOffer,unscheduledDueSoonOffer,peakInsightOffer);
   // Same "dismissible banner, not a blocking modal" idiom as above, for
   // pending tasks whose deadline has already passed — these used to get
   // wiped from storage the moment the daily gate ran, with no toast, no
@@ -33533,6 +33830,7 @@ function App() {
     if(queued.length===0)return;
     const latest=pickLatestQueuedNudgesByKind(queued);
     if(latest.strugglingBucket)setStrugglingBucketOffer(latest.strugglingBucket);
+    if(latest.unscheduledDueSoon)setUnscheduledDueSoonOffer(latest.unscheduledDueSoon);
     if(latest.peakInsight)setPeakInsightOffer(latest.peakInsight);
     if(latest.examPrep)setExamPrepSuggestion(latest.examPrep);
     if(latest.prepPromptBatch)setPrepPromptBatch(latest.prepPromptBatch);
@@ -33794,6 +34092,28 @@ function App() {
       dismissPeakHourInsight(peakInsightOffer.suggestedBucket);
     }
     setPeakInsightOffer(null);
+  };
+  // Accepting doesn't silently auto-schedule anything -- these items were
+  // never reviewed/confirmed, so committing real calendar placements for
+  // all of them without the student looking at each one first would break
+  // this whole session's "never silently commit, always preview" rule.
+  // Instead: navigate to Calendar and highlight exactly which ones need
+  // attention, reusing the calendarHighlightIds one-shot flag CalendarTab
+  // already reads on mount (studlin-app.jsx, "here's what was just
+  // imported" -- same mechanism, different trigger).
+  const acceptUnscheduledDueSoonOffer=()=>{
+    if(!unscheduledDueSoonOffer)return;
+    logSuggestionDecision("unscheduledDueSoon","accepted",unscheduledDueSoonOffer);
+    lsSet("calendarHighlightIds",{ids:unscheduledDueSoonOffer.ids,setAt:Date.now()});
+    setActive("calendar");
+    setUnscheduledDueSoonOffer(null);
+  };
+  const declineUnscheduledDueSoonOffer=()=>{
+    if(unscheduledDueSoonOffer){
+      logSuggestionDecision("unscheduledDueSoon","dismissed",unscheduledDueSoonOffer);
+      dismissUnscheduledDueSoon();
+    }
+    setUnscheduledDueSoonOffer(null);
   };
   const [scheduleSettingsOpen,setScheduleSettingsOpen]=useState(false);
   // Defaults to collapsed (icon rail) for anyone who's never touched this
@@ -34513,6 +34833,18 @@ function App() {
     if(strugglingBucket){
       if(recoveryPending)queueInsightNudge("strugglingBucket",strugglingBucket);
       else setStrugglingBucketOffer(strugglingBucket);
+    }
+    // Third proactive signal (chat-only, no dashboard banner -- see its own
+    // state comment) -- same recoveryPending gate as the other two (a
+    // rough week already has its own dedicated recovery flow, this would
+    // just be noise on top of it), but NOT suppressed by strugglingBucket
+    // the way peakInsight is below -- unscheduled real work due soon is
+    // independent of a behavioral hour-bucket pattern, not competing for
+    // the same bottom-left UI slot.
+    const unscheduledDueSoon=detectUnscheduledDueSoon(evs,today);
+    if(unscheduledDueSoon){
+      if(recoveryPending)queueInsightNudge("unscheduledDueSoon",unscheduledDueSoon);
+      else setUnscheduledDueSoonOffer(unscheduledDueSoon);
     }
     // Same once-a-day gate, for the complementary all-time signal. Both
     // banners share the same fixed bottom-left corner, so only surface
@@ -35677,8 +36009,8 @@ function App() {
         onEventsCommitted={(next)=>{if(calendarSetEventsRef.current)calendarSetEventsRef.current(next);}}
         onDeleteEvent={deleteEventFromDetail}
         proactiveSignal={studlinAiProactive}
-        onAcceptProactive={(signal)=>{if(signal.kind==="struggling_bucket")acceptStrugglingBucketOffer();else if(signal.kind==="peak_hours")acceptPeakHourInsight();}}
-        onDeclineProactive={(signal)=>{if(signal.kind==="struggling_bucket")declineStrugglingBucketOffer();else if(signal.kind==="peak_hours")declinePeakHourInsight();}} />
+        onAcceptProactive={(signal)=>{if(signal.kind==="struggling_bucket")acceptStrugglingBucketOffer();else if(signal.kind==="unscheduled_due_soon")acceptUnscheduledDueSoonOffer();else if(signal.kind==="peak_hours")acceptPeakHourInsight();}}
+        onDeclineProactive={(signal)=>{if(signal.kind==="struggling_bucket")declineStrugglingBucketOffer();else if(signal.kind==="unscheduled_due_soon")declineUnscheduledDueSoonOffer();else if(signal.kind==="peak_hours")declinePeakHourInsight();}} />
     </div>
   );
 }

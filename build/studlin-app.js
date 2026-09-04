@@ -1897,6 +1897,33 @@ function dismissPeakHourInsight(bucketId) {
   dismissed[bucketId] = Date.now();
   lsSet("peakInsightDismissed", dismissed);
 }
+const UNSCHEDULED_DUE_SOON_WINDOW_DAYS = 3;
+const UNSCHEDULED_DUE_SOON_COOLDOWN_MS = 2 * 864e5;
+function detectUnscheduledDueSoon(events, todayKey) {
+  const dismissedAt = lsGet("unscheduledDueSoonDismissedAt", 0);
+  if (Date.now() - dismissedAt < UNSCHEDULED_DUE_SOON_COOLDOWN_MS) return null;
+  const all = events || [];
+  const end = (() => {
+    const d = /* @__PURE__ */ new Date(todayKey + "T12:00:00");
+    d.setDate(d.getDate() + UNSCHEDULED_DUE_SOON_WINDOW_DAYS);
+    return dayKey(d);
+  })();
+  const hasLinkedSession = (id) => all.some((e) => e.dueEventId === id && e.status !== "done");
+  const candidates = all.filter((ev) => {
+    if (ev.kind !== "deadline" || ev.status !== "pending" || ev.checklist || isProjectMarker(ev)) return false;
+    const dueRef = ev.deadline || ev.date;
+    if (!dueRef || dueRef < todayKey || dueRef > end) return false;
+    return !hasLinkedSession(ev.id);
+  }).sort((a, b) => {
+    const da = a.deadline || a.date, db = b.deadline || b.date;
+    return da < db ? -1 : da > db ? 1 : 0;
+  });
+  if (candidates.length === 0) return null;
+  return { count: candidates.length, titles: candidates.map((e) => e.title), ids: candidates.map((e) => e.id), nearestDate: candidates[0].deadline || candidates[0].date };
+}
+function dismissUnscheduledDueSoon() {
+  lsSet("unscheduledDueSoonDismissedAt", Date.now());
+}
 function logSuggestionDecision(kind, action, context) {
   const log = lsGet("suggestionLog", []);
   log.push({ kind, action, context: context || {}, t: Date.now() });
@@ -2345,6 +2372,25 @@ function fmtPlacementReason(reason, timeStr) {
   if (reason.type === "deadlineDriven") return "Moved before its " + reason.deadlineDay + " deadline.";
   if (reason.type === "deferred") return "You chose to push this to next week.";
   if (reason.type === "manualOverride") return "You picked this time yourself.";
+  return "";
+}
+function inferChatMoveReason(dayEvents, newTime, newDuration, excludeId, displacedTitle) {
+  if (displacedTitle) return "moved " + displacedTitle + " to fit";
+  if (!newTime) return "";
+  const ADJACENT_GAP_MINS = 15;
+  const others = (dayEvents || []).filter((e) => e.id !== excludeId && e.time);
+  const newStart = timeToMinutes(newTime);
+  const newEnd = newStart + (newDuration || 30);
+  const rightAfter = others.filter((e) => {
+    const s = timeToMinutes(e.time);
+    return s >= newEnd && s - newEnd <= ADJACENT_GAP_MINS;
+  }).sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time))[0];
+  if (rightAfter) return "right before your " + rightAfter.title + " at " + fmtClock12(rightAfter.time);
+  const rightBefore = others.filter((e) => {
+    const s = timeToMinutes(e.time), d = e.duration || 30;
+    return s + d <= newStart && newStart - (s + d) <= ADJACENT_GAP_MINS;
+  }).sort((a, b) => timeToMinutes(b.time) - timeToMinutes(a.time))[0];
+  if (rightBefore) return "right after your " + rightBefore.title;
   return "";
 }
 function fmtMovedReasonSuffix(ev) {
@@ -4769,7 +4815,7 @@ function describeCreateProposal(task) {
   const when = task.time ? dateLabel + " at " + fmtClock12(task.time) + (task.duration ? " (" + task.duration + " min)" : "") : dateLabel ? "due " + dateLabel : "no date yet";
   return 'Add "' + task.title + '" -- ' + when + "?";
 }
-function pastTenseProposalLabel(label, moved) {
+function pastTenseProposalLabel(label, moved, reason) {
   if (!label) return label;
   let s = label.replace(/\?$/, "");
   let isMove = false;
@@ -4785,7 +4831,7 @@ function pastTenseProposalLabel(label, moved) {
   if (isMove && moved && moved.length > 0 && moved[0].newDate) {
     const d = /* @__PURE__ */ new Date(moved[0].newDate + "T12:00:00");
     const dateLabel = d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
-    s += " to " + dateLabel + (moved[0].newTime ? " at " + fmtClock12(moved[0].newTime) : "") + ".";
+    s += " to " + dateLabel + (moved[0].newTime ? " at " + fmtClock12(moved[0].newTime) : "") + (reason ? ", " + reason : "") + ".";
   }
   return s;
 }
@@ -5223,6 +5269,54 @@ function getUserName() {
 }
 function saveProfile(p) {
   lsSet("profile", p);
+}
+const AI_MEMORY_FACT_CAP = 20;
+function getAiMemory() {
+  return lsGet("aiMemory", { facts: [], updatedAt: null });
+}
+function saveAiMemory(mem) {
+  lsSet("aiMemory", mem);
+}
+async function pushAiMemory(mem) {
+  const u = firebase.auth().currentUser;
+  if (!u) return;
+  try {
+    await fsdb().collection("aiMemory").doc(u.uid).set({ facts: mem.facts || [], updatedAt: (/* @__PURE__ */ new Date()).toISOString() }, { merge: true });
+  } catch (e) {
+  }
+}
+async function hydrateAiMemoryOnAuth() {
+  const u = firebase.auth().currentUser;
+  if (!u) return;
+  try {
+    const doc = await fsdb().collection("aiMemory").doc(u.uid).get();
+    if (doc.exists) {
+      const data = doc.data();
+      saveAiMemory({ facts: Array.isArray(data.facts) ? data.facts : [], updatedAt: data.updatedAt || null });
+    }
+  } catch (e) {
+  }
+}
+function mergeAiMemoryFacts(existingMem, newFactTexts) {
+  const existing = existingMem && existingMem.facts || [];
+  const norm = (s) => (s || "").trim().toLowerCase();
+  const isDupe = (text) => {
+    const nt = norm(text);
+    if (!nt) return true;
+    return existing.some((f) => {
+      const nf = norm(f.text);
+      return nf === nt || nf.includes(nt) || nt.includes(nf);
+    });
+  };
+  const added = (newFactTexts || []).map((t) => (t || "").trim()).filter((t) => t && !isDupe(t)).map((text) => ({ text, addedAt: Date.now() }));
+  if (added.length === 0) return existingMem || { facts: [], updatedAt: null };
+  let facts = [...existing, ...added];
+  if (facts.length > AI_MEMORY_FACT_CAP) facts = facts.slice(facts.length - AI_MEMORY_FACT_CAP);
+  return { facts, updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+}
+function removeAiMemoryFact(mem, index) {
+  const facts = (mem.facts || []).filter((_, i) => i !== index);
+  return { facts, updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
 }
 function seedEventsIfStale() {
   return;
@@ -10345,9 +10439,16 @@ function gatherStudlinAiProfileSignals(flags, prefs) {
   if (flags.needsConfidence) profile.confidenceInsight = confidenceOutcomeInsight();
   return profile;
 }
+function formatAiMemoryForPrompt() {
+  const facts = (getAiMemory().facts || []).map((f) => f.text);
+  if (facts.length === 0) return "";
+  return "STUDENT'S OWN STATED PREFERENCES (real things they've told Studlin AI before, still true unless today's message says otherwise): " + facts.join("; ") + ".";
+}
 function formatStudlinAiDigestForPrompt(question, digest, flags, profile) {
   const lines = ["DIGEST (real data about this student -- the ONLY source of truth; never invent beyond this):"];
   lines.push("Today: " + digest.todayKey + " (" + currentClockLabel() + " right now). Schedule window shown below: " + digest.todayKey + " through " + digest.windowEndKey + ".");
+  const memLine = formatAiMemoryForPrompt();
+  if (memLine) lines.push(memLine);
   if (flags.needsWorkload) {
     if (digest.busiestDay) lines.push("Busiest day in this window: " + digest.busiestDay.date + " (" + digest.busiestDay.workloadMinutes + " minutes scheduled).");
     if (digest.lightestDay) lines.push("Lightest day with anything scheduled: " + digest.lightestDay.date + " (" + digest.lightestDay.workloadMinutes + " minutes).");
@@ -10409,6 +10510,8 @@ function formatStudlinAiCoachingPrompt(question, context) {
   const { digest, subject, subjectNudge, examReadiness, confidenceInsight } = context;
   const lines = ["CONTEXT (real data about this student -- ground your advice in this, never invent beyond it):"];
   lines.push("Today: " + digest.todayKey + " (" + currentClockLabel() + " right now).");
+  const memLine = formatAiMemoryForPrompt();
+  if (memLine) lines.push(memLine);
   if (digest.heavyDayKeys.length > 0) lines.push("Heavier-than-usual days in the next two weeks: " + digest.heavyDayKeys.join(", ") + ".");
   if (digest.overdue.length > 0) lines.push(digest.overdue.length + " overdue item(s) right now: " + digest.overdue.map((o) => o.title).join(", ") + ".");
   if (subject) {
@@ -10442,7 +10545,8 @@ async function classifyStudlinAiMessage(text, history) {
   const nextWeekSameDay = dayKey(new Date(Date.now() + 7 * 864e5));
   const weekday = (/* @__PURE__ */ new Date()).toLocaleDateString("en-US", { weekday: "long" });
   const nowTime = currentClockLabel();
-  const prompt = "You are a message router for a student calendar assistant chat. Today is " + weekday + ", " + today + ". The current time right now is " + nowTime + '. The student typed: "' + text + `". Decide whether this is a QUESTION about their existing schedule/study history (a real number/fact), a COACHING ask (wants real study-strategy help, not a fact), an ACTION request (create something new, move/reschedule something that already exists, or turn pasted study material into flashcards/a quiz), or unsupported. Respond with ONLY this JSON, no markdown fences, no explanation:
+  const memLine = formatAiMemoryForPrompt();
+  const prompt = "You are a message router for a student calendar assistant chat. Today is " + weekday + ", " + today + ". The current time right now is " + nowTime + ". " + (memLine ? memLine + " " : "") + 'The student typed: "' + text + `". Decide whether this is a QUESTION about their existing schedule/study history (a real number/fact), a COACHING ask (wants real study-strategy help, not a fact), an ACTION request (create something new, move/reschedule something that already exists, or turn pasted study material into flashcards/a quiz), or unsupported. Respond with ONLY this JSON, no markdown fences, no explanation:
 {"kind":"question"|"coaching"|"action"|"unsupported","intent":"create_task"|"delete_task"|"set_peak_hours"|"shift"|"clear_day"|"clear_week"|"skip_class"|"move_event"|"retime_event"|"move_flex_task"|"generate_study_material"|null,"days":<integer 1-14 or null>,"date":"YYYY-MM-DD or null","target":"<short name of the specific existing item, or null>","targetDate":"YYYY-MM-DD or null","destDate":"YYYY-MM-DD or null","newStart":"HH:MM 24h or null","newDuration":<integer minutes or null>,"title":"<short name of the NEW item to create, or null>","dueDate":"YYYY-MM-DD or null","dueTime":"HH:MM 24h or null","durationMin":<integer minutes or null>,"taskKind":"study"|"todo"|"event"|"reminder"|"exam"|"project"|null,"genFormat":"flashcards"|"quiz"|null,"peakHours":"morning"|"midday"|"afternoon"|"evening"|null,"clarify":"<a short, specific question, or null>"}
 Rules: "question" is asking for a real FACT about their schedule/workload/streak/pace/productivity (a number, a date, a yes/no). "coaching" is asking for real help or a plan -- "how should I study for X," "help me prepare," "where do I start," "I'm stressed about Y and don't know the material" -- wanting strategy/advice, not a fact, and not (yet) asking to add/move anything. Neither ever changes anything -- leave intent and every other field null for both. "unsupported" covers anything ambiguous, multi-step, deleting/cancelling MULTIPLE things or an entire day/week/recurring routine, or that doesn't clearly match one action below -- never guess. Deleting exactly ONE clearly-named item uses delete_task instead, not unsupported.
 "clarify": if the message clearly WANTS one of the actions below but is missing something required to do it (no title for a new item, no clear name for what to move/retime/delete, no day count for "shift"), set kind to "unsupported", intent to null, and "clarify" to ONE short, specific question asking for exactly the missing thing (e.g. "When is that due?" or "Which day would you like it moved to?"). Leave "clarify" null for every other case -- genuinely off-topic, too vague to guess the intended action at all, multi-step, or a bulk/destructive request. Never set clarify when kind is "question", "coaching", or "action".
@@ -10499,8 +10603,9 @@ Examples:
     return { kind: "unsupported", intent: null, clarify: null };
   }
 }
-function deriveStudlinAiProactiveSignal(strugglingBucketOffer, peakInsightOffer) {
+function deriveStudlinAiProactiveSignal(strugglingBucketOffer, unscheduledDueSoonOffer, peakInsightOffer) {
   if (strugglingBucketOffer) return { kind: "struggling_bucket", ...strugglingBucketOffer };
+  if (unscheduledDueSoonOffer) return { kind: "unscheduled_due_soon", ...unscheduledDueSoonOffer };
   if (peakInsightOffer) return { kind: "peak_hours", ...peakInsightOffer };
   return null;
 }
@@ -10629,6 +10734,8 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
   const [pendingIndex, setPendingIndex] = useState(null);
   const [pendingClarification, setPendingClarification] = useState(false);
   const [seededProactiveKey, setSeededProactiveKey] = useState(null);
+  const [memoryToast, setMemoryToast] = useState("");
+  const extractedThisSessionRef = useRef(false);
   const scrollRef = useRef(null);
   useEffect(() => {
     if (!open) return;
@@ -10643,17 +10750,51 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
   }, [messages, loading]);
   useEffect(() => {
     if (!open || !proactiveSignal) return;
-    const key = proactiveSignal.kind + ":" + proactiveSignal.suggestedBucket;
+    const key = proactiveSignal.kind === "unscheduled_due_soon" ? "unscheduled_due_soon:" + proactiveSignal.nearestDate + ":" + proactiveSignal.count : proactiveSignal.kind + ":" + proactiveSignal.suggestedBucket;
     if (key === seededProactiveKey) return;
     setSeededProactiveKey(key);
-    const text = proactiveSignal.kind === "struggling_bucket" ? "Your " + PEAK_BUCKET_LABELS[proactiveSignal.strugglingBucket].toLowerCase() + " tasks haven't been sticking -- " + proactiveSignal.recentMissedCount + " of your last " + proactiveSignal.recentWindow + " were missed. Want me to default new tasks to " + PEAK_BUCKET_LABELS[proactiveSignal.suggestedBucket].toLowerCase() + " instead?" : "Looks like you actually finish more " + PEAK_BUCKET_LABELS[proactiveSignal.suggestedBucket].toLowerCase() + " tasks (" + Math.round(proactiveSignal.suggestedPct * 100) + "%) than " + PEAK_BUCKET_LABELS[proactiveSignal.currentBucket].toLowerCase() + " ones (" + Math.round(proactiveSignal.currentPct * 100) + "%). Want me to update your peak hours?";
-    const label = "Switch to " + PEAK_BUCKET_LABELS[proactiveSignal.suggestedBucket];
+    const text = proactiveSignal.kind === "struggling_bucket" ? "Your " + PEAK_BUCKET_LABELS[proactiveSignal.strugglingBucket].toLowerCase() + " tasks haven't been sticking -- " + proactiveSignal.recentMissedCount + " of your last " + proactiveSignal.recentWindow + " were missed. Want me to default new tasks to " + PEAK_BUCKET_LABELS[proactiveSignal.suggestedBucket].toLowerCase() + " instead?" : proactiveSignal.kind === "unscheduled_due_soon" ? "You've got " + proactiveSignal.count + " thing" + (proactiveSignal.count !== 1 ? "s" : "") + " due by " + proactiveSignal.nearestDate + " with no time scheduled yet" + (proactiveSignal.titles && proactiveSignal.titles.length > 0 ? " (" + proactiveSignal.titles.slice(0, 3).join(", ") + (proactiveSignal.titles.length > 3 ? ", ..." : "") + ")" : "") + ". Want me to take you there so you can get them on the calendar?" : "Looks like you actually finish more " + PEAK_BUCKET_LABELS[proactiveSignal.suggestedBucket].toLowerCase() + " tasks (" + Math.round(proactiveSignal.suggestedPct * 100) + "%) than " + PEAK_BUCKET_LABELS[proactiveSignal.currentBucket].toLowerCase() + " ones (" + Math.round(proactiveSignal.currentPct * 100) + "%). Want me to update your peak hours?";
+    const label = proactiveSignal.kind === "unscheduled_due_soon" ? "Take me there" : "Switch to " + PEAK_BUCKET_LABELS[proactiveSignal.suggestedBucket];
     setMessages((m) => {
       const next = [...m, { role: "ai", text, kind: "proposal", proposal: { ok: true, source: "proactive", signal: proactiveSignal, label } }];
       setPendingIndex(next.length - 1);
       return next;
     });
   }, [open, proactiveSignal, seededProactiveKey]);
+  useEffect(() => {
+    if (open) {
+      extractedThisSessionRef.current = false;
+      return;
+    }
+    if (extractedThisSessionRef.current) return;
+    if (!messages.some((m) => m.role === "user")) return;
+    extractedThisSessionRef.current = true;
+    (async () => {
+      if (!canUseStudlinAiQna()) return;
+      const transcript = messages.filter((m) => m.role === "user" || m.role === "ai").slice(-20).map((m) => (m.role === "user" ? "Student: " : "Studlin: ") + (m.text || "")).join("\n");
+      if (!transcript.trim()) return;
+      const prompt = `Given this conversation between a student and their study assistant, list 0-3 short, durable facts or standing preferences about the student worth remembering long-term (e.g. "prefers evening workouts", "has a part-time job on weekends") -- real, standing facts about how they live/study/prefer things, NOT one-off scheduling requests, NOT anything already obvious from a single task, NOT a fact about a class/assignment that will stop being relevant once the term ends. If nothing durable came up, return an empty list -- don't strain to find something. Respond with ONLY this JSON, no markdown fences, no explanation: {"facts":["..."]}
+
+CONVERSATION:
+` + transcript;
+      try {
+        const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt }], model: "flash", format: "json" }) });
+        if (!res.ok) return;
+        const data = await res.json();
+        const raw = (data.reply || "").replace(/```json?|```/g, "").trim();
+        const parsed = JSON.parse(raw);
+        if (!parsed || !Array.isArray(parsed.facts) || parsed.facts.length === 0) return;
+        const existingMem = getAiMemory();
+        const nextMem = mergeAiMemoryFacts(existingMem, parsed.facts);
+        if (nextMem.facts.length === (existingMem.facts || []).length) return;
+        saveAiMemory(nextMem);
+        pushAiMemory(nextMem);
+        setMemoryToast("Studlin AI remembered something new");
+        setTimeout(() => setMemoryToast(""), 3500);
+      } catch (e) {
+      }
+    })();
+  }, [open, messages]);
   const askQuestion = async (text, history) => {
     if (!canUseStudlinAiQna()) {
       setPricingOpen(canUseStudlinAiQnaReason() === "free-tier" ? "studlinAiQna" : "aiUsageCap");
@@ -10886,9 +11027,16 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
       recordSmartReschedule();
     } else return;
     if (next) onEventsCommitted(next);
+    let moveReason = "";
+    if ((proposal.kind === "move_fixed" || proposal.kind === "move_flex_task") && proposal.moved && proposal.moved.length > 0 && next) {
+      const primary = proposal.moved[0];
+      const displaced = proposal.moved.length > 1 ? proposal.moved[1] : null;
+      const dayEvents = next.filter((e) => e.date === primary.newDate && e.id !== primary.id && e.time).concat(getRoutineOccurrencesForDate(primary.newDate));
+      moveReason = inferChatMoveReason(dayEvents, primary.newTime, primary.newDuration || primary.duration, primary.id, displaced ? displaced.title : null);
+    }
     setMessages((m) => {
       const withResolved = m.map((mm, i) => i === idx ? { ...mm, proposal: { ...mm.proposal, resolved: "confirmed" } } : mm);
-      return [...withResolved, { role: "ai", text: "Done. " + pastTenseProposalLabel(proposal.label, proposal.moved) }];
+      return [...withResolved, { role: "ai", text: "Done. " + pastTenseProposalLabel(proposal.label, proposal.moved, moveReason) }];
     });
     setPendingIndex(null);
   };
@@ -10962,7 +11110,7 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
         style: { padding: "9px 14px", borderRadius: 8, border: "none", background: T.lime, color: T.ink, fontWeight: 600, fontSize: 13, cursor: "pointer", opacity: !input.trim() || loading || pendingIndex != null ? 0.5 : 1, flexShrink: 0 }
       },
       "Send"
-    )))),
+    ))), memoryToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 22, right: 22, zIndex: STUDLIN_AI_DRAWER_PANEL_Z + 1, padding: "10px 16px", background: T.ink, color: T.lime, borderRadius: 10, fontSize: 12.5, fontWeight: 600, boxShadow: "0 16px 40px -12px rgba(0,0,0,0.5)", animation: "studlinPop 0.2s cubic-bezier(.2,.85,.3,1)" } }, memoryToast)),
     document.body
   );
 }
@@ -18869,6 +19017,23 @@ function SettingsTab({ theme = "dark", setTheme = () => {
   const [confirmRemoveSubjId, setConfirmRemoveSubjId] = useState(null);
   const [courseDeleteSnapshots, setCourseDeleteSnapshots] = useState(null);
   const [courseDeleteToast, setCourseDeleteToast] = useState("");
+  const [aiMemoryFacts, setAiMemoryFacts] = useState(() => getAiMemory().facts || []);
+  const [confirmRemoveFactIdx, setConfirmRemoveFactIdx] = useState(null);
+  const [confirmClearMemory, setConfirmClearMemory] = useState(false);
+  const removeAiFact = (idx) => {
+    const next = removeAiMemoryFact(getAiMemory(), idx);
+    saveAiMemory(next);
+    pushAiMemory(next);
+    setAiMemoryFacts(next.facts);
+    setConfirmRemoveFactIdx(null);
+  };
+  const clearAiMemory = () => {
+    const next = { facts: [], updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+    saveAiMemory(next);
+    pushAiMemory(next);
+    setAiMemoryFacts([]);
+    setConfirmClearMemory(false);
+  };
   const countLinkedForSubject = (sub) => {
     const matches = (item) => item.courseId === sub.id || item.subject === sub.label;
     return getWeeklyRoutine().filter(matches).length + lsGet("events", []).filter(matches).length;
@@ -18964,7 +19129,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     tog("shareAvailability");
     if (next) publishBusyWindows();
     else unpublishBusyWindows();
-  }, style: { width: 38, height: 20, borderRadius: 10, background: toggles.shareAvailability ? T.lime : T.card2, border: `1px solid ${toggles.shareAvailability ? T.lime : T.border}`, position: "relative", cursor: "pointer", transition: "all 0.2s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 14, borderRadius: "50%", background: toggles.shareAvailability ? T.bg : "#fff", position: "absolute", top: 2, left: toggles.shareAvailability ? 21 : 2, transition: "left 0.2s" } })) })), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "Data & AI"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "You own your notes, essays, and recordings."), /* @__PURE__ */ React.createElement(Row, { label: "Use my work to train Studlin AI", sub: "Off by default. We will never share your raw content.", k: "collect" }), /* @__PURE__ */ React.createElement(Row, { label: "Anonymous usage analytics", sub: "Helps us fix bugs and prioritise features.", k: "analytics" }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: exportAllData }, React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 6 } }, Icon.copy, "Export all data")), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: downloadChatHistory, disabled: chatHistoryLoading }, chatHistoryLoading ? "Preparing\u2026" : "Download chat history"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle" }, "Privacy policy"))), /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 10 } }, "Account security"), /* @__PURE__ */ React.createElement(Row, { label: "Two-factor authentication", sub: "Add a one-time code on every sign in.", k: "twofa", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: true, style: { opacity: 0.4, cursor: "not-allowed" } }, "Coming Soon") }), /* @__PURE__ */ React.createElement(Row, { label: "Active sessions", sub: "See and sign out other signed-in devices.", k: "sessions", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: true, style: { opacity: 0.4, cursor: "not-allowed" } }, "Coming Soon") }), /* @__PURE__ */ React.createElement(Row, { label: "Change password", sub: passwordResetSent ? "Reset link sent to " + profile.email + "." : "We'll email you a secure link to set a new one.", k: "pw", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: passwordResetLoading, onClick: sendPasswordReset }, passwordResetLoading ? "Sending\u2026" : passwordResetSent ? "Resend" : "Email reset link") }))), active === "Subjects & Labels" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Manage Subjects & Labels"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Color-code your classes. These labels appear on your calendar and tasks globally.")), /* @__PURE__ */ React.createElement(Btn, { onClick: () => {
+  }, style: { width: 38, height: 20, borderRadius: 10, background: toggles.shareAvailability ? T.lime : T.card2, border: `1px solid ${toggles.shareAvailability ? T.lime : T.border}`, position: "relative", cursor: "pointer", transition: "all 0.2s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 14, borderRadius: "50%", background: toggles.shareAvailability ? T.bg : "#fff", position: "absolute", top: 2, left: toggles.shareAvailability ? 21 : 2, transition: "left 0.2s" } })) })), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "Data & AI"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "You own your notes, essays, and recordings."), /* @__PURE__ */ React.createElement(Row, { label: "Use my work to train Studlin AI", sub: "Off by default. We will never share your raw content.", k: "collect" }), /* @__PURE__ */ React.createElement(Row, { label: "Anonymous usage analytics", sub: "Helps us fix bugs and prioritise features.", k: "analytics" }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: exportAllData }, React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 6 } }, Icon.copy, "Export all data")), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: downloadChatHistory, disabled: chatHistoryLoading }, chatHistoryLoading ? "Preparing\u2026" : "Download chat history"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle" }, "Privacy policy"))), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "What Studlin AI remembers"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "Standing preferences it's picked up from your chats \u2014 not one-off requests, just things worth not re-explaining every time."), aiMemoryFacts.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, padding: "16px 0", textAlign: "center", borderTop: `1px solid ${T.border}` } }, "Nothing remembered yet. It'll pick things up naturally as you chat.") : aiMemoryFacts.map((f, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, marginBottom: 8 } }, confirmRemoveFactIdx === i ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, "Forget this?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => removeAiFact(i) }, "Forget"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmRemoveFactIdx(null) }, "Cancel")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, f.text), /* @__PURE__ */ React.createElement("button", { onClick: () => setConfirmRemoveFactIdx(i), style: { background: "none", border: `1px solid ${T.border}`, color: T.muted, cursor: "pointer", borderRadius: 6, padding: "4px 10px", fontSize: 12, fontFamily: T.font, flexShrink: 0 } }, "Remove")))), aiMemoryFacts.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 6 } }, confirmClearMemory ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Forget everything Studlin AI remembers about you?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: clearAiMemory }, "Yes, clear all"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmClearMemory(false) }, "Cancel")) : /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmClearMemory(true) }, "Clear all"))), /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 10 } }, "Account security"), /* @__PURE__ */ React.createElement(Row, { label: "Two-factor authentication", sub: "Add a one-time code on every sign in.", k: "twofa", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: true, style: { opacity: 0.4, cursor: "not-allowed" } }, "Coming Soon") }), /* @__PURE__ */ React.createElement(Row, { label: "Active sessions", sub: "See and sign out other signed-in devices.", k: "sessions", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: true, style: { opacity: 0.4, cursor: "not-allowed" } }, "Coming Soon") }), /* @__PURE__ */ React.createElement(Row, { label: "Change password", sub: passwordResetSent ? "Reset link sent to " + profile.email + "." : "We'll email you a secure link to set a new one.", k: "pw", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: passwordResetLoading, onClick: sendPasswordReset }, passwordResetLoading ? "Sending\u2026" : passwordResetSent ? "Resend" : "Email reset link") }))), active === "Subjects & Labels" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Manage Subjects & Labels"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Color-code your classes. These labels appear on your calendar and tasks globally.")), /* @__PURE__ */ React.createElement(Btn, { onClick: () => {
     const term = getSchoolTerm();
     setMgmtSubjs((s) => [...s, { id: String(Date.now()), label: "", color: nextAvailableSubjectColor(s.map((x) => x.color)), termEnd: term ? term.end : null }]);
   } }, "+ Add")), mgmtSubjs.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, padding: "20px 0", textAlign: "center", borderTop: `1px solid ${T.border}` } }, 'No subjects yet. Click "+ Add" to create your first label.'), mgmtSubjs.map((sub, i) => /* @__PURE__ */ React.createElement("div", { key: sub.id || i, style: { ...subjectRowStyle(sub.color), marginBottom: 10 } }, confirmRemoveSubjId === sub.id ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flex: 1 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, 'Delete "', sub.label, '" and its ', countLinkedForSubject(sub), " linked item", countLinkedForSubject(sub) !== 1 ? "s" : "", " (class times, assignments, exams)?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => confirmRemoveSubject(sub) }, "Delete"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmRemoveSubjId(null) }, "Cancel")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(ColorSelect, { value: sub.color, onChange: (c) => setMgmtSubjs((s) => s.map((x, j) => j === i ? { ...x, color: c } : x)) }), /* @__PURE__ */ React.createElement("input", { value: sub.label, onChange: (e) => setMgmtSubjs((s) => s.map((x, j) => j === i ? { ...x, label: e.target.value } : x)), placeholder: "Subject name...", style: { flex: 1, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 7, padding: "7px 10px", color: T.text, fontSize: 13, fontFamily: T.font, outline: "none" } }), /* @__PURE__ */ React.createElement("button", { onClick: () => removeSubjectRow(sub), style: { background: "none", border: `1px solid ${T.border}`, color: T.muted, cursor: "pointer", borderRadius: 6, padding: "4px 10px", fontSize: 12, fontFamily: T.font } }, "Remove")))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 16, alignItems: "center", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Btn, { onClick: saveMgmtSubjs }, "Save changes"), mgmtSubjs.length > 0 && (confirmClearSubjs ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Delete all ", mgmtSubjs.length, " subject", mgmtSubjs.length !== 1 ? "s" : "", " and everything linked to them?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: clearAllSubjects }, "Yes, delete all"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmClearSubjs(false) }, "Cancel")) : /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmClearSubjs(true) }, "Clear all")), mgmtSaved && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.lime, fontWeight: 600 } }, "\u2713 Saved")), courseDeleteToast && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginTop: 10, padding: "9px 12px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.text, flex: 1 } }, courseDeleteToast), /* @__PURE__ */ React.createElement("button", { onClick: undoCourseDeletes, style: { background: "none", border: "none", color: T.lime, cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: T.font, textDecoration: "underline" } }, "Undo")))), active === "Calendar Preferences" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Study Schedule"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 16 } }, "Work hours, weekend schedule, difficulty, and peak focus hours."), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setScheduleSettingsOpen(true) }, "Customize Schedule")), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Weekly Routine"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 16 } }, "Your classes, sports, and shifts: the times the AI treats as absolute and never schedules over."), /* @__PURE__ */ React.createElement(Btn, { onClick: onOpenRoutineCenter }, "Manage Routine")), /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Auto-schedule prep time"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 16 } }, "How Studlin handles study sessions for assignments and exams pulled from a syllabus scan, once they're actually coming up."), /* @__PURE__ */ React.createElement(SelectChip, { options: [{ value: "ask", label: "Always ask" }, { value: "auto", label: "Auto-add" }, { value: "off", label: "Off" }], value: prepScheduleMode, onChange: (v) => {
@@ -19726,6 +19891,7 @@ function AuthGate() {
         DataStore.notes.hydrateOnAuth();
         DataStore.practiceExams.hydrateOnAuth();
         DataStore.timerLogs.hydrateOnAuth();
+        hydrateAiMemoryOnAuth();
         if (!lsGet("onboarded", false)) await profilePromise;
         const ref = sessionStorage.getItem("studlin-ref");
         if (ref && ref !== u.uid) {
@@ -19940,7 +20106,8 @@ function App() {
   const [catchUpMoveDraft, setCatchUpMoveDraft] = useState(null);
   const [strugglingBucketOffer, setStrugglingBucketOffer] = useState(null);
   const [peakInsightOffer, setPeakInsightOffer] = useState(null);
-  const studlinAiProactive = deriveStudlinAiProactiveSignal(strugglingBucketOffer, peakInsightOffer);
+  const [unscheduledDueSoonOffer, setUnscheduledDueSoonOffer] = useState(null);
+  const studlinAiProactive = deriveStudlinAiProactiveSignal(strugglingBucketOffer, unscheduledDueSoonOffer, peakInsightOffer);
   const [expiredPending, setExpiredPending] = useState([]);
   const [calendarWizardOpen, setCalendarWizardOpen] = useState(false);
   const [scheduleChangeAlerts, setScheduleChangeAlerts] = useState([]);
@@ -20097,6 +20264,7 @@ function App() {
     if (queued.length === 0) return;
     const latest = pickLatestQueuedNudgesByKind(queued);
     if (latest.strugglingBucket) setStrugglingBucketOffer(latest.strugglingBucket);
+    if (latest.unscheduledDueSoon) setUnscheduledDueSoonOffer(latest.unscheduledDueSoon);
     if (latest.peakInsight) setPeakInsightOffer(latest.peakInsight);
     if (latest.examPrep) setExamPrepSuggestion(latest.examPrep);
     if (latest.prepPromptBatch) setPrepPromptBatch(latest.prepPromptBatch);
@@ -20315,6 +20483,20 @@ function App() {
       dismissPeakHourInsight(peakInsightOffer.suggestedBucket);
     }
     setPeakInsightOffer(null);
+  };
+  const acceptUnscheduledDueSoonOffer = () => {
+    if (!unscheduledDueSoonOffer) return;
+    logSuggestionDecision("unscheduledDueSoon", "accepted", unscheduledDueSoonOffer);
+    lsSet("calendarHighlightIds", { ids: unscheduledDueSoonOffer.ids, setAt: Date.now() });
+    setActive("calendar");
+    setUnscheduledDueSoonOffer(null);
+  };
+  const declineUnscheduledDueSoonOffer = () => {
+    if (unscheduledDueSoonOffer) {
+      logSuggestionDecision("unscheduledDueSoon", "dismissed", unscheduledDueSoonOffer);
+      dismissUnscheduledDueSoon();
+    }
+    setUnscheduledDueSoonOffer(null);
   };
   const [scheduleSettingsOpen, setScheduleSettingsOpen] = useState(false);
   const [navCollapsed, setNavCollapsed] = useState(() => lsGet("navCollapsed", true));
@@ -20801,6 +20983,11 @@ function App() {
     if (strugglingBucket) {
       if (recoveryPending) queueInsightNudge("strugglingBucket", strugglingBucket);
       else setStrugglingBucketOffer(strugglingBucket);
+    }
+    const unscheduledDueSoon = detectUnscheduledDueSoon(evs, today);
+    if (unscheduledDueSoon) {
+      if (recoveryPending) queueInsightNudge("unscheduledDueSoon", unscheduledDueSoon);
+      else setUnscheduledDueSoonOffer(unscheduledDueSoon);
     }
     const peakInsight = strugglingBucket ? null : detectPeakHourInsight(getSchedulePreferences());
     if (peakInsight) {
@@ -21334,10 +21521,12 @@ function App() {
       proactiveSignal: studlinAiProactive,
       onAcceptProactive: (signal) => {
         if (signal.kind === "struggling_bucket") acceptStrugglingBucketOffer();
+        else if (signal.kind === "unscheduled_due_soon") acceptUnscheduledDueSoonOffer();
         else if (signal.kind === "peak_hours") acceptPeakHourInsight();
       },
       onDeclineProactive: (signal) => {
         if (signal.kind === "struggling_bucket") declineStrugglingBucketOffer();
+        else if (signal.kind === "unscheduled_due_soon") declineUnscheduledDueSoonOffer();
         else if (signal.kind === "peak_hours") declinePeakHourInsight();
       }
     }
