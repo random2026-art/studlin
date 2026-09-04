@@ -98,6 +98,7 @@ function loadStudlinModule(options) {
     "T","applyTheme","ACCENTS",
     "getWorkWindowMinsFor","detectPeakHourInsight","dismissPeakHourInsight",
     "detectStrugglingBucket","dismissStrugglingBucket","TIER0_HOUR_BUCKETS","PEAK_BUCKET_LABELS",
+    "detectUnscheduledDueSoon","dismissUnscheduledDueSoon",
     "logCompletionOutcome","getBucketReliability","setSchedulePreferences","applyStudyStylePrefs","applySessionOrderPreference",
     "computeSubjectHourReliabilityMatrix","MATRIX_MIN_SAMPLE","computeReadinessTrajectory","computeAttentionBalance",
     "applyCheckInRating","computeExamReadiness","canGenQuiz","recordQuizGen",
@@ -122,6 +123,7 @@ function loadStudlinModule(options) {
     "layoutDayEvents","computeEventBlockHeightPx","isTimerEligible",
     "logSuggestionDecision","examPrepIntervalPosition","fmtMovedReasonSuffix",
     "fmtPlacementReason","TIER0_EXAM_PREP_TOLERANCE_DAYS","computeAttackBlockStartDate",
+    "pastTenseProposalLabel","inferChatMoveReason",
     "ATTACK_BLOCK_GATE_PADDING","ATTACK_BLOCK_FINISH_BUFFER_DAYS","ATTACK_BLOCK_SUSTAINABLE_WEEKLY_MINS",
     "computeAttackBlockRampOffsets","ATTACK_BLOCK_RAMP_EXPONENT","detectAttackBlockOverruns",
     "getAttackOverrunDismissals","isAttackOverrunDismissedToday","dismissAttackOverrunToday",
@@ -198,7 +200,11 @@ function loadStudlinModule(options) {
     "canGenFlashcardsReason","canBuildExamPlanReason","canAddSessionFocusReason",
     "canBreakDownProjectReason","canUseSmartRescheduleReason","canUseBrainDumpReason","canUseAiArrangeReason",
     "generateFlashcardsFromText","generateQuizFromText","latestWrongTopicsForExam","sessionPriorityFor",
-    "hourBucket","timeToMinutes","minutesToTime"];
+    "hourBucket","timeToMinutes","minutesToTime",
+    "getAiMemory","saveAiMemory","mergeAiMemoryFacts","removeAiMemoryFact","AI_MEMORY_FACT_CAP",
+    "currentClockLabel","formatAiMemoryForPrompt",
+    "buildImportSyllabusItemsProposal","extractSyllabusItemsFromChatText",
+    "getRoutineOccurrenceNote","saveRoutineOccurrenceNote"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }

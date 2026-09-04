@@ -1687,6 +1687,29 @@ const getRoutineSkips=()=>lsGet("routineSkips",{});
 // onDropRoutineOccurrence).
 const getRoutineOverrides=()=>lsGet("routineOverrides",{});
 const saveRoutineOverrides=(o)=>lsSet("routineOverrides",o);
+// Per-occurrence "what's happening in class today" content -- a specific
+// class meeting can have its own notes/to-do completely different from
+// the next one (a worksheet due one day, a lab the next), so this is
+// keyed the exact same way a retime/resize override already is
+// (routineId then dateKey), reusing that same store rather than adding a
+// second parallel one. Read side defaults to an empty, well-formed shape
+// so a caller never has to null-check before rendering.
+function getRoutineOccurrenceNote(routineId,dateKey){
+  const overrides=getRoutineOverrides();
+  const forDate=overrides[routineId]&&overrides[routineId][dateKey];
+  return{note:(forDate&&forDate.note)||"",todo:(forDate&&forDate.todo)||[]};
+}
+// Merges {note,todo} onto whatever's already saved for this occurrence
+// (a real startTime/duration retime override may already be sitting
+// here -- see applyRoutineDropScope's own comment) so saving a note can
+// never silently undo an existing time change, same reasoning in
+// reverse. Pass null/undefined for a field to leave it untouched.
+function saveRoutineOccurrenceNote(routineId,dateKey,patch){
+  const overrides=getRoutineOverrides();
+  const forRoutine={...(overrides[routineId]||{})};
+  forRoutine[dateKey]={...(forRoutine[dateKey]||{}),...patch};
+  saveRoutineOverrides({...overrides,[routineId]:forRoutine});
+}
 // The current school term's date range, {start,end} (both "YYYY-MM-DD")
 // or null if never set — opt-in, so a student who hasn't configured this
 // sees no change from today's always-on behavior. Governs only
@@ -2098,20 +2121,31 @@ function expandRoutineOccurrences(routines,startDateKey,endDateKey){
       // Phase 7e: a "just this occurrence" retime/resize overrides only
       // this one date's time/duration -- every other occurrence of the
       // same rule keeps r.startTime/r.duration untouched.
+      //
+      // 2026-09-04 (per-day class notes): time/duration now fall back
+      // independently per-field rather than "override present -> use its
+      // fields wholesale." A note-only override (see
+      // saveRoutineOccurrenceNote) has no startTime/duration keys at all
+      // -- before this fix, its mere presence would have blanked this
+      // occurrence's real time out to undefined. Existing retime/resize
+      // overrides always set both fields together, so this is a pure
+      // behavior-preserving fix for them, not a change.
       const override=overrides[r.id]&&overrides[r.id][dk];
       out.push({
         id:"routine-"+r.id+"-"+dk,
         routineId:r.id,
         title:r.title,
         date:dk,
-        time:override?override.startTime:r.startTime,
-        duration:override?override.duration:(r.duration||30),
+        time:override&&override.startTime!=null?override.startTime:r.startTime,
+        duration:override&&override.duration!=null?override.duration:(r.duration||30),
         kind:ROUTINE_KIND_TO_EVENT_KIND[r.kind]||"class",
         subject:r.subject||"",
         color:r.color||null,
         status:"pending",
         isRoutine:true,
-        overridden:!!override,
+        overridden:!!(override&&(override.startTime!=null||override.duration!=null)),
+        dayNote:(override&&override.note)||"",
+        dayTodo:(override&&override.todo)||[],
         // A recurring class/activity's commuteBefore/After (set via
         // editing it -- NewEventModal's editRoutine mode already saves
         // these correctly onto the rule, see saveRoutineEditFromModal)
@@ -3227,6 +3261,48 @@ function dismissPeakHourInsight(bucketId){
   dismissed[bucketId]=Date.now();
   lsSet("peakInsightDismissed",dismissed);
 }
+// Third proactive signal, 2026-09-04 -- Studlin AI chat feature request:
+// "3 things due Thursday, 2 unscheduled -- want me to fix that?" surfacing
+// unprompted, not just when asked. Deliberately conservative to avoid
+// nagging/false positives.
+//
+// IMPORTANT, verified against buildSyllabusEventBatch (the real marker-
+// creation code) before shipping: a due-date marker's own `time` field is
+// NOT a reliable "has this been scheduled" signal -- every non-noDate
+// deadline marker gets time:"23:59" as a fixed placeholder regardless of
+// whether any real work time exists for it (duration:null on the marker
+// itself always). Actual scheduled work lives in SEPARATE "study block"
+// events linked back via dueEventId (see regenerateRemainingSessionFocuses
+// and others for the same pattern) -- so "unscheduled" really means "no
+// linked, still-pending session exists at all", not "!ev.time". Also
+// excludes: checklist:true (an explicit "just track the date, don't
+// schedule time for it" request -- offering to schedule THAT would go
+// against what the student already asked for) and isProjectMarker
+// (projects already have their own phase/outline tracking surface, this
+// nudge is about plain assignments falling through the cracks).
+const UNSCHEDULED_DUE_SOON_WINDOW_DAYS=3;
+const UNSCHEDULED_DUE_SOON_COOLDOWN_MS=2*86400000; // 2 days -- shorter than struggling-bucket/peak-hour's 14-day cooldowns, since THIS signal's underlying items genuinely change day to day (a decline today shouldn't suppress a real new one appearing in two days), not a stable behavioral pattern worth a long cooldown.
+function detectUnscheduledDueSoon(events,todayKey){
+  const dismissedAt=lsGet("unscheduledDueSoonDismissedAt",0);
+  if(Date.now()-dismissedAt<UNSCHEDULED_DUE_SOON_COOLDOWN_MS)return null;
+  const all=events||[];
+  const end=(()=>{const d=new Date(todayKey+"T12:00:00");d.setDate(d.getDate()+UNSCHEDULED_DUE_SOON_WINDOW_DAYS);return dayKey(d);})();
+  const hasLinkedSession=id=>all.some(e=>e.dueEventId===id&&e.status!=="done");
+  const candidates=all.filter(ev=>{
+    if(ev.kind!=="deadline"||ev.status!=="pending"||ev.checklist||isProjectMarker(ev))return false;
+    const dueRef=ev.deadline||ev.date;
+    if(!dueRef||dueRef<todayKey||dueRef>end)return false;
+    return !hasLinkedSession(ev.id);
+  }).sort((a,b)=>{
+    const da=a.deadline||a.date,db=b.deadline||b.date;
+    return da<db?-1:da>db?1:0;
+  });
+  if(candidates.length===0)return null;
+  return {count:candidates.length,titles:candidates.map(e=>e.title),ids:candidates.map(e=>e.id),nearestDate:candidates[0].deadline||candidates[0].date};
+}
+function dismissUnscheduledDueSoon(){
+  lsSet("unscheduledDueSoonDismissedAt",Date.now());
+}
 // Append-only log of every accept/dismiss/edit decision a student makes on
 // a Studlin-generated suggestion (peak-hour insight, struggling bucket,
 // week balance, exam-prep pacing, and eventually Tier 0's own ask-mode) --
@@ -3925,6 +4001,38 @@ function fmtPlacementReason(reason,timeStr){
   if(reason.type==="deadlineDriven")return "Moved before its "+reason.deadlineDay+" deadline.";
   if(reason.type==="deferred")return "You chose to push this to next week.";
   if(reason.type==="manualOverride")return "You picked this time yourself.";
+  return "";
+}
+// Studlin AI chat feature, 2026-09-04: a lightweight, HONEST reason for a
+// plain move/retime/create proposal in chat. Deliberately NOT reusing
+// fmtPlacementReason's own richer reason vocabulary above (peak-hour/
+// reliability scoring) -- those reasons only exist because findTier0Slot
+// actually computed them. Chat's move_fixed/move_flex_task proposals go
+// through computePausePlan/buildMoveFlexTaskProposal instead, which call
+// the plain findFixedEventSlot/findLegalSlotOrNull "first legal opening"
+// scanner -- it never scores peak hours or reliability, so claiming it did
+// would be inventing a reason the engine didn't actually use. This only
+// ever states something already true from the data the proposal itself
+// computed: a real displaced neighbor, or real adjacency to another event
+// on the same day after placement. Empty string (append nothing) when
+// neither applies -- no reason beats a fabricated one.
+function inferChatMoveReason(dayEvents,newTime,newDuration,excludeId,displacedTitle){
+  if(displacedTitle)return "moved "+displacedTitle+" to fit";
+  if(!newTime)return "";
+  const ADJACENT_GAP_MINS=15;
+  const others=(dayEvents||[]).filter(e=>e.id!==excludeId&&e.time);
+  const newStart=timeToMinutes(newTime);
+  const newEnd=newStart+(newDuration||30);
+  const rightAfter=others.filter(e=>{
+    const s=timeToMinutes(e.time);
+    return s>=newEnd&&s-newEnd<=ADJACENT_GAP_MINS;
+  }).sort((a,b)=>timeToMinutes(a.time)-timeToMinutes(b.time))[0];
+  if(rightAfter)return "right before your "+rightAfter.title+" at "+fmtClock12(rightAfter.time);
+  const rightBefore=others.filter(e=>{
+    const s=timeToMinutes(e.time),d=e.duration||30;
+    return s+d<=newStart&&newStart-(s+d)<=ADJACENT_GAP_MINS;
+  }).sort((a,b)=>timeToMinutes(b.time)-timeToMinutes(a.time))[0];
+  if(rightBefore)return "right after your "+rightBefore.title;
   return "";
 }
 // A Tier 0 move's reasoning was already computed by findTier0Slot's own
@@ -7706,7 +7814,7 @@ function describeCreateProposal(task){
 // message, so the chat literally said e.g. "Done. Delete "Chem Notes"
 // from 2026-09-08?" even though the action had already finished. Strips
 // the trailing "?" and turns the leading imperative into a completed one.
-function pastTenseProposalLabel(label,moved){
+function pastTenseProposalLabel(label,moved,reason){
   if(!label)return label;
   let s=label.replace(/\?$/,"");
   let isMove=false;
@@ -7723,10 +7831,15 @@ function pastTenseProposalLabel(label,moved){
   // shown right before confirming already had the real destination (see
   // StudlinAiMiniDayPreview, only rendered pre-confirm). Appends it here
   // from the same `moved` data the proposal itself already computed.
+  //
+  // `reason` (optional, 2026-09-04 feature): a short, honest clause from
+  // inferChatMoveReason -- e.g. "right before your Track Practice" or
+  // "moved Gym to fit" -- folded in before the final period so it reads
+  // as one sentence, not a bolted-on parenthetical.
   if(isMove&&moved&&moved.length>0&&moved[0].newDate){
     const d=new Date(moved[0].newDate+"T12:00:00");
     const dateLabel=d.toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"});
-    s+=" to "+dateLabel+(moved[0].newTime?" at "+fmtClock12(moved[0].newTime):"")+".";
+    s+=" to "+dateLabel+(moved[0].newTime?" at "+fmtClock12(moved[0].newTime):"")+(reason?", "+reason:"")+".";
   }
   return s;
 }
@@ -7882,6 +7995,120 @@ function buildGenerateStudyMaterialProposal(parsed,materialText){
     ?"Generate a practice quiz from this"+(subject?" for "+subject:"")+"?"
     :"Generate flashcards from this"+(subject?" for "+subject:"")+"?";
   return{ok:true,kind:"generate_study_material",genFormat,materialText:trimmed,subject,label};
+}
+// Real extraction call for import_syllabus_items -- the classifier only
+// ever confirms "this message is several dated graded items for subject
+// X," never the items themselves (same reasoning generate_study_material's
+// materialText documents: never trust the classifier to echo back long
+// content verbatim). This is a second, focused AI call, structurally the
+// same "AI attempt, JSON in, JSON out" shape as Notes' own
+// extractSyllabusDeadlines, just against a short pasted chat message
+// instead of a full uploaded syllabus -- deliberately a fresh function
+// rather than hoisting/reusing that one, since it's defined deep inside
+// NotesTab's own component closure and extracting it out is a real risk
+// to an already-shipped, well-tested path for a same-day feature. Reuses
+// the shared module-level helpers that one already depends on
+// (ANTI_GARBAGE_EXTRACTION_RULE, looksLikeRealDeadlineTitle,
+// withDerivedExamImportance) so both extraction prompts stay judged by
+// the same "is this a real title" bar.
+async function extractSyllabusItemsFromChatText(text){
+  const trimmed=(text||"").trim();
+  if(!trimmed)return [];
+  try{
+    const prompt="Extract every distinct graded item (quiz, exam, midterm, final, assignment, project) with a real date mentioned in this chat message from a student to their study assistant. "+
+      "Today's date is "+dayKey()+". If a date has no year, infer the most likely upcoming year given today's date. "+
+      "For each item return: \"title\" (short, e.g. \"First Quiz\" or \"Final Exam\"), "+
+      "\"date\" (YYYY-MM-DD, your best guess -- never omit even if uncertain), "+
+      "\"kind\" (\"exam\" for a quiz/test/midterm/final, \"deadline\" for anything else graded), "+
+      "\"examType\" (ONLY when kind is \"exam\": \"quiz\",\"midterm\",\"final\",\"project\",\"other\" -- omit entirely when kind is \"deadline\"), "+
+      "\"gradeWeightPercent\" (ONLY when kind is \"exam\" AND a percentage of the final grade is explicitly stated, a plain number like 20, not a string or a % sign -- omit entirely if none is stated, never guess one), "+
+      "\"detail\" (optional -- only when something concrete beyond the date is stated, e.g. \"covers chapters 1 through 8\" -- omit the key entirely rather than inventing filler). "+
+      ANTI_GARBAGE_EXTRACTION_RULE+
+      "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
+      "{\"items\":[{\"title\":\"First Quiz\",\"date\":\"2026-09-21\",\"kind\":\"exam\",\"examType\":\"quiz\",\"gradeWeightPercent\":20,\"detail\":\"Covers chapters 1 through 8\"}]}. "+
+      "If you find no real dated items at all, respond with {\"items\":[]}.\n\n"+trimmed.slice(0,6000);
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard",format:"json"})});
+    if(!res.ok)return [];
+    const data=await res.json();
+    const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
+    const parsed=JSON.parse(raw);
+    if(!parsed||!Array.isArray(parsed.items))return [];
+    return parsed.items.filter(it=>it&&it.date&&looksLikeRealDeadlineTitle(it.title)).map(withDerivedExamImportance);
+  }catch(e){return [];}
+}
+// Turns real extracted items into the same shape buildSyllabusEventBatch
+// already expects from the syllabus-review screen -- same conservative
+// defaults that screen's own initial state uses (see its setSyllabusReview
+// calls): assignments opt IN to a real Attack Block prep chain by default,
+// exams do NOT auto-get spaced review sessions (proposeSessions:false) --
+// scheduling actual study TIME for an exam without being asked is a
+// bigger, more reversible-feeling decision than just recording that it
+// exists, so it stays opt-in via the existing Studlin Prep flow instead.
+// Pure and independently testable, same as every other proposal builder
+// in this file -- extraction (the actual AI call) already happened before
+// this runs. `routines` is optional (undefined-safe) so existing callers
+// don't need to change.
+//
+// duringClass (2026-09-04 feature, widened 2026-09-04 to also read the
+// pasted text itself): classifyStudlinAiMessage sets this true when
+// EITHER the student's own words say these items happen/are done during
+// class, OR the pasted syllabus/material text says so on its own (e.g. a
+// line reading "in-class worksheet" or "due in class") -- it reads the
+// whole message, not just the student's own added sentence. Either way,
+// each item's date gets
+// checked against the matched course's actual kind:"class" routine rows
+// (same courseId-or-fuzzy-label matching newMeetingTimesForCourse already
+// uses). A date that doesn't land on a day that class actually meets is
+// flagged, never silently dropped or silently trusted -- "if it's not
+// certain or something isn't adding up it will tell you," per the
+// request this was built for. Only runs when the course actually HAS
+// real meeting-day data on file (a class with no routine set up yet
+// can't be checked against anything, so nothing is flagged rather than
+// flagging everything).
+function buildImportSyllabusItemsProposal(parsed,items,routines){
+  const real=(items||[]).filter(it=>it&&it.title&&it.date);
+  if(real.length===0){
+    return{ok:false,label:"Couldn't find clear dated items in that -- try pasting the exact titles and dates."};
+  }
+  const subject=((parsed&&parsed.subject)||"").trim()||null;
+  let meetingDays=null;
+  if(parsed&&parsed.duringClass&&subject){
+    const courseId=courseIdForLabelFuzzy(subject);
+    const norm=normalizeCourseLabel(subject);
+    const classRows=(routines||[]).filter(r=>r.kind==="class"&&(courseId?r.courseId===courseId:normalizeCourseLabel(r.subject||r.title||"")===norm));
+    if(classRows.length>0){
+      meetingDays=new Set();
+      classRows.forEach(r=>(r.days||[]).forEach(d=>meetingDays.add(d)));
+    }
+  }
+  const normalized=real.map(it=>{
+    // Monday-first 0..6, matching expandRoutineOccurrences' own dow
+    // computation exactly, so a flagged mismatch here is checked against
+    // the identical day-numbering the real calendar uses.
+    const dow=(new Date(it.date+"T12:00:00").getDay()+6)%7;
+    const dayMismatch=!!(meetingDays&&!meetingDays.has(dow));
+    return{
+      title:it.title,
+      date:it.date,
+      kind:it.kind==="exam"?"exam":"deadline",
+      examType:it.examType||undefined,
+      gradeWeightPercent:it.gradeWeightPercent!=null?it.gradeWeightPercent:undefined,
+      detail:it.detail||undefined,
+      importanceLevel:it.importanceLevel||undefined,
+      examWeight:it.examWeight||undefined,
+      attackBlock:it.kind!=="exam",
+      proposeSessions:false,
+      difficulty:500,
+      dayMismatch,
+    };
+  });
+  const mismatched=normalized.filter(it=>it.dayMismatch);
+  const listText=normalized.map(it=>{
+    const dateLabel=new Date(it.date+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"});
+    return it.title+" ("+dateLabel+")"+(it.gradeWeightPercent!=null?" -- "+it.gradeWeightPercent+"%":"")+(it.dayMismatch?" [doesn't look like a "+subject+" day -- double check]":"");
+  }).join(", ");
+  const label="Add "+normalized.length+" item"+(normalized.length!==1?"s":"")+(subject?" to "+subject:"")+": "+listText+"?";
+  return{ok:true,kind:"import_syllabus_items",items:normalized,subject,mismatchCount:mismatched.length,label};
 }
 // Top-level dispatcher StudlinAiDrawer calls once a message classifies as
 // an action -- normalizes all builders above into one
@@ -8440,6 +8667,78 @@ function getUserName(){
   }catch(e){return "Student";}
 }
 function saveProfile(p){lsSet("profile",p);}
+// Studlin AI's persistent cross-session memory (2026-09-04 feature) -- a
+// short, capped list of durable facts/preferences the AI has learned
+// about this student, surviving a drawer close/reload/device switch,
+// unlike the chat transcript itself (StudlinAiDrawer's `messages` is pure
+// in-memory state, never persisted -- see its own useState([])).
+//
+// Deliberately the lighter `profiles`-style single-owner-doc pattern, not
+// the full DataStore sync machinery (offline queue, debounce, per-item
+// conflict merge) events/notes/decks use -- this is one small,
+// infrequently-updated list per user, not a large frequently-edited
+// collection, so that machinery would be real unneeded complexity here.
+// Stored in its OWN doc (aiMemory/{uid}, see firestore.rules), not folded
+// into profiles/{uid} -- profiles is the public classmate directory, and
+// a personal fact like "hates morning workouts" must never be readable
+// by anyone but the owner.
+const AI_MEMORY_FACT_CAP=20;
+function getAiMemory(){return lsGet("aiMemory",{facts:[],updatedAt:null});}
+function saveAiMemory(mem){lsSet("aiMemory",mem);}
+// Fire-and-forget push to Firestore, mirroring upsertProfile's own shape
+// exactly (same set(...,{merge:true}) pattern, same silent-catch -- a
+// failed background sync here is no worse than upsertProfile's own
+// established precedent, and blocking on it would be a real regression
+// for a feature nobody's waiting on).
+async function pushAiMemory(mem){
+  const u=firebase.auth().currentUser;
+  if(!u)return;
+  try{await fsdb().collection('aiMemory').doc(u.uid).set({facts:mem.facts||[],updatedAt:new Date().toISOString()},{merge:true});}catch(e){}
+}
+// One-time pull on auth -- NEW relative to every other single-owner-doc
+// pattern in this file (upsertProfile is push-only; getProfile/saveProfile
+// never round-trip Firestore at all). Without this, a fact learned on one
+// device would never reach a second one. Remote wins outright on a real
+// conflict (whole-array field, infrequent writes, one person -- the
+// per-item newest-wins merge DataStore needs for a large shared-ish
+// collection is real overkill here).
+async function hydrateAiMemoryOnAuth(){
+  const u=firebase.auth().currentUser;
+  if(!u)return;
+  try{
+    const doc=await fsdb().collection('aiMemory').doc(u.uid).get();
+    if(doc.exists){
+      const data=doc.data();
+      saveAiMemory({facts:Array.isArray(data.facts)?data.facts:[],updatedAt:data.updatedAt||null});
+    }
+  }catch(e){}
+}
+// Merges newly-extracted fact strings into existing memory -- skips a
+// near-duplicate of something already remembered (same normalized text,
+// or one string containing the other -- catches "hates morning workouts"
+// vs "Hates morning workouts specifically"), then drops the OLDEST facts
+// first if the merge would exceed the cap, so memory stays bounded
+// without ever silently dropping something just learned. Returns the new
+// memory object; caller is responsible for actually calling
+// saveAiMemory/pushAiMemory with it (kept pure/testable, no I/O here).
+function mergeAiMemoryFacts(existingMem,newFactTexts){
+  const existing=(existingMem&&existingMem.facts)||[];
+  const norm=s=>(s||"").trim().toLowerCase();
+  const isDupe=text=>{
+    const nt=norm(text);
+    if(!nt)return true;
+    return existing.some(f=>{const nf=norm(f.text);return nf===nt||nf.includes(nt)||nt.includes(nf);});
+  };
+  const added=(newFactTexts||[]).map(t=>(t||"").trim()).filter(t=>t&&!isDupe(t)).map(text=>({text,addedAt:Date.now()}));
+  if(added.length===0)return existingMem||{facts:[],updatedAt:null};
+  let facts=[...existing,...added];
+  if(facts.length>AI_MEMORY_FACT_CAP)facts=facts.slice(facts.length-AI_MEMORY_FACT_CAP);
+  return {facts,updatedAt:new Date().toISOString()};
+}
+function removeAiMemoryFact(mem,index){
+  const facts=(mem.facts||[]).filter((_,i)=>i!==index);
+  return {facts,updatedAt:new Date().toISOString()};
+}
 function seedEventsIfStale(){
   return;
   const ev=lsGet("events",null); const tk=dayKey();
@@ -16887,6 +17186,16 @@ function gatherStudlinAiProfileSignals(flags,prefs){
   if(flags.needsConfidence)profile.confidenceInsight=confidenceOutcomeInsight();
   return profile;
 }
+// Persistent AI memory, 2026-09-04 feature: one line, shared by all three
+// Studlin AI prompt builders, listing whatever durable facts have been
+// captured so far (see getAiMemory/mergeAiMemoryFacts). Empty string when
+// there's nothing yet -- an empty "PREFERENCES:" line would read to the
+// model as "the student has no preferences," not "none captured yet."
+function formatAiMemoryForPrompt(){
+  const facts=(getAiMemory().facts||[]).map(f=>f.text);
+  if(facts.length===0)return "";
+  return "STUDENT'S OWN STATED PREFERENCES (real things they've told Studlin AI before, still true unless today's message says otherwise): "+facts.join("; ")+".";
+}
 // Turns the digest + whichever profile signals were gathered into the
 // actual text sent to the model -- one short, pre-written sentence per
 // included signal (authored once, centrally, here) rather than raw
@@ -16900,6 +17209,8 @@ function gatherStudlinAiProfileSignals(flags,prefs){
 function formatStudlinAiDigestForPrompt(question,digest,flags,profile){
   const lines=["DIGEST (real data about this student -- the ONLY source of truth; never invent beyond this):"];
   lines.push("Today: "+digest.todayKey+" ("+currentClockLabel()+" right now). Schedule window shown below: "+digest.todayKey+" through "+digest.windowEndKey+".");
+  const memLine=formatAiMemoryForPrompt();
+  if(memLine)lines.push(memLine);
 
   if(flags.needsWorkload){
     if(digest.busiestDay)lines.push("Busiest day in this window: "+digest.busiestDay.date+" ("+digest.busiestDay.workloadMinutes+" minutes scheduled).");
@@ -16989,6 +17300,8 @@ function formatStudlinAiCoachingPrompt(question,context){
   const{digest,subject,subjectNudge,examReadiness,confidenceInsight}=context;
   const lines=["CONTEXT (real data about this student -- ground your advice in this, never invent beyond it):"];
   lines.push("Today: "+digest.todayKey+" ("+currentClockLabel()+" right now).");
+  const memLine=formatAiMemoryForPrompt();
+  if(memLine)lines.push(memLine);
   if(digest.heavyDayKeys.length>0)lines.push("Heavier-than-usual days in the next two weeks: "+digest.heavyDayKeys.join(", ")+".");
   if(digest.overdue.length>0)lines.push(digest.overdue.length+" overdue item(s) right now: "+digest.overdue.map(o=>o.title).join(", ")+".");
   if(subject){
@@ -17063,10 +17376,11 @@ async function classifyStudlinAiMessage(text,history){
   const nextWeekSameDay=dayKey(new Date(Date.now()+7*86400000));
   const weekday=new Date().toLocaleDateString("en-US",{weekday:"long"});
   const nowTime=currentClockLabel();
-  const prompt="You are a message router for a student calendar assistant chat. Today is "+weekday+", "+today+". The current time right now is "+nowTime+". The student typed: \""+text+"\". Decide whether this is a QUESTION about their existing schedule/study history (a real number/fact), a COACHING ask (wants real study-strategy help, not a fact), an ACTION request (create something new, move/reschedule something that already exists, or turn pasted study material into flashcards/a quiz), or unsupported. Respond with ONLY this JSON, no markdown fences, no explanation:\n"+
-    "{\"kind\":\"question\"|\"coaching\"|\"action\"|\"unsupported\",\"intent\":\"create_task\"|\"delete_task\"|\"set_peak_hours\"|\"shift\"|\"clear_day\"|\"clear_week\"|\"skip_class\"|\"move_event\"|\"retime_event\"|\"move_flex_task\"|\"generate_study_material\"|null,\"days\":<integer 1-14 or null>,\"date\":\"YYYY-MM-DD or null\",\"target\":\"<short name of the specific existing item, or null>\",\"targetDate\":\"YYYY-MM-DD or null\",\"destDate\":\"YYYY-MM-DD or null\",\"newStart\":\"HH:MM 24h or null\",\"newDuration\":<integer minutes or null>,\"title\":\"<short name of the NEW item to create, or null>\",\"dueDate\":\"YYYY-MM-DD or null\",\"dueTime\":\"HH:MM 24h or null\",\"durationMin\":<integer minutes or null>,\"taskKind\":\"study\"|\"todo\"|\"event\"|\"reminder\"|\"exam\"|\"project\"|null,\"genFormat\":\"flashcards\"|\"quiz\"|null,\"peakHours\":\"morning\"|\"midday\"|\"afternoon\"|\"evening\"|null,\"clarify\":\"<a short, specific question, or null>\"}\n"+
+  const memLine=formatAiMemoryForPrompt();
+  const prompt="You are a message router for a student calendar assistant chat. Today is "+weekday+", "+today+". The current time right now is "+nowTime+". "+(memLine?memLine+" ":"")+"The student typed: \""+text+"\". Decide whether this is a QUESTION about their existing schedule/study history (a real number/fact), a COACHING ask (wants real study-strategy help, not a fact), an ACTION request (create something new, move/reschedule something that already exists, or turn pasted study material into flashcards/a quiz), or unsupported. Respond with ONLY this JSON, no markdown fences, no explanation:\n"+
+    "{\"kind\":\"question\"|\"coaching\"|\"action\"|\"unsupported\",\"intent\":\"create_task\"|\"delete_task\"|\"set_peak_hours\"|\"shift\"|\"clear_day\"|\"clear_week\"|\"skip_class\"|\"move_event\"|\"retime_event\"|\"move_flex_task\"|\"generate_study_material\"|\"import_syllabus_items\"|null,\"days\":<integer 1-14 or null>,\"date\":\"YYYY-MM-DD or null\",\"target\":\"<short name of the specific existing item, or null>\",\"targetDate\":\"YYYY-MM-DD or null\",\"destDate\":\"YYYY-MM-DD or null\",\"newStart\":\"HH:MM 24h or null\",\"newDuration\":<integer minutes or null>,\"title\":\"<short name of the NEW item to create, or null>\",\"dueDate\":\"YYYY-MM-DD or null\",\"dueTime\":\"HH:MM 24h or null\",\"durationMin\":<integer minutes or null>,\"taskKind\":\"study\"|\"todo\"|\"event\"|\"reminder\"|\"exam\"|\"project\"|null,\"genFormat\":\"flashcards\"|\"quiz\"|null,\"peakHours\":\"morning\"|\"midday\"|\"afternoon\"|\"evening\"|null,\"subject\":\"<the class/subject name the student named, or null>\",\"duringClass\":<true for import_syllabus_items when EITHER the student's own words say these items happen/are due during class, OR the pasted syllabus/material text itself states that for these items (e.g. \"completed in class,\" \"due in class,\" \"in-class assignment\"), false otherwise>,\"clarify\":\"<a short, specific question, or null>\"}\n"+
     "Rules: \"question\" is asking for a real FACT about their schedule/workload/streak/pace/productivity (a number, a date, a yes/no). \"coaching\" is asking for real help or a plan -- \"how should I study for X,\" \"help me prepare,\" \"where do I start,\" \"I'm stressed about Y and don't know the material\" -- wanting strategy/advice, not a fact, and not (yet) asking to add/move anything. Neither ever changes anything -- leave intent and every other field null for both. \"unsupported\" covers anything ambiguous, multi-step, deleting/cancelling MULTIPLE things or an entire day/week/recurring routine, or that doesn't clearly match one action below -- never guess. Deleting exactly ONE clearly-named item uses delete_task instead, not unsupported.\n"+
-    "\"clarify\": if the message clearly WANTS one of the actions below but is missing something required to do it (no title for a new item, no clear name for what to move/retime/delete, no day count for \"shift\"), set kind to \"unsupported\", intent to null, and \"clarify\" to ONE short, specific question asking for exactly the missing thing (e.g. \"When is that due?\" or \"Which day would you like it moved to?\"). Leave \"clarify\" null for every other case -- genuinely off-topic, too vague to guess the intended action at all, multi-step, or a bulk/destructive request. Never set clarify when kind is \"question\", \"coaching\", or \"action\".\n"+
+    "\"clarify\": if the message clearly WANTS one of the actions below but is missing something required to do it (no title for a new item, no clear name for what to move/retime/delete, no day count for \"shift\", no class named for \"import_syllabus_items\"), set kind to \"unsupported\", intent to null, and \"clarify\" to ONE short, specific question asking for exactly the missing thing (e.g. \"When is that due?\", \"Which day would you like it moved to?\", or \"Which class are these for?\"). Leave \"clarify\" null for every other case -- genuinely off-topic, too vague to guess the intended action at all, multi-step, or a bulk/destructive request. Never set clarify when kind is \"question\", \"coaching\", or \"action\".\n"+
     "\"create_task\" is for adding something NEW that doesn't exist yet -- \"title\" is required, \"dueDate\" if a deadline/date was mentioned (resolve relative phrases like \"tomorrow\"/\"Friday\" against today's date above), \"dueTime\" only if a real clock time was mentioned, \"durationMin\" only if a specific work-time length was mentioned. \"taskKind\" picks which kind of thing: \"exam\" for a test/quiz/final, \"project\" for a multi-step project, \"event\" for a fixed real-world thing at a specific time (an appointment, a meeting -- not a class or something already on a routine), \"reminder\" for a simple point-in-time nudge with no real work involved (\"remind me to email my professor\"), \"todo\" if the student explicitly just wants a due date tracked with no work time scheduled (\"just remind me,\" \"don't schedule time for it\"), otherwise \"study\" (the default -- a task/assignment/homework Studlin finds real time to work on before its deadline). IMPORTANT: only classify as create_task when the student is actually ASKING to add/track/schedule something. A message that merely mentions, describes, or shares feelings about an exam/assignment/deadline (stress, context, background) without asking for it to be added is \"question\" or \"coaching\" instead -- the mere presence of a date or an exam name is not itself a request to create anything, look for real intent to add.\n"+
     "\"delete_task\" is for permanently removing ONE existing, clearly-named item from the calendar -- a task, assignment, event, exam, or reminder, NEVER a recurring class/routine (\"delete my chem homework,\" \"cancel my dentist appointment\" -- not \"delete all my chem classes\") -- \"target\" is its name as the student said it, \"targetDate\" is the date it's currently on (default today's date above if not mentioned).\n"+
     "\"set_peak_hours\" is for the student declaring or changing when THEY PERSONALLY focus/work best -- \"peakHours\" is exactly one of \"morning\" (roughly 6-11am), \"midday\" (11am-3pm), \"afternoon\" (3-6pm), \"evening\" (6-10pm) -- map their own words to the single closest window. If what they said doesn't clearly fit one of these four (e.g. \"late at night,\" \"whenever,\" \"it varies\"), this doesn't qualify -- leave peakHours null and use clarify to ask which of morning/midday/afternoon/evening fits best instead of guessing.\n"+
@@ -17075,34 +17389,39 @@ async function classifyStudlinAiMessage(text,history){
     "\"retime_event\" is for when ONE fixed thing's own time changed (not cancelled) and everything else should fit around the new time -- \"target\"/\"targetDate\" as above, \"newStart\" 24h HH:MM, \"newDuration\" in minutes if a range was given, null if only a start time was given.\n"+
     "\"shift\" pushes everything from today onward back by a day count, only with an explicit or clearly implied number, never invent one. \"clear_day\" empties one specific date (resolve relative phrases against today's date above). \"clear_week\" clears the next 7 days, no parameters. \"skip_class\" is for not physically attending class/school on a specific day, opening that time for other work.\n"+
     "\"generate_study_material\" is for when the student pastes real study material (notes, a definition list, an excerpt, a transcript) directly in their message and asks to be quizzed on it or have flashcards made from it -- \"genFormat\" is \"flashcards\" for card/flashcard requests, \"quiz\" for quiz/test/practice-exam requests (default to \"flashcards\" if genuinely ambiguous which they want). Only classify this way when the message actually contains real pasted content to learn from, not just a bare request -- \"quiz me on chapter 3\" with nothing pasted is coaching or unsupported instead, never this.\n"+
+    "\"import_syllabus_items\" is for when the student pastes or lists MULTIPLE distinct graded items at once (quizzes, exams, assignments, each with its own date), typically copied straight from a syllabus, and asks to add them -- \"subject\" is the class they named (as they said it, e.g. \"econ\" or \"my econ class\"). Only classify this way when there are genuinely two or more distinct dated items being requested together -- a single item with one date is create_task instead, never this. Do not try to extract the individual items yourself here -- leave title/dueDate/etc null, only \"subject\" (and \"duringClass\", see below) matter for this intent, the items are re-read from the original message separately. \"duringClass\": set true when EITHER the student's own words say these items happen/are done/are due DURING class or lecture time itself (e.g. \"done during class,\" \"we do these in class\"), OR the pasted syllabus/material text ITSELF says so for these items, even if the student added no comment of their own (e.g. a pasted line reading \"in-class worksheet,\" \"completed during lecture,\" \"due in class,\" \"submit at the start of class\") -- read the whole pasted block for this, not just what the student typed around it. When true, each item's date gets checked against that class's real meeting days and flagged if one doesn't line up. False for ordinary homework/assignments/exams with no such statement anywhere in the message -- most of the time this is false, never guess it true just because a class was named.\n"+
     "Leave every field the chosen intent/kind doesn't use as null. Relative-date phrases are never off by less than what they literally say: \"tomorrow\" is exactly today's date above + 1 day. \"next week\" (no specific weekday named) means "+nextWeekSameDay+" (today's date above + 7 days), never less than 7 days out, never treated the same as \"tomorrow.\" \"next Monday\"/\"next Friday\"/etc. resolve to that exact date within the next 7 days.\n"+
     "Relative TIME phrases work the same way, against the current time above -- never guessed, never defaulted to some other hour: \"in 15 minutes\"/\"in an hour\"/\"in 20 min\" means exactly the current time plus that many minutes, computed for real (e.g. if the current time above were 12:08 PM, \"in 15 minutes\" is 12:23 PM, \"in an hour\" is 1:08 PM). \"soon\"/\"in a bit\"/\"right now\" with no specific number given still means close to the current time above -- within about 15 minutes of it, never later in the day. This applies to dueTime (create_task) and newStart (retime_event) alike.\n"+
     "Examples:\n"+
-    "\"which day next week is busiest?\" -> {\"kind\":\"question\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"clarify\":null}\n"+
-    "\"add a task to finish my history essay, due Friday\" -> {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"Finish history essay\",\"dueDate\":\"<the real date of this Friday>\",\"dueTime\":null,\"durationMin\":null,\"taskKind\":\"study\",\"genFormat\":null,\"peakHours\":null,\"clarify\":null}\n"+
-    "\"just track that my chem lab report is due next Monday, don't schedule time for it\" -> {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"Chem lab report\",\"dueDate\":\"<that Monday's date>\",\"dueTime\":null,\"durationMin\":null,\"taskKind\":\"todo\",\"genFormat\":null,\"peakHours\":null,\"clarify\":null}\n"+
-    "\"add my chem final, it's on the 20th\" -> {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"Chem final\",\"dueDate\":\"<the 20th of the current or next occurring month>\",\"dueTime\":null,\"durationMin\":null,\"taskKind\":\"exam\",\"genFormat\":null,\"peakHours\":null,\"clarify\":null}\n"+
-    "\"i have an upcoming calc exam in 10 days and i am stressing because i dont know any of the material\" (wants real help, not a fact, never actually asked to add anything) -> {\"kind\":\"coaching\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"clarify\":null}\n"+
-    "\"can you help me think of a plan of how i should study for it\" -> {\"kind\":\"coaching\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"clarify\":null}\n"+
-    "\"add a dentist appointment tomorrow at 3pm\" -> {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"Dentist appointment\",\"dueDate\":\""+tomorrow+"\",\"dueTime\":\"15:00\",\"durationMin\":null,\"taskKind\":\"event\",\"genFormat\":null,\"peakHours\":null,\"clarify\":null}\n"+
-    "\"i'm leaving for the gym in 15 minutes, going for an hour\" -> dueTime is the CURRENT TIME above plus 15 minutes, computed for real (not a guess, not some other hour) -- e.g. {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"Gym\",\"dueDate\":\""+today+"\",\"dueTime\":\"<current time above + 15 minutes, as real HH:MM>\",\"durationMin\":60,\"taskKind\":\"event\",\"genFormat\":null,\"peakHours\":null,\"clarify\":null}\n"+
-    "\"remind me to email my professor tomorrow\" -> {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"Email professor\",\"dueDate\":\""+tomorrow+"\",\"dueTime\":null,\"durationMin\":null,\"taskKind\":\"reminder\",\"genFormat\":null,\"peakHours\":null,\"clarify\":null}\n"+
-    "\"add my history project, due in two weeks\" -> {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"History project\",\"dueDate\":\"<today's date above + 14 days>\",\"dueTime\":null,\"durationMin\":null,\"taskKind\":\"project\",\"genFormat\":null,\"peakHours\":null,\"clarify\":null}\n"+
-    "\"delete my old chem homework task\" -> {\"kind\":\"action\",\"intent\":\"delete_task\",\"days\":null,\"date\":null,\"target\":\"chem homework\",\"targetDate\":\""+today+"\",\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"clarify\":null}\n"+
-    "\"cancel my dentist appointment tomorrow\" -> {\"kind\":\"action\",\"intent\":\"delete_task\",\"days\":null,\"date\":null,\"target\":\"dentist appointment\",\"targetDate\":\""+tomorrow+"\",\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"clarify\":null}\n"+
-    "\"delete all my chem classes\" -> {\"kind\":\"unsupported\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"clarify\":null}\n"+
-    "\"move my chem homework to tomorrow\" -> {\"kind\":\"action\",\"intent\":\"move_flex_task\",\"days\":null,\"date\":null,\"target\":\"chem homework\",\"targetDate\":\""+today+"\",\"destDate\":\""+tomorrow+"\",\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"clarify\":null}\n"+
-    "\"I can't make the gym today, move it to tomorrow\" -> {\"kind\":\"action\",\"intent\":\"move_event\",\"days\":null,\"date\":null,\"target\":\"gym\",\"targetDate\":\""+today+"\",\"destDate\":\""+tomorrow+"\",\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"clarify\":null}\n"+
-    "\"my track practice got moved to 7-9pm\" -> {\"kind\":\"action\",\"intent\":\"retime_event\",\"days\":null,\"date\":null,\"target\":\"track practice\",\"targetDate\":\""+today+"\",\"destDate\":null,\"newStart\":\"19:00\",\"newDuration\":120,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"clarify\":null}\n"+
-    "\"I'm sick, push everything back 3 days\" -> {\"kind\":\"action\",\"intent\":\"shift\",\"days\":3,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"clarify\":null}\n"+
-    "\"cancel everything forever\" -> {\"kind\":\"unsupported\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"clarify\":null}\n"+
-    "\"add a task to finish my essay\" (no date mentioned at all) -> {\"kind\":\"unsupported\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"clarify\":\"When is that due?\"}\n"+
-    "\"I actually focus way better in the evening than in the morning\" -> {\"kind\":\"action\",\"intent\":\"set_peak_hours\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"peakHours\":\"evening\",\"clarify\":null}\n"+
-    "\"update my peak hours\" (no specific time of day named at all) -> {\"kind\":\"unsupported\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"clarify\":\"Which time of day -- morning, midday, afternoon, or evening?\"}\n"+
-    "\"add a task to finish my essay. When is that due? next Friday\" (a combined follow-up, same student message thread) -> {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"Finish essay\",\"dueDate\":\"<the real date of next Friday>\",\"dueTime\":null,\"durationMin\":null,\"taskKind\":\"study\",\"genFormat\":null,\"peakHours\":null,\"clarify\":null}\n"+
-    "\"can you move my project\" (no destination day given at all, not even \"sometime\") -> {\"kind\":\"unsupported\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"clarify\":\"What day would you like it moved to?\"}\n"+
-    "\"Here's my notes: Mitochondria are the powerhouse of the cell -- they produce ATP through cellular respiration, using oxygen to break down glucose into usable energy. Can you make flashcards from this?\" (real pasted content, clearly asking for cards) -> {\"kind\":\"action\",\"intent\":\"generate_study_material\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":\"flashcards\",\"peakHours\":null,\"clarify\":null}\n"+
-    "\"quiz me on chapter 3\" (no real material actually pasted, just a bare request) -> {\"kind\":\"coaching\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"clarify\":null}";
+    "\"which day next week is busiest?\" -> {\"kind\":\"question\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
+    "\"add a task to finish my history essay, due Friday\" -> {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"Finish history essay\",\"dueDate\":\"<the real date of this Friday>\",\"dueTime\":null,\"durationMin\":null,\"taskKind\":\"study\",\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
+    "\"just track that my chem lab report is due next Monday, don't schedule time for it\" -> {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"Chem lab report\",\"dueDate\":\"<that Monday's date>\",\"dueTime\":null,\"durationMin\":null,\"taskKind\":\"todo\",\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
+    "\"add my chem final, it's on the 20th\" -> {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"Chem final\",\"dueDate\":\"<the 20th of the current or next occurring month>\",\"dueTime\":null,\"durationMin\":null,\"taskKind\":\"exam\",\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
+    "\"i have an upcoming calc exam in 10 days and i am stressing because i dont know any of the material\" (wants real help, not a fact, never actually asked to add anything) -> {\"kind\":\"coaching\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
+    "\"can you help me think of a plan of how i should study for it\" -> {\"kind\":\"coaching\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
+    "\"add a dentist appointment tomorrow at 3pm\" -> {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"Dentist appointment\",\"dueDate\":\""+tomorrow+"\",\"dueTime\":\"15:00\",\"durationMin\":null,\"taskKind\":\"event\",\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
+    "\"i'm leaving for the gym in 15 minutes, going for an hour\" -> dueTime is the CURRENT TIME above plus 15 minutes, computed for real (not a guess, not some other hour) -- e.g. {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"Gym\",\"dueDate\":\""+today+"\",\"dueTime\":\"<current time above + 15 minutes, as real HH:MM>\",\"durationMin\":60,\"taskKind\":\"event\",\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
+    "\"remind me to email my professor tomorrow\" -> {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"Email professor\",\"dueDate\":\""+tomorrow+"\",\"dueTime\":null,\"durationMin\":null,\"taskKind\":\"reminder\",\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
+    "\"add my history project, due in two weeks\" -> {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"History project\",\"dueDate\":\"<today's date above + 14 days>\",\"dueTime\":null,\"durationMin\":null,\"taskKind\":\"project\",\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
+    "\"delete my old chem homework task\" -> {\"kind\":\"action\",\"intent\":\"delete_task\",\"days\":null,\"date\":null,\"target\":\"chem homework\",\"targetDate\":\""+today+"\",\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
+    "\"cancel my dentist appointment tomorrow\" -> {\"kind\":\"action\",\"intent\":\"delete_task\",\"days\":null,\"date\":null,\"target\":\"dentist appointment\",\"targetDate\":\""+tomorrow+"\",\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
+    "\"delete all my chem classes\" -> {\"kind\":\"unsupported\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
+    "\"move my chem homework to tomorrow\" -> {\"kind\":\"action\",\"intent\":\"move_flex_task\",\"days\":null,\"date\":null,\"target\":\"chem homework\",\"targetDate\":\""+today+"\",\"destDate\":\""+tomorrow+"\",\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
+    "\"I can't make the gym today, move it to tomorrow\" -> {\"kind\":\"action\",\"intent\":\"move_event\",\"days\":null,\"date\":null,\"target\":\"gym\",\"targetDate\":\""+today+"\",\"destDate\":\""+tomorrow+"\",\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
+    "\"my track practice got moved to 7-9pm\" -> {\"kind\":\"action\",\"intent\":\"retime_event\",\"days\":null,\"date\":null,\"target\":\"track practice\",\"targetDate\":\""+today+"\",\"destDate\":null,\"newStart\":\"19:00\",\"newDuration\":120,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
+    "\"I'm sick, push everything back 3 days\" -> {\"kind\":\"action\",\"intent\":\"shift\",\"days\":3,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
+    "\"cancel everything forever\" -> {\"kind\":\"unsupported\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
+    "\"add a task to finish my essay\" (no date mentioned at all) -> {\"kind\":\"unsupported\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":\"When is that due?\"}\n"+
+    "\"I actually focus way better in the evening than in the morning\" -> {\"kind\":\"action\",\"intent\":\"set_peak_hours\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"peakHours\":\"evening\",\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
+    "\"update my peak hours\" (no specific time of day named at all) -> {\"kind\":\"unsupported\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":\"Which time of day -- morning, midday, afternoon, or evening?\"}\n"+
+    "\"add a task to finish my essay. When is that due? next Friday\" (a combined follow-up, same student message thread) -> {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"Finish essay\",\"dueDate\":\"<the real date of next Friday>\",\"dueTime\":null,\"durationMin\":null,\"taskKind\":\"study\",\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
+    "\"can you move my project\" (no destination day given at all, not even \"sometime\") -> {\"kind\":\"unsupported\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":\"What day would you like it moved to?\"}\n"+
+    "\"Here's my notes: Mitochondria are the powerhouse of the cell -- they produce ATP through cellular respiration, using oxygen to break down glucose into usable energy. Can you make flashcards from this?\" (real pasted content, clearly asking for cards) -> {\"kind\":\"action\",\"intent\":\"generate_study_material\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":\"flashcards\",\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
+    "\"quiz me on chapter 3\" (no real material actually pasted, just a bare request) -> {\"kind\":\"coaching\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
+    "\"these are for my econ class so add them to that: First Quiz (9/21, covers chapters 1 through 8) worth 20% of the total class grade. Second Quiz (10/27, covers chapters 9 through 16) 25%. Final Exam (TBA, cumulative) 35%.\" (multiple distinct dated graded items, one named class) -> {\"kind\":\"action\",\"intent\":\"import_syllabus_items\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"subject\":\"econ\",\"duringClass\":false,\"clarify\":null}\n"+
+    "\"quiz 1 is 9/21, quiz 2 is 10/27, final is TBA -- add these\" (multiple dated items, no class named anywhere) -> {\"kind\":\"unsupported\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":\"Which class are these for?\"}\n"+
+    "\"these worksheets are done during class for chem, W4 due 9/7, W5 due 9/9, W6 due 9/14\" (dated items the student explicitly says happen DURING class time itself) -> {\"kind\":\"action\",\"intent\":\"import_syllabus_items\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"subject\":\"chem\",\"duringClass\":true,\"clarify\":null}\n"+
+    "\"add these to chem: W4 - Opens Mon 9/7 8:00 AM, Due Mon 9/7 9:30 AM (in-class worksheet). W5 - Opens Wed 9/9 8:00 AM, Due Wed 9/9 9:30 AM (in-class worksheet).\" (the STUDENT added no comment of their own about class -- but the pasted text itself says \"in-class worksheet\" for each item, which counts just as much) -> {\"kind\":\"action\",\"intent\":\"import_syllabus_items\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"subject\":\"chem\",\"duringClass\":true,\"clarify\":null}";
   // authFetch/res.json() failures (real network/connectivity problems)
   // are left to throw out of this function -- the caller (StudlinAiDrawer.
   // send()) shows a real "couldn't reach Studlin AI" message for those.
@@ -17128,7 +17447,7 @@ async function classifyStudlinAiMessage(text,history){
     const parsed=JSON.parse(raw);
     if(!parsed||!["question","coaching","action","unsupported"].includes(parsed.kind))throw new Error("bad-kind");
     if(parsed.kind==="action"){
-      const knownIntents=["create_task","delete_task","set_peak_hours","shift","clear_day","clear_week","skip_class","move_event","retime_event","move_flex_task","generate_study_material"];
+      const knownIntents=["create_task","delete_task","set_peak_hours","shift","clear_day","clear_week","skip_class","move_event","retime_event","move_flex_task","generate_study_material","import_syllabus_items"];
       if(!knownIntents.includes(parsed.intent))throw new Error("bad-intent");
       if(parsed.intent==="create_task"&&!(typeof parsed.title==="string"&&parsed.title.trim()))throw new Error("no-title");
       if((parsed.intent==="move_event"||parsed.intent==="retime_event"||parsed.intent==="move_flex_task"||parsed.intent==="delete_task")&&!(typeof parsed.target==="string"&&parsed.target.trim()))throw new Error("no-target");
@@ -17136,6 +17455,7 @@ async function classifyStudlinAiMessage(text,history){
       if(parsed.intent==="shift"&&!(parsed.days>=1&&parsed.days<=14))throw new Error("bad-days");
       if(parsed.intent==="set_peak_hours"&&!["morning","midday","afternoon","evening"].includes(parsed.peakHours))throw new Error("bad-peak-hours");
       if(parsed.intent==="generate_study_material"&&!["flashcards","quiz"].includes(parsed.genFormat))throw new Error("bad-genformat");
+      if(parsed.intent==="import_syllabus_items"&&!(typeof parsed.subject==="string"&&parsed.subject.trim()))throw new Error("no-subject");
     }
     return parsed;
   }catch(e){
@@ -17154,8 +17474,14 @@ async function classifyStudlinAiMessage(text,history){
 // not an inline ternary in App(), so the precedence is named/testable
 // and so a future proactive signal (catch-up, attack-block risk) has an
 // obvious place to slot in.
-function deriveStudlinAiProactiveSignal(strugglingBucketOffer,peakInsightOffer){
+// unscheduledDueSoonOffer added 2026-09-04 -- placed above peakInsightOffer
+// (a well-sampled, evergreen behavioral pattern with no real urgency) but
+// below strugglingBucketOffer (an established, already-prioritized recent-
+// miss signal) since it reflects genuinely time-sensitive unscheduled work,
+// not a stable pattern. See its own detectUnscheduledDueSoon comment.
+function deriveStudlinAiProactiveSignal(strugglingBucketOffer,unscheduledDueSoonOffer,peakInsightOffer){
   if(strugglingBucketOffer)return{kind:"struggling_bucket",...strugglingBucketOffer};
+  if(unscheduledDueSoonOffer)return{kind:"unscheduled_due_soon",...unscheduledDueSoonOffer};
   if(peakInsightOffer)return{kind:"peak_hours",...peakInsightOffer};
   return null;
 }
@@ -17364,6 +17690,12 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
   // still surfacing a genuinely NEW/different signal even if the
   // conversation already has messages in it from an earlier one.
   const [seededProactiveKey,setSeededProactiveKey]=useState(null);
+  // Persistent-memory extraction toast (see the drawer-close effect below)
+  // -- shown once, briefly, the first time a real fact actually gets
+  // captured in a given open/close cycle. No toast on the common "nothing
+  // durable came up" case -- silence there is correct, not a bug.
+  const [memoryToast,setMemoryToast]=useState("");
+  const extractedThisSessionRef=useRef(false);
   const scrollRef=useRef(null);
 
   useEffect(()=>{
@@ -17385,19 +17717,68 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
   // so the two surfaces read as the same voice, not a rewritten one.
   useEffect(()=>{
     if(!open||!proactiveSignal)return;
-    const key=proactiveSignal.kind+":"+proactiveSignal.suggestedBucket;
+    // Bug fix, 2026-09-04: key used to always be kind+":"+suggestedBucket
+    // -- the new unscheduled_due_soon signal has no suggestedBucket (it's
+    // keyed by nearestDate+count instead), so this branches by kind now
+    // rather than assuming every signal shares the same shape.
+    const key=proactiveSignal.kind==="unscheduled_due_soon"
+      ?("unscheduled_due_soon:"+proactiveSignal.nearestDate+":"+proactiveSignal.count)
+      :(proactiveSignal.kind+":"+proactiveSignal.suggestedBucket);
     if(key===seededProactiveKey)return;
     setSeededProactiveKey(key);
     const text=proactiveSignal.kind==="struggling_bucket"
       ?("Your "+PEAK_BUCKET_LABELS[proactiveSignal.strugglingBucket].toLowerCase()+" tasks haven't been sticking -- "+proactiveSignal.recentMissedCount+" of your last "+proactiveSignal.recentWindow+" were missed. Want me to default new tasks to "+PEAK_BUCKET_LABELS[proactiveSignal.suggestedBucket].toLowerCase()+" instead?")
+      :proactiveSignal.kind==="unscheduled_due_soon"
+      ?("You've got "+proactiveSignal.count+" thing"+(proactiveSignal.count!==1?"s":"")+" due by "+proactiveSignal.nearestDate+" with no time scheduled yet"+(proactiveSignal.titles&&proactiveSignal.titles.length>0?" ("+proactiveSignal.titles.slice(0,3).join(", ")+(proactiveSignal.titles.length>3?", ...":"")+")":"")+". Want me to take you there so you can get them on the calendar?")
       :("Looks like you actually finish more "+PEAK_BUCKET_LABELS[proactiveSignal.suggestedBucket].toLowerCase()+" tasks ("+Math.round(proactiveSignal.suggestedPct*100)+"%) than "+PEAK_BUCKET_LABELS[proactiveSignal.currentBucket].toLowerCase()+" ones ("+Math.round(proactiveSignal.currentPct*100)+"%). Want me to update your peak hours?");
-    const label="Switch to "+PEAK_BUCKET_LABELS[proactiveSignal.suggestedBucket];
+    const label=proactiveSignal.kind==="unscheduled_due_soon"?"Take me there":"Switch to "+PEAK_BUCKET_LABELS[proactiveSignal.suggestedBucket];
     setMessages(m=>{
       const next=[...m,{role:"ai",text,kind:"proposal",proposal:{ok:true,source:"proactive",signal:proactiveSignal,label}}];
       setPendingIndex(next.length-1);
       return next;
     });
   },[open,proactiveSignal,seededProactiveKey]);
+
+  // Persistent memory extraction, 2026-09-04 feature: fires once when the
+  // drawer closes after a real conversation, not on every message --
+  // extraction is a real (cheap) AI call, no reason to fire it more than
+  // once per open/close cycle. StudlinAiDrawer previously had NO close
+  // hook at all -- onClose was just passed straight through as a prop
+  // with nothing internal reacting to it (confirmed before building this,
+  // not assumed). Silent on failure/empty-result, matching sendMessage's
+  // own fire-and-forget precedent elsewhere in this file -- never blocks
+  // the drawer from closing, and "nothing durable came up" (the common
+  // case) is correct behavior, not something to show an error for.
+  useEffect(()=>{
+    if(open){extractedThisSessionRef.current=false;return;}
+    if(extractedThisSessionRef.current)return;
+    if(!messages.some(m=>m.role==="user"))return;
+    extractedThisSessionRef.current=true;
+    (async()=>{
+      // Memory is an extension of Studlin AI chat, same Pro gate as the
+      // rest of it -- not a separate free feature.
+      if(!canUseStudlinAiQna())return;
+      const transcript=messages.filter(m=>m.role==="user"||m.role==="ai").slice(-20)
+        .map(m=>(m.role==="user"?"Student: ":"Studlin: ")+(m.text||"")).join("\n");
+      if(!transcript.trim())return;
+      const prompt="Given this conversation between a student and their study assistant, list 0-3 short, durable facts or standing preferences about the student worth remembering long-term (e.g. \"prefers evening workouts\", \"has a part-time job on weekends\") -- real, standing facts about how they live/study/prefer things, NOT one-off scheduling requests, NOT anything already obvious from a single task, NOT a fact about a class/assignment that will stop being relevant once the term ends. If nothing durable came up, return an empty list -- don't strain to find something. Respond with ONLY this JSON, no markdown fences, no explanation: {\"facts\":[\"...\"]}\n\nCONVERSATION:\n"+transcript;
+      try{
+        const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash",format:"json"})});
+        if(!res.ok)return;
+        const data=await res.json();
+        const raw=(data.reply||"").replace(/```json?|```/g,"").trim();
+        const parsed=JSON.parse(raw);
+        if(!parsed||!Array.isArray(parsed.facts)||parsed.facts.length===0)return;
+        const existingMem=getAiMemory();
+        const nextMem=mergeAiMemoryFacts(existingMem,parsed.facts);
+        if(nextMem.facts.length===(existingMem.facts||[]).length)return; // every candidate was a near-duplicate of something already remembered
+        saveAiMemory(nextMem);
+        pushAiMemory(nextMem);
+        setMemoryToast("Studlin AI remembered something new");
+        setTimeout(()=>setMemoryToast(""),3500);
+      }catch(e){}
+    })();
+  },[open,messages]);
 
   // Phase 1's original read-only path -- now only reached once
   // classifyStudlinAiMessage has decided the message is a real question,
@@ -17478,6 +17859,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
   const runAction=async(parsed,forcedId,rawText)=>{
     const isCreate=parsed.intent==="create_task";
     const isGenMaterial=parsed.intent==="generate_study_material";
+    const isImportSyllabus=parsed.intent==="import_syllabus_items";
     if(isCreate){
       if(!canUseBrainDump()){
         setPricingOpen(canUseBrainDumpReason()==="free-tier"?"brainDump":"aiUsageCap");
@@ -17492,9 +17874,38 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
         setMessages(m=>[...m,{role:"ai",text:"Generating "+(parsed.genFormat==="quiz"?"a practice quiz":"flashcards")+" through Studlin AI needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
         return;
       }
+    }else if(isImportSyllabus){
+      if(!canScanSyllabus()){
+        const reason=canScanSyllabusReason();
+        setPricingOpen(reason==="free-tier"?"syllabusScan":"aiUsageCap");
+        setMessages(m=>[...m,{role:"ai",text:"Importing several dates at once through Studlin AI needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
+        return;
+      }
     }else if(!canUseSmartReschedule()){
       setPricingOpen(canUseSmartRescheduleReason()==="free-tier"?"smartReschedule":"aiUsageCap");
       setMessages(m=>[...m,{role:"ai",text:"Moving or rescheduling through Studlin AI needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
+      return;
+    }
+    // import_syllabus_items needs a real second extraction call (the
+    // classifier only ever confirms "this is several dated items for
+    // subject X," see extractSyllabusItemsFromChatText's own comment) --
+    // done here, before the card is shown, so the proposal can list the
+    // actual items rather than deferring to confirm time the way
+    // generate_study_material does (that one defers because the real
+    // generation output is large/expensive; this extraction is cheap and a
+    // much better confirm-before-you-commit card when shown up front).
+    if(isImportSyllabus){
+      const items=await extractSyllabusItemsFromChatText(rawText);
+      const proposal=buildImportSyllabusItemsProposal(parsed,items,getWeeklyRoutine());
+      if(!proposal.ok){
+        setMessages(m=>[...m,{role:"ai",text:proposal.label,kind:"info"}]);
+        return;
+      }
+      setMessages(m=>{
+        const next=[...m,{role:"ai",text:proposal.label,kind:"proposal",proposal:{...proposal,parsed}}];
+        setPendingIndex(next.length-1);
+        return next;
+      });
       return;
     }
     const events=lsGet("events",[]);
@@ -17547,7 +17958,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
           setMessages(m=>[...m,{role:"ai",text:parsed.clarify,kind:"clarify"}]);
           setPendingClarification(true);
         }else{
-          setMessages(m=>[...m,{role:"ai",text:"I can answer questions about your schedule, help you plan how to study for something, turn pasted material into flashcards or a quiz, or create, move, or delete a task. Try rephrasing that.",kind:"info"}]);
+          setMessages(m=>[...m,{role:"ai",text:"I can answer questions about your schedule, help you plan how to study for something, turn pasted material into flashcards or a quiz, add several syllabus dates at once, or create, move, or delete a task. Try rephrasing that.",kind:"info"}]);
         }
       }
       else await runAction(parsed,null,text);
@@ -17693,11 +18104,43 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
       if(!canUseSmartReschedule()){setPricingOpen(canUseSmartRescheduleReason()==="free-tier"?"smartReschedule":"aiUsageCap");return;}
       commitStudlinAiPeakHours(getSchedulePreferences(),proposal.bucketId);
       recordSmartReschedule();
+    }else if(proposal.kind==="import_syllabus_items"){
+      if(!canScanSyllabus()){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}
+      // Same courseIdForLabelFuzzy-then-create-if-missing pattern the
+      // syllabus review screen's own "Add to Calendar" button uses (see
+      // its comment) -- a name typed slightly differently than an
+      // existing class ("econ" vs "Econ 101") still attaches to the real
+      // course instead of silently forking an untethered duplicate.
+      const subs=getSubjects();
+      let cid=proposal.subject?courseIdForLabelFuzzy(proposal.subject):null;
+      if(!cid&&proposal.subject){
+        const newSubj={id:"subj-"+Date.now()+"-"+Math.round(Math.random()*1000),label:proposal.subject,color:nextAvailableSubjectColor(subs.map(s=>s.color)),termEnd:null};
+        saveSubjects([...subs,newSubj]);
+        cid=newSubj.id;
+      }
+      commitSyllabusEvents("chat-"+Date.now(),proposal.subject||"Other",proposal.items,null,cid);
+      next=lsGet("events",[]);
+      recordSyllabusScan();
     }else return;
     if(next)onEventsCommitted(next);
+    // Bug fix, 2026-09-04 -- Studlin AI chat feature: honest "why" for a
+    // move/retime confirmation, using the REAL post-commit state (`next`)
+    // so it reflects what actually happened, not a guess. Only for
+    // move_fixed/move_flex_task -- create_task/delete_task/set_peak_hours
+    // have no comparable "placed relative to X" concept. Merges in that
+    // day's routine occurrences too (a real class/habit can be the
+    // adjacent thing just as much as a one-off event can).
+    let moveReason="";
+    if((proposal.kind==="move_fixed"||proposal.kind==="move_flex_task")&&proposal.moved&&proposal.moved.length>0&&next){
+      const primary=proposal.moved[0];
+      const displaced=proposal.moved.length>1?proposal.moved[1]:null;
+      const dayEvents=next.filter(e=>e.date===primary.newDate&&e.id!==primary.id&&e.time)
+        .concat(getRoutineOccurrencesForDate(primary.newDate));
+      moveReason=inferChatMoveReason(dayEvents,primary.newTime,primary.newDuration||primary.duration,primary.id,displaced?displaced.title:null);
+    }
     setMessages(m=>{
       const withResolved=m.map((mm,i)=>i===idx?{...mm,proposal:{...mm.proposal,resolved:"confirmed"}}:mm);
-      return [...withResolved,{role:"ai",text:"Done. "+pastTenseProposalLabel(proposal.label,proposal.moved)}];
+      return [...withResolved,{role:"ai",text:"Done. "+pastTenseProposalLabel(proposal.label,proposal.moved,moveReason)}];
     });
     setPendingIndex(null);
   };
@@ -17791,6 +18234,16 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
             style={{padding:"9px 14px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontWeight:600,fontSize:13,cursor:"pointer",opacity:(!input.trim()||loading||pendingIndex!=null)?0.5:1,flexShrink:0}}>Send</button>
         </div>
       </div>
+      {/* Bug fix, 2026-09-04: this drawer stays mounted at all times (see
+          the panel div's own transform:open?...:"translateX(100%)" --
+          slide, not unmount), and the memory-extraction effect only fires
+          once `open` has already gone false. A toast placed INSIDE the
+          sliding panel above would render off-screen right when it's
+          supposed to appear. Positioned as an independent sibling instead
+          so it's visible regardless of the drawer's own open state. */}
+      {memoryToast&&(
+        <div style={{position:"fixed",bottom:22,right:22,zIndex:STUDLIN_AI_DRAWER_PANEL_Z+1,padding:"10px 16px",background:T.ink,color:T.lime,borderRadius:10,fontSize:12.5,fontWeight:600,boxShadow:"0 16px 40px -12px rgba(0,0,0,0.5)",animation:"studlinPop 0.2s cubic-bezier(.2,.85,.3,1)"}}>{memoryToast}</div>
+      )}
     </>,
     document.body
   );
@@ -19652,16 +20105,28 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                     <div
                       draggable
                       onDragStart={()=>{ if(!isRoutine){setWkDragId(ev.id); setWkDragDeadline(ev.deadline||null);closePopover();} else {if(onRoutineDragStateChange)onRoutineDragStateChange(true);setWkDragRoutineOccurrence({routineId:ev.routineId,fromDate:ev.date,duration:dur});} }}
-                      onDoubleClick={()=>{ if(!isRoutine)openEdit(ev); else if(onEditRoutine)onEditRoutine(ev.routineId); }}
+                      onDoubleClick={()=>{ if(!isRoutine)openEdit(ev); else if(onEditRoutine)onEditRoutine(ev.routineId,ev.date); }}
                       onClick={(e)=>{
                         if(isRoutine){
-                          if(editRoutineMode&&onEditRoutine){onEditRoutine(ev.routineId);return;}
+                          if(editRoutineMode&&onEditRoutine){onEditRoutine(ev.routineId,ev.date);return;}
                           // Outside edit-routine mode, a click selects this
                           // specific occurrence (which day, not just which
                           // rule) so Ctrl+C knows exactly which placement to
                           // copy -- same selection concept as a plain event
                           // just above, routed to a separate callback since
                           // routines live in a different array/shape.
+                          //
+                          // 2026-09-04: this used to also pop open a small
+                          // day-notes menu here -- reverted per direct
+                          // feedback that it made the click/double-click
+                          // interaction feel broken (a real risk any
+                          // popover-on-single-click carries when the same
+                          // element also has its own double-click handler:
+                          // the browser's click-click-dblclick sequence
+                          // fires this handler twice before dblclick lands).
+                          // Day notes now live inside the existing "Edit
+                          // event" panel instead (double-click), see
+                          // NewEventModal's editRoutineDate-gated section.
                           e.stopPropagation();
                           if(selectedEventId)closePopover();
                           if(onSelectRoutineOccurrence)onSelectRoutineOccurrence(isRoutineSelected?null:{routineId:ev.routineId,date:ev.date,title:ev.title});
@@ -19709,6 +20174,11 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                           clean up, the block is already rendering normally. */}
                       {isPendingAcceptance&&<span title={isDeclined?"Declined":acceptanceSummary.accepted+"/"+acceptanceSummary.total+" accepted"} style={{position:"absolute",bottom:2,left:2,fontSize:8,fontWeight:800,color:isDeclined?"#fff":kindStyle.color,background:isDeclined?T.red+"cc":"rgba(0,0,0,0.18)",borderRadius:8,padding:"1px 4px",lineHeight:1.3,zIndex:1}}>{isDeclined?"Declined":acceptanceSummary.accepted+"/"+acceptanceSummary.total}</span>}
                       {conflictTitles.length>0&&<span title={"Overlaps with "+conflictTitles.join(", ")} style={{position:"absolute",top:2,left:2,fontSize:9,lineHeight:1,zIndex:1,filter:"drop-shadow(0 1px 1px rgba(0,0,0,0.35))"}}>⚠️</span>}
+                      {/* This specific class meeting has its own notes/to-do
+                          saved (see ClassDayNotesModal) -- routine occurrences
+                          never carry a real deadline/`over`, so this never
+                          collides with the overdue dot above. */}
+                      {isRoutine&&(ev.dayNote||(ev.dayTodo&&ev.dayTodo.length>0))&&<span title="This class has notes saved" style={{position:"absolute",top:3,right:3,width:6,height:6,borderRadius:"50%",background:T.lime,boxShadow:"0 0 0 1.5px rgba(255,255,255,0.9)",zIndex:1}} />}
                       <div style={{fontSize:9.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isExam?"EXAM · ":""}{ev.title}</div>
                       {heightPx > 34 && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isWarningKind?tokens.color.warning:tokens.color.textSecondary,marginTop:1}}>{fmtTimeRange(String(Math.floor(effStartMin/60)).padStart(2,"0")+":"+String(effStartMin%60).padStart(2,"0"),effDuration)}</div>}
                       {/* Third line, only once there's real room for it (same
@@ -22204,7 +22674,7 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
                     the tooltip even says "Double-click to edit" and nothing
                     happened. WeeklyPlanner already branches this correctly
                     (see its own onDoubleClick); mirrored here. */}
-                <div onDoubleClick={()=>{if(ev.isRoutine){if(onEditRoutine)onEditRoutine(ev.routineId);}else openEdit(ev);}}
+                <div onDoubleClick={()=>{if(ev.isRoutine){if(onEditRoutine)onEditRoutine(ev.routineId,ev.date);}else openEdit(ev);}}
                   onClick={(e)=>{
                     if(ev.isRoutine)return;
                     if(isPendingAcceptance){
@@ -22279,6 +22749,86 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
 // does. Reuses layoutDayEvents/computeEventBlockHeightPx (proven in
 // DayPlanner) and colorOf (so a class's color here always matches its
 // color everywhere else in the app -- never a fresh palette).
+// Per-occurrence "what's happening in this specific class meeting" editor
+// -- an inline section INSIDE NewEventModal's existing "Edit event" panel
+// (see its editRoutineDate-gated render), not a separate Modal. This used
+// to be its own popover-triggered Modal, but stacking a popover-on-click
+// on top of the SAME block's existing double-click-to-edit handler made
+// the click/double-click interaction feel broken (direct user feedback --
+// a real risk any popover-on-single-click carries when the element
+// already has its own dblclick handler, since the browser's click-click-
+// dblclick sequence fires the single-click handler twice first). Folding
+// this into the edit panel that double-click already opens avoids a
+// second click target entirely, and also sidesteps this file's own
+// documented "Modal-in-Modal breaks centering" gotcha (see the Delete-
+// confirm comment in NewEventModal) since nothing is nested here.
+//
+// A different class meeting of the same recurring course can have
+// completely different content (a worksheet due one day, nothing the
+// next), so this is keyed by the exact occurrence (routineId+date), not
+// the course -- see getRoutineOccurrenceNote/saveRoutineOccurrenceNote's
+// own comments. Guardrails per CLAUDE.md: visible focus state on both
+// inputs, an inline "Saved" confirmation rather than silence.
+function ClassDayNotesFields({routineId,date}){
+  const [note,setNote]=useState("");
+  const [todo,setTodo]=useState([]);
+  const [newItem,setNewItem]=useState("");
+  const [saved,setSaved]=useState(false);
+  useEffect(()=>{
+    if(!routineId||!date)return;
+    const existing=getRoutineOccurrenceNote(routineId,date);
+    setNote(existing.note);
+    setTodo(existing.todo);
+    setSaved(false);
+  },[routineId,date]);
+  const save=()=>{
+    saveRoutineOccurrenceNote(routineId,date,{note:note.trim(),todo});
+    setSaved(true);
+    setTimeout(()=>setSaved(false),1800);
+  };
+  const addItem=()=>{
+    const t=newItem.trim();
+    if(!t)return;
+    setTodo(x=>[...x,{text:t,done:false}]);
+    setNewItem("");
+  };
+  const inputStyle={width:"100%",background:T.card2,border:`1.5px solid ${T.border}`,borderRadius:9,padding:"9px 11px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",boxSizing:"border-box",transition:"border-color 0.15s"};
+  const sectionLabelStyle={fontSize:10,fontWeight:800,letterSpacing:"0.06em",textTransform:"uppercase",color:T.muted,marginBottom:8};
+  const dateLabel=new Date(date+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"});
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:14,padding:"12px",background:T.bg,border:`1px solid ${T.border}`,borderRadius:10,marginTop:4}}>
+      <div style={{fontSize:12,fontWeight:700,color:T.white}}>Notes for {dateLabel}</div>
+      <div>
+        <div style={sectionLabelStyle}>Notes for this class</div>
+        <textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="e.g. Worksheet due today, covers chapter 4..." rows={3} style={{...inputStyle,resize:"none",lineHeight:1.5}} onFocus={e=>e.currentTarget.style.borderColor=T.lime} onBlur={e=>e.currentTarget.style.borderColor=T.border} />
+      </div>
+      <div>
+        <div style={sectionLabelStyle}>To do in class</div>
+        {todo.length===0?(
+          <div style={{fontSize:12,color:T.muted,padding:"12px 0",textAlign:"center",border:`1.5px dashed ${T.border}`,borderRadius:9,marginBottom:9}}>Nothing added yet.</div>
+        ):(
+          <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:9}}>
+            {todo.map((it,i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",gap:9,padding:"8px 10px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8}}>
+                <input type="checkbox" checked={it.done} onChange={()=>setTodo(x=>x.map((y,j)=>j===i?{...y,done:!y.done}:y))} style={{cursor:"pointer",flexShrink:0,width:15,height:15,accentColor:T.lime}} />
+                <span style={{flex:1,fontSize:12.5,color:it.done?T.muted:T.text,textDecoration:it.done?"line-through":"none"}}>{it.text}</span>
+                <button type="button" onClick={()=>setTodo(x=>x.filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:11,fontFamily:T.font,flexShrink:0}}>Remove</button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{display:"flex",gap:6}}>
+          <input value={newItem} onChange={e=>setNewItem(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addItem();}}} placeholder="Add an item..." style={{...inputStyle,flex:1}} onFocus={e=>e.currentTarget.style.borderColor=T.lime} onBlur={e=>e.currentTarget.style.borderColor=T.border} />
+          <Btn variant="subtle" onClick={addItem}>Add</Btn>
+        </div>
+      </div>
+      <div style={{display:"flex",alignItems:"center",gap:10}}>
+        <Btn variant="subtle" onClick={save}>Save notes</Btn>
+        {saved&&<span style={{fontSize:12,color:T.lime,fontWeight:600}}>✓ Saved</span>}
+      </div>
+    </div>
+  );
+}
 const DAY_PREVIEW_ICON_BY_KIND={"class":Icon.cal,"study block":Icon.brain,"exam":Icon.zap,"deadline":Icon.file,"reminder":Icon.clock};
 function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime,fmtTimeRange,catchUpPending,openNew}){
   if(!open)return null;
@@ -23354,7 +23904,18 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   // one piece of a manually split task (splitGroup) -- converting just
   // one sibling into its own Attack Block chain would orphan it from the
   // rest of the split.
-  const canAddAttackBlock=(kind==="deadline"||kind==="study block")&&!ev.isAttackBlock&&!ev.dueEventId&&!ev.deckId&&!ev.practiceExamId&&!ev.isExamPrepSession&&!ev.splitGroup&&linkedSessions.length===0&&!(ev.phases&&ev.phases.length>0);
+  // Bug fix, 2026-09-04 user report: linkedSessions.length===0 is ALSO
+  // exactly the condition that makes the behind-pace nudge fire (see its
+  // own render below) once a deadline-kind item has passed its ideal-
+  // start gate with zero real work logged -- so the two showed up
+  // together every time, offering two different-looking ways to solve
+  // the identical problem ("get this thing its first real session") in
+  // the same form: a one-tap "Propose a catch-up block" nudge, and a
+  // separate "Start an Attack Block" toggle a few sections down. Hiding
+  // this toggle while that nudge is actively showing removes the
+  // redundant prompt without removing the option -- dismissing the nudge
+  // ("Not now") still leaves this toggle available as the fallback path.
+  const canAddAttackBlock=(kind==="deadline"||kind==="study block")&&!ev.isAttackBlock&&!ev.dueEventId&&!ev.deckId&&!ev.practiceExamId&&!ev.isExamPrepSession&&!ev.splitGroup&&linkedSessions.length===0&&!(ev.phases&&ev.phases.length>0)&&!(pace&&pace.behind&&!paceDismissed);
   const isPhaseCandidate=canAddAttackBlock&&isPhaseDecompositionCandidate(ev.estimatedHours,date,dayKey());
   // True exactly when PhasesOutlineEditor below is live and about to ground
   // proposeProjectPhases/proposeOutline in whatever's typed into `notes` --
@@ -24304,7 +24865,7 @@ function findAllOverlaps(events,todayKey){
 // editRoutine (the rule being edited) is the one thing that switches this
 // between create and edit mode -- present means Save+Delete, absent means
 // Create.
-function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKind,anchorX,anchorY,color,hideRepeat,onPreviewChange,liveOverride,events,routines,hidden,editRoutine,subjectOptions,onClose,onCreate,onSave,onDelete}){
+function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKind,anchorX,anchorY,color,hideRepeat,onPreviewChange,liveOverride,events,routines,hidden,editRoutine,editRoutineDate,subjectOptions,onClose,onCreate,onSave,onDelete}){
   const [title,setTitle]=useState("");
   const [date,setDate]=useState("");
   const [startTime,setStartTime]=useState("09:00");
@@ -24352,6 +24913,17 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
   // this file's own established gotcha) matching the confirm-in-place
   // pattern this same component's routine sidebar already uses.
   const [confirmDeleteRoutine,setConfirmDeleteRoutine]=useState(false);
+  // "Edit event" / "Notes" tab, only shown when editing a specific
+  // occurrence (editRoutineDate set) -- see the header render below.
+  // Always reset to "edit" below whenever a genuinely different item
+  // opens, so switching to Notes on one class doesn't leak into the next
+  // one double-clicked (this component never unmounts between edits,
+  // see the `if(!open)return null` early-return above -- state here
+  // otherwise persists silently across separate edit sessions).
+  const [activeTab,setActiveTab]=useState("edit");
+  useEffect(()=>{
+    if(open)setActiveTab("edit");
+  },[open,editRoutine&&editRoutine.id,editRoutineDate]);
 
   // Live preview (2026-07-30): reports this form's current title/date/time
   // up to the caller on every relevant change while open, so the calendar
@@ -24523,9 +25095,27 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
       <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:998}} />
       <div onClick={e=>e.stopPropagation()} style={{position:"fixed",top,left,width:POPOVER_WIDTH,maxHeight:"calc(100vh - "+top+"px - 16px)",overflowY:"auto",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:999,animation:"studlinPop 0.15s cubic-bezier(.2,.85,.3,1)"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"9px 12px",borderBottom:`1px solid ${T.border}`}}>
-          <div style={{fontSize:13,fontWeight:700,color:T.white}}>{editRoutine?"Edit event":"New event"}</div>
+          {/* Tabs only when editing a specific occurrence (double-clicked
+              one day's block, not the recurring rule from Routine Control
+              Center or the sidebar Activities list, neither of which has a
+              single date to attach notes to -- see editRoutineDate's own
+              comment). Plain title otherwise, unchanged. */}
+          {editRoutine&&editRoutineDate?(
+            <div style={{display:"flex",gap:4}}>
+              <button type="button" onClick={()=>setActiveTab("edit")} style={{background:"none",border:"none",cursor:"pointer",fontFamily:T.font,fontSize:13,fontWeight:700,padding:"4px 2px",color:activeTab==="edit"?T.white:T.muted,borderBottom:`2px solid ${activeTab==="edit"?T.lime:"transparent"}`}}>Edit event</button>
+              <button type="button" onClick={()=>setActiveTab("notes")} style={{background:"none",border:"none",cursor:"pointer",fontFamily:T.font,fontSize:13,fontWeight:700,padding:"4px 2px",marginLeft:14,display:"flex",alignItems:"center",gap:5,color:activeTab==="notes"?T.white:T.muted,borderBottom:`2px solid ${activeTab==="notes"?T.lime:"transparent"}`}}>Notes{(()=>{const n=getRoutineOccurrenceNote(editRoutine.id,editRoutineDate);return (n.note||n.todo.length>0)?<span style={{width:5,height:5,borderRadius:"50%",background:T.lime,display:"inline-block"}} />:null;})()}</button>
+            </div>
+          ):(
+            <div style={{fontSize:13,fontWeight:700,color:T.white}}>{editRoutine?"Edit event":"New event"}</div>
+          )}
           <button type="button" onClick={onClose} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,lineHeight:1,padding:0}}>×</button>
         </div>
+        {editRoutine&&editRoutineDate&&activeTab==="notes"&&(
+          <div style={{padding:"10px 12px"}}>
+            <ClassDayNotesFields routineId={editRoutine.id} date={editRoutineDate} />
+          </div>
+        )}
+        {(!editRoutineDate||activeTab==="edit")&&(
         <div style={{padding:"10px 12px",display:"flex",flexDirection:"column",gap:6}}>
           <Input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Event title" style={{fontSize:13,fontWeight:600,padding:"7px 10px"}} autoFocus />
           <div style={{display:"flex",gap:6}}>
@@ -24683,6 +25273,8 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
             <SelectChip size="sm" options={[{value:false,label:"Fixed (won't move)"},{value:true,label:"Free (can move)"}]} value={movable} onChange={setMovable} />
           </div>
         </div>
+        )}
+        {(!editRoutineDate||activeTab==="edit")&&(
         <div style={{display:"flex",gap:8,justifyContent:editRoutine?"space-between":"flex-end",alignItems:"center",padding:"9px 12px",borderTop:`1px solid ${T.border}`}}>
           {editRoutine&&(confirmDeleteRoutine?(
             <div style={{display:"flex",gap:6,alignItems:"center"}}>
@@ -24698,6 +25290,7 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
             <Btn onClick={submit} disabled={invalid} style={{padding:"6px 13px",fontSize:12}}>{editRoutine?"Save changes":"Create"}</Btn>
           </div>
         </div>
+        )}
       </div>
     </>
   ), document.body);
@@ -26011,8 +26604,15 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const [editRoutineMode,setEditRoutineMode]=useState(false);
   const [hoveredRoutineId,setHoveredRoutineId]=useState(null);
   const [routineEditItem,setRoutineEditItem]=useState(null); // the underlying rule being edited, or null
-  const openRoutineEdit=(rule)=>setRoutineEditItem(rule);
-  const closeRoutineEdit=()=>setRoutineEditItem(null);
+  // Which specific occurrence's block was actually double-clicked to get
+  // here, if any -- null when edit was opened from somewhere with no
+  // single date to attach to (Routine Control Center's plain rule list,
+  // the sidebar Activities list). Powers ClassDayNotesFields inside
+  // NewEventModal; every existing openRoutineEdit(rule) call site that
+  // never passes a second arg is unaffected, this just defaults to null.
+  const [routineEditDate,setRoutineEditDate]=useState(null);
+  const openRoutineEdit=(rule,date)=>{setRoutineEditItem(rule);setRoutineEditDate(date||null);};
+  const closeRoutineEdit=()=>{setRoutineEditItem(null);setRoutineEditDate(null);};
   // Now the onSave handler for the shared NewEventModal (unified with
   // "New event" -- see that component's own comment for why). patch is
   // whatever the modal's Save button sent: title/kind/subject/days/
@@ -26439,7 +27039,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       // when fromDate===toDate, so this branch can trust that.
       const overrides=getRoutineOverrides();
       const forRoutine={...(overrides[routineId]||{})};
-      forRoutine[toDate]={startTime:toTime,duration:newDuration!=null?newDuration:(rule.duration||30)};
+      // Merge onto whatever's already saved for this date (a day note/
+      // to-do -- see saveRoutineOccurrenceNote -- can already be sitting
+      // here) rather than replacing the entry wholesale, so dragging or
+      // resizing an occurrence never silently wipes out a note the
+      // student already wrote for that same day.
+      forRoutine[toDate]={...(forRoutine[toDate]||{}),startTime:toTime,duration:newDuration!=null?newDuration:(rule.duration||30)};
       saveRoutineOverrides({...overrides,[routineId]:forRoutine});
       // routineOverrides lives in its own localStorage key, not in
       // `routines` React state -- expandRoutineOccurrences reads the
@@ -28290,7 +28895,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       {calView==="weekly"&&(
         <WeeklyPlanner events={events} setEvents={setEvents} moveEvent={moveEvent} weekOffset={weekOffset} setWeekOffset={setWeekOffset} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} fmtTimeRange={fmtTimeRange} openNew={openNew} openEdit={openEdit}
           routines={routines} editRoutineMode={editRoutineMode} hoveredRoutineId={hoveredRoutineId} setHoveredRoutineId={setHoveredRoutineId}
-          onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
+          onEditRoutine={(routineId,date)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule,date);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
           selDay={selDay} setSelDay={setSelDay} onDeleteEvent={deleteEventWithUndo} catchUpPending={catchUpPending}
           sidebarDragChip={sidebarDragChip} onDropSidebarChip={(dk,time,anchorPoint)=>{openNewEventForDrop(sidebarDragChip,dk,time,anchorPoint);setSidebarDragChip(null);}}
           onDropRoutineOccurrence={onDropRoutineOccurrence} onResizeRoutineOccurrence={onResizeRoutineOccurrence} pendingRoutineChange={routineDropPending} onRoutineDragStateChange={setRoutineDragActive}
@@ -28304,7 +28909,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           gsBusyByDate={gsOpen&&gsStep==="place"?gsBusyByDate:null} gsRecommended={gsOpen&&gsStep==="place"?gsRecommended:null} />
       )}
       {calView==="daily"&&(
-        <DayPlanner dayEvents={dayEvents} setEvents={setEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} fmtTimeRange={fmtTimeRange} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} catchUpPending={catchUpPending} openNew={openNew} newItemHighlightIds={newItemHighlightSet} onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} />
+        <DayPlanner dayEvents={dayEvents} setEvents={setEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} fmtTimeRange={fmtTimeRange} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} catchUpPending={catchUpPending} openNew={openNew} newItemHighlightIds={newItemHighlightSet} onEditRoutine={(routineId,date)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule,date);}} />
       )}
     </div>
       {/* Right-hand column (Phase 5e) -- upcoming across everything by
@@ -28484,7 +29089,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         onPreviewChange={setPreviewEvent}
         liveOverride={previewOverride}
         events={events} routines={routines} hidden={previewDragActive}
-        editRoutine={routineEditItem} subjectOptions={SUBJ}
+        editRoutine={routineEditItem} editRoutineDate={routineEditDate} subjectOptions={SUBJ}
         onSave={saveRoutineEditFromModal} onDelete={deleteRoutineEdit}
         onClose={()=>{setNewEventOpen(false);setPreviewEvent(null);setPreviewOverride(null);closeRoutineEdit();}}
         onCreate={(payload)=>{setPreviewEvent(null);setPreviewOverride(null);commitNewEvent(payload);}} />
@@ -30694,6 +31299,11 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   const [confirmRemoveSubjId,setConfirmRemoveSubjId]=useState(null);
   const [courseDeleteSnapshots,setCourseDeleteSnapshots]=useState(null);
   const [courseDeleteToast,setCourseDeleteToast]=useState("");
+  const [aiMemoryFacts,setAiMemoryFacts]=useState(()=>getAiMemory().facts||[]);
+  const [confirmRemoveFactIdx,setConfirmRemoveFactIdx]=useState(null);
+  const [confirmClearMemory,setConfirmClearMemory]=useState(false);
+  const removeAiFact=(idx)=>{const next=removeAiMemoryFact(getAiMemory(),idx);saveAiMemory(next);pushAiMemory(next);setAiMemoryFacts(next.facts);setConfirmRemoveFactIdx(null);};
+  const clearAiMemory=()=>{const next={facts:[],updatedAt:new Date().toISOString()};saveAiMemory(next);pushAiMemory(next);setAiMemoryFacts([]);setConfirmClearMemory(false);};
   const countLinkedForSubject=(sub)=>{
     const matches=(item)=>item.courseId===sub.id||item.subject===sub.label;
     return getWeeklyRoutine().filter(matches).length+lsGet("events",[]).filter(matches).length;
@@ -31007,6 +31617,39 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                 <Btn variant="subtle" onClick={downloadChatHistory} disabled={chatHistoryLoading}>{chatHistoryLoading?"Preparing…":"Download chat history"}</Btn>
                 <Btn variant="subtle">Privacy policy</Btn>
               </div>
+            </Card>
+            <Card style={{marginBottom:12}}>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>What Studlin AI remembers</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Standing preferences it's picked up from your chats — not one-off requests, just things worth not re-explaining every time.</div>
+              {aiMemoryFacts.length===0?(
+                <div style={{fontSize:12.5,color:T.muted,padding:"16px 0",textAlign:"center",borderTop:`1px solid ${T.border}`}}>Nothing remembered yet. It'll pick things up naturally as you chat.</div>
+              ):(
+                aiMemoryFacts.map((f,i)=>(
+                  <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,marginBottom:8}}>
+                    {confirmRemoveFactIdx===i?(<>
+                      <span style={{fontSize:12.5,color:T.text,flex:1}}>Forget this?</span>
+                      <Btn variant="danger" onClick={()=>removeAiFact(i)}>Forget</Btn>
+                      <Btn variant="subtle" onClick={()=>setConfirmRemoveFactIdx(null)}>Cancel</Btn>
+                    </>):(<>
+                      <span style={{fontSize:12.5,color:T.text,flex:1}}>{f.text}</span>
+                      <button onClick={()=>setConfirmRemoveFactIdx(i)} style={{background:"none",border:`1px solid ${T.border}`,color:T.muted,cursor:"pointer",borderRadius:6,padding:"4px 10px",fontSize:12,fontFamily:T.font,flexShrink:0}}>Remove</button>
+                    </>)}
+                  </div>
+                ))
+              )}
+              {aiMemoryFacts.length>0&&(
+                <div style={{marginTop:6}}>
+                  {confirmClearMemory?(
+                    <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                      <span style={{fontSize:12,color:T.muted}}>Forget everything Studlin AI remembers about you?</span>
+                      <Btn variant="danger" onClick={clearAiMemory}>Yes, clear all</Btn>
+                      <Btn variant="subtle" onClick={()=>setConfirmClearMemory(false)}>Cancel</Btn>
+                    </div>
+                  ):(
+                    <Btn variant="subtle" onClick={()=>setConfirmClearMemory(true)}>Clear all</Btn>
+                  )}
+                </div>
+              )}
             </Card>
             <Card>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:10}}>Account security</div>
@@ -32888,6 +33531,7 @@ function AuthGate(){
         DataStore.notes.hydrateOnAuth();
         DataStore.practiceExams.hydrateOnAuth();
         DataStore.timerLogs.hydrateOnAuth();
+        hydrateAiMemoryOnAuth();
         // "onboarded" otherwise lives only in this browser's localStorage —
         // if it's not already set here, wait for the profile fetch (which
         // reconciles it against the account's own record) before mounting
@@ -33213,14 +33857,20 @@ function App() {
   // well-sampled gap between the declared peak bucket and a better-
   // performing one, not a recent miss streak. {currentBucket,suggestedBucket,...} or null.
   const [peakInsightOffer,setPeakInsightOffer]=useState(null);
+  // Third proactive signal, chat-only -- see detectUnscheduledDueSoon's own
+  // comment. Deliberately does NOT get a bottom-left dashboard banner like
+  // the two above (that UI wasn't asked for and would compete with them
+  // for the same fixed corner) -- this state exists purely to feed
+  // studlinAiProactive below, so Studlin AI chat can surface it. {count,
+  // titles,ids,nearestDate} or null.
+  const [unscheduledDueSoonOffer,setUnscheduledDueSoonOffer]=useState(null);
   // Studlin AI's own proactive surface -- a second, additional place
-  // (the chat bubble badge) reflecting whichever of the two offers
-  // above is currently live, without duplicating their detection or
-  // touching the existing bottom-left banners at all. Plain per-render
-  // derivation, not new state -- see deriveStudlinAiProactiveSignal's
-  // own comment for why the precedence mirrors the daily-tick effect
-  // exactly.
-  const studlinAiProactive=deriveStudlinAiProactiveSignal(strugglingBucketOffer,peakInsightOffer);
+  // (the chat bubble badge) reflecting whichever offer above is currently
+  // live, without duplicating their detection or touching the existing
+  // bottom-left banners at all. Plain per-render derivation, not new
+  // state -- see deriveStudlinAiProactiveSignal's own comment for why the
+  // precedence mirrors the daily-tick effect exactly.
+  const studlinAiProactive=deriveStudlinAiProactiveSignal(strugglingBucketOffer,unscheduledDueSoonOffer,peakInsightOffer);
   // Same "dismissible banner, not a blocking modal" idiom as above, for
   // pending tasks whose deadline has already passed — these used to get
   // wiped from storage the moment the daily gate ran, with no toast, no
@@ -33533,6 +34183,7 @@ function App() {
     if(queued.length===0)return;
     const latest=pickLatestQueuedNudgesByKind(queued);
     if(latest.strugglingBucket)setStrugglingBucketOffer(latest.strugglingBucket);
+    if(latest.unscheduledDueSoon)setUnscheduledDueSoonOffer(latest.unscheduledDueSoon);
     if(latest.peakInsight)setPeakInsightOffer(latest.peakInsight);
     if(latest.examPrep)setExamPrepSuggestion(latest.examPrep);
     if(latest.prepPromptBatch)setPrepPromptBatch(latest.prepPromptBatch);
@@ -33794,6 +34445,28 @@ function App() {
       dismissPeakHourInsight(peakInsightOffer.suggestedBucket);
     }
     setPeakInsightOffer(null);
+  };
+  // Accepting doesn't silently auto-schedule anything -- these items were
+  // never reviewed/confirmed, so committing real calendar placements for
+  // all of them without the student looking at each one first would break
+  // this whole session's "never silently commit, always preview" rule.
+  // Instead: navigate to Calendar and highlight exactly which ones need
+  // attention, reusing the calendarHighlightIds one-shot flag CalendarTab
+  // already reads on mount (studlin-app.jsx, "here's what was just
+  // imported" -- same mechanism, different trigger).
+  const acceptUnscheduledDueSoonOffer=()=>{
+    if(!unscheduledDueSoonOffer)return;
+    logSuggestionDecision("unscheduledDueSoon","accepted",unscheduledDueSoonOffer);
+    lsSet("calendarHighlightIds",{ids:unscheduledDueSoonOffer.ids,setAt:Date.now()});
+    setActive("calendar");
+    setUnscheduledDueSoonOffer(null);
+  };
+  const declineUnscheduledDueSoonOffer=()=>{
+    if(unscheduledDueSoonOffer){
+      logSuggestionDecision("unscheduledDueSoon","dismissed",unscheduledDueSoonOffer);
+      dismissUnscheduledDueSoon();
+    }
+    setUnscheduledDueSoonOffer(null);
   };
   const [scheduleSettingsOpen,setScheduleSettingsOpen]=useState(false);
   // Defaults to collapsed (icon rail) for anyone who's never touched this
@@ -34513,6 +35186,18 @@ function App() {
     if(strugglingBucket){
       if(recoveryPending)queueInsightNudge("strugglingBucket",strugglingBucket);
       else setStrugglingBucketOffer(strugglingBucket);
+    }
+    // Third proactive signal (chat-only, no dashboard banner -- see its own
+    // state comment) -- same recoveryPending gate as the other two (a
+    // rough week already has its own dedicated recovery flow, this would
+    // just be noise on top of it), but NOT suppressed by strugglingBucket
+    // the way peakInsight is below -- unscheduled real work due soon is
+    // independent of a behavioral hour-bucket pattern, not competing for
+    // the same bottom-left UI slot.
+    const unscheduledDueSoon=detectUnscheduledDueSoon(evs,today);
+    if(unscheduledDueSoon){
+      if(recoveryPending)queueInsightNudge("unscheduledDueSoon",unscheduledDueSoon);
+      else setUnscheduledDueSoonOffer(unscheduledDueSoon);
     }
     // Same once-a-day gate, for the complementary all-time signal. Both
     // banners share the same fixed bottom-left corner, so only surface
@@ -35677,8 +36362,8 @@ function App() {
         onEventsCommitted={(next)=>{if(calendarSetEventsRef.current)calendarSetEventsRef.current(next);}}
         onDeleteEvent={deleteEventFromDetail}
         proactiveSignal={studlinAiProactive}
-        onAcceptProactive={(signal)=>{if(signal.kind==="struggling_bucket")acceptStrugglingBucketOffer();else if(signal.kind==="peak_hours")acceptPeakHourInsight();}}
-        onDeclineProactive={(signal)=>{if(signal.kind==="struggling_bucket")declineStrugglingBucketOffer();else if(signal.kind==="peak_hours")declinePeakHourInsight();}} />
+        onAcceptProactive={(signal)=>{if(signal.kind==="struggling_bucket")acceptStrugglingBucketOffer();else if(signal.kind==="unscheduled_due_soon")acceptUnscheduledDueSoonOffer();else if(signal.kind==="peak_hours")acceptPeakHourInsight();}}
+        onDeclineProactive={(signal)=>{if(signal.kind==="struggling_bucket")declineStrugglingBucketOffer();else if(signal.kind==="unscheduled_due_soon")declineUnscheduledDueSoonOffer();else if(signal.kind==="peak_hours")declinePeakHourInsight();}} />
     </div>
   );
 }

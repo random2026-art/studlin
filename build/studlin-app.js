@@ -1137,6 +1137,17 @@ function undoCourseDelete(snapshot) {
 const getRoutineSkips = () => lsGet("routineSkips", {});
 const getRoutineOverrides = () => lsGet("routineOverrides", {});
 const saveRoutineOverrides = (o) => lsSet("routineOverrides", o);
+function getRoutineOccurrenceNote(routineId, dateKey) {
+  const overrides = getRoutineOverrides();
+  const forDate = overrides[routineId] && overrides[routineId][dateKey];
+  return { note: forDate && forDate.note || "", todo: forDate && forDate.todo || [] };
+}
+function saveRoutineOccurrenceNote(routineId, dateKey, patch) {
+  const overrides = getRoutineOverrides();
+  const forRoutine = { ...overrides[routineId] || {} };
+  forRoutine[dateKey] = { ...forRoutine[dateKey] || {}, ...patch };
+  saveRoutineOverrides({ ...overrides, [routineId]: forRoutine });
+}
 const getSchoolTerm = () => lsGet("schoolTerm", null);
 const saveSchoolTerm = (t) => lsSet("schoolTerm", t);
 const isTermRolloverDue = (term, todayKey) => !!(term && term.end && todayKey > term.end);
@@ -1378,14 +1389,16 @@ function expandRoutineOccurrences(routines, startDateKey, endDateKey) {
         routineId: r.id,
         title: r.title,
         date: dk,
-        time: override ? override.startTime : r.startTime,
-        duration: override ? override.duration : r.duration || 30,
+        time: override && override.startTime != null ? override.startTime : r.startTime,
+        duration: override && override.duration != null ? override.duration : r.duration || 30,
         kind: ROUTINE_KIND_TO_EVENT_KIND[r.kind] || "class",
         subject: r.subject || "",
         color: r.color || null,
         status: "pending",
         isRoutine: true,
-        overridden: !!override,
+        overridden: !!(override && (override.startTime != null || override.duration != null)),
+        dayNote: override && override.note || "",
+        dayTodo: override && override.todo || [],
         // A recurring class/activity's commuteBefore/After (set via
         // editing it -- NewEventModal's editRoutine mode already saves
         // these correctly onto the rule, see saveRoutineEditFromModal)
@@ -1897,6 +1910,33 @@ function dismissPeakHourInsight(bucketId) {
   dismissed[bucketId] = Date.now();
   lsSet("peakInsightDismissed", dismissed);
 }
+const UNSCHEDULED_DUE_SOON_WINDOW_DAYS = 3;
+const UNSCHEDULED_DUE_SOON_COOLDOWN_MS = 2 * 864e5;
+function detectUnscheduledDueSoon(events, todayKey) {
+  const dismissedAt = lsGet("unscheduledDueSoonDismissedAt", 0);
+  if (Date.now() - dismissedAt < UNSCHEDULED_DUE_SOON_COOLDOWN_MS) return null;
+  const all = events || [];
+  const end = (() => {
+    const d = /* @__PURE__ */ new Date(todayKey + "T12:00:00");
+    d.setDate(d.getDate() + UNSCHEDULED_DUE_SOON_WINDOW_DAYS);
+    return dayKey(d);
+  })();
+  const hasLinkedSession = (id) => all.some((e) => e.dueEventId === id && e.status !== "done");
+  const candidates = all.filter((ev) => {
+    if (ev.kind !== "deadline" || ev.status !== "pending" || ev.checklist || isProjectMarker(ev)) return false;
+    const dueRef = ev.deadline || ev.date;
+    if (!dueRef || dueRef < todayKey || dueRef > end) return false;
+    return !hasLinkedSession(ev.id);
+  }).sort((a, b) => {
+    const da = a.deadline || a.date, db = b.deadline || b.date;
+    return da < db ? -1 : da > db ? 1 : 0;
+  });
+  if (candidates.length === 0) return null;
+  return { count: candidates.length, titles: candidates.map((e) => e.title), ids: candidates.map((e) => e.id), nearestDate: candidates[0].deadline || candidates[0].date };
+}
+function dismissUnscheduledDueSoon() {
+  lsSet("unscheduledDueSoonDismissedAt", Date.now());
+}
 function logSuggestionDecision(kind, action, context) {
   const log = lsGet("suggestionLog", []);
   log.push({ kind, action, context: context || {}, t: Date.now() });
@@ -2345,6 +2385,25 @@ function fmtPlacementReason(reason, timeStr) {
   if (reason.type === "deadlineDriven") return "Moved before its " + reason.deadlineDay + " deadline.";
   if (reason.type === "deferred") return "You chose to push this to next week.";
   if (reason.type === "manualOverride") return "You picked this time yourself.";
+  return "";
+}
+function inferChatMoveReason(dayEvents, newTime, newDuration, excludeId, displacedTitle) {
+  if (displacedTitle) return "moved " + displacedTitle + " to fit";
+  if (!newTime) return "";
+  const ADJACENT_GAP_MINS = 15;
+  const others = (dayEvents || []).filter((e) => e.id !== excludeId && e.time);
+  const newStart = timeToMinutes(newTime);
+  const newEnd = newStart + (newDuration || 30);
+  const rightAfter = others.filter((e) => {
+    const s = timeToMinutes(e.time);
+    return s >= newEnd && s - newEnd <= ADJACENT_GAP_MINS;
+  }).sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time))[0];
+  if (rightAfter) return "right before your " + rightAfter.title + " at " + fmtClock12(rightAfter.time);
+  const rightBefore = others.filter((e) => {
+    const s = timeToMinutes(e.time), d = e.duration || 30;
+    return s + d <= newStart && newStart - (s + d) <= ADJACENT_GAP_MINS;
+  }).sort((a, b) => timeToMinutes(b.time) - timeToMinutes(a.time))[0];
+  if (rightBefore) return "right after your " + rightBefore.title;
   return "";
 }
 function fmtMovedReasonSuffix(ev) {
@@ -4769,7 +4828,7 @@ function describeCreateProposal(task) {
   const when = task.time ? dateLabel + " at " + fmtClock12(task.time) + (task.duration ? " (" + task.duration + " min)" : "") : dateLabel ? "due " + dateLabel : "no date yet";
   return 'Add "' + task.title + '" -- ' + when + "?";
 }
-function pastTenseProposalLabel(label, moved) {
+function pastTenseProposalLabel(label, moved, reason) {
   if (!label) return label;
   let s = label.replace(/\?$/, "");
   let isMove = false;
@@ -4785,7 +4844,7 @@ function pastTenseProposalLabel(label, moved) {
   if (isMove && moved && moved.length > 0 && moved[0].newDate) {
     const d = /* @__PURE__ */ new Date(moved[0].newDate + "T12:00:00");
     const dateLabel = d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
-    s += " to " + dateLabel + (moved[0].newTime ? " at " + fmtClock12(moved[0].newTime) : "") + ".";
+    s += " to " + dateLabel + (moved[0].newTime ? " at " + fmtClock12(moved[0].newTime) : "") + (reason ? ", " + reason : "") + ".";
   }
   return s;
 }
@@ -4863,6 +4922,64 @@ function buildGenerateStudyMaterialProposal(parsed, materialText) {
   const subject = matchSubjectInMaterialText(trimmed);
   const label = genFormat === "quiz" ? "Generate a practice quiz from this" + (subject ? " for " + subject : "") + "?" : "Generate flashcards from this" + (subject ? " for " + subject : "") + "?";
   return { ok: true, kind: "generate_study_material", genFormat, materialText: trimmed, subject, label };
+}
+async function extractSyllabusItemsFromChatText(text) {
+  const trimmed = (text || "").trim();
+  if (!trimmed) return [];
+  try {
+    const prompt = "Extract every distinct graded item (quiz, exam, midterm, final, assignment, project) with a real date mentioned in this chat message from a student to their study assistant. Today's date is " + dayKey() + `. If a date has no year, infer the most likely upcoming year given today's date. For each item return: "title" (short, e.g. "First Quiz" or "Final Exam"), "date" (YYYY-MM-DD, your best guess -- never omit even if uncertain), "kind" ("exam" for a quiz/test/midterm/final, "deadline" for anything else graded), "examType" (ONLY when kind is "exam": "quiz","midterm","final","project","other" -- omit entirely when kind is "deadline"), "gradeWeightPercent" (ONLY when kind is "exam" AND a percentage of the final grade is explicitly stated, a plain number like 20, not a string or a % sign -- omit entirely if none is stated, never guess one), "detail" (optional -- only when something concrete beyond the date is stated, e.g. "covers chapters 1 through 8" -- omit the key entirely rather than inventing filler). ` + ANTI_GARBAGE_EXTRACTION_RULE + 'Respond with ONLY valid JSON, no markdown fences, no commentary: {"items":[{"title":"First Quiz","date":"2026-09-21","kind":"exam","examType":"quiz","gradeWeightPercent":20,"detail":"Covers chapters 1 through 8"}]}. If you find no real dated items at all, respond with {"items":[]}.\n\n' + trimmed.slice(0, 6e3);
+    const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt }], model: "standard", format: "json" }) });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const raw = (data.reply || "").replace(/```json?\n?/gi, "").replace(/```/g, "").trim();
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.items)) return [];
+    return parsed.items.filter((it) => it && it.date && looksLikeRealDeadlineTitle(it.title)).map(withDerivedExamImportance);
+  } catch (e) {
+    return [];
+  }
+}
+function buildImportSyllabusItemsProposal(parsed, items, routines) {
+  const real = (items || []).filter((it) => it && it.title && it.date);
+  if (real.length === 0) {
+    return { ok: false, label: "Couldn't find clear dated items in that -- try pasting the exact titles and dates." };
+  }
+  const subject = (parsed && parsed.subject || "").trim() || null;
+  let meetingDays = null;
+  if (parsed && parsed.duringClass && subject) {
+    const courseId = courseIdForLabelFuzzy(subject);
+    const norm = normalizeCourseLabel(subject);
+    const classRows = (routines || []).filter((r) => r.kind === "class" && (courseId ? r.courseId === courseId : normalizeCourseLabel(r.subject || r.title || "") === norm));
+    if (classRows.length > 0) {
+      meetingDays = /* @__PURE__ */ new Set();
+      classRows.forEach((r) => (r.days || []).forEach((d) => meetingDays.add(d)));
+    }
+  }
+  const normalized = real.map((it) => {
+    const dow = ((/* @__PURE__ */ new Date(it.date + "T12:00:00")).getDay() + 6) % 7;
+    const dayMismatch = !!(meetingDays && !meetingDays.has(dow));
+    return {
+      title: it.title,
+      date: it.date,
+      kind: it.kind === "exam" ? "exam" : "deadline",
+      examType: it.examType || void 0,
+      gradeWeightPercent: it.gradeWeightPercent != null ? it.gradeWeightPercent : void 0,
+      detail: it.detail || void 0,
+      importanceLevel: it.importanceLevel || void 0,
+      examWeight: it.examWeight || void 0,
+      attackBlock: it.kind !== "exam",
+      proposeSessions: false,
+      difficulty: 500,
+      dayMismatch
+    };
+  });
+  const mismatched = normalized.filter((it) => it.dayMismatch);
+  const listText = normalized.map((it) => {
+    const dateLabel = (/* @__PURE__ */ new Date(it.date + "T12:00:00")).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+    return it.title + " (" + dateLabel + ")" + (it.gradeWeightPercent != null ? " -- " + it.gradeWeightPercent + "%" : "") + (it.dayMismatch ? " [doesn't look like a " + subject + " day -- double check]" : "");
+  }).join(", ");
+  const label = "Add " + normalized.length + " item" + (normalized.length !== 1 ? "s" : "") + (subject ? " to " + subject : "") + ": " + listText + "?";
+  return { ok: true, kind: "import_syllabus_items", items: normalized, subject, mismatchCount: mismatched.length, label };
 }
 function buildStudlinAiActionProposal(parsed, events, routines, prefs, forcedId, rawText) {
   if (parsed.intent === "create_task") return buildCreateTaskProposal(parsed, events, routines, prefs);
@@ -5223,6 +5340,54 @@ function getUserName() {
 }
 function saveProfile(p) {
   lsSet("profile", p);
+}
+const AI_MEMORY_FACT_CAP = 20;
+function getAiMemory() {
+  return lsGet("aiMemory", { facts: [], updatedAt: null });
+}
+function saveAiMemory(mem) {
+  lsSet("aiMemory", mem);
+}
+async function pushAiMemory(mem) {
+  const u = firebase.auth().currentUser;
+  if (!u) return;
+  try {
+    await fsdb().collection("aiMemory").doc(u.uid).set({ facts: mem.facts || [], updatedAt: (/* @__PURE__ */ new Date()).toISOString() }, { merge: true });
+  } catch (e) {
+  }
+}
+async function hydrateAiMemoryOnAuth() {
+  const u = firebase.auth().currentUser;
+  if (!u) return;
+  try {
+    const doc = await fsdb().collection("aiMemory").doc(u.uid).get();
+    if (doc.exists) {
+      const data = doc.data();
+      saveAiMemory({ facts: Array.isArray(data.facts) ? data.facts : [], updatedAt: data.updatedAt || null });
+    }
+  } catch (e) {
+  }
+}
+function mergeAiMemoryFacts(existingMem, newFactTexts) {
+  const existing = existingMem && existingMem.facts || [];
+  const norm = (s) => (s || "").trim().toLowerCase();
+  const isDupe = (text) => {
+    const nt = norm(text);
+    if (!nt) return true;
+    return existing.some((f) => {
+      const nf = norm(f.text);
+      return nf === nt || nf.includes(nt) || nt.includes(nf);
+    });
+  };
+  const added = (newFactTexts || []).map((t) => (t || "").trim()).filter((t) => t && !isDupe(t)).map((text) => ({ text, addedAt: Date.now() }));
+  if (added.length === 0) return existingMem || { facts: [], updatedAt: null };
+  let facts = [...existing, ...added];
+  if (facts.length > AI_MEMORY_FACT_CAP) facts = facts.slice(facts.length - AI_MEMORY_FACT_CAP);
+  return { facts, updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+}
+function removeAiMemoryFact(mem, index) {
+  const facts = (mem.facts || []).filter((_, i) => i !== index);
+  return { facts, updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
 }
 function seedEventsIfStale() {
   return;
@@ -10345,9 +10510,16 @@ function gatherStudlinAiProfileSignals(flags, prefs) {
   if (flags.needsConfidence) profile.confidenceInsight = confidenceOutcomeInsight();
   return profile;
 }
+function formatAiMemoryForPrompt() {
+  const facts = (getAiMemory().facts || []).map((f) => f.text);
+  if (facts.length === 0) return "";
+  return "STUDENT'S OWN STATED PREFERENCES (real things they've told Studlin AI before, still true unless today's message says otherwise): " + facts.join("; ") + ".";
+}
 function formatStudlinAiDigestForPrompt(question, digest, flags, profile) {
   const lines = ["DIGEST (real data about this student -- the ONLY source of truth; never invent beyond this):"];
   lines.push("Today: " + digest.todayKey + " (" + currentClockLabel() + " right now). Schedule window shown below: " + digest.todayKey + " through " + digest.windowEndKey + ".");
+  const memLine = formatAiMemoryForPrompt();
+  if (memLine) lines.push(memLine);
   if (flags.needsWorkload) {
     if (digest.busiestDay) lines.push("Busiest day in this window: " + digest.busiestDay.date + " (" + digest.busiestDay.workloadMinutes + " minutes scheduled).");
     if (digest.lightestDay) lines.push("Lightest day with anything scheduled: " + digest.lightestDay.date + " (" + digest.lightestDay.workloadMinutes + " minutes).");
@@ -10409,6 +10581,8 @@ function formatStudlinAiCoachingPrompt(question, context) {
   const { digest, subject, subjectNudge, examReadiness, confidenceInsight } = context;
   const lines = ["CONTEXT (real data about this student -- ground your advice in this, never invent beyond it):"];
   lines.push("Today: " + digest.todayKey + " (" + currentClockLabel() + " right now).");
+  const memLine = formatAiMemoryForPrompt();
+  if (memLine) lines.push(memLine);
   if (digest.heavyDayKeys.length > 0) lines.push("Heavier-than-usual days in the next two weeks: " + digest.heavyDayKeys.join(", ") + ".");
   if (digest.overdue.length > 0) lines.push(digest.overdue.length + " overdue item(s) right now: " + digest.overdue.map((o) => o.title).join(", ") + ".");
   if (subject) {
@@ -10442,10 +10616,11 @@ async function classifyStudlinAiMessage(text, history) {
   const nextWeekSameDay = dayKey(new Date(Date.now() + 7 * 864e5));
   const weekday = (/* @__PURE__ */ new Date()).toLocaleDateString("en-US", { weekday: "long" });
   const nowTime = currentClockLabel();
-  const prompt = "You are a message router for a student calendar assistant chat. Today is " + weekday + ", " + today + ". The current time right now is " + nowTime + '. The student typed: "' + text + `". Decide whether this is a QUESTION about their existing schedule/study history (a real number/fact), a COACHING ask (wants real study-strategy help, not a fact), an ACTION request (create something new, move/reschedule something that already exists, or turn pasted study material into flashcards/a quiz), or unsupported. Respond with ONLY this JSON, no markdown fences, no explanation:
-{"kind":"question"|"coaching"|"action"|"unsupported","intent":"create_task"|"delete_task"|"set_peak_hours"|"shift"|"clear_day"|"clear_week"|"skip_class"|"move_event"|"retime_event"|"move_flex_task"|"generate_study_material"|null,"days":<integer 1-14 or null>,"date":"YYYY-MM-DD or null","target":"<short name of the specific existing item, or null>","targetDate":"YYYY-MM-DD or null","destDate":"YYYY-MM-DD or null","newStart":"HH:MM 24h or null","newDuration":<integer minutes or null>,"title":"<short name of the NEW item to create, or null>","dueDate":"YYYY-MM-DD or null","dueTime":"HH:MM 24h or null","durationMin":<integer minutes or null>,"taskKind":"study"|"todo"|"event"|"reminder"|"exam"|"project"|null,"genFormat":"flashcards"|"quiz"|null,"peakHours":"morning"|"midday"|"afternoon"|"evening"|null,"clarify":"<a short, specific question, or null>"}
+  const memLine = formatAiMemoryForPrompt();
+  const prompt = "You are a message router for a student calendar assistant chat. Today is " + weekday + ", " + today + ". The current time right now is " + nowTime + ". " + (memLine ? memLine + " " : "") + 'The student typed: "' + text + `". Decide whether this is a QUESTION about their existing schedule/study history (a real number/fact), a COACHING ask (wants real study-strategy help, not a fact), an ACTION request (create something new, move/reschedule something that already exists, or turn pasted study material into flashcards/a quiz), or unsupported. Respond with ONLY this JSON, no markdown fences, no explanation:
+{"kind":"question"|"coaching"|"action"|"unsupported","intent":"create_task"|"delete_task"|"set_peak_hours"|"shift"|"clear_day"|"clear_week"|"skip_class"|"move_event"|"retime_event"|"move_flex_task"|"generate_study_material"|"import_syllabus_items"|null,"days":<integer 1-14 or null>,"date":"YYYY-MM-DD or null","target":"<short name of the specific existing item, or null>","targetDate":"YYYY-MM-DD or null","destDate":"YYYY-MM-DD or null","newStart":"HH:MM 24h or null","newDuration":<integer minutes or null>,"title":"<short name of the NEW item to create, or null>","dueDate":"YYYY-MM-DD or null","dueTime":"HH:MM 24h or null","durationMin":<integer minutes or null>,"taskKind":"study"|"todo"|"event"|"reminder"|"exam"|"project"|null,"genFormat":"flashcards"|"quiz"|null,"peakHours":"morning"|"midday"|"afternoon"|"evening"|null,"subject":"<the class/subject name the student named, or null>","duringClass":<true for import_syllabus_items when EITHER the student's own words say these items happen/are due during class, OR the pasted syllabus/material text itself states that for these items (e.g. "completed in class," "due in class," "in-class assignment"), false otherwise>,"clarify":"<a short, specific question, or null>"}
 Rules: "question" is asking for a real FACT about their schedule/workload/streak/pace/productivity (a number, a date, a yes/no). "coaching" is asking for real help or a plan -- "how should I study for X," "help me prepare," "where do I start," "I'm stressed about Y and don't know the material" -- wanting strategy/advice, not a fact, and not (yet) asking to add/move anything. Neither ever changes anything -- leave intent and every other field null for both. "unsupported" covers anything ambiguous, multi-step, deleting/cancelling MULTIPLE things or an entire day/week/recurring routine, or that doesn't clearly match one action below -- never guess. Deleting exactly ONE clearly-named item uses delete_task instead, not unsupported.
-"clarify": if the message clearly WANTS one of the actions below but is missing something required to do it (no title for a new item, no clear name for what to move/retime/delete, no day count for "shift"), set kind to "unsupported", intent to null, and "clarify" to ONE short, specific question asking for exactly the missing thing (e.g. "When is that due?" or "Which day would you like it moved to?"). Leave "clarify" null for every other case -- genuinely off-topic, too vague to guess the intended action at all, multi-step, or a bulk/destructive request. Never set clarify when kind is "question", "coaching", or "action".
+"clarify": if the message clearly WANTS one of the actions below but is missing something required to do it (no title for a new item, no clear name for what to move/retime/delete, no day count for "shift", no class named for "import_syllabus_items"), set kind to "unsupported", intent to null, and "clarify" to ONE short, specific question asking for exactly the missing thing (e.g. "When is that due?", "Which day would you like it moved to?", or "Which class are these for?"). Leave "clarify" null for every other case -- genuinely off-topic, too vague to guess the intended action at all, multi-step, or a bulk/destructive request. Never set clarify when kind is "question", "coaching", or "action".
 "create_task" is for adding something NEW that doesn't exist yet -- "title" is required, "dueDate" if a deadline/date was mentioned (resolve relative phrases like "tomorrow"/"Friday" against today's date above), "dueTime" only if a real clock time was mentioned, "durationMin" only if a specific work-time length was mentioned. "taskKind" picks which kind of thing: "exam" for a test/quiz/final, "project" for a multi-step project, "event" for a fixed real-world thing at a specific time (an appointment, a meeting -- not a class or something already on a routine), "reminder" for a simple point-in-time nudge with no real work involved ("remind me to email my professor"), "todo" if the student explicitly just wants a due date tracked with no work time scheduled ("just remind me," "don't schedule time for it"), otherwise "study" (the default -- a task/assignment/homework Studlin finds real time to work on before its deadline). IMPORTANT: only classify as create_task when the student is actually ASKING to add/track/schedule something. A message that merely mentions, describes, or shares feelings about an exam/assignment/deadline (stress, context, background) without asking for it to be added is "question" or "coaching" instead -- the mere presence of a date or an exam name is not itself a request to create anything, look for real intent to add.
 "delete_task" is for permanently removing ONE existing, clearly-named item from the calendar -- a task, assignment, event, exam, or reminder, NEVER a recurring class/routine ("delete my chem homework," "cancel my dentist appointment" -- not "delete all my chem classes") -- "target" is its name as the student said it, "targetDate" is the date it's currently on (default today's date above if not mentioned).
 "set_peak_hours" is for the student declaring or changing when THEY PERSONALLY focus/work best -- "peakHours" is exactly one of "morning" (roughly 6-11am), "midday" (11am-3pm), "afternoon" (3-6pm), "evening" (6-10pm) -- map their own words to the single closest window. If what they said doesn't clearly fit one of these four (e.g. "late at night," "whenever," "it varies"), this doesn't qualify -- leave peakHours null and use clarify to ask which of morning/midday/afternoon/evening fits best instead of guessing.
@@ -10454,29 +10629,34 @@ Rules: "question" is asking for a real FACT about their schedule/workload/streak
 "retime_event" is for when ONE fixed thing's own time changed (not cancelled) and everything else should fit around the new time -- "target"/"targetDate" as above, "newStart" 24h HH:MM, "newDuration" in minutes if a range was given, null if only a start time was given.
 "shift" pushes everything from today onward back by a day count, only with an explicit or clearly implied number, never invent one. "clear_day" empties one specific date (resolve relative phrases against today's date above). "clear_week" clears the next 7 days, no parameters. "skip_class" is for not physically attending class/school on a specific day, opening that time for other work.
 "generate_study_material" is for when the student pastes real study material (notes, a definition list, an excerpt, a transcript) directly in their message and asks to be quizzed on it or have flashcards made from it -- "genFormat" is "flashcards" for card/flashcard requests, "quiz" for quiz/test/practice-exam requests (default to "flashcards" if genuinely ambiguous which they want). Only classify this way when the message actually contains real pasted content to learn from, not just a bare request -- "quiz me on chapter 3" with nothing pasted is coaching or unsupported instead, never this.
+"import_syllabus_items" is for when the student pastes or lists MULTIPLE distinct graded items at once (quizzes, exams, assignments, each with its own date), typically copied straight from a syllabus, and asks to add them -- "subject" is the class they named (as they said it, e.g. "econ" or "my econ class"). Only classify this way when there are genuinely two or more distinct dated items being requested together -- a single item with one date is create_task instead, never this. Do not try to extract the individual items yourself here -- leave title/dueDate/etc null, only "subject" (and "duringClass", see below) matter for this intent, the items are re-read from the original message separately. "duringClass": set true when EITHER the student's own words say these items happen/are done/are due DURING class or lecture time itself (e.g. "done during class," "we do these in class"), OR the pasted syllabus/material text ITSELF says so for these items, even if the student added no comment of their own (e.g. a pasted line reading "in-class worksheet," "completed during lecture," "due in class," "submit at the start of class") -- read the whole pasted block for this, not just what the student typed around it. When true, each item's date gets checked against that class's real meeting days and flagged if one doesn't line up. False for ordinary homework/assignments/exams with no such statement anywhere in the message -- most of the time this is false, never guess it true just because a class was named.
 Leave every field the chosen intent/kind doesn't use as null. Relative-date phrases are never off by less than what they literally say: "tomorrow" is exactly today's date above + 1 day. "next week" (no specific weekday named) means ` + nextWeekSameDay + ` (today's date above + 7 days), never less than 7 days out, never treated the same as "tomorrow." "next Monday"/"next Friday"/etc. resolve to that exact date within the next 7 days.
 Relative TIME phrases work the same way, against the current time above -- never guessed, never defaulted to some other hour: "in 15 minutes"/"in an hour"/"in 20 min" means exactly the current time plus that many minutes, computed for real (e.g. if the current time above were 12:08 PM, "in 15 minutes" is 12:23 PM, "in an hour" is 1:08 PM). "soon"/"in a bit"/"right now" with no specific number given still means close to the current time above -- within about 15 minutes of it, never later in the day. This applies to dueTime (create_task) and newStart (retime_event) alike.
 Examples:
-"which day next week is busiest?" -> {"kind":"question","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":null}
-"add a task to finish my history essay, due Friday" -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Finish history essay","dueDate":"<the real date of this Friday>","dueTime":null,"durationMin":null,"taskKind":"study","genFormat":null,"peakHours":null,"clarify":null}
-"just track that my chem lab report is due next Monday, don't schedule time for it" -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Chem lab report","dueDate":"<that Monday's date>","dueTime":null,"durationMin":null,"taskKind":"todo","genFormat":null,"peakHours":null,"clarify":null}
-"add my chem final, it's on the 20th" -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Chem final","dueDate":"<the 20th of the current or next occurring month>","dueTime":null,"durationMin":null,"taskKind":"exam","genFormat":null,"peakHours":null,"clarify":null}
-"i have an upcoming calc exam in 10 days and i am stressing because i dont know any of the material" (wants real help, not a fact, never actually asked to add anything) -> {"kind":"coaching","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":null}
-"can you help me think of a plan of how i should study for it" -> {"kind":"coaching","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":null}
-"add a dentist appointment tomorrow at 3pm" -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Dentist appointment","dueDate":"` + tomorrow + `","dueTime":"15:00","durationMin":null,"taskKind":"event","genFormat":null,"peakHours":null,"clarify":null}
-"i'm leaving for the gym in 15 minutes, going for an hour" -> dueTime is the CURRENT TIME above plus 15 minutes, computed for real (not a guess, not some other hour) -- e.g. {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Gym","dueDate":"` + today + '","dueTime":"<current time above + 15 minutes, as real HH:MM>","durationMin":60,"taskKind":"event","genFormat":null,"peakHours":null,"clarify":null}\n"remind me to email my professor tomorrow" -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Email professor","dueDate":"' + tomorrow + `","dueTime":null,"durationMin":null,"taskKind":"reminder","genFormat":null,"peakHours":null,"clarify":null}
-"add my history project, due in two weeks" -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"History project","dueDate":"<today's date above + 14 days>","dueTime":null,"durationMin":null,"taskKind":"project","genFormat":null,"peakHours":null,"clarify":null}
-"delete my old chem homework task" -> {"kind":"action","intent":"delete_task","days":null,"date":null,"target":"chem homework","targetDate":"` + today + '","destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":null}\n"cancel my dentist appointment tomorrow" -> {"kind":"action","intent":"delete_task","days":null,"date":null,"target":"dentist appointment","targetDate":"' + tomorrow + '","destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":null}\n"delete all my chem classes" -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":null}\n"move my chem homework to tomorrow" -> {"kind":"action","intent":"move_flex_task","days":null,"date":null,"target":"chem homework","targetDate":"' + today + '","destDate":"' + tomorrow + `","newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":null}
-"I can't make the gym today, move it to tomorrow" -> {"kind":"action","intent":"move_event","days":null,"date":null,"target":"gym","targetDate":"` + today + '","destDate":"' + tomorrow + '","newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":null}\n"my track practice got moved to 7-9pm" -> {"kind":"action","intent":"retime_event","days":null,"date":null,"target":"track practice","targetDate":"' + today + `","destDate":null,"newStart":"19:00","newDuration":120,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":null}
-"I'm sick, push everything back 3 days" -> {"kind":"action","intent":"shift","days":3,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":null}
-"cancel everything forever" -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":null}
-"add a task to finish my essay" (no date mentioned at all) -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":"When is that due?"}
-"I actually focus way better in the evening than in the morning" -> {"kind":"action","intent":"set_peak_hours","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"peakHours":"evening","clarify":null}
-"update my peak hours" (no specific time of day named at all) -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":"Which time of day -- morning, midday, afternoon, or evening?"}
-"add a task to finish my essay. When is that due? next Friday" (a combined follow-up, same student message thread) -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Finish essay","dueDate":"<the real date of next Friday>","dueTime":null,"durationMin":null,"taskKind":"study","genFormat":null,"peakHours":null,"clarify":null}
-"can you move my project" (no destination day given at all, not even "sometime") -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":"What day would you like it moved to?"}
-"Here's my notes: Mitochondria are the powerhouse of the cell -- they produce ATP through cellular respiration, using oxygen to break down glucose into usable energy. Can you make flashcards from this?" (real pasted content, clearly asking for cards) -> {"kind":"action","intent":"generate_study_material","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":"flashcards","peakHours":null,"clarify":null}
-"quiz me on chapter 3" (no real material actually pasted, just a bare request) -> {"kind":"coaching","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":null}`;
+"which day next week is busiest?" -> {"kind":"question","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null}
+"add a task to finish my history essay, due Friday" -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Finish history essay","dueDate":"<the real date of this Friday>","dueTime":null,"durationMin":null,"taskKind":"study","genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null}
+"just track that my chem lab report is due next Monday, don't schedule time for it" -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Chem lab report","dueDate":"<that Monday's date>","dueTime":null,"durationMin":null,"taskKind":"todo","genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null}
+"add my chem final, it's on the 20th" -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Chem final","dueDate":"<the 20th of the current or next occurring month>","dueTime":null,"durationMin":null,"taskKind":"exam","genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null}
+"i have an upcoming calc exam in 10 days and i am stressing because i dont know any of the material" (wants real help, not a fact, never actually asked to add anything) -> {"kind":"coaching","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null}
+"can you help me think of a plan of how i should study for it" -> {"kind":"coaching","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null}
+"add a dentist appointment tomorrow at 3pm" -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Dentist appointment","dueDate":"` + tomorrow + `","dueTime":"15:00","durationMin":null,"taskKind":"event","genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null}
+"i'm leaving for the gym in 15 minutes, going for an hour" -> dueTime is the CURRENT TIME above plus 15 minutes, computed for real (not a guess, not some other hour) -- e.g. {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Gym","dueDate":"` + today + '","dueTime":"<current time above + 15 minutes, as real HH:MM>","durationMin":60,"taskKind":"event","genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null}\n"remind me to email my professor tomorrow" -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Email professor","dueDate":"' + tomorrow + `","dueTime":null,"durationMin":null,"taskKind":"reminder","genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null}
+"add my history project, due in two weeks" -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"History project","dueDate":"<today's date above + 14 days>","dueTime":null,"durationMin":null,"taskKind":"project","genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null}
+"delete my old chem homework task" -> {"kind":"action","intent":"delete_task","days":null,"date":null,"target":"chem homework","targetDate":"` + today + '","destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null}\n"cancel my dentist appointment tomorrow" -> {"kind":"action","intent":"delete_task","days":null,"date":null,"target":"dentist appointment","targetDate":"' + tomorrow + '","destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null}\n"delete all my chem classes" -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null}\n"move my chem homework to tomorrow" -> {"kind":"action","intent":"move_flex_task","days":null,"date":null,"target":"chem homework","targetDate":"' + today + '","destDate":"' + tomorrow + `","newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null}
+"I can't make the gym today, move it to tomorrow" -> {"kind":"action","intent":"move_event","days":null,"date":null,"target":"gym","targetDate":"` + today + '","destDate":"' + tomorrow + '","newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null}\n"my track practice got moved to 7-9pm" -> {"kind":"action","intent":"retime_event","days":null,"date":null,"target":"track practice","targetDate":"' + today + `","destDate":null,"newStart":"19:00","newDuration":120,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null}
+"I'm sick, push everything back 3 days" -> {"kind":"action","intent":"shift","days":3,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null}
+"cancel everything forever" -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null}
+"add a task to finish my essay" (no date mentioned at all) -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":"When is that due?"}
+"I actually focus way better in the evening than in the morning" -> {"kind":"action","intent":"set_peak_hours","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"peakHours":"evening","subject":null,"duringClass":false,"clarify":null}
+"update my peak hours" (no specific time of day named at all) -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":"Which time of day -- morning, midday, afternoon, or evening?"}
+"add a task to finish my essay. When is that due? next Friday" (a combined follow-up, same student message thread) -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Finish essay","dueDate":"<the real date of next Friday>","dueTime":null,"durationMin":null,"taskKind":"study","genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null}
+"can you move my project" (no destination day given at all, not even "sometime") -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":"What day would you like it moved to?"}
+"Here's my notes: Mitochondria are the powerhouse of the cell -- they produce ATP through cellular respiration, using oxygen to break down glucose into usable energy. Can you make flashcards from this?" (real pasted content, clearly asking for cards) -> {"kind":"action","intent":"generate_study_material","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":"flashcards","peakHours":null,"subject":null,"duringClass":false,"clarify":null}
+"quiz me on chapter 3" (no real material actually pasted, just a bare request) -> {"kind":"coaching","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null}
+"these are for my econ class so add them to that: First Quiz (9/21, covers chapters 1 through 8) worth 20% of the total class grade. Second Quiz (10/27, covers chapters 9 through 16) 25%. Final Exam (TBA, cumulative) 35%." (multiple distinct dated graded items, one named class) -> {"kind":"action","intent":"import_syllabus_items","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":"econ","duringClass":false,"clarify":null}
+"quiz 1 is 9/21, quiz 2 is 10/27, final is TBA -- add these" (multiple dated items, no class named anywhere) -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":"Which class are these for?"}
+"these worksheets are done during class for chem, W4 due 9/7, W5 due 9/9, W6 due 9/14" (dated items the student explicitly says happen DURING class time itself) -> {"kind":"action","intent":"import_syllabus_items","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":"chem","duringClass":true,"clarify":null}
+"add these to chem: W4 - Opens Mon 9/7 8:00 AM, Due Mon 9/7 9:30 AM (in-class worksheet). W5 - Opens Wed 9/9 8:00 AM, Due Wed 9/9 9:30 AM (in-class worksheet)." (the STUDENT added no comment of their own about class -- but the pasted text itself says "in-class worksheet" for each item, which counts just as much) -> {"kind":"action","intent":"import_syllabus_items","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":"chem","duringClass":true,"clarify":null}`;
   const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [...history || [], { r: "user", t: prompt }], model: "flash", format: "studlin_ai_intent" }) });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || "classify-failed");
@@ -10485,7 +10665,7 @@ Examples:
     const parsed = JSON.parse(raw);
     if (!parsed || !["question", "coaching", "action", "unsupported"].includes(parsed.kind)) throw new Error("bad-kind");
     if (parsed.kind === "action") {
-      const knownIntents = ["create_task", "delete_task", "set_peak_hours", "shift", "clear_day", "clear_week", "skip_class", "move_event", "retime_event", "move_flex_task", "generate_study_material"];
+      const knownIntents = ["create_task", "delete_task", "set_peak_hours", "shift", "clear_day", "clear_week", "skip_class", "move_event", "retime_event", "move_flex_task", "generate_study_material", "import_syllabus_items"];
       if (!knownIntents.includes(parsed.intent)) throw new Error("bad-intent");
       if (parsed.intent === "create_task" && !(typeof parsed.title === "string" && parsed.title.trim())) throw new Error("no-title");
       if ((parsed.intent === "move_event" || parsed.intent === "retime_event" || parsed.intent === "move_flex_task" || parsed.intent === "delete_task") && !(typeof parsed.target === "string" && parsed.target.trim())) throw new Error("no-target");
@@ -10493,14 +10673,16 @@ Examples:
       if (parsed.intent === "shift" && !(parsed.days >= 1 && parsed.days <= 14)) throw new Error("bad-days");
       if (parsed.intent === "set_peak_hours" && !["morning", "midday", "afternoon", "evening"].includes(parsed.peakHours)) throw new Error("bad-peak-hours");
       if (parsed.intent === "generate_study_material" && !["flashcards", "quiz"].includes(parsed.genFormat)) throw new Error("bad-genformat");
+      if (parsed.intent === "import_syllabus_items" && !(typeof parsed.subject === "string" && parsed.subject.trim())) throw new Error("no-subject");
     }
     return parsed;
   } catch (e) {
     return { kind: "unsupported", intent: null, clarify: null };
   }
 }
-function deriveStudlinAiProactiveSignal(strugglingBucketOffer, peakInsightOffer) {
+function deriveStudlinAiProactiveSignal(strugglingBucketOffer, unscheduledDueSoonOffer, peakInsightOffer) {
   if (strugglingBucketOffer) return { kind: "struggling_bucket", ...strugglingBucketOffer };
+  if (unscheduledDueSoonOffer) return { kind: "unscheduled_due_soon", ...unscheduledDueSoonOffer };
   if (peakInsightOffer) return { kind: "peak_hours", ...peakInsightOffer };
   return null;
 }
@@ -10629,6 +10811,8 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
   const [pendingIndex, setPendingIndex] = useState(null);
   const [pendingClarification, setPendingClarification] = useState(false);
   const [seededProactiveKey, setSeededProactiveKey] = useState(null);
+  const [memoryToast, setMemoryToast] = useState("");
+  const extractedThisSessionRef = useRef(false);
   const scrollRef = useRef(null);
   useEffect(() => {
     if (!open) return;
@@ -10643,17 +10827,51 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
   }, [messages, loading]);
   useEffect(() => {
     if (!open || !proactiveSignal) return;
-    const key = proactiveSignal.kind + ":" + proactiveSignal.suggestedBucket;
+    const key = proactiveSignal.kind === "unscheduled_due_soon" ? "unscheduled_due_soon:" + proactiveSignal.nearestDate + ":" + proactiveSignal.count : proactiveSignal.kind + ":" + proactiveSignal.suggestedBucket;
     if (key === seededProactiveKey) return;
     setSeededProactiveKey(key);
-    const text = proactiveSignal.kind === "struggling_bucket" ? "Your " + PEAK_BUCKET_LABELS[proactiveSignal.strugglingBucket].toLowerCase() + " tasks haven't been sticking -- " + proactiveSignal.recentMissedCount + " of your last " + proactiveSignal.recentWindow + " were missed. Want me to default new tasks to " + PEAK_BUCKET_LABELS[proactiveSignal.suggestedBucket].toLowerCase() + " instead?" : "Looks like you actually finish more " + PEAK_BUCKET_LABELS[proactiveSignal.suggestedBucket].toLowerCase() + " tasks (" + Math.round(proactiveSignal.suggestedPct * 100) + "%) than " + PEAK_BUCKET_LABELS[proactiveSignal.currentBucket].toLowerCase() + " ones (" + Math.round(proactiveSignal.currentPct * 100) + "%). Want me to update your peak hours?";
-    const label = "Switch to " + PEAK_BUCKET_LABELS[proactiveSignal.suggestedBucket];
+    const text = proactiveSignal.kind === "struggling_bucket" ? "Your " + PEAK_BUCKET_LABELS[proactiveSignal.strugglingBucket].toLowerCase() + " tasks haven't been sticking -- " + proactiveSignal.recentMissedCount + " of your last " + proactiveSignal.recentWindow + " were missed. Want me to default new tasks to " + PEAK_BUCKET_LABELS[proactiveSignal.suggestedBucket].toLowerCase() + " instead?" : proactiveSignal.kind === "unscheduled_due_soon" ? "You've got " + proactiveSignal.count + " thing" + (proactiveSignal.count !== 1 ? "s" : "") + " due by " + proactiveSignal.nearestDate + " with no time scheduled yet" + (proactiveSignal.titles && proactiveSignal.titles.length > 0 ? " (" + proactiveSignal.titles.slice(0, 3).join(", ") + (proactiveSignal.titles.length > 3 ? ", ..." : "") + ")" : "") + ". Want me to take you there so you can get them on the calendar?" : "Looks like you actually finish more " + PEAK_BUCKET_LABELS[proactiveSignal.suggestedBucket].toLowerCase() + " tasks (" + Math.round(proactiveSignal.suggestedPct * 100) + "%) than " + PEAK_BUCKET_LABELS[proactiveSignal.currentBucket].toLowerCase() + " ones (" + Math.round(proactiveSignal.currentPct * 100) + "%). Want me to update your peak hours?";
+    const label = proactiveSignal.kind === "unscheduled_due_soon" ? "Take me there" : "Switch to " + PEAK_BUCKET_LABELS[proactiveSignal.suggestedBucket];
     setMessages((m) => {
       const next = [...m, { role: "ai", text, kind: "proposal", proposal: { ok: true, source: "proactive", signal: proactiveSignal, label } }];
       setPendingIndex(next.length - 1);
       return next;
     });
   }, [open, proactiveSignal, seededProactiveKey]);
+  useEffect(() => {
+    if (open) {
+      extractedThisSessionRef.current = false;
+      return;
+    }
+    if (extractedThisSessionRef.current) return;
+    if (!messages.some((m) => m.role === "user")) return;
+    extractedThisSessionRef.current = true;
+    (async () => {
+      if (!canUseStudlinAiQna()) return;
+      const transcript = messages.filter((m) => m.role === "user" || m.role === "ai").slice(-20).map((m) => (m.role === "user" ? "Student: " : "Studlin: ") + (m.text || "")).join("\n");
+      if (!transcript.trim()) return;
+      const prompt = `Given this conversation between a student and their study assistant, list 0-3 short, durable facts or standing preferences about the student worth remembering long-term (e.g. "prefers evening workouts", "has a part-time job on weekends") -- real, standing facts about how they live/study/prefer things, NOT one-off scheduling requests, NOT anything already obvious from a single task, NOT a fact about a class/assignment that will stop being relevant once the term ends. If nothing durable came up, return an empty list -- don't strain to find something. Respond with ONLY this JSON, no markdown fences, no explanation: {"facts":["..."]}
+
+CONVERSATION:
+` + transcript;
+      try {
+        const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt }], model: "flash", format: "json" }) });
+        if (!res.ok) return;
+        const data = await res.json();
+        const raw = (data.reply || "").replace(/```json?|```/g, "").trim();
+        const parsed = JSON.parse(raw);
+        if (!parsed || !Array.isArray(parsed.facts) || parsed.facts.length === 0) return;
+        const existingMem = getAiMemory();
+        const nextMem = mergeAiMemoryFacts(existingMem, parsed.facts);
+        if (nextMem.facts.length === (existingMem.facts || []).length) return;
+        saveAiMemory(nextMem);
+        pushAiMemory(nextMem);
+        setMemoryToast("Studlin AI remembered something new");
+        setTimeout(() => setMemoryToast(""), 3500);
+      } catch (e) {
+      }
+    })();
+  }, [open, messages]);
   const askQuestion = async (text, history) => {
     if (!canUseStudlinAiQna()) {
       setPricingOpen(canUseStudlinAiQnaReason() === "free-tier" ? "studlinAiQna" : "aiUsageCap");
@@ -10700,6 +10918,7 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
   const runAction = async (parsed, forcedId, rawText) => {
     const isCreate = parsed.intent === "create_task";
     const isGenMaterial = parsed.intent === "generate_study_material";
+    const isImportSyllabus = parsed.intent === "import_syllabus_items";
     if (isCreate) {
       if (!canUseBrainDump()) {
         setPricingOpen(canUseBrainDumpReason() === "free-tier" ? "brainDump" : "aiUsageCap");
@@ -10714,9 +10933,30 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
         setMessages((m) => [...m, { role: "ai", text: "Generating " + (parsed.genFormat === "quiz" ? "a practice quiz" : "flashcards") + " through Studlin AI needs Pro. I've opened the upgrade options.", kind: "paywall" }]);
         return;
       }
+    } else if (isImportSyllabus) {
+      if (!canScanSyllabus()) {
+        const reason = canScanSyllabusReason();
+        setPricingOpen(reason === "free-tier" ? "syllabusScan" : "aiUsageCap");
+        setMessages((m) => [...m, { role: "ai", text: "Importing several dates at once through Studlin AI needs Pro. I've opened the upgrade options.", kind: "paywall" }]);
+        return;
+      }
     } else if (!canUseSmartReschedule()) {
       setPricingOpen(canUseSmartRescheduleReason() === "free-tier" ? "smartReschedule" : "aiUsageCap");
       setMessages((m) => [...m, { role: "ai", text: "Moving or rescheduling through Studlin AI needs Pro. I've opened the upgrade options.", kind: "paywall" }]);
+      return;
+    }
+    if (isImportSyllabus) {
+      const items = await extractSyllabusItemsFromChatText(rawText);
+      const proposal2 = buildImportSyllabusItemsProposal(parsed, items, getWeeklyRoutine());
+      if (!proposal2.ok) {
+        setMessages((m) => [...m, { role: "ai", text: proposal2.label, kind: "info" }]);
+        return;
+      }
+      setMessages((m) => {
+        const next = [...m, { role: "ai", text: proposal2.label, kind: "proposal", proposal: { ...proposal2, parsed } }];
+        setPendingIndex(next.length - 1);
+        return next;
+      });
       return;
     }
     const events = lsGet("events", []);
@@ -10757,7 +10997,7 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
           setMessages((m) => [...m, { role: "ai", text: parsed.clarify, kind: "clarify" }]);
           setPendingClarification(true);
         } else {
-          setMessages((m) => [...m, { role: "ai", text: "I can answer questions about your schedule, help you plan how to study for something, turn pasted material into flashcards or a quiz, or create, move, or delete a task. Try rephrasing that.", kind: "info" }]);
+          setMessages((m) => [...m, { role: "ai", text: "I can answer questions about your schedule, help you plan how to study for something, turn pasted material into flashcards or a quiz, add several syllabus dates at once, or create, move, or delete a task. Try rephrasing that.", kind: "info" }]);
         }
       } else await runAction(parsed, null, text);
     } catch (e) {
@@ -10884,11 +11124,33 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
       }
       commitStudlinAiPeakHours(getSchedulePreferences(), proposal.bucketId);
       recordSmartReschedule();
+    } else if (proposal.kind === "import_syllabus_items") {
+      if (!canScanSyllabus()) {
+        setPricingOpen(canScanSyllabusReason() === "free-tier" ? "syllabusScan" : "aiUsageCap");
+        return;
+      }
+      const subs = getSubjects();
+      let cid = proposal.subject ? courseIdForLabelFuzzy(proposal.subject) : null;
+      if (!cid && proposal.subject) {
+        const newSubj = { id: "subj-" + Date.now() + "-" + Math.round(Math.random() * 1e3), label: proposal.subject, color: nextAvailableSubjectColor(subs.map((s) => s.color)), termEnd: null };
+        saveSubjects([...subs, newSubj]);
+        cid = newSubj.id;
+      }
+      commitSyllabusEvents("chat-" + Date.now(), proposal.subject || "Other", proposal.items, null, cid);
+      next = lsGet("events", []);
+      recordSyllabusScan();
     } else return;
     if (next) onEventsCommitted(next);
+    let moveReason = "";
+    if ((proposal.kind === "move_fixed" || proposal.kind === "move_flex_task") && proposal.moved && proposal.moved.length > 0 && next) {
+      const primary = proposal.moved[0];
+      const displaced = proposal.moved.length > 1 ? proposal.moved[1] : null;
+      const dayEvents = next.filter((e) => e.date === primary.newDate && e.id !== primary.id && e.time).concat(getRoutineOccurrencesForDate(primary.newDate));
+      moveReason = inferChatMoveReason(dayEvents, primary.newTime, primary.newDuration || primary.duration, primary.id, displaced ? displaced.title : null);
+    }
     setMessages((m) => {
       const withResolved = m.map((mm, i) => i === idx ? { ...mm, proposal: { ...mm.proposal, resolved: "confirmed" } } : mm);
-      return [...withResolved, { role: "ai", text: "Done. " + pastTenseProposalLabel(proposal.label, proposal.moved) }];
+      return [...withResolved, { role: "ai", text: "Done. " + pastTenseProposalLabel(proposal.label, proposal.moved, moveReason) }];
     });
     setPendingIndex(null);
   };
@@ -10962,7 +11224,7 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
         style: { padding: "9px 14px", borderRadius: 8, border: "none", background: T.lime, color: T.ink, fontWeight: 600, fontSize: 13, cursor: "pointer", opacity: !input.trim() || loading || pendingIndex != null ? 0.5 : 1, flexShrink: 0 }
       },
       "Send"
-    )))),
+    ))), memoryToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 22, right: 22, zIndex: STUDLIN_AI_DRAWER_PANEL_Z + 1, padding: "10px 16px", background: T.ink, color: T.lime, borderRadius: 10, fontSize: 12.5, fontWeight: 600, boxShadow: "0 16px 40px -12px rgba(0,0,0,0.5)", animation: "studlinPop 0.2s cubic-bezier(.2,.85,.3,1)" } }, memoryToast)),
     document.body
   );
 }
@@ -12107,12 +12369,12 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
               },
               onDoubleClick: () => {
                 if (!isRoutine) openEdit(ev);
-                else if (onEditRoutine) onEditRoutine(ev.routineId);
+                else if (onEditRoutine) onEditRoutine(ev.routineId, ev.date);
               },
               onClick: (e) => {
                 if (isRoutine) {
                   if (editRoutineMode && onEditRoutine) {
-                    onEditRoutine(ev.routineId);
+                    onEditRoutine(ev.routineId, ev.date);
                     return;
                   }
                   e.stopPropagation();
@@ -12151,6 +12413,7 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
             overflowCount > 0 && /* @__PURE__ */ React.createElement("span", { title: overflowCount + " more at this time \u2014 open the day to see them", style: { position: "absolute", bottom: 2, right: 2, fontSize: 8, fontWeight: 800, color: kindStyle.color, background: "rgba(0,0,0,0.18)", borderRadius: 8, padding: "1px 4px", lineHeight: 1.3, zIndex: 1 } }, "+", overflowCount),
             isPendingAcceptance && /* @__PURE__ */ React.createElement("span", { title: isDeclined ? "Declined" : acceptanceSummary.accepted + "/" + acceptanceSummary.total + " accepted", style: { position: "absolute", bottom: 2, left: 2, fontSize: 8, fontWeight: 800, color: isDeclined ? "#fff" : kindStyle.color, background: isDeclined ? T.red + "cc" : "rgba(0,0,0,0.18)", borderRadius: 8, padding: "1px 4px", lineHeight: 1.3, zIndex: 1 } }, isDeclined ? "Declined" : acceptanceSummary.accepted + "/" + acceptanceSummary.total),
             conflictTitles.length > 0 && /* @__PURE__ */ React.createElement("span", { title: "Overlaps with " + conflictTitles.join(", "), style: { position: "absolute", top: 2, left: 2, fontSize: 9, lineHeight: 1, zIndex: 1, filter: "drop-shadow(0 1px 1px rgba(0,0,0,0.35))" } }, "\u26A0\uFE0F"),
+            isRoutine && (ev.dayNote || ev.dayTodo && ev.dayTodo.length > 0) && /* @__PURE__ */ React.createElement("span", { title: "This class has notes saved", style: { position: "absolute", top: 3, right: 3, width: 6, height: 6, borderRadius: "50%", background: T.lime, boxShadow: "0 0 0 1.5px rgba(255,255,255,0.9)", zIndex: 1 } }),
             /* @__PURE__ */ React.createElement("div", { style: { fontSize: 9.5, fontWeight: 700, color: kindStyle.color, lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, isExam ? "EXAM \xB7 " : "", ev.title),
             heightPx > 34 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 8.5, color: isStudy ? T.ink + "aa" : isWarningKind ? tokens.color.warning : tokens.color.textSecondary, marginTop: 1 } }, fmtTimeRange2(String(Math.floor(effStartMin / 60)).padStart(2, "0") + ":" + String(effStartMin % 60).padStart(2, "0"), effDuration)),
             heightPx > 40 && ev.location && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 8.5, color: isStudy ? T.ink + "aa" : isWarningKind ? tokens.color.warning : tokens.color.textSecondary, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.location),
@@ -13527,7 +13790,7 @@ function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf,
       {
         onDoubleClick: () => {
           if (ev.isRoutine) {
-            if (onEditRoutine) onEditRoutine(ev.routineId);
+            if (onEditRoutine) onEditRoutine(ev.routineId, ev.date);
           } else openEdit(ev);
         },
         onClick: (e) => {
@@ -13562,6 +13825,39 @@ function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf,
     const left = Math.min(Math.max(8, rect.left), window.innerWidth - 248);
     return ReactDOM.createPortal(/* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: () => setWhoInAnchor(null), style: { position: "fixed", inset: 0, zIndex: 998 } }), /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top, left, width: 232, background: T.card, border: `1px solid ${T.border}`, borderRadius: 6, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)", zIndex: 999, overflow: "hidden", animation: "studlinPop 0.15s cubic-bezier(.2,.85,.3,1)" } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "9px 14px", borderBottom: `1px solid ${T.border}`, fontSize: 12.5, fontWeight: 600, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.title), /* @__PURE__ */ React.createElement("div", { style: { padding: "10px 14px" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", color: T.muted, marginBottom: 8, textTransform: "uppercase" } }, "Who's in \xB7 ", summary.accepted, "/", summary.total), /* @__PURE__ */ React.createElement(AcceptanceRoster, { memberUids: ev.proposalMemberUids, memberNames: ev.proposalMemberNames, responses: ev.proposalResponses })))), document.body);
   })());
+}
+function ClassDayNotesFields({ routineId, date }) {
+  const [note, setNote] = useState("");
+  const [todo, setTodo] = useState([]);
+  const [newItem, setNewItem] = useState("");
+  const [saved, setSaved] = useState(false);
+  useEffect(() => {
+    if (!routineId || !date) return;
+    const existing = getRoutineOccurrenceNote(routineId, date);
+    setNote(existing.note);
+    setTodo(existing.todo);
+    setSaved(false);
+  }, [routineId, date]);
+  const save = () => {
+    saveRoutineOccurrenceNote(routineId, date, { note: note.trim(), todo });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1800);
+  };
+  const addItem = () => {
+    const t = newItem.trim();
+    if (!t) return;
+    setTodo((x) => [...x, { text: t, done: false }]);
+    setNewItem("");
+  };
+  const inputStyle = { width: "100%", background: T.card2, border: `1.5px solid ${T.border}`, borderRadius: 9, padding: "9px 11px", color: T.text, fontSize: 13, fontFamily: T.font, outline: "none", boxSizing: "border-box", transition: "border-color 0.15s" };
+  const sectionLabelStyle = { fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: T.muted, marginBottom: 8 };
+  const dateLabel = (/* @__PURE__ */ new Date(date + "T12:00:00")).toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+  return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 14, padding: "12px", background: T.bg, border: `1px solid ${T.border}`, borderRadius: 10, marginTop: 4 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: T.white } }, "Notes for ", dateLabel), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: sectionLabelStyle }, "Notes for this class"), /* @__PURE__ */ React.createElement("textarea", { value: note, onChange: (e) => setNote(e.target.value), placeholder: "e.g. Worksheet due today, covers chapter 4...", rows: 3, style: { ...inputStyle, resize: "none", lineHeight: 1.5 }, onFocus: (e) => e.currentTarget.style.borderColor = T.lime, onBlur: (e) => e.currentTarget.style.borderColor = T.border })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: sectionLabelStyle }, "To do in class"), todo.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, padding: "12px 0", textAlign: "center", border: `1.5px dashed ${T.border}`, borderRadius: 9, marginBottom: 9 } }, "Nothing added yet.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 9 } }, todo.map((it, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", alignItems: "center", gap: 9, padding: "8px 10px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: it.done, onChange: () => setTodo((x) => x.map((y, j) => j === i ? { ...y, done: !y.done } : y)), style: { cursor: "pointer", flexShrink: 0, width: 15, height: 15, accentColor: T.lime } }), /* @__PURE__ */ React.createElement("span", { style: { flex: 1, fontSize: 12.5, color: it.done ? T.muted : T.text, textDecoration: it.done ? "line-through" : "none" } }, it.text), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setTodo((x) => x.filter((_, j) => j !== i)), style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 11, fontFamily: T.font, flexShrink: 0 } }, "Remove")))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6 } }, /* @__PURE__ */ React.createElement("input", { value: newItem, onChange: (e) => setNewItem(e.target.value), onKeyDown: (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      addItem();
+    }
+  }, placeholder: "Add an item...", style: { ...inputStyle, flex: 1 }, onFocus: (e) => e.currentTarget.style.borderColor = T.lime, onBlur: (e) => e.currentTarget.style.borderColor = T.border }), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: addItem }, "Add"))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: save }, "Save notes"), saved && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.lime, fontWeight: 600 } }, "\u2713 Saved")));
 }
 const DAY_PREVIEW_ICON_BY_KIND = { "class": Icon.cal, "study block": Icon.brain, "exam": Icon.zap, "deadline": Icon.file, "reminder": Icon.clock };
 function DayPreviewModal({ open, onClose, dayEvents, selDay, dayLabel, colorOf, fmtTime: fmtTime2, fmtTimeRange: fmtTimeRange2, catchUpPending, openNew }) {
@@ -14153,7 +14449,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
     setPaceDismissedState(true);
     setPaceProposal(null);
   };
-  const canAddAttackBlock = (kind === "deadline" || kind === "study block") && !ev.isAttackBlock && !ev.dueEventId && !ev.deckId && !ev.practiceExamId && !ev.isExamPrepSession && !ev.splitGroup && linkedSessions.length === 0 && !(ev.phases && ev.phases.length > 0);
+  const canAddAttackBlock = (kind === "deadline" || kind === "study block") && !ev.isAttackBlock && !ev.dueEventId && !ev.deckId && !ev.practiceExamId && !ev.isExamPrepSession && !ev.splitGroup && linkedSessions.length === 0 && !(ev.phases && ev.phases.length > 0) && !(pace && pace.behind && !paceDismissed);
   const isPhaseCandidate = canAddAttackBlock && isPhaseDecompositionCandidate(ev.estimatedHours, date, dayKey());
   const showsPhaseDetail = addAttackBlock && isPhaseCandidate;
   const isProject2 = isProjectMarker(ev);
@@ -14677,7 +14973,7 @@ function findAllOverlaps(events, todayKey) {
   }
   return pairs;
 }
-function NewEventModal({ open, initialTitle, initialDate, initialStartTime, initialKind, anchorX, anchorY, color, hideRepeat, onPreviewChange, liveOverride, events, routines, hidden, editRoutine, subjectOptions, onClose, onCreate, onSave, onDelete }) {
+function NewEventModal({ open, initialTitle, initialDate, initialStartTime, initialKind, anchorX, anchorY, color, hideRepeat, onPreviewChange, liveOverride, events, routines, hidden, editRoutine, editRoutineDate, subjectOptions, onClose, onCreate, onSave, onDelete }) {
   const [title, setTitle] = useState("");
   const [date, setDate] = useState("");
   const [startTime, setStartTime] = useState("09:00");
@@ -14695,6 +14991,10 @@ function NewEventModal({ open, initialTitle, initialDate, initialStartTime, init
   const [movable, setMovable] = useState(false);
   const [routineColor, setRoutineColor] = useState(T.lime);
   const [confirmDeleteRoutine, setConfirmDeleteRoutine] = useState(false);
+  const [activeTab, setActiveTab] = useState("edit");
+  useEffect(() => {
+    if (open) setActiveTab("edit");
+  }, [open, editRoutine && editRoutine.id, editRoutineDate]);
   useEffect(() => {
     if (!open || !onPreviewChange || editRoutine) return;
     onPreviewChange({ title, date, startTime, endTime, allDay, color: color || T.lime });
@@ -14797,7 +15097,10 @@ function NewEventModal({ open, initialTitle, initialDate, initialStartTime, init
   const fitsRight = x + 10 + POPOVER_WIDTH <= window.innerWidth - 8;
   const left = fitsRight ? Math.max(8, x + 10) : Math.max(8, x - 10 - POPOVER_WIDTH);
   const top = Math.min(Math.max(8, y - 24), Math.max(8, window.innerHeight - ESTIMATED_HEIGHT - 8));
-  return ReactDOM.createPortal(/* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: onClose, style: { position: "fixed", inset: 0, zIndex: 998 } }), /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { position: "fixed", top, left, width: POPOVER_WIDTH, maxHeight: "calc(100vh - " + top + "px - 16px)", overflowY: "auto", background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)", zIndex: 999, animation: "studlinPop 0.15s cubic-bezier(.2,.85,.3,1)" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 12px", borderBottom: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: T.white } }, editRoutine ? "Edit event" : "New event"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onClose, style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 16, lineHeight: 1, padding: 0 } }, "\xD7")), /* @__PURE__ */ React.createElement("div", { style: { padding: "10px 12px", display: "flex", flexDirection: "column", gap: 6 } }, /* @__PURE__ */ React.createElement(Input, { value: title, onChange: (e) => setTitle(e.target.value), placeholder: "Event title", style: { fontSize: 13, fontWeight: 600, padding: "7px 10px" }, autoFocus: true }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6 } }, !editRoutine && /* @__PURE__ */ React.createElement(DateField, { label: "Date", value: date, onChange: setDate }), !allDay && evKind === "habit" ? /* @__PURE__ */ React.createElement("div", { style: { flex: 1 } }, /* @__PURE__ */ React.createElement(NumField, { min: 5, max: 480, fallback: 30, value: Math.max(5, timeToMinutes(endTime) - timeToMinutes(startTime)), onChange: (v) => setEndTime(minutesToTime(timeToMinutes(startTime) + v)), style: { width: "100%" } })) : !allDay && // Google Calendar-inspired polish: this row's own start/end
+  return ReactDOM.createPortal(/* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: onClose, style: { position: "fixed", inset: 0, zIndex: 998 } }), /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { position: "fixed", top, left, width: POPOVER_WIDTH, maxHeight: "calc(100vh - " + top + "px - 16px)", overflowY: "auto", background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)", zIndex: 999, animation: "studlinPop 0.15s cubic-bezier(.2,.85,.3,1)" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 12px", borderBottom: `1px solid ${T.border}` } }, editRoutine && editRoutineDate ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 4 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setActiveTab("edit"), style: { background: "none", border: "none", cursor: "pointer", fontFamily: T.font, fontSize: 13, fontWeight: 700, padding: "4px 2px", color: activeTab === "edit" ? T.white : T.muted, borderBottom: `2px solid ${activeTab === "edit" ? T.lime : "transparent"}` } }, "Edit event"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setActiveTab("notes"), style: { background: "none", border: "none", cursor: "pointer", fontFamily: T.font, fontSize: 13, fontWeight: 700, padding: "4px 2px", marginLeft: 14, display: "flex", alignItems: "center", gap: 5, color: activeTab === "notes" ? T.white : T.muted, borderBottom: `2px solid ${activeTab === "notes" ? T.lime : "transparent"}` } }, "Notes", (() => {
+    const n = getRoutineOccurrenceNote(editRoutine.id, editRoutineDate);
+    return n.note || n.todo.length > 0 ? /* @__PURE__ */ React.createElement("span", { style: { width: 5, height: 5, borderRadius: "50%", background: T.lime, display: "inline-block" } }) : null;
+  })())) : /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: T.white } }, editRoutine ? "Edit event" : "New event"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onClose, style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 16, lineHeight: 1, padding: 0 } }, "\xD7")), editRoutine && editRoutineDate && activeTab === "notes" && /* @__PURE__ */ React.createElement("div", { style: { padding: "10px 12px" } }, /* @__PURE__ */ React.createElement(ClassDayNotesFields, { routineId: editRoutine.id, date: editRoutineDate })), (!editRoutineDate || activeTab === "edit") && /* @__PURE__ */ React.createElement("div", { style: { padding: "10px 12px", display: "flex", flexDirection: "column", gap: 6 } }, /* @__PURE__ */ React.createElement(Input, { value: title, onChange: (e) => setTitle(e.target.value), placeholder: "Event title", style: { fontSize: 13, fontWeight: 600, padding: "7px 10px" }, autoFocus: true }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6 } }, !editRoutine && /* @__PURE__ */ React.createElement(DateField, { label: "Date", value: date, onChange: setDate }), !allDay && evKind === "habit" ? /* @__PURE__ */ React.createElement("div", { style: { flex: 1 } }, /* @__PURE__ */ React.createElement(NumField, { min: 5, max: 480, fallback: 30, value: Math.max(5, timeToMinutes(endTime) - timeToMinutes(startTime)), onChange: (v) => setEndTime(minutesToTime(timeToMinutes(startTime) + v)), style: { width: "100%" } })) : !allDay && // Google Calendar-inspired polish: this row's own start/end
   // inputs were already correct (never start+duration -- that
   // was only ever the per-day override's problem, below). What
   // wasn't right was the box around it -- background+border
@@ -14864,7 +15167,7 @@ function NewEventModal({ open, initialTitle, initialDate, initialStartTime, init
       onChange: (e) => setCommuteAfter(e.target.value),
       style: { width: 42, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 5, padding: "2px 5px", color: T.text, fontSize: 11, fontFamily: T.font, outline: "none" }
     }
-  ), " min")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.faint, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Scheduling"), /* @__PURE__ */ React.createElement(SelectChip, { size: "sm", options: [{ value: false, label: "Fixed (won't move)" }, { value: true, label: "Free (can move)" }], value: movable, onChange: setMovable }))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, justifyContent: editRoutine ? "space-between" : "flex-end", alignItems: "center", padding: "9px 12px", borderTop: `1px solid ${T.border}` } }, editRoutine && (confirmDeleteRoutine ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.muted } }, "Delete this?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: onDelete, style: { padding: "6px 13px", fontSize: 12 } }, "Yes, delete"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmDeleteRoutine(false), style: { padding: "6px 13px", fontSize: 12 } }, "Cancel")) : /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => setConfirmDeleteRoutine(true), style: { padding: "6px 13px", fontSize: 12 } }, "Delete")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: onClose, style: { padding: "6px 13px", fontSize: 12 } }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: submit, disabled: invalid, style: { padding: "6px 13px", fontSize: 12 } }, editRoutine ? "Save changes" : "Create"))))), document.body);
+  ), " min")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.faint, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Scheduling"), /* @__PURE__ */ React.createElement(SelectChip, { size: "sm", options: [{ value: false, label: "Fixed (won't move)" }, { value: true, label: "Free (can move)" }], value: movable, onChange: setMovable }))), (!editRoutineDate || activeTab === "edit") && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, justifyContent: editRoutine ? "space-between" : "flex-end", alignItems: "center", padding: "9px 12px", borderTop: `1px solid ${T.border}` } }, editRoutine && (confirmDeleteRoutine ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.muted } }, "Delete this?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: onDelete, style: { padding: "6px 13px", fontSize: 12 } }, "Yes, delete"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmDeleteRoutine(false), style: { padding: "6px 13px", fontSize: 12 } }, "Cancel")) : /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => setConfirmDeleteRoutine(true), style: { padding: "6px 13px", fontSize: 12 } }, "Delete")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: onClose, style: { padding: "6px 13px", fontSize: 12 } }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: submit, disabled: invalid, style: { padding: "6px 13px", fontSize: 12 } }, editRoutine ? "Save changes" : "Create"))))), document.body);
 }
 const CALENDAR_HIGHLIGHT_MAX_AGE_MS = 5 * 60 * 1e3;
 function resolveCalendarHighlightFlag(flag, nowMs) {
@@ -15626,8 +15929,15 @@ function CalendarTab({ setActive = () => {
   const [editRoutineMode, setEditRoutineMode] = useState(false);
   const [hoveredRoutineId, setHoveredRoutineId] = useState(null);
   const [routineEditItem, setRoutineEditItem] = useState(null);
-  const openRoutineEdit = (rule) => setRoutineEditItem(rule);
-  const closeRoutineEdit = () => setRoutineEditItem(null);
+  const [routineEditDate, setRoutineEditDate] = useState(null);
+  const openRoutineEdit = (rule, date) => {
+    setRoutineEditItem(rule);
+    setRoutineEditDate(date || null);
+  };
+  const closeRoutineEdit = () => {
+    setRoutineEditItem(null);
+    setRoutineEditDate(null);
+  };
   const saveRoutineEditFromModal = (patch) => {
     const isHabit = patch.kind === "habit";
     if (!routineEditItem || !patch.title.trim() || isHabit && patch.days.length === 0) return;
@@ -16002,7 +16312,7 @@ function CalendarTab({ setActive = () => {
     } else {
       const overrides = getRoutineOverrides();
       const forRoutine = { ...overrides[routineId] || {} };
-      forRoutine[toDate] = { startTime: toTime, duration: newDuration != null ? newDuration : rule.duration || 30 };
+      forRoutine[toDate] = { ...forRoutine[toDate] || {}, startTime: toTime, duration: newDuration != null ? newDuration : rule.duration || 30 };
       saveRoutineOverrides({ ...overrides, [routineId]: forRoutine });
       setRoutinesState([...routines]);
     }
@@ -17420,9 +17730,9 @@ Examples:
       editRoutineMode,
       hoveredRoutineId,
       setHoveredRoutineId,
-      onEditRoutine: (routineId) => {
+      onEditRoutine: (routineId, date) => {
         const rule = routines.find((r) => r.id === routineId);
-        if (rule) openRoutineEdit(rule);
+        if (rule) openRoutineEdit(rule, date);
       },
       onDeleteRoutine: deleteRoutineItem,
       schoolWindow,
@@ -17454,9 +17764,9 @@ Examples:
       gsBusyByDate: gsOpen && gsStep === "place" ? gsBusyByDate : null,
       gsRecommended: gsOpen && gsStep === "place" ? gsRecommended : null
     }
-  ), calView === "daily" && /* @__PURE__ */ React.createElement(DayPlanner, { dayEvents, setEvents: setEvents2, selDay, todayK, colorOf, fmtTime: fmtTime2, fmtTimeRange, openEdit, markDone, uncrossDone, prefs: getSchedulePreferences(), setSelDay, catchUpPending, openNew, newItemHighlightIds: newItemHighlightSet, onEditRoutine: (routineId) => {
+  ), calView === "daily" && /* @__PURE__ */ React.createElement(DayPlanner, { dayEvents, setEvents: setEvents2, selDay, todayK, colorOf, fmtTime: fmtTime2, fmtTimeRange, openEdit, markDone, uncrossDone, prefs: getSchedulePreferences(), setSelDay, catchUpPending, openNew, newItemHighlightIds: newItemHighlightSet, onEditRoutine: (routineId, date) => {
     const rule = routines.find((r) => r.id === routineId);
-    if (rule) openRoutineEdit(rule);
+    if (rule) openRoutineEdit(rule, date);
   } })), /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, display: "flex", position: "relative", height: "calc(100vh - 150px)" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 0, bottom: 0, left: calRightColCollapsed ? 0 : 14, width: 1, background: T.border, boxShadow: `-1px 0 3px rgba(0,0,0,0.12)` } }), !calRightColCollapsed && /* @__PURE__ */ React.createElement("div", { style: { width: 220, marginLeft: 34, maxHeight: "100%", overflowY: "auto" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontWeight: 700, color: T.white } }, selectedCourse ? selectedCourse.label : "Upcoming"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: toggleCalRightColCollapsed, style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontWeight: 600, fontFamily: T.font, cursor: "pointer", padding: 0 } }, "Close \u203A")), sidebarDueTodayItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 10, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setDueTodayOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.lime, transform: dueTodayOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.lime } }, "Due Today (", sidebarDueTodayItems.length, ")")), dueTodayOpen && sidebarDueTodayItems.map(renderSidebarItem)), sidebarOverdueItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setOverdueSectionOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.red, transform: overdueSectionOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.red } }, "Overdue (", sidebarOverdueItems.length, ")")), overdueSectionOpen && sidebarOverdueItems.map(renderSidebarItem)), sidebarUpcomingItems.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.faint } }, "Nothing upcoming."), sidebarUpcomingGroups.map((group) => /* @__PURE__ */ React.createElement("div", { key: group.label, style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, color: group.label === "Overdue" ? T.red : T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 } }, "Due: ", group.label), group.items.map(renderSidebarItem)))), calRightColCollapsed && /* @__PURE__ */ React.createElement(
     "button",
     {
@@ -17581,6 +17891,7 @@ Examples:
       routines,
       hidden: previewDragActive,
       editRoutine: routineEditItem,
+      editRoutineDate: routineEditDate,
       subjectOptions: SUBJ,
       onSave: saveRoutineEditFromModal,
       onDelete: deleteRoutineEdit,
@@ -18869,6 +19180,23 @@ function SettingsTab({ theme = "dark", setTheme = () => {
   const [confirmRemoveSubjId, setConfirmRemoveSubjId] = useState(null);
   const [courseDeleteSnapshots, setCourseDeleteSnapshots] = useState(null);
   const [courseDeleteToast, setCourseDeleteToast] = useState("");
+  const [aiMemoryFacts, setAiMemoryFacts] = useState(() => getAiMemory().facts || []);
+  const [confirmRemoveFactIdx, setConfirmRemoveFactIdx] = useState(null);
+  const [confirmClearMemory, setConfirmClearMemory] = useState(false);
+  const removeAiFact = (idx) => {
+    const next = removeAiMemoryFact(getAiMemory(), idx);
+    saveAiMemory(next);
+    pushAiMemory(next);
+    setAiMemoryFacts(next.facts);
+    setConfirmRemoveFactIdx(null);
+  };
+  const clearAiMemory = () => {
+    const next = { facts: [], updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+    saveAiMemory(next);
+    pushAiMemory(next);
+    setAiMemoryFacts([]);
+    setConfirmClearMemory(false);
+  };
   const countLinkedForSubject = (sub) => {
     const matches = (item) => item.courseId === sub.id || item.subject === sub.label;
     return getWeeklyRoutine().filter(matches).length + lsGet("events", []).filter(matches).length;
@@ -18964,7 +19292,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     tog("shareAvailability");
     if (next) publishBusyWindows();
     else unpublishBusyWindows();
-  }, style: { width: 38, height: 20, borderRadius: 10, background: toggles.shareAvailability ? T.lime : T.card2, border: `1px solid ${toggles.shareAvailability ? T.lime : T.border}`, position: "relative", cursor: "pointer", transition: "all 0.2s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 14, borderRadius: "50%", background: toggles.shareAvailability ? T.bg : "#fff", position: "absolute", top: 2, left: toggles.shareAvailability ? 21 : 2, transition: "left 0.2s" } })) })), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "Data & AI"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "You own your notes, essays, and recordings."), /* @__PURE__ */ React.createElement(Row, { label: "Use my work to train Studlin AI", sub: "Off by default. We will never share your raw content.", k: "collect" }), /* @__PURE__ */ React.createElement(Row, { label: "Anonymous usage analytics", sub: "Helps us fix bugs and prioritise features.", k: "analytics" }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: exportAllData }, React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 6 } }, Icon.copy, "Export all data")), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: downloadChatHistory, disabled: chatHistoryLoading }, chatHistoryLoading ? "Preparing\u2026" : "Download chat history"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle" }, "Privacy policy"))), /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 10 } }, "Account security"), /* @__PURE__ */ React.createElement(Row, { label: "Two-factor authentication", sub: "Add a one-time code on every sign in.", k: "twofa", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: true, style: { opacity: 0.4, cursor: "not-allowed" } }, "Coming Soon") }), /* @__PURE__ */ React.createElement(Row, { label: "Active sessions", sub: "See and sign out other signed-in devices.", k: "sessions", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: true, style: { opacity: 0.4, cursor: "not-allowed" } }, "Coming Soon") }), /* @__PURE__ */ React.createElement(Row, { label: "Change password", sub: passwordResetSent ? "Reset link sent to " + profile.email + "." : "We'll email you a secure link to set a new one.", k: "pw", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: passwordResetLoading, onClick: sendPasswordReset }, passwordResetLoading ? "Sending\u2026" : passwordResetSent ? "Resend" : "Email reset link") }))), active === "Subjects & Labels" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Manage Subjects & Labels"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Color-code your classes. These labels appear on your calendar and tasks globally.")), /* @__PURE__ */ React.createElement(Btn, { onClick: () => {
+  }, style: { width: 38, height: 20, borderRadius: 10, background: toggles.shareAvailability ? T.lime : T.card2, border: `1px solid ${toggles.shareAvailability ? T.lime : T.border}`, position: "relative", cursor: "pointer", transition: "all 0.2s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 14, borderRadius: "50%", background: toggles.shareAvailability ? T.bg : "#fff", position: "absolute", top: 2, left: toggles.shareAvailability ? 21 : 2, transition: "left 0.2s" } })) })), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "Data & AI"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "You own your notes, essays, and recordings."), /* @__PURE__ */ React.createElement(Row, { label: "Use my work to train Studlin AI", sub: "Off by default. We will never share your raw content.", k: "collect" }), /* @__PURE__ */ React.createElement(Row, { label: "Anonymous usage analytics", sub: "Helps us fix bugs and prioritise features.", k: "analytics" }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: exportAllData }, React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 6 } }, Icon.copy, "Export all data")), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: downloadChatHistory, disabled: chatHistoryLoading }, chatHistoryLoading ? "Preparing\u2026" : "Download chat history"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle" }, "Privacy policy"))), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "What Studlin AI remembers"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "Standing preferences it's picked up from your chats \u2014 not one-off requests, just things worth not re-explaining every time."), aiMemoryFacts.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, padding: "16px 0", textAlign: "center", borderTop: `1px solid ${T.border}` } }, "Nothing remembered yet. It'll pick things up naturally as you chat.") : aiMemoryFacts.map((f, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, marginBottom: 8 } }, confirmRemoveFactIdx === i ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, "Forget this?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => removeAiFact(i) }, "Forget"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmRemoveFactIdx(null) }, "Cancel")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, f.text), /* @__PURE__ */ React.createElement("button", { onClick: () => setConfirmRemoveFactIdx(i), style: { background: "none", border: `1px solid ${T.border}`, color: T.muted, cursor: "pointer", borderRadius: 6, padding: "4px 10px", fontSize: 12, fontFamily: T.font, flexShrink: 0 } }, "Remove")))), aiMemoryFacts.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 6 } }, confirmClearMemory ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Forget everything Studlin AI remembers about you?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: clearAiMemory }, "Yes, clear all"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmClearMemory(false) }, "Cancel")) : /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmClearMemory(true) }, "Clear all"))), /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 10 } }, "Account security"), /* @__PURE__ */ React.createElement(Row, { label: "Two-factor authentication", sub: "Add a one-time code on every sign in.", k: "twofa", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: true, style: { opacity: 0.4, cursor: "not-allowed" } }, "Coming Soon") }), /* @__PURE__ */ React.createElement(Row, { label: "Active sessions", sub: "See and sign out other signed-in devices.", k: "sessions", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: true, style: { opacity: 0.4, cursor: "not-allowed" } }, "Coming Soon") }), /* @__PURE__ */ React.createElement(Row, { label: "Change password", sub: passwordResetSent ? "Reset link sent to " + profile.email + "." : "We'll email you a secure link to set a new one.", k: "pw", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: passwordResetLoading, onClick: sendPasswordReset }, passwordResetLoading ? "Sending\u2026" : passwordResetSent ? "Resend" : "Email reset link") }))), active === "Subjects & Labels" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Manage Subjects & Labels"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Color-code your classes. These labels appear on your calendar and tasks globally.")), /* @__PURE__ */ React.createElement(Btn, { onClick: () => {
     const term = getSchoolTerm();
     setMgmtSubjs((s) => [...s, { id: String(Date.now()), label: "", color: nextAvailableSubjectColor(s.map((x) => x.color)), termEnd: term ? term.end : null }]);
   } }, "+ Add")), mgmtSubjs.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, padding: "20px 0", textAlign: "center", borderTop: `1px solid ${T.border}` } }, 'No subjects yet. Click "+ Add" to create your first label.'), mgmtSubjs.map((sub, i) => /* @__PURE__ */ React.createElement("div", { key: sub.id || i, style: { ...subjectRowStyle(sub.color), marginBottom: 10 } }, confirmRemoveSubjId === sub.id ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flex: 1 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, 'Delete "', sub.label, '" and its ', countLinkedForSubject(sub), " linked item", countLinkedForSubject(sub) !== 1 ? "s" : "", " (class times, assignments, exams)?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => confirmRemoveSubject(sub) }, "Delete"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmRemoveSubjId(null) }, "Cancel")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(ColorSelect, { value: sub.color, onChange: (c) => setMgmtSubjs((s) => s.map((x, j) => j === i ? { ...x, color: c } : x)) }), /* @__PURE__ */ React.createElement("input", { value: sub.label, onChange: (e) => setMgmtSubjs((s) => s.map((x, j) => j === i ? { ...x, label: e.target.value } : x)), placeholder: "Subject name...", style: { flex: 1, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 7, padding: "7px 10px", color: T.text, fontSize: 13, fontFamily: T.font, outline: "none" } }), /* @__PURE__ */ React.createElement("button", { onClick: () => removeSubjectRow(sub), style: { background: "none", border: `1px solid ${T.border}`, color: T.muted, cursor: "pointer", borderRadius: 6, padding: "4px 10px", fontSize: 12, fontFamily: T.font } }, "Remove")))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 16, alignItems: "center", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Btn, { onClick: saveMgmtSubjs }, "Save changes"), mgmtSubjs.length > 0 && (confirmClearSubjs ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Delete all ", mgmtSubjs.length, " subject", mgmtSubjs.length !== 1 ? "s" : "", " and everything linked to them?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: clearAllSubjects }, "Yes, delete all"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmClearSubjs(false) }, "Cancel")) : /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmClearSubjs(true) }, "Clear all")), mgmtSaved && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.lime, fontWeight: 600 } }, "\u2713 Saved")), courseDeleteToast && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginTop: 10, padding: "9px 12px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.text, flex: 1 } }, courseDeleteToast), /* @__PURE__ */ React.createElement("button", { onClick: undoCourseDeletes, style: { background: "none", border: "none", color: T.lime, cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: T.font, textDecoration: "underline" } }, "Undo")))), active === "Calendar Preferences" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Study Schedule"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 16 } }, "Work hours, weekend schedule, difficulty, and peak focus hours."), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setScheduleSettingsOpen(true) }, "Customize Schedule")), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Weekly Routine"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 16 } }, "Your classes, sports, and shifts: the times the AI treats as absolute and never schedules over."), /* @__PURE__ */ React.createElement(Btn, { onClick: onOpenRoutineCenter }, "Manage Routine")), /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Auto-schedule prep time"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 16 } }, "How Studlin handles study sessions for assignments and exams pulled from a syllabus scan, once they're actually coming up."), /* @__PURE__ */ React.createElement(SelectChip, { options: [{ value: "ask", label: "Always ask" }, { value: "auto", label: "Auto-add" }, { value: "off", label: "Off" }], value: prepScheduleMode, onChange: (v) => {
@@ -19726,6 +20054,7 @@ function AuthGate() {
         DataStore.notes.hydrateOnAuth();
         DataStore.practiceExams.hydrateOnAuth();
         DataStore.timerLogs.hydrateOnAuth();
+        hydrateAiMemoryOnAuth();
         if (!lsGet("onboarded", false)) await profilePromise;
         const ref = sessionStorage.getItem("studlin-ref");
         if (ref && ref !== u.uid) {
@@ -19940,7 +20269,8 @@ function App() {
   const [catchUpMoveDraft, setCatchUpMoveDraft] = useState(null);
   const [strugglingBucketOffer, setStrugglingBucketOffer] = useState(null);
   const [peakInsightOffer, setPeakInsightOffer] = useState(null);
-  const studlinAiProactive = deriveStudlinAiProactiveSignal(strugglingBucketOffer, peakInsightOffer);
+  const [unscheduledDueSoonOffer, setUnscheduledDueSoonOffer] = useState(null);
+  const studlinAiProactive = deriveStudlinAiProactiveSignal(strugglingBucketOffer, unscheduledDueSoonOffer, peakInsightOffer);
   const [expiredPending, setExpiredPending] = useState([]);
   const [calendarWizardOpen, setCalendarWizardOpen] = useState(false);
   const [scheduleChangeAlerts, setScheduleChangeAlerts] = useState([]);
@@ -20097,6 +20427,7 @@ function App() {
     if (queued.length === 0) return;
     const latest = pickLatestQueuedNudgesByKind(queued);
     if (latest.strugglingBucket) setStrugglingBucketOffer(latest.strugglingBucket);
+    if (latest.unscheduledDueSoon) setUnscheduledDueSoonOffer(latest.unscheduledDueSoon);
     if (latest.peakInsight) setPeakInsightOffer(latest.peakInsight);
     if (latest.examPrep) setExamPrepSuggestion(latest.examPrep);
     if (latest.prepPromptBatch) setPrepPromptBatch(latest.prepPromptBatch);
@@ -20315,6 +20646,20 @@ function App() {
       dismissPeakHourInsight(peakInsightOffer.suggestedBucket);
     }
     setPeakInsightOffer(null);
+  };
+  const acceptUnscheduledDueSoonOffer = () => {
+    if (!unscheduledDueSoonOffer) return;
+    logSuggestionDecision("unscheduledDueSoon", "accepted", unscheduledDueSoonOffer);
+    lsSet("calendarHighlightIds", { ids: unscheduledDueSoonOffer.ids, setAt: Date.now() });
+    setActive("calendar");
+    setUnscheduledDueSoonOffer(null);
+  };
+  const declineUnscheduledDueSoonOffer = () => {
+    if (unscheduledDueSoonOffer) {
+      logSuggestionDecision("unscheduledDueSoon", "dismissed", unscheduledDueSoonOffer);
+      dismissUnscheduledDueSoon();
+    }
+    setUnscheduledDueSoonOffer(null);
   };
   const [scheduleSettingsOpen, setScheduleSettingsOpen] = useState(false);
   const [navCollapsed, setNavCollapsed] = useState(() => lsGet("navCollapsed", true));
@@ -20801,6 +21146,11 @@ function App() {
     if (strugglingBucket) {
       if (recoveryPending) queueInsightNudge("strugglingBucket", strugglingBucket);
       else setStrugglingBucketOffer(strugglingBucket);
+    }
+    const unscheduledDueSoon = detectUnscheduledDueSoon(evs, today);
+    if (unscheduledDueSoon) {
+      if (recoveryPending) queueInsightNudge("unscheduledDueSoon", unscheduledDueSoon);
+      else setUnscheduledDueSoonOffer(unscheduledDueSoon);
     }
     const peakInsight = strugglingBucket ? null : detectPeakHourInsight(getSchedulePreferences());
     if (peakInsight) {
@@ -21334,10 +21684,12 @@ function App() {
       proactiveSignal: studlinAiProactive,
       onAcceptProactive: (signal) => {
         if (signal.kind === "struggling_bucket") acceptStrugglingBucketOffer();
+        else if (signal.kind === "unscheduled_due_soon") acceptUnscheduledDueSoonOffer();
         else if (signal.kind === "peak_hours") acceptPeakHourInsight();
       },
       onDeclineProactive: (signal) => {
         if (signal.kind === "struggling_bucket") declineStrugglingBucketOffer();
+        else if (signal.kind === "unscheduled_due_soon") declineUnscheduledDueSoonOffer();
         else if (signal.kind === "peak_hours") declinePeakHourInsight();
       }
     }

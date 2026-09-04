@@ -86,6 +86,17 @@ service cloud.firestore {
       allow write: if request.auth != null && request.auth.uid == userId;
     }
 
+    // Studlin AI's persistent cross-session memory (2026-09-04) -- a short
+    // list of durable facts/preferences the AI has learned about this
+    // student ("hates morning workouts", "usually free after 5pm"). A
+    // SEPARATE doc from profiles above, not a field on it -- profiles is
+    // the public classmate directory (any signed-in user can read it);
+    // personal facts like these must never be readable by anyone but the
+    // owner, unlike a name/school/username.
+    match /aiMemory/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
     // Friend requests / relationships between two real users.
     // - Only readable by the two people involved.
     // - Only creatable by the authenticated sender, targeting someone else,
