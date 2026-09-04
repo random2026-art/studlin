@@ -1369,7 +1369,18 @@ const CustomSelect=({value,options,onChange,minWidth,fontSize,boxed})=>{
       <button type="button" ref={triggerRef} onClick={openPopover}
         style={boxed?{width:minWidth||"100%",display:"flex",alignItems:"center",justifyContent:"space-between",gap:6,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,color:T.text,fontSize:fontSize||13,fontFamily:T.font,outline:"none",cursor:"pointer",padding:"10px 8px"}
           :{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",gap:4,background:"transparent",border:"none",color:T.text,fontSize:fontSize||10.5,fontFamily:T.font,outline:"none",cursor:"pointer",padding:"2px 0"}}>
-        <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{current?current.label:value}</span>
+        <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:6}}>
+          {/* Bug fix, 2026-09-04 (user report): the picker only ever
+              showed the selected label as plain text, even though every
+              Subject-field caller already passes a real per-subject color
+              on each option (see SUBJ's own {value,label,color} shape) --
+              nothing here ever used it. A small dot makes the current
+              selection recognizable at a glance the same way the subject
+              already reads everywhere else in the app (calendar blocks,
+              sidebar rows, etc.), not just as a name. */}
+          {current&&current.color&&<span style={{width:8,height:8,borderRadius:"50%",background:current.color,flexShrink:0}} />}
+          {current?current.label:value}
+        </span>
         <span style={{color:T.faint,fontSize:9,flexShrink:0}}>▾</span>
       </button>
       {/* Bug fix, 2026-09-04: this portal's z-index (998/999) sat BELOW
@@ -1384,12 +1395,21 @@ const CustomSelect=({value,options,onChange,minWidth,fontSize,boxed})=>{
       {open&&anchor&&ReactDOM.createPortal((
         <>
           <div onClick={()=>setOpen(false)} style={{position:"fixed",inset:0,zIndex:1998}} />
-          <div onClick={e=>e.stopPropagation()} style={{position:"fixed",top:anchor.top,left:anchor.left,minWidth:anchor.width,zIndex:1999,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:4,boxShadow:"0 12px 28px -12px rgba(0,0,0,0.5)",animation:"studlinPop 0.15s cubic-bezier(.2,.85,.3,1)"}}>
+          {/* Bug fix, 2026-09-04 (user report): this list had no
+              maxHeight or overflow at all -- with enough options (a
+              student with a full course load of subjects, say) it just
+              ran off the bottom of the screen with literally no way to
+              scroll down and reach the rest. Capped relative to the
+              anchor's own position so it never overflows the viewport
+              regardless of where the trigger sits on screen, and now
+              scrolls internally past that cap. */}
+          <div onClick={e=>e.stopPropagation()} style={{position:"fixed",top:anchor.top,left:anchor.left,minWidth:anchor.width,zIndex:1999,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:4,boxShadow:"0 12px 28px -12px rgba(0,0,0,0.5)",animation:"studlinPop 0.15s cubic-bezier(.2,.85,.3,1)",maxHeight:`min(320px, calc(100vh - ${anchor.top}px - 16px))`,overflowY:"auto"}}>
             {norm.map(o=>(
               <div key={o.value} onClick={()=>{onChange(o.value);setOpen(false);}}
-                style={{padding:"6px 8px",borderRadius:5,fontSize:fontSize||11,fontFamily:T.font,color:o.value===value?T.lime:T.text,background:o.value===value?T.lime+"14":"transparent",cursor:"pointer",whiteSpace:"nowrap"}}
+                style={{display:"flex",alignItems:"center",gap:8,padding:"6px 8px",borderRadius:5,fontSize:fontSize||11,fontFamily:T.font,color:o.value===value?T.lime:T.text,background:o.value===value?T.lime+"14":"transparent",cursor:"pointer",whiteSpace:"nowrap"}}
                 onMouseEnter={e=>{if(o.value!==value)e.currentTarget.style.background=T.card2;}}
                 onMouseLeave={e=>{if(o.value!==value)e.currentTarget.style.background="transparent";}}>
+                {o.color&&<span style={{width:8,height:8,borderRadius:"50%",background:o.color,flexShrink:0}} />}
                 {o.label}
               </div>
             ))}
