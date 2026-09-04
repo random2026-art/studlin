@@ -24902,6 +24902,17 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
   // this file's own established gotcha) matching the confirm-in-place
   // pattern this same component's routine sidebar already uses.
   const [confirmDeleteRoutine,setConfirmDeleteRoutine]=useState(false);
+  // "Edit event" / "Notes" tab, only shown when editing a specific
+  // occurrence (editRoutineDate set) -- see the header render below.
+  // Always reset to "edit" below whenever a genuinely different item
+  // opens, so switching to Notes on one class doesn't leak into the next
+  // one double-clicked (this component never unmounts between edits,
+  // see the `if(!open)return null` early-return above -- state here
+  // otherwise persists silently across separate edit sessions).
+  const [activeTab,setActiveTab]=useState("edit");
+  useEffect(()=>{
+    if(open)setActiveTab("edit");
+  },[open,editRoutine&&editRoutine.id,editRoutineDate]);
 
   // Live preview (2026-07-30): reports this form's current title/date/time
   // up to the caller on every relevant change while open, so the calendar
@@ -25073,9 +25084,27 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
       <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:998}} />
       <div onClick={e=>e.stopPropagation()} style={{position:"fixed",top,left,width:POPOVER_WIDTH,maxHeight:"calc(100vh - "+top+"px - 16px)",overflowY:"auto",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:999,animation:"studlinPop 0.15s cubic-bezier(.2,.85,.3,1)"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"9px 12px",borderBottom:`1px solid ${T.border}`}}>
-          <div style={{fontSize:13,fontWeight:700,color:T.white}}>{editRoutine?"Edit event":"New event"}</div>
+          {/* Tabs only when editing a specific occurrence (double-clicked
+              one day's block, not the recurring rule from Routine Control
+              Center or the sidebar Activities list, neither of which has a
+              single date to attach notes to -- see editRoutineDate's own
+              comment). Plain title otherwise, unchanged. */}
+          {editRoutine&&editRoutineDate?(
+            <div style={{display:"flex",gap:4}}>
+              <button type="button" onClick={()=>setActiveTab("edit")} style={{background:"none",border:"none",cursor:"pointer",fontFamily:T.font,fontSize:13,fontWeight:700,padding:"4px 2px",color:activeTab==="edit"?T.white:T.muted,borderBottom:`2px solid ${activeTab==="edit"?T.lime:"transparent"}`}}>Edit event</button>
+              <button type="button" onClick={()=>setActiveTab("notes")} style={{background:"none",border:"none",cursor:"pointer",fontFamily:T.font,fontSize:13,fontWeight:700,padding:"4px 2px",marginLeft:14,display:"flex",alignItems:"center",gap:5,color:activeTab==="notes"?T.white:T.muted,borderBottom:`2px solid ${activeTab==="notes"?T.lime:"transparent"}`}}>Notes{(()=>{const n=getRoutineOccurrenceNote(editRoutine.id,editRoutineDate);return (n.note||n.todo.length>0)?<span style={{width:5,height:5,borderRadius:"50%",background:T.lime,display:"inline-block"}} />:null;})()}</button>
+            </div>
+          ):(
+            <div style={{fontSize:13,fontWeight:700,color:T.white}}>{editRoutine?"Edit event":"New event"}</div>
+          )}
           <button type="button" onClick={onClose} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,lineHeight:1,padding:0}}>×</button>
         </div>
+        {editRoutine&&editRoutineDate&&activeTab==="notes"&&(
+          <div style={{padding:"10px 12px"}}>
+            <ClassDayNotesFields routineId={editRoutine.id} date={editRoutineDate} />
+          </div>
+        )}
+        {(!editRoutineDate||activeTab==="edit")&&(
         <div style={{padding:"10px 12px",display:"flex",flexDirection:"column",gap:6}}>
           <Input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Event title" style={{fontSize:13,fontWeight:600,padding:"7px 10px"}} autoFocus />
           <div style={{display:"flex",gap:6}}>
@@ -25232,14 +25261,9 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
             <div style={{fontSize:10,color:T.faint,textTransform:"uppercase",letterSpacing:"0.05em"}}>Scheduling</div>
             <SelectChip size="sm" options={[{value:false,label:"Fixed (won't move)"},{value:true,label:"Free (can move)"}]} value={movable} onChange={setMovable} />
           </div>
-          {/* Only when this edit was opened FROM a specific occurrence
-              (double-clicking one day's block on the calendar, not the
-              Routine Control Center's plain rule list, which has no
-              single date to attach notes to) -- see ClassDayNotesFields'
-              own comment for why this lives here instead of a separate
-              popover-triggered Modal. */}
-          {editRoutine&&editRoutineDate&&<ClassDayNotesFields routineId={editRoutine.id} date={editRoutineDate} />}
         </div>
+        )}
+        {(!editRoutineDate||activeTab==="edit")&&(
         <div style={{display:"flex",gap:8,justifyContent:editRoutine?"space-between":"flex-end",alignItems:"center",padding:"9px 12px",borderTop:`1px solid ${T.border}`}}>
           {editRoutine&&(confirmDeleteRoutine?(
             <div style={{display:"flex",gap:6,alignItems:"center"}}>
@@ -25255,6 +25279,7 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
             <Btn onClick={submit} disabled={invalid} style={{padding:"6px 13px",fontSize:12}}>{editRoutine?"Save changes":"Create"}</Btn>
           </div>
         </div>
+        )}
       </div>
     </>
   ), document.body);
