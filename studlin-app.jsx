@@ -1366,10 +1366,19 @@ const CustomSelect=({value,options,onChange,minWidth,fontSize,boxed})=>{
         <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{current?current.label:value}</span>
         <span style={{color:T.faint,fontSize:9,flexShrink:0}}>▾</span>
       </button>
+      {/* Bug fix, 2026-09-04: this portal's z-index (998/999) sat BELOW
+          Modal's own backdrop (zIndex:1000, see its own definition) --
+          for every CustomSelect used inside a Modal (Edit/New Task's
+          Subject field, added tonight, first real case that surfaced
+          this), the dropdown rendered visually under the backdrop's
+          blur, and clicking an option actually hit the backdrop's own
+          onClick={onClose} sitting on top of it instead -- closing the
+          whole modal rather than picking anything. Bumped clear of every
+          Modal instance regardless of nesting depth. */}
       {open&&anchor&&ReactDOM.createPortal((
         <>
-          <div onClick={()=>setOpen(false)} style={{position:"fixed",inset:0,zIndex:998}} />
-          <div onClick={e=>e.stopPropagation()} style={{position:"fixed",top:anchor.top,left:anchor.left,minWidth:anchor.width,zIndex:999,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:4,boxShadow:"0 12px 28px -12px rgba(0,0,0,0.5)",animation:"studlinPop 0.15s cubic-bezier(.2,.85,.3,1)"}}>
+          <div onClick={()=>setOpen(false)} style={{position:"fixed",inset:0,zIndex:1998}} />
+          <div onClick={e=>e.stopPropagation()} style={{position:"fixed",top:anchor.top,left:anchor.left,minWidth:anchor.width,zIndex:1999,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:4,boxShadow:"0 12px 28px -12px rgba(0,0,0,0.5)",animation:"studlinPop 0.15s cubic-bezier(.2,.85,.3,1)"}}>
             {norm.map(o=>(
               <div key={o.value} onClick={()=>{onChange(o.value);setOpen(false);}}
                 style={{padding:"6px 8px",borderRadius:5,fontSize:fontSize||11,fontFamily:T.font,color:o.value===value?T.lime:T.text,background:o.value===value?T.lime+"14":"transparent",cursor:"pointer",whiteSpace:"nowrap"}}
@@ -23451,6 +23460,18 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
           }} style={{background:"none",border:"none",color:T.lime,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline"}}>Undo</button>
         </div>
       )}
+      {/* Bug fix, 2026-09-04: a Google Calendar recurring event syncs in as
+          one independent Studlin event per occurrence with nothing
+          indicating that anywhere -- real user report: "there are so many
+          [instances of the same activity] which take a lot of space...
+          theres nothing that says its repeated at all." This is that
+          indicator, surfaced right where the confusion actually happens
+          (before they even try to delete it). */}
+      {ev.googleRecurringId&&(
+        <div style={{padding:"6px 2px",marginBottom:10,fontSize:12,color:T.muted}}>
+          🔁 This repeats on your Google Calendar -- each occurrence is its own item here. Delete offers an "all occurrences" option.
+        </div>
+      )}
       {isDeadlineKind&&(
         <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:14}}>
           {isEvCompleted?(
@@ -23817,9 +23838,24 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
         calendar grid's own separate delete button. onDelete owns the
         actual undo-backed removal (see its callers); this only confirms
         the intent, same pattern as the other destructive confirms above. */}
+    {/* googleRecurringId (2026-09-04): a Google Calendar recurring event
+        syncs in as one independent Studlin event per occurrence -- this
+        is the real "delete all" for that, since deleting just this one
+        used to be the only option even for something that's genuinely
+        one weekly-repeating commitment on the source calendar. */}
     <Modal open={deleteConfirmOpen} onClose={()=>setDeleteConfirmOpen(false)} title="Delete this?" sub="You can undo this for a few seconds right after." width={420}
-      footer={<><Btn variant="subtle" onClick={()=>setDeleteConfirmOpen(false)}>Never mind</Btn><Btn variant="danger" onClick={()=>{setDeleteConfirmOpen(false);onDelete(ev);onClose();}}>Delete</Btn></>}>
+      footer={ev.googleRecurringId?(<>
+        <Btn variant="subtle" onClick={()=>setDeleteConfirmOpen(false)}>Never mind</Btn>
+        <Btn variant="danger" onClick={()=>{setDeleteConfirmOpen(false);onDelete(ev);onClose();}}>Just this one</Btn>
+        <Btn variant="danger" onClick={()=>{setDeleteConfirmOpen(false);onDelete(ev,{allOccurrences:true});onClose();}}>All occurrences</Btn>
+      </>):(<>
+        <Btn variant="subtle" onClick={()=>setDeleteConfirmOpen(false)}>Never mind</Btn>
+        <Btn variant="danger" onClick={()=>{setDeleteConfirmOpen(false);onDelete(ev);onClose();}}>Delete</Btn>
+      </>)}>
       <div style={{fontSize:13,color:T.text}}>{ev.title}</div>
+      {ev.googleRecurringId&&(
+        <div style={{fontSize:12,color:T.muted,marginTop:8,lineHeight:1.5}}>This repeats on your Google Calendar. "Just this one" removes only this occurrence -- "All occurrences" removes every synced instance of it from Studlin.</div>
+      )}
     </Modal>
     {/* ── Type-switch data-safety confirms -- see save()/finishSave for why
         these exist (real linked prep work / an active shared project would
@@ -24961,6 +24997,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // working mechanism NewEventModal's own evKind==="habit" path uses --
   // rather than a new recurrence engine.
   const [taskRepeatDays,setTaskRepeatDays]=useState([]);
+  // Repeat mode picker (2026-09-04) -- same "Does not repeat / Repeats
+  // weekly / On selected days" pattern NewEventModal's own Repeat select
+  // already uses (see its own comment), reused here instead of showing
+  // the full day-chip picker unconditionally. taskRepeatDays stays the
+  // one real persisted value either way -- this is purely which UI state
+  // the picker starts in.
+  const [taskRepeatMode,setTaskRepeatMode]=useState("none"); // none | weekly | selected
   // Brain Dump — tell Studlin everything at once instead of one task at a
   // time. One AI call splits it into items; anything with a real duration
   // gets slotted deterministically via findOpenSlotFor (same placement
@@ -26160,7 +26203,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       setEvSplitEnabled(false);setEvSplitCount(2);
     }
     if(k!=="assignment"&&k!=="task")setAsChecklist(false);
-    if(k!=="task")setTaskRepeatDays([]);
+    if(k!=="task"){setTaskRepeatDays([]);setTaskRepeatMode("none");}
     // Exam material/session drafts and Project phases/outline drafts are
     // both purely local to whichever type is currently picked -- carrying
     // either across a switch to a different type (or between exam <->
@@ -28386,27 +28429,6 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           </Field>
         )}
 
-        {/* Task-only: fold a recurring commitment straight into Add Task
-            instead of requiring a detour through Settings -> Activities ->
-            Add New -> switch Type to Habit -- see taskRepeatDays' own
-            comment. Picking any day here takes over from the Scheduling
-            choice above (a repeating task has no single due date to
-            schedule around), so that field hides itself once this has a
-            day picked. */}
-        {evKind==="task"&&(
-          <Field label="Repeat" hint={taskRepeatDays.length>0?"No fixed time -- Studlin fits it in wherever there's room each day it repeats.":"Leave off for a one-time task."}>
-            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-              {ROUTINE_DOW.map((d,di)=>(
-                <button key={di} type="button" onClick={()=>setTaskRepeatDays(r=>r.includes(di)?r.filter(x=>x!==di):[...r,di])} style={wizardChipStyle(taskRepeatDays.includes(di))}>{d}</button>
-              ))}
-              <button type="button" onClick={()=>setTaskRepeatDays(r=>r.length===7?[]:[0,1,2,3,4,5,6])} style={wizardChipStyle(taskRepeatDays.length===7)}>Every day</button>
-            </div>
-          </Field>
-        )}
-        {evKind==="task"&&taskRepeatDays.length>0&&(
-          <Field label="Duration (minutes)" hint="How long this occupies on your calendar"><NumField min={5} max={480} fallback={30} value={evDuration} onChange={setEvDuration} /></Field>
-        )}
-
         {/* "No specific time, add to checklist instead" was removed
             2026-07-30 (the reasoning at the time: a plain checklist item
             can already be added from Dashboard, so this looked like a
@@ -28451,6 +28473,47 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
               <Input placeholder="e.g. Drivers ed, SAT prep, club..." value={evCustom} onChange={ev=>setEvCustom(ev.target.value)} style={{flex:1}} />
             </div>
           </Field>
+        )}
+
+        {/* Task-only: fold a recurring commitment straight into Add Task
+            instead of requiring a detour through Settings -> Activities ->
+            Add New -> switch Type to Habit -- see taskRepeatDays' own
+            comment. Picking any day here takes over from the Scheduling
+            choice above (a repeating task has no single due date to
+            schedule around), so that field hides itself once this has a
+            day picked.
+            2026-09-04: moved below Type (was rendering above it, backwards
+            from the actual decision order -- Repeat only ever applies to
+            Task, so picking Type first makes more sense) and swapped the
+            always-visible day-chip wall for the same "Does not repeat /
+            Repeats weekly / On selected days" mode select NewEventModal's
+            own Repeat field already uses, instead of a different,
+            one-off pattern just for this modal. */}
+        {evKind==="task"&&(
+          <Field label="Repeat" hint={taskRepeatDays.length>0?"No fixed time -- Studlin fits it in wherever there's room each day it repeats.":"Leave off for a one-time task."}>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              <select value={taskRepeatMode} onChange={e=>{
+                const mode=e.target.value;
+                setTaskRepeatMode(mode);
+                if(mode==="none")setTaskRepeatDays([]);
+              }} style={{...wizardSelectStyle,padding:"6px 8px",fontSize:12,alignSelf:"flex-start"}}>
+                <option value="none">Does not repeat</option>
+                <option value="weekly">Repeats weekly</option>
+                <option value="selected">On selected days</option>
+              </select>
+              {(taskRepeatMode==="weekly"||taskRepeatMode==="selected")&&(
+                <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                  {ROUTINE_DOW.map((d,di)=>(
+                    <button key={di} type="button" onClick={()=>setTaskRepeatDays(r=>r.includes(di)?r.filter(x=>x!==di):[...r,di])} style={wizardChipStyle(taskRepeatDays.includes(di))}>{d}</button>
+                  ))}
+                  <button type="button" onClick={()=>setTaskRepeatDays(r=>r.length===7?[]:[0,1,2,3,4,5,6])} style={wizardChipStyle(taskRepeatDays.length===7)}>Every day</button>
+                </div>
+              )}
+            </div>
+          </Field>
+        )}
+        {evKind==="task"&&taskRepeatDays.length>0&&(
+          <Field label="Duration (minutes)" hint="How long this occupies on your calendar"><NumField min={5} max={480} fallback={30} value={evDuration} onChange={setEvDuration} /></Field>
         )}
 
         {/* Optional exam link, Study Session only -- so a session created
@@ -33537,17 +33600,30 @@ function App() {
   // used to leave every linked prep session/deck/practice exam dangling.
   // applyExamTypeSwitchCleanup already exists for exactly this, previously
   // only wired to the "switch Type away from Exam" path.
-  const deleteEventFromDetail=(ev)=>{
+  // opts.allOccurrences (2026-09-04): a Google Calendar recurring event
+  // (weekly office hours, say) syncs in as one fully independent Studlin
+  // event per occurrence -- necessary since each week genuinely needs its
+  // own date, but nothing ever tied them back together, so deleting one
+  // never touched the rest and there was no way to remove the whole
+  // series at once. googleRecurringId (added server-side, see
+  // api/_lib/google-calendar.js) is the same id Google stamps on every
+  // occurrence of one recurring event -- this is the real "delete all"
+  // that field exists for.
+  const deleteEventFromDetail=(ev,opts)=>{
     const events=lsGet("events",[]);
     const isExam=ev.kind==="exam";
+    const deleteAllOccurrences=!!(opts&&opts.allOccurrences&&ev.googleRecurringId);
+    const idsToRemove=deleteAllOccurrences
+      ?new Set(events.filter(e=>e.googleRecurringId===ev.googleRecurringId).map(e=>e.id))
+      :new Set([ev.id]);
     const prevDecks=isExam?lsGet("decks",[]):null;
     const prevPracticeExams=isExam?lsGet("practiceExams",[]):null;
     const cleanup=isExam?applyExamTypeSwitchCleanup(events,ev.id,prevDecks,prevPracticeExams):null;
-    const next=(cleanup?cleanup.events:events).filter(e=>e.id!==ev.id);
+    const next=(cleanup?cleanup.events:events).filter(e=>!idsToRemove.has(e.id));
     lsSet("events",next);if(calendarSetEventsRef.current)calendarSetEventsRef.current(next);
     if(cleanup){lsSet("decks",cleanup.decks);lsSet("practiceExams",cleanup.practiceExams);}
-    setEventDeleteUndoSnapshot({event:ev,...(cleanup?{prevEvents:events,prevDecks,prevPracticeExams}:{})});
-    setEventDeleteUndoToast(`Deleted "${ev.title}"`);
+    setEventDeleteUndoSnapshot({event:ev,...((cleanup||deleteAllOccurrences)?{prevEvents:events,prevDecks,prevPracticeExams}:{})});
+    setEventDeleteUndoToast(deleteAllOccurrences?`Deleted all ${idsToRemove.size} occurrences of "${ev.title}"`:`Deleted "${ev.title}"`);
     setTimeout(()=>{setEventDeleteUndoToast("");setEventDeleteUndoSnapshot(null);},5000);
   };
   const undoEventDeleteFromDetail=()=>{

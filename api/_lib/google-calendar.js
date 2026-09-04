@@ -61,6 +61,19 @@ function googleItemToEvent(item) {
     title: item.summary || 'Untitled',
     subject: 'General',
     kind: timed ? 'busy block' : 'deadline',
+    // Bug fix, 2026-09-04: the events endpoint below is called with
+    // singleEvents=true, which is what makes a recurring Google event (a
+    // weekly office-hours block, say) come back as one separate item per
+    // occurrence in the first place -- necessary for Studlin to place each
+    // week's instance on the right date, but it meant every occurrence
+    // landed in Studlin as a fully independent one-off event with nothing
+    // connecting them: no "this repeats" indicator, and deleting one never
+    // touched the others. Google's own API includes recurringEventId on
+    // every expanded instance of a recurring event (present here only when
+    // the source event actually recurs; absent for a genuine one-off) --
+    // previously read and then silently discarded. Carried through now so
+    // the client can group same-series occurrences together.
+    googleRecurringId: item.recurringEventId || null,
   };
 }
 

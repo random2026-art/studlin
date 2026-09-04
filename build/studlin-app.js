@@ -943,7 +943,7 @@ const CustomSelect = ({ value, options, onChange, minWidth, fontSize, boxed }) =
     },
     /* @__PURE__ */ React.createElement("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, current ? current.label : value),
     /* @__PURE__ */ React.createElement("span", { style: { color: T.faint, fontSize: 9, flexShrink: 0 } }, "\u25BE")
-  ), open && anchor && ReactDOM.createPortal(/* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: () => setOpen(false), style: { position: "fixed", inset: 0, zIndex: 998 } }), /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { position: "fixed", top: anchor.top, left: anchor.left, minWidth: anchor.width, zIndex: 999, background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: 4, boxShadow: "0 12px 28px -12px rgba(0,0,0,0.5)", animation: "studlinPop 0.15s cubic-bezier(.2,.85,.3,1)" } }, norm.map((o) => /* @__PURE__ */ React.createElement(
+  ), open && anchor && ReactDOM.createPortal(/* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: () => setOpen(false), style: { position: "fixed", inset: 0, zIndex: 1998 } }), /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { position: "fixed", top: anchor.top, left: anchor.left, minWidth: anchor.width, zIndex: 1999, background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: 4, boxShadow: "0 12px 28px -12px rgba(0,0,0,0.5)", animation: "studlinPop 0.15s cubic-bezier(.2,.85,.3,1)" } }, norm.map((o) => /* @__PURE__ */ React.createElement(
     "div",
     {
       key: o.value,
@@ -14310,6 +14310,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
       if (result.blocked && onToast) onToast("Can't undo \u2014 something else is already using that time.");
       onClose();
     }, style: { background: "none", border: "none", color: T.lime, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: T.font, textDecoration: "underline" } }, "Undo")),
+    ev.googleRecurringId && /* @__PURE__ */ React.createElement("div", { style: { padding: "6px 2px", marginBottom: 10, fontSize: 12, color: T.muted } }, '\u{1F501} This repeats on your Google Calendar -- each occurrence is its own item here. Delete offers an "all occurrences" option.'),
     isDeadlineKind && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 14 } }, isEvCompleted ? /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: T.lime, background: T.lime + "14", border: `1px solid ${T.lime}44`, borderRadius: 6, padding: "4px 10px" } }, "COMPLETED") : itemLifecycleState(ev, dayKey()) === "past-due" && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: T.amber, background: T.amber + "14", border: `1px solid ${T.amber}44`, borderRadius: 6, padding: "4px 10px" } }, "PAST DUE"), /* @__PURE__ */ React.createElement(BtnSm, { variant: isEvCompleted ? "ghost" : "subtle", onClick: toggleEvCompleted }, isEvCompleted ? "Mark as uncomplete" : "Mark as completed")),
     completeSessionPrompt && /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.amber}44`, borderRadius: 8, padding: "12px 14px", marginBottom: 14, fontSize: 12.5, color: T.text, lineHeight: 1.5 } }, "You still have ", evPendingLinked.length, " scheduled block", evPendingLinked.length !== 1 ? "s" : "", " for this \u2014 cancel ", evPendingLinked.length !== 1 ? "them" : "it", " too?", /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => finishMarkingEvComplete(true) }, "Cancel ", evPendingLinked.length !== 1 ? "them" : "it"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => finishMarkingEvComplete(false) }, "Keep them"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setCompleteSessionPrompt(false) }, "Never mind"))),
     ev.placementReason && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", padding: "6px 2px", marginBottom: 10, fontSize: 12, color: T.muted } }, /* @__PURE__ */ React.createElement("span", null, "\u{1F552} ", fmtPlacementReason(ev.placementReason, ev.time))),
@@ -14436,13 +14437,22 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
       title: "Delete this?",
       sub: "You can undo this for a few seconds right after.",
       width: 420,
-      footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setDeleteConfirmOpen(false) }, "Never mind"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => {
+      footer: ev.googleRecurringId ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setDeleteConfirmOpen(false) }, "Never mind"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => {
+        setDeleteConfirmOpen(false);
+        onDelete(ev);
+        onClose();
+      } }, "Just this one"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => {
+        setDeleteConfirmOpen(false);
+        onDelete(ev, { allOccurrences: true });
+        onClose();
+      } }, "All occurrences")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setDeleteConfirmOpen(false) }, "Never mind"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => {
         setDeleteConfirmOpen(false);
         onDelete(ev);
         onClose();
       } }, "Delete"))
     },
-    /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text } }, ev.title)
+    /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text } }, ev.title),
+    ev.googleRecurringId && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginTop: 8, lineHeight: 1.5 } }, 'This repeats on your Google Calendar. "Just this one" removes only this occurrence -- "All occurrences" removes every synced instance of it from Studlin.')
   ), /* @__PURE__ */ React.createElement(
     Modal,
     {
@@ -14986,6 +14996,7 @@ function CalendarTab({ setActive = () => {
   const [evDeadlineTime, setEvDeadlineTime] = useState("23:59");
   const [asChecklist, setAsChecklist] = useState(false);
   const [taskRepeatDays, setTaskRepeatDays] = useState([]);
+  const [taskRepeatMode, setTaskRepeatMode] = useState("none");
   const [brainDumpOpen, setBrainDumpOpen] = useState(false);
   const [brainDumpText, setBrainDumpText] = useState("");
   const [brainDumpLoading, setBrainDumpLoading] = useState(false);
@@ -15967,7 +15978,10 @@ function CalendarTab({ setActive = () => {
       setEvSplitCount(2);
     }
     if (k !== "assignment" && k !== "task") setAsChecklist(false);
-    if (k !== "task") setTaskRepeatDays([]);
+    if (k !== "task") {
+      setTaskRepeatDays([]);
+      setTaskRepeatMode("none");
+    }
     resetTypeExtras();
   };
   const resolveAssignmentKind = () => evKind === "assignment" || evKind === "task" ? taskMode === "ai" ? "deadline" : "study block" : evKind === "project" ? "deadline" : evKind;
@@ -17534,11 +17548,15 @@ Examples:
         v.label
       );
     }))),
-    evKind === "task" && /* @__PURE__ */ React.createElement(Field, { label: "Repeat", hint: taskRepeatDays.length > 0 ? "No fixed time -- Studlin fits it in wherever there's room each day it repeats." : "Leave off for a one-time task." }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } }, ROUTINE_DOW.map((d, di) => /* @__PURE__ */ React.createElement("button", { key: di, type: "button", onClick: () => setTaskRepeatDays((r) => r.includes(di) ? r.filter((x) => x !== di) : [...r, di]), style: wizardChipStyle(taskRepeatDays.includes(di)) }, d)), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setTaskRepeatDays((r) => r.length === 7 ? [] : [0, 1, 2, 3, 4, 5, 6]), style: wizardChipStyle(taskRepeatDays.length === 7) }, "Every day"))),
-    evKind === "task" && taskRepeatDays.length > 0 && /* @__PURE__ */ React.createElement(Field, { label: "Duration (minutes)", hint: "How long this occupies on your calendar" }, /* @__PURE__ */ React.createElement(NumField, { min: 5, max: 480, fallback: 30, value: evDuration, onChange: setEvDuration })),
     /* @__PURE__ */ React.createElement(Field, { label: "Type", hint: isFixedKind ? "Won't be moved or rescheduled." : isRepeatingTask ? "Repeats on the days you pick below." : isChecklistMode ? "Just a due date -- no calendar time yet." : evKind === "assignment" || evKind === "task" ? taskMode === "manual" ? evKind === "task" ? "Happens at this exact time." : "A study session at this exact time." : "Studlin finds the time before it's due." : void 0 }, /* @__PURE__ */ React.createElement(SelectChip, { options: [{ value: "assignment", label: taskMode === "manual" ? "Study Session" : "Assignment" }, { value: "task", label: "Task" }, { value: "project", label: "Project" }, "exam", "class", { value: "busy block", label: "Activity" }, "reminder"], value: evKind, onChange: onEvKindChange })),
     /* @__PURE__ */ React.createElement(Field, { label: "Subject" }, /* @__PURE__ */ React.createElement(CustomSelect, { boxed: true, options: SUBJ, value: evSubject, onChange: setEvSubject, minWidth: 220 })),
     evSubject === "Other" && /* @__PURE__ */ React.createElement(Field, { label: "Custom subject", hint: "Pick a color so it doesn't get lost on the calendar." }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement(ColorSelect, { value: evCustomColor, onChange: setEvCustomColor }), /* @__PURE__ */ React.createElement(Input, { placeholder: "e.g. Drivers ed, SAT prep, club...", value: evCustom, onChange: (ev) => setEvCustom(ev.target.value), style: { flex: 1 } }))),
+    evKind === "task" && /* @__PURE__ */ React.createElement(Field, { label: "Repeat", hint: taskRepeatDays.length > 0 ? "No fixed time -- Studlin fits it in wherever there's room each day it repeats." : "Leave off for a one-time task." }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement("select", { value: taskRepeatMode, onChange: (e) => {
+      const mode = e.target.value;
+      setTaskRepeatMode(mode);
+      if (mode === "none") setTaskRepeatDays([]);
+    }, style: { ...wizardSelectStyle, padding: "6px 8px", fontSize: 12, alignSelf: "flex-start" } }, /* @__PURE__ */ React.createElement("option", { value: "none" }, "Does not repeat"), /* @__PURE__ */ React.createElement("option", { value: "weekly" }, "Repeats weekly"), /* @__PURE__ */ React.createElement("option", { value: "selected" }, "On selected days")), (taskRepeatMode === "weekly" || taskRepeatMode === "selected") && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } }, ROUTINE_DOW.map((d, di) => /* @__PURE__ */ React.createElement("button", { key: di, type: "button", onClick: () => setTaskRepeatDays((r) => r.includes(di) ? r.filter((x) => x !== di) : [...r, di]), style: wizardChipStyle(taskRepeatDays.includes(di)) }, d)), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setTaskRepeatDays((r) => r.length === 7 ? [] : [0, 1, 2, 3, 4, 5, 6]), style: wizardChipStyle(taskRepeatDays.length === 7) }, "Every day")))),
+    evKind === "task" && taskRepeatDays.length > 0 && /* @__PURE__ */ React.createElement(Field, { label: "Duration (minutes)", hint: "How long this occupies on your calendar" }, /* @__PURE__ */ React.createElement(NumField, { min: 5, max: 480, fallback: 30, value: evDuration, onChange: setEvDuration })),
     evKind === "assignment" && taskMode === "manual" && evSubject !== "None" && (() => {
       const linkedExam = evLinkedExamId ? upcomingExams().find((ex) => ex.id === evLinkedExamId) : null;
       return /* @__PURE__ */ React.createElement(Field, { label: "Link to a test (optional)", hint: "Shows this session on that exam's page in Studlin Prep too." }, linkedExam ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 8, border: `1px solid ${T.border}`, background: T.card2 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0, fontSize: 12.5, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, linkedExam.title, " ", /* @__PURE__ */ React.createElement("span", { style: { color: T.muted } }, "\xB7 ", linkedExam.date)), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setEvLinkedExamId(null), style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontFamily: T.font, fontSize: 11, textDecoration: "underline", padding: 0, flexShrink: 0 } }, "Unlink")) : /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setExamPickerOpen(true), style: { background: "none", border: `1px solid ${T.border}`, borderRadius: 8, padding: "9px 12px", color: T.muted, cursor: "pointer", fontFamily: T.font, fontSize: 12.5, textAlign: "left", width: "100%" } }, "+ Link to an exam"));
@@ -20259,21 +20277,23 @@ function App() {
   const [dashToast, setDashToast] = useState("");
   const [eventDeleteUndoSnapshot, setEventDeleteUndoSnapshot] = useState(null);
   const [eventDeleteUndoToast, setEventDeleteUndoToast] = useState("");
-  const deleteEventFromDetail = (ev) => {
+  const deleteEventFromDetail = (ev, opts) => {
     const events = lsGet("events", []);
     const isExam = ev.kind === "exam";
+    const deleteAllOccurrences = !!(opts && opts.allOccurrences && ev.googleRecurringId);
+    const idsToRemove = deleteAllOccurrences ? new Set(events.filter((e) => e.googleRecurringId === ev.googleRecurringId).map((e) => e.id)) : /* @__PURE__ */ new Set([ev.id]);
     const prevDecks = isExam ? lsGet("decks", []) : null;
     const prevPracticeExams = isExam ? lsGet("practiceExams", []) : null;
     const cleanup = isExam ? applyExamTypeSwitchCleanup(events, ev.id, prevDecks, prevPracticeExams) : null;
-    const next = (cleanup ? cleanup.events : events).filter((e) => e.id !== ev.id);
+    const next = (cleanup ? cleanup.events : events).filter((e) => !idsToRemove.has(e.id));
     lsSet("events", next);
     if (calendarSetEventsRef.current) calendarSetEventsRef.current(next);
     if (cleanup) {
       lsSet("decks", cleanup.decks);
       lsSet("practiceExams", cleanup.practiceExams);
     }
-    setEventDeleteUndoSnapshot({ event: ev, ...cleanup ? { prevEvents: events, prevDecks, prevPracticeExams } : {} });
-    setEventDeleteUndoToast(`Deleted "${ev.title}"`);
+    setEventDeleteUndoSnapshot({ event: ev, ...cleanup || deleteAllOccurrences ? { prevEvents: events, prevDecks, prevPracticeExams } : {} });
+    setEventDeleteUndoToast(deleteAllOccurrences ? `Deleted all ${idsToRemove.size} occurrences of "${ev.title}"` : `Deleted "${ev.title}"`);
     setTimeout(() => {
       setEventDeleteUndoToast("");
       setEventDeleteUndoSnapshot(null);
