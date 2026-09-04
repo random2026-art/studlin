@@ -12928,7 +12928,18 @@ function Notes({setActive=()=>{}}){
     const linked=lsGet("events",[]).filter(e=>e.noteId===note.id);
     setDeleteNoteConfirm({idx,linked});
   };
-  const exportNote=(n)=>{const t=document.createElement("div");t.innerHTML=n.body;navigator.clipboard&&navigator.clipboard.writeText(n.title+"\n\n"+(t.textContent||t.innerText));};
+  // Bug fix, 2026-09-04 audit: gave zero success feedback -- no toast, no
+  // button-label change, and silently did nothing at all if
+  // navigator.clipboard was undefined/blocked. Same "Copied!" toggle
+  // pattern the invite-link Copy button already uses elsewhere.
+  const [noteCopied,setNoteCopied]=useState(false);
+  const exportNote=(n)=>{
+    const t=document.createElement("div");t.innerHTML=n.body;
+    if(!navigator.clipboard)return;
+    navigator.clipboard.writeText(n.title+"\n\n"+(t.textContent||t.innerText)).then(()=>{
+      setNoteCopied(true);setTimeout(()=>setNoteCopied(false),1800);
+    });
+  };
   const sendNote=async()=>{
     const t=sendNoteTarget.trim();
     if(!t||sel===null)return;
@@ -13111,7 +13122,7 @@ function Notes({setActive=()=>{}}){
           </Field>
         )}
         {!viaSyllabusScan&&<Field label="Title"><Input placeholder="e.g. Macbeth Act IV notes" value={newTitle} onChange={ev=>setNewTitle(ev.target.value)} autoFocus /></Field>}
-        <Field label="Class"><SelectChip options={tagOptions} value={newTag} onChange={setNewTag} /></Field>
+        <Field label="Class"><CustomSelect boxed options={tagOptions} value={newTag} onChange={setNewTag} minWidth={220} /></Field>
         {newTag==="Other"&&(<>
           <Field label="Custom class"><Input placeholder="e.g. Physics, SAT prep..." value={customTag} onChange={ev=>setCustomTag(ev.target.value)} /></Field>
           {/* Catches the exact mistake that created duplicate classes
@@ -13450,7 +13461,7 @@ function Notes({setActive=()=>{}}){
                     <input type="color" defaultValue="#aece5e" onInput={e=>{if(editorRef.current)editorRef.current.focus();document.execCommand("styleWithCSS",false,true);document.execCommand("hiliteColor",false,e.target.value);}} style={{position:"absolute",opacity:0,width:"100%",height:"100%",top:0,left:0,cursor:"pointer",border:"none",padding:0}} />
                   </label>
                   <div style={{width:1,height:18,background:T.border,margin:"0 2px"}} />
-                  <BtnSm variant="subtle" onClick={()=>exportNote(activeNote)}>{Icon.copy} Copy</BtnSm>
+                  <BtnSm variant="subtle" onClick={()=>exportNote(activeNote)}>{noteCopied?<>{Icon.check} Copied!</>:<>{Icon.copy} Copy</>}</BtnSm>
                   <BtnSm variant="subtle" onClick={()=>setSendNoteOpen(true)}>{Icon.send} Send</BtnSm>
                   <div style={{flex:1}} />
                   <button onClick={openDocComment} title="Attach a note to the whole document (no highlight needed)" style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${T.blue}44`,background:T.blue+"14",color:T.blue,cursor:"pointer",fontFamily:T.font,fontSize:12,fontWeight:700,display:"inline-flex",alignItems:"center",gap:6,transition:"all 0.15s"}}>
@@ -14003,11 +14014,22 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
     if(!session||!myUid)return;
     showNetToast("Joining "+u.n+"'s session…");
     const now=Date.now();
+    // Bug fix, 2026-09-04 audit: a failed write here used to be silently
+    // swallowed and the timer opened anyway -- you'd see yourself "in" the
+    // session locally while your friend's client never actually learned
+    // you joined (the participants write never landed). startLockIn (the
+    // "start my own session" path) already has this exact same-shaped
+    // error toast for the identical failure mode; join never got it.
+    let joinFailed=false;
     await fsdb().collection('studySessions').doc(sessionId).update({
       ['participants.'+myUid+'.state']:'joined',
       ['participants.'+myUid+'.joinedAt']:now,
       updatedAt:new Date().toISOString(),
-    }).catch(()=>{});
+    }).catch(()=>{joinFailed=true;});
+    if(joinFailed){
+      showNetToast("Couldn't join "+u.n+"'s session. Try again.");
+      return;
+    }
     if(window._setTimerTask)window._setTimerTask({
       id:"coop-"+sessionId,
       title:session.title,
@@ -16403,6 +16425,15 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
         if(msg.studySessionId){
           fsdb().collection('studySessions').doc(msg.studySessionId).update({["participants."+myUid+".state"]:"accepted"}).catch(()=>{});
         }
+      }else if(decision==="declined"&&msg.studySessionId){
+        // Bug fix, 2026-09-04 audit: the accept branch above updates this
+        // participant's real state in studySessions; decline never had the
+        // mirror write, leaving them stuck at "invited" forever in that
+        // doc even though the chat message itself correctly shows
+        // declined. No live symptom today (computeCoopFromParticipants only
+        // ever surfaces "joined" participants), but real inconsistent data
+        // sitting in Firestore.
+        fsdb().collection('studySessions').doc(msg.studySessionId).update({["participants."+myUid+".state"]:"declined"}).catch(()=>{});
       }
       const nextResponses={...(msg.responses||{}),[myUid]:decision};
       const allAccepted=memberUids.length>0&&memberUids.every(uid=>nextResponses[uid]==="accepted");
@@ -24462,7 +24493,7 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
               event is never asked to classify itself. */}
           {(editRoutine||repeat==="selected"||repeat==="weekly")&&(<>
             <Field label="Type"><SelectChip options={[{value:"class",label:"Class"},{value:"busy",label:"Activity"},{value:"free",label:"Free Period"},{value:"habit",label:"Habit"}]} value={evKind} onChange={setEvKind} /></Field>
-            {evKind==="class"&&subjectOptions&&<Field label="Subject"><SelectChip options={subjectOptions} value={subject} onChange={setSubject} /></Field>}
+            {evKind==="class"&&subjectOptions&&<Field label="Subject"><CustomSelect boxed options={subjectOptions} value={subject} onChange={setSubject} minWidth={220} /></Field>}
             {editRoutine&&evKind!=="class"&&<Field label="Color"><ColorSelect value={routineColor} onChange={setRoutineColor} /></Field>}
           </>)}
           </>)}
@@ -33216,8 +33247,19 @@ function App() {
         lsSet("events",lsGet("events",[]).map(e=>e.id===task.id?{...e,isDiagnosticFirstPass:false}:e));
       }
       const materialText=examEvent?(examEvent.sourceMaterials||[]).filter(f=>f.text&&f.text.trim()).map(f=>f.text).join("\n\n"):"";
-      if(task.isDiagnosticFirstPass&&examEvent&&materialText.trim()&&canGenQuiz()){
-        startDiagnosticQuiz(task,examEvent,materialText);
+      if(task.isDiagnosticFirstPass&&examEvent&&materialText.trim()){
+        if(canGenQuiz()){
+          startDiagnosticQuiz(task,examEvent,materialText);
+        }else{
+          // Bug fix, 2026-09-04 audit: every other AI-gated action in this
+          // file shows a real upgrade prompt when blocked by a quota/plan
+          // gate -- this was the one path that silently downgraded to the
+          // plain check-in instead, with zero indication a real check was
+          // skipped for a quota reason, even though the confidence-step
+          // copy explicitly promises "a real first pass... then a quick
+          // check."
+          setPricingOpen(canGenQuizReason()==="free-tier"?"studyMaterialGen":"aiUsageCap");
+        }
       }else{
         setExamCheckIn(task);
       }
@@ -33279,7 +33321,15 @@ function App() {
       .sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
     if(pending.length===0)return;
     proposeSessionFocuses(examEvent.title,materialText,pending.length,examEvent.subject,wrongTopics.join(", ")).then(focuses=>{
-      if(!focuses)return;
+      if(!focuses){
+        // Bug fix, 2026-09-04 audit: the diagnostic quiz's "done" screen
+        // promises "a closer look coming up for: {topics}" -- if this
+        // background call fails (API error, rate limit), that promise
+        // silently went unfulfilled with nothing telling the student.
+        setDashToast("Couldn't update your remaining sessions with what you missed — they'll keep their original focus.");
+        setTimeout(()=>setDashToast(""),4200);
+        return;
+      }
       const ids=pending.map(s=>s.id);
       const patched=lsGet("events",[]).map(e=>{
         const idx=ids.indexOf(e.id);
@@ -34086,11 +34136,22 @@ function App() {
   const joinLiveInvite=async()=>{
     if(!liveInvite||!myUid)return;
     const now=Date.now();
+    // Bug fix, 2026-09-04 audit: same silent-join-failure fix as
+    // FriendsChat's joinLockIn (see its own comment) -- a failed write
+    // used to open the timer anyway with the inviting friend never
+    // learning you actually joined.
+    let joinFailed=false;
     await fsdb().collection('studySessions').doc(liveInvite.id).update({
       ['participants.'+myUid+'.state']:'joined',
       ['participants.'+myUid+'.joinedAt']:now,
       updatedAt:new Date().toISOString(),
-    }).catch(()=>{});
+    }).catch(()=>{joinFailed=true;});
+    if(joinFailed){
+      setLockInErrorToast("Couldn't join that session. Try again.");
+      setTimeout(()=>setLockInErrorToast(""),4500);
+      setLiveInvite(null);
+      return;
+    }
     setTimerTask({
       id:"coop-"+liveInvite.id,title:liveInvite.title,subject:liveInvite.subject,
       duration:Math.max(5,liveInvite.duration||25),kind:"study block",
@@ -34907,8 +34968,14 @@ function App() {
           }
           const examEvent=timerTask.dueEventId?next.find(e=>e.id===timerTask.dueEventId):null;
           const materialText=examEvent?(examEvent.sourceMaterials||[]).filter(f=>f.text&&f.text.trim()).map(f=>f.text).join("\n\n"):"";
-          if(timerTask.isDiagnosticFirstPass&&examEvent&&materialText.trim()&&canGenQuiz()){
-            startDiagnosticQuiz(timerTask,examEvent,materialText);
+          if(timerTask.isDiagnosticFirstPass&&examEvent&&materialText.trim()){
+            if(canGenQuiz()){
+              startDiagnosticQuiz(timerTask,examEvent,materialText);
+            }else{
+              // Same fix as handleTaskCompleted's identical branch -- see
+              // its comment.
+              setPricingOpen(canGenQuizReason()==="free-tier"?"studyMaterialGen":"aiUsageCap");
+            }
           }else{
             setExamCheckIn(timerTask);
           }

@@ -7934,10 +7934,15 @@ function Notes({ setActive = () => {
     const linked = lsGet("events", []).filter((e) => e.noteId === note.id);
     setDeleteNoteConfirm({ idx, linked });
   };
+  const [noteCopied, setNoteCopied] = useState(false);
   const exportNote = (n) => {
     const t = document.createElement("div");
     t.innerHTML = n.body;
-    navigator.clipboard && navigator.clipboard.writeText(n.title + "\n\n" + (t.textContent || t.innerText));
+    if (!navigator.clipboard) return;
+    navigator.clipboard.writeText(n.title + "\n\n" + (t.textContent || t.innerText)).then(() => {
+      setNoteCopied(true);
+      setTimeout(() => setNoteCopied(false), 1800);
+    });
   };
   const sendNote = async () => {
     const t = sendNoteTarget.trim();
@@ -8125,7 +8130,7 @@ function Notes({ setActive = () => {
     },
     !viaSyllabusScan && /* @__PURE__ */ React.createElement(Field, { label: "Source" }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } }, sources.map((o) => /* @__PURE__ */ React.createElement("button", { key: o.id, type: "button", onClick: () => setSrc(o.id), style: { padding: "12px 14px", borderRadius: 10, border: "1px solid " + (src === o.id ? T.lime + "66" : T.border), background: src === o.id ? T.lime + "10" : T.card2, color: T.text, cursor: "pointer", textAlign: "left", fontFamily: T.font, position: "relative" } }, o.cost && /* @__PURE__ */ React.createElement("span", { style: { position: "absolute", top: 8, right: 10, fontSize: 9, fontFamily: T.mono, color: src === o.id ? T.lime : T.faint, letterSpacing: "0.05em" } }, o.cost), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 3 } }, /* @__PURE__ */ React.createElement("span", { style: { color: src === o.id ? T.lime : T.muted, display: "flex" } }, o.icon), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontWeight: 600 } }, o.label)), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted } }, o.desc))))),
     !viaSyllabusScan && /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement(Input, { placeholder: "e.g. Macbeth Act IV notes", value: newTitle, onChange: (ev) => setNewTitle(ev.target.value), autoFocus: true })),
-    /* @__PURE__ */ React.createElement(Field, { label: "Class" }, /* @__PURE__ */ React.createElement(SelectChip, { options: tagOptions, value: newTag, onChange: setNewTag })),
+    /* @__PURE__ */ React.createElement(Field, { label: "Class" }, /* @__PURE__ */ React.createElement(CustomSelect, { boxed: true, options: tagOptions, value: newTag, onChange: setNewTag, minWidth: 220 })),
     newTag === "Other" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "Custom class" }, /* @__PURE__ */ React.createElement(Input, { placeholder: "e.g. Physics, SAT prep...", value: customTag, onChange: (ev) => setCustomTag(ev.target.value) })), (() => {
       const cid = courseIdForLabelFuzzy(customTag);
       const match = cid ? userSubjects.find((s) => s.id === cid) : null;
@@ -8281,7 +8286,7 @@ function Notes({ setActive = () => {
     if (editorRef.current) editorRef.current.focus();
     document.execCommand("styleWithCSS", false, true);
     document.execCommand("hiliteColor", false, e.target.value);
-  }, style: { position: "absolute", opacity: 0, width: "100%", height: "100%", top: 0, left: 0, cursor: "pointer", border: "none", padding: 0 } })), /* @__PURE__ */ React.createElement("div", { style: { width: 1, height: 18, background: T.border, margin: "0 2px" } }), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => exportNote(activeNote) }, Icon.copy, " Copy"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => setSendNoteOpen(true) }, Icon.send, " Send"), /* @__PURE__ */ React.createElement("div", { style: { flex: 1 } }), /* @__PURE__ */ React.createElement("button", { onClick: openDocComment, title: "Attach a note to the whole document (no highlight needed)", style: { padding: "5px 12px", borderRadius: 6, border: `1px solid ${T.blue}44`, background: T.blue + "14", color: T.blue, cursor: "pointer", fontFamily: T.font, fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6, transition: "all 0.15s" } }, Icon.chat, " Add Comment"), /* @__PURE__ */ React.createElement("button", { onClick: cleanNotes, disabled: cleaning, style: { padding: "5px 12px", borderRadius: 6, border: `1px solid ${T.lime}44`, background: cleaning ? T.card2 : T.lime + "14", color: cleaning ? T.muted : T.lime, cursor: cleaning ? "default" : "pointer", fontFamily: T.font, fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6, transition: "all 0.15s" } }, cleaning ? /* @__PURE__ */ React.createElement(React.Fragment, null, "Cleaning\u2026") : /* @__PURE__ */ React.createElement(React.Fragment, null, Icon.wand, " Clean Notes")), /* @__PURE__ */ React.createElement("button", { onClick: scanNoteForDates, disabled: scanningDates, title: "Check this note for dates and offer to add them to your calendar", style: { padding: "5px 12px", borderRadius: 6, border: `1px solid ${T.purple}44`, background: scanningDates ? T.card2 : T.purple + "14", color: scanningDates ? T.muted : T.purple, cursor: scanningDates ? "default" : "pointer", fontFamily: T.font, fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6, transition: "all 0.15s" } }, scanningDates ? /* @__PURE__ */ React.createElement(React.Fragment, null, "Scanning\u2026") : /* @__PURE__ */ React.createElement(React.Fragment, null, Icon.cal, " Scan for Dates")), /* @__PURE__ */ React.createElement(BtnSm, { variant: "danger", onClick: () => deleteNote(sel) }, "Delete")), /* @__PURE__ */ React.createElement("div", { style: { padding: "16px 24px 10px", borderBottom: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("input", { value: activeNote.title, onChange: (e) => updateNote(sel, { title: e.target.value }), style: { fontSize: 20, fontWeight: 700, color: T.white, letterSpacing: "-0.02em", background: "transparent", border: "none", outline: "none", fontFamily: T.font, width: "100%", padding: 0, marginBottom: 8 }, placeholder: "Note title\u2026" }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center" } }, /* @__PURE__ */ React.createElement(Badge, { color: colorOf(activeNote.tag) }, activeNote.tag), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.muted } }, activeNote.date), activeComments.length > 0 && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: T.blue, fontWeight: 600 } }, activeComments.length, " comment", activeComments.length !== 1 ? "s" : ""))), popover && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: popover.y, left: popover.x, transform: "translateX(-50%)", zIndex: 30, display: "flex", gap: 4, background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: "4px 6px", boxShadow: "0 8px 24px rgba(0,0,0,0.4)", whiteSpace: "nowrap" } }, /* @__PURE__ */ React.createElement("button", { onMouseDown: (e) => {
+  }, style: { position: "absolute", opacity: 0, width: "100%", height: "100%", top: 0, left: 0, cursor: "pointer", border: "none", padding: 0 } })), /* @__PURE__ */ React.createElement("div", { style: { width: 1, height: 18, background: T.border, margin: "0 2px" } }), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => exportNote(activeNote) }, noteCopied ? /* @__PURE__ */ React.createElement(React.Fragment, null, Icon.check, " Copied!") : /* @__PURE__ */ React.createElement(React.Fragment, null, Icon.copy, " Copy")), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => setSendNoteOpen(true) }, Icon.send, " Send"), /* @__PURE__ */ React.createElement("div", { style: { flex: 1 } }), /* @__PURE__ */ React.createElement("button", { onClick: openDocComment, title: "Attach a note to the whole document (no highlight needed)", style: { padding: "5px 12px", borderRadius: 6, border: `1px solid ${T.blue}44`, background: T.blue + "14", color: T.blue, cursor: "pointer", fontFamily: T.font, fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6, transition: "all 0.15s" } }, Icon.chat, " Add Comment"), /* @__PURE__ */ React.createElement("button", { onClick: cleanNotes, disabled: cleaning, style: { padding: "5px 12px", borderRadius: 6, border: `1px solid ${T.lime}44`, background: cleaning ? T.card2 : T.lime + "14", color: cleaning ? T.muted : T.lime, cursor: cleaning ? "default" : "pointer", fontFamily: T.font, fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6, transition: "all 0.15s" } }, cleaning ? /* @__PURE__ */ React.createElement(React.Fragment, null, "Cleaning\u2026") : /* @__PURE__ */ React.createElement(React.Fragment, null, Icon.wand, " Clean Notes")), /* @__PURE__ */ React.createElement("button", { onClick: scanNoteForDates, disabled: scanningDates, title: "Check this note for dates and offer to add them to your calendar", style: { padding: "5px 12px", borderRadius: 6, border: `1px solid ${T.purple}44`, background: scanningDates ? T.card2 : T.purple + "14", color: scanningDates ? T.muted : T.purple, cursor: scanningDates ? "default" : "pointer", fontFamily: T.font, fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6, transition: "all 0.15s" } }, scanningDates ? /* @__PURE__ */ React.createElement(React.Fragment, null, "Scanning\u2026") : /* @__PURE__ */ React.createElement(React.Fragment, null, Icon.cal, " Scan for Dates")), /* @__PURE__ */ React.createElement(BtnSm, { variant: "danger", onClick: () => deleteNote(sel) }, "Delete")), /* @__PURE__ */ React.createElement("div", { style: { padding: "16px 24px 10px", borderBottom: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("input", { value: activeNote.title, onChange: (e) => updateNote(sel, { title: e.target.value }), style: { fontSize: 20, fontWeight: 700, color: T.white, letterSpacing: "-0.02em", background: "transparent", border: "none", outline: "none", fontFamily: T.font, width: "100%", padding: 0, marginBottom: 8 }, placeholder: "Note title\u2026" }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center" } }, /* @__PURE__ */ React.createElement(Badge, { color: colorOf(activeNote.tag) }, activeNote.tag), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.muted } }, activeNote.date), activeComments.length > 0 && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: T.blue, fontWeight: 600 } }, activeComments.length, " comment", activeComments.length !== 1 ? "s" : ""))), popover && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: popover.y, left: popover.x, transform: "translateX(-50%)", zIndex: 30, display: "flex", gap: 4, background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: "4px 6px", boxShadow: "0 8px 24px rgba(0,0,0,0.4)", whiteSpace: "nowrap" } }, /* @__PURE__ */ React.createElement("button", { onMouseDown: (e) => {
     e.preventDefault();
     setPendingSel(popover.selText);
     setPendingSelGlobal(false);
@@ -8764,12 +8769,18 @@ function FriendsChat({ onFriendRequestSent, onActiveChatChange, initialTarget, o
     if (!session || !myUid) return;
     showNetToast("Joining " + u.n + "'s session\u2026");
     const now = Date.now();
+    let joinFailed = false;
     await fsdb().collection("studySessions").doc(sessionId).update({
       ["participants." + myUid + ".state"]: "joined",
       ["participants." + myUid + ".joinedAt"]: now,
       updatedAt: (/* @__PURE__ */ new Date()).toISOString()
     }).catch(() => {
+      joinFailed = true;
     });
+    if (joinFailed) {
+      showNetToast("Couldn't join " + u.n + "'s session. Try again.");
+      return;
+    }
     if (window._setTimerTask) window._setTimerTask({
       id: "coop-" + sessionId,
       title: session.title,
@@ -10141,6 +10152,9 @@ function ChatDrawer({ open, target, myUid, onClose, onMakePermanent, onDeleteGro
           fsdb().collection("studySessions").doc(msg.studySessionId).update({ ["participants." + myUid + ".state"]: "accepted" }).catch(() => {
           });
         }
+      } else if (decision === "declined" && msg.studySessionId) {
+        fsdb().collection("studySessions").doc(msg.studySessionId).update({ ["participants." + myUid + ".state"]: "declined" }).catch(() => {
+        });
       }
       const nextResponses = { ...msg.responses || {}, [myUid]: decision };
       const allAccepted = memberUids.length > 0 && memberUids.every((uid) => nextResponses[uid] === "accepted");
@@ -14771,7 +14785,7 @@ function NewEventModal({ open, initialTitle, initialDate, initialStartTime, init
         );
       })());
     }));
-  })(), (editRoutine || repeat === "selected" || repeat === "weekly") && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "Type" }, /* @__PURE__ */ React.createElement(SelectChip, { options: [{ value: "class", label: "Class" }, { value: "busy", label: "Activity" }, { value: "free", label: "Free Period" }, { value: "habit", label: "Habit" }], value: evKind, onChange: setEvKind })), evKind === "class" && subjectOptions && /* @__PURE__ */ React.createElement(Field, { label: "Subject" }, /* @__PURE__ */ React.createElement(SelectChip, { options: subjectOptions, value: subject, onChange: setSubject })), editRoutine && evKind !== "class" && /* @__PURE__ */ React.createElement(Field, { label: "Color" }, /* @__PURE__ */ React.createElement(ColorSelect, { value: routineColor, onChange: setRoutineColor })))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, fontSize: 11, color: T.muted, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 5 } }, "Commute before:", /* @__PURE__ */ React.createElement(
+  })(), (editRoutine || repeat === "selected" || repeat === "weekly") && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "Type" }, /* @__PURE__ */ React.createElement(SelectChip, { options: [{ value: "class", label: "Class" }, { value: "busy", label: "Activity" }, { value: "free", label: "Free Period" }, { value: "habit", label: "Habit" }], value: evKind, onChange: setEvKind })), evKind === "class" && subjectOptions && /* @__PURE__ */ React.createElement(Field, { label: "Subject" }, /* @__PURE__ */ React.createElement(CustomSelect, { boxed: true, options: subjectOptions, value: subject, onChange: setSubject, minWidth: 220 })), editRoutine && evKind !== "class" && /* @__PURE__ */ React.createElement(Field, { label: "Color" }, /* @__PURE__ */ React.createElement(ColorSelect, { value: routineColor, onChange: setRoutineColor })))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, fontSize: 11, color: T.muted, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 5 } }, "Commute before:", /* @__PURE__ */ React.createElement(
     "input",
     {
       type: "number",
@@ -19955,8 +19969,12 @@ function App() {
         lsSet("events", lsGet("events", []).map((e) => e.id === task.id ? { ...e, isDiagnosticFirstPass: false } : e));
       }
       const materialText = examEvent ? (examEvent.sourceMaterials || []).filter((f) => f.text && f.text.trim()).map((f) => f.text).join("\n\n") : "";
-      if (task.isDiagnosticFirstPass && examEvent && materialText.trim() && canGenQuiz()) {
-        startDiagnosticQuiz(task, examEvent, materialText);
+      if (task.isDiagnosticFirstPass && examEvent && materialText.trim()) {
+        if (canGenQuiz()) {
+          startDiagnosticQuiz(task, examEvent, materialText);
+        } else {
+          setPricingOpen(canGenQuizReason() === "free-tier" ? "studyMaterialGen" : "aiUsageCap");
+        }
       } else {
         setExamCheckIn(task);
       }
@@ -19993,7 +20011,11 @@ function App() {
     const pending = lsGet("events", []).filter((e) => e.dueEventId === examEvent.id && e.isExamPrepSession && e.status === "pending" && !e.deckId && !e.practiceExamId).sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
     if (pending.length === 0) return;
     proposeSessionFocuses(examEvent.title, materialText, pending.length, examEvent.subject, wrongTopics.join(", ")).then((focuses) => {
-      if (!focuses) return;
+      if (!focuses) {
+        setDashToast("Couldn't update your remaining sessions with what you missed \u2014 they'll keep their original focus.");
+        setTimeout(() => setDashToast(""), 4200);
+        return;
+      }
       const ids = pending.map((s) => s.id);
       const patched = lsGet("events", []).map((e) => {
         const idx = ids.indexOf(e.id);
@@ -20586,12 +20608,20 @@ function App() {
   const joinLiveInvite = async () => {
     if (!liveInvite || !myUid) return;
     const now = Date.now();
+    let joinFailed = false;
     await fsdb().collection("studySessions").doc(liveInvite.id).update({
       ["participants." + myUid + ".state"]: "joined",
       ["participants." + myUid + ".joinedAt"]: now,
       updatedAt: (/* @__PURE__ */ new Date()).toISOString()
     }).catch(() => {
+      joinFailed = true;
     });
+    if (joinFailed) {
+      setLockInErrorToast("Couldn't join that session. Try again.");
+      setTimeout(() => setLockInErrorToast(""), 4500);
+      setLiveInvite(null);
+      return;
+    }
     setTimerTask({
       id: "coop-" + liveInvite.id,
       title: liveInvite.title,
@@ -21041,8 +21071,12 @@ function App() {
           }
           const examEvent = timerTask.dueEventId ? next.find((e) => e.id === timerTask.dueEventId) : null;
           const materialText = examEvent ? (examEvent.sourceMaterials || []).filter((f) => f.text && f.text.trim()).map((f) => f.text).join("\n\n") : "";
-          if (timerTask.isDiagnosticFirstPass && examEvent && materialText.trim() && canGenQuiz()) {
-            startDiagnosticQuiz(timerTask, examEvent, materialText);
+          if (timerTask.isDiagnosticFirstPass && examEvent && materialText.trim()) {
+            if (canGenQuiz()) {
+              startDiagnosticQuiz(timerTask, examEvent, materialText);
+            } else {
+              setPricingOpen(canGenQuizReason() === "free-tier" ? "studyMaterialGen" : "aiUsageCap");
+            }
           } else {
             setExamCheckIn(timerTask);
           }

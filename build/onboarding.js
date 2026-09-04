@@ -132,13 +132,16 @@ function StepSignup({ state, set, advance }) {
     if (!state.terms) errs.terms = "You need to accept the Terms of Service and Privacy Policy to continue.";
     return errs;
   };
+  const scrollTermsIntoView = () => {
+    const stageEl = document.querySelector(".stage");
+    if (stageEl) stageEl.scrollTo({ top: stageEl.scrollHeight, behavior: "smooth" });
+    else window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+  };
   const googleSign = () => {
     const idErrs = checkIdentityFields();
     if (Object.keys(idErrs).length > 0) {
       setErrors(idErrs);
-      const stageEl = document.querySelector(".stage");
-      if (stageEl) stageEl.scrollTo({ top: stageEl.scrollHeight, behavior: "smooth" });
-      else window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+      scrollTermsIntoView();
       return;
     }
     setErrors({});
@@ -194,7 +197,10 @@ function StepSignup({ state, set, advance }) {
     else if (isDisposableEmail(state.email)) errs.email = "Please use a permanent email address, not a temporary one";
     if (!allOk) errs.password = "Password must be at least 8 characters";
     setErrors(errs);
-    if (Object.keys(errs).length > 0) return;
+    if (Object.keys(errs).length > 0) {
+      if (errs.terms) scrollTermsIntoView();
+      return;
+    }
     setAuthError("");
     setLoading(true);
     if (await isPasswordPwned(state.password)) {
