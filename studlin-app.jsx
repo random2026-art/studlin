@@ -3834,6 +3834,22 @@ function reconcileToastSuffix(result){
 // indistinguishable from an actual noon event) instead of surfacing the
 // problem, so bail out to the raw string when the hour is out of [0,24).
 function fmtClock12(t){if(!t)return"";const p=t.split(":");let h=+p[0];if(!(h>=0&&h<24))return t;const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+ap;}
+// Was CalendarTab-local (part of the Google Calendar-inspired polish pass)
+// -- promoted to module scope 2026-09-04 so Dashboard's Today's Plan can
+// share the exact same "1PM - 1:45PM" formatting instead of duplicating
+// it, rather than showing just a bare start time with no sense of how
+// long anything actually takes.
+function fmtTimeRange(startTime,durationMins){
+  if(!startTime)return "—";
+  const startMin=timeToMinutes(startTime);
+  const endMin=Math.min(1439,startMin+(durationMins||0));
+  const part=(mins,includeSuffix)=>{
+    let h=Math.floor(mins/60);const m=mins%60;const ap=h>=12?"PM":"AM";h=h%12||12;
+    return h+(m!==0?":"+String(m).padStart(2,"0"):"")+(includeSuffix?" "+ap:"");
+  };
+  const sameSuffix=(startMin>=12*60)===(endMin>=12*60);
+  return part(startMin,!sameSuffix)+" - "+part(endMin,true);
+}
 function fmtMovedFrom(mf){if(!mf)return"";const dk=mf.date===dayKey()?"today":mf.date;return dk+" "+fmtClock12(mf.time);}
 // Copy for a findReliableSlotFor `.reason` — includes the difficulty tier
 // word once Direction 4's tiering is live, since the same bucket can now
@@ -26071,17 +26087,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // shows "4 - 5 PM", not "4:00 - 5:00 PM") the same way Shovel's own
   // calendar does. Shares one AM/PM suffix when both ends fall in the
   // same half of the day; shows both when a block crosses noon/midnight.
-  const fmtTimeRange=(startTime,durationMins)=>{
-    if(!startTime)return "—";
-    const startMin=timeToMinutes(startTime);
-    const endMin=Math.min(1439,startMin+(durationMins||0));
-    const part=(mins,includeSuffix)=>{
-      let h=Math.floor(mins/60);const m=mins%60;const ap=h>=12?"PM":"AM";h=h%12||12;
-      return h+(m!==0?":"+String(m).padStart(2,"0"):"")+(includeSuffix?" "+ap:"");
-    };
-    const sameSuffix=(startMin>=12*60)===(endMin>=12*60);
-    return part(startMin,!sameSuffix)+" - "+part(endMin,true);
-  };
+  // Promoted to module scope 2026-09-04 (see its own comment there) --
+  // this local const removed, callers below now resolve the shared one.
   const niceDate=(k)=>{const p=k.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});};
   // Computed straight from `events`/routines for `selDay` (rather than the
   // month-grid-scoped `byDay`) so this stays correct even when `selDay`
@@ -31875,7 +31882,11 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                       <span style={{fontSize:13.5,color:T.text,fontWeight:500}}>{t.title}</span>
                       <div style={{fontSize:11,color:T.muted,marginTop:1}}>{t.subject}{t.subject?" · ":""}{t.kind==="class"?"Class":"Recurring"}</div>
                     </div>
-                    <span style={{fontFamily:T.mono,fontSize:10,color:T.faint}}>{fmtClock(t.time)}</span>
+                    {/* End time, not just start (2026-09-04) -- a class
+                        block always has a real duration, so the range
+                        reads faster than making a student do the mental
+                        math themselves. */}
+                    <span style={{fontFamily:T.mono,fontSize:10,color:T.faint}}>{t.duration>0?fmtTimeRange(t.time,t.duration):fmtClock(t.time)}</span>
                   </div>
                 );
               }
@@ -31913,7 +31924,11 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                         Reschedule on, it's the real deadline). */}
                     <div style={{fontSize:11,color:t.kind==="deadline"?T.amber:T.muted,marginTop:1}}>{t.subject}{t.kind==="deadline"?" · Due":t.kind==="study block"?(t.isGeneralTask?" · Your task":" · Your study session"):t.kind?" · "+t.kind:""}</div>
                   </div>
-                  <span style={{fontFamily:T.mono,fontSize:10,color:T.faint}}>{fmtClock(t.time)}</span>
+                  {/* End time, not just start (2026-09-04) -- a bare due
+                      date/no-duration item (t.duration falsy/0) still just
+                      shows its single time, a range would be meaningless
+                      ("5 - 5 PM"). */}
+                  <span style={{fontFamily:T.mono,fontSize:10,color:T.faint}}>{t.duration>0?fmtTimeRange(t.time,t.duration):fmtClock(t.time)}</span>
                   {!t.done&&isTimerEligible(t)&&(
                     <button onClick={(e)=>{e.stopPropagation();if(window._setTimerTask)window._setTimerTask(t.isChunk?{...t,duration:t.fullDuration}:t);}} style={{flexShrink:0,padding:"3px 9px",borderRadius:6,border:`1px solid ${T.lime}`,background:T.lime,color:T.ink,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Begin</button>
                   )}
@@ -34827,7 +34842,16 @@ function App() {
           the raw 1-5 integer -- see confidenceUnitOf/confidenceZoneOf for
           how every downstream reader (priority, readiness, plateau
           detection) treats it identically to the old strings. */}
-      <Modal open={!!examCheckIn} onClose={()=>setExamCheckIn(null)} title="How do you feel about the exam so far?" width={380}>
+      {/* Bug fix, 2026-09-04: this fires for every completed flexible study
+          block (see handleTaskCompleted), not just ones actually linked to
+          an exam -- a plain generic study session (no dueEventId) was
+          still getting "How do you feel about the exam so far?", which
+          makes no sense when there's no exam behind it. Copy only, not the
+          trigger condition itself -- the rating still feeds
+          applyCheckInRating's completionLog signal for every flexible
+          study block regardless of exam link, same as before; this just
+          stops it from falsely referencing "the exam" when there isn't one. */}
+      <Modal open={!!examCheckIn} onClose={()=>setExamCheckIn(null)} title={examCheckIn&&examCheckIn.dueEventId?"How do you feel about the exam so far?":"How did that session go?"} width={380}>
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
           {EXAM_CHECKIN_SCALE.map(opt=>(
             <Btn key={opt.value} variant="ghost" onClick={()=>submitExamCheckIn(opt.value)} style={{width:"100%",justifyContent:"center"}}>{opt.label}</Btn>
