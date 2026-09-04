@@ -73,6 +73,22 @@ const lightT = {
 };
 const T = {...darkT}; // mutable · applyTheme() swaps in place so all components re-read on render
 const hexA=(hex,a)=>{const h=hex.replace('#','');const r=parseInt(h.slice(0,2),16),g=parseInt(h.slice(2,4),16),b=parseInt(h.slice(4,6),16);return `rgba(${r},${g},${b},${a})`;};
+// Flattens a semi-transparent color against a real solid background into
+// one equivalent SOLID hex, instead of leaving it as an actual rgba/alpha
+// overlay. Same perceived color as hexA(hex,a) sitting on top of bgHex,
+// but opaque -- nothing underneath can show through anymore. Built for
+// the calendar-grid complaint (2026-09-04): class/activity blocks used a
+// low-alpha tint (subjectColor+"1E") directly over the grid's hour lines,
+// so the lines visibly bled through the "color." Keeps the exact same
+// tint students already see; it just stops being literally see-through.
+const blendOverBg=(hex,alpha,bgHex)=>{
+  const h=hex.replace('#',''),bg=bgHex.replace('#','');
+  const r1=parseInt(h.slice(0,2),16),g1=parseInt(h.slice(2,4),16),b1=parseInt(h.slice(4,6),16);
+  const r2=parseInt(bg.slice(0,2),16),g2=parseInt(bg.slice(2,4),16),b2=parseInt(bg.slice(4,6),16);
+  const mix=(a,b)=>Math.round(a*alpha+b*(1-alpha));
+  const toHex=n=>n.toString(16).padStart(2,'0');
+  return '#'+toHex(mix(r1,r2))+toHex(mix(g1,g2))+toHex(mix(b1,b2));
+};
 // accent palettes — override the lime family per user choice
 const ACCENTS={
   Lime:  {dk:{lime:"#AECE5E",limeDk:"#8BAE3C",limeLt:"#CBDF92"}, lt:{lime:"#6E9C35",limeDk:"#57802A",limeLt:"#DCE9C0"}},
@@ -2156,6 +2172,19 @@ function expandRoutineOccurrences(routines,startDateKey,endDateKey){
         // calendar, only for one-off events built via buildTask.
         commuteBefore:r.commuteBefore||0,
         commuteAfter:r.commuteAfter||0,
+        // Same class of bug as commuteBefore/commuteAfter above, same
+        // root cause, just never caught for this field: NewEventModal's
+        // editRoutine mode already saves `location` correctly onto the
+        // rule (see saveRoutineEditFromModal), but this function is what
+        // actually builds the object WeeklyPlanner/DayPlanner render on
+        // the calendar, and it never copied that field over -- so a
+        // location set on any REPEATING class/activity silently never
+        // showed on its block, even though a one-off event's location
+        // (built directly via buildTask, no expansion step) always
+        // worked. User report, 2026-09-04: "once i add location its
+        // supposed to have that location on the block... but it doesn't
+        // work" -- reproduced exactly on a recurring class.
+        location:r.location||"",
       });
     });
   }
@@ -20042,11 +20071,21 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   // blocks and exams/deadlines keep their own deliberate
                   // kind-based treatment untouched -- those need to read as
                   // "focus time" / "urgent" regardless of which subject.
+                  // Bug fix, 2026-09-04 user report: both tints below used
+                  // to be real alpha transparency (subjectColor+"1E",
+                  // tokens.color.warningSubtle at 12% opacity) sitting
+                  // directly over this grid's own hour-line borders --
+                  // "somewhat transparent so you can see the lines...
+                  // behind them." blendOverBg keeps the identical
+                  // perceived color (same hue, same apparent softness)
+                  // but flattens it to one solid hex against this Card's
+                  // real background (T.card), so the lines underneath can
+                  // no longer show through at all.
                   const kindStyle = isStudy
                     ? {background:tokens.color.accent,color:T.ink}
                     : isWarningKind
-                      ? {background:tokens.color.warningSubtle,border:`1px solid ${tokens.color.warning}`,color:tokens.color.warning}
-                      : {background:subjectColor+"1E",color:subjectColor};
+                      ? {background:blendOverBg(T.amber,0.12,T.card),border:`1px solid ${tokens.color.warning}`,color:tokens.color.warning}
+                      : {background:blendOverBg(subjectColor,0.1176,T.card),color:subjectColor};
                   const dimmedByRoutineMode = editRoutineMode && !isRoutine;
                   const highlightedByRoutineMode = editRoutineMode && isRoutine;
                   // Schedule with Friends / Find Shared Study Window: a
@@ -22639,11 +22678,17 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
               const color=ev.color||colorOf(ev.courseId||ev.subject);
               const isStudy=ev.kind==="study block";
               const isExam=ev.kind==="exam";
+              // Bug fix, 2026-09-04 user report: this else-branch background
+              // used to be real alpha transparency (color+"1E") directly
+              // over this grid's own hour-line borders -- see WeeklyPlanner's
+              // matching fix/comment. Same blendOverBg treatment: identical
+              // perceived tint, but flattened to one solid hex so the lines
+              // underneath stop showing through.
               const kindStyle=isStudy
                 ?{background:color,borderLeft:"none",color:T.ink}
                 :isExam
                   ?{background:T.ink,border:`2px solid ${color}`,borderLeft:`2px solid ${color}`,boxShadow:`0 0 10px -1px ${color}, inset 0 0 10px ${color}22`,color:T.cream}
-                  :{background:color+"1E",borderLeft:`3px solid ${color}`,color};
+                  :{background:blendOverBg(color,0.1176,T.card),borderLeft:`3px solid ${color}`,color};
               const leftPct=(displayCol/displayTotalCols)*100;
               const widthPct=100/displayTotalCols;
               // Same "just added/imported" marker as WeeklyPlanner's own

@@ -204,7 +204,7 @@ function loadStudlinModule(options) {
     "getAiMemory","saveAiMemory","mergeAiMemoryFacts","removeAiMemoryFact","AI_MEMORY_FACT_CAP",
     "currentClockLabel","formatAiMemoryForPrompt",
     "buildImportSyllabusItemsProposal","extractSyllabusItemsFromChatText",
-    "getRoutineOccurrenceNote","saveRoutineOccurrenceNote"];
+    "getRoutineOccurrenceNote","saveRoutineOccurrenceNote","blendOverBg"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }
