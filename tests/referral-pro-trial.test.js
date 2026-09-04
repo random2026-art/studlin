@@ -200,7 +200,10 @@ describe("Growth banner copy: real days-of-trial framing, not the old unbacked c
     assert.doesNotMatch(APP_SOURCE, /bonus AI scheduling credits/);
   });
   test("both banners state the real, shared REFERRAL_TRIAL_DAYS constant, not a hardcoded number that could drift from the real grant", () => {
-    const matches = APP_SOURCE.match(/\{REFERRAL_TRIAL_DAYS\} days of Pro-Limited/g) || [];
+    // Bug fix, 2026-09-04 audit: "Pro-Limited" (the internal plan enum)
+    // was leaking verbatim into this copy -- both banners now route the
+    // display text through planDisplayName() instead of the raw literal.
+    const matches = APP_SOURCE.match(/\{REFERRAL_TRIAL_DAYS\} days of \{planDisplayName\("Pro-Limited"\)\}/g) || [];
     assert.equal(matches.length, 2, "expected both the Network-tab banner and the invite modal to reference the same constant");
   });
 });

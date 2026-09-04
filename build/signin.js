@@ -106,6 +106,7 @@ function App() {
         try {
           const credential = firebase.auth.GoogleAuthProvider.credential(null, tokenResponse.access_token);
           suppressAuthRedirect.current = true;
+          await firebase.auth().setPersistence(remember ? firebase.auth.Auth.Persistence.LOCAL : firebase.auth.Auth.Persistence.SESSION);
           const result = await firebase.auth().signInWithCredential(credential);
           if (result.additionalUserInfo && result.additionalUserInfo.isNewUser) {
             window.location.href = "/onboarding";
@@ -136,6 +137,7 @@ function App() {
     setGlobalError("");
     setLoading(true);
     try {
+      await firebase.auth().setPersistence(remember ? firebase.auth.Auth.Persistence.LOCAL : firebase.auth.Auth.Persistence.SESSION);
       await firebase.auth().signInWithEmailAndPassword(email, password);
       window.location.href = APP_URL;
     } catch (err) {

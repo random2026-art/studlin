@@ -521,7 +521,7 @@ const PRICING_PLANS=(billing)=>([
   {
     key:"pro",name:"Pro",price:billing==="annual"?"$4.99":"$6.99",per:billing==="annual"?"/mo · billed yearly":"/mo",tag:null,
     desc:"Every AI feature Studlin has.",
-    features:["Add Task with AI: Studlin schedules it for you","AI study plans, flashcards, practice exams, syllabus & schedule scans, brain dump & project breakdowns","Smart Reschedule","All AI models: Flash, Standard & Research"],
+    features:["Add Task with AI: Studlin schedules it for you","AI study plans, flashcards, practice exams, syllabus & schedule scans, brain dump & project breakdowns","Smart Reschedule","AI chat, whenever you need it"],
     cta:"Upgrade to Pro",variant:"lime",featured:true,
   },
 ]);
@@ -5372,6 +5372,11 @@ async function upsertProfile(extra={}){
     // profiles/{userId} write rule is a plain owner-check with no field
     // allowlist, so this needs no firestore.rules change.
     incognito:isIncognitoOn(),
+    // Bug fix, 2026-09-04 audit: "Show Online Status" had the exact same
+    // gap Incognito had before the fix above -- isOnlineStatusOn() only
+    // ever read local settings, so turning it off had zero effect on what
+    // any friend actually saw. Same channel, same fix.
+    onlineStatus:isOnlineStatusOn(),
     updatedAt:new Date().toISOString(),
   };
   try{await fsdb().collection('profiles').doc(u.uid).set(data,{merge:true});}catch(e){}
@@ -6511,6 +6516,13 @@ const hasProAccess=()=>{const p=getPlan();return p==="Pro"||p==="Pro-Limited";};
 // being a genuinely usable, non-zero taste of every feature.
 const effectiveProLimit=(fullLimit)=>isReferralTrial()?Math.max(2,Math.round(fullLimit/20)):fullLimit;
 function getCreditLimit(){const p=getPlan();if(p==="Pro")return 100000;if(p==="Pro-Limited")return 300;return 120;}
+// Bug fix, 2026-09-04 audit: "Pro-Limited" is the internal plan enum for
+// the referral trial (see isReferralTrial above) -- it was leaking
+// verbatim into referral-invite copy and the Settings plan-name header,
+// reading like a downgrade or an error rather than the perk it actually
+// is. Display-only; every plan===/getPlan()==="Pro-Limited" comparison
+// elsewhere is unaffected.
+function planDisplayName(p){return p==="Pro-Limited"?"Referral Trial":p;}
 function getCredits(){return lsGet("credits",getCreditLimit());}
 function setCreditsLS(n){lsSet("credits",Math.max(0,n));}
 const CREDIT_COST={standard:1,flash:1};
@@ -7643,6 +7655,23 @@ function describeCreateProposal(task){
   if(!task)return"Add task";
   const when=task.time?(task.date+" "+task.time+(task.duration?" ("+task.duration+" min)":"")):(task.date?"due "+task.date:"no date yet");
   return"Add \""+task.title+"\" -- "+when+"?";
+}
+// Bug fix, 2026-09-04 audit: every proposal.label above is phrased as a
+// pre-confirm question ("Delete \"X\" from date?", "Add \"Y\" -- when?")
+// -- confirmProposal used to reuse it verbatim in the post-confirm "Done."
+// message, so the chat literally said e.g. "Done. Delete "Chem Notes"
+// from 2026-09-08?" even though the action had already finished. Strips
+// the trailing "?" and turns the leading imperative into a completed one.
+function pastTenseProposalLabel(label){
+  if(!label)return label;
+  let s=label.replace(/\?$/,"");
+  if(s.indexOf("Add ")===0)s="Added "+s.slice(4);
+  else if(s.indexOf("Delete ")===0)s="Deleted "+s.slice(7);
+  else if(s.indexOf("Move ")===0)s="Moved "+s.slice(5);
+  else if(s.indexOf("Retime ")===0)s="Retimed "+s.slice(7);
+  // "Set your peak focus hours to X" already reads correctly as a
+  // completed action unchanged -- "set" is its own past tense.
+  return s;
 }
 // Turns a batch of built tasks (from planBrainDumpTasks, exam branch)
 // into a plain-English summary of the real spaced study-session plan --
@@ -11924,6 +11953,11 @@ function Flashcards({setActive=()=>{}}={}) {
   const [cA,setCA]=useState("");
   const [draft,setDraft]=useState([]);
   const colorMap={Biology:T.teal,"English IV":T.purple,Calculus:T.blue,Spanish:T.amber,Chemistry:T.red};
+  // Bug fix, 2026-09-04 audit: this "x" used to delete the deck immediately
+  // on click, no confirm, no undo -- a real CLAUDE.md violation ("anything
+  // that deletes user data... requires a confirm modal first") and an easy
+  // misclick target sitting right on the card corner.
+  const [deleteDeckConfirmId,setDeleteDeckConfirmId]=useState(null);
 
   // One-shot deep-link flag (matches the pendingTour/pendingRoutineCenter
   // pattern used elsewhere) -- originally kept as reusable infrastructure
@@ -12409,8 +12443,24 @@ function Flashcards({setActive=()=>{}}={}) {
           </div>
           <div style={{display:"flex",gap:8,marginTop:14,justifyContent:"center"}}>
             {flipped
+              // Bug fix, 2026-09-04 audit: these four buttons all shared the
+              // exact same onClick -- none of them ever recorded anything,
+              // so deck.done (the field the deck-list progress %, "done"
+              // badge, and Dashboard's cardsMasteredTotal stat all read)
+              // stayed 0 forever regardless of how a student graded recall.
+              // "Missed"/"Hard" don't count as a completed review; "Good"/
+              // "Mastered" do -- matches the copy each button already shows.
               ?[["Missed",T.red],["Hard",T.amber],["Good",T.teal],["Mastered",T.lime]].map(([l,c])=>(
-                  <button key={l} onClick={()=>{setFlipped(false);setIdx(i=>(i+1)%studyCards.length);}} style={{flex:1,padding:"9px 0",borderRadius:7,background:c+"14",color:c,border:"1px solid "+c+"33",cursor:"pointer",fontSize:12,fontWeight:600,fontFamily:T.font}}>{l}</button>
+                  <button key={l} onClick={()=>{
+                    if(l==="Good"||l==="Mastered"){
+                      setDeckList(list=>{
+                        const next=list.map(d=>d.id===studyDeck.id?{...d,done:Math.min(d.cards?d.cards.length:d.count,(d.done||0)+1)}:d);
+                        lsSet("decks",next);
+                        return next;
+                      });
+                    }
+                    setFlipped(false);setIdx(i=>(i+1)%studyCards.length);
+                  }} style={{flex:1,padding:"9px 0",borderRadius:7,background:c+"14",color:c,border:"1px solid "+c+"33",cursor:"pointer",fontSize:12,fontWeight:600,fontFamily:T.font}}>{l}</button>
                 ))
               :<><Btn variant="ghost" onClick={()=>{setFlipped(false);setIdx(i=>Math.max(0,i-1));}}>Prev</Btn><Btn onClick={()=>setFlipped(true)}>Reveal answer</Btn><Btn variant="ghost" onClick={()=>{setFlipped(false);setIdx(i=>(i+1)%studyCards.length);}}>Next</Btn></>
             }
@@ -12424,7 +12474,7 @@ function Flashcards({setActive=()=>{}}={}) {
           {(()=>{
             const renderDeckCard=(d,i)=>(
               <Card key={d.id||i} style={{cursor:"pointer",position:"relative"}}>
-                <button onClick={(e)=>{e.stopPropagation();deleteDeck(d.id);}} style={{position:"absolute",top:12,right:12,background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14}}>x</button>
+                <button onClick={(e)=>{e.stopPropagation();setDeleteDeckConfirmId(d.id);}} style={{position:"absolute",top:12,right:12,background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14}}>x</button>
                 <div onDoubleClick={(e)=>{e.stopPropagation();openEditDeck(d);}} title="Double-click to edit" style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:4}}>{d.name}</div>
                 <div style={{fontSize:11,color:T.muted,marginBottom:10}}>{d.cards?d.cards.length:d.count} cards{d.source==="imported"&&<span style={{color:T.teal,fontWeight:600}}> · from {d.importedFrom}</span>}</div>
                 {(()=>{
@@ -12462,6 +12512,12 @@ function Flashcards({setActive=()=>{}}={}) {
         </div>
       )}
       <UpgradeModal open={!!upgradeModal} feature={upgradeModal?upgradeModal.feature:""} detail={upgradeModal?upgradeModal.detail:""} onClose={()=>setUpgradeModal(null)} onUpgraded={()=>setUpgradeModal(null)} />
+      <Modal open={!!deleteDeckConfirmId} onClose={()=>setDeleteDeckConfirmId(null)} title="Delete this deck?" width={400}
+        footer={<><Btn variant="subtle" onClick={()=>setDeleteDeckConfirmId(null)}>Cancel</Btn><Btn variant="danger" onClick={()=>{deleteDeck(deleteDeckConfirmId);setDeleteDeckConfirmId(null);}}>Delete</Btn></>}>
+        {(()=>{const d=deckList.find(x=>x.id===deleteDeckConfirmId);return d?(
+          <div style={{fontSize:13,color:T.text}}>This deletes <strong>{d.name}</strong> ({d.cards?d.cards.length:d.count} cards) and any scheduled review sessions linked to it. This can't be undone.</div>
+        ):null;})()}
+      </Modal>
     </div>
   );
 }
@@ -12861,17 +12917,16 @@ function Notes({setActive=()=>{}}){
       lsSet("events",events.filter(e=>e.noteId!==note.id));
     }
   };
-  // Deleting a note is normally instant (no confirm) — but a note that
-  // generated real calendar deadlines (via the Syllabus source) is the one
-  // case where deletion has calendar-visible consequences, so that case
-  // alone gets a confirm modal, checkbox defaulting unchecked: an orphaned
-  // harmless noteId on a surviving event beats silently vaporizing a
-  // student's real deadlines.
+  // Bug fix, 2026-09-04 audit: a note with no linked calendar deadlines
+  // used to delete instantly, no confirm at all -- a real CLAUDE.md
+  // violation for what's usually the common case (most notes have no
+  // linked events). Now always routes through the same confirm modal;
+  // the modal itself only shows the "also delete linked events" checkbox
+  // when there's actually something linked to ask about.
   const deleteNote=(idx)=>{
     const note=notes[idx];
     const linked=lsGet("events",[]).filter(e=>e.noteId===note.id);
-    if(linked.length>0){setDeleteNoteConfirm({idx,linked});return;}
-    doDeleteNote(idx,false);
+    setDeleteNoteConfirm({idx,linked});
   };
   const exportNote=(n)=>{const t=document.createElement("div");t.innerHTML=n.body;navigator.clipboard&&navigator.clipboard.writeText(n.title+"\n\n"+(t.textContent||t.innerText));};
   const sendNote=async()=>{
@@ -13220,7 +13275,7 @@ function Notes({setActive=()=>{}}){
       </Modal>
 
       {/* ── DELETE NOTE CONFIRMATION — only shown when the note has linked calendar deadlines ── */}
-      <Modal open={!!deleteNoteConfirm} onClose={()=>setDeleteNoteConfirm(null)} title="Delete this note?" sub={deleteNoteConfirm?"This note created "+deleteNoteConfirm.linked.length+" calendar deadline"+(deleteNoteConfirm.linked.length!==1?"s":"")+".":""} width={460}
+      <Modal open={!!deleteNoteConfirm} onClose={()=>setDeleteNoteConfirm(null)} title="Delete this note?" sub={deleteNoteConfirm&&deleteNoteConfirm.linked.length>0?"This note created "+deleteNoteConfirm.linked.length+" calendar deadline"+(deleteNoteConfirm.linked.length!==1?"s":"")+".":"This can't be undone."} width={460}
         footer={<>
           <Btn variant="subtle" onClick={()=>setDeleteNoteConfirm(null)}>Cancel</Btn>
           <Btn variant="danger" onClick={()=>{
@@ -13229,11 +13284,13 @@ function Notes({setActive=()=>{}}){
             setDeleteNoteConfirm(null);
           }}>Delete note</Btn>
         </>}>
-        <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:T.text,cursor:"pointer"}}>
-          <input id="also-delete-linked-events" type="checkbox" defaultChecked={false} />
-          Also delete the linked calendar events
-        </label>
-        <div style={{fontSize:11.5,color:T.muted,marginTop:8,lineHeight:1.5}}>Leave this unchecked to keep those deadlines on your calendar even after the note is gone.</div>
+        {deleteNoteConfirm&&deleteNoteConfirm.linked.length>0&&(<>
+          <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:T.text,cursor:"pointer"}}>
+            <input id="also-delete-linked-events" type="checkbox" defaultChecked={false} />
+            Also delete the linked calendar events
+          </label>
+          <div style={{fontSize:11.5,color:T.muted,marginTop:8,lineHeight:1.5}}>Leave this unchecked to keep those deadlines on your calendar even after the note is gone.</div>
+        </>)}
       </Modal>
 
       {/* ── SYLLABUS COMMIT TOAST — success confirmation only ── */}
@@ -13647,6 +13704,10 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
     // param needs to actually suppress a friend's live-session reveal --
     // upsertProfile now writes it, this is the read side.
     incognito:!!(d&&d.incognito),
+    // Bug fix, 2026-09-04 audit: read side for onlineStatus, same shape as
+    // incognito above. Defaults true (visible) to match isOnlineStatusOn's
+    // own local default when a friend's profile predates this field.
+    onlineStatus:d?d.onlineStatus!==false:true,
   });
 
   // ── Classmates at my school — real, auto-populated, replaces the old
@@ -14097,7 +14158,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
                 // all, so presenceInfo's own suppression branch (line ~13505)
                 // was dead -- a friend's "Locking In: X -- tap to join"
                 // reveal showed regardless of their Incognito setting.
-                const pr=presenceInfo(u,{incognito:!!u.incognito,liveSession:liveSessionFor(u.uid)});
+                const pr=presenceInfo(u,{incognito:!!u.incognito||u.onlineStatus===false,liveSession:liveSessionFor(u.uid)});
                 const revealed=joinRevealFor===u.h;
                 return (
                   <div key={row.key} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<inboxShown.length-1?`1px solid ${T.border}`:"none"}}>
@@ -14183,7 +14244,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
       <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderRadius:10,background:T.lime+"0C",border:`1px solid ${T.lime}22`,marginBottom:24}}>
         <div style={{width:28,height:28,borderRadius:8,background:T.lime+"1A",border:`1px solid ${T.lime}30`,display:"flex",alignItems:"center",justifyContent:"center",color:T.lime,flexShrink:0}}>{Icon.zap}</div>
         <div style={{flex:1,fontSize:12.5,color:T.muted,lineHeight:1.5}}>
-          <span style={{color:T.text,fontWeight:600}}>Invite classmates to unlock collective scheduling.</span>{" "}For every friend who joins, you <strong style={{color:T.lime}}>both</strong> get <span style={{color:T.lime,fontWeight:600}}>{REFERRAL_TRIAL_DAYS} days of Pro-Limited</span>, free.
+          <span style={{color:T.text,fontWeight:600}}>Invite classmates to unlock collective scheduling.</span>{" "}For every friend who joins, you <strong style={{color:T.lime}}>both</strong> get <span style={{color:T.lime,fontWeight:600}}>{REFERRAL_TRIAL_DAYS} days of {planDisplayName("Pro-Limited")}</span>, free.
         </div>
         <button onClick={()=>setInviteOpen(true)} style={{flexShrink:0,padding:"7px 16px",borderRadius:7,background:T.lime,color:T.ink,border:"none",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:T.font,whiteSpace:"nowrap"}}>
           Invite friends
@@ -14267,7 +14328,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
               </button>
             </div>
             <div style={{padding:"10px 14px",background:T.lime+"0A",border:`1px solid ${T.lime}22`,borderRadius:8,fontSize:12,color:T.text,marginBottom:20,lineHeight:1.6}}>
-              For every friend who joins via your link, you <strong style={{color:T.lime}}>both</strong> unlock <strong style={{color:T.lime}}>{REFERRAL_TRIAL_DAYS} days of Pro-Limited</strong>, free.
+              For every friend who joins via your link, you <strong style={{color:T.lime}}>both</strong> unlock <strong style={{color:T.lime}}>{REFERRAL_TRIAL_DAYS} days of {planDisplayName("Pro-Limited")}</strong>, free.
             </div>
             <div style={{display:"flex",gap:10}}>
               <Btn onClick={()=>setInviteOpen(false)} variant="subtle" style={{flex:1,justifyContent:"center"}}>Close</Btn>
@@ -16094,6 +16155,12 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
   const [syncRunning,setSyncRunning]=useState(false);
   const [settingsOpen,setSettingsOpen]=useState(false);
   const [unfriendConfirmOpen,setUnfriendConfirmOpen]=useState(false);
+  // Bug fix, 2026-09-04 audit: "Delete group" fired immediately on click,
+  // no confirm -- inconsistent with "Remove friend" right below it in the
+  // same settings modal (which already gets unfriendConfirmOpen), and
+  // higher-stakes than unfriending since it deletes shared chat history
+  // for every member, not just this user's relationship.
+  const [deleteGroupConfirmOpen,setDeleteGroupConfirmOpen]=useState(false);
   const [findWindowOpen,setFindWindowOpen]=useState(false);
   // Set when "Suggest another time" is clicked on a declined proposal —
   // the next submitFindWindow posts referencing this id instead of a
@@ -16488,8 +16555,17 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
                 </>)
               :<div style={{fontSize:12.5,color:T.muted,marginBottom:10}}>This is a standard ongoing group. It will never auto-archive.</div>
             }
-            {target.group.createdBy===myUid&&<Btn variant="danger" onClick={()=>{setSettingsOpen(false);onDeleteGroup(target.group.id);}} style={{width:"100%",justifyContent:"center"}}>{Icon.xmark} Delete group</Btn>}
+            {target.group.createdBy===myUid&&<Btn variant="danger" onClick={()=>{setSettingsOpen(false);setDeleteGroupConfirmOpen(true);}} style={{width:"100%",justifyContent:"center"}}>{Icon.xmark} Delete group</Btn>}
           </div>
+        </Modal>
+      )}
+
+      {target&&isGroup&&(
+        <Modal open={deleteGroupConfirmOpen} onClose={()=>setDeleteGroupConfirmOpen(false)} title={"Delete "+(target.group.name||"this group")+"?"} sub="This deletes the group and its chat history for every member. This can't be undone." width={400}
+          footer={<>
+            <Btn variant="subtle" onClick={()=>setDeleteGroupConfirmOpen(false)}>Cancel</Btn>
+            <Btn variant="danger" onClick={()=>{setDeleteGroupConfirmOpen(false);onClose();onDeleteGroup(target.group.id);}}>{Icon.xmark} Delete group</Btn>
+          </>}>
         </Modal>
       )}
 
@@ -16860,7 +16936,7 @@ async function classifyStudlinAiMessage(text,history){
     "\"update my peak hours\" (no specific time of day named at all) -> {\"kind\":\"unsupported\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"clarify\":\"Which time of day -- morning, midday, afternoon, or evening?\"}\n"+
     "\"add a task to finish my essay. When is that due? next Friday\" (a combined follow-up, same student message thread) -> {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"Finish essay\",\"dueDate\":\"<the real date of next Friday>\",\"dueTime\":null,\"durationMin\":null,\"taskKind\":\"study\",\"genFormat\":null,\"peakHours\":null,\"clarify\":null}\n"+
     "\"can you move my project\" (no destination day given at all, not even \"sometime\") -> {\"kind\":\"unsupported\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"clarify\":\"What day would you like it moved to?\"}\n"+
-    "\"Here's my notes: Mitochondria are the powerhouse of the cell -- they produce ATP through cellular respiration, using oxygen to break down glucose into usable energy. Can you make flashcards from this?\" (real pasted content, clearly asking for cards) -> {\"kind\":\"action\",\"intent\":\"generate_study_material\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":\"flashcards\",\"genFormat\":null,\"peakHours\":null,\"clarify\":null}\n"+
+    "\"Here's my notes: Mitochondria are the powerhouse of the cell -- they produce ATP through cellular respiration, using oxygen to break down glucose into usable energy. Can you make flashcards from this?\" (real pasted content, clearly asking for cards) -> {\"kind\":\"action\",\"intent\":\"generate_study_material\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":\"flashcards\",\"peakHours\":null,\"clarify\":null}\n"+
     "\"quiz me on chapter 3\" (no real material actually pasted, just a bare request) -> {\"kind\":\"coaching\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"clarify\":null}";
   // authFetch/res.json() failures (real network/connectivity problems)
   // are left to throw out of this function -- the caller (StudlinAiDrawer.
@@ -16872,6 +16948,16 @@ async function classifyStudlinAiMessage(text,history){
   // actively misleading (nothing was actually unreachable).
   const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[...(history||[]),{r:"user",t:prompt}],model:"flash",format:"studlin_ai_intent"})});
   const data=await res.json();
+  // Bug fix, 2026-09-04 audit: a non-2xx response (rate limit, server
+  // error, moderation block) still parses as JSON here -- just with no
+  // `reply` field -- so this used to fall through to the catch below and
+  // silently return "unsupported", which send() then renders as "I can
+  // answer questions about... Try rephrasing that." That's actively
+  // misleading for a real backend failure that had nothing to do with
+  // what the student typed. Throwing here routes it to the same "Couldn't
+  // reach Studlin AI" error message authFetch/res.json() failures already
+  // get (see the comment above this function).
+  if(!res.ok)throw new Error(data.error||"classify-failed");
   try{
     const raw=(data.reply||"").replace(/```json?|```/g,"").trim();
     const parsed=JSON.parse(raw);
@@ -17335,7 +17421,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
       onAcceptProactive(proposal.signal);
       setMessages(m=>{
         const withResolved=m.map((mm,i)=>i===idx?{...mm,proposal:{...mm.proposal,resolved:"confirmed"}}:mm);
-        return [...withResolved,{role:"ai",text:"Done. "+proposal.label,kind:"done"}];
+        return [...withResolved,{role:"ai",text:"Done. "+pastTenseProposalLabel(proposal.label),kind:"done"}];
       });
       setPendingIndex(null);
       return;
@@ -17438,7 +17524,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
     if(next)onEventsCommitted(next);
     setMessages(m=>{
       const withResolved=m.map((mm,i)=>i===idx?{...mm,proposal:{...mm.proposal,resolved:"confirmed"}}:mm);
-      return [...withResolved,{role:"ai",text:"Done. "+proposal.label}];
+      return [...withResolved,{role:"ai",text:"Done. "+pastTenseProposalLabel(proposal.label)}];
     });
     setPendingIndex(null);
   };
@@ -20518,6 +20604,14 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     const u=firebase.auth().currentUser;
     if(u)fsdb().collection('users').doc(u.uid).set({[FREE_SCAN_FLAG[kind]]:true,updatedAt:new Date().toISOString()},{merge:true}).catch(()=>{});
   };
+  // Bug fix, 2026-09-04 audit: extractClassSyllabusText/Image return
+  // {subject:null,meetingTimes:[],deadlines:[],error:null} (not an error)
+  // when the AI's response parses fine but structurally found nothing
+  // usable -- every OTHER scan entry point in this wizard (whole-schedule,
+  // HS schedule) already detects and messages this exact case; a
+  // single-class scan didn't, so it silently dropped the student onto a
+  // blank "Review this class" form with no explanation why.
+  const syllabusFoundNothing=(result)=>!result.subject&&(!result.meetingTimes||result.meetingTimes.length===0)&&(!result.deadlines||result.deadlines.length===0);
   const handleScanFile=async(e)=>{
     const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";
     const ext=file.name.split(".").pop().toLowerCase();
@@ -20530,6 +20624,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
         const base64=(dataUrl.split(",")[1])||"";
         const result=await extractClassSyllabusImage(base64,IMAGE_EXT_MEDIA_TYPES[ext]);
         if(result.error){setScanError(result.error);return;}
+        if(syllabusFoundNothing(result)){setScanError("Couldn't find much in that image -- try a clearer photo, or fill in the class details yourself below.");return;}
         if(!canScanScreenshot())markFreeScanUsed("syllabus");
         recordScreenshotScan();
         buildReviewFromExtraction(result);
@@ -20553,6 +20648,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
       }
       const result=await extractClassSyllabusText(text);
       if(result.error){setScanError(result.error);return;}
+      if(syllabusFoundNothing(result)){setScanError("Couldn't find much in that file -- try a clearer copy, or fill in the class details yourself below.");return;}
       if(!canScanSyllabus())markFreeScanUsed("syllabus");
       recordSyllabusScan();
       buildReviewFromExtraction(result,text);
@@ -20567,6 +20663,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     try{
       const result=await extractClassSyllabusText(pasteText);
       if(result.error){setScanError(result.error);return;}
+      if(syllabusFoundNothing(result)){setScanError("Couldn't find much in that text -- try pasting more of it, or fill in the class details yourself below.");return;}
       if(!canScanSyllabus())markFreeScanUsed("syllabus");
       recordSyllabusScan();
       buildReviewFromExtraction(result,pasteText);
@@ -21749,7 +21846,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
 // illegibility on a packed day and clamp to a narrow window on a light
 // one). The container just scrolls, same as any normal calendar, landing
 // near the current time or the first real event on open.
-function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending, openNew, newItemHighlightIds}) {
+function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending, openNew, newItemHighlightIds, onEditRoutine}) {
   const scrollRef=useRef(null);
   const [dayPreviewOpen,setDayPreviewOpen]=useState(false);
   // Minimal "who's in" popover for a pending group-proposal block -- Day
@@ -21926,7 +22023,15 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
                     {ev.commuteBefore*(pxPerHr/60)>13 && <span style={{fontSize:9,color,fontWeight:600,whiteSpace:"nowrap"}}>{ev.commuteBefore}m commute</span>}
                   </div>
                 )}
-                <div onDoubleClick={()=>openEdit(ev)}
+                {/* Bug fix, 2026-09-04 audit: double-click here used to
+                    always call openEdit(ev), but a routine occurrence's
+                    synthetic id is never in the real events array, so
+                    EventDetailModal's own `if(!eventId||!ev)return null`
+                    bail made this a true dead click for every routine --
+                    the tooltip even says "Double-click to edit" and nothing
+                    happened. WeeklyPlanner already branches this correctly
+                    (see its own onDoubleClick); mirrored here. */}
+                <div onDoubleClick={()=>{if(ev.isRoutine){if(onEditRoutine)onEditRoutine(ev.routineId);}else openEdit(ev);}}
                   onClick={(e)=>{
                     if(ev.isRoutine)return;
                     if(isPendingAcceptance){
@@ -22878,6 +22983,11 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   // every other persist decision this modal hands off via commit/onDelete
   // rather than owning storage directly.
   const [deleteConfirmOpen,setDeleteConfirmOpen]=useState(false);
+  // Bug fix, 2026-09-04 audit: the "Scheduled blocks" list's own inline
+  // Delete fired immediately, no confirm and no undo -- unlike almost
+  // every other delete path in Calendar. Keyed by block id since this is
+  // a per-row delete inside a list, not a single whole-modal action.
+  const [confirmDeleteBlockId,setConfirmDeleteBlockId]=useState(null);
   const [completeSessionPrompt,setCompleteSessionPrompt]=useState(false);
   // Type-switch data-safety confirms (see onTypeChange/save/finishSave
   // below) -- switching the Type away from Exam when there's real linked
@@ -23530,7 +23640,14 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
                     <div onClick={()=>jumpToCalendar(s.id)} style={{cursor:"pointer",flex:1,minWidth:0}} title="Jump to calendar">
                       <div style={{fontSize:12,fontWeight:600,color:s.status==="done"?T.muted:T.text,textDecoration:s.status==="done"?"line-through":"none"}}>{s.date} · {s.time} · {s.duration||30}min</div>
                     </div>
-                    <button type="button" onClick={()=>deleteLinkedBlock(s.id)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline",flexShrink:0}}>Delete</button>
+                    {confirmDeleteBlockId===s.id?(
+                      <div style={{display:"flex",gap:6,alignItems:"center",flexShrink:0}}>
+                        <button type="button" onClick={()=>{deleteLinkedBlock(s.id);setConfirmDeleteBlockId(null);}} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:11,fontWeight:700,fontFamily:T.font,textDecoration:"underline"}}>Confirm</button>
+                        <button type="button" onClick={()=>setConfirmDeleteBlockId(null)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline"}}>Cancel</button>
+                      </div>
+                    ):(
+                      <button type="button" onClick={()=>setConfirmDeleteBlockId(s.id)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline",flexShrink:0}}>Delete</button>
+                    )}
                   </div>
                   {/* Lightweight progress check-in -- a block whose time
                       already passed and is still marked pending, asking
@@ -24035,6 +24152,13 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
   // identity of its own. This was simply never built for the edit path, the
   // gap behind "can't change an activity's color" (only its Add form could).
   const [routineColor,setRoutineColor]=useState(T.lime);
+  // Bug fix, 2026-09-04 audit: Delete used to fire onDelete immediately on
+  // click, no confirm -- a real CLAUDE.md violation ("anything that
+  // deletes user data... requires a confirm modal first"). Inline two-step
+  // confirm (not a nested Modal-in-Modal, which breaks centering -- see
+  // this file's own established gotcha) matching the confirm-in-place
+  // pattern this same component's routine sidebar already uses.
+  const [confirmDeleteRoutine,setConfirmDeleteRoutine]=useState(false);
 
   // Live preview (2026-07-30): reports this form's current title/date/time
   // up to the caller on every relevant change while open, so the calendar
@@ -24059,7 +24183,7 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
 
   useEffect(()=>{
     if(!open)return;
-    setDayTimes({});setDayTimeEditingIdx(null);
+    setDayTimes({});setDayTimeEditingIdx(null);setConfirmDeleteRoutine(false);
     if(editRoutine){
       // Edit mode: seed everything from the existing rule, with the rule's
       // own days pre-checked and its one shared time as the default.
@@ -24367,7 +24491,15 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
           </div>
         </div>
         <div style={{display:"flex",gap:8,justifyContent:editRoutine?"space-between":"flex-end",alignItems:"center",padding:"9px 12px",borderTop:`1px solid ${T.border}`}}>
-          {editRoutine&&<Btn variant="danger" onClick={onDelete} style={{padding:"6px 13px",fontSize:12}}>Delete</Btn>}
+          {editRoutine&&(confirmDeleteRoutine?(
+            <div style={{display:"flex",gap:6,alignItems:"center"}}>
+              <span style={{fontSize:11,color:T.muted}}>Delete this?</span>
+              <Btn variant="danger" onClick={onDelete} style={{padding:"6px 13px",fontSize:12}}>Yes, delete</Btn>
+              <Btn variant="subtle" onClick={()=>setConfirmDeleteRoutine(false)} style={{padding:"6px 13px",fontSize:12}}>Cancel</Btn>
+            </div>
+          ):(
+            <Btn variant="danger" onClick={()=>setConfirmDeleteRoutine(true)} style={{padding:"6px 13px",fontSize:12}}>Delete</Btn>
+          ))}
           <div style={{display:"flex",gap:8}}>
             <Btn variant="subtle" onClick={onClose} style={{padding:"6px 13px",fontSize:12}}>Cancel</Btn>
             <Btn onClick={submit} disabled={invalid} style={{padding:"6px 13px",fontSize:12}}>{editRoutine?"Save changes":"Create"}</Btn>
@@ -24804,7 +24936,18 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     lsSet("hasConfiguredRoutine",true);
     setClassSetupOpen(false);
     syncClassSetupState();
-    if(newIds&&newIds.length>0)setNewItemHighlightIds(newIds);
+    if(newIds&&newIds.length>0){
+      setNewItemHighlightIds(newIds);
+      // Bug fix, 2026-09-04 audit: "Add to Calendar" gave zero success
+      // feedback -- the wizard just closed, with no indication of what
+      // (if anything) actually landed. A duplicate-scanned item is
+      // correctly and silently deduped by buildSyllabusEventBatch, but
+      // that made "3 items got skipped as duplicates" and "3 items got
+      // lost" indistinguishable to the student. This at least confirms
+      // something real happened; the highlighted blocks on the calendar
+      // (setNewItemHighlightIds above) show exactly what.
+      showToast("Added "+newIds.length+" item"+(newIds.length!==1?"s":"")+" to your calendar.");
+    }
   };
   // Same re-sync finishClassSetup does, minus the onboarding flags (already
   // true by the time an existing user reaches this from the Tools menu).
@@ -24812,7 +24955,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     setQuickScanOpen(false);
     setQuickScanTargetCourseId(null);
     syncClassSetupState();
-    if(newIds&&newIds.length>0)setNewItemHighlightIds(newIds);
+    if(newIds&&newIds.length>0){
+      setNewItemHighlightIds(newIds);
+      showToast("Added "+newIds.length+" item"+(newIds.length!==1?"s":"")+" to your calendar.");
+    }
   };
   // One-shot "here's what was just imported" signal for the calendar-import
   // flow (Moodle/Canvas/Schoology/Blackboard/generic .ics/work schedule,
@@ -27965,7 +28111,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           gsBusyByDate={gsOpen&&gsStep==="place"?gsBusyByDate:null} gsRecommended={gsOpen&&gsStep==="place"?gsRecommended:null} />
       )}
       {calView==="daily"&&(
-        <DayPlanner dayEvents={dayEvents} setEvents={setEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} fmtTimeRange={fmtTimeRange} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} catchUpPending={catchUpPending} openNew={openNew} newItemHighlightIds={newItemHighlightSet} />
+        <DayPlanner dayEvents={dayEvents} setEvents={setEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} fmtTimeRange={fmtTimeRange} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} catchUpPending={catchUpPending} openNew={openNew} newItemHighlightIds={newItemHighlightSet} onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} />
       )}
     </div>
       {/* Right-hand column (Phase 5e) -- upcoming across everything by
@@ -29463,6 +29609,11 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     // while after you flip Incognito on, contradicting "completely masks"
     // right when it matters (you're about to start studying).
     if(k==="incognito")upsertProfile();
+    // Bug fix, 2026-09-04 audit: "Show Online Status" was a total no-op --
+    // upsertProfile never wrote it and no read site ever consumed it, so
+    // turning it off changed nothing a friend could see. Same instant-sync
+    // treatment as Incognito right above.
+    if(k==="onlineStatus")upsertProfile();
     return n;
   });
   const [sysPushStatus,setSysPushStatus]=useState(()=>{
@@ -29593,7 +29744,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     // trial line right below: a set referralTrialExpiresAt with no real
     // subscription unambiguously means "on the limited trial," not "Pro
     // with unknown billing."
-    if(plan==="Pro-Limited"&&account.referralTrialExpiresAt)return "Pro-Limited trial - ends "+fmtBillingDate(account.referralTrialExpiresAt);
+    if(plan==="Pro-Limited"&&account.referralTrialExpiresAt)return planDisplayName("Pro-Limited")+" - ends "+fmtBillingDate(account.referralTrialExpiresAt);
     // Beta trial reads as its own real state, not a fake subscription
     // renewal date -- account.stripeSubscriptionId is only ever set for
     // an actual paid subscription (see handleRedeemBeta's own comment on
@@ -31180,7 +31331,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
                 <div>
                   <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.bg,opacity:0.6}}>CURRENT PLAN</div>
-                  <div style={{fontSize:26,fontWeight:700,color:T.bg,letterSpacing:"-0.02em",marginTop:4}}>{account.plan||getPlan()}</div>
+                  <div style={{fontSize:26,fontWeight:700,color:T.bg,letterSpacing:"-0.02em",marginTop:4}}>{planDisplayName(account.plan||getPlan())}</div>
                   <div style={{fontSize:13,color:T.bg,opacity:0.75,marginTop:4}}>{subscriptionPlanLine()}</div>
                 </div>
                 <div style={{textAlign:"right"}}>
@@ -31189,10 +31340,9 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                   <div style={{fontSize:13,color:T.bg,opacity:0.75,marginTop:4}}>{getPlan()==="Pro"?"No monthly cap":"Resets in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")}</div>
                 </div>
               </div>
-              <div style={{display:"flex",gap:8,marginTop:18,flexWrap:"wrap"}}>
-                <a href="checkout.html?credits=500" style={{background:T.bg,color:T.lime,padding:"8px 16px",borderRadius:7,fontSize:12.5,fontWeight:600,textDecoration:"none"}}>Buy credit packs</a>
-                {getPlan()!=="Pro"&&<a href="checkout.html?plan=pro&billing=monthly" style={{background:"transparent",border:`1px solid ${T.bg}55`,color:T.bg,padding:"8px 16px",borderRadius:7,fontSize:12.5,fontWeight:600,textDecoration:"none"}}>Upgrade to Pro</a>}
-              </div>
+              {getPlan()!=="Pro"&&<div style={{display:"flex",gap:8,marginTop:18,flexWrap:"wrap"}}>
+                <a href="checkout.html?plan=pro&billing=monthly" style={{background:"transparent",border:`1px solid ${T.bg}55`,color:T.bg,padding:"8px 16px",borderRadius:7,fontSize:12.5,fontWeight:600,textDecoration:"none"}}>Upgrade to Pro</a>
+              </div>}
             </Card>
             {account.stripeSubscriptionId&&(
               <Card style={{marginBottom:12}}>
@@ -31224,9 +31374,9 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                   <div style={{fontSize:11.5,color:T.muted,marginLeft:"auto"}}>Exp {String(billingInfo.paymentMethod.expMonth).padStart(2,"0")}/{String(billingInfo.paymentMethod.expYear).slice(-2)}</div>
                 </div>
               ):(
-                <div style={{fontSize:12.5,color:T.muted,textAlign:"center",padding:"20px 0"}}>No card on file yet. One gets saved automatically the first time you subscribe or buy credits.</div>
+                <div style={{fontSize:12.5,color:T.muted,textAlign:"center",padding:"20px 0"}}>No card on file yet. One gets saved automatically the first time you subscribe.</div>
               )}
-              <div style={{fontSize:11.5,color:T.muted,lineHeight:1.5,marginTop:8}}>Your default card is used for subscription renewals and credit purchases. Add more cards by making a purchase. We'll save it securely via Stripe.</div>
+              <div style={{fontSize:11.5,color:T.muted,lineHeight:1.5,marginTop:8}}>Your default card is used for subscription renewals. We'll save it securely via Stripe.</div>
             </Card>
             <Card style={{marginBottom:getPlan()!=="Pro"?12:0}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:10}}>Billing history</div>
@@ -31808,7 +31958,16 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   const cardsMasteredTotal=rawDecks.reduce((a,d)=>a+(d.done||0),0);
   // Real session activity for the last 7 days
   const allSessions=lsGet("sessions",[]);
-  const weekDays7=(()=>{const arr=[];const now=new Date();const dow=(now.getDay()+6)%7;const mon=new Date(now);mon.setDate(now.getDate()-dow);for(let i=0;i<7;i++){const d=new Date(mon);d.setDate(mon.getDate()+i);arr.push(d);}return arr;})();
+  // Bug fix, 2026-09-04 audit: this is the week Weekly Wrapped recaps.
+  // Wrapped's own auto-open window is Sunday evening OR Monday evening (a
+  // grace window for someone who missed Sunday -- see isWrappedWindow).
+  // "This week's Monday" (dow=0..6, Mon=0) correctly IS the week that just
+  // ended when opened on Sunday (dow=6) -- but on Monday (dow=0) it
+  // resolves to *today*, i.e. the week that's just starting, not the one
+  // that ended. Treating Monday as day 7 of the *previous* week fixes
+  // both: the recap always lands on the most recently completed Mon-Sun
+  // block, whichever of the two days Wrapped happens to open on.
+  const weekDays7=(()=>{const arr=[];const now=new Date();let dow=(now.getDay()+6)%7;if(dow===0)dow=7;const mon=new Date(now);mon.setDate(now.getDate()-dow);for(let i=0;i<7;i++){const d=new Date(mon);d.setDate(mon.getDate()+i);arr.push(d);}return arr;})();
   // Weekly Wrapped's forward-looking half -- weekDays7 above is the week
   // that just ended (Wrapped fires Sunday/Monday evening), so "next week"
   // starts exactly 7 days after weekDays7's own Monday.
@@ -34528,9 +34687,16 @@ function App() {
             real, working purchase flow. Pro is the one real upgrade path
             now (see the CTA below), so it's the only one shown. */}
         <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.muted,textTransform:"uppercase",marginBottom:10}}>What costs what</div>
+        {/* Bug fix, 2026-09-04 audit: this table used to list fictional
+            models ("Pro"/"Reasoning" chat tiers -- see the Pro pricing
+            copy fix nearby) and dead legacy essay-tool features (citation
+            generation, plagiarism check, AI Humanizer, essay analysis)
+            with none of the numbers matching what api/chat.js actually
+            deducts. Replaced with the real cost map (CREDIT_COST /
+            IMAGE_CREDIT_COST / STUDLIN_AI_*_COST constants). */}
         <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"4px 14px"}}>
-          {[["AI chat · Standard / Flash","1"],["AI chat · Pro","2"],["AI chat · Reasoning","3"],["Citation generation","1"],["File upload + analysis","2"],["Plagiarism check","2"],["AI Humanizer run","2"],["Full essay analysis","3"],["Practice test generation","4"]].map(([k,v],i)=>(
-            <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"9px 0",borderBottom:i<8?`1px solid ${T.border}`:"none",fontSize:13}}>
+          {[["AI chat message","1"],["AI chat with an image attached","4"],["Studlin AI question","2"],["Studlin AI action (move, add, delete...)","1"],["Studlin AI coaching check-in","2"]].map(([k,v],i,arr)=>(
+            <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"9px 0",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none",fontSize:13}}>
               <span style={{color:T.text}}>{k}</span>
               <span style={{fontFamily:T.mono,fontWeight:600,color:T.lime}}>{v}</span>
             </div>
@@ -34725,7 +34891,28 @@ function App() {
         // exam behind it at all. submitExamCheckIn already no-ops
         // harmlessly with no matching examEvent, so nothing was actually
         // broken by this besides the confusing prompt itself.
-        if(timerTask.kind==="study block"&&!timerTask.routineId&&!timerTask.studySessionId)setExamCheckIn(timerTask);
+        if(timerTask.kind==="study block"&&!timerTask.routineId&&!timerTask.studySessionId){
+          // Bug fix, 2026-09-04 audit: this Lock-In completion path never
+          // checked isDiagnosticFirstPass, so finishing session 1 through
+          // the timer -- the app's primary, flagship completion method --
+          // always fell straight to the plain confidence self-report. The
+          // real "let's see what needs another look" diagnostic quiz only
+          // ever fired via a checkbox completion (handleTaskCompleted).
+          // Mirrors that function's own branch exactly, including clearing
+          // the marker unconditionally so this stays single-fire the same
+          // way (see handleTaskCompleted's own comment on that).
+          if(timerTask.isDiagnosticFirstPass){
+            next=next.map(e=>e.id===timerTask.id?{...e,isDiagnosticFirstPass:false}:e);
+            lsSet("events",next);
+          }
+          const examEvent=timerTask.dueEventId?next.find(e=>e.id===timerTask.dueEventId):null;
+          const materialText=examEvent?(examEvent.sourceMaterials||[]).filter(f=>f.text&&f.text.trim()).map(f=>f.text).join("\n\n"):"";
+          if(timerTask.isDiagnosticFirstPass&&examEvent&&materialText.trim()&&canGenQuiz()){
+            startDiagnosticQuiz(timerTask,examEvent,materialText);
+          }else{
+            setExamCheckIn(timerTask);
+          }
+        }
         // Modal stays open to show the XP/leaderboard reward summary — it
         // closes itself (setTimerTask(null) via onClose) once dismissed.
       }} />}

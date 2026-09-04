@@ -585,6 +585,7 @@ function App() {
       localStorage.removeItem("studlin-onboarding");
     } catch (e) {
     }
+    let saveError = false;
     if (u) {
       try {
         await firebase.firestore().collection("users").doc(u.uid).set({
@@ -595,6 +596,7 @@ function App() {
           updatedAt: (/* @__PURE__ */ new Date()).toISOString()
         }, { merge: true });
       } catch (e) {
+        saveError = true;
       }
       try {
         const school = (state.school || "").trim();
@@ -605,13 +607,21 @@ function App() {
           updatedAt: (/* @__PURE__ */ new Date()).toISOString()
         }, { merge: true });
       } catch (e) {
+        saveError = true;
       }
       if (window.posthog) {
         posthog.capture("onboarding_completed", { school: (state.school || "").trim() });
         posthog.setPersonProperties({ school: (state.school || "").trim(), onboarded: true });
       }
     }
-    window.location.href = "/app";
+    if (saveError) {
+      setFinishError("Couldn't save your school to your account -- you can set it again in Settings.");
+      setTimeout(() => {
+        window.location.href = "/app";
+      }, 1800);
+    } else {
+      window.location.href = "/app";
+    }
   };
   useEffect(() => {
     const fn = (e) => {

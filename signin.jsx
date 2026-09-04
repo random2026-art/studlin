@@ -141,6 +141,8 @@ function App() {
         try {
           const credential = firebase.auth.GoogleAuthProvider.credential(null, tokenResponse.access_token);
           suppressAuthRedirect.current = true;
+          // Same "remember" fix as the email path above -- see its comment.
+          await firebase.auth().setPersistence(remember ? firebase.auth.Auth.Persistence.LOCAL : firebase.auth.Auth.Persistence.SESSION);
           const result = await firebase.auth().signInWithCredential(credential);
           if(result.additionalUserInfo&&result.additionalUserInfo.isNewUser){
             // No account existed for this Google identity — instead of
@@ -176,6 +178,10 @@ function App() {
 
     setGlobalError("");setLoading(true);
     try {
+      // Bug fix, 2026-09-04 audit: "remember" was toggled by the checkbox
+      // below but never read anywhere -- Firebase's default (LOCAL)
+      // persistence applied regardless, so unchecking it did nothing.
+      await firebase.auth().setPersistence(remember ? firebase.auth.Auth.Persistence.LOCAL : firebase.auth.Auth.Persistence.SESSION);
       await firebase.auth().signInWithEmailAndPassword(email, password);
       window.location.href = APP_URL;
     } catch(err) {

@@ -421,6 +421,25 @@ const chatHandler = async (req, res) => {
           if (windowCount >= RATE_LIMIT_PER_MIN) {
             throw new Error('RATE_LIMIT');
           }
+          // Bug fix, 2026-09-04 audit: Studlin AI chat (the studlin_ai*
+          // formats -- the question-answering/action-proposal/coaching
+          // chat drawer, gated Pro-only client-side via
+          // canUseStudlinAiQna()/hasProAccess()) was never actually
+          // checked server-side -- only the plan-agnostic credit balance
+          // was. Every account starts with DEFAULT_CREDITS real credits
+          // regardless of plan, so a Free account calling this endpoint
+          // directly (bypassing the UI) could spend real inference cost
+          // on a feature the product's own pricing says Free doesn't get.
+          // format:"json" (syllabus/schedule extraction, Brain Dump, etc.)
+          // is untouched -- those have their own separate, sometimes-
+          // free-tier-eligible gates client-side (canScanSyllabus and
+          // friends), this only covers the three formats that are
+          // unconditionally Pro-only with no free path at all.
+          const planNow = data.plan || 'Free';
+          const isStudlinAiFormat = format === 'studlin_ai' || format === 'studlin_ai_intent' || format === 'studlin_ai_coaching';
+          if (isStudlinAiFormat && planNow !== 'Pro' && planNow !== 'Pro-Limited') {
+            throw new Error('PRO_REQUIRED');
+          }
           if (credits < cost) {
             throw new Error('NO_CREDITS');
           }
@@ -457,6 +476,9 @@ const chatHandler = async (req, res) => {
         }
         if (txErr.message === 'NO_CREDITS') {
           return res.status(402).json({ error: 'Not enough credits. Upgrade or buy more.' });
+        }
+        if (txErr.message === 'PRO_REQUIRED') {
+          return res.status(402).json({ error: 'Studlin AI chat requires Pro.' });
         }
         // Unexpected Firestore error (e.g. NOT_FOUND from a database/collection
         // that isn't set up yet) — log it and let the chat continue rather than

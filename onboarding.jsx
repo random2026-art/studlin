@@ -199,19 +199,26 @@ function StepSignup({ state, set, advance }) {
     return errs;
   };
 
+  // Terms checkbox unchecked — it may be below the fold (the trust panel
+  // above it can push it out of view on shorter screens), so the inline
+  // error alone might be invisible. Scroll it into view instead of
+  // leaving the click looking like it did nothing. The page itself never
+  // scrolls here (.shell is a fixed 100vh grid) — .stage is the actual
+  // scrollable element, not window/body. Shared by both auth paths below
+  // — bug fix, 2026-09-04 audit: originally only googleSign had this,
+  // so the identical error on the email path (tryAdvance) showed with no
+  // visible feedback near the button the student actually clicked.
+  const scrollTermsIntoView = () => {
+    const stageEl = document.querySelector('.stage');
+    if (stageEl) stageEl.scrollTo({ top: stageEl.scrollHeight, behavior: 'smooth' });
+    else window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+  };
+
   const googleSign = () => {
     const idErrs = checkIdentityFields();
     if (Object.keys(idErrs).length > 0) {
-      // Terms checkbox is unchecked — it may be below the fold (the trust
-      // panel above it can push it out of view on shorter screens), so the
-      // inline error alone might be invisible. Scroll it into view instead
-      // of leaving the click looking like it did nothing. The page itself
-      // never scrolls here (.shell is a fixed 100vh grid) — .stage is the
-      // actual scrollable element, not window/body.
       setErrors(idErrs);
-      const stageEl = document.querySelector('.stage');
-      if (stageEl) stageEl.scrollTo({ top: stageEl.scrollHeight, behavior: 'smooth' });
-      else window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+      scrollTermsIntoView();
       return;
     }
     setErrors({});setAuthError("");setLoading(true);
@@ -249,7 +256,10 @@ function StepSignup({ state, set, advance }) {
     else if (isDisposableEmail(state.email)) errs.email = "Please use a permanent email address, not a temporary one";
     if (!allOk) errs.password = "Password must be at least 8 characters";
     setErrors(errs);
-    if (Object.keys(errs).length > 0) return;
+    if (Object.keys(errs).length > 0) {
+      if (errs.terms) scrollTermsIntoView();
+      return;
+    }
 
     setAuthError("");setLoading(true);
 
@@ -725,6 +735,19 @@ function App() {
       localStorage.setItem("studlin-profile", JSON.stringify({ ...prevProfile, name: fullName || prevProfile.name || "", username: uname, affiliation: (state.school||"").trim(), school: (state.school||"").trim(), status: state.status||"" }));
     } catch(e){}
     try { localStorage.removeItem("studlin-onboarding"); } catch(e){}
+    // Bug fix, 2026-09-04 audit: both Firestore writes below discarded
+    // their errors completely -- finishError existed in the UI (see its
+    // render further down) but nothing ever actually set it to a real
+    // message, so it was dead code. A write failure (permission-rule
+    // change, transient outage, network drop) used to leave school/status
+    // never actually saved server-side with zero indication anything went
+    // wrong -- silently breaking classmate-matching (profiles.schoolLower)
+    // and desyncing onboarded status across devices. Still navigates
+    // forward either way (local state already looks right on this
+    // device, and the main app's own upsertProfile() retries the profiles
+    // write on next load anyway -- see the comment above), just makes a
+    // real failure visible for a moment first instead of masking it.
+    let saveError=false;
     if (u) {
       try {
         // name/email/provider are deliberately NOT written here — Firestore
@@ -742,7 +765,7 @@ function App() {
           onboardedAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         }, { merge: true });
-      } catch(e) {}
+      } catch(e) { saveError=true; }
       try {
         // The `users` write above is the account record; classmate-matching
         // (studlin-app.jsx's own Studlin Network) reads from `profiles`
@@ -758,13 +781,18 @@ function App() {
           school, schoolLower: school.toLowerCase(), status: state.status||"",
           updatedAt: new Date().toISOString(),
         }, { merge: true });
-      } catch(e) {}
+      } catch(e) { saveError=true; }
       if(window.posthog){
         posthog.capture("onboarding_completed",{school:(state.school||"").trim()});
         posthog.setPersonProperties({school:(state.school||"").trim(),onboarded:true});
       }
     }
-    window.location.href = "/app";
+    if(saveError){
+      setFinishError("Couldn't save your school to your account -- you can set it again in Settings.");
+      setTimeout(()=>{window.location.href="/app";},1800);
+    }else{
+      window.location.href = "/app";
+    }
   };
 
   useEffect(()=>{

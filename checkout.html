@@ -146,8 +146,18 @@ const isCredits=creditParam!==null;
 let plan=params.get('plan')||'pro';
 let billing=params.get('billing')||'monthly';
 
+// Credit top-ups were disabled 2026-08-26 (every AI gate checks
+// getPlan()==="Pro" outright, not credit balance, so a completed purchase
+// unlocked nothing) -- api/create-intent.js now rejects mode:'payment'
+// server-side too, but bounce here first rather than showing a working-
+// looking payment form for a purchase that can no longer succeed.
+if(isCredits){
+  alert('Credit purchases are no longer available. Upgrade to Pro for unlimited AI access instead.');
+  window.location.href='/app';
+}
+
 const PLAN_DATA={
-  pro:{name:'STUDLIN PRO',monthly:'$6.99',annual:'$4.99',annualTotal:'$59.88',features:['Add Task with AI: Studlin schedules it for you','AI study plans, flashcards, practice exams, syllabus scans, brain dump & project breakdowns','Smart Reschedule','AI chat: every model, plus 4 dedicated study modes']},
+  pro:{name:'STUDLIN PRO',monthly:'$6.99',annual:'$4.99',annualTotal:'$59.88',features:['Add Task with AI: Studlin schedules it for you','AI study plans, flashcards, practice exams, syllabus & schedule scans, brain dump & project breakdowns','Smart Reschedule','AI chat, whenever you need it']},
 };
 
 const CREDIT_PACKS={'150':{price:'$4.99',label:'150 AI Credits'},'500':{price:'$14.99',label:'500 AI Credits'},'1000':{price:'$24.99',label:'1,000 AI Credits'},'3000':{price:'$59.99',label:'3,000 AI Credits'}};

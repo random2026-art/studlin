@@ -405,7 +405,7 @@ const PRICING_PLANS = (billing) => [
     per: billing === "annual" ? "/mo \xB7 billed yearly" : "/mo",
     tag: null,
     desc: "Every AI feature Studlin has.",
-    features: ["Add Task with AI: Studlin schedules it for you", "AI study plans, flashcards, practice exams, syllabus & schedule scans, brain dump & project breakdowns", "Smart Reschedule", "All AI models: Flash, Standard & Research"],
+    features: ["Add Task with AI: Studlin schedules it for you", "AI study plans, flashcards, practice exams, syllabus & schedule scans, brain dump & project breakdowns", "Smart Reschedule", "AI chat, whenever you need it"],
     cta: "Upgrade to Pro",
     variant: "lime",
     featured: true
@@ -3341,6 +3341,11 @@ async function upsertProfile(extra = {}) {
     // profiles/{userId} write rule is a plain owner-check with no field
     // allowlist, so this needs no firestore.rules change.
     incognito: isIncognitoOn(),
+    // Bug fix, 2026-09-04 audit: "Show Online Status" had the exact same
+    // gap Incognito had before the fix above -- isOnlineStatusOn() only
+    // ever read local settings, so turning it off had zero effect on what
+    // any friend actually saw. Same channel, same fix.
+    onlineStatus: isOnlineStatusOn(),
     updatedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
   try {
@@ -3995,6 +4000,9 @@ function getCreditLimit() {
   if (p === "Pro") return 1e5;
   if (p === "Pro-Limited") return 300;
   return 120;
+}
+function planDisplayName(p) {
+  return p === "Pro-Limited" ? "Referral Trial" : p;
 }
 function getCredits() {
   return lsGet("credits", getCreditLimit());
@@ -4754,6 +4762,15 @@ function describeCreateProposal(task) {
   if (!task) return "Add task";
   const when = task.time ? task.date + " " + task.time + (task.duration ? " (" + task.duration + " min)" : "") : task.date ? "due " + task.date : "no date yet";
   return 'Add "' + task.title + '" -- ' + when + "?";
+}
+function pastTenseProposalLabel(label) {
+  if (!label) return label;
+  let s = label.replace(/\?$/, "");
+  if (s.indexOf("Add ") === 0) s = "Added " + s.slice(4);
+  else if (s.indexOf("Delete ") === 0) s = "Deleted " + s.slice(7);
+  else if (s.indexOf("Move ") === 0) s = "Moved " + s.slice(5);
+  else if (s.indexOf("Retime ") === 0) s = "Retimed " + s.slice(7);
+  return s;
 }
 function describeExamSessionPlan(tasks, digest) {
   const sessions = (tasks || []).filter((t) => t.isExamPrepSession);
@@ -7089,6 +7106,7 @@ function Flashcards({ setActive = () => {
   const [cA, setCA] = useState("");
   const [draft, setDraft] = useState([]);
   const colorMap = { Biology: T.teal, "English IV": T.purple, Calculus: T.blue, Spanish: T.amber, Chemistry: T.red };
+  const [deleteDeckConfirmId, setDeleteDeckConfirmId] = useState(null);
   useEffect(() => {
     if (lsGet("openNewDeckOnMount", false)) {
       try {
@@ -7493,6 +7511,13 @@ function Flashcards({ setActive = () => {
     dSource === "record" && /* @__PURE__ */ React.createElement(Field, { label: "Record lecture", hint: "Speak or play audio \u2014 AI generates flashcards from what it hears." }, /* @__PURE__ */ React.createElement("div", { style: { border: "1px solid " + (recOn ? T.red + "55" : T.border), borderRadius: 10, padding: 18, textAlign: "center", background: recOn ? T.red + "0a" : T.card2 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: recOn ? stopRec : startRec, style: { width: 48, height: 48, borderRadius: "50%", border: "none", background: recOn ? T.red : T.lime, color: recOn ? "#fff" : T.ink, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 8 } }, recOn ? /* @__PURE__ */ React.createElement("span", { style: { width: 14, height: 14, background: "#fff", borderRadius: 3 } }) : MicIcon), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: recOn ? T.red : T.white } }, fmtRec(recSecs)), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, recOn ? "Recording... tap to stop" : "Tap to start"), recText && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.text, marginTop: 10, padding: "8px 10px", background: T.card, borderRadius: 6, textAlign: "left", maxHeight: 80, overflowY: "auto" } }, recText))),
     createDeckError && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: 4 } }, createDeckError)
   ), /* @__PURE__ */ React.createElement(Pills, { tabs: ["study", "decks"], active: tab, onChange: setTab }), tab === "study" && (studyDeck && studyCards.length > 0 ? /* @__PURE__ */ React.createElement("div", { style: { maxWidth: 600, margin: "0 auto" } }, /* @__PURE__ */ React.createElement("button", { onClick: () => setActive("dashboard"), style: { background: "none", border: "none", color: T.muted, fontSize: 12.5, fontWeight: 600, fontFamily: T.font, cursor: "pointer", padding: "0 0 12px", display: "flex", alignItems: "center", gap: 6 } }, "\u2190 Back to Dashboard"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white } }, studyDeck.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Card ", idx + 1, " of ", studyCards.length)), /* @__PURE__ */ React.createElement("div", { onClick: () => setFlipped((f) => !f), style: { cursor: "pointer", userSelect: "none" } }, !flipped ? /* @__PURE__ */ React.createElement(Card, { style: { minHeight: 200, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: 32, background: T.card2 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 15, fontWeight: 600, color: T.white, lineHeight: 1.6, marginBottom: 12 } }, curCard ? curCard.q : "No question"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, letterSpacing: "0.03em" } }, "CLICK TO REVEAL")) : /* @__PURE__ */ React.createElement("div", { style: { background: T.lime, borderRadius: 10, minHeight: 200, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: 32 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: T.bg, lineHeight: 1.7, marginBottom: 10 } }, curCard ? curCard.a : "No answer"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.bg, opacity: 0.5 } }, "RATE YOUR RECALL"))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 14, justifyContent: "center" } }, flipped ? [["Missed", T.red], ["Hard", T.amber], ["Good", T.teal], ["Mastered", T.lime]].map(([l, c]) => /* @__PURE__ */ React.createElement("button", { key: l, onClick: () => {
+    if (l === "Good" || l === "Mastered") {
+      setDeckList((list) => {
+        const next = list.map((d) => d.id === studyDeck.id ? { ...d, done: Math.min(d.cards ? d.cards.length : d.count, (d.done || 0) + 1) } : d);
+        lsSet("decks", next);
+        return next;
+      });
+    }
     setFlipped(false);
     setIdx((i) => (i + 1) % studyCards.length);
   }, style: { flex: 1, padding: "9px 0", borderRadius: 7, background: c + "14", color: c, border: "1px solid " + c + "33", cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: T.font } }, l)) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: () => {
@@ -7504,7 +7529,7 @@ function Flashcards({ setActive = () => {
   } }, "Next")))) : /* @__PURE__ */ React.createElement(Card, { style: { padding: 32, textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, color: T.muted, marginBottom: 16 } }, "Select a deck to study or create a new one."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, justifyContent: "center" } }, /* @__PURE__ */ React.createElement(Btn, { onClick: () => setNewOpen(true) }, Icon.plus, " New deck"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: () => setTab("decks") }, "Browse decks")))), tab === "decks" && /* @__PURE__ */ React.createElement("div", null, deckList.length === 0 && /* @__PURE__ */ React.createElement(Card, { style: { padding: 24, textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, marginBottom: 12 } }, "No decks yet. Create your first one."), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setNewOpen(true) }, Icon.plus, " New deck")), (() => {
     const renderDeckCard = (d, i) => /* @__PURE__ */ React.createElement(Card, { key: d.id || i, style: { cursor: "pointer", position: "relative" } }, /* @__PURE__ */ React.createElement("button", { onClick: (e) => {
       e.stopPropagation();
-      deleteDeck(d.id);
+      setDeleteDeckConfirmId(d.id);
     }, style: { position: "absolute", top: 12, right: 12, background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 14 } }, "x"), /* @__PURE__ */ React.createElement("div", { onDoubleClick: (e) => {
       e.stopPropagation();
       openEditDeck(d);
@@ -7533,7 +7558,23 @@ function Flashcards({ setActive = () => {
     const ownDecks = deckList.filter((d) => d.source !== "imported");
     const importedDecks = deckList.filter((d) => d.source === "imported");
     return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } }, ownDecks.map(renderDeckCard)), importedDecks.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: T.faint, margin: "18px 0 10px" } }, "Imported Decks"), importedDecks.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } }, importedDecks.map(renderDeckCard)));
-  })()), /* @__PURE__ */ React.createElement(UpgradeModal, { open: !!upgradeModal, feature: upgradeModal ? upgradeModal.feature : "", detail: upgradeModal ? upgradeModal.detail : "", onClose: () => setUpgradeModal(null), onUpgraded: () => setUpgradeModal(null) }));
+  })()), /* @__PURE__ */ React.createElement(UpgradeModal, { open: !!upgradeModal, feature: upgradeModal ? upgradeModal.feature : "", detail: upgradeModal ? upgradeModal.detail : "", onClose: () => setUpgradeModal(null), onUpgraded: () => setUpgradeModal(null) }), /* @__PURE__ */ React.createElement(
+    Modal,
+    {
+      open: !!deleteDeckConfirmId,
+      onClose: () => setDeleteDeckConfirmId(null),
+      title: "Delete this deck?",
+      width: 400,
+      footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setDeleteDeckConfirmId(null) }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => {
+        deleteDeck(deleteDeckConfirmId);
+        setDeleteDeckConfirmId(null);
+      } }, "Delete"))
+    },
+    (() => {
+      const d = deckList.find((x) => x.id === deleteDeckConfirmId);
+      return d ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text } }, "This deletes ", /* @__PURE__ */ React.createElement("strong", null, d.name), " (", d.cards ? d.cards.length : d.count, " cards) and any scheduled review sessions linked to it. This can't be undone.") : null;
+    })()
+  ));
 }
 function Notes({ setActive = () => {
 } }) {
@@ -7891,11 +7932,7 @@ function Notes({ setActive = () => {
   const deleteNote = (idx) => {
     const note = notes[idx];
     const linked = lsGet("events", []).filter((e) => e.noteId === note.id);
-    if (linked.length > 0) {
-      setDeleteNoteConfirm({ idx, linked });
-      return;
-    }
-    doDeleteNote(idx, false);
+    setDeleteNoteConfirm({ idx, linked });
   };
   const exportNote = (n) => {
     const t = document.createElement("div");
@@ -8169,7 +8206,7 @@ function Notes({ setActive = () => {
       open: !!deleteNoteConfirm,
       onClose: () => setDeleteNoteConfirm(null),
       title: "Delete this note?",
-      sub: deleteNoteConfirm ? "This note created " + deleteNoteConfirm.linked.length + " calendar deadline" + (deleteNoteConfirm.linked.length !== 1 ? "s" : "") + "." : "",
+      sub: deleteNoteConfirm && deleteNoteConfirm.linked.length > 0 ? "This note created " + deleteNoteConfirm.linked.length + " calendar deadline" + (deleteNoteConfirm.linked.length !== 1 ? "s" : "") + "." : "This can't be undone.",
       width: 460,
       footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setDeleteNoteConfirm(null) }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => {
         const also = document.getElementById("also-delete-linked-events");
@@ -8177,8 +8214,7 @@ function Notes({ setActive = () => {
         setDeleteNoteConfirm(null);
       } }, "Delete note"))
     },
-    /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: T.text, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { id: "also-delete-linked-events", type: "checkbox", defaultChecked: false }), "Also delete the linked calendar events"),
-    /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginTop: 8, lineHeight: 1.5 } }, "Leave this unchecked to keep those deadlines on your calendar even after the note is gone.")
+    deleteNoteConfirm && deleteNoteConfirm.linked.length > 0 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: T.text, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { id: "also-delete-linked-events", type: "checkbox", defaultChecked: false }), "Also delete the linked calendar events"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginTop: 8, lineHeight: 1.5 } }, "Leave this unchecked to keep those deadlines on your calendar even after the note is gone."))
   ), syllabusToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: STUDLIN_AI_BUBBLE_CLEARANCE, right: 20, zIndex: 999, padding: "11px 18px", borderRadius: 10, background: T.teal, color: "#fff", fontSize: 13, fontWeight: 600, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, syllabusToast), /* @__PURE__ */ React.createElement(UpgradeModal, { open: !!upgradeModal, feature: upgradeModal ? upgradeModal.feature : "", detail: upgradeModal ? upgradeModal.detail : "", onClose: () => setUpgradeModal(null), onUpgraded: () => setUpgradeModal(null) }), /* @__PURE__ */ React.createElement(Modal, { open: !!quizOverlay, onClose: () => setQuizOverlay(null), title: "Practice Quiz", sub: activeNote ? activeNote.title : "", width: 520 }, quizOverlay && !quizOverlay.done && (() => {
     const q = quizOverlay.questions[quizOverlay.idx];
     const picked = quizOverlay.picked;
@@ -8400,7 +8436,11 @@ function FriendsChat({ onFriendRequestSent, onActiveChatChange, initialTarget, o
     // Bug fix, 2026-09-03: this is the field presenceInfo's own incognito
     // param needs to actually suppress a friend's live-session reveal --
     // upsertProfile now writes it, this is the read side.
-    incognito: !!(d && d.incognito)
+    incognito: !!(d && d.incognito),
+    // Bug fix, 2026-09-04 audit: read side for onlineStatus, same shape as
+    // incognito above. Defaults true (visible) to match isOnlineStatusOn's
+    // own local default when a friend's profile predates this field.
+    onlineStatus: d ? d.onlineStatus !== false : true
   });
   const mySchool = (getProfile().school || getProfile().affiliation || "").trim();
   const [classmates, setClassmates] = useState([]);
@@ -8817,7 +8857,7 @@ function FriendsChat({ onFriendRequestSent, onActiveChatChange, initialTarget, o
       }, style: { width: 32, height: 32, borderRadius: 9, border: `1px solid ${T.border}`, background: T.card2, color: T.lime, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0 } }, Icon.msgSquare));
     }
     const u = row.user;
-    const pr = presenceInfo(u, { incognito: !!u.incognito, liveSession: liveSessionFor(u.uid) });
+    const pr = presenceInfo(u, { incognito: !!u.incognito || u.onlineStatus === false, liveSession: liveSessionFor(u.uid) });
     const revealed = joinRevealFor === u.h;
     return /* @__PURE__ */ React.createElement("div", { key: row.key, style: { display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderBottom: i < inboxShown.length - 1 ? `1px solid ${T.border}` : "none" } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setChatTarget({ kind: "dm", user: u }), style: { position: "relative", flexShrink: 0, cursor: "pointer" } }, /* @__PURE__ */ React.createElement(Av, { initials: u.n.split(" ").map((x) => x[0]).join(""), color: T.lime, size: 34, picUrl: u.p || "" }), /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", bottom: 0, right: 0, width: 9, height: 9, borderRadius: "50%", background: pr.color, border: `2px solid ${T.card}` } })), /* @__PURE__ */ React.createElement("div", { onClick: () => setChatTarget({ kind: "dm", user: u }), style: { flex: 1, minWidth: 0, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white } }, u.n), /* @__PURE__ */ React.createElement("div", { onClick: (e) => {
       if (pr.joinable) {
@@ -8832,7 +8872,7 @@ function FriendsChat({ onFriendRequestSent, onActiveChatChange, initialTarget, o
     const label = isFriend ? "Following" : incomingFromThem ? "Accept" : isPendingOut ? "Pending" : "Add";
     const onClickBtn = isFriend ? void 0 : isPendingOut ? () => cancelOutgoingRequest(u.uid) : incomingFromThem ? () => acceptReq(incomingFromThem.id) : () => sendFriendRequest(u.uid);
     return /* @__PURE__ */ React.createElement("div", { key: u.uid, style: { display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderBottom: i < arr.length - 1 ? `1px solid ${T.border}` : "none" } }, /* @__PURE__ */ React.createElement(Av, { initials: u.n.split(" ").map((x) => x[0]).join(""), color: T.lime, size: 34, picUrl: u.p || "" }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white } }, u.n), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted } }, u.h)), /* @__PURE__ */ React.createElement(BtnSm, { variant: label === "Add" || label === "Accept" ? "lime" : "subtle", onClick: onClickBtn, title: isPendingOut ? "Click to cancel this request" : void 0, style: { flexShrink: 0, opacity: onClickBtn ? 1 : 0.7 } }, label));
-  }) : /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 34, height: 34, borderRadius: 9, background: T.lime + "18", border: `1px solid ${T.lime}30`, display: "flex", alignItems: "center", justifyContent: "center", color: T.lime, flexShrink: 0 } }, Icon.zap), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: T.white } }, "Be the pioneer on your campus."), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted } }, "Invite classmates to auto-sync routines and study together."))), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setInviteOpen(true), style: { width: "100%", justifyContent: "center" } }, Icon.mail, " Invite classmates")))), !mySchool && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 24, padding: "16px 18px", borderRadius: 10, background: T.card, border: `1px solid ${T.border}`, fontSize: 12, color: T.muted, lineHeight: 1.6 } }, "Add your school in Profile to find and connect with classmates automatically."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderRadius: 10, background: T.lime + "0C", border: `1px solid ${T.lime}22`, marginBottom: 24 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 28, height: 28, borderRadius: 8, background: T.lime + "1A", border: `1px solid ${T.lime}30`, display: "flex", alignItems: "center", justifyContent: "center", color: T.lime, flexShrink: 0 } }, Icon.zap), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: 12.5, color: T.muted, lineHeight: 1.5 } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.text, fontWeight: 600 } }, "Invite classmates to unlock collective scheduling."), " ", "For every friend who joins, you ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, "both"), " get ", /* @__PURE__ */ React.createElement("span", { style: { color: T.lime, fontWeight: 600 } }, REFERRAL_TRIAL_DAYS, " days of Pro-Limited"), ", free."), /* @__PURE__ */ React.createElement("button", { onClick: () => setInviteOpen(true), style: { flexShrink: 0, padding: "7px 16px", borderRadius: 7, background: T.lime, color: T.ink, border: "none", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: T.font, whiteSpace: "nowrap" } }, "Invite friends")), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 24 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: T.faint, marginBottom: 8 } }, "Add Friends"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 10 } }, ["All", "@username", "Name", "School"].map((f) => /* @__PURE__ */ React.createElement("button", { key: f, onClick: () => setSearchFilter(f), style: { padding: "5px 11px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, border: `1px solid ${searchFilter === f ? T.lime + "44" : T.border}`, background: searchFilter === f ? T.lime + "14" : "transparent", color: searchFilter === f ? T.lime : T.muted, transition: "all 0.12s" } }, f))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 13px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 9, marginBottom: 12 } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, display: "flex", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("svg", { width: "15", height: "15", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("circle", { cx: "11", cy: "11", r: "8" }), /* @__PURE__ */ React.createElement("line", { x1: "21", y1: "21", x2: "16.65", y2: "16.65" }))), /* @__PURE__ */ React.createElement("input", { value: searchQ, onChange: (e) => {
+  }) : /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 34, height: 34, borderRadius: 9, background: T.lime + "18", border: `1px solid ${T.lime}30`, display: "flex", alignItems: "center", justifyContent: "center", color: T.lime, flexShrink: 0 } }, Icon.zap), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: T.white } }, "Be the pioneer on your campus."), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted } }, "Invite classmates to auto-sync routines and study together."))), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setInviteOpen(true), style: { width: "100%", justifyContent: "center" } }, Icon.mail, " Invite classmates")))), !mySchool && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 24, padding: "16px 18px", borderRadius: 10, background: T.card, border: `1px solid ${T.border}`, fontSize: 12, color: T.muted, lineHeight: 1.6 } }, "Add your school in Profile to find and connect with classmates automatically."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderRadius: 10, background: T.lime + "0C", border: `1px solid ${T.lime}22`, marginBottom: 24 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 28, height: 28, borderRadius: 8, background: T.lime + "1A", border: `1px solid ${T.lime}30`, display: "flex", alignItems: "center", justifyContent: "center", color: T.lime, flexShrink: 0 } }, Icon.zap), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: 12.5, color: T.muted, lineHeight: 1.5 } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.text, fontWeight: 600 } }, "Invite classmates to unlock collective scheduling."), " ", "For every friend who joins, you ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, "both"), " get ", /* @__PURE__ */ React.createElement("span", { style: { color: T.lime, fontWeight: 600 } }, REFERRAL_TRIAL_DAYS, " days of ", planDisplayName("Pro-Limited")), ", free."), /* @__PURE__ */ React.createElement("button", { onClick: () => setInviteOpen(true), style: { flexShrink: 0, padding: "7px 16px", borderRadius: 7, background: T.lime, color: T.ink, border: "none", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: T.font, whiteSpace: "nowrap" } }, "Invite friends")), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 24 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: T.faint, marginBottom: 8 } }, "Add Friends"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 10 } }, ["All", "@username", "Name", "School"].map((f) => /* @__PURE__ */ React.createElement("button", { key: f, onClick: () => setSearchFilter(f), style: { padding: "5px 11px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, border: `1px solid ${searchFilter === f ? T.lime + "44" : T.border}`, background: searchFilter === f ? T.lime + "14" : "transparent", color: searchFilter === f ? T.lime : T.muted, transition: "all 0.12s" } }, f))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 13px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 9, marginBottom: 12 } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, display: "flex", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("svg", { width: "15", height: "15", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("circle", { cx: "11", cy: "11", r: "8" }), /* @__PURE__ */ React.createElement("line", { x1: "21", y1: "21", x2: "16.65", y2: "16.65" }))), /* @__PURE__ */ React.createElement("input", { value: searchQ, onChange: (e) => {
     setSearchQ(e.target.value);
     setEmailSent(false);
   }, placeholder: searchFilter === "@username" ? "Search by @username\u2026" : searchFilter === "School" ? "Search by university or college\u2026" : searchFilter === "Name" ? "Search by first or last name\u2026" : "Search by name, @username, or school\u2026", style: { flex: 1, background: "none", border: "none", outline: "none", color: T.text, fontSize: 13, fontFamily: T.font } }), searchQ && /* @__PURE__ */ React.createElement("button", { onClick: () => setSearchQ(""), style: { background: "none", border: "none", color: T.muted, cursor: "pointer", padding: 0, display: "flex", lineHeight: 1, flexShrink: 0 } }, Icon.xmark)), /* @__PURE__ */ React.createElement(Card, { style: { padding: 0, overflow: "hidden" } }, !searchQ.trim() ? /* @__PURE__ */ React.createElement("div", { style: { padding: 24, textAlign: "center", fontSize: 12.5, color: T.muted, lineHeight: 1.6 } }, "Search by username, name, or school to find classmates already on Studlin.") : searching ? /* @__PURE__ */ React.createElement("div", { style: { padding: 24, textAlign: "center", fontSize: 12.5, color: T.muted } }, "Searching\u2026") : !noResults ? searchResults.map((u, i, arr) => {
@@ -8844,7 +8884,7 @@ function FriendsChat({ onFriendRequestSent, onActiveChatChange, initialTarget, o
     return /* @__PURE__ */ React.createElement("div", { key: u.uid, style: { display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderBottom: i < arr.length - 1 ? `1px solid ${T.border}` : "none" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative", flexShrink: 0 } }, /* @__PURE__ */ React.createElement(Av, { initials: u.n.split(" ").map((x) => x[0]).join(""), color: T.lime, size: 34, picUrl: u.p || "" })), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white } }, u.n), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted } }, u.h, u.s && /* @__PURE__ */ React.createElement(React.Fragment, null, " \xB7 ", /* @__PURE__ */ React.createElement("span", { style: { color: T.blue } }, u.s)))), /* @__PURE__ */ React.createElement(BtnSm, { variant: label === "Add" || label === "Accept" ? "lime" : "subtle", onClick: onClickBtn, title: isPendingOut ? "Click to cancel this request" : void 0, style: { flexShrink: 0, opacity: onClickBtn ? 1 : 0.7 } }, label));
   }) : /* @__PURE__ */ React.createElement("div", { style: { padding: 20 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 34, height: 34, borderRadius: 9, background: T.blue + "18", border: `1px solid ${T.blue}30`, display: "flex", alignItems: "center", justifyContent: "center", color: T.blue, flexShrink: 0 } }, Icon.mail), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: T.white } }, 'No one found for "', searchQ, '"'), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted } }, "Invite them to join Studlin via email."))), /* @__PURE__ */ React.createElement("input", { value: inviteEmail, onChange: (e) => setInviteEmail(e.target.value), onKeyDown: (e) => {
     if (e.key === "Enter") sendEmailInvite();
-  }, placeholder: "friend@university.edu", style: { width: "100%", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "9px 12px", color: T.text, fontSize: 13, fontFamily: T.font, outline: "none", boxSizing: "border-box", marginBottom: 10 } }), emailSent && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.teal, marginBottom: 8 } }, "Invite sent!"), /* @__PURE__ */ React.createElement(Btn, { onClick: sendEmailInvite, style: { width: "100%", justifyContent: "center", opacity: inviteEmail.trim() ? 1 : 0.45 } }, Icon.mail, " Send invite")))), inviteOpen && /* @__PURE__ */ React.createElement("div", { onClick: () => setInviteOpen(false), style: { position: "fixed", inset: 0, zIndex: 90, background: "rgba(8,12,10,0.78)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center" } }, /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { width: 460, maxWidth: "92vw", background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, padding: 28, boxShadow: "0 40px 90px -30px rgba(0,0,0,0.65)" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 42, height: 42, borderRadius: 12, background: T.lime + "18", border: `1px solid ${T.lime}33`, display: "flex", alignItems: "center", justifyContent: "center", color: T.lime, flexShrink: 0 } }, Icon.users), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 18, fontWeight: 700, color: T.white, letterSpacing: "-0.02em" } }, "Invite your classmates"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Unlock collective calendar syncing."))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, lineHeight: 1.7, marginBottom: 20 } }, "When your whole class is on Studlin, syncing calendars can automatically find when ", /* @__PURE__ */ React.createElement("em", null, "everyone"), ' is free \u2014 no more "when can everyone meet?" texts.'), /* @__PURE__ */ React.createElement("div", { style: { padding: "11px 14px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 10, marginBottom: 14, display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: 12, color: T.text, fontFamily: T.mono, wordBreak: "break-all" } }, inviteLink), /* @__PURE__ */ React.createElement("button", { onClick: copyLink, style: { flexShrink: 0, padding: "7px 13px", borderRadius: 7, background: copied ? T.teal : T.lime, color: T.ink, border: "none", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: T.font, transition: "background 0.2s", whiteSpace: "nowrap" } }, copied ? "\u2713 Copied!" : "Copy")), /* @__PURE__ */ React.createElement("div", { style: { padding: "10px 14px", background: T.lime + "0A", border: `1px solid ${T.lime}22`, borderRadius: 8, fontSize: 12, color: T.text, marginBottom: 20, lineHeight: 1.6 } }, "For every friend who joins via your link, you ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, "both"), " unlock ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, REFERRAL_TRIAL_DAYS, " days of Pro-Limited"), ", free."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: () => setInviteOpen(false), variant: "subtle", style: { flex: 1, justifyContent: "center" } }, "Close"), /* @__PURE__ */ React.createElement(Btn, { onClick: copyLink, style: { flex: 1, justifyContent: "center" } }, copied ? /* @__PURE__ */ React.createElement(React.Fragment, null, Icon.check, " Copied!") : /* @__PURE__ */ React.createElement(React.Fragment, null, Icon.copy, " Copy link"))))), /* @__PURE__ */ React.createElement(
+  }, placeholder: "friend@university.edu", style: { width: "100%", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "9px 12px", color: T.text, fontSize: 13, fontFamily: T.font, outline: "none", boxSizing: "border-box", marginBottom: 10 } }), emailSent && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.teal, marginBottom: 8 } }, "Invite sent!"), /* @__PURE__ */ React.createElement(Btn, { onClick: sendEmailInvite, style: { width: "100%", justifyContent: "center", opacity: inviteEmail.trim() ? 1 : 0.45 } }, Icon.mail, " Send invite")))), inviteOpen && /* @__PURE__ */ React.createElement("div", { onClick: () => setInviteOpen(false), style: { position: "fixed", inset: 0, zIndex: 90, background: "rgba(8,12,10,0.78)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center" } }, /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { width: 460, maxWidth: "92vw", background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, padding: 28, boxShadow: "0 40px 90px -30px rgba(0,0,0,0.65)" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 42, height: 42, borderRadius: 12, background: T.lime + "18", border: `1px solid ${T.lime}33`, display: "flex", alignItems: "center", justifyContent: "center", color: T.lime, flexShrink: 0 } }, Icon.users), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 18, fontWeight: 700, color: T.white, letterSpacing: "-0.02em" } }, "Invite your classmates"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Unlock collective calendar syncing."))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, lineHeight: 1.7, marginBottom: 20 } }, "When your whole class is on Studlin, syncing calendars can automatically find when ", /* @__PURE__ */ React.createElement("em", null, "everyone"), ' is free \u2014 no more "when can everyone meet?" texts.'), /* @__PURE__ */ React.createElement("div", { style: { padding: "11px 14px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 10, marginBottom: 14, display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: 12, color: T.text, fontFamily: T.mono, wordBreak: "break-all" } }, inviteLink), /* @__PURE__ */ React.createElement("button", { onClick: copyLink, style: { flexShrink: 0, padding: "7px 13px", borderRadius: 7, background: copied ? T.teal : T.lime, color: T.ink, border: "none", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: T.font, transition: "background 0.2s", whiteSpace: "nowrap" } }, copied ? "\u2713 Copied!" : "Copy")), /* @__PURE__ */ React.createElement("div", { style: { padding: "10px 14px", background: T.lime + "0A", border: `1px solid ${T.lime}22`, borderRadius: 8, fontSize: 12, color: T.text, marginBottom: 20, lineHeight: 1.6 } }, "For every friend who joins via your link, you ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, "both"), " unlock ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, REFERRAL_TRIAL_DAYS, " days of ", planDisplayName("Pro-Limited")), ", free."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: () => setInviteOpen(false), variant: "subtle", style: { flex: 1, justifyContent: "center" } }, "Close"), /* @__PURE__ */ React.createElement(Btn, { onClick: copyLink, style: { flex: 1, justifyContent: "center" } }, copied ? /* @__PURE__ */ React.createElement(React.Fragment, null, Icon.check, " Copied!") : /* @__PURE__ */ React.createElement(React.Fragment, null, Icon.copy, " Copy link"))))), /* @__PURE__ */ React.createElement(
     Modal,
     {
       open: createGroupOpen,
@@ -9674,7 +9714,7 @@ function ExploreClassesCard({ school, classes, setActive }) {
   const [reOptModal, setReOptModal] = useState(null);
   const isHS = school === DEMO_SCHOOL_HS;
   const toggleSelect = (code) => setSelectedCodes((prev) => prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code]);
-  const showToast = (msg) => {
+  const showToast2 = (msg) => {
     setToast(msg);
     setTimeout(() => setToast(""), 2600);
   };
@@ -9695,7 +9735,7 @@ function ExploreClassesCard({ school, classes, setActive }) {
     const newDate = resolveDemoDate(cls.events[idx].dayOffset + (turningOn ? 3 : 0));
     if (already) lsSet("events", evs.map((e) => e.id === injectedId ? { ...e, date: newDate } : e));
     if (turningOn) {
-      showToast(cls.instructor + ' moved "Project 1" to Monday' + (already ? " \u2014 your calendar has been updated." : " (preview only \u2014 add this class to your plan to sync it)."));
+      showToast2(cls.instructor + ' moved "Project 1" to Monday' + (already ? " \u2014 your calendar has been updated." : " (preview only \u2014 add this class to your plan to sync it)."));
     }
   };
   const onOptimize = () => {
@@ -9878,6 +9918,7 @@ function ChatDrawer({ open, target, myUid, onClose, onMakePermanent, onDeleteGro
   const [syncRunning, setSyncRunning] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [unfriendConfirmOpen, setUnfriendConfirmOpen] = useState(false);
+  const [deleteGroupConfirmOpen, setDeleteGroupConfirmOpen] = useState(false);
   const [findWindowOpen, setFindWindowOpen] = useState(false);
   const [counterSupersedes, setCounterSupersedes] = useState(null);
   const [fwTimeMode, setFwTimeMode] = useState("anytime");
@@ -10155,8 +10196,22 @@ function ChatDrawer({ open, target, myUid, onClose, onMakePermanent, onDeleteGro
       return /* @__PURE__ */ React.createElement("div", { key: uid, style: { display: "flex", alignItems: "center", gap: 9 } }, /* @__PURE__ */ React.createElement(Av, { initials: name.split(" ").map((x) => x[0]).join(""), color: T.lime, size: 28, picUrl: "" }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, fontWeight: 600 } }, name));
     })), /* @__PURE__ */ React.createElement("div", { style: { paddingTop: 16, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement(Label, null, "Expiration"), target.group.groupType === "temporary" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, marginBottom: 10, lineHeight: 1.5 } }, expiry && expiry.expired ? "This group has expired and will archive shortly." : /* @__PURE__ */ React.createElement(React.Fragment, null, "Auto-archives on ", /* @__PURE__ */ React.createElement("strong", null, new Date(target.group.expiresAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })), " \u2014 ", expiry && expiry.label, " left.")), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => onMakePermanent(target.group.id), style: { width: "100%", justifyContent: "center", marginBottom: 8 } }, Icon.users, " Make permanent")) : /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginBottom: 10 } }, "This is a standard ongoing group. It will never auto-archive."), target.group.createdBy === myUid && /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => {
       setSettingsOpen(false);
-      onDeleteGroup(target.group.id);
-    }, style: { width: "100%", justifyContent: "center" } }, Icon.xmark, " Delete group"))), target && !isGroup && /* @__PURE__ */ React.createElement(
+      setDeleteGroupConfirmOpen(true);
+    }, style: { width: "100%", justifyContent: "center" } }, Icon.xmark, " Delete group"))), target && isGroup && /* @__PURE__ */ React.createElement(
+      Modal,
+      {
+        open: deleteGroupConfirmOpen,
+        onClose: () => setDeleteGroupConfirmOpen(false),
+        title: "Delete " + (target.group.name || "this group") + "?",
+        sub: "This deletes the group and its chat history for every member. This can't be undone.",
+        width: 400,
+        footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setDeleteGroupConfirmOpen(false) }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => {
+          setDeleteGroupConfirmOpen(false);
+          onClose();
+          onDeleteGroup(target.group.id);
+        } }, Icon.xmark, " Delete group"))
+      }
+    ), target && !isGroup && /* @__PURE__ */ React.createElement(
       Modal,
       {
         open: unfriendConfirmOpen,
@@ -10350,10 +10405,11 @@ Examples:
 "update my peak hours" (no specific time of day named at all) -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":"Which time of day -- morning, midday, afternoon, or evening?"}
 "add a task to finish my essay. When is that due? next Friday" (a combined follow-up, same student message thread) -> {"kind":"action","intent":"create_task","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Finish essay","dueDate":"<the real date of next Friday>","dueTime":null,"durationMin":null,"taskKind":"study","genFormat":null,"peakHours":null,"clarify":null}
 "can you move my project" (no destination day given at all, not even "sometime") -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":"What day would you like it moved to?"}
-"Here's my notes: Mitochondria are the powerhouse of the cell -- they produce ATP through cellular respiration, using oxygen to break down glucose into usable energy. Can you make flashcards from this?" (real pasted content, clearly asking for cards) -> {"kind":"action","intent":"generate_study_material","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":"flashcards","genFormat":null,"peakHours":null,"clarify":null}
+"Here's my notes: Mitochondria are the powerhouse of the cell -- they produce ATP through cellular respiration, using oxygen to break down glucose into usable energy. Can you make flashcards from this?" (real pasted content, clearly asking for cards) -> {"kind":"action","intent":"generate_study_material","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":"flashcards","peakHours":null,"clarify":null}
 "quiz me on chapter 3" (no real material actually pasted, just a bare request) -> {"kind":"coaching","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"clarify":null}`;
   const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [...history || [], { r: "user", t: prompt }], model: "flash", format: "studlin_ai_intent" }) });
   const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "classify-failed");
   try {
     const raw = (data.reply || "").replace(/```json?|```/g, "").trim();
     const parsed = JSON.parse(raw);
@@ -10661,7 +10717,7 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
       onAcceptProactive(proposal.signal);
       setMessages((m) => {
         const withResolved = m.map((mm, i) => i === idx ? { ...mm, proposal: { ...mm.proposal, resolved: "confirmed" } } : mm);
-        return [...withResolved, { role: "ai", text: "Done. " + proposal.label, kind: "done" }];
+        return [...withResolved, { role: "ai", text: "Done. " + pastTenseProposalLabel(proposal.label), kind: "done" }];
       });
       setPendingIndex(null);
       return;
@@ -10762,7 +10818,7 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
     if (next) onEventsCommitted(next);
     setMessages((m) => {
       const withResolved = m.map((mm, i) => i === idx ? { ...mm, proposal: { ...mm.proposal, resolved: "confirmed" } } : mm);
-      return [...withResolved, { role: "ai", text: "Done. " + proposal.label }];
+      return [...withResolved, { role: "ai", text: "Done. " + pastTenseProposalLabel(proposal.label) }];
     });
     setPendingIndex(null);
   };
@@ -12549,6 +12605,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     if (u) fsdb().collection("users").doc(u.uid).set({ [FREE_SCAN_FLAG[kind]]: true, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }, { merge: true }).catch(() => {
     });
   };
+  const syllabusFoundNothing = (result) => !result.subject && (!result.meetingTimes || result.meetingTimes.length === 0) && (!result.deadlines || result.deadlines.length === 0);
   const handleScanFile = async (e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
@@ -12578,6 +12635,10 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
         const result2 = await extractClassSyllabusImage(base64, IMAGE_EXT_MEDIA_TYPES[ext]);
         if (result2.error) {
           setScanError(result2.error);
+          return;
+        }
+        if (syllabusFoundNothing(result2)) {
+          setScanError("Couldn't find much in that image -- try a clearer photo, or fill in the class details yourself below.");
           return;
         }
         if (!canScanScreenshot()) markFreeScanUsed("syllabus");
@@ -12616,6 +12677,10 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
         setScanError(result.error);
         return;
       }
+      if (syllabusFoundNothing(result)) {
+        setScanError("Couldn't find much in that file -- try a clearer copy, or fill in the class details yourself below.");
+        return;
+      }
       if (!canScanSyllabus()) markFreeScanUsed("syllabus");
       recordSyllabusScan();
       buildReviewFromExtraction(result, text);
@@ -12637,6 +12702,10 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
       const result = await extractClassSyllabusText(pasteText);
       if (result.error) {
         setScanError(result.error);
+        return;
+      }
+      if (syllabusFoundNothing(result)) {
+        setScanError("Couldn't find much in that text -- try pasting more of it, or fill in the class details yourself below.");
         return;
       }
       if (!canScanSyllabus()) markFreeScanUsed("syllabus");
@@ -13280,7 +13349,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
   // windowInvalid guard is the only real precondition left.
   /* @__PURE__ */ React.createElement(Btn, { onClick: commitAllToCalendar }, pendingClasses.length > 0 ? "Add to Calendar" : "Finish")))));
 }
-function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf, fmtTime: fmtTime2, fmtTimeRange: fmtTimeRange2, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending, openNew, newItemHighlightIds }) {
+function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf, fmtTime: fmtTime2, fmtTimeRange: fmtTimeRange2, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending, openNew, newItemHighlightIds, onEditRoutine }) {
   const scrollRef = useRef(null);
   const [dayPreviewOpen, setDayPreviewOpen] = useState(false);
   const [whoInAnchor, setWhoInAnchor] = useState(null);
@@ -13386,7 +13455,11 @@ function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf,
     return /* @__PURE__ */ React.createElement(React.Fragment, { key: ev.id }, ev.commuteBefore > 0 && /* @__PURE__ */ React.createElement("div", { title: ev.commuteBefore + " min commute", style: commuteStripStyle(ev.commuteBefore, "before") }, ev.commuteBefore * (pxPerHr / 60) > 13 && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color, fontWeight: 600, whiteSpace: "nowrap" } }, ev.commuteBefore, "m commute")), /* @__PURE__ */ React.createElement(
       "div",
       {
-        onDoubleClick: () => openEdit(ev),
+        onDoubleClick: () => {
+          if (ev.isRoutine) {
+            if (onEditRoutine) onEditRoutine(ev.routineId);
+          } else openEdit(ev);
+        },
         onClick: (e) => {
           if (ev.isRoutine) return;
           if (isPendingAcceptance) {
@@ -13860,6 +13933,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
   const [notes, setNotes] = useState("");
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [confirmDeleteBlockId, setConfirmDeleteBlockId] = useState(null);
   const [completeSessionPrompt, setCompleteSessionPrompt] = useState(false);
   const [examSwitchAwayConfirm, setExamSwitchAwayConfirm] = useState(false);
   const [projectSwitchAwayConfirm, setProjectSwitchAwayConfirm] = useState(false);
@@ -14320,7 +14394,10 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
     })(),
     kind !== "exam" && linkedSessions.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 } }, "Scheduled blocks"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" } }, linkedSessions.slice().sort((a, b) => a.date + a.time < b.date + b.time ? -1 : 1).map((s, si) => {
       const isPast = s.status === "pending" && s.date && s.date < dayKey();
-      return /* @__PURE__ */ React.createElement("div", { key: s.id, style: { padding: "8px 10px", borderTop: si === 0 ? "none" : `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("div", { onClick: () => jumpToCalendar(s.id), style: { cursor: "pointer", flex: 1, minWidth: 0 }, title: "Jump to calendar" }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 600, color: s.status === "done" ? T.muted : T.text, textDecoration: s.status === "done" ? "line-through" : "none" } }, s.date, " \xB7 ", s.time, " \xB7 ", s.duration || 30, "min")), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => deleteLinkedBlock(s.id), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 11, fontFamily: T.font, textDecoration: "underline", flexShrink: 0 } }, "Delete")), isPast && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 6, paddingTop: 6, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.amber } }, "Did you get to this?"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => markLinkedBlockDone(s.id), style: { background: "none", border: "none", color: T.lime, cursor: "pointer", fontSize: 11, fontWeight: 600, fontFamily: T.font, textDecoration: "underline" } }, "Mark done")));
+      return /* @__PURE__ */ React.createElement("div", { key: s.id, style: { padding: "8px 10px", borderTop: si === 0 ? "none" : `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("div", { onClick: () => jumpToCalendar(s.id), style: { cursor: "pointer", flex: 1, minWidth: 0 }, title: "Jump to calendar" }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 600, color: s.status === "done" ? T.muted : T.text, textDecoration: s.status === "done" ? "line-through" : "none" } }, s.date, " \xB7 ", s.time, " \xB7 ", s.duration || 30, "min")), confirmDeleteBlockId === s.id ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+        deleteLinkedBlock(s.id);
+        setConfirmDeleteBlockId(null);
+      }, style: { background: "none", border: "none", color: T.red, cursor: "pointer", fontSize: 11, fontWeight: 700, fontFamily: T.font, textDecoration: "underline" } }, "Confirm"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setConfirmDeleteBlockId(null), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 11, fontFamily: T.font, textDecoration: "underline" } }, "Cancel")) : /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setConfirmDeleteBlockId(s.id), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 11, fontFamily: T.font, textDecoration: "underline", flexShrink: 0 } }, "Delete")), isPast && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 6, paddingTop: 6, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.amber } }, "Did you get to this?"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => markLinkedBlockDone(s.id), style: { background: "none", border: "none", color: T.lime, cursor: "pointer", fontSize: 11, fontWeight: 600, fontFamily: T.font, textDecoration: "underline" } }, "Mark done")));
     }))),
     pace && pace.behind && !paceDismissed && /* @__PURE__ */ React.createElement("div", { style: { background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 8, padding: "10px 12px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, marginBottom: 2 } }, "Behind pace on this one"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 8 } }, Math.round(pace.loggedMins), " of an expected ", Math.round(pace.expectedMins), " min logged so far, aiming to finish by ", pace.gate.finishByDate, "."), paceProposal ? paceProposal.date ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.text } }, paceProposal.date, " \xB7 ", paceProposal.time, " \xB7 ", paceProposal.duration, "min"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: confirmPaceProposal }, "Add it"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setPaceProposal(null) }, "Never mind"))) : /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted } }, "Couldn't find an open slot before the deadline -- try adding a time manually below.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: proposePaceBlock }, "Propose a catch-up block"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: dismissPaceOffer }, "Not now"))),
     pace && pace.ahead && /* @__PURE__ */ React.createElement("div", { style: { background: T.teal + "14", border: `1px solid ${T.teal}33`, borderRadius: 8, padding: "10px 12px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, marginBottom: 2 } }, "Ahead of pace on this one"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted } }, Math.round(pace.loggedMins), " of an expected ", Math.round(pace.expectedMins), " min logged so far \u2014 nice work.")),
@@ -14544,6 +14621,7 @@ function NewEventModal({ open, initialTitle, initialDate, initialStartTime, init
   const [location2, setLocation] = useState("");
   const [movable, setMovable] = useState(false);
   const [routineColor, setRoutineColor] = useState(T.lime);
+  const [confirmDeleteRoutine, setConfirmDeleteRoutine] = useState(false);
   useEffect(() => {
     if (!open || !onPreviewChange || editRoutine) return;
     onPreviewChange({ title, date, startTime, endTime, allDay, color: color || T.lime });
@@ -14555,6 +14633,7 @@ function NewEventModal({ open, initialTitle, initialDate, initialStartTime, init
     if (!open) return;
     setDayTimes({});
     setDayTimeEditingIdx(null);
+    setConfirmDeleteRoutine(false);
     if (editRoutine) {
       setTitle(editRoutine.title || "");
       setEvKind(editRoutine.kind === "busy" ? "busy" : editRoutine.kind || "class");
@@ -14712,7 +14791,7 @@ function NewEventModal({ open, initialTitle, initialDate, initialStartTime, init
       onChange: (e) => setCommuteAfter(e.target.value),
       style: { width: 42, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 5, padding: "2px 5px", color: T.text, fontSize: 11, fontFamily: T.font, outline: "none" }
     }
-  ), " min")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.faint, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Scheduling"), /* @__PURE__ */ React.createElement(SelectChip, { size: "sm", options: [{ value: false, label: "Fixed (won't move)" }, { value: true, label: "Free (can move)" }], value: movable, onChange: setMovable }))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, justifyContent: editRoutine ? "space-between" : "flex-end", alignItems: "center", padding: "9px 12px", borderTop: `1px solid ${T.border}` } }, editRoutine && /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: onDelete, style: { padding: "6px 13px", fontSize: 12 } }, "Delete"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: onClose, style: { padding: "6px 13px", fontSize: 12 } }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: submit, disabled: invalid, style: { padding: "6px 13px", fontSize: 12 } }, editRoutine ? "Save changes" : "Create"))))), document.body);
+  ), " min")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.faint, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Scheduling"), /* @__PURE__ */ React.createElement(SelectChip, { size: "sm", options: [{ value: false, label: "Fixed (won't move)" }, { value: true, label: "Free (can move)" }], value: movable, onChange: setMovable }))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, justifyContent: editRoutine ? "space-between" : "flex-end", alignItems: "center", padding: "9px 12px", borderTop: `1px solid ${T.border}` } }, editRoutine && (confirmDeleteRoutine ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.muted } }, "Delete this?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: onDelete, style: { padding: "6px 13px", fontSize: 12 } }, "Yes, delete"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmDeleteRoutine(false), style: { padding: "6px 13px", fontSize: 12 } }, "Cancel")) : /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => setConfirmDeleteRoutine(true), style: { padding: "6px 13px", fontSize: 12 } }, "Delete")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: onClose, style: { padding: "6px 13px", fontSize: 12 } }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: submit, disabled: invalid, style: { padding: "6px 13px", fontSize: 12 } }, editRoutine ? "Save changes" : "Create"))))), document.body);
 }
 const CALENDAR_HIGHLIGHT_MAX_AGE_MS = 5 * 60 * 1e3;
 function resolveCalendarHighlightFlag(flag, nowMs) {
@@ -14879,13 +14958,19 @@ function CalendarTab({ setActive = () => {
     lsSet("hasConfiguredRoutine", true);
     setClassSetupOpen(false);
     syncClassSetupState();
-    if (newIds && newIds.length > 0) setNewItemHighlightIds(newIds);
+    if (newIds && newIds.length > 0) {
+      setNewItemHighlightIds(newIds);
+      showToast("Added " + newIds.length + " item" + (newIds.length !== 1 ? "s" : "") + " to your calendar.");
+    }
   };
   const finishQuickScan = (newIds) => {
     setQuickScanOpen(false);
     setQuickScanTargetCourseId(null);
     syncClassSetupState();
-    if (newIds && newIds.length > 0) setNewItemHighlightIds(newIds);
+    if (newIds && newIds.length > 0) {
+      setNewItemHighlightIds(newIds);
+      showToast("Added " + newIds.length + " item" + (newIds.length !== 1 ? "s" : "") + " to your calendar.");
+    }
   };
   useEffect(() => {
     const flag = lsGet("calendarHighlightIds", null);
@@ -17296,7 +17381,10 @@ Examples:
       gsBusyByDate: gsOpen && gsStep === "place" ? gsBusyByDate : null,
       gsRecommended: gsOpen && gsStep === "place" ? gsRecommended : null
     }
-  ), calView === "daily" && /* @__PURE__ */ React.createElement(DayPlanner, { dayEvents, setEvents: setEvents2, selDay, todayK, colorOf, fmtTime: fmtTime2, fmtTimeRange, openEdit, markDone, uncrossDone, prefs: getSchedulePreferences(), setSelDay, catchUpPending, openNew, newItemHighlightIds: newItemHighlightSet })), /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, display: "flex", position: "relative", height: "calc(100vh - 150px)" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 0, bottom: 0, left: calRightColCollapsed ? 0 : 14, width: 1, background: T.border, boxShadow: `-1px 0 3px rgba(0,0,0,0.12)` } }), !calRightColCollapsed && /* @__PURE__ */ React.createElement("div", { style: { width: 220, marginLeft: 34, maxHeight: "100%", overflowY: "auto" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontWeight: 700, color: T.white } }, selectedCourse ? selectedCourse.label : "Upcoming"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: toggleCalRightColCollapsed, style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontWeight: 600, fontFamily: T.font, cursor: "pointer", padding: 0 } }, "Close \u203A")), sidebarDueTodayItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 10, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setDueTodayOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.lime, transform: dueTodayOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.lime } }, "Due Today (", sidebarDueTodayItems.length, ")")), dueTodayOpen && sidebarDueTodayItems.map(renderSidebarItem)), sidebarOverdueItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setOverdueSectionOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.red, transform: overdueSectionOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.red } }, "Overdue (", sidebarOverdueItems.length, ")")), overdueSectionOpen && sidebarOverdueItems.map(renderSidebarItem)), sidebarUpcomingItems.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.faint } }, "Nothing upcoming."), sidebarUpcomingGroups.map((group) => /* @__PURE__ */ React.createElement("div", { key: group.label, style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, color: group.label === "Overdue" ? T.red : T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 } }, "Due: ", group.label), group.items.map(renderSidebarItem)))), calRightColCollapsed && /* @__PURE__ */ React.createElement(
+  ), calView === "daily" && /* @__PURE__ */ React.createElement(DayPlanner, { dayEvents, setEvents: setEvents2, selDay, todayK, colorOf, fmtTime: fmtTime2, fmtTimeRange, openEdit, markDone, uncrossDone, prefs: getSchedulePreferences(), setSelDay, catchUpPending, openNew, newItemHighlightIds: newItemHighlightSet, onEditRoutine: (routineId) => {
+    const rule = routines.find((r) => r.id === routineId);
+    if (rule) openRoutineEdit(rule);
+  } })), /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, display: "flex", position: "relative", height: "calc(100vh - 150px)" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 0, bottom: 0, left: calRightColCollapsed ? 0 : 14, width: 1, background: T.border, boxShadow: `-1px 0 3px rgba(0,0,0,0.12)` } }), !calRightColCollapsed && /* @__PURE__ */ React.createElement("div", { style: { width: 220, marginLeft: 34, maxHeight: "100%", overflowY: "auto" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontWeight: 700, color: T.white } }, selectedCourse ? selectedCourse.label : "Upcoming"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: toggleCalRightColCollapsed, style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontWeight: 600, fontFamily: T.font, cursor: "pointer", padding: 0 } }, "Close \u203A")), sidebarDueTodayItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 10, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setDueTodayOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.lime, transform: dueTodayOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.lime } }, "Due Today (", sidebarDueTodayItems.length, ")")), dueTodayOpen && sidebarDueTodayItems.map(renderSidebarItem)), sidebarOverdueItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setOverdueSectionOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.red, transform: overdueSectionOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.red } }, "Overdue (", sidebarOverdueItems.length, ")")), overdueSectionOpen && sidebarOverdueItems.map(renderSidebarItem)), sidebarUpcomingItems.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.faint } }, "Nothing upcoming."), sidebarUpcomingGroups.map((group) => /* @__PURE__ */ React.createElement("div", { key: group.label, style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, color: group.label === "Overdue" ? T.red : T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 } }, "Due: ", group.label), group.items.map(renderSidebarItem)))), calRightColCollapsed && /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -18025,6 +18113,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     lsSet("settings", n);
     if (k === "motion" && typeof document !== "undefined" && document.body) document.body.setAttribute("data-motion", n.motion ? "reduce" : "");
     if (k === "incognito") upsertProfile();
+    if (k === "onlineStatus") upsertProfile();
     return n;
   });
   const [sysPushStatus, setSysPushStatus] = useState(() => {
@@ -18157,7 +18246,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
   const subscriptionPlanLine = () => {
     const plan = account.plan || getPlan();
     if (plan === "Free") return "Free plan";
-    if (plan === "Pro-Limited" && account.referralTrialExpiresAt) return "Pro-Limited trial - ends " + fmtBillingDate(account.referralTrialExpiresAt);
+    if (plan === "Pro-Limited" && account.referralTrialExpiresAt) return planDisplayName("Pro-Limited") + " - ends " + fmtBillingDate(account.referralTrialExpiresAt);
     if (!account.stripeSubscriptionId && account.betaTrialExpiresAt) return "Beta trial - Pro until " + fmtBillingDate(account.betaTrialExpiresAt);
     const end = account.subscriptionCurrentPeriodEnd || account.subscriptionEndsAt;
     return account.subscriptionCancelAtPeriodEnd ? "Active until " + fmtBillingDate(end) : planPriceText(plan, account.subscriptionInterval) + " - renews " + fmtBillingDate(end);
@@ -18211,9 +18300,9 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     try {
       await firebase.auth().sendPasswordResetEmail(profile.email);
       setPasswordResetSent(true);
-      showToast("Password reset link sent to " + profile.email + ".");
+      showToast2("Password reset link sent to " + profile.email + ".");
     } catch (e) {
-      showToast("Couldn't send that -- try again in a moment.", "error");
+      showToast2("Couldn't send that -- try again in a moment.", "error");
     }
     setPasswordResetLoading(false);
   };
@@ -18289,7 +18378,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
   const [googleLastSynced, setGoogleLastSynced] = useState(() => lsGet("cal-google-last-synced", null));
   const [googleSyncError, setGoogleSyncError] = useState(null);
   const [integrationToast, setIntegrationToast] = useState(null);
-  const showToast = (msg, type = "success") => {
+  const showToast2 = (msg, type = "success") => {
     setIntegrationToast({ msg, type });
     setTimeout(() => setIntegrationToast(null), 3500);
   };
@@ -18298,13 +18387,13 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     const result = await connectGoogleCalendar();
     setGoogleSyncing(false);
     if (!result.success) {
-      showToast(result.error, "error");
+      showToast2(result.error, "error");
       return;
     }
     setGoogleLastSynced(Date.now());
     setCalGoogleLinked(true);
     setGoogleSyncError(null);
-    showToast(`Google Calendar synced \xB7 ${result.eventCount} event${result.eventCount === 1 ? "" : "s"} imported` + reconcileToastSuffix(result.reconcileResult));
+    showToast2(`Google Calendar synced \xB7 ${result.eventCount} event${result.eventCount === 1 ? "" : "s"} imported` + reconcileToastSuffix(result.reconcileResult));
   };
   const connectGoogle = requestGoogleSync;
   const syncGoogleNow = async () => {
@@ -18312,7 +18401,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     const result = await pullGoogleCalendarIfConnected();
     setGoogleSyncing(false);
     if (!result) {
-      showToast("Sync failed. Try reconnecting below.", "error");
+      showToast2("Sync failed. Try reconnecting below.", "error");
       return;
     }
     if (result.lastSyncedAt) {
@@ -18320,10 +18409,10 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     }
     setGoogleSyncError(result.lastSyncError || null);
     if (result.lastSyncError) {
-      showToast(result.lastSyncError, "error");
+      showToast2(result.lastSyncError, "error");
       return;
     }
-    showToast("Google Calendar synced" + reconcileToastSuffix(result.reconcileResult));
+    showToast2("Google Calendar synced" + reconcileToastSuffix(result.reconcileResult));
   };
   useEffect(() => {
     if (!calGoogleLinked) return;
@@ -18345,7 +18434,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     setGoogleLastSynced(null);
     setCalGoogleLinked(false);
     setGoogleSyncError(null);
-    showToast("Google Calendar disconnected.");
+    showToast2("Google Calendar disconnected.");
     authFetch("/api/me", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "google-calendar-disconnect" }) }).catch(() => {
     });
   };
@@ -18509,7 +18598,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     setImportCalOpen(false);
     setImportCalReview(null);
     const skippedCount = fetched.length - newIds.length;
-    showToast(newIds.length + " new event" + (newIds.length !== 1 ? "s" : "") + " synced from " + label + (skippedCount > 0 ? " (" + skippedCount + " already on your calendar)" : "") + reconcileToastSuffix(result));
+    showToast2(newIds.length + " new event" + (newIds.length !== 1 ? "s" : "") + " synced from " + label + (skippedCount > 0 ? " (" + skippedCount + " already on your calendar)" : "") + reconcileToastSuffix(result));
     const hadMoreQueued = lsGet("openImportCalQueue", []).length > 0;
     openNextQueuedImportCal();
     if (!hadMoreQueued) highlightAndJumpToCalendar(newIds);
@@ -18525,7 +18614,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
           const nextSubs2 = importedCals.map((s) => s.id === sub.id ? { ...s, lastSyncError: data.lastSyncError } : s);
           setImportedCals(nextSubs2);
           saveImportedCalendars(nextSubs2);
-          showToast(sub.label + ": " + data.lastSyncError, "error");
+          showToast2(sub.label + ": " + data.lastSyncError, "error");
           return;
         }
       } else {
@@ -18547,7 +18636,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
         const nextSubs2 = importedCals.map((s) => s.id === sub.id ? { ...s, lastSyncedAt: Date.now(), lastSyncError: null } : s);
         setImportedCals(nextSubs2);
         saveImportedCalendars(nextSubs2);
-        showToast(sub.label + ": " + reviewEvents.length + " new item" + (reviewEvents.length !== 1 ? "s" : "") + " ready to review next time you open Settings.");
+        showToast2(sub.label + ": " + reviewEvents.length + " new item" + (reviewEvents.length !== 1 ? "s" : "") + " ready to review next time you open Settings.");
         return;
       }
       const merged = mergeImportedEvents(lsGet("events", []), sub.id, data.events, classifications);
@@ -18557,7 +18646,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
       setImportedCals(nextSubs);
       saveImportedCalendars(nextSubs);
       const newItems = merged.filter((e) => e.importSubId === sub.id && !existingUids.has(e.externalUid));
-      showToast(sub.label + (newItems.length > 0 ? ": " + newItems.length + " new item" + (newItems.length !== 1 ? "s" : "") + " found." : " synced.") + reconcileToastSuffix(result));
+      showToast2(sub.label + (newItems.length > 0 ? ": " + newItems.length + " new item" + (newItems.length !== 1 ? "s" : "") + " found." : " synced.") + reconcileToastSuffix(result));
       if (manual) highlightAndJumpToCalendar(newItems.map((e) => e.id));
     } catch (e) {
     }
@@ -18569,7 +18658,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     setImportedCals(nextSubs);
     saveImportedCalendars(nextSubs);
     setRemoveCalConfirm(null);
-    showToast(sub.label + " removed");
+    showToast2(sub.label + " removed");
     if (sub.viaToken) {
       authFetch("/api/me", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "canvas-disconnect" }) }).catch(() => {
       });
@@ -18650,14 +18739,14 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     surfaceReconcileResult(result);
     setWorkScanOpen(false);
     setWorkScanReview(null);
-    showToast(newEvents.length + " shift" + (newEvents.length !== 1 ? "s" : "") + " added to your calendar." + reconcileToastSuffix(result));
+    showToast2(newEvents.length + " shift" + (newEvents.length !== 1 ? "s" : "") + " added to your calendar." + reconcileToastSuffix(result));
     highlightAndJumpToCalendar(newEvents.map((e) => e.id));
   };
   const toggleApple = () => {
     const n = !calAppleLinked;
     setCalAppleLinked(n);
     lsSet("cal-apple", n);
-    showToast(n ? "Apple Calendar connected." : "Apple Calendar disconnected.");
+    showToast2(n ? "Apple Calendar connected." : "Apple Calendar disconnected.");
   };
   const sections = [
     { id: "General", icon: Icon.settings },
@@ -18914,13 +19003,13 @@ function SettingsTab({ theme = "dark", setTheme = () => {
       ["Smart Reschedule", plan === "Free" ? "Pro only" : plan === "Pro-Limited" ? "Limited" : "Included"],
       ["Manual classes, tasks & calendar", "Unlimited"]
     ].map(([action, status], i, arr) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: i < arr.length - 1 ? `1px solid ${T.border}` : "none" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, action), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted, fontFamily: T.mono } }, status)))), !hasProAccess() && /* @__PURE__ */ React.createElement(Card, { style: { background: T.lime, border: "none" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: T.ink, marginBottom: 4 } }, "Unlock Studlin's AI"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.ink, opacity: 0.75, marginBottom: 14 } }, "Upgrade to Pro for AI chat, scans, flashcard generation, and everything else Studlin's AI can do."), /* @__PURE__ */ React.createElement("button", { onClick: () => setPricingOpen(true), style: { background: T.ink, color: T.lime, border: "none", padding: "8px 18px", borderRadius: 8, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: T.font } }, "Upgrade to Pro")));
-  })(), active === "Subscription" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12, background: T.lime, border: "none" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: T.bg, opacity: 0.6 } }, "CURRENT PLAN"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 26, fontWeight: 700, color: T.bg, letterSpacing: "-0.02em", marginTop: 4 } }, account.plan || getPlan()), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.bg, opacity: 0.75, marginTop: 4 } }, subscriptionPlanLine())), /* @__PURE__ */ React.createElement("div", { style: { textAlign: "right" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: T.bg, opacity: 0.6 } }, "AI CHAT MESSAGES"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 26, fontWeight: 700, color: T.bg, letterSpacing: "-0.02em", marginTop: 4 } }, getPlan() === "Pro" ? "Unlimited" : getCredits() + " / " + getCreditLimit()), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.bg, opacity: 0.75, marginTop: 4 } }, getPlan() === "Pro" ? "No monthly cap" : "Resets in " + daysUntilReset() + " day" + (daysUntilReset() !== 1 ? "s" : "")))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 18, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("a", { href: "checkout.html?credits=500", style: { background: T.bg, color: T.lime, padding: "8px 16px", borderRadius: 7, fontSize: 12.5, fontWeight: 600, textDecoration: "none" } }, "Buy credit packs"), getPlan() !== "Pro" && /* @__PURE__ */ React.createElement("a", { href: "checkout.html?plan=pro&billing=monthly", style: { background: "transparent", border: `1px solid ${T.bg}55`, color: T.bg, padding: "8px 16px", borderRadius: 7, fontSize: 12.5, fontWeight: 600, textDecoration: "none" } }, "Upgrade to Pro"))), account.stripeSubscriptionId && /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "Manage subscription"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, lineHeight: 1.55 } }, account.subscriptionCancelAtPeriodEnd ? "Your subscription is canceled. You'll keep " + (account.plan || getPlan()) + " perks until " + fmtBillingDate(account.subscriptionCurrentPeriodEnd || account.subscriptionEndsAt) + "." : "Cancel future payments and keep " + (account.plan || getPlan()) + " through " + fmtBillingDate(account.subscriptionCurrentPeriodEnd || account.subscriptionEndsAt) + ".")), account.subscriptionCancelAtPeriodEnd ? /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => {
+  })(), active === "Subscription" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12, background: T.lime, border: "none" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: T.bg, opacity: 0.6 } }, "CURRENT PLAN"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 26, fontWeight: 700, color: T.bg, letterSpacing: "-0.02em", marginTop: 4 } }, planDisplayName(account.plan || getPlan())), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.bg, opacity: 0.75, marginTop: 4 } }, subscriptionPlanLine())), /* @__PURE__ */ React.createElement("div", { style: { textAlign: "right" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: T.bg, opacity: 0.6 } }, "AI CHAT MESSAGES"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 26, fontWeight: 700, color: T.bg, letterSpacing: "-0.02em", marginTop: 4 } }, getPlan() === "Pro" ? "Unlimited" : getCredits() + " / " + getCreditLimit()), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.bg, opacity: 0.75, marginTop: 4 } }, getPlan() === "Pro" ? "No monthly cap" : "Resets in " + daysUntilReset() + " day" + (daysUntilReset() !== 1 ? "s" : "")))), getPlan() !== "Pro" && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 18, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("a", { href: "checkout.html?plan=pro&billing=monthly", style: { background: "transparent", border: `1px solid ${T.bg}55`, color: T.bg, padding: "8px 16px", borderRadius: 7, fontSize: 12.5, fontWeight: 600, textDecoration: "none" } }, "Upgrade to Pro"))), account.stripeSubscriptionId && /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "Manage subscription"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, lineHeight: 1.55 } }, account.subscriptionCancelAtPeriodEnd ? "Your subscription is canceled. You'll keep " + (account.plan || getPlan()) + " perks until " + fmtBillingDate(account.subscriptionCurrentPeriodEnd || account.subscriptionEndsAt) + "." : "Cancel future payments and keep " + (account.plan || getPlan()) + " through " + fmtBillingDate(account.subscriptionCurrentPeriodEnd || account.subscriptionEndsAt) + ".")), account.subscriptionCancelAtPeriodEnd ? /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => {
     setSubscriptionError("");
     setSubscriptionAction("resume");
   }, style: { flexShrink: 0 } }, "Resume subscription") : /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => {
     setSubscriptionError("");
     setSubscriptionAction("cancel");
-  }, style: { flexShrink: 0 } }, "Cancel subscription"))), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white } }, "Payment methods"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => alert("To add a new card, make any purchase \u2014 your card will be saved automatically.") }, "+ Add card")), billingInfo === null ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, padding: "14px 0" } }, "Loading\u2026") : billingInfo.paymentMethod ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: 14, background: T.card2, borderRadius: 10, border: `1px solid ${T.lime}33` } }, /* @__PURE__ */ React.createElement("div", { style: { width: 40, height: 28, borderRadius: 4, background: "linear-gradient(135deg,#1A1F36,#3F4865)", display: "grid", placeItems: "center", color: "#fff", fontSize: 9, fontWeight: 700, letterSpacing: "0.06em", fontFamily: T.mono } }, billingInfo.paymentMethod.brand.toUpperCase()), /* @__PURE__ */ React.createElement("div", { style: { fontFamily: T.mono, fontSize: 13, color: T.text } }, "\u2022\u2022\u2022\u2022 ", billingInfo.paymentMethod.last4), /* @__PURE__ */ React.createElement(Badge, { color: T.lime }, "Default"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginLeft: "auto" } }, "Exp ", String(billingInfo.paymentMethod.expMonth).padStart(2, "0"), "/", String(billingInfo.paymentMethod.expYear).slice(-2))) : /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, textAlign: "center", padding: "20px 0" } }, "No card on file yet. One gets saved automatically the first time you subscribe or buy credits."), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, lineHeight: 1.5, marginTop: 8 } }, "Your default card is used for subscription renewals and credit purchases. Add more cards by making a purchase. We'll save it securely via Stripe.")), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: getPlan() !== "Pro" ? 12 : 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 10 } }, "Billing history"), billingInfo === null ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, padding: "6px 0" } }, "Loading\u2026") : billingInfo.invoices.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, textAlign: "center", padding: "20px 0" } }, "No charges yet. Real purchases will show up here.") : billingInfo.invoices.map((inv, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "grid", gridTemplateColumns: "110px 1fr 80px 70px", gap: 14, padding: "11px 0", borderBottom: i < billingInfo.invoices.length - 1 ? `1px solid ${T.border}` : "none", fontSize: 12.5, alignItems: "center" } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, fontFamily: T.mono, fontSize: 11 } }, new Date(inv.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })), /* @__PURE__ */ React.createElement("span", { style: { color: T.text } }, inv.description), /* @__PURE__ */ React.createElement("span", { style: { color: T.text, fontFamily: T.mono, fontWeight: 600, textAlign: "right" } }, "$", inv.amount), /* @__PURE__ */ React.createElement(Badge, { color: inv.status === "Paid" ? T.teal : T.amber }, inv.status)))), getPlan() !== "Pro" && /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, marginBottom: 8 } }, "Have a beta code?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Input, { value: betaCode, onChange: (e) => setBetaCode(e.target.value), onKeyDown: (e) => {
+  }, style: { flexShrink: 0 } }, "Cancel subscription"))), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white } }, "Payment methods"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => alert("To add a new card, make any purchase \u2014 your card will be saved automatically.") }, "+ Add card")), billingInfo === null ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, padding: "14px 0" } }, "Loading\u2026") : billingInfo.paymentMethod ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: 14, background: T.card2, borderRadius: 10, border: `1px solid ${T.lime}33` } }, /* @__PURE__ */ React.createElement("div", { style: { width: 40, height: 28, borderRadius: 4, background: "linear-gradient(135deg,#1A1F36,#3F4865)", display: "grid", placeItems: "center", color: "#fff", fontSize: 9, fontWeight: 700, letterSpacing: "0.06em", fontFamily: T.mono } }, billingInfo.paymentMethod.brand.toUpperCase()), /* @__PURE__ */ React.createElement("div", { style: { fontFamily: T.mono, fontSize: 13, color: T.text } }, "\u2022\u2022\u2022\u2022 ", billingInfo.paymentMethod.last4), /* @__PURE__ */ React.createElement(Badge, { color: T.lime }, "Default"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginLeft: "auto" } }, "Exp ", String(billingInfo.paymentMethod.expMonth).padStart(2, "0"), "/", String(billingInfo.paymentMethod.expYear).slice(-2))) : /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, textAlign: "center", padding: "20px 0" } }, "No card on file yet. One gets saved automatically the first time you subscribe."), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, lineHeight: 1.5, marginTop: 8 } }, "Your default card is used for subscription renewals. We'll save it securely via Stripe.")), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: getPlan() !== "Pro" ? 12 : 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 10 } }, "Billing history"), billingInfo === null ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, padding: "6px 0" } }, "Loading\u2026") : billingInfo.invoices.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, textAlign: "center", padding: "20px 0" } }, "No charges yet. Real purchases will show up here.") : billingInfo.invoices.map((inv, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "grid", gridTemplateColumns: "110px 1fr 80px 70px", gap: 14, padding: "11px 0", borderBottom: i < billingInfo.invoices.length - 1 ? `1px solid ${T.border}` : "none", fontSize: 12.5, alignItems: "center" } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, fontFamily: T.mono, fontSize: 11 } }, new Date(inv.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })), /* @__PURE__ */ React.createElement("span", { style: { color: T.text } }, inv.description), /* @__PURE__ */ React.createElement("span", { style: { color: T.text, fontFamily: T.mono, fontWeight: 600, textAlign: "right" } }, "$", inv.amount), /* @__PURE__ */ React.createElement(Badge, { color: inv.status === "Paid" ? T.teal : T.amber }, inv.status)))), getPlan() !== "Pro" && /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, marginBottom: 8 } }, "Have a beta code?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Input, { value: betaCode, onChange: (e) => setBetaCode(e.target.value), onKeyDown: (e) => {
     if (e.key === "Enter") redeemBetaCode();
   }, placeholder: "Enter code", style: { flex: 1, fontSize: 12.5 }, disabled: betaRedeeming }), /* @__PURE__ */ React.createElement(BtnSm, { onClick: redeemBetaCode, disabled: !betaCode.trim() || betaRedeeming }, betaRedeeming ? "Checking\u2026" : "Redeem")), betaMsg && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: betaMsg.indexOf("unlocked") > -1 || betaMsg.indexOf("active") > -1 ? T.lime : T.red, marginTop: 8 } }, betaMsg)), /* @__PURE__ */ React.createElement(
     Modal,
@@ -19205,7 +19294,8 @@ function Dashboard({ setActive, seriousMode = false, rescheduleTask, setReschedu
   const weekDays7 = (() => {
     const arr = [];
     const now = /* @__PURE__ */ new Date();
-    const dow = (now.getDay() + 6) % 7;
+    let dow = (now.getDay() + 6) % 7;
+    if (dow === 0) dow = 7;
     const mon = new Date(now);
     mon.setDate(now.getDate() - dow);
     for (let i = 0; i < 7; i++) {
@@ -20823,7 +20913,7 @@ function App() {
     },
     /* @__PURE__ */ React.createElement("div", { style: { background: T.lime, borderRadius: 8, padding: "20px 22px", position: "relative", overflow: "hidden", marginBottom: 18 } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", right: -30, top: -30, width: 160, height: 160, background: "radial-gradient(circle,rgba(255,255,255,0.45),transparent 70%)", pointerEvents: "none" } }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", position: "relative" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontFamily: T.mono, fontSize: 10, letterSpacing: "0.14em", fontWeight: 600, color: "rgba(8,12,40,0.6)" } }, "CURRENT BALANCE"), /* @__PURE__ */ React.createElement("div", { style: { fontFamily: T.hand, fontSize: 54, fontWeight: 700, color: T.ink, lineHeight: 0.9, marginTop: 4 } }, getPlan() === "Pro" ? "Unlimited" : getCredits() + "", /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.font, fontSize: 18, fontWeight: 500, color: "rgba(8,12,40,0.55)", marginLeft: 4 } }, getPlan() === "Pro" ? "" : "/ " + getCreditLimit())), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: "rgba(8,12,40,0.65)", marginTop: 4 } }, getPlan() === "Pro" ? "No monthly cap" : "Resets in " + daysUntilReset() + " day" + (daysUntilReset() !== 1 ? "s" : "") + " \xB7 " + (getCreditLimit() - getCredits()) + " used this cycle")), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.mono, fontSize: 10, letterSpacing: "0.16em", fontWeight: 700, background: T.ink, color: T.lime, padding: "4px 8px", borderRadius: 5 } }, getPlan().toUpperCase())), /* @__PURE__ */ React.createElement("div", { style: { height: 5, background: "rgba(8,12,40,0.15)", borderRadius: 99, marginTop: 14, overflow: "hidden", position: "relative" } }, /* @__PURE__ */ React.createElement("div", { style: { height: "100%", width: Math.min(100, Math.round(getCredits() / getCreditLimit() * 100)) + "%", background: T.ink, borderRadius: 99 } }))),
     /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: T.muted, textTransform: "uppercase", marginBottom: 10 } }, "What costs what"),
-    /* @__PURE__ */ React.createElement("div", { style: { background: T.card2, border: `1px solid ${T.border}`, borderRadius: 10, padding: "4px 14px" } }, [["AI chat \xB7 Standard / Flash", "1"], ["AI chat \xB7 Pro", "2"], ["AI chat \xB7 Reasoning", "3"], ["Citation generation", "1"], ["File upload + analysis", "2"], ["Plagiarism check", "2"], ["AI Humanizer run", "2"], ["Full essay analysis", "3"], ["Practice test generation", "4"]].map(([k, v], i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", justifyContent: "space-between", padding: "9px 0", borderBottom: i < 8 ? `1px solid ${T.border}` : "none", fontSize: 13 } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.text } }, k), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.mono, fontWeight: 600, color: T.lime } }, v)))),
+    /* @__PURE__ */ React.createElement("div", { style: { background: T.card2, border: `1px solid ${T.border}`, borderRadius: 10, padding: "4px 14px" } }, [["AI chat message", "1"], ["AI chat with an image attached", "4"], ["Studlin AI question", "2"], ["Studlin AI action (move, add, delete...)", "1"], ["Studlin AI coaching check-in", "2"]].map(([k, v], i, arr) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", justifyContent: "space-between", padding: "9px 0", borderBottom: i < arr.length - 1 ? `1px solid ${T.border}` : "none", fontSize: 13 } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.text } }, k), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.mono, fontWeight: 600, color: T.lime } }, v)))),
     /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16, padding: "12px 14px", background: T.card2, borderRadius: 10, border: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, fontWeight: 600 } }, "Hit your cap often?"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginTop: 2 } }, "Pro plan gives you unlimited AI chat, no credits needed.")), /* @__PURE__ */ React.createElement("a", { href: "checkout.html?plan=pro&billing=monthly", style: { display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 7, fontSize: 12, fontWeight: 600, background: T.ink, color: T.lime, textDecoration: "none", fontFamily: T.font } }, "Upgrade to Pro"))
   ), /* @__PURE__ */ React.createElement(
     Modal,
@@ -20944,7 +21034,19 @@ function App() {
           }
         }
         lsSet("events", next);
-        if (timerTask.kind === "study block" && !timerTask.routineId && !timerTask.studySessionId) setExamCheckIn(timerTask);
+        if (timerTask.kind === "study block" && !timerTask.routineId && !timerTask.studySessionId) {
+          if (timerTask.isDiagnosticFirstPass) {
+            next = next.map((e) => e.id === timerTask.id ? { ...e, isDiagnosticFirstPass: false } : e);
+            lsSet("events", next);
+          }
+          const examEvent = timerTask.dueEventId ? next.find((e) => e.id === timerTask.dueEventId) : null;
+          const materialText = examEvent ? (examEvent.sourceMaterials || []).filter((f) => f.text && f.text.trim()).map((f) => f.text).join("\n\n") : "";
+          if (timerTask.isDiagnosticFirstPass && examEvent && materialText.trim() && canGenQuiz()) {
+            startDiagnosticQuiz(timerTask, examEvent, materialText);
+          } else {
+            setExamCheckIn(timerTask);
+          }
+        }
       }
     }
   ), recoveredSession && !timerTask && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 76, right: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 320 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, "Looks like you were ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, recoveredSession.elapsedMins, "min"), ' into "', recoveredSession.task.title, '" \u2014 what happened?'), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: recoverMarkDone }, "Mark as done"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: recoverResume }, "Resume"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: recoverDiscard }, "Discard"))), catchUpBanner && (() => {

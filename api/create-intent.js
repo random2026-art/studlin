@@ -3,13 +3,6 @@ const { setCors, verifyAuth } = require('./_lib/auth');
 const { withSentry } = require('./_lib/sentry');
 const { checkRateLimit } = require('./_lib/rateLimit');
 
-const CREDIT_PACKS = {
-  150:  499,
-  500:  1499,
-  1000: 2499,
-  3000: 5999,
-};
-
 // Subscription price IDs — merged in from api/checkout.js so subscription
 // creation and one-off payment intents share one function (Vercel Hobby's
 // 12-function cap; see vercel.json).
@@ -45,31 +38,15 @@ module.exports = withSentry(async (req, res) => {
     }
 
     if (mode === 'payment') {
-      let amountCents, creditCount;
-      if (customAmount) {
-        const dollars = Math.floor(Number(customAmount));
-        if (!Number.isFinite(dollars) || dollars < 5 || dollars > 100000) {
-          return res.status(400).json({ error: 'Amount must be a whole number between $5 and $100,000.' });
-        }
-        amountCents = dollars * 100;
-        creditCount = dollars * 30;
-      } else {
-        amountCents = CREDIT_PACKS[credits];
-        if (!amountCents) return res.status(400).json({ error: 'Invalid credit pack.' });
-        creditCount = credits;
-      }
-
-      const paymentIntent = await stripe.paymentIntents.create({
-        amount: amountCents,
-        currency: 'usd',
-        payment_method_types: ['card'],
-        metadata: {
-          type: 'credit_topup',
-          credits: String(creditCount),
-          firebase_uid: user.uid,
-        },
-      });
-      return res.status(200).json({ clientSecret: paymentIntent.client_secret });
+      // Credit top-ups were disabled 2026-08-26 in the client (every AI
+      // gate checks getPlan()==="Pro" outright, not credit balance, so a
+      // completed purchase unlocked nothing) -- but this endpoint itself
+      // was left able to actually charge a card for it. Found live 2026-09-04
+      // via a leftover "Buy credit packs" link in Settings still pointing at
+      // checkout.html?credits=500. Blocking server-side too so no client
+      // entry point (old link, bookmark, direct call) can charge real money
+      // for a feature that doesn't unlock anything.
+      return res.status(400).json({ error: 'Credit purchases are not available. Upgrade to Pro for unlimited AI access instead.' });
     }
 
     if (mode === 'subscription') {
