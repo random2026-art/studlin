@@ -111,3 +111,91 @@ describe("buildImportSyllabusItemsProposal", () => {
     assert.equal(result.subject, null);
   });
 });
+
+// duringClass: the "these worksheets are done during class" feature --
+// 2026-09-07 is a real Monday and 2026-09-08 a real Tuesday (verified
+// against the actual calendar, matching the user's own Canvas screenshot
+// showing W4 due Monday Sep 7). Monday-first day indexing: Mon=0, Tue=1,
+// Wed=2 -- matches expandRoutineOccurrences' own dow computation.
+describe("buildImportSyllabusItemsProposal -- duringClass lecture-day check", () => {
+  test("duringClass:false (the default/ordinary case) never flags anything, even for a date the class doesn't meet on", () => {
+    const m = loadStudlinModule();
+    m.saveSubjects([{ id: "s1", label: "chem", color: "#fff" }]);
+    m.saveWeeklyRoutine([{ id: "r1", kind: "class", courseId: "s1", days: [0, 2], startTime: "09:00", duration: 50 }]);
+    const items = [{ title: "W-Tuesday", date: "2026-09-08", kind: "deadline" }]; // a Tuesday
+    const result = m.buildImportSyllabusItemsProposal({ subject: "chem", duringClass: false }, items, m.getWeeklyRoutine());
+    assert.equal(result.items[0].dayMismatch, false);
+    assert.equal(result.mismatchCount, 0);
+  });
+
+  test("duringClass:true and the date lands on a real meeting day -- no mismatch", () => {
+    const m = loadStudlinModule();
+    m.saveSubjects([{ id: "s1", label: "chem", color: "#fff" }]);
+    m.saveWeeklyRoutine([{ id: "r1", kind: "class", courseId: "s1", days: [0, 2], startTime: "09:00", duration: 50 }]);
+    const items = [{ title: "W4", date: "2026-09-07", kind: "deadline" }]; // a Monday, class meets Mon/Wed
+    const result = m.buildImportSyllabusItemsProposal({ subject: "chem", duringClass: true }, items, m.getWeeklyRoutine());
+    assert.equal(result.items[0].dayMismatch, false);
+    assert.equal(result.mismatchCount, 0);
+    assert.ok(!result.label.includes("double check"));
+  });
+
+  test("duringClass:true and the date does NOT land on a real meeting day -- flagged, surfaced in the label", () => {
+    const m = loadStudlinModule();
+    m.saveSubjects([{ id: "s1", label: "chem", color: "#fff" }]);
+    m.saveWeeklyRoutine([{ id: "r1", kind: "class", courseId: "s1", days: [0, 2], startTime: "09:00", duration: 50 }]); // Mon/Wed only
+    const items = [{ title: "Weird Worksheet", date: "2026-09-08", kind: "deadline" }]; // a Tuesday
+    const result = m.buildImportSyllabusItemsProposal({ subject: "chem", duringClass: true }, items, m.getWeeklyRoutine());
+    assert.equal(result.items[0].dayMismatch, true);
+    assert.equal(result.mismatchCount, 1);
+    assert.ok(result.label.includes("double check"));
+  });
+
+  test("a mixed batch only flags the actual mismatched items, not the whole batch", () => {
+    const m = loadStudlinModule();
+    m.saveSubjects([{ id: "s1", label: "chem", color: "#fff" }]);
+    m.saveWeeklyRoutine([{ id: "r1", kind: "class", courseId: "s1", days: [0, 2], startTime: "09:00", duration: 50 }]);
+    const items = [
+      { title: "W4", date: "2026-09-07", kind: "deadline" }, // Monday -- fine
+      { title: "Weird one", date: "2026-09-08", kind: "deadline" }, // Tuesday -- mismatch
+    ];
+    const result = m.buildImportSyllabusItemsProposal({ subject: "chem", duringClass: true }, items, m.getWeeklyRoutine());
+    assert.equal(result.items[0].dayMismatch, false);
+    assert.equal(result.items[1].dayMismatch, true);
+    assert.equal(result.mismatchCount, 1);
+  });
+
+  test("duringClass:true but the course has no class routine on file at all -- nothing to check against, so nothing is flagged", () => {
+    const m = loadStudlinModule();
+    m.saveSubjects([{ id: "s1", label: "chem", color: "#fff" }]);
+    m.saveWeeklyRoutine([]); // no routine data for this class
+    const items = [{ title: "W4", date: "2026-09-08", kind: "deadline" }];
+    const result = m.buildImportSyllabusItemsProposal({ subject: "chem", duringClass: true }, items, m.getWeeklyRoutine());
+    assert.equal(result.items[0].dayMismatch, false);
+    assert.equal(result.mismatchCount, 0);
+  });
+
+  test("duringClass:true with no subject at all -- can't resolve a course, so nothing is flagged", () => {
+    const m = loadStudlinModule();
+    const items = [{ title: "W4", date: "2026-09-08", kind: "deadline" }];
+    const result = m.buildImportSyllabusItemsProposal({ subject: null, duringClass: true }, items, []);
+    assert.equal(result.items[0].dayMismatch, false);
+  });
+
+  test("routines param omitted entirely (undefined) never throws -- existing callers stay safe", () => {
+    const m = loadStudlinModule();
+    const items = [{ title: "First Quiz", date: "2026-09-21", kind: "exam" }];
+    const result = m.buildImportSyllabusItemsProposal({ subject: "econ", duringClass: true }, items);
+    assert.equal(result.ok, true);
+    assert.equal(result.items[0].dayMismatch, false);
+  });
+
+  test("a fuzzy/near-duplicate class name (no exact subject match, no courseId) still matches via normalized-label fallback, same as newMeetingTimesForCourse's own pattern", () => {
+    const m = loadStudlinModule();
+    // No courseId on the routine row -- legacy-style data, matched by
+    // normalized subject label instead (mirrors real pre-courseId rows).
+    m.saveWeeklyRoutine([{ id: "r1", kind: "class", subject: "Chem", days: [0, 2], startTime: "09:00", duration: 50 }]);
+    const items = [{ title: "Weird one", date: "2026-09-08", kind: "deadline" }]; // Tuesday
+    const result = m.buildImportSyllabusItemsProposal({ subject: "chem", duringClass: true }, items, m.getWeeklyRoutine());
+    assert.equal(result.items[0].dayMismatch, true, "should still match Chem's routine via label fallback and flag the Tuesday date");
+  });
+});
