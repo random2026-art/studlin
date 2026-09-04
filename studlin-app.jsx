@@ -1687,6 +1687,29 @@ const getRoutineSkips=()=>lsGet("routineSkips",{});
 // onDropRoutineOccurrence).
 const getRoutineOverrides=()=>lsGet("routineOverrides",{});
 const saveRoutineOverrides=(o)=>lsSet("routineOverrides",o);
+// Per-occurrence "what's happening in class today" content -- a specific
+// class meeting can have its own notes/to-do completely different from
+// the next one (a worksheet due one day, a lab the next), so this is
+// keyed the exact same way a retime/resize override already is
+// (routineId then dateKey), reusing that same store rather than adding a
+// second parallel one. Read side defaults to an empty, well-formed shape
+// so a caller never has to null-check before rendering.
+function getRoutineOccurrenceNote(routineId,dateKey){
+  const overrides=getRoutineOverrides();
+  const forDate=overrides[routineId]&&overrides[routineId][dateKey];
+  return{note:(forDate&&forDate.note)||"",todo:(forDate&&forDate.todo)||[]};
+}
+// Merges {note,todo} onto whatever's already saved for this occurrence
+// (a real startTime/duration retime override may already be sitting
+// here -- see applyRoutineDropScope's own comment) so saving a note can
+// never silently undo an existing time change, same reasoning in
+// reverse. Pass null/undefined for a field to leave it untouched.
+function saveRoutineOccurrenceNote(routineId,dateKey,patch){
+  const overrides=getRoutineOverrides();
+  const forRoutine={...(overrides[routineId]||{})};
+  forRoutine[dateKey]={...(forRoutine[dateKey]||{}),...patch};
+  saveRoutineOverrides({...overrides,[routineId]:forRoutine});
+}
 // The current school term's date range, {start,end} (both "YYYY-MM-DD")
 // or null if never set — opt-in, so a student who hasn't configured this
 // sees no change from today's always-on behavior. Governs only
@@ -2098,20 +2121,31 @@ function expandRoutineOccurrences(routines,startDateKey,endDateKey){
       // Phase 7e: a "just this occurrence" retime/resize overrides only
       // this one date's time/duration -- every other occurrence of the
       // same rule keeps r.startTime/r.duration untouched.
+      //
+      // 2026-09-04 (per-day class notes): time/duration now fall back
+      // independently per-field rather than "override present -> use its
+      // fields wholesale." A note-only override (see
+      // saveRoutineOccurrenceNote) has no startTime/duration keys at all
+      // -- before this fix, its mere presence would have blanked this
+      // occurrence's real time out to undefined. Existing retime/resize
+      // overrides always set both fields together, so this is a pure
+      // behavior-preserving fix for them, not a change.
       const override=overrides[r.id]&&overrides[r.id][dk];
       out.push({
         id:"routine-"+r.id+"-"+dk,
         routineId:r.id,
         title:r.title,
         date:dk,
-        time:override?override.startTime:r.startTime,
-        duration:override?override.duration:(r.duration||30),
+        time:override&&override.startTime!=null?override.startTime:r.startTime,
+        duration:override&&override.duration!=null?override.duration:(r.duration||30),
         kind:ROUTINE_KIND_TO_EVENT_KIND[r.kind]||"class",
         subject:r.subject||"",
         color:r.color||null,
         status:"pending",
         isRoutine:true,
-        overridden:!!override,
+        overridden:!!(override&&(override.startTime!=null||override.duration!=null)),
+        dayNote:(override&&override.note)||"",
+        dayTodo:(override&&override.todo)||[],
         // A recurring class/activity's commuteBefore/After (set via
         // editing it -- NewEventModal's editRoutine mode already saves
         // these correctly onto the rule, see saveRoutineEditFromModal)
@@ -19509,6 +19543,17 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
   // block gotcha (position:fixed elsewhere in this file).
   const [popoverAnchor, setPopoverAnchor] = useState(null);
   const closePopover = () => { setPopoverAnchor(null); setSelectedEventId(null); if(onSelectEvent)onSelectEvent(null); };
+  // Mirrors popoverAnchor above, one level up -- a routine occurrence
+  // (a specific day's class meeting, not the recurring rule) has its own
+  // small menu offering per-day notes, same click-to-open pattern as a
+  // plain event's popover, kept as a separate state since routine blocks
+  // already have their own click semantics (select-for-copy) this must
+  // not disturb.
+  const [routinePopoverAnchor, setRoutinePopoverAnchor] = useState(null);
+  const closeRoutinePopover = () => setRoutinePopoverAnchor(null);
+  // {routineId,date,title} of the occurrence whose notes modal is open,
+  // or null.
+  const [classDayNotesTarget, setClassDayNotesTarget] = useState(null);
   useEffect(()=>{
     if(!selectedEventId)return;
     const handler=(e)=>{
@@ -20079,6 +20124,12 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                           e.stopPropagation();
                           if(selectedEventId)closePopover();
                           if(onSelectRoutineOccurrence)onSelectRoutineOccurrence(isRoutineSelected?null:{routineId:ev.routineId,date:ev.date,title:ev.title});
+                          // Also opens a small menu offering this specific
+                          // day's notes -- purely additive alongside the
+                          // selection above, never replaces it (a second
+                          // click on an already-selected occurrence just
+                          // re-opens/toggles this same menu).
+                          setRoutinePopoverAnchor(prev=>(prev&&prev.routineId===ev.routineId&&prev.date===ev.date)?null:{routineId:ev.routineId,date:ev.date,title:ev.title,rect:e.currentTarget.getBoundingClientRect()});
                           return;
                         }
                         e.stopPropagation();
@@ -20123,6 +20174,11 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                           clean up, the block is already rendering normally. */}
                       {isPendingAcceptance&&<span title={isDeclined?"Declined":acceptanceSummary.accepted+"/"+acceptanceSummary.total+" accepted"} style={{position:"absolute",bottom:2,left:2,fontSize:8,fontWeight:800,color:isDeclined?"#fff":kindStyle.color,background:isDeclined?T.red+"cc":"rgba(0,0,0,0.18)",borderRadius:8,padding:"1px 4px",lineHeight:1.3,zIndex:1}}>{isDeclined?"Declined":acceptanceSummary.accepted+"/"+acceptanceSummary.total}</span>}
                       {conflictTitles.length>0&&<span title={"Overlaps with "+conflictTitles.join(", ")} style={{position:"absolute",top:2,left:2,fontSize:9,lineHeight:1,zIndex:1,filter:"drop-shadow(0 1px 1px rgba(0,0,0,0.35))"}}>⚠️</span>}
+                      {/* This specific class meeting has its own notes/to-do
+                          saved (see ClassDayNotesModal) -- routine occurrences
+                          never carry a real deadline/`over`, so this never
+                          collides with the overdue dot above. */}
+                      {isRoutine&&(ev.dayNote||(ev.dayTodo&&ev.dayTodo.length>0))&&<span title="This class has notes saved" style={{position:"absolute",top:3,right:3,width:6,height:6,borderRadius:"50%",background:T.lime,boxShadow:"0 0 0 1.5px rgba(255,255,255,0.9)",zIndex:1}} />}
                       <div style={{fontSize:9.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isExam?"EXAM · ":""}{ev.title}</div>
                       {heightPx > 34 && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isWarningKind?tokens.color.warning:tokens.color.textSecondary,marginTop:1}}>{fmtTimeRange(String(Math.floor(effStartMin/60)).padStart(2,"0")+":"+String(effStartMin%60).padStart(2,"0"),effDuration)}</div>}
                       {/* Third line, only once there's real room for it (same
@@ -20251,6 +20307,26 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
           </>
         ), document.body);
       })()}
+      {routinePopoverAnchor && (()=>{
+        const rect = routinePopoverAnchor.rect;
+        const popoverWidth = 208;
+        const top = Math.min(rect.bottom+6, window.innerHeight-100);
+        const left = Math.min(Math.max(8,rect.left), window.innerWidth-(popoverWidth+8));
+        const itemStyle = {display:"block",width:"100%",textAlign:"left",padding:"9px 14px",background:"none",border:"none",cursor:"pointer",fontSize:12.5,fontWeight:500,fontFamily:T.font,color:T.text};
+        const hasNote=(()=>{const n=getRoutineOccurrenceNote(routinePopoverAnchor.routineId,routinePopoverAnchor.date);return !!(n.note||n.todo.length>0);})();
+        return ReactDOM.createPortal((
+          <>
+            <div onClick={closeRoutinePopover} style={{position:"fixed",inset:0,zIndex:998}} />
+            <div style={{position:"fixed",top,left,width:popoverWidth,background:T.card,border:`1px solid ${T.border}`,borderRadius:6,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:999,overflow:"hidden",animation:"studlinPop 0.15s cubic-bezier(.2,.85,.3,1)"}}>
+              <div style={{padding:"9px 14px",borderBottom:`1px solid ${T.border}`,fontSize:12.5,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{routinePopoverAnchor.title}</div>
+              <button onClick={()=>{setClassDayNotesTarget(routinePopoverAnchor);closeRoutinePopover();}} style={itemStyle} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="none"}>{hasNote?"View notes for this day":"Add notes for this day"}</button>
+              {onEditRoutine&&(
+                <button onClick={()=>{closeRoutinePopover();onEditRoutine(routinePopoverAnchor.routineId);}} style={{...itemStyle,borderTop:`1px solid ${T.border}`}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="none"}>Edit series</button>
+              )}
+            </div>
+          </>
+        ), document.body);
+      })()}
       {exitGhosts.length>0 && ReactDOM.createPortal(
         // Portaled to document.body, same pattern the popover above
         // already uses -- guarantees it paints above everything and is
@@ -20264,6 +20340,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
       )}
     </Card>
     <DayPreviewModal open={!!previewDayKey} onClose={()=>setPreviewDayKey(null)} dayEvents={previewDayKey?(byDay[previewDayKey]||[]):[]} selDay={previewDayKey} dayLabel={previewDayKey?fmtWeekDueLabel(previewDayKey):""} colorOf={colorOf} fmtTime={fmtTime} fmtTimeRange={fmtTimeRange} catchUpPending={catchUpPending} openNew={openNew} />
+    <ClassDayNotesModal open={!!classDayNotesTarget} onClose={()=>setClassDayNotesTarget(null)} target={classDayNotesTarget} />
     </>
   );
 }
@@ -22693,6 +22770,72 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
 // does. Reuses layoutDayEvents/computeEventBlockHeightPx (proven in
 // DayPlanner) and colorOf (so a class's color here always matches its
 // color everywhere else in the app -- never a fresh palette).
+// Per-occurrence "what's happening in this specific class meeting" editor
+// -- opened from WeeklyPlanner's routine-occurrence popover. A different
+// class meeting of the same recurring course can have completely
+// different content (a worksheet due one day, nothing the next), so this
+// is keyed by the exact occurrence (routineId+date), not the course --
+// see getRoutineOccurrenceNote/saveRoutineOccurrenceNote's own comments.
+// Guardrails per CLAUDE.md: visible focus state on both inputs, an inline
+// "Saved" confirmation rather than silence, no browser alerts anywhere.
+function ClassDayNotesModal({open,onClose,target}){
+  const [note,setNote]=useState("");
+  const [todo,setTodo]=useState([]);
+  const [newItem,setNewItem]=useState("");
+  const [saved,setSaved]=useState(false);
+  useEffect(()=>{
+    if(!open||!target)return;
+    const existing=getRoutineOccurrenceNote(target.routineId,target.date);
+    setNote(existing.note);
+    setTodo(existing.todo);
+    setSaved(false);
+  },[open,target&&target.routineId,target&&target.date]);
+  if(!target)return null;
+  const dateLabel=new Date(target.date+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"});
+  const save=()=>{
+    saveRoutineOccurrenceNote(target.routineId,target.date,{note:note.trim(),todo});
+    setSaved(true);
+    setTimeout(()=>setSaved(false),1800);
+  };
+  const addItem=()=>{
+    const t=newItem.trim();
+    if(!t)return;
+    setTodo(x=>[...x,{text:t,done:false}]);
+    setNewItem("");
+  };
+  const inputStyle={width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 11px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",boxSizing:"border-box"};
+  return (
+    <Modal open={open} onClose={onClose} title={target.title} sub={dateLabel} width={440}>
+      <div style={{display:"flex",flexDirection:"column",gap:16}}>
+        <div>
+          <div style={{fontSize:12,fontWeight:700,color:T.white,marginBottom:6}}>Notes for this class</div>
+          <textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="e.g. Worksheet due today, covers chapter 4..." rows={3} style={{...inputStyle,resize:"vertical"}} onFocus={e=>e.currentTarget.style.borderColor=T.lime} onBlur={e=>e.currentTarget.style.borderColor=T.border} />
+        </div>
+        <div>
+          <div style={{fontSize:12,fontWeight:700,color:T.white,marginBottom:6}}>To do in class</div>
+          {todo.length===0&&(
+            <div style={{fontSize:12,color:T.muted,marginBottom:8}}>Nothing added yet.</div>
+          )}
+          {todo.map((it,i)=>(
+            <div key={i} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+              <input type="checkbox" checked={it.done} onChange={()=>setTodo(x=>x.map((y,j)=>j===i?{...y,done:!y.done}:y))} style={{cursor:"pointer",flexShrink:0}} />
+              <span style={{flex:1,fontSize:13,color:it.done?T.muted:T.text,textDecoration:it.done?"line-through":"none"}}>{it.text}</span>
+              <button onClick={()=>setTodo(x=>x.filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:12,fontFamily:T.font,flexShrink:0}}>Remove</button>
+            </div>
+          ))}
+          <div style={{display:"flex",gap:8,marginTop:4}}>
+            <input value={newItem} onChange={e=>setNewItem(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addItem();}}} placeholder="Add an item..." style={{...inputStyle,flex:1}} onFocus={e=>e.currentTarget.style.borderColor=T.lime} onBlur={e=>e.currentTarget.style.borderColor=T.border} />
+            <Btn variant="subtle" onClick={addItem}>Add</Btn>
+          </div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <Btn onClick={save}>Save</Btn>
+          {saved&&<span style={{fontSize:12,color:T.lime,fontWeight:600}}>✓ Saved</span>}
+        </div>
+      </div>
+    </Modal>
+  );
+}
 const DAY_PREVIEW_ICON_BY_KIND={"class":Icon.cal,"study block":Icon.brain,"exam":Icon.zap,"deadline":Icon.file,"reminder":Icon.clock};
 function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime,fmtTimeRange,catchUpPending,openNew}){
   if(!open)return null;
@@ -26853,7 +26996,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       // when fromDate===toDate, so this branch can trust that.
       const overrides=getRoutineOverrides();
       const forRoutine={...(overrides[routineId]||{})};
-      forRoutine[toDate]={startTime:toTime,duration:newDuration!=null?newDuration:(rule.duration||30)};
+      // Merge onto whatever's already saved for this date (a day note/
+      // to-do -- see saveRoutineOccurrenceNote -- can already be sitting
+      // here) rather than replacing the entry wholesale, so dragging or
+      // resizing an occurrence never silently wipes out a note the
+      // student already wrote for that same day.
+      forRoutine[toDate]={...(forRoutine[toDate]||{}),startTime:toTime,duration:newDuration!=null?newDuration:(rule.duration||30)};
       saveRoutineOverrides({...overrides,[routineId]:forRoutine});
       // routineOverrides lives in its own localStorage key, not in
       // `routines` React state -- expandRoutineOccurrences reads the

@@ -1137,6 +1137,17 @@ function undoCourseDelete(snapshot) {
 const getRoutineSkips = () => lsGet("routineSkips", {});
 const getRoutineOverrides = () => lsGet("routineOverrides", {});
 const saveRoutineOverrides = (o) => lsSet("routineOverrides", o);
+function getRoutineOccurrenceNote(routineId, dateKey) {
+  const overrides = getRoutineOverrides();
+  const forDate = overrides[routineId] && overrides[routineId][dateKey];
+  return { note: forDate && forDate.note || "", todo: forDate && forDate.todo || [] };
+}
+function saveRoutineOccurrenceNote(routineId, dateKey, patch) {
+  const overrides = getRoutineOverrides();
+  const forRoutine = { ...overrides[routineId] || {} };
+  forRoutine[dateKey] = { ...forRoutine[dateKey] || {}, ...patch };
+  saveRoutineOverrides({ ...overrides, [routineId]: forRoutine });
+}
 const getSchoolTerm = () => lsGet("schoolTerm", null);
 const saveSchoolTerm = (t) => lsSet("schoolTerm", t);
 const isTermRolloverDue = (term, todayKey) => !!(term && term.end && todayKey > term.end);
@@ -1378,14 +1389,16 @@ function expandRoutineOccurrences(routines, startDateKey, endDateKey) {
         routineId: r.id,
         title: r.title,
         date: dk,
-        time: override ? override.startTime : r.startTime,
-        duration: override ? override.duration : r.duration || 30,
+        time: override && override.startTime != null ? override.startTime : r.startTime,
+        duration: override && override.duration != null ? override.duration : r.duration || 30,
         kind: ROUTINE_KIND_TO_EVENT_KIND[r.kind] || "class",
         subject: r.subject || "",
         color: r.color || null,
         status: "pending",
         isRoutine: true,
-        overridden: !!override,
+        overridden: !!(override && (override.startTime != null || override.duration != null)),
+        dayNote: override && override.note || "",
+        dayTodo: override && override.todo || [],
         // A recurring class/activity's commuteBefore/After (set via
         // editing it -- NewEventModal's editRoutine mode already saves
         // these correctly onto the rule, see saveRoutineEditFromModal)
@@ -12017,6 +12030,9 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
     setSelectedEventId(null);
     if (onSelectEvent) onSelectEvent(null);
   };
+  const [routinePopoverAnchor, setRoutinePopoverAnchor] = useState(null);
+  const closeRoutinePopover = () => setRoutinePopoverAnchor(null);
+  const [classDayNotesTarget, setClassDayNotesTarget] = useState(null);
   useEffect(() => {
     if (!selectedEventId) return;
     const handler = (e) => {
@@ -12366,6 +12382,7 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
                   e.stopPropagation();
                   if (selectedEventId) closePopover();
                   if (onSelectRoutineOccurrence) onSelectRoutineOccurrence(isRoutineSelected ? null : { routineId: ev.routineId, date: ev.date, title: ev.title });
+                  setRoutinePopoverAnchor((prev) => prev && prev.routineId === ev.routineId && prev.date === ev.date ? null : { routineId: ev.routineId, date: ev.date, title: ev.title, rect: e.currentTarget.getBoundingClientRect() });
                   return;
                 }
                 e.stopPropagation();
@@ -12399,6 +12416,7 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
             overflowCount > 0 && /* @__PURE__ */ React.createElement("span", { title: overflowCount + " more at this time \u2014 open the day to see them", style: { position: "absolute", bottom: 2, right: 2, fontSize: 8, fontWeight: 800, color: kindStyle.color, background: "rgba(0,0,0,0.18)", borderRadius: 8, padding: "1px 4px", lineHeight: 1.3, zIndex: 1 } }, "+", overflowCount),
             isPendingAcceptance && /* @__PURE__ */ React.createElement("span", { title: isDeclined ? "Declined" : acceptanceSummary.accepted + "/" + acceptanceSummary.total + " accepted", style: { position: "absolute", bottom: 2, left: 2, fontSize: 8, fontWeight: 800, color: isDeclined ? "#fff" : kindStyle.color, background: isDeclined ? T.red + "cc" : "rgba(0,0,0,0.18)", borderRadius: 8, padding: "1px 4px", lineHeight: 1.3, zIndex: 1 } }, isDeclined ? "Declined" : acceptanceSummary.accepted + "/" + acceptanceSummary.total),
             conflictTitles.length > 0 && /* @__PURE__ */ React.createElement("span", { title: "Overlaps with " + conflictTitles.join(", "), style: { position: "absolute", top: 2, left: 2, fontSize: 9, lineHeight: 1, zIndex: 1, filter: "drop-shadow(0 1px 1px rgba(0,0,0,0.35))" } }, "\u26A0\uFE0F"),
+            isRoutine && (ev.dayNote || ev.dayTodo && ev.dayTodo.length > 0) && /* @__PURE__ */ React.createElement("span", { title: "This class has notes saved", style: { position: "absolute", top: 3, right: 3, width: 6, height: 6, borderRadius: "50%", background: T.lime, boxShadow: "0 0 0 1.5px rgba(255,255,255,0.9)", zIndex: 1 } }),
             /* @__PURE__ */ React.createElement("div", { style: { fontSize: 9.5, fontWeight: 700, color: kindStyle.color, lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, isExam ? "EXAM \xB7 " : "", ev.title),
             heightPx > 34 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 8.5, color: isStudy ? T.ink + "aa" : isWarningKind ? tokens.color.warning : tokens.color.textSecondary, marginTop: 1 } }, fmtTimeRange2(String(Math.floor(effStartMin / 60)).padStart(2, "0") + ":" + String(effStartMin % 60).padStart(2, "0"), effDuration)),
             heightPx > 40 && ev.location && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 8.5, color: isStudy ? T.ink + "aa" : isWarningKind ? tokens.color.warning : tokens.color.textSecondary, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.location),
@@ -12472,6 +12490,23 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
       closePopover();
       if (onDeleteEvent) onDeleteEvent(ev);
     }, style: { ...itemStyle, color: T.red, borderTop: `1px solid ${T.border}` }, onMouseEnter: (e) => e.currentTarget.style.background = T.card2, onMouseLeave: (e) => e.currentTarget.style.background = "none" }, "Delete"))), document.body);
+  })(), routinePopoverAnchor && (() => {
+    const rect = routinePopoverAnchor.rect;
+    const popoverWidth = 208;
+    const top = Math.min(rect.bottom + 6, window.innerHeight - 100);
+    const left = Math.min(Math.max(8, rect.left), window.innerWidth - (popoverWidth + 8));
+    const itemStyle = { display: "block", width: "100%", textAlign: "left", padding: "9px 14px", background: "none", border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 500, fontFamily: T.font, color: T.text };
+    const hasNote = (() => {
+      const n = getRoutineOccurrenceNote(routinePopoverAnchor.routineId, routinePopoverAnchor.date);
+      return !!(n.note || n.todo.length > 0);
+    })();
+    return ReactDOM.createPortal(/* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: closeRoutinePopover, style: { position: "fixed", inset: 0, zIndex: 998 } }), /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top, left, width: popoverWidth, background: T.card, border: `1px solid ${T.border}`, borderRadius: 6, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)", zIndex: 999, overflow: "hidden", animation: "studlinPop 0.15s cubic-bezier(.2,.85,.3,1)" } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "9px 14px", borderBottom: `1px solid ${T.border}`, fontSize: 12.5, fontWeight: 600, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, routinePopoverAnchor.title), /* @__PURE__ */ React.createElement("button", { onClick: () => {
+      setClassDayNotesTarget(routinePopoverAnchor);
+      closeRoutinePopover();
+    }, style: itemStyle, onMouseEnter: (e) => e.currentTarget.style.background = T.card2, onMouseLeave: (e) => e.currentTarget.style.background = "none" }, hasNote ? "View notes for this day" : "Add notes for this day"), onEditRoutine && /* @__PURE__ */ React.createElement("button", { onClick: () => {
+      closeRoutinePopover();
+      onEditRoutine(routinePopoverAnchor.routineId);
+    }, style: { ...itemStyle, borderTop: `1px solid ${T.border}` }, onMouseEnter: (e) => e.currentTarget.style.background = T.card2, onMouseLeave: (e) => e.currentTarget.style.background = "none" }, "Edit series"))), document.body);
   })(), exitGhosts.length > 0 && ReactDOM.createPortal(
     // Portaled to document.body, same pattern the popover above
     // already uses -- guarantees it paints above everything and is
@@ -12480,7 +12515,7 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
     // render inside.
     exitGhosts.map((g) => /* @__PURE__ */ React.createElement("div", { key: "exit-" + g.id, style: { position: "fixed", left: g.rect.left, top: g.rect.top, width: g.rect.width, height: g.rect.height, borderRadius: 5, background: T.lime + "1c", border: `1.5px dashed ${T.lime}`, pointerEvents: "none", zIndex: 200, boxSizing: "border-box", animation: "studlinDissolve 0.4s ease-out forwards" } })),
     document.body
-  )), /* @__PURE__ */ React.createElement(DayPreviewModal, { open: !!previewDayKey, onClose: () => setPreviewDayKey(null), dayEvents: previewDayKey ? byDay[previewDayKey] || [] : [], selDay: previewDayKey, dayLabel: previewDayKey ? fmtWeekDueLabel(previewDayKey) : "", colorOf, fmtTime: fmtTime2, fmtTimeRange: fmtTimeRange2, catchUpPending, openNew }));
+  )), /* @__PURE__ */ React.createElement(DayPreviewModal, { open: !!previewDayKey, onClose: () => setPreviewDayKey(null), dayEvents: previewDayKey ? byDay[previewDayKey] || [] : [], selDay: previewDayKey, dayLabel: previewDayKey ? fmtWeekDueLabel(previewDayKey) : "", colorOf, fmtTime: fmtTime2, fmtTimeRange: fmtTimeRange2, catchUpPending, openNew }), /* @__PURE__ */ React.createElement(ClassDayNotesModal, { open: !!classDayNotesTarget, onClose: () => setClassDayNotesTarget(null), target: classDayNotesTarget }));
 }
 const ROUTINE_DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const fmtTimeShort = (t) => {
@@ -13810,6 +13845,39 @@ function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf,
     const left = Math.min(Math.max(8, rect.left), window.innerWidth - 248);
     return ReactDOM.createPortal(/* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: () => setWhoInAnchor(null), style: { position: "fixed", inset: 0, zIndex: 998 } }), /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top, left, width: 232, background: T.card, border: `1px solid ${T.border}`, borderRadius: 6, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)", zIndex: 999, overflow: "hidden", animation: "studlinPop 0.15s cubic-bezier(.2,.85,.3,1)" } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "9px 14px", borderBottom: `1px solid ${T.border}`, fontSize: 12.5, fontWeight: 600, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.title), /* @__PURE__ */ React.createElement("div", { style: { padding: "10px 14px" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", color: T.muted, marginBottom: 8, textTransform: "uppercase" } }, "Who's in \xB7 ", summary.accepted, "/", summary.total), /* @__PURE__ */ React.createElement(AcceptanceRoster, { memberUids: ev.proposalMemberUids, memberNames: ev.proposalMemberNames, responses: ev.proposalResponses })))), document.body);
   })());
+}
+function ClassDayNotesModal({ open, onClose, target }) {
+  const [note, setNote] = useState("");
+  const [todo, setTodo] = useState([]);
+  const [newItem, setNewItem] = useState("");
+  const [saved, setSaved] = useState(false);
+  useEffect(() => {
+    if (!open || !target) return;
+    const existing = getRoutineOccurrenceNote(target.routineId, target.date);
+    setNote(existing.note);
+    setTodo(existing.todo);
+    setSaved(false);
+  }, [open, target && target.routineId, target && target.date]);
+  if (!target) return null;
+  const dateLabel = (/* @__PURE__ */ new Date(target.date + "T12:00:00")).toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+  const save = () => {
+    saveRoutineOccurrenceNote(target.routineId, target.date, { note: note.trim(), todo });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1800);
+  };
+  const addItem = () => {
+    const t = newItem.trim();
+    if (!t) return;
+    setTodo((x) => [...x, { text: t, done: false }]);
+    setNewItem("");
+  };
+  const inputStyle = { width: "100%", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "9px 11px", color: T.text, fontSize: 13, fontFamily: T.font, outline: "none", boxSizing: "border-box" };
+  return /* @__PURE__ */ React.createElement(Modal, { open, onClose, title: target.title, sub: dateLabel, width: 440 }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 16 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: T.white, marginBottom: 6 } }, "Notes for this class"), /* @__PURE__ */ React.createElement("textarea", { value: note, onChange: (e) => setNote(e.target.value), placeholder: "e.g. Worksheet due today, covers chapter 4...", rows: 3, style: { ...inputStyle, resize: "vertical" }, onFocus: (e) => e.currentTarget.style.borderColor = T.lime, onBlur: (e) => e.currentTarget.style.borderColor = T.border })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: T.white, marginBottom: 6 } }, "To do in class"), todo.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 8 } }, "Nothing added yet."), todo.map((it, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 6 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: it.done, onChange: () => setTodo((x) => x.map((y, j) => j === i ? { ...y, done: !y.done } : y)), style: { cursor: "pointer", flexShrink: 0 } }), /* @__PURE__ */ React.createElement("span", { style: { flex: 1, fontSize: 13, color: it.done ? T.muted : T.text, textDecoration: it.done ? "line-through" : "none" } }, it.text), /* @__PURE__ */ React.createElement("button", { onClick: () => setTodo((x) => x.filter((_, j) => j !== i)), style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 12, fontFamily: T.font, flexShrink: 0 } }, "Remove"))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 4 } }, /* @__PURE__ */ React.createElement("input", { value: newItem, onChange: (e) => setNewItem(e.target.value), onKeyDown: (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      addItem();
+    }
+  }, placeholder: "Add an item...", style: { ...inputStyle, flex: 1 }, onFocus: (e) => e.currentTarget.style.borderColor = T.lime, onBlur: (e) => e.currentTarget.style.borderColor = T.border }), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: addItem }, "Add"))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: save }, "Save"), saved && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.lime, fontWeight: 600 } }, "\u2713 Saved"))));
 }
 const DAY_PREVIEW_ICON_BY_KIND = { "class": Icon.cal, "study block": Icon.brain, "exam": Icon.zap, "deadline": Icon.file, "reminder": Icon.clock };
 function DayPreviewModal({ open, onClose, dayEvents, selDay, dayLabel, colorOf, fmtTime: fmtTime2, fmtTimeRange: fmtTimeRange2, catchUpPending, openNew }) {
@@ -16250,7 +16318,7 @@ function CalendarTab({ setActive = () => {
     } else {
       const overrides = getRoutineOverrides();
       const forRoutine = { ...overrides[routineId] || {} };
-      forRoutine[toDate] = { startTime: toTime, duration: newDuration != null ? newDuration : rule.duration || 30 };
+      forRoutine[toDate] = { ...forRoutine[toDate] || {}, startTime: toTime, duration: newDuration != null ? newDuration : rule.duration || 30 };
       saveRoutineOverrides({ ...overrides, [routineId]: forRoutine });
       setRoutinesState([...routines]);
     }
