@@ -507,10 +507,16 @@ function TourStep({ targetRef, title, body, step, total, onNext, onSkip, isLast 
 // 2026-08-18 pricing pass: Free is everything that costs Studlin nothing
 // to run (manual entry, the calendar itself); every AI-cost feature
 // (scans, generation, Brain Dump, Smart Reschedule, study plans) is
-// Pro-only, zero free taste -- see canScanSyllabus and friends. Attack
-// sessions dropped from Pro's feature list -- it's a deterministic
-// probe-then-schedule with no AI call at all, so it was always free and
-// listing it as a Pro perk was inaccurate.
+// Pro-only -- see canScanSyllabus and friends. Attack sessions dropped
+// from Pro's feature list -- it's a deterministic probe-then-schedule
+// with no AI call at all, so it was always free and listing it as a Pro
+// perk was inaccurate.
+// Correction, 2026-09-04 audit: "zero free taste" above was never quite
+// true and isn't now either -- canFreeOnboardingScan gives every Free
+// account one lifetime free syllabus scan and one free schedule scan, a
+// deliberate onboarding "aha moment." Not reflected in the Free tier's
+// feature bullets below; low-priority since it undersells rather than
+// oversells Free, flagged here so it doesn't mislead a future edit.
 const PRICING_PLANS=(billing)=>([
   {
     key:"free",name:"Free",price:"$0",per:"forever",tag:null,
@@ -7662,15 +7668,28 @@ function describeCreateProposal(task){
 // message, so the chat literally said e.g. "Done. Delete "Chem Notes"
 // from 2026-09-08?" even though the action had already finished. Strips
 // the trailing "?" and turns the leading imperative into a completed one.
-function pastTenseProposalLabel(label){
+function pastTenseProposalLabel(label,moved){
   if(!label)return label;
   let s=label.replace(/\?$/,"");
+  let isMove=false;
   if(s.indexOf("Add ")===0)s="Added "+s.slice(4);
   else if(s.indexOf("Delete ")===0)s="Deleted "+s.slice(7);
-  else if(s.indexOf("Move ")===0)s="Moved "+s.slice(5);
-  else if(s.indexOf("Retime ")===0)s="Retimed "+s.slice(7);
+  else if(s.indexOf("Move ")===0){s="Moved "+s.slice(5);isMove=true;}
+  else if(s.indexOf("Retime ")===0){s="Retimed "+s.slice(7);isMove=true;}
   // "Set your peak focus hours to X" already reads correctly as a
   // completed action unchanged -- "set" is its own past tense.
+  //
+  // Bug fix, 2026-09-04 audit (2nd pass): a move/retime confirmation
+  // never stated where the item actually landed -- "Done. Moved Chem
+  // homework." with no date/time -- even though the mini day-preview
+  // shown right before confirming already had the real destination (see
+  // StudlinAiMiniDayPreview, only rendered pre-confirm). Appends it here
+  // from the same `moved` data the proposal itself already computed.
+  if(isMove&&moved&&moved.length>0&&moved[0].newDate){
+    const d=new Date(moved[0].newDate+"T12:00:00");
+    const dateLabel=d.toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"});
+    s+=" to "+dateLabel+(moved[0].newTime?" at "+fmtClock12(moved[0].newTime):"")+".";
+  }
   return s;
 }
 // Turns a batch of built tasks (from planBrainDumpTasks, exam branch)
@@ -16486,7 +16505,15 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
           <div style={{padding:"18px 18px 14px",borderBottom:`1px solid ${pp.border}`,display:"flex",alignItems:"center",gap:12}}>
             {isGroup
               ?<div style={{width:40,height:40,borderRadius:12,background:T.purple+"18",border:`1px solid ${T.purple}33`,display:"flex",alignItems:"center",justifyContent:"center",color:T.purple,flexShrink:0}}>{Icon.users}</div>
-              :<div style={{position:"relative",flexShrink:0}}><Av initials={target.user.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={40} picUrl={target.user.p||""} /><div style={{position:"absolute",bottom:0,right:0,width:10,height:10,borderRadius:"50%",background:target.user.online?T.teal:pp.faint,border:`2px solid ${T.surface}`}} /></div>
+              // Bug fix, 2026-09-04 audit (2nd pass): target.user.online is
+              // hardcoded false in profileToFriend -- there's no real
+              // presence data behind it, so this dot could never turn on
+              // for anyone, ever. A dot that's permanently dead is worse
+              // than no dot (it looks like a real status and lies), so
+              // removed rather than wired to fake data. Real presence is a
+              // bigger feature (see the deferred "friend presence goes
+              // stale" item in the audit report) -- not attempted here.
+              :<Av initials={target.user.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={40} picUrl={target.user.p||""} />
             }
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontSize:14,fontWeight:700,color:pp.text,letterSpacing:"-0.01em"}}>{title}</div>
@@ -17555,7 +17582,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
     if(next)onEventsCommitted(next);
     setMessages(m=>{
       const withResolved=m.map((mm,i)=>i===idx?{...mm,proposal:{...mm.proposal,resolved:"confirmed"}}:mm);
-      return [...withResolved,{role:"ai",text:"Done. "+pastTenseProposalLabel(proposal.label)}];
+      return [...withResolved,{role:"ai",text:"Done. "+pastTenseProposalLabel(proposal.label,proposal.moved)}];
     });
     setPendingIndex(null);
   };
@@ -22963,6 +22990,20 @@ function NewSlotPickerModal({title,sub,candidates,onConfirm,onClose,onManual,con
 function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOpen=()=>{},onDelete=()=>{}}){
   const allEvents=lsGet("events",[]);
   const ev=allEvents.find(e=>e.id===eventId);
+  // Bug fix, 2026-09-04 audit (2nd pass): a Google-synced event (id shape
+  // 'gcal-'+item.id, see googleItemToEvent) got the exact same fully-
+  // editable form as any real Studlin task -- edit its title/subject/
+  // notes, hit Save, and the next sync (every Settings visit, every app
+  // load; applyGoogleEvents does a full delete-and-recreate, not a merge)
+  // silently reverted it back to Google's data. Settings' own connect
+  // screen already describes this integration as "Read-only" -- this
+  // modal just never actually enforced that. Made genuinely read-only
+  // here (Save disabled, save() itself gated) rather than attempting a
+  // field-level merge, which would need much more care than an unattended
+  // pass on a live sync feature should risk. Delete stays available --
+  // deleting here only stops Studlin from displaying it locally, it never
+  // touches the real Google event, so it's a different, safe operation.
+  const isGoogleSynced=!!(eventId&&eventId.indexOf("gcal-")===0);
   const routines=getWeeklyRoutine();
   const userSubjects=getSubjects();
   const SUBJ=[{value:"None",label:"None",color:T.lime},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
@@ -23462,6 +23503,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
     finishSave(null);
   };
   const save=()=>{
+    if(isGoogleSynced)return;
     if(!title.trim())return;
     if(deadline&&date>deadline){setDeadlineErr("Can't schedule past the deadline ("+deadline+").");return;}
     if((showsPhaseDetail||requiresProjectDetail)&&!notes.trim()){setDetailErr("Add a bit of detail so Studlin can suggest real phases, not a generic template.");return;}
@@ -23526,7 +23568,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
         {ev.status!=="done"&&isTimerEligible(ev)&&(
           <Btn variant="subtle" onClick={()=>{if(window._setTimerTask)window._setTimerTask(ev);onClose();}}>Begin</Btn>
         )}
-        <Btn onClick={save} disabled={!title.trim()} style={{opacity:title.trim()?1:0.45}}>Save changes</Btn>
+        {!isGoogleSynced&&<Btn onClick={save} disabled={!title.trim()} style={{opacity:title.trim()?1:0.45}}>Save changes</Btn>}
       </>}>
       <Field label="Title"><Input value={title} onChange={e=>setTitle(e.target.value)} autoFocus /></Field>
       {/* Labels only, values unchanged. "Assignment (scheduled)"/
@@ -23608,6 +23650,11 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
           theres nothing that says its repeated at all." This is that
           indicator, surfaced right where the confusion actually happens
           (before they even try to delete it). */}
+      {isGoogleSynced&&(
+        <div style={{padding:"8px 10px",marginBottom:10,fontSize:12,color:T.text,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,lineHeight:1.5}}>
+          🔒 Synced from Google Calendar -- read-only here. Edit it in Google Calendar and it'll update on your next sync. You can still remove it from Studlin with Delete.
+        </div>
+      )}
       {ev.googleRecurringId&&(
         <div style={{padding:"6px 2px",marginBottom:10,fontSize:12,color:T.muted}}>
           🔁 This repeats on your Google Calendar -- each occurrence is its own item here. Delete offers an "all occurrences" option.
@@ -31854,8 +31901,6 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   const isPlanPrimaryRow=t=>!t.isBreak&&!(t.isChunk&&t.chunkIndex>0)&&!t.isRoutine;
   const planCountable=plan.filter(isPlanPrimaryRow);
   const planDoneCount=planCountable.filter(t=>t.done).length;
-  const subjColor={Chemistry:T.red,"English IV":T.purple,Biology:T.teal,Calculus:T.blue,Spanish:T.amber,History:T.muted};
-  const scOf=(s)=>subjColor[s]||T.lime;
   const fmtClock=(t)=>{if(!t)return"";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+ap;};
   const prof=getProfile();
   const firstName=(prof.name||"there").split(" ")[0];
@@ -32134,7 +32179,6 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
               </div>
             </div>
             :plan.map((t)=>{
-              const c=scOf(t.subject);
               // A class/activity is real, fixed, and part of the day --
               // shown at full visual weight, not dimmed like a break/chunk
               // continuation below -- but it isn't a to-do: no checkbox, no
