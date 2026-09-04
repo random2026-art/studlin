@@ -30,6 +30,7 @@ const BETA_TESTER_EMAILS = [
   'nourlena28@gmail.com',
   '26lthoman@gmail.com',
   'labassta535@gmail.com',
+  'mamc30@lehigh.edu',
 ];
 const BETA_CODE = 'betatesters';
 const BETA_TRIAL_DAYS = 30;
