@@ -14449,7 +14449,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
     setPaceDismissedState(true);
     setPaceProposal(null);
   };
-  const canAddAttackBlock = (kind === "deadline" || kind === "study block") && !ev.isAttackBlock && !ev.dueEventId && !ev.deckId && !ev.practiceExamId && !ev.isExamPrepSession && !ev.splitGroup && linkedSessions.length === 0 && !(ev.phases && ev.phases.length > 0);
+  const canAddAttackBlock = (kind === "deadline" || kind === "study block") && !ev.isAttackBlock && !ev.dueEventId && !ev.deckId && !ev.practiceExamId && !ev.isExamPrepSession && !ev.splitGroup && linkedSessions.length === 0 && !(ev.phases && ev.phases.length > 0) && !(pace && pace.behind && !paceDismissed);
   const isPhaseCandidate = canAddAttackBlock && isPhaseDecompositionCandidate(ev.estimatedHours, date, dayKey());
   const showsPhaseDetail = addAttackBlock && isPhaseCandidate;
   const isProject2 = isProjectMarker(ev);

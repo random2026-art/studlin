@@ -23904,7 +23904,18 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   // one piece of a manually split task (splitGroup) -- converting just
   // one sibling into its own Attack Block chain would orphan it from the
   // rest of the split.
-  const canAddAttackBlock=(kind==="deadline"||kind==="study block")&&!ev.isAttackBlock&&!ev.dueEventId&&!ev.deckId&&!ev.practiceExamId&&!ev.isExamPrepSession&&!ev.splitGroup&&linkedSessions.length===0&&!(ev.phases&&ev.phases.length>0);
+  // Bug fix, 2026-09-04 user report: linkedSessions.length===0 is ALSO
+  // exactly the condition that makes the behind-pace nudge fire (see its
+  // own render below) once a deadline-kind item has passed its ideal-
+  // start gate with zero real work logged -- so the two showed up
+  // together every time, offering two different-looking ways to solve
+  // the identical problem ("get this thing its first real session") in
+  // the same form: a one-tap "Propose a catch-up block" nudge, and a
+  // separate "Start an Attack Block" toggle a few sections down. Hiding
+  // this toggle while that nudge is actively showing removes the
+  // redundant prompt without removing the option -- dismissing the nudge
+  // ("Not now") still leaves this toggle available as the fallback path.
+  const canAddAttackBlock=(kind==="deadline"||kind==="study block")&&!ev.isAttackBlock&&!ev.dueEventId&&!ev.deckId&&!ev.practiceExamId&&!ev.isExamPrepSession&&!ev.splitGroup&&linkedSessions.length===0&&!(ev.phases&&ev.phases.length>0)&&!(pace&&pace.behind&&!paceDismissed);
   const isPhaseCandidate=canAddAttackBlock&&isPhaseDecompositionCandidate(ev.estimatedHours,date,dayKey());
   // True exactly when PhasesOutlineEditor below is live and about to ground
   // proposeProjectPhases/proposeOutline in whatever's typed into `notes` --
