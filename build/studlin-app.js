@@ -75,6 +75,14 @@ const hexA = (hex, a) => {
   const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
   return `rgba(${r},${g},${b},${a})`;
 };
+const blendOverBg = (hex, alpha, bgHex) => {
+  const h = hex.replace("#", ""), bg = bgHex.replace("#", "");
+  const r1 = parseInt(h.slice(0, 2), 16), g1 = parseInt(h.slice(2, 4), 16), b1 = parseInt(h.slice(4, 6), 16);
+  const r2 = parseInt(bg.slice(0, 2), 16), g2 = parseInt(bg.slice(2, 4), 16), b2 = parseInt(bg.slice(4, 6), 16);
+  const mix = (a, b) => Math.round(a * alpha + b * (1 - alpha));
+  const toHex = (n) => n.toString(16).padStart(2, "0");
+  return "#" + toHex(mix(r1, r2)) + toHex(mix(g1, g2)) + toHex(mix(b1, b2));
+};
 const ACCENTS = {
   Lime: { dk: { lime: "#AECE5E", limeDk: "#8BAE3C", limeLt: "#CBDF92" }, lt: { lime: "#6E9C35", limeDk: "#57802A", limeLt: "#DCE9C0" } },
   Forest: { dk: { lime: "#6FC1A0", limeDk: "#4E9C7B", limeLt: "#A9E0CB" }, lt: { lime: "#2E8E6E", limeDk: "#227056", limeLt: "#A9E0CB" } },
@@ -1395,7 +1403,20 @@ function expandRoutineOccurrences(routines, startDateKey, endDateKey) {
         // recurring item silently never rendered anywhere on the
         // calendar, only for one-off events built via buildTask.
         commuteBefore: r.commuteBefore || 0,
-        commuteAfter: r.commuteAfter || 0
+        commuteAfter: r.commuteAfter || 0,
+        // Same class of bug as commuteBefore/commuteAfter above, same
+        // root cause, just never caught for this field: NewEventModal's
+        // editRoutine mode already saves `location` correctly onto the
+        // rule (see saveRoutineEditFromModal), but this function is what
+        // actually builds the object WeeklyPlanner/DayPlanner render on
+        // the calendar, and it never copied that field over -- so a
+        // location set on any REPEATING class/activity silently never
+        // showed on its block, even though a one-off event's location
+        // (built directly via buildTask, no expansion step) always
+        // worked. User report, 2026-09-04: "once i add location its
+        // supposed to have that location on the block... but it doesn't
+        // work" -- reproduced exactly on a recurring class.
+        location: r.location || ""
       });
     });
   }
@@ -12078,7 +12099,7 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
           const isStudy = ev.kind === "study block";
           const isExam = ev.kind === "exam";
           const isWarningKind = isExam || ev.kind === "deadline";
-          const kindStyle = isStudy ? { background: tokens.color.accent, color: T.ink } : isWarningKind ? { background: tokens.color.warningSubtle, border: `1px solid ${tokens.color.warning}`, color: tokens.color.warning } : { background: subjectColor + "1E", color: subjectColor };
+          const kindStyle = isStudy ? { background: tokens.color.accent, color: T.ink } : isWarningKind ? { background: blendOverBg(T.amber, 0.12, T.card), border: `1px solid ${tokens.color.warning}`, color: tokens.color.warning } : { background: blendOverBg(subjectColor, 0.1176, T.card), color: subjectColor };
           const dimmedByRoutineMode = editRoutineMode && !isRoutine;
           const highlightedByRoutineMode = editRoutineMode && isRoutine;
           const acceptanceSummary = ev.proposalMemberUids ? computeAcceptanceSummary(ev.proposalMemberUids, ev.proposalResponses) : null;
@@ -13516,7 +13537,7 @@ function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf,
     const color = ev.color || colorOf(ev.courseId || ev.subject);
     const isStudy = ev.kind === "study block";
     const isExam = ev.kind === "exam";
-    const kindStyle = isStudy ? { background: color, borderLeft: "none", color: T.ink } : isExam ? { background: T.ink, border: `2px solid ${color}`, borderLeft: `2px solid ${color}`, boxShadow: `0 0 10px -1px ${color}, inset 0 0 10px ${color}22`, color: T.cream } : { background: color + "1E", borderLeft: `3px solid ${color}`, color };
+    const kindStyle = isStudy ? { background: color, borderLeft: "none", color: T.ink } : isExam ? { background: T.ink, border: `2px solid ${color}`, borderLeft: `2px solid ${color}`, boxShadow: `0 0 10px -1px ${color}, inset 0 0 10px ${color}22`, color: T.cream } : { background: blendOverBg(color, 0.1176, T.card), borderLeft: `3px solid ${color}`, color };
     const leftPct = displayCol / displayTotalCols * 100;
     const widthPct = 100 / displayTotalCols;
     const isNewlyAdded = !!newItemHighlightIds && (newItemHighlightIds.has(ev.id) || ev.routineId && newItemHighlightIds.has(ev.routineId));

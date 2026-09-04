@@ -198,7 +198,7 @@ function loadStudlinModule(options) {
     "canGenFlashcardsReason","canBuildExamPlanReason","canAddSessionFocusReason",
     "canBreakDownProjectReason","canUseSmartRescheduleReason","canUseBrainDumpReason","canUseAiArrangeReason",
     "generateFlashcardsFromText","generateQuizFromText","latestWrongTopicsForExam","sessionPriorityFor",
-    "hourBucket","timeToMinutes","minutesToTime"];
+    "hourBucket","timeToMinutes","minutesToTime","blendOverBg"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }
