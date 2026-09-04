@@ -20326,7 +20326,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
               <div style={{padding:"9px 14px",borderBottom:`1px solid ${T.border}`,fontSize:12.5,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{routinePopoverAnchor.title}</div>
               <button onClick={()=>{setClassDayNotesTarget(routinePopoverAnchor);closeRoutinePopover();}} style={itemStyle} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="none"}>{hasNote?"View notes for this day":"Add notes for this day"}</button>
               {onEditRoutine&&(
-                <button onClick={()=>{closeRoutinePopover();onEditRoutine(routinePopoverAnchor.routineId);}} style={{...itemStyle,borderTop:`1px solid ${T.border}`}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="none"}>Edit series</button>
+                <button onClick={()=>{closeRoutinePopover();onEditRoutine(routinePopoverAnchor.routineId);}} style={{...itemStyle,borderTop:`1px solid ${T.border}`}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="none"}>Edit</button>
               )}
             </div>
           </>
@@ -22808,32 +22808,36 @@ function ClassDayNotesModal({open,onClose,target}){
     setTodo(x=>[...x,{text:t,done:false}]);
     setNewItem("");
   };
-  const inputStyle={width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 11px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",boxSizing:"border-box"};
+  const inputStyle={width:"100%",background:T.card2,border:`1.5px solid ${T.border}`,borderRadius:10,padding:"10px 12px",color:T.text,fontSize:13.5,fontFamily:T.font,outline:"none",boxSizing:"border-box",transition:"border-color 0.15s"};
+  const sectionLabelStyle={fontSize:10.5,fontWeight:800,letterSpacing:"0.06em",textTransform:"uppercase",color:T.muted,marginBottom:9};
   return (
-    <Modal open={open} onClose={onClose} title={target.title} sub={dateLabel} width={440}>
-      <div style={{display:"flex",flexDirection:"column",gap:16}}>
+    <Modal open={open} onClose={onClose} title={target.title} sub={dateLabel} width={460}>
+      <div style={{display:"flex",flexDirection:"column",gap:20}}>
         <div>
-          <div style={{fontSize:12,fontWeight:700,color:T.white,marginBottom:6}}>Notes for this class</div>
-          <textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="e.g. Worksheet due today, covers chapter 4..." rows={3} style={{...inputStyle,resize:"vertical"}} onFocus={e=>e.currentTarget.style.borderColor=T.lime} onBlur={e=>e.currentTarget.style.borderColor=T.border} />
+          <div style={sectionLabelStyle}>Notes for this class</div>
+          <textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="e.g. Worksheet due today, covers chapter 4..." rows={4} style={{...inputStyle,resize:"none",lineHeight:1.5}} onFocus={e=>e.currentTarget.style.borderColor=T.lime} onBlur={e=>e.currentTarget.style.borderColor=T.border} />
         </div>
         <div>
-          <div style={{fontSize:12,fontWeight:700,color:T.white,marginBottom:6}}>To do in class</div>
-          {todo.length===0&&(
-            <div style={{fontSize:12,color:T.muted,marginBottom:8}}>Nothing added yet.</div>
-          )}
-          {todo.map((it,i)=>(
-            <div key={i} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
-              <input type="checkbox" checked={it.done} onChange={()=>setTodo(x=>x.map((y,j)=>j===i?{...y,done:!y.done}:y))} style={{cursor:"pointer",flexShrink:0}} />
-              <span style={{flex:1,fontSize:13,color:it.done?T.muted:T.text,textDecoration:it.done?"line-through":"none"}}>{it.text}</span>
-              <button onClick={()=>setTodo(x=>x.filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:12,fontFamily:T.font,flexShrink:0}}>Remove</button>
+          <div style={sectionLabelStyle}>To do in class</div>
+          {todo.length===0?(
+            <div style={{fontSize:12.5,color:T.muted,padding:"14px 0",textAlign:"center",border:`1.5px dashed ${T.border}`,borderRadius:10,marginBottom:10}}>Nothing added yet.</div>
+          ):(
+            <div style={{display:"flex",flexDirection:"column",gap:7,marginBottom:10}}>
+              {todo.map((it,i)=>(
+                <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:9}}>
+                  <input type="checkbox" checked={it.done} onChange={()=>setTodo(x=>x.map((y,j)=>j===i?{...y,done:!y.done}:y))} style={{cursor:"pointer",flexShrink:0,width:16,height:16,accentColor:T.lime}} />
+                  <span style={{flex:1,fontSize:13,color:it.done?T.muted:T.text,textDecoration:it.done?"line-through":"none"}}>{it.text}</span>
+                  <button onClick={()=>setTodo(x=>x.filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:11.5,fontFamily:T.font,flexShrink:0}}>Remove</button>
+                </div>
+              ))}
             </div>
-          ))}
-          <div style={{display:"flex",gap:8,marginTop:4}}>
+          )}
+          <div style={{display:"flex",gap:8}}>
             <input value={newItem} onChange={e=>setNewItem(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addItem();}}} placeholder="Add an item..." style={{...inputStyle,flex:1}} onFocus={e=>e.currentTarget.style.borderColor=T.lime} onBlur={e=>e.currentTarget.style.borderColor=T.border} />
             <Btn variant="subtle" onClick={addItem}>Add</Btn>
           </div>
         </div>
-        <div style={{display:"flex",alignItems:"center",gap:10}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,paddingTop:14,borderTop:`1px solid ${T.border}`}}>
           <Btn onClick={save}>Save</Btn>
           {saved&&<span style={{fontSize:12,color:T.lime,fontWeight:600}}>✓ Saved</span>}
         </div>
