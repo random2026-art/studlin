@@ -13852,7 +13852,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
   const [priority, setPriority] = useState(500);
   const [difficulty, setDifficulty] = useState(500);
   const [moreOpen, setMoreOpen] = useState(false);
-  const [subject, setSubject] = useState("Chemistry");
+  const [subject, setSubject] = useState("None");
   const [kind, setKind] = useState("deadline");
   const [asProject, setAsProject] = useState(false);
   const [asChecklist, setAsChecklist] = useState(false);
@@ -13899,7 +13899,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
     setPriority(toSliderVal(ev.priority, 5));
     setDifficulty(toSliderVal(ev.difficulty, 5));
     setMoreOpen(!!(ev.priority && (ev.priority > 10 ? ev.priority !== 500 : ev.priority !== 5)));
-    setSubject(ev.subject || "Chemistry");
+    setSubject(ev.subject || "None");
     setKind(ev.kind || "deadline");
     setNotes(ev.notes || "");
     setAsProject(isProjectMarker(ev));
@@ -17537,7 +17537,7 @@ Examples:
     evKind === "task" && /* @__PURE__ */ React.createElement(Field, { label: "Repeat", hint: taskRepeatDays.length > 0 ? "No fixed time -- Studlin fits it in wherever there's room each day it repeats." : "Leave off for a one-time task." }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } }, ROUTINE_DOW.map((d, di) => /* @__PURE__ */ React.createElement("button", { key: di, type: "button", onClick: () => setTaskRepeatDays((r) => r.includes(di) ? r.filter((x) => x !== di) : [...r, di]), style: wizardChipStyle(taskRepeatDays.includes(di)) }, d)), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setTaskRepeatDays((r) => r.length === 7 ? [] : [0, 1, 2, 3, 4, 5, 6]), style: wizardChipStyle(taskRepeatDays.length === 7) }, "Every day"))),
     evKind === "task" && taskRepeatDays.length > 0 && /* @__PURE__ */ React.createElement(Field, { label: "Duration (minutes)", hint: "How long this occupies on your calendar" }, /* @__PURE__ */ React.createElement(NumField, { min: 5, max: 480, fallback: 30, value: evDuration, onChange: setEvDuration })),
     /* @__PURE__ */ React.createElement(Field, { label: "Type", hint: isFixedKind ? "Won't be moved or rescheduled." : isRepeatingTask ? "Repeats on the days you pick below." : isChecklistMode ? "Just a due date -- no calendar time yet." : evKind === "assignment" || evKind === "task" ? taskMode === "manual" ? evKind === "task" ? "Happens at this exact time." : "A study session at this exact time." : "Studlin finds the time before it's due." : void 0 }, /* @__PURE__ */ React.createElement(SelectChip, { options: [{ value: "assignment", label: taskMode === "manual" ? "Study Session" : "Assignment" }, { value: "task", label: "Task" }, { value: "project", label: "Project" }, "exam", "class", { value: "busy block", label: "Activity" }, "reminder"], value: evKind, onChange: onEvKindChange })),
-    /* @__PURE__ */ React.createElement(Field, { label: "Subject" }, /* @__PURE__ */ React.createElement(SelectChip, { options: SUBJ, value: evSubject, onChange: setEvSubject })),
+    /* @__PURE__ */ React.createElement(Field, { label: "Subject" }, /* @__PURE__ */ React.createElement(CustomSelect, { boxed: true, options: SUBJ, value: evSubject, onChange: setEvSubject, minWidth: 220 })),
     evSubject === "Other" && /* @__PURE__ */ React.createElement(Field, { label: "Custom subject", hint: "Pick a color so it doesn't get lost on the calendar." }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement(ColorSelect, { value: evCustomColor, onChange: setEvCustomColor }), /* @__PURE__ */ React.createElement(Input, { placeholder: "e.g. Drivers ed, SAT prep, club...", value: evCustom, onChange: (ev) => setEvCustom(ev.target.value), style: { flex: 1 } }))),
     evKind === "assignment" && taskMode === "manual" && evSubject !== "None" && (() => {
       const linkedExam = evLinkedExamId ? upcomingExams().find((ex) => ex.id === evLinkedExamId) : null;

@@ -22833,7 +22833,13 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   const [priority,setPriority]=useState(500);
   const [difficulty,setDifficulty]=useState(500);
   const [moreOpen,setMoreOpen]=useState(false);
-  const [subject,setSubject]=useState("Chemistry");
+  // Bug fix, 2026-09-04: hardcoded to a specific real class name that not
+  // every student even has -- when an event has no subject at all (e.g.
+  // an AI-extracted item with nothing to tag it with), this rendered as a
+  // real-looking selected subject that doesn't match anything in SUBJ, so
+  // no chip/option ever highlighted as selected. "None" is the actual
+  // real option that shape is supposed to fall back to.
+  const [subject,setSubject]=useState("None");
   const [kind,setKind]=useState("deadline");
   // Project and To-do aren't real `kind` values (a project is
   // kind:"deadline"+phases/outline, a to-do is kind:"deadline"+checklist) --
@@ -22946,7 +22952,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
     setDuration(ev.duration||60);setDeadline(ev.deadline||"");setDeadlineErr("");
     setPriority(toSliderVal(ev.priority,5));setDifficulty(toSliderVal(ev.difficulty,5));
     setMoreOpen(!!(ev.priority&&(ev.priority>10?ev.priority!==500:ev.priority!==5)));
-    setSubject(ev.subject||"Chemistry");setKind(ev.kind||"deadline");setNotes(ev.notes||"");
+    setSubject(ev.subject||"None");setKind(ev.kind||"deadline");setNotes(ev.notes||"");
     setAsProject(isProjectMarker(ev));setAsChecklist(!!ev.checklist);setAsGeneralTask(!!ev.isGeneralTask);
     setCancelConfirmOpen(false);setDetailErr("");
     setExamSwitchAwayConfirm(false);setProjectSwitchAwayConfirm(false);
@@ -28434,7 +28440,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         <Field label="Type" hint={isFixedKind?"Won't be moved or rescheduled.":isRepeatingTask?"Repeats on the days you pick below.":isChecklistMode?"Just a due date -- no calendar time yet.":(evKind==="assignment"||evKind==="task")?(taskMode==="manual"?(evKind==="task"?"Happens at this exact time.":"A study session at this exact time."):"Studlin finds the time before it's due."):undefined}>
           <SelectChip options={[{value:"assignment",label:taskMode==="manual"?"Study Session":"Assignment"},{value:"task",label:"Task"},{value:"project",label:"Project"},"exam","class",{value:"busy block",label:"Activity"},"reminder"]} value={evKind} onChange={onEvKindChange} />
         </Field>
-        <Field label="Subject"><SelectChip options={SUBJ} value={evSubject} onChange={setEvSubject} /></Field>
+        {/* Same fix as EventDetailModal's identical Subject field
+            (2026-09-04) -- a SelectChip wall wrapping across several rows
+            for a real course load, swapped for a dropdown. */}
+        <Field label="Subject"><CustomSelect boxed options={SUBJ} value={evSubject} onChange={setEvSubject} minWidth={220} /></Field>
         {evSubject==="Other"&&(
           <Field label="Custom subject" hint="Pick a color so it doesn't get lost on the calendar.">
             <div style={{display:"flex",alignItems:"center",gap:10}}>
