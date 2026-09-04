@@ -9935,6 +9935,7 @@ function ChatDrawer({ open, target, myUid, onClose, onMakePermanent, onDeleteGro
   const roomId = target ? isGroup ? target.group.id : myUid && target.user.uid ? dmRoomId(myUid, target.user.uid) : null : null;
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
+  const [sendTextError, setSendTextError] = useState("");
   const [quickOpen, setQuickOpen] = useState(false);
   const [deckPicker, setDeckPicker] = useState(false);
   const [syncRunning, setSyncRunning] = useState(false);
@@ -9957,6 +9958,7 @@ function ChatDrawer({ open, target, myUid, onClose, onMakePermanent, onDeleteGro
   const scrollRef = useRef(null);
   useEffect(() => {
     setInput("");
+    setSendTextError("");
     setQuickOpen(false);
     setDeckPicker(false);
     setSyncRunning(false);
@@ -10011,18 +10013,29 @@ function ChatDrawer({ open, target, myUid, onClose, onMakePermanent, onDeleteGro
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
   const sendMessage = (fields) => {
-    if (!roomId || !myUid) return;
+    if (!roomId || !myUid) return Promise.resolve({ ok: false });
     const ts = Date.now();
     const roomRef = fsdb().collection("chatRooms").doc(roomId);
-    roomRef.collection("messages").add({ senderId: myUid, ts, ...fields }).catch(reportError("sendMessage-add"));
+    const addResult = roomRef.collection("messages").add({ senderId: myUid, ts, ...fields }).then(() => ({ ok: true })).catch((e) => {
+      reportError("sendMessage-add")(e);
+      return { ok: false };
+    });
     roomRef.update({ lastMessage: { text: fields.text || null, kind: fields.kind, ts, senderId: myUid }, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).catch(reportError("sendMessage-lastMessage"));
     const preview = fields.text || (fields.kind === "calendar" ? "Shared free time found" : fields.kind === "note" ? "Note shared" : fields.kind === "deck" ? "Deck shared" : "New message");
     authFetch("/api/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "push", roomId, preview }) }).catch(reportError("sendMessage-push"));
+    return addResult;
   };
   const sendText = () => {
     if (!input.trim()) return;
-    sendMessage({ kind: "text", text: input.trim() });
+    const text = input.trim();
     setInput("");
+    setSendTextError("");
+    sendMessage({ kind: "text", text }).then((res) => {
+      if (!res.ok) {
+        setInput(text);
+        setSendTextError("Couldn't send. Check your connection and try again.");
+      }
+    });
   };
   const fmtTimeLabel = (t) => {
     const p = t.split(":");
@@ -10211,12 +10224,15 @@ function ChatDrawer({ open, target, myUid, onClose, onMakePermanent, onDeleteGro
     }, style: qaBtn }, /* @__PURE__ */ React.createElement("span", { style: { color: T.purple, display: "flex" } }, Icon.cal), /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, "Find Shared Study Window"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: pp.faint, fontWeight: 400 } }, "Find free time")), /* @__PURE__ */ React.createElement("button", { onClick: () => {
       setDeckPicker(true);
       setQuickOpen(false);
-    }, style: qaBtn }, /* @__PURE__ */ React.createElement("span", { style: { color: T.teal, display: "flex" } }, Icon.layers), /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, "Send Flashcard Deck"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: pp.faint, fontWeight: 400 } }, "Share a deck")), /* @__PURE__ */ React.createElement("button", { onClick: requestDeck, style: qaBtn }, /* @__PURE__ */ React.createElement("span", { style: { color: T.teal, display: "flex" } }, Icon.layers), /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, "Request a Deck"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: pp.faint, fontWeight: 400 } }, "Ask ", peerFirst || "them"))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, padding: "12px 16px", borderTop: `1px solid ${pp.border}` } }, /* @__PURE__ */ React.createElement("button", { onClick: () => {
+    }, style: qaBtn }, /* @__PURE__ */ React.createElement("span", { style: { color: T.teal, display: "flex" } }, Icon.layers), /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, "Send Flashcard Deck"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: pp.faint, fontWeight: 400 } }, "Share a deck")), /* @__PURE__ */ React.createElement("button", { onClick: requestDeck, style: qaBtn }, /* @__PURE__ */ React.createElement("span", { style: { color: T.teal, display: "flex" } }, Icon.layers), /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, "Request a Deck"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: pp.faint, fontWeight: 400 } }, "Ask ", peerFirst || "them"))), sendTextError && /* @__PURE__ */ React.createElement("div", { style: { padding: "0 16px 8px", fontSize: 11.5, color: T.red } }, sendTextError), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, padding: "12px 16px", borderTop: `1px solid ${pp.border}` } }, /* @__PURE__ */ React.createElement("button", { onClick: () => {
       setQuickOpen((q) => !q);
       setDeckPicker(false);
-    }, style: { width: 34, height: 34, borderRadius: 9, border: `1px solid ${quickOpen ? T.lime + "55" : pp.border}`, background: quickOpen ? T.lime + "20" : pp.card2, color: quickOpen ? T.lime : pp.muted, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0 } }, Icon.plus), /* @__PURE__ */ React.createElement("input", { value: input, onChange: (e) => setInput(e.target.value), onKeyDown: (e) => {
+    }, style: { width: 34, height: 34, borderRadius: 9, border: `1px solid ${quickOpen ? T.lime + "55" : pp.border}`, background: quickOpen ? T.lime + "20" : pp.card2, color: quickOpen ? T.lime : pp.muted, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0 } }, Icon.plus), /* @__PURE__ */ React.createElement("input", { value: input, onChange: (e) => {
+      setInput(e.target.value);
+      if (sendTextError) setSendTextError("");
+    }, onKeyDown: (e) => {
       if (e.key === "Enter") sendText();
-    }, placeholder: "Message\u2026", style: { flex: 1, background: pp.card2, border: `1px solid ${pp.border}`, borderRadius: 9, padding: "9px 12px", color: pp.text, fontSize: 13, fontFamily: T.font, outline: "none" } }), /* @__PURE__ */ React.createElement("button", { onClick: sendText, style: { width: 34, height: 34, borderRadius: 9, border: "none", background: input.trim() ? T.lime : pp.card2, color: input.trim() ? T.bg : pp.faint, display: "grid", placeItems: "center", cursor: input.trim() ? "pointer" : "default", flexShrink: 0 } }, Icon.send)))), isGroup && /* @__PURE__ */ React.createElement(Modal, { open: settingsOpen, onClose: () => setSettingsOpen(false), title: target.group.name, sub: "Group settings", width: 420 }, /* @__PURE__ */ React.createElement(Label, null, "Members"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 18 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 9 } }, /* @__PURE__ */ React.createElement(Av, { initials: "ME", color: T.lime, size: 28 }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, fontWeight: 600 } }, "You"), /* @__PURE__ */ React.createElement("div", { style: { width: 7, height: 7, borderRadius: "50%", background: isOnlineStatusOn() && !isIncognitoOn() ? T.teal : T.faint, marginLeft: "auto" } })), target.group.memberUids.filter((uid) => uid !== myUid).map((uid) => {
+    }, placeholder: "Message\u2026", style: { flex: 1, background: pp.card2, border: `1px solid ${sendTextError ? T.red + "88" : pp.border}`, borderRadius: 9, padding: "9px 12px", color: pp.text, fontSize: 13, fontFamily: T.font, outline: "none" } }), /* @__PURE__ */ React.createElement("button", { onClick: sendText, style: { width: 34, height: 34, borderRadius: 9, border: "none", background: input.trim() ? T.lime : pp.card2, color: input.trim() ? T.bg : pp.faint, display: "grid", placeItems: "center", cursor: input.trim() ? "pointer" : "default", flexShrink: 0 } }, Icon.send)))), isGroup && /* @__PURE__ */ React.createElement(Modal, { open: settingsOpen, onClose: () => setSettingsOpen(false), title: target.group.name, sub: "Group settings", width: 420 }, /* @__PURE__ */ React.createElement(Label, null, "Members"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 18 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 9 } }, /* @__PURE__ */ React.createElement(Av, { initials: "ME", color: T.lime, size: 28 }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, fontWeight: 600 } }, "You"), /* @__PURE__ */ React.createElement("div", { style: { width: 7, height: 7, borderRadius: "50%", background: isOnlineStatusOn() && !isIncognitoOn() ? T.teal : T.faint, marginLeft: "auto" } })), target.group.memberUids.filter((uid) => uid !== myUid).map((uid) => {
       const name = target.group.memberNames && target.group.memberNames[uid] || "Studlin User";
       return /* @__PURE__ */ React.createElement("div", { key: uid, style: { display: "flex", alignItems: "center", gap: 9 } }, /* @__PURE__ */ React.createElement(Av, { initials: name.split(" ").map((x) => x[0]).join(""), color: T.lime, size: 28, picUrl: "" }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, fontWeight: 600 } }, name));
     })), /* @__PURE__ */ React.createElement("div", { style: { paddingTop: 16, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement(Label, null, "Expiration"), target.group.groupType === "temporary" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, marginBottom: 10, lineHeight: 1.5 } }, expiry && expiry.expired ? "This group has expired and will archive shortly." : /* @__PURE__ */ React.createElement(React.Fragment, null, "Auto-archives on ", /* @__PURE__ */ React.createElement("strong", null, new Date(target.group.expiresAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })), " \u2014 ", expiry && expiry.label, " left.")), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => onMakePermanent(target.group.id), style: { width: "100%", justifyContent: "center", marginBottom: 8 } }, Icon.users, " Make permanent")) : /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginBottom: 10 } }, "This is a standard ongoing group. It will never auto-archive."), target.group.createdBy === myUid && /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => {

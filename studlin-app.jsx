@@ -16191,6 +16191,12 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
   const roomId=target?(isGroup?target.group.id:(myUid&&target.user.uid?dmRoomId(myUid,target.user.uid):null)):null;
   const [messages,setMessages]=useState([]);
   const [input,setInput]=useState("");
+  // Bug fix, 2026-09-04 audit (3rd pass): sendText cleared the input
+  // immediately and sendMessage's own write was pure fire-and-forget (a
+  // background reportError call, nothing surfaced to the UI) -- a failed
+  // send just made the typed text vanish with no error and no way to
+  // retry it, since it was already gone from the input.
+  const [sendTextError,setSendTextError]=useState("");
   const [quickOpen,setQuickOpen]=useState(false);
   const [deckPicker,setDeckPicker]=useState(false);
   const [syncRunning,setSyncRunning]=useState(false);
@@ -16230,7 +16236,7 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
   // messages subcollection's security rules (which look up its memberUids)
   // resolve for reads/writes.
   useEffect(()=>{
-    setInput("");setQuickOpen(false);setDeckPicker(false);setSyncRunning(false);setSettingsOpen(false);setFindWindowOpen(false);setUnfriendConfirmOpen(false);setFwMode("auto");setFwManualDate("");setFwManualCheck(null);
+    setInput("");setSendTextError("");setQuickOpen(false);setDeckPicker(false);setSyncRunning(false);setSettingsOpen(false);setFindWindowOpen(false);setUnfriendConfirmOpen(false);setFwMode("auto");setFwManualDate("");setFwManualCheck(null);
     if(!roomId||!myUid){setMessages([]);return;}
     let cancelled=false;
     let unsub=()=>{};
@@ -16275,19 +16281,34 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
   // parent room's lastMessage/updatedAt so the inbox preview/sort (driven by
   // the single chatRooms listener in FriendsChat) updates live for everyone
   // in the room, not just the sender.
+  // Returns a promise resolving to {ok:boolean} -- never rejects, so
+  // every pre-existing caller that ignores the return value (calendar
+  // proposals, deck shares, etc.) stays byte-safe. sendText below is the
+  // one caller that actually uses it, for the plain-text-message failure
+  // fix (see sendTextError's own comment).
   const sendMessage=(fields)=>{
-    if(!roomId||!myUid)return;
+    if(!roomId||!myUid)return Promise.resolve({ok:false});
     const ts=Date.now();
     const roomRef=fsdb().collection('chatRooms').doc(roomId);
-    roomRef.collection('messages').add({senderId:myUid,ts,...fields}).catch(reportError("sendMessage-add"));
+    const addResult=roomRef.collection('messages').add({senderId:myUid,ts,...fields})
+      .then(()=>({ok:true}))
+      .catch(e=>{reportError("sendMessage-add")(e);return{ok:false};});
     roomRef.update({lastMessage:{text:fields.text||null,kind:fields.kind,ts,senderId:myUid},updatedAt:new Date().toISOString()}).catch(reportError("sendMessage-lastMessage"));
     // Server-side push — checks the recipient's own preference before
     // sending, so this is a request to try, not a guarantee it fires.
     const preview=fields.text||(fields.kind==="calendar"?"Shared free time found":fields.kind==="note"?"Note shared":fields.kind==="deck"?"Deck shared":"New message");
     authFetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"push",roomId,preview})}).catch(reportError("sendMessage-push"));
+    return addResult;
   };
 
-  const sendText=()=>{if(!input.trim())return;sendMessage({kind:"text",text:input.trim()});setInput("");};
+  const sendText=()=>{
+    if(!input.trim())return;
+    const text=input.trim();
+    setInput("");setSendTextError("");
+    sendMessage({kind:"text",text}).then(res=>{
+      if(!res.ok){setInput(text);setSendTextError("Couldn't send. Check your connection and try again.");}
+    });
+  };
   const fmtTimeLabel=(t)=>{const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+" "+ap;};
   // findSharedStudyWindow now lives at module scope, above ChatDrawer, so
   // CalendarTab's "Schedule with Friends" can call the same ranking (it
@@ -16575,9 +16596,12 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
             </div>
           )}
 
+          {sendTextError&&(
+            <div style={{padding:"0 16px 8px",fontSize:11.5,color:T.red}}>{sendTextError}</div>
+          )}
           <div style={{display:"flex",alignItems:"center",gap:8,padding:"12px 16px",borderTop:`1px solid ${pp.border}`}}>
             <button onClick={()=>{setQuickOpen(q=>!q);setDeckPicker(false);}} style={{width:34,height:34,borderRadius:9,border:`1px solid ${quickOpen?T.lime+"55":pp.border}`,background:quickOpen?T.lime+"20":pp.card2,color:quickOpen?T.lime:pp.muted,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.plus}</button>
-            <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")sendText();}} placeholder="Message…" style={{flex:1,background:pp.card2,border:`1px solid ${pp.border}`,borderRadius:9,padding:"9px 12px",color:pp.text,fontSize:13,fontFamily:T.font,outline:"none"}} />
+            <input value={input} onChange={e=>{setInput(e.target.value);if(sendTextError)setSendTextError("");}} onKeyDown={e=>{if(e.key==="Enter")sendText();}} placeholder="Message…" style={{flex:1,background:pp.card2,border:`1px solid ${sendTextError?T.red+"88":pp.border}`,borderRadius:9,padding:"9px 12px",color:pp.text,fontSize:13,fontFamily:T.font,outline:"none"}} />
             <button onClick={sendText} style={{width:34,height:34,borderRadius:9,border:"none",background:input.trim()?T.lime:pp.card2,color:input.trim()?T.bg:pp.faint,display:"grid",placeItems:"center",cursor:input.trim()?"pointer":"default",flexShrink:0}}>{Icon.send}</button>
           </div>
         </>)}
