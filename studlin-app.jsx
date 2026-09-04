@@ -3869,6 +3869,18 @@ function reconcileToastSuffix(result){
 // indistinguishable from an actual noon event) instead of surfacing the
 // problem, so bail out to the raw string when the hour is out of [0,24).
 function fmtClock12(t){if(!t)return"";const p=t.split(":");let h=+p[0];if(!(h>=0&&h<24))return t;const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+ap;}
+// Bug fix, 2026-09-04 user report: every Studlin AI prompt (classifier,
+// digest Q&A, coaching) told the model today's DATE but never the actual
+// TIME right now -- so "leave for the gym in 15 minutes" had nothing to
+// resolve against and the model had to guess a real clock time out of
+// thin air (landed on 4:15 PM for a message sent at 12:08 PM, no
+// relation to either the stated 15-minute offset or anything else in the
+// conversation). Real current time, one place, used everywhere the date
+// already is.
+function currentClockLabel(){
+  const d=new Date();
+  return fmtClock12(String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0"));
+}
 // Was CalendarTab-local (part of the Google Calendar-inspired polish pass)
 // -- promoted to module scope 2026-09-04 so Dashboard's Today's Plan can
 // share the exact same "1PM - 1:45PM" formatting instead of duplicating
@@ -7679,7 +7691,13 @@ function buildMoveFlexTaskProposal(parsed,events,routines,prefs,forcedId){
 // proposals both read the same way in the drawer.
 function describeCreateProposal(task){
   if(!task)return"Add task";
-  const when=task.time?(task.date+" "+task.time+(task.duration?" ("+task.duration+" min)":"")):(task.date?"due "+task.date:"no date yet");
+  // Bug fix, 2026-09-04 user report: showed the raw internal date/time
+  // exactly as stored ("2026-09-04 16:15") -- 24h military time and a
+  // bare ISO date, neither of which anything else in this app's UI ever
+  // shows a student directly. Same weekday+month+day / 12h format the
+  // move/retime confirmations already use.
+  const dateLabel=task.date?new Date(task.date+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}):null;
+  const when=task.time?(dateLabel+" at "+fmtClock12(task.time)+(task.duration?" ("+task.duration+" min)":"")):(dateLabel?"due "+dateLabel:"no date yet");
   return"Add \""+task.title+"\" -- "+when+"?";
 }
 // Bug fix, 2026-09-04 audit: every proposal.label above is phrased as a
@@ -16881,7 +16899,7 @@ function gatherStudlinAiProfileSignals(flags,prefs){
 // prompt's "say so plainly" instruction.
 function formatStudlinAiDigestForPrompt(question,digest,flags,profile){
   const lines=["DIGEST (real data about this student -- the ONLY source of truth; never invent beyond this):"];
-  lines.push("Today: "+digest.todayKey+". Schedule window shown below: "+digest.todayKey+" through "+digest.windowEndKey+".");
+  lines.push("Today: "+digest.todayKey+" ("+currentClockLabel()+" right now). Schedule window shown below: "+digest.todayKey+" through "+digest.windowEndKey+".");
 
   if(flags.needsWorkload){
     if(digest.busiestDay)lines.push("Busiest day in this window: "+digest.busiestDay.date+" ("+digest.busiestDay.workloadMinutes+" minutes scheduled).");
@@ -16970,7 +16988,7 @@ function gatherStudlinAiCoachingContext(text,events,routines,prefs,todayKey){
 function formatStudlinAiCoachingPrompt(question,context){
   const{digest,subject,subjectNudge,examReadiness,confidenceInsight}=context;
   const lines=["CONTEXT (real data about this student -- ground your advice in this, never invent beyond it):"];
-  lines.push("Today: "+digest.todayKey+".");
+  lines.push("Today: "+digest.todayKey+" ("+currentClockLabel()+" right now).");
   if(digest.heavyDayKeys.length>0)lines.push("Heavier-than-usual days in the next two weeks: "+digest.heavyDayKeys.join(", ")+".");
   if(digest.overdue.length>0)lines.push(digest.overdue.length+" overdue item(s) right now: "+digest.overdue.map(o=>o.title).join(", ")+".");
   if(subject){
@@ -17044,7 +17062,8 @@ async function classifyStudlinAiMessage(text,history){
   const tomorrow=dayKey(new Date(Date.now()+86400000));
   const nextWeekSameDay=dayKey(new Date(Date.now()+7*86400000));
   const weekday=new Date().toLocaleDateString("en-US",{weekday:"long"});
-  const prompt="You are a message router for a student calendar assistant chat. Today is "+weekday+", "+today+". The student typed: \""+text+"\". Decide whether this is a QUESTION about their existing schedule/study history (a real number/fact), a COACHING ask (wants real study-strategy help, not a fact), an ACTION request (create something new, move/reschedule something that already exists, or turn pasted study material into flashcards/a quiz), or unsupported. Respond with ONLY this JSON, no markdown fences, no explanation:\n"+
+  const nowTime=currentClockLabel();
+  const prompt="You are a message router for a student calendar assistant chat. Today is "+weekday+", "+today+". The current time right now is "+nowTime+". The student typed: \""+text+"\". Decide whether this is a QUESTION about their existing schedule/study history (a real number/fact), a COACHING ask (wants real study-strategy help, not a fact), an ACTION request (create something new, move/reschedule something that already exists, or turn pasted study material into flashcards/a quiz), or unsupported. Respond with ONLY this JSON, no markdown fences, no explanation:\n"+
     "{\"kind\":\"question\"|\"coaching\"|\"action\"|\"unsupported\",\"intent\":\"create_task\"|\"delete_task\"|\"set_peak_hours\"|\"shift\"|\"clear_day\"|\"clear_week\"|\"skip_class\"|\"move_event\"|\"retime_event\"|\"move_flex_task\"|\"generate_study_material\"|null,\"days\":<integer 1-14 or null>,\"date\":\"YYYY-MM-DD or null\",\"target\":\"<short name of the specific existing item, or null>\",\"targetDate\":\"YYYY-MM-DD or null\",\"destDate\":\"YYYY-MM-DD or null\",\"newStart\":\"HH:MM 24h or null\",\"newDuration\":<integer minutes or null>,\"title\":\"<short name of the NEW item to create, or null>\",\"dueDate\":\"YYYY-MM-DD or null\",\"dueTime\":\"HH:MM 24h or null\",\"durationMin\":<integer minutes or null>,\"taskKind\":\"study\"|\"todo\"|\"event\"|\"reminder\"|\"exam\"|\"project\"|null,\"genFormat\":\"flashcards\"|\"quiz\"|null,\"peakHours\":\"morning\"|\"midday\"|\"afternoon\"|\"evening\"|null,\"clarify\":\"<a short, specific question, or null>\"}\n"+
     "Rules: \"question\" is asking for a real FACT about their schedule/workload/streak/pace/productivity (a number, a date, a yes/no). \"coaching\" is asking for real help or a plan -- \"how should I study for X,\" \"help me prepare,\" \"where do I start,\" \"I'm stressed about Y and don't know the material\" -- wanting strategy/advice, not a fact, and not (yet) asking to add/move anything. Neither ever changes anything -- leave intent and every other field null for both. \"unsupported\" covers anything ambiguous, multi-step, deleting/cancelling MULTIPLE things or an entire day/week/recurring routine, or that doesn't clearly match one action below -- never guess. Deleting exactly ONE clearly-named item uses delete_task instead, not unsupported.\n"+
     "\"clarify\": if the message clearly WANTS one of the actions below but is missing something required to do it (no title for a new item, no clear name for what to move/retime/delete, no day count for \"shift\"), set kind to \"unsupported\", intent to null, and \"clarify\" to ONE short, specific question asking for exactly the missing thing (e.g. \"When is that due?\" or \"Which day would you like it moved to?\"). Leave \"clarify\" null for every other case -- genuinely off-topic, too vague to guess the intended action at all, multi-step, or a bulk/destructive request. Never set clarify when kind is \"question\", \"coaching\", or \"action\".\n"+
@@ -17057,6 +17076,7 @@ async function classifyStudlinAiMessage(text,history){
     "\"shift\" pushes everything from today onward back by a day count, only with an explicit or clearly implied number, never invent one. \"clear_day\" empties one specific date (resolve relative phrases against today's date above). \"clear_week\" clears the next 7 days, no parameters. \"skip_class\" is for not physically attending class/school on a specific day, opening that time for other work.\n"+
     "\"generate_study_material\" is for when the student pastes real study material (notes, a definition list, an excerpt, a transcript) directly in their message and asks to be quizzed on it or have flashcards made from it -- \"genFormat\" is \"flashcards\" for card/flashcard requests, \"quiz\" for quiz/test/practice-exam requests (default to \"flashcards\" if genuinely ambiguous which they want). Only classify this way when the message actually contains real pasted content to learn from, not just a bare request -- \"quiz me on chapter 3\" with nothing pasted is coaching or unsupported instead, never this.\n"+
     "Leave every field the chosen intent/kind doesn't use as null. Relative-date phrases are never off by less than what they literally say: \"tomorrow\" is exactly today's date above + 1 day. \"next week\" (no specific weekday named) means "+nextWeekSameDay+" (today's date above + 7 days), never less than 7 days out, never treated the same as \"tomorrow.\" \"next Monday\"/\"next Friday\"/etc. resolve to that exact date within the next 7 days.\n"+
+    "Relative TIME phrases work the same way, against the current time above -- never guessed, never defaulted to some other hour: \"in 15 minutes\"/\"in an hour\"/\"in 20 min\" means exactly the current time plus that many minutes, computed for real (e.g. if the current time above were 12:08 PM, \"in 15 minutes\" is 12:23 PM, \"in an hour\" is 1:08 PM). \"soon\"/\"in a bit\"/\"right now\" with no specific number given still means close to the current time above -- within about 15 minutes of it, never later in the day. This applies to dueTime (create_task) and newStart (retime_event) alike.\n"+
     "Examples:\n"+
     "\"which day next week is busiest?\" -> {\"kind\":\"question\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"clarify\":null}\n"+
     "\"add a task to finish my history essay, due Friday\" -> {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"Finish history essay\",\"dueDate\":\"<the real date of this Friday>\",\"dueTime\":null,\"durationMin\":null,\"taskKind\":\"study\",\"genFormat\":null,\"peakHours\":null,\"clarify\":null}\n"+
@@ -17065,6 +17085,7 @@ async function classifyStudlinAiMessage(text,history){
     "\"i have an upcoming calc exam in 10 days and i am stressing because i dont know any of the material\" (wants real help, not a fact, never actually asked to add anything) -> {\"kind\":\"coaching\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"clarify\":null}\n"+
     "\"can you help me think of a plan of how i should study for it\" -> {\"kind\":\"coaching\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"clarify\":null}\n"+
     "\"add a dentist appointment tomorrow at 3pm\" -> {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"Dentist appointment\",\"dueDate\":\""+tomorrow+"\",\"dueTime\":\"15:00\",\"durationMin\":null,\"taskKind\":\"event\",\"genFormat\":null,\"peakHours\":null,\"clarify\":null}\n"+
+    "\"i'm leaving for the gym in 15 minutes, going for an hour\" -> dueTime is the CURRENT TIME above plus 15 minutes, computed for real (not a guess, not some other hour) -- e.g. {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"Gym\",\"dueDate\":\""+today+"\",\"dueTime\":\"<current time above + 15 minutes, as real HH:MM>\",\"durationMin\":60,\"taskKind\":\"event\",\"genFormat\":null,\"peakHours\":null,\"clarify\":null}\n"+
     "\"remind me to email my professor tomorrow\" -> {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"Email professor\",\"dueDate\":\""+tomorrow+"\",\"dueTime\":null,\"durationMin\":null,\"taskKind\":\"reminder\",\"genFormat\":null,\"peakHours\":null,\"clarify\":null}\n"+
     "\"add my history project, due in two weeks\" -> {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"History project\",\"dueDate\":\"<today's date above + 14 days>\",\"dueTime\":null,\"durationMin\":null,\"taskKind\":\"project\",\"genFormat\":null,\"peakHours\":null,\"clarify\":null}\n"+
     "\"delete my old chem homework task\" -> {\"kind\":\"action\",\"intent\":\"delete_task\",\"days\":null,\"date\":null,\"target\":\"chem homework\",\"targetDate\":\""+today+"\",\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"clarify\":null}\n"+
@@ -17194,7 +17215,15 @@ function StudlinAiMiniDayPreview({dateKey,proposedBlock}){
           const widthPct=100/displayTotalCols;
           return (
             <div key={ev.id} style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 1px)`,width:`calc(${widthPct}% - 2px)`,height:heightPx,borderRadius:5,padding:"2px 6px",overflow:"hidden",boxSizing:"border-box",background:color+"22",border:ev.__proposed?`1.5px dashed ${color}`:`1px solid ${color}55`,display:"flex",flexDirection:"column",justifyContent:"center"}}>
-              <span style={{fontSize:9.5,fontWeight:700,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.title}</span>
+              <span style={{fontSize:9.5,fontWeight:700,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                {/* Bug fix, 2026-09-04 user report: real event and
+                    proposed-new event rendered with only a subtle dashed-
+                    vs-solid border to tell them apart -- easy to miss, and
+                    a real user read both as "being added" by the message
+                    they just sent. An explicit label removes the
+                    ambiguity outright. */}
+                {ev.__proposed&&<span style={{color:T.lime}}>NEW · </span>}{ev.title}
+              </span>
               {heightPx>22&&<span style={{fontSize:8.5,color:T.muted}}>{fmtClock12(ev.time)}</span>}
             </div>
           );

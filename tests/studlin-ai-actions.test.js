@@ -99,15 +99,20 @@ describe("buildCreateTaskProposal", () => {
 });
 
 describe("describeCreateProposal", () => {
-  test("a scheduled task reads date, time, and duration", () => {
+  // Bug fix, 2026-09-04 user report: this used to show the raw internal
+  // date/time exactly as stored -- 24h military time ("14:00") and a bare
+  // ISO date ("2026-09-20") -- neither of which anything else in this
+  // app's UI ever shows a student directly. Now matches the same
+  // weekday+month+day / 12h format the move/retime confirmations use.
+  test("a scheduled task reads date, time, and duration in human format, not military time", () => {
     const m = loadStudlinModule();
     const label = m.describeCreateProposal({ title: "Chem Essay", date: "2026-09-20", time: "14:00", duration: 30 });
-    assert.equal(label, 'Add "Chem Essay" -- 2026-09-20 14:00 (30 min)?');
+    assert.equal(label, 'Add "Chem Essay" -- Sun, Sep 20 at 2:00PM (30 min)?');
   });
-  test("a due-date-only task reads just the date", () => {
+  test("a due-date-only task reads just the date, in human format", () => {
     const m = loadStudlinModule();
     const label = m.describeCreateProposal({ title: "Lab Report", date: "2026-09-25", time: "" });
-    assert.equal(label, 'Add "Lab Report" -- due 2026-09-25?');
+    assert.equal(label, 'Add "Lab Report" -- due Fri, Sep 25?');
   });
 });
 
