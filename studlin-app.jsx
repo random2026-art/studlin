@@ -13673,11 +13673,23 @@ function fmtGroupCountdown(expiresAt){
 // (see the comment further down where u.presence is fabricated) — building
 // genuine ambient presence (heartbeats, idle detection) is materially
 // bigger than what was asked and stays out of scope here.
+// Bug fix, 2026-09-04 audit + user follow-up: profileToFriend used to
+// unconditionally hand this function presence:{state:"idle"} for every
+// friend, real data or not, so "idle" fired for literally everyone not
+// in a live session -- a status indicator that never varies isn't real
+// information. profileToFriend now omits presence/online entirely when
+// there's no real signal (see its own comment), landing on the new
+// "unknown" state below -- confirmed by the user: show nothing rather
+// than a made-up status, until there's real presence to report. u.online
+// as an explicit true/false boolean (distinct from undefined) still
+// resolves to the real idle/offline branches below, unchanged -- this
+// only adds a case for genuinely having neither signal.
 function presenceInfo(u,{incognito=false,liveSession=null}={}){
   if(!incognito&&liveSession)return{color:T.teal,text:"Locking In: "+(liveSession.subject||liveSession.title)+" — tap to join",joinable:true,sessionId:liveSession.id};
-  const p=incognito?{state:"offline"}:(u.presence||{state:u.online?"idle":"offline"});
+  const p=incognito?{state:"offline"}:(u.presence||(typeof u.online==="boolean"?{state:u.online?"idle":"offline"}:{state:"unknown"}));
   if(p.state==="in-class")return{color:T.amber,text:"In Class",joinable:false};
   if(p.state==="idle")return{color:T.muted,text:"Idle",joinable:false};
+  if(p.state==="unknown")return{color:T.faint,text:null,joinable:false};
   return{color:T.faint,text:"Offline",joinable:false};
 }
 
@@ -13748,8 +13760,12 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
     h:"@"+((d&&d.username)||uid.slice(0,6)),
     s:(d&&d.school)||"",
     p:(d&&d.picUrl)||"",
-    online:false,
-    presence:{state:"idle"},
+    // Bug fix, 2026-09-04 user follow-up: online/presence used to be
+    // hardcoded here (false / {state:"idle"}) for every friend regardless
+    // of any real signal, which is what made presenceInfo show "Idle" for
+    // literally everyone. Omitted entirely now -- presenceInfo's new
+    // "unknown" fallback (see its own comment) reads the absence of both
+    // as "no real signal" and shows nothing, instead of a made-up status.
     // Bug fix, 2026-09-03: this is the field presenceInfo's own incognito
     // param needs to actually suppress a friend's live-session reveal --
     // upsertProfile now writes it, this is the read side.
@@ -13836,21 +13852,47 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
   // Accepted friendships (either direction) — real-time via onSnapshot, resolved
   // against `profiles` for display. This is what powers "My Friends" live on
   // both sides once the other person accepts, with no manual refresh needed.
+  //
+  // Bug fix, 2026-09-04 user follow-up: each friend's profile doc used to be
+  // fetched once (a plain .get()), re-run only when the friendship LIST
+  // itself changed -- so a friend's live status change (flipping Incognito
+  // on, say) while you already had this tab open went unnoticed until you
+  // navigated away and back, silently undermining Incognito's own "you'll
+  // appear offline everywhere" promise. Real per-friend onSnapshot listeners
+  // now, added/removed as the friend list itself changes and torn down on
+  // unmount -- so a friend's profile write reaches this view the moment it
+  // happens, the same way the friendship-list change itself already did.
   useEffect(()=>{
     if(!myUid)return;
-    let asSender=[],asReceiver=[],cancelled=false;
-    const rebuild=async()=>{
+    let asSender=[],asReceiver=[];
+    const profileUnsubs={}; // uid -> unsubscribe fn for that friend's profile listener
+    const profileDocs={}; // uid -> latest profile data (or null)
+    const rebuildFriendsState=()=>{
       const ids=[...new Set([...asSender,...asReceiver])];
-      if(ids.length===0){setFriends([]);return;}
-      const docs=await Promise.all(ids.map(uid=>fsdb().collection('profiles').doc(uid).get().catch(()=>null)));
-      if(cancelled)return;
-      setFriends(docs.map((p,i)=>profileToFriend(ids[i],p&&p.exists?p.data():null)));
+      setFriends(ids.map(uid=>profileToFriend(uid,profileDocs[uid]||null)));
+    };
+    // Reconciles the set of per-friend profile listeners against the
+    // current friend list -- starts one for any newly-accepted friend,
+    // stops one for anyone no longer on the list (unfriended), and always
+    // re-renders with whatever's already known so a friend list change is
+    // never blocked waiting on every profile listener's first snapshot.
+    const syncProfileListeners=()=>{
+      const ids=new Set([...asSender,...asReceiver]);
+      ids.forEach(uid=>{
+        if(profileUnsubs[uid])return;
+        profileUnsubs[uid]=fsdb().collection('profiles').doc(uid)
+          .onSnapshot(doc=>{profileDocs[uid]=doc.exists?doc.data():null;rebuildFriendsState();},()=>{});
+      });
+      Object.keys(profileUnsubs).forEach(uid=>{
+        if(!ids.has(uid)){profileUnsubs[uid]();delete profileUnsubs[uid];delete profileDocs[uid];}
+      });
+      rebuildFriendsState();
     };
     const unsub1=fsdb().collection('friendships').where('senderId','==',myUid).where('status','==','accepted')
-      .onSnapshot(snap=>{asSender=snap.docs.map(d=>d.data().receiverId);rebuild();},()=>{});
+      .onSnapshot(snap=>{asSender=snap.docs.map(d=>d.data().receiverId);syncProfileListeners();},()=>{});
     const unsub2=fsdb().collection('friendships').where('receiverId','==',myUid).where('status','==','accepted')
-      .onSnapshot(snap=>{asReceiver=snap.docs.map(d=>d.data().senderId);rebuild();},()=>{});
-    return ()=>{cancelled=true;unsub1();unsub2();};
+      .onSnapshot(snap=>{asReceiver=snap.docs.map(d=>d.data().senderId);syncProfileListeners();},()=>{});
+    return ()=>{unsub1();unsub2();Object.values(profileUnsubs).forEach(fn=>fn());};
   },[myUid]);
 
   // Chat rooms (DMs + groups) I belong to — one query drives the whole inbox
@@ -30198,6 +30240,13 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
         subId:"canvas-token",
         url:null,label:"Canvas",sourceType:"Canvas",
         events,skippedAllDay:0,classified:true,viaToken:true,
+        // Bug fix, 2026-09-04 audit: classifyImportedCalendarEvents caps
+        // at 120 items (see its own comment) -- everything still imports,
+        // but items beyond the cap get the same generic fallback a real
+        // classification failure would produce, with no way to tell
+        // "the AI actually looked at this" from "never sent to it at
+        // all." Flagged here so the review screen can say so.
+        classificationCapped:events.length>120,
       });
     }catch(e){
       setImportCalLoading(false);setImportCalClassifying(false);
@@ -30249,6 +30298,8 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
         url,label,sourceType:label,
         events,skippedAllDay:data.skippedAllDay||0,
         classified,
+        // See the identical comment on the Canvas-token branch above.
+        classificationCapped:classified&&events.length>120,
       });
     }catch(e){
       setImportCalError(e.message||"Couldn't read that calendar link. Double-check it's a public/secret calendar URL.");
@@ -31279,6 +31330,9 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                     {importCalReview.events.length} event{importCalReview.events.length!==1?"s":""} found
                     {importCalReview.skippedAllDay>0&&(" · "+importCalReview.skippedAllDay+" all-day entr"+(importCalReview.skippedAllDay!==1?"ies":"y")+" skipped for now")}
                   </div>
+                  {importCalReview.classificationCapped&&(
+                    <div style={{fontSize:11.5,color:T.muted,marginBottom:10,lineHeight:1.5}}>Everything below still gets imported, but AI classification only checked your nearest 120 items -- anything further out defaults to a generic type/subject you can still edit.</div>
+                  )}
                   {importCalReview.events.length===0?(
                     <div style={{padding:"24px 16px",textAlign:"center",color:T.muted,fontSize:12.5}}>Nothing to import from this link right now.</div>
                   ):importCalReview.classified?(

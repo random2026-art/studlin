@@ -8386,9 +8386,10 @@ function fmtGroupCountdown(expiresAt) {
 }
 function presenceInfo(u, { incognito = false, liveSession = null } = {}) {
   if (!incognito && liveSession) return { color: T.teal, text: "Locking In: " + (liveSession.subject || liveSession.title) + " \u2014 tap to join", joinable: true, sessionId: liveSession.id };
-  const p = incognito ? { state: "offline" } : u.presence || { state: u.online ? "idle" : "offline" };
+  const p = incognito ? { state: "offline" } : u.presence || (typeof u.online === "boolean" ? { state: u.online ? "idle" : "offline" } : { state: "unknown" });
   if (p.state === "in-class") return { color: T.amber, text: "In Class", joinable: false };
   if (p.state === "idle") return { color: T.muted, text: "Idle", joinable: false };
+  if (p.state === "unknown") return { color: T.faint, text: null, joinable: false };
   return { color: T.faint, text: "Offline", joinable: false };
 }
 function FriendsChat({ onFriendRequestSent, onActiveChatChange, initialTarget, onInitialTargetConsumed } = {}) {
@@ -8448,8 +8449,12 @@ function FriendsChat({ onFriendRequestSent, onActiveChatChange, initialTarget, o
     h: "@" + (d && d.username || uid.slice(0, 6)),
     s: d && d.school || "",
     p: d && d.picUrl || "",
-    online: false,
-    presence: { state: "idle" },
+    // Bug fix, 2026-09-04 user follow-up: online/presence used to be
+    // hardcoded here (false / {state:"idle"}) for every friend regardless
+    // of any real signal, which is what made presenceInfo show "Idle" for
+    // literally everyone. Omitted entirely now -- presenceInfo's new
+    // "unknown" fallback (see its own comment) reads the absence of both
+    // as "no real signal" and shows nothing, instead of a made-up status.
     // Bug fix, 2026-09-03: this is the field presenceInfo's own incognito
     // param needs to actually suppress a friend's live-session reveal --
     // upsertProfile now writes it, this is the read side.
@@ -8525,31 +8530,46 @@ function FriendsChat({ onFriendRequestSent, onActiveChatChange, initialTarget, o
   }, [myUid]);
   useEffect(() => {
     if (!myUid) return;
-    let asSender = [], asReceiver = [], cancelled = false;
-    const rebuild = async () => {
+    let asSender = [], asReceiver = [];
+    const profileUnsubs = {};
+    const profileDocs = {};
+    const rebuildFriendsState = () => {
       const ids = [.../* @__PURE__ */ new Set([...asSender, ...asReceiver])];
-      if (ids.length === 0) {
-        setFriends([]);
-        return;
-      }
-      const docs = await Promise.all(ids.map((uid) => fsdb().collection("profiles").doc(uid).get().catch(() => null)));
-      if (cancelled) return;
-      setFriends(docs.map((p, i) => profileToFriend(ids[i], p && p.exists ? p.data() : null)));
+      setFriends(ids.map((uid) => profileToFriend(uid, profileDocs[uid] || null)));
+    };
+    const syncProfileListeners = () => {
+      const ids = /* @__PURE__ */ new Set([...asSender, ...asReceiver]);
+      ids.forEach((uid) => {
+        if (profileUnsubs[uid]) return;
+        profileUnsubs[uid] = fsdb().collection("profiles").doc(uid).onSnapshot((doc) => {
+          profileDocs[uid] = doc.exists ? doc.data() : null;
+          rebuildFriendsState();
+        }, () => {
+        });
+      });
+      Object.keys(profileUnsubs).forEach((uid) => {
+        if (!ids.has(uid)) {
+          profileUnsubs[uid]();
+          delete profileUnsubs[uid];
+          delete profileDocs[uid];
+        }
+      });
+      rebuildFriendsState();
     };
     const unsub1 = fsdb().collection("friendships").where("senderId", "==", myUid).where("status", "==", "accepted").onSnapshot((snap) => {
       asSender = snap.docs.map((d) => d.data().receiverId);
-      rebuild();
+      syncProfileListeners();
     }, () => {
     });
     const unsub2 = fsdb().collection("friendships").where("receiverId", "==", myUid).where("status", "==", "accepted").onSnapshot((snap) => {
       asReceiver = snap.docs.map((d) => d.data().senderId);
-      rebuild();
+      syncProfileListeners();
     }, () => {
     });
     return () => {
-      cancelled = true;
       unsub1();
       unsub2();
+      Object.values(profileUnsubs).forEach((fn) => fn());
     };
   }, [myUid]);
   useEffect(() => {
@@ -18563,7 +18583,14 @@ function SettingsTab({ theme = "dark", setTheme = () => {
         events,
         skippedAllDay: 0,
         classified: true,
-        viaToken: true
+        viaToken: true,
+        // Bug fix, 2026-09-04 audit: classifyImportedCalendarEvents caps
+        // at 120 items (see its own comment) -- everything still imports,
+        // but items beyond the cap get the same generic fallback a real
+        // classification failure would produce, with no way to tell
+        // "the AI actually looked at this" from "never sent to it at
+        // all." Flagged here so the review screen can say so.
+        classificationCapped: events.length > 120
       });
     } catch (e) {
       setImportCalLoading(false);
@@ -18610,7 +18637,9 @@ function SettingsTab({ theme = "dark", setTheme = () => {
         sourceType: label,
         events,
         skippedAllDay: data.skippedAllDay || 0,
-        classified
+        classified,
+        // See the identical comment on the Canvas-token branch above.
+        classificationCapped: classified && events.length > 120
       });
     } catch (e) {
       setImportCalError(e.message || "Couldn't read that calendar link. Double-check it's a public/secret calendar URL.");
@@ -18986,7 +19015,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
       setImportCalMethod("token");
       setImportCalError("");
       setCanvasDomainError("");
-    }, style: { background: "none", border: "none", padding: 0, marginTop: 2, fontSize: 11.5, color: T.muted, textDecoration: "underline", cursor: "pointer", fontFamily: T.font } }, "\u2190 Use an access token instead (gets full descriptions and real grade weights)")), importedCals.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 18, paddingTop: 16, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, marginBottom: 10 } }, "Connected calendars"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, importedCals.map((sub) => /* @__PURE__ */ React.createElement("div", { key: sub.id, style: { display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: T.card2, borderRadius: 9, border: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, sub.label), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 1 } }, "synced ", timeAgoLabel(sub.lastSyncedAt))), /* @__PURE__ */ React.createElement("button", { onClick: () => resyncCalendar(sub, { manual: true }), title: "Sync now", style: { width: 26, height: 26, borderRadius: 6, border: `1px solid ${T.border}`, background: "transparent", color: T.muted, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0 } }, Icon.refresh), /* @__PURE__ */ React.createElement("button", { onClick: () => setRemoveCalConfirm(sub), title: "Remove", style: { padding: "5px 10px", borderRadius: 6, border: `1px solid ${T.border}`, background: "transparent", color: T.muted, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, flexShrink: 0 } }, "Remove")))))) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, importCalReview.events.length, " event", importCalReview.events.length !== 1 ? "s" : "", " found", importCalReview.skippedAllDay > 0 && " \xB7 " + importCalReview.skippedAllDay + " all-day entr" + (importCalReview.skippedAllDay !== 1 ? "ies" : "y") + " skipped for now"), importCalReview.events.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { padding: "24px 16px", textAlign: "center", color: T.muted, fontSize: 12.5 } }, "Nothing to import from this link right now.") : importCalReview.classified ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, maxHeight: 400, overflowY: "auto" } }, importCalReview.events.map((ev, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { padding: "10px 12px", borderRadius: 9, background: T.card2, border: `1px solid ${T.border}`, opacity: ev.include === false ? 0.5 : 1 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "flex-start", gap: 9 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: ev.include !== false, onChange: () => setImportCalReview((r) => ({ ...r, events: r.events.map((x, xi) => xi === i ? { ...x, include: !x.include } : x) })), style: { marginTop: 11, cursor: "pointer", flexShrink: 0 } }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", gap: 10, marginBottom: 6 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.title), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.muted, flexShrink: 0 } }, (/* @__PURE__ */ new Date(ev.date + "T12:00:00")).toLocaleDateString("en-US", { month: "short", day: "numeric" }), !ev.allDay && " \xB7 " + fmtClock12(ev.time))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(
+    }, style: { background: "none", border: "none", padding: 0, marginTop: 2, fontSize: 11.5, color: T.muted, textDecoration: "underline", cursor: "pointer", fontFamily: T.font } }, "\u2190 Use an access token instead (gets full descriptions and real grade weights)")), importedCals.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 18, paddingTop: 16, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, marginBottom: 10 } }, "Connected calendars"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, importedCals.map((sub) => /* @__PURE__ */ React.createElement("div", { key: sub.id, style: { display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: T.card2, borderRadius: 9, border: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, sub.label), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 1 } }, "synced ", timeAgoLabel(sub.lastSyncedAt))), /* @__PURE__ */ React.createElement("button", { onClick: () => resyncCalendar(sub, { manual: true }), title: "Sync now", style: { width: 26, height: 26, borderRadius: 6, border: `1px solid ${T.border}`, background: "transparent", color: T.muted, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0 } }, Icon.refresh), /* @__PURE__ */ React.createElement("button", { onClick: () => setRemoveCalConfirm(sub), title: "Remove", style: { padding: "5px 10px", borderRadius: 6, border: `1px solid ${T.border}`, background: "transparent", color: T.muted, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, flexShrink: 0 } }, "Remove")))))) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, importCalReview.events.length, " event", importCalReview.events.length !== 1 ? "s" : "", " found", importCalReview.skippedAllDay > 0 && " \xB7 " + importCalReview.skippedAllDay + " all-day entr" + (importCalReview.skippedAllDay !== 1 ? "ies" : "y") + " skipped for now"), importCalReview.classificationCapped && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 10, lineHeight: 1.5 } }, "Everything below still gets imported, but AI classification only checked your nearest 120 items -- anything further out defaults to a generic type/subject you can still edit."), importCalReview.events.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { padding: "24px 16px", textAlign: "center", color: T.muted, fontSize: 12.5 } }, "Nothing to import from this link right now.") : importCalReview.classified ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, maxHeight: 400, overflowY: "auto" } }, importCalReview.events.map((ev, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { padding: "10px 12px", borderRadius: 9, background: T.card2, border: `1px solid ${T.border}`, opacity: ev.include === false ? 0.5 : 1 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "flex-start", gap: 9 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: ev.include !== false, onChange: () => setImportCalReview((r) => ({ ...r, events: r.events.map((x, xi) => xi === i ? { ...x, include: !x.include } : x) })), style: { marginTop: 11, cursor: "pointer", flexShrink: 0 } }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", gap: 10, marginBottom: 6 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.title), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.muted, flexShrink: 0 } }, (/* @__PURE__ */ new Date(ev.date + "T12:00:00")).toLocaleDateString("en-US", { month: "short", day: "numeric" }), !ev.allDay && " \xB7 " + fmtClock12(ev.time))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(
       SelectChip,
       {
         options: [{ value: "assignment", label: "Assignment" }, { value: "exam", label: "Exam" }, { value: "project", label: "Project" }, { value: "class", label: "Class" }],

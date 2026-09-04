@@ -66,4 +66,24 @@ describe("presenceInfo (Incognito Mode masking)", () => {
     const info = m.presenceInfo({}, { incognito: false, liveSession: { id: "s2", title: "Group study" } });
     assert.equal(info.text, "Locking In: Group study — tap to join");
   });
+
+  // Bug fix, 2026-09-04 user follow-up: profileToFriend used to hand this
+  // function a hardcoded presence:{state:"idle"} for every friend, real
+  // data or not -- "Idle" showed for literally everyone not in a live
+  // session. profileToFriend now omits presence/online entirely when
+  // there's no real signal; presenceInfo reads that absence as "unknown"
+  // and shows nothing, per the user's explicit choice over showing a
+  // made-up status.
+  test("no presence and no online boolean at all resolves to 'unknown' -- no fabricated status text", () => {
+    const m = loadStudlinModule();
+    const info = m.presenceInfo({}, {});
+    assert.equal(info.text, null);
+    assert.equal(info.joinable, false);
+  });
+
+  test("an explicit boolean u.online (true or false) still resolves to the real idle/offline branches, not 'unknown'", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.presenceInfo({ online: true }, {}).text, "Idle");
+    assert.equal(m.presenceInfo({ online: false }, {}).text, "Offline");
+  });
 });

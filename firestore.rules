@@ -145,9 +145,20 @@ service cloud.firestore {
         && request.auth.uid in request.resource.data.memberUids
         && request.resource.data.memberUids.size() >= 2
         && request.resource.data.createdBy == request.auth.uid;
+      // Bug fix, 2026-09-04 audit: this had no field-level allowlist at
+      // all -- memberUids/createdBy were frozen, but any OTHER field could
+      // be written arbitrarily by any member. The messages subcollection
+      // right below already learned this exact lesson once (see its own
+      // comment); this closes the same gap one level up. lastReadAt is
+      // allowed as a whole map, not scoped to the caller's own key --
+      // Firestore rules operate on whole-document diffs, not per-map-key
+      // ACLs, the same limitation studySessions.participants/memberNames
+      // already accepts below (see its own comment) rather than inventing
+      // a workaround that would need a Cloud Function to actually enforce.
       allow update: if request.auth != null && request.auth.uid in resource.data.memberUids
         && request.resource.data.memberUids == resource.data.memberUids
-        && request.resource.data.createdBy == resource.data.createdBy;
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastMessage','updatedAt','groupType','expiresAt','lastReadAt']);
       allow delete: if request.auth != null && request.auth.uid == resource.data.createdBy;
 
       match /messages/{messageId} {
