@@ -23388,7 +23388,14 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
           it) since this modal edits an existing real kind directly, not a
           type that resolves to one at save time. */}
       <Field label="Type"><SelectChip options={[{value:"study block",label:"Study Session"},{value:"deadline",label:"Assignment"},{value:"task",label:"Task"},{value:"project",label:"Project"},{value:"todo",label:"To-do"},"exam","class","reminder",{value:"busy block",label:"Activity"}]} value={typeChoice} onChange={onTypeChange} /></Field>
-      <Field label="Subject"><SelectChip options={SUBJ} value={subject} onChange={setSubject} /></Field>
+      {/* Was a SelectChip wall (every subject as its own full pill button,
+          wrapping across several rows for anyone with a real course load)
+          -- a dropdown reads exactly the same info in one line, matching
+          the pattern already used for Importance/other single-pick fields
+          elsewhere in the app. Loses the per-subject color dot SelectChip
+          drew (CustomSelect doesn't render one) -- same tradeoff every
+          other dropdown-style field in this app already makes. */}
+      <Field label="Subject"><CustomSelect boxed options={SUBJ} value={subject} onChange={setSubject} minWidth={220} /></Field>
       {/* A To-do (asChecklist) has no scheduled work time at all -- only a
           due date, same as Add Task's own checklist-mode shape. Used to
           show Scheduled date + Start time here regardless, and the save
@@ -23399,10 +23406,19 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
           isDuePill's assumptions). Fixed here by hiding Start time
           entirely and relabeling to match Add Task's own "Due date
           (optional)" wording; the merge fix that actually zeroes
-          time/duration lives in save() below. */}
-      <div style={{display:"grid",gridTemplateColumns:asChecklist?"1fr":"1fr 1fr",gap:12}}>
+          time/duration lives in save() below.
+          End time used to live ~350 lines further down in this form
+          (originally a standalone "Duration (minutes)" field converted to
+          a real end-time input during the Google Calendar-inspired polish
+          pass, which left it in its old position rather than moving it
+          next to Start time -- explicitly flagged as a tradeoff in that
+          pass's own comment). Moved in here for real, 2026-09-04, so Date/
+          Start/End actually read as one row instead of two unrelated
+          ones. */}
+      <div style={{display:"grid",gridTemplateColumns:asChecklist?"1fr":(kind==="reminder"?"1fr 1fr":"1fr 1fr 1fr"),gap:12}}>
         <Field label={asChecklist?"Due date (optional)":"Scheduled date"}><Input type="date" value={date} onChange={e=>{setDate(e.target.value);setDeadlineErr("");}} /></Field>
         {!asChecklist&&<Field label={kind==="reminder"?"Reminder time":"Start time"}><BoxedTimeInput value={time} onChange={setTime} /></Field>}
+        {!asChecklist&&kind!=="reminder"&&<Field label="End time"><BoxedTimeInput value={minutesToTime(timeToMinutes(time)+duration)} onChange={v=>setDuration(Math.max(5,timeToMinutes(v)-timeToMinutes(time)))} /></Field>}
       </div>
       {/* Google Calendar-inspired polish: these were pure read-only
           notices (a status line plus one small text-link action) using
@@ -23748,18 +23764,6 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
         )}
       </>)}
       {deadlineErr&&<div style={{fontSize:12,color:T.red,marginTop:-8,marginBottom:14}}>{deadlineErr}</div>}
-      {/* Google Calendar-inspired polish: start+duration -> start-end.
-          Start time lives earlier in this form (the "time" field above,
-          BoxedTimeInput) -- not adjacent enough to this row to merge into
-          one combined start-end control without restructuring the whole
-          form's layout (a lot of exam/confidence/deadline content sits
-          between them), so this stays a separate field but now shows a
-          real End time instead of a raw minutes number. duration stays
-          the only real persisted state, same derive-and-write-back shape
-          as every other conversion in this pass. */}
-      {kind!=="reminder"&&!asChecklist&&(
-        <Field label="End time"><BoxedTimeInput value={minutesToTime(timeToMinutes(time)+duration)} onChange={v=>setDuration(Math.max(5,timeToMinutes(v)-timeToMinutes(time)))} /></Field>
-      )}
       {kind!=="exam"&&kind!=="class"&&kind!=="reminder"&&!asChecklist&&(
         <>
           <Field label="Deadline" hint="When this must be done by"><Input type="date" value={deadline} onChange={e=>{setDeadline(e.target.value);setDeadlineErr("");}} /></Field>
