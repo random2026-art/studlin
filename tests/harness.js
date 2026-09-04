@@ -202,7 +202,8 @@ function loadStudlinModule(options) {
     "generateFlashcardsFromText","generateQuizFromText","latestWrongTopicsForExam","sessionPriorityFor",
     "hourBucket","timeToMinutes","minutesToTime",
     "getAiMemory","saveAiMemory","mergeAiMemoryFacts","removeAiMemoryFact","AI_MEMORY_FACT_CAP",
-    "currentClockLabel","formatAiMemoryForPrompt"];
+    "currentClockLabel","formatAiMemoryForPrompt",
+    "buildImportSyllabusItemsProposal","extractSyllabusItemsFromChatText"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }
