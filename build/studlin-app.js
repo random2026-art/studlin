@@ -12031,9 +12031,6 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
     setSelectedEventId(null);
     if (onSelectEvent) onSelectEvent(null);
   };
-  const [routinePopoverAnchor, setRoutinePopoverAnchor] = useState(null);
-  const closeRoutinePopover = () => setRoutinePopoverAnchor(null);
-  const [classDayNotesTarget, setClassDayNotesTarget] = useState(null);
   useEffect(() => {
     if (!selectedEventId) return;
     const handler = (e) => {
@@ -12372,18 +12369,17 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
               },
               onDoubleClick: () => {
                 if (!isRoutine) openEdit(ev);
-                else if (onEditRoutine) onEditRoutine(ev.routineId);
+                else if (onEditRoutine) onEditRoutine(ev.routineId, ev.date);
               },
               onClick: (e) => {
                 if (isRoutine) {
                   if (editRoutineMode && onEditRoutine) {
-                    onEditRoutine(ev.routineId);
+                    onEditRoutine(ev.routineId, ev.date);
                     return;
                   }
                   e.stopPropagation();
                   if (selectedEventId) closePopover();
                   if (onSelectRoutineOccurrence) onSelectRoutineOccurrence(isRoutineSelected ? null : { routineId: ev.routineId, date: ev.date, title: ev.title });
-                  setRoutinePopoverAnchor((prev) => prev && prev.routineId === ev.routineId && prev.date === ev.date ? null : { routineId: ev.routineId, date: ev.date, title: ev.title, rect: e.currentTarget.getBoundingClientRect() });
                   return;
                 }
                 e.stopPropagation();
@@ -12491,23 +12487,6 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
       closePopover();
       if (onDeleteEvent) onDeleteEvent(ev);
     }, style: { ...itemStyle, color: T.red, borderTop: `1px solid ${T.border}` }, onMouseEnter: (e) => e.currentTarget.style.background = T.card2, onMouseLeave: (e) => e.currentTarget.style.background = "none" }, "Delete"))), document.body);
-  })(), routinePopoverAnchor && (() => {
-    const rect = routinePopoverAnchor.rect;
-    const popoverWidth = 208;
-    const top = Math.min(rect.bottom + 6, window.innerHeight - 100);
-    const left = Math.min(Math.max(8, rect.left), window.innerWidth - (popoverWidth + 8));
-    const itemStyle = { display: "block", width: "100%", textAlign: "left", padding: "9px 14px", background: "none", border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 500, fontFamily: T.font, color: T.text };
-    const hasNote = (() => {
-      const n = getRoutineOccurrenceNote(routinePopoverAnchor.routineId, routinePopoverAnchor.date);
-      return !!(n.note || n.todo.length > 0);
-    })();
-    return ReactDOM.createPortal(/* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: closeRoutinePopover, style: { position: "fixed", inset: 0, zIndex: 998 } }), /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top, left, width: popoverWidth, background: T.card, border: `1px solid ${T.border}`, borderRadius: 6, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)", zIndex: 999, overflow: "hidden", animation: "studlinPop 0.15s cubic-bezier(.2,.85,.3,1)" } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "9px 14px", borderBottom: `1px solid ${T.border}`, fontSize: 12.5, fontWeight: 600, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, routinePopoverAnchor.title), /* @__PURE__ */ React.createElement("button", { onClick: () => {
-      setClassDayNotesTarget(routinePopoverAnchor);
-      closeRoutinePopover();
-    }, style: itemStyle, onMouseEnter: (e) => e.currentTarget.style.background = T.card2, onMouseLeave: (e) => e.currentTarget.style.background = "none" }, hasNote ? "View notes for this day" : "Add notes for this day"), onEditRoutine && /* @__PURE__ */ React.createElement("button", { onClick: () => {
-      closeRoutinePopover();
-      onEditRoutine(routinePopoverAnchor.routineId);
-    }, style: { ...itemStyle, borderTop: `1px solid ${T.border}` }, onMouseEnter: (e) => e.currentTarget.style.background = T.card2, onMouseLeave: (e) => e.currentTarget.style.background = "none" }, "Edit"))), document.body);
   })(), exitGhosts.length > 0 && ReactDOM.createPortal(
     // Portaled to document.body, same pattern the popover above
     // already uses -- guarantees it paints above everything and is
@@ -12516,7 +12495,7 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
     // render inside.
     exitGhosts.map((g) => /* @__PURE__ */ React.createElement("div", { key: "exit-" + g.id, style: { position: "fixed", left: g.rect.left, top: g.rect.top, width: g.rect.width, height: g.rect.height, borderRadius: 5, background: T.lime + "1c", border: `1.5px dashed ${T.lime}`, pointerEvents: "none", zIndex: 200, boxSizing: "border-box", animation: "studlinDissolve 0.4s ease-out forwards" } })),
     document.body
-  )), /* @__PURE__ */ React.createElement(DayPreviewModal, { open: !!previewDayKey, onClose: () => setPreviewDayKey(null), dayEvents: previewDayKey ? byDay[previewDayKey] || [] : [], selDay: previewDayKey, dayLabel: previewDayKey ? fmtWeekDueLabel(previewDayKey) : "", colorOf, fmtTime: fmtTime2, fmtTimeRange: fmtTimeRange2, catchUpPending, openNew }), /* @__PURE__ */ React.createElement(ClassDayNotesModal, { open: !!classDayNotesTarget, onClose: () => setClassDayNotesTarget(null), target: classDayNotesTarget }));
+  )), /* @__PURE__ */ React.createElement(DayPreviewModal, { open: !!previewDayKey, onClose: () => setPreviewDayKey(null), dayEvents: previewDayKey ? byDay[previewDayKey] || [] : [], selDay: previewDayKey, dayLabel: previewDayKey ? fmtWeekDueLabel(previewDayKey) : "", colorOf, fmtTime: fmtTime2, fmtTimeRange: fmtTimeRange2, catchUpPending, openNew }));
 }
 const ROUTINE_DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const fmtTimeShort = (t) => {
@@ -13811,7 +13790,7 @@ function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf,
       {
         onDoubleClick: () => {
           if (ev.isRoutine) {
-            if (onEditRoutine) onEditRoutine(ev.routineId);
+            if (onEditRoutine) onEditRoutine(ev.routineId, ev.date);
           } else openEdit(ev);
         },
         onClick: (e) => {
@@ -13847,22 +13826,20 @@ function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf,
     return ReactDOM.createPortal(/* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: () => setWhoInAnchor(null), style: { position: "fixed", inset: 0, zIndex: 998 } }), /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top, left, width: 232, background: T.card, border: `1px solid ${T.border}`, borderRadius: 6, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)", zIndex: 999, overflow: "hidden", animation: "studlinPop 0.15s cubic-bezier(.2,.85,.3,1)" } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "9px 14px", borderBottom: `1px solid ${T.border}`, fontSize: 12.5, fontWeight: 600, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.title), /* @__PURE__ */ React.createElement("div", { style: { padding: "10px 14px" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", color: T.muted, marginBottom: 8, textTransform: "uppercase" } }, "Who's in \xB7 ", summary.accepted, "/", summary.total), /* @__PURE__ */ React.createElement(AcceptanceRoster, { memberUids: ev.proposalMemberUids, memberNames: ev.proposalMemberNames, responses: ev.proposalResponses })))), document.body);
   })());
 }
-function ClassDayNotesModal({ open, onClose, target }) {
+function ClassDayNotesFields({ routineId, date }) {
   const [note, setNote] = useState("");
   const [todo, setTodo] = useState([]);
   const [newItem, setNewItem] = useState("");
   const [saved, setSaved] = useState(false);
   useEffect(() => {
-    if (!open || !target) return;
-    const existing = getRoutineOccurrenceNote(target.routineId, target.date);
+    if (!routineId || !date) return;
+    const existing = getRoutineOccurrenceNote(routineId, date);
     setNote(existing.note);
     setTodo(existing.todo);
     setSaved(false);
-  }, [open, target && target.routineId, target && target.date]);
-  if (!target) return null;
-  const dateLabel = (/* @__PURE__ */ new Date(target.date + "T12:00:00")).toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+  }, [routineId, date]);
   const save = () => {
-    saveRoutineOccurrenceNote(target.routineId, target.date, { note: note.trim(), todo });
+    saveRoutineOccurrenceNote(routineId, date, { note: note.trim(), todo });
     setSaved(true);
     setTimeout(() => setSaved(false), 1800);
   };
@@ -13872,14 +13849,15 @@ function ClassDayNotesModal({ open, onClose, target }) {
     setTodo((x) => [...x, { text: t, done: false }]);
     setNewItem("");
   };
-  const inputStyle = { width: "100%", background: T.card2, border: `1.5px solid ${T.border}`, borderRadius: 10, padding: "10px 12px", color: T.text, fontSize: 13.5, fontFamily: T.font, outline: "none", boxSizing: "border-box", transition: "border-color 0.15s" };
-  const sectionLabelStyle = { fontSize: 10.5, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: T.muted, marginBottom: 9 };
-  return /* @__PURE__ */ React.createElement(Modal, { open, onClose, title: target.title, sub: dateLabel, width: 460 }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 20 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: sectionLabelStyle }, "Notes for this class"), /* @__PURE__ */ React.createElement("textarea", { value: note, onChange: (e) => setNote(e.target.value), placeholder: "e.g. Worksheet due today, covers chapter 4...", rows: 4, style: { ...inputStyle, resize: "none", lineHeight: 1.5 }, onFocus: (e) => e.currentTarget.style.borderColor = T.lime, onBlur: (e) => e.currentTarget.style.borderColor = T.border })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: sectionLabelStyle }, "To do in class"), todo.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, padding: "14px 0", textAlign: "center", border: `1.5px dashed ${T.border}`, borderRadius: 10, marginBottom: 10 } }, "Nothing added yet.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 7, marginBottom: 10 } }, todo.map((it, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 9 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: it.done, onChange: () => setTodo((x) => x.map((y, j) => j === i ? { ...y, done: !y.done } : y)), style: { cursor: "pointer", flexShrink: 0, width: 16, height: 16, accentColor: T.lime } }), /* @__PURE__ */ React.createElement("span", { style: { flex: 1, fontSize: 13, color: it.done ? T.muted : T.text, textDecoration: it.done ? "line-through" : "none" } }, it.text), /* @__PURE__ */ React.createElement("button", { onClick: () => setTodo((x) => x.filter((_, j) => j !== i)), style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 11.5, fontFamily: T.font, flexShrink: 0 } }, "Remove")))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement("input", { value: newItem, onChange: (e) => setNewItem(e.target.value), onKeyDown: (e) => {
+  const inputStyle = { width: "100%", background: T.card2, border: `1.5px solid ${T.border}`, borderRadius: 9, padding: "9px 11px", color: T.text, fontSize: 13, fontFamily: T.font, outline: "none", boxSizing: "border-box", transition: "border-color 0.15s" };
+  const sectionLabelStyle = { fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: T.muted, marginBottom: 8 };
+  const dateLabel = (/* @__PURE__ */ new Date(date + "T12:00:00")).toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+  return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 14, padding: "12px", background: T.bg, border: `1px solid ${T.border}`, borderRadius: 10, marginTop: 4 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: T.white } }, "Notes for ", dateLabel), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: sectionLabelStyle }, "Notes for this class"), /* @__PURE__ */ React.createElement("textarea", { value: note, onChange: (e) => setNote(e.target.value), placeholder: "e.g. Worksheet due today, covers chapter 4...", rows: 3, style: { ...inputStyle, resize: "none", lineHeight: 1.5 }, onFocus: (e) => e.currentTarget.style.borderColor = T.lime, onBlur: (e) => e.currentTarget.style.borderColor = T.border })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: sectionLabelStyle }, "To do in class"), todo.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, padding: "12px 0", textAlign: "center", border: `1.5px dashed ${T.border}`, borderRadius: 9, marginBottom: 9 } }, "Nothing added yet.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 9 } }, todo.map((it, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", alignItems: "center", gap: 9, padding: "8px 10px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: it.done, onChange: () => setTodo((x) => x.map((y, j) => j === i ? { ...y, done: !y.done } : y)), style: { cursor: "pointer", flexShrink: 0, width: 15, height: 15, accentColor: T.lime } }), /* @__PURE__ */ React.createElement("span", { style: { flex: 1, fontSize: 12.5, color: it.done ? T.muted : T.text, textDecoration: it.done ? "line-through" : "none" } }, it.text), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setTodo((x) => x.filter((_, j) => j !== i)), style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 11, fontFamily: T.font, flexShrink: 0 } }, "Remove")))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6 } }, /* @__PURE__ */ React.createElement("input", { value: newItem, onChange: (e) => setNewItem(e.target.value), onKeyDown: (e) => {
     if (e.key === "Enter") {
       e.preventDefault();
       addItem();
     }
-  }, placeholder: "Add an item...", style: { ...inputStyle, flex: 1 }, onFocus: (e) => e.currentTarget.style.borderColor = T.lime, onBlur: (e) => e.currentTarget.style.borderColor = T.border }), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: addItem }, "Add"))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, paddingTop: 14, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement(Btn, { onClick: save }, "Save"), saved && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.lime, fontWeight: 600 } }, "\u2713 Saved"))));
+  }, placeholder: "Add an item...", style: { ...inputStyle, flex: 1 }, onFocus: (e) => e.currentTarget.style.borderColor = T.lime, onBlur: (e) => e.currentTarget.style.borderColor = T.border }), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: addItem }, "Add"))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: save }, "Save notes"), saved && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.lime, fontWeight: 600 } }, "\u2713 Saved")));
 }
 const DAY_PREVIEW_ICON_BY_KIND = { "class": Icon.cal, "study block": Icon.brain, "exam": Icon.zap, "deadline": Icon.file, "reminder": Icon.clock };
 function DayPreviewModal({ open, onClose, dayEvents, selDay, dayLabel, colorOf, fmtTime: fmtTime2, fmtTimeRange: fmtTimeRange2, catchUpPending, openNew }) {
@@ -14995,7 +14973,7 @@ function findAllOverlaps(events, todayKey) {
   }
   return pairs;
 }
-function NewEventModal({ open, initialTitle, initialDate, initialStartTime, initialKind, anchorX, anchorY, color, hideRepeat, onPreviewChange, liveOverride, events, routines, hidden, editRoutine, subjectOptions, onClose, onCreate, onSave, onDelete }) {
+function NewEventModal({ open, initialTitle, initialDate, initialStartTime, initialKind, anchorX, anchorY, color, hideRepeat, onPreviewChange, liveOverride, events, routines, hidden, editRoutine, editRoutineDate, subjectOptions, onClose, onCreate, onSave, onDelete }) {
   const [title, setTitle] = useState("");
   const [date, setDate] = useState("");
   const [startTime, setStartTime] = useState("09:00");
@@ -15182,7 +15160,7 @@ function NewEventModal({ open, initialTitle, initialDate, initialStartTime, init
       onChange: (e) => setCommuteAfter(e.target.value),
       style: { width: 42, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 5, padding: "2px 5px", color: T.text, fontSize: 11, fontFamily: T.font, outline: "none" }
     }
-  ), " min")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.faint, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Scheduling"), /* @__PURE__ */ React.createElement(SelectChip, { size: "sm", options: [{ value: false, label: "Fixed (won't move)" }, { value: true, label: "Free (can move)" }], value: movable, onChange: setMovable }))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, justifyContent: editRoutine ? "space-between" : "flex-end", alignItems: "center", padding: "9px 12px", borderTop: `1px solid ${T.border}` } }, editRoutine && (confirmDeleteRoutine ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.muted } }, "Delete this?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: onDelete, style: { padding: "6px 13px", fontSize: 12 } }, "Yes, delete"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmDeleteRoutine(false), style: { padding: "6px 13px", fontSize: 12 } }, "Cancel")) : /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => setConfirmDeleteRoutine(true), style: { padding: "6px 13px", fontSize: 12 } }, "Delete")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: onClose, style: { padding: "6px 13px", fontSize: 12 } }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: submit, disabled: invalid, style: { padding: "6px 13px", fontSize: 12 } }, editRoutine ? "Save changes" : "Create"))))), document.body);
+  ), " min")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.faint, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Scheduling"), /* @__PURE__ */ React.createElement(SelectChip, { size: "sm", options: [{ value: false, label: "Fixed (won't move)" }, { value: true, label: "Free (can move)" }], value: movable, onChange: setMovable })), editRoutine && editRoutineDate && /* @__PURE__ */ React.createElement(ClassDayNotesFields, { routineId: editRoutine.id, date: editRoutineDate })), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, justifyContent: editRoutine ? "space-between" : "flex-end", alignItems: "center", padding: "9px 12px", borderTop: `1px solid ${T.border}` } }, editRoutine && (confirmDeleteRoutine ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.muted } }, "Delete this?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: onDelete, style: { padding: "6px 13px", fontSize: 12 } }, "Yes, delete"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmDeleteRoutine(false), style: { padding: "6px 13px", fontSize: 12 } }, "Cancel")) : /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => setConfirmDeleteRoutine(true), style: { padding: "6px 13px", fontSize: 12 } }, "Delete")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: onClose, style: { padding: "6px 13px", fontSize: 12 } }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: submit, disabled: invalid, style: { padding: "6px 13px", fontSize: 12 } }, editRoutine ? "Save changes" : "Create"))))), document.body);
 }
 const CALENDAR_HIGHLIGHT_MAX_AGE_MS = 5 * 60 * 1e3;
 function resolveCalendarHighlightFlag(flag, nowMs) {
@@ -15944,8 +15922,15 @@ function CalendarTab({ setActive = () => {
   const [editRoutineMode, setEditRoutineMode] = useState(false);
   const [hoveredRoutineId, setHoveredRoutineId] = useState(null);
   const [routineEditItem, setRoutineEditItem] = useState(null);
-  const openRoutineEdit = (rule) => setRoutineEditItem(rule);
-  const closeRoutineEdit = () => setRoutineEditItem(null);
+  const [routineEditDate, setRoutineEditDate] = useState(null);
+  const openRoutineEdit = (rule, date) => {
+    setRoutineEditItem(rule);
+    setRoutineEditDate(date || null);
+  };
+  const closeRoutineEdit = () => {
+    setRoutineEditItem(null);
+    setRoutineEditDate(null);
+  };
   const saveRoutineEditFromModal = (patch) => {
     const isHabit = patch.kind === "habit";
     if (!routineEditItem || !patch.title.trim() || isHabit && patch.days.length === 0) return;
@@ -17738,9 +17723,9 @@ Examples:
       editRoutineMode,
       hoveredRoutineId,
       setHoveredRoutineId,
-      onEditRoutine: (routineId) => {
+      onEditRoutine: (routineId, date) => {
         const rule = routines.find((r) => r.id === routineId);
-        if (rule) openRoutineEdit(rule);
+        if (rule) openRoutineEdit(rule, date);
       },
       onDeleteRoutine: deleteRoutineItem,
       schoolWindow,
@@ -17772,9 +17757,9 @@ Examples:
       gsBusyByDate: gsOpen && gsStep === "place" ? gsBusyByDate : null,
       gsRecommended: gsOpen && gsStep === "place" ? gsRecommended : null
     }
-  ), calView === "daily" && /* @__PURE__ */ React.createElement(DayPlanner, { dayEvents, setEvents: setEvents2, selDay, todayK, colorOf, fmtTime: fmtTime2, fmtTimeRange, openEdit, markDone, uncrossDone, prefs: getSchedulePreferences(), setSelDay, catchUpPending, openNew, newItemHighlightIds: newItemHighlightSet, onEditRoutine: (routineId) => {
+  ), calView === "daily" && /* @__PURE__ */ React.createElement(DayPlanner, { dayEvents, setEvents: setEvents2, selDay, todayK, colorOf, fmtTime: fmtTime2, fmtTimeRange, openEdit, markDone, uncrossDone, prefs: getSchedulePreferences(), setSelDay, catchUpPending, openNew, newItemHighlightIds: newItemHighlightSet, onEditRoutine: (routineId, date) => {
     const rule = routines.find((r) => r.id === routineId);
-    if (rule) openRoutineEdit(rule);
+    if (rule) openRoutineEdit(rule, date);
   } })), /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, display: "flex", position: "relative", height: "calc(100vh - 150px)" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 0, bottom: 0, left: calRightColCollapsed ? 0 : 14, width: 1, background: T.border, boxShadow: `-1px 0 3px rgba(0,0,0,0.12)` } }), !calRightColCollapsed && /* @__PURE__ */ React.createElement("div", { style: { width: 220, marginLeft: 34, maxHeight: "100%", overflowY: "auto" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontWeight: 700, color: T.white } }, selectedCourse ? selectedCourse.label : "Upcoming"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: toggleCalRightColCollapsed, style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontWeight: 600, fontFamily: T.font, cursor: "pointer", padding: 0 } }, "Close \u203A")), sidebarDueTodayItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 10, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setDueTodayOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.lime, transform: dueTodayOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.lime } }, "Due Today (", sidebarDueTodayItems.length, ")")), dueTodayOpen && sidebarDueTodayItems.map(renderSidebarItem)), sidebarOverdueItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setOverdueSectionOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.red, transform: overdueSectionOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.red } }, "Overdue (", sidebarOverdueItems.length, ")")), overdueSectionOpen && sidebarOverdueItems.map(renderSidebarItem)), sidebarUpcomingItems.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.faint } }, "Nothing upcoming."), sidebarUpcomingGroups.map((group) => /* @__PURE__ */ React.createElement("div", { key: group.label, style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, color: group.label === "Overdue" ? T.red : T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 } }, "Due: ", group.label), group.items.map(renderSidebarItem)))), calRightColCollapsed && /* @__PURE__ */ React.createElement(
     "button",
     {
@@ -17899,6 +17884,7 @@ Examples:
       routines,
       hidden: previewDragActive,
       editRoutine: routineEditItem,
+      editRoutineDate: routineEditDate,
       subjectOptions: SUBJ,
       onSave: saveRoutineEditFromModal,
       onDelete: deleteRoutineEdit,

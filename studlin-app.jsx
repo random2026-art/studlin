@@ -19548,17 +19548,6 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
   // block gotcha (position:fixed elsewhere in this file).
   const [popoverAnchor, setPopoverAnchor] = useState(null);
   const closePopover = () => { setPopoverAnchor(null); setSelectedEventId(null); if(onSelectEvent)onSelectEvent(null); };
-  // Mirrors popoverAnchor above, one level up -- a routine occurrence
-  // (a specific day's class meeting, not the recurring rule) has its own
-  // small menu offering per-day notes, same click-to-open pattern as a
-  // plain event's popover, kept as a separate state since routine blocks
-  // already have their own click semantics (select-for-copy) this must
-  // not disturb.
-  const [routinePopoverAnchor, setRoutinePopoverAnchor] = useState(null);
-  const closeRoutinePopover = () => setRoutinePopoverAnchor(null);
-  // {routineId,date,title} of the occurrence whose notes modal is open,
-  // or null.
-  const [classDayNotesTarget, setClassDayNotesTarget] = useState(null);
   useEffect(()=>{
     if(!selectedEventId)return;
     const handler=(e)=>{
@@ -20116,25 +20105,31 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                     <div
                       draggable
                       onDragStart={()=>{ if(!isRoutine){setWkDragId(ev.id); setWkDragDeadline(ev.deadline||null);closePopover();} else {if(onRoutineDragStateChange)onRoutineDragStateChange(true);setWkDragRoutineOccurrence({routineId:ev.routineId,fromDate:ev.date,duration:dur});} }}
-                      onDoubleClick={()=>{ if(!isRoutine)openEdit(ev); else if(onEditRoutine)onEditRoutine(ev.routineId); }}
+                      onDoubleClick={()=>{ if(!isRoutine)openEdit(ev); else if(onEditRoutine)onEditRoutine(ev.routineId,ev.date); }}
                       onClick={(e)=>{
                         if(isRoutine){
-                          if(editRoutineMode&&onEditRoutine){onEditRoutine(ev.routineId);return;}
+                          if(editRoutineMode&&onEditRoutine){onEditRoutine(ev.routineId,ev.date);return;}
                           // Outside edit-routine mode, a click selects this
                           // specific occurrence (which day, not just which
                           // rule) so Ctrl+C knows exactly which placement to
                           // copy -- same selection concept as a plain event
                           // just above, routed to a separate callback since
                           // routines live in a different array/shape.
+                          //
+                          // 2026-09-04: this used to also pop open a small
+                          // day-notes menu here -- reverted per direct
+                          // feedback that it made the click/double-click
+                          // interaction feel broken (a real risk any
+                          // popover-on-single-click carries when the same
+                          // element also has its own double-click handler:
+                          // the browser's click-click-dblclick sequence
+                          // fires this handler twice before dblclick lands).
+                          // Day notes now live inside the existing "Edit
+                          // event" panel instead (double-click), see
+                          // NewEventModal's editRoutineDate-gated section.
                           e.stopPropagation();
                           if(selectedEventId)closePopover();
                           if(onSelectRoutineOccurrence)onSelectRoutineOccurrence(isRoutineSelected?null:{routineId:ev.routineId,date:ev.date,title:ev.title});
-                          // Also opens a small menu offering this specific
-                          // day's notes -- purely additive alongside the
-                          // selection above, never replaces it (a second
-                          // click on an already-selected occurrence just
-                          // re-opens/toggles this same menu).
-                          setRoutinePopoverAnchor(prev=>(prev&&prev.routineId===ev.routineId&&prev.date===ev.date)?null:{routineId:ev.routineId,date:ev.date,title:ev.title,rect:e.currentTarget.getBoundingClientRect()});
                           return;
                         }
                         e.stopPropagation();
@@ -20312,26 +20307,6 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
           </>
         ), document.body);
       })()}
-      {routinePopoverAnchor && (()=>{
-        const rect = routinePopoverAnchor.rect;
-        const popoverWidth = 208;
-        const top = Math.min(rect.bottom+6, window.innerHeight-100);
-        const left = Math.min(Math.max(8,rect.left), window.innerWidth-(popoverWidth+8));
-        const itemStyle = {display:"block",width:"100%",textAlign:"left",padding:"9px 14px",background:"none",border:"none",cursor:"pointer",fontSize:12.5,fontWeight:500,fontFamily:T.font,color:T.text};
-        const hasNote=(()=>{const n=getRoutineOccurrenceNote(routinePopoverAnchor.routineId,routinePopoverAnchor.date);return !!(n.note||n.todo.length>0);})();
-        return ReactDOM.createPortal((
-          <>
-            <div onClick={closeRoutinePopover} style={{position:"fixed",inset:0,zIndex:998}} />
-            <div style={{position:"fixed",top,left,width:popoverWidth,background:T.card,border:`1px solid ${T.border}`,borderRadius:6,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:999,overflow:"hidden",animation:"studlinPop 0.15s cubic-bezier(.2,.85,.3,1)"}}>
-              <div style={{padding:"9px 14px",borderBottom:`1px solid ${T.border}`,fontSize:12.5,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{routinePopoverAnchor.title}</div>
-              <button onClick={()=>{setClassDayNotesTarget(routinePopoverAnchor);closeRoutinePopover();}} style={itemStyle} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="none"}>{hasNote?"View notes for this day":"Add notes for this day"}</button>
-              {onEditRoutine&&(
-                <button onClick={()=>{closeRoutinePopover();onEditRoutine(routinePopoverAnchor.routineId);}} style={{...itemStyle,borderTop:`1px solid ${T.border}`}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="none"}>Edit</button>
-              )}
-            </div>
-          </>
-        ), document.body);
-      })()}
       {exitGhosts.length>0 && ReactDOM.createPortal(
         // Portaled to document.body, same pattern the popover above
         // already uses -- guarantees it paints above everything and is
@@ -20345,7 +20320,6 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
       )}
     </Card>
     <DayPreviewModal open={!!previewDayKey} onClose={()=>setPreviewDayKey(null)} dayEvents={previewDayKey?(byDay[previewDayKey]||[]):[]} selDay={previewDayKey} dayLabel={previewDayKey?fmtWeekDueLabel(previewDayKey):""} colorOf={colorOf} fmtTime={fmtTime} fmtTimeRange={fmtTimeRange} catchUpPending={catchUpPending} openNew={openNew} />
-    <ClassDayNotesModal open={!!classDayNotesTarget} onClose={()=>setClassDayNotesTarget(null)} target={classDayNotesTarget} />
     </>
   );
 }
@@ -22700,7 +22674,7 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
                     the tooltip even says "Double-click to edit" and nothing
                     happened. WeeklyPlanner already branches this correctly
                     (see its own onDoubleClick); mirrored here. */}
-                <div onDoubleClick={()=>{if(ev.isRoutine){if(onEditRoutine)onEditRoutine(ev.routineId);}else openEdit(ev);}}
+                <div onDoubleClick={()=>{if(ev.isRoutine){if(onEditRoutine)onEditRoutine(ev.routineId,ev.date);}else openEdit(ev);}}
                   onClick={(e)=>{
                     if(ev.isRoutine)return;
                     if(isPendingAcceptance){
@@ -22776,29 +22750,39 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
 // DayPlanner) and colorOf (so a class's color here always matches its
 // color everywhere else in the app -- never a fresh palette).
 // Per-occurrence "what's happening in this specific class meeting" editor
-// -- opened from WeeklyPlanner's routine-occurrence popover. A different
-// class meeting of the same recurring course can have completely
-// different content (a worksheet due one day, nothing the next), so this
-// is keyed by the exact occurrence (routineId+date), not the course --
-// see getRoutineOccurrenceNote/saveRoutineOccurrenceNote's own comments.
-// Guardrails per CLAUDE.md: visible focus state on both inputs, an inline
-// "Saved" confirmation rather than silence, no browser alerts anywhere.
-function ClassDayNotesModal({open,onClose,target}){
+// -- an inline section INSIDE NewEventModal's existing "Edit event" panel
+// (see its editRoutineDate-gated render), not a separate Modal. This used
+// to be its own popover-triggered Modal, but stacking a popover-on-click
+// on top of the SAME block's existing double-click-to-edit handler made
+// the click/double-click interaction feel broken (direct user feedback --
+// a real risk any popover-on-single-click carries when the element
+// already has its own dblclick handler, since the browser's click-click-
+// dblclick sequence fires the single-click handler twice first). Folding
+// this into the edit panel that double-click already opens avoids a
+// second click target entirely, and also sidesteps this file's own
+// documented "Modal-in-Modal breaks centering" gotcha (see the Delete-
+// confirm comment in NewEventModal) since nothing is nested here.
+//
+// A different class meeting of the same recurring course can have
+// completely different content (a worksheet due one day, nothing the
+// next), so this is keyed by the exact occurrence (routineId+date), not
+// the course -- see getRoutineOccurrenceNote/saveRoutineOccurrenceNote's
+// own comments. Guardrails per CLAUDE.md: visible focus state on both
+// inputs, an inline "Saved" confirmation rather than silence.
+function ClassDayNotesFields({routineId,date}){
   const [note,setNote]=useState("");
   const [todo,setTodo]=useState([]);
   const [newItem,setNewItem]=useState("");
   const [saved,setSaved]=useState(false);
   useEffect(()=>{
-    if(!open||!target)return;
-    const existing=getRoutineOccurrenceNote(target.routineId,target.date);
+    if(!routineId||!date)return;
+    const existing=getRoutineOccurrenceNote(routineId,date);
     setNote(existing.note);
     setTodo(existing.todo);
     setSaved(false);
-  },[open,target&&target.routineId,target&&target.date]);
-  if(!target)return null;
-  const dateLabel=new Date(target.date+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"});
+  },[routineId,date]);
   const save=()=>{
-    saveRoutineOccurrenceNote(target.routineId,target.date,{note:note.trim(),todo});
+    saveRoutineOccurrenceNote(routineId,date,{note:note.trim(),todo});
     setSaved(true);
     setTimeout(()=>setSaved(false),1800);
   };
@@ -22808,41 +22792,41 @@ function ClassDayNotesModal({open,onClose,target}){
     setTodo(x=>[...x,{text:t,done:false}]);
     setNewItem("");
   };
-  const inputStyle={width:"100%",background:T.card2,border:`1.5px solid ${T.border}`,borderRadius:10,padding:"10px 12px",color:T.text,fontSize:13.5,fontFamily:T.font,outline:"none",boxSizing:"border-box",transition:"border-color 0.15s"};
-  const sectionLabelStyle={fontSize:10.5,fontWeight:800,letterSpacing:"0.06em",textTransform:"uppercase",color:T.muted,marginBottom:9};
+  const inputStyle={width:"100%",background:T.card2,border:`1.5px solid ${T.border}`,borderRadius:9,padding:"9px 11px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",boxSizing:"border-box",transition:"border-color 0.15s"};
+  const sectionLabelStyle={fontSize:10,fontWeight:800,letterSpacing:"0.06em",textTransform:"uppercase",color:T.muted,marginBottom:8};
+  const dateLabel=new Date(date+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"});
   return (
-    <Modal open={open} onClose={onClose} title={target.title} sub={dateLabel} width={460}>
-      <div style={{display:"flex",flexDirection:"column",gap:20}}>
-        <div>
-          <div style={sectionLabelStyle}>Notes for this class</div>
-          <textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="e.g. Worksheet due today, covers chapter 4..." rows={4} style={{...inputStyle,resize:"none",lineHeight:1.5}} onFocus={e=>e.currentTarget.style.borderColor=T.lime} onBlur={e=>e.currentTarget.style.borderColor=T.border} />
-        </div>
-        <div>
-          <div style={sectionLabelStyle}>To do in class</div>
-          {todo.length===0?(
-            <div style={{fontSize:12.5,color:T.muted,padding:"14px 0",textAlign:"center",border:`1.5px dashed ${T.border}`,borderRadius:10,marginBottom:10}}>Nothing added yet.</div>
-          ):(
-            <div style={{display:"flex",flexDirection:"column",gap:7,marginBottom:10}}>
-              {todo.map((it,i)=>(
-                <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:9}}>
-                  <input type="checkbox" checked={it.done} onChange={()=>setTodo(x=>x.map((y,j)=>j===i?{...y,done:!y.done}:y))} style={{cursor:"pointer",flexShrink:0,width:16,height:16,accentColor:T.lime}} />
-                  <span style={{flex:1,fontSize:13,color:it.done?T.muted:T.text,textDecoration:it.done?"line-through":"none"}}>{it.text}</span>
-                  <button onClick={()=>setTodo(x=>x.filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:11.5,fontFamily:T.font,flexShrink:0}}>Remove</button>
-                </div>
-              ))}
-            </div>
-          )}
-          <div style={{display:"flex",gap:8}}>
-            <input value={newItem} onChange={e=>setNewItem(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addItem();}}} placeholder="Add an item..." style={{...inputStyle,flex:1}} onFocus={e=>e.currentTarget.style.borderColor=T.lime} onBlur={e=>e.currentTarget.style.borderColor=T.border} />
-            <Btn variant="subtle" onClick={addItem}>Add</Btn>
+    <div style={{display:"flex",flexDirection:"column",gap:14,padding:"12px",background:T.bg,border:`1px solid ${T.border}`,borderRadius:10,marginTop:4}}>
+      <div style={{fontSize:12,fontWeight:700,color:T.white}}>Notes for {dateLabel}</div>
+      <div>
+        <div style={sectionLabelStyle}>Notes for this class</div>
+        <textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="e.g. Worksheet due today, covers chapter 4..." rows={3} style={{...inputStyle,resize:"none",lineHeight:1.5}} onFocus={e=>e.currentTarget.style.borderColor=T.lime} onBlur={e=>e.currentTarget.style.borderColor=T.border} />
+      </div>
+      <div>
+        <div style={sectionLabelStyle}>To do in class</div>
+        {todo.length===0?(
+          <div style={{fontSize:12,color:T.muted,padding:"12px 0",textAlign:"center",border:`1.5px dashed ${T.border}`,borderRadius:9,marginBottom:9}}>Nothing added yet.</div>
+        ):(
+          <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:9}}>
+            {todo.map((it,i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",gap:9,padding:"8px 10px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8}}>
+                <input type="checkbox" checked={it.done} onChange={()=>setTodo(x=>x.map((y,j)=>j===i?{...y,done:!y.done}:y))} style={{cursor:"pointer",flexShrink:0,width:15,height:15,accentColor:T.lime}} />
+                <span style={{flex:1,fontSize:12.5,color:it.done?T.muted:T.text,textDecoration:it.done?"line-through":"none"}}>{it.text}</span>
+                <button type="button" onClick={()=>setTodo(x=>x.filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:11,fontFamily:T.font,flexShrink:0}}>Remove</button>
+              </div>
+            ))}
           </div>
-        </div>
-        <div style={{display:"flex",alignItems:"center",gap:10,paddingTop:14,borderTop:`1px solid ${T.border}`}}>
-          <Btn onClick={save}>Save</Btn>
-          {saved&&<span style={{fontSize:12,color:T.lime,fontWeight:600}}>✓ Saved</span>}
+        )}
+        <div style={{display:"flex",gap:6}}>
+          <input value={newItem} onChange={e=>setNewItem(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addItem();}}} placeholder="Add an item..." style={{...inputStyle,flex:1}} onFocus={e=>e.currentTarget.style.borderColor=T.lime} onBlur={e=>e.currentTarget.style.borderColor=T.border} />
+          <Btn variant="subtle" onClick={addItem}>Add</Btn>
         </div>
       </div>
-    </Modal>
+      <div style={{display:"flex",alignItems:"center",gap:10}}>
+        <Btn variant="subtle" onClick={save}>Save notes</Btn>
+        {saved&&<span style={{fontSize:12,color:T.lime,fontWeight:600}}>✓ Saved</span>}
+      </div>
+    </div>
   );
 }
 const DAY_PREVIEW_ICON_BY_KIND={"class":Icon.cal,"study block":Icon.brain,"exam":Icon.zap,"deadline":Icon.file,"reminder":Icon.clock};
@@ -24870,7 +24854,7 @@ function findAllOverlaps(events,todayKey){
 // editRoutine (the rule being edited) is the one thing that switches this
 // between create and edit mode -- present means Save+Delete, absent means
 // Create.
-function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKind,anchorX,anchorY,color,hideRepeat,onPreviewChange,liveOverride,events,routines,hidden,editRoutine,subjectOptions,onClose,onCreate,onSave,onDelete}){
+function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKind,anchorX,anchorY,color,hideRepeat,onPreviewChange,liveOverride,events,routines,hidden,editRoutine,editRoutineDate,subjectOptions,onClose,onCreate,onSave,onDelete}){
   const [title,setTitle]=useState("");
   const [date,setDate]=useState("");
   const [startTime,setStartTime]=useState("09:00");
@@ -25248,6 +25232,13 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
             <div style={{fontSize:10,color:T.faint,textTransform:"uppercase",letterSpacing:"0.05em"}}>Scheduling</div>
             <SelectChip size="sm" options={[{value:false,label:"Fixed (won't move)"},{value:true,label:"Free (can move)"}]} value={movable} onChange={setMovable} />
           </div>
+          {/* Only when this edit was opened FROM a specific occurrence
+              (double-clicking one day's block on the calendar, not the
+              Routine Control Center's plain rule list, which has no
+              single date to attach notes to) -- see ClassDayNotesFields'
+              own comment for why this lives here instead of a separate
+              popover-triggered Modal. */}
+          {editRoutine&&editRoutineDate&&<ClassDayNotesFields routineId={editRoutine.id} date={editRoutineDate} />}
         </div>
         <div style={{display:"flex",gap:8,justifyContent:editRoutine?"space-between":"flex-end",alignItems:"center",padding:"9px 12px",borderTop:`1px solid ${T.border}`}}>
           {editRoutine&&(confirmDeleteRoutine?(
@@ -26577,8 +26568,15 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const [editRoutineMode,setEditRoutineMode]=useState(false);
   const [hoveredRoutineId,setHoveredRoutineId]=useState(null);
   const [routineEditItem,setRoutineEditItem]=useState(null); // the underlying rule being edited, or null
-  const openRoutineEdit=(rule)=>setRoutineEditItem(rule);
-  const closeRoutineEdit=()=>setRoutineEditItem(null);
+  // Which specific occurrence's block was actually double-clicked to get
+  // here, if any -- null when edit was opened from somewhere with no
+  // single date to attach to (Routine Control Center's plain rule list,
+  // the sidebar Activities list). Powers ClassDayNotesFields inside
+  // NewEventModal; every existing openRoutineEdit(rule) call site that
+  // never passes a second arg is unaffected, this just defaults to null.
+  const [routineEditDate,setRoutineEditDate]=useState(null);
+  const openRoutineEdit=(rule,date)=>{setRoutineEditItem(rule);setRoutineEditDate(date||null);};
+  const closeRoutineEdit=()=>{setRoutineEditItem(null);setRoutineEditDate(null);};
   // Now the onSave handler for the shared NewEventModal (unified with
   // "New event" -- see that component's own comment for why). patch is
   // whatever the modal's Save button sent: title/kind/subject/days/
@@ -28861,7 +28859,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       {calView==="weekly"&&(
         <WeeklyPlanner events={events} setEvents={setEvents} moveEvent={moveEvent} weekOffset={weekOffset} setWeekOffset={setWeekOffset} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} fmtTimeRange={fmtTimeRange} openNew={openNew} openEdit={openEdit}
           routines={routines} editRoutineMode={editRoutineMode} hoveredRoutineId={hoveredRoutineId} setHoveredRoutineId={setHoveredRoutineId}
-          onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
+          onEditRoutine={(routineId,date)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule,date);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
           selDay={selDay} setSelDay={setSelDay} onDeleteEvent={deleteEventWithUndo} catchUpPending={catchUpPending}
           sidebarDragChip={sidebarDragChip} onDropSidebarChip={(dk,time,anchorPoint)=>{openNewEventForDrop(sidebarDragChip,dk,time,anchorPoint);setSidebarDragChip(null);}}
           onDropRoutineOccurrence={onDropRoutineOccurrence} onResizeRoutineOccurrence={onResizeRoutineOccurrence} pendingRoutineChange={routineDropPending} onRoutineDragStateChange={setRoutineDragActive}
@@ -28875,7 +28873,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           gsBusyByDate={gsOpen&&gsStep==="place"?gsBusyByDate:null} gsRecommended={gsOpen&&gsStep==="place"?gsRecommended:null} />
       )}
       {calView==="daily"&&(
-        <DayPlanner dayEvents={dayEvents} setEvents={setEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} fmtTimeRange={fmtTimeRange} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} catchUpPending={catchUpPending} openNew={openNew} newItemHighlightIds={newItemHighlightSet} onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} />
+        <DayPlanner dayEvents={dayEvents} setEvents={setEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} fmtTimeRange={fmtTimeRange} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} catchUpPending={catchUpPending} openNew={openNew} newItemHighlightIds={newItemHighlightSet} onEditRoutine={(routineId,date)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule,date);}} />
       )}
     </div>
       {/* Right-hand column (Phase 5e) -- upcoming across everything by
@@ -29055,7 +29053,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         onPreviewChange={setPreviewEvent}
         liveOverride={previewOverride}
         events={events} routines={routines} hidden={previewDragActive}
-        editRoutine={routineEditItem} subjectOptions={SUBJ}
+        editRoutine={routineEditItem} editRoutineDate={routineEditDate} subjectOptions={SUBJ}
         onSave={saveRoutineEditFromModal} onDelete={deleteRoutineEdit}
         onClose={()=>{setNewEventOpen(false);setPreviewEvent(null);setPreviewOverride(null);closeRoutineEdit();}}
         onCreate={(payload)=>{setPreviewEvent(null);setPreviewOverride(null);commitNewEvent(payload);}} />
