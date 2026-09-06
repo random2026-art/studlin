@@ -1788,7 +1788,7 @@ function isDuePill(ev) {
   return !ev.checklist && !ev.duration && !!(ev.kind === "deadline" || ev.kind === "exam" || ev.kind === "reminder" && ev.timeUnconfirmed);
 }
 function isZeroDurationTimedReminder(ev) {
-  return ev.kind === "reminder" && !ev.checklist && !ev.duration && !ev.timeUnconfirmed && !!ev.time;
+  return ev.kind === "reminder" && !ev.checklist && !ev.timeUnconfirmed && !!ev.time;
 }
 const MANUAL_BLOCK_DRAG_MIME = "application/x-studlin-manual-block";
 function isTier0Missed(ev, todayKey) {
@@ -14868,8 +14868,10 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
         onDragStart: (e) => {
           e.dataTransfer.setData(MANUAL_BLOCK_DRAG_MIME, JSON.stringify({ dueEventId: ev.id, title: "Work on: " + (title.trim() || ev.title), subject: ev.subject || "", deadline: ev.deadline || null, duration: manualDuration }));
           e.dataTransfer.effectAllowed = "copy";
-          if (setActive) setActive("calendar");
-          onClose();
+          setTimeout(() => {
+            if (setActive) setActive("calendar");
+            onClose();
+          }, 0);
         },
         title: "Drag onto the calendar to place it exactly where you want",
         style: { display: "flex", alignItems: "center", gap: 8, fontSize: 11.5, fontWeight: 600, color: T.text, padding: "8px 10px", borderRadius: 6, border: `1px dashed ${T.lime}77`, cursor: "grab", background: T.lime + "0c" }

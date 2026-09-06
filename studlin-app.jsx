@@ -3022,13 +3022,24 @@ function isReorderableTask(e){
 // already excluded these correctly; Day view never did.
 function isDuePill(ev){return !ev.checklist&&!ev.duration&&!!(ev.kind==="deadline"||ev.kind==="exam"||(ev.kind==="reminder"&&ev.timeUnconfirmed));}
 // A reminder with a real confirmed time (isDuePill already sends the
-// no-real-time kind elsewhere) still has zero actual duration -- it's a
-// nudge at an instant, not blocked time. WeeklyPlanner/DayPlanner used to
-// run it through the exact same computeEventBlockHeightPx floor as a real
-// task, so a reminder rendered as an ordinary-looking short block with
-// nothing telling a student "this isn't occupying time." 2026-09-06 user
-// request: give it its own thin marker treatment instead of a filled box.
-function isZeroDurationTimedReminder(ev){return ev.kind==="reminder"&&!ev.checklist&&!ev.duration&&!ev.timeUnconfirmed&&!!ev.time;}
+// no-real-time kind elsewhere) is conceptually a nudge at an instant, not
+// blocked time -- WeeklyPlanner/DayPlanner used to run it through the same
+// computeEventBlockHeightPx floor as a real task, so it rendered as an
+// ordinary-looking short block with nothing telling a student "this isn't
+// occupying time." 2026-09-06 user request: give it its own thin marker
+// treatment instead.
+// Bug fix, same day: this originally also required !ev.duration, on the
+// assumption a reminder's stored duration was always 0. True only for one
+// created by Studlin AI/brain-dump (planBrainDumpTasks explicitly sets
+// duration:0) -- a reminder saved through the New Task form keeps whatever
+// evDuration happened to default to (60), because that form only ever
+// HIDES the End Time field for kind==="reminder", it never resets the
+// value. That meant every manually-created reminder failed the check and
+// silently kept rendering as a filled block. A reminder's duration is
+// never actually surfaced anywhere as an end time either way (the form
+// hides it, this file has no other reminder-specific duration display),
+// so it's just ignored here rather than relied on.
+function isZeroDurationTimedReminder(ev){return ev.kind==="reminder"&&!ev.checklist&&!ev.timeUnconfirmed&&!!ev.time;}
 // Drag payload MIME for EventDetailModal's "+ Add my own time block" ->
 // WeeklyPlanner's hour grid (2026-09-06 user request: drag-to-place as an
 // alternative to typing a date/time, not a replacement -- both stay).
@@ -24757,8 +24768,16 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
                 onDragStart={(e)=>{
                   e.dataTransfer.setData(MANUAL_BLOCK_DRAG_MIME, JSON.stringify({dueEventId:ev.id,title:"Work on: "+(title.trim()||ev.title),subject:ev.subject||"",deadline:ev.deadline||null,duration:manualDuration}));
                   e.dataTransfer.effectAllowed="copy";
-                  if(setActive)setActive("calendar");
-                  onClose();
+                  // Bug fix, same day: closing the modal synchronously here
+                  // unmounts this exact element (the drag source) before the
+                  // browser finishes its own internal dragstart handling
+                  // (capturing the drag image, etc.) -- in practice that
+                  // cancelled the drag outright, so it never reached a
+                  // dragover/drop anywhere. Deferring the actual close past
+                  // this handler's return lets the native drag operation
+                  // finish starting up first; the modal still visibly closes
+                  // essentially instantly from the student's perspective.
+                  setTimeout(()=>{ if(setActive)setActive("calendar"); onClose(); }, 0);
                 }}
                 title="Drag onto the calendar to place it exactly where you want"
                 style={{display:"flex",alignItems:"center",gap:8,fontSize:11.5,fontWeight:600,color:T.text,padding:"8px 10px",borderRadius:6,border:`1px dashed ${T.lime}77`,cursor:"grab",background:T.lime+"0c"}}>
