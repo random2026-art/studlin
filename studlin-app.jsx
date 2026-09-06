@@ -7114,6 +7114,30 @@ function reminderCategoryAllowed(evKind,deadlineAlertsOn){
   if(evKind==="deadline"||evKind==="exam")return deadlineAlertsOn!==false;
   return true;
 }
+// Bug fix, 2026-09-06 user report: "the desktop notification pops up
+// like 3 times" -- the "X starts in N minutes" check dedupes with an
+// in-memory ref (notifiedRef), which only protects a SINGLE browser
+// tab's own session. Multiple Studlin tabs/windows open at once (an
+// easy, entirely normal thing to end up with) each run this exact same
+// check independently, with no way for one tab to know a sibling tab
+// already fired the identical notification for the identical event --
+// that's the literal "N times" the report describes. Persisted here
+// instead, so whichever tab fires first "claims" the key and every
+// other tab sees it's already been sent. Pruned by a real cutoff so
+// this doesn't grow across the account's whole lifetime -- these keys
+// are only ever meaningful within the same day a reminder could fire.
+const REMINDER_FIRED_KEY="notifiedReminders";
+const REMINDER_FIRED_PRUNE_MS=86400000;
+function hasFiredReminder(key){
+  return !!lsGet(REMINDER_FIRED_KEY,{})[key];
+}
+function markReminderFired(key){
+  const fired=lsGet(REMINDER_FIRED_KEY,{});
+  fired[key]=Date.now();
+  const cutoff=Date.now()-REMINDER_FIRED_PRUNE_MS;
+  Object.keys(fired).forEach(k=>{if(fired[k]<cutoff)delete fired[k];});
+  lsSet(REMINDER_FIRED_KEY,fired);
+}
 // N9/N10 in the audit: this used to compute a real per-task XP penalty
 // and accumulate it into xpPenaltyTotal on every load, with penalizedTasks
 // growing by one entry per overdue task forever, no cleanup -- but
@@ -20308,6 +20332,22 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                           zoom; still hides on very short blocks where three
                           lines would genuinely crowd. */}
                       {heightPx > 40 && ev.location && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isWarningKind?tokens.color.warning:tokens.color.textSecondary,marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.location}</div>}
+                      {/* New feature, 2026-09-06 user request: same idea as
+                          the location line above -- a small indicator only
+                          when a real note actually exists (isRoutine reads
+                          dayNote, see ClassDayNotesFields; a plain event
+                          reads its own notes field), clickable straight to
+                          wherever that note is actually shown (the same
+                          destination double-click already opens), so it's
+                          not just visible that a note exists but one tap
+                          away from reading it. stopPropagation so this
+                          doesn't also trigger the block's own single-click
+                          select/popover underneath it. */}
+                      {heightPx > 40 && (isRoutine?ev.dayNote:ev.notes) && (
+                        <div onClick={(e)=>{e.stopPropagation();if(isRoutine){if(onEditRoutine)onEditRoutine(ev.routineId,ev.date);}else{openEdit(ev);}}} title="Has notes -- click to view" style={{fontSize:8.5,color:isStudy?T.ink+"aa":isWarningKind?tokens.color.warning:tokens.color.textSecondary,marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",cursor:"pointer",textDecoration:"underline",textUnderlineOffset:2}}>
+                          Details
+                        </div>
+                      )}
                       {/* Drag-to-resize edge handles -- routine occurrences
                           included now (startWkResize/onUp branch on
                           isRoutine and route through onResizeRoutineOccurrence's
@@ -22813,6 +22853,14 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
                   {heightPx>34&&<div style={{fontSize:9.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:2}}>{fmtTimeRange(ev.time,dur)}</div>}
                   {/* Same progressive-disclosure location line as WeeklyPlanner's own -- see its comment (threshold lowered from 48 to 40, same fix). */}
                   {heightPx>40&&ev.location&&<div style={{fontSize:9.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.location}</div>}
+                  {/* New feature, 2026-09-06 user request -- see
+                      WeeklyPlanner's matching comment for the full
+                      reasoning. */}
+                  {heightPx>40&&(ev.isRoutine?ev.dayNote:ev.notes)&&(
+                    <div onClick={(e)=>{e.stopPropagation();if(ev.isRoutine){if(onEditRoutine)onEditRoutine(ev.routineId,ev.date);}else{openEdit(ev);}}} title="Has notes -- click to view" style={{fontSize:9.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",cursor:"pointer",textDecoration:"underline",textUnderlineOffset:2}}>
+                      Details
+                    </div>
+                  )}
                 </div>
                 {ev.commuteAfter>0 && (
                   <div title={ev.commuteAfter+" min commute"} style={commuteStripStyle(ev.commuteAfter,"after")}>
@@ -30296,7 +30344,22 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                           style={{background:"none",border:`1px solid ${T.border}`,borderRadius:6,color:T.muted,cursor:"pointer",fontSize:11,padding:"5px 8px",fontFamily:T.font}}>Later</button>}
                         {canReslot && <button type="button" onClick={() => moveTaskNotToday(ev)} title="Studlin redistributes it into the rest of the week"
                           style={{background:"none",border:`1px solid ${T.border}`,borderRadius:6,color:T.muted,cursor:"pointer",fontSize:11,padding:"5px 8px",fontFamily:T.font}}>Not today</button>}
-                        <button type="button" onClick={() => { setDayDetailKey(null); openEdit(ev); }} title="Edit"
+                        {/* Bug fix, 2026-09-06 user report: same class of
+                            dead-click bug already found and fixed for
+                            WeeklyPlanner/DayPlanner's own double-click on
+                            2026-09-04 (see DayPlanner's own comment) --
+                            this Edit button called openEdit(ev)
+                            unconditionally too, but a routine occurrence's
+                            synthetic id (see expandRoutineOccurrences) is
+                            never a real id in the events array, so
+                            EventDetailModal's own `if(!eventId||!ev)return
+                            null` bail made this silently do nothing for
+                            every class/activity shown in this exact list
+                            -- the comment right above already documents
+                            isRoutine items reaching this code (the
+                            checkbox exclusion), this button just never got
+                            the same audit. */}
+                        <button type="button" onClick={() => { setDayDetailKey(null); if(ev.isRoutine){const rule=routines.find(r=>r.id===ev.routineId);if(rule)openRoutineEdit(rule,ev.date);}else{openEdit(ev);} }} title="Edit"
                           style={{background:"none",border:`1px solid ${T.border}`,borderRadius:6,color:T.muted,cursor:"pointer",fontSize:11,padding:"5px 8px",fontFamily:T.font}}>Edit</button>
                         <button type="button" onClick={() => deleteEventWithUndo(ev)} title="Delete"
                           style={{background:"none",border:`1px solid ${T.border}`,borderRadius:6,color:T.muted,cursor:"pointer",fontSize:11,padding:"5px 8px",fontFamily:T.font}}>×</button>
@@ -30516,7 +30579,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     setMergeConfirm(null);
   };
   const [canvasSeeding,setCanvasSeeding]=useState(false);
-  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,analytics:false,onlineStatus:true,incognito:false,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false},...lsGet("settings",{})}));
+  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,classReminders:false,analytics:false,onlineStatus:true,incognito:false,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false},...lsGet("settings",{})}));
   const tog=k=>setToggles(t=>{
     const n={...t,[k]:!t[k]};
     lsSet("settings",n);
@@ -31687,6 +31750,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                   now real, independent category filters under that one
                   master switch. */}
               <Row label="Deadline alerts" sub="Get a heads-up before an assignment or exam's own start time." k="deadline" />
+              <Row label="Class & activity reminders" sub="A heads-up 10 and 5 minutes before any class, meeting, or activity on your Weekly Routine starts." k="classReminders" />
               <Row label="Streak reminders" sub="A nudge if you haven't logged any study time by 8pm." k="streak" />
               <Row label="Focus sound alerts" sub="Audio cue when Pomodoro sessions complete." k="sound" />
             </Card>
@@ -33767,9 +33831,13 @@ function App() {
         markStreakNudgeSent(todayK);
         try{new Notification("Studlin",{body:"Haven't studied yet today — a quick session keeps your streak alive."});}catch(e){}
       }
-      events.forEach(ev=>{
-        if(!ev.time||ev.date!==todayK||ev.checklist||ev.status==="done")return;
-        if(!reminderCategoryAllowed(ev.kind,settings.deadline))return;
+      // Shared by both the plain events loop and the class/activity loop
+      // below -- pulled out so the two never quietly drift into different
+      // dedup/timing behavior. `ev` just needs a stable id, a real time,
+      // and a checklist/status shape; a routine occurrence (see
+      // expandRoutineOccurrences) already matches this exactly.
+      const remindItem=(ev)=>{
+        if(!ev.time||ev.checklist||ev.status==="done")return;
         // Already actively locked in on this exact task (started early, or
         // right on time) -- neither "starts in N minutes" nor "still doing
         // this?" makes sense to nag about something the student is
@@ -33780,12 +33848,17 @@ function App() {
         LEAD_TIMES.forEach(lead=>{
           const key=ev.id+"-"+lead;
           if(notifiedRef.current.has(key))return;
+          // Bug fix, 2026-09-06 user report: also check the persisted
+          // cross-tab record (see hasFiredReminder's own comment) --
+          // notifiedRef alone only ever protected THIS tab.
+          if(hasFiredReminder(key))return;
           // Fires once minsUntil drops to/below the lead time, but only
           // within a 1-minute trailing window — past that it's stale (the
           // task started while the tab was closed) and firing late would
           // be more confusing than useful.
           if(minsUntil<=lead&&minsUntil>lead-1){
             notifiedRef.current.add(key);
+            markReminderFired(key);
             try{new Notification("Studlin",{body:ev.title+" starts in "+lead+" minutes"});}catch(e){}
           }
         });
@@ -33796,7 +33869,24 @@ function App() {
         // Begin, so it misfired "reschedule" at people mid-task with no
         // way to tell it "yes, I'm fine" short of checking the box, which
         // was always available anyway.
+      };
+      events.forEach(ev=>{
+        if(ev.date!==todayK)return;
+        if(!reminderCategoryAllowed(ev.kind,settings.deadline))return;
+        remindItem(ev);
       });
+      // New feature, 2026-09-06 user request: "notify me about everything
+      // about to happen, including class." Recurring classes/activities
+      // never lived in the `events` array at all (they're virtually
+      // expanded from Weekly Routine, see expandRoutineOccurrences) --
+      // the loop above could never have reached them no matter what
+      // reminderCategoryAllowed said, this is a genuinely new capability,
+      // not a bug in the existing per-category gate. Opt-in behind its
+      // own toggle (default off) rather than silently turning on for
+      // everyone the moment this ships.
+      if(settings.classReminders===true){
+        getRoutineOccurrencesForDate(todayK).forEach(remindItem);
+      }
     };
     check();
     const id=setInterval(check,30000);

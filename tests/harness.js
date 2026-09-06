@@ -206,7 +206,8 @@ function loadStudlinModule(options) {
     "buildImportSyllabusItemsProposal","extractSyllabusItemsFromChatText",
     "getRoutineOccurrenceNote","saveRoutineOccurrenceNote","blendOverBg",
     "diffNewGoogleEvents","describeNewGoogleEvents","summarizeImportReviewQueue",
-    "shouldShowImportReviewNudge","dismissImportReviewNudge","IMPORT_REVIEW_NUDGE_COOLDOWN_MS"];
+    "shouldShowImportReviewNudge","dismissImportReviewNudge","IMPORT_REVIEW_NUDGE_COOLDOWN_MS",
+    "hasFiredReminder","markReminderFired"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }
