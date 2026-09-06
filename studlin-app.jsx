@@ -17007,7 +17007,19 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
           {sendTextError&&(
             <div style={{padding:"0 16px 8px",fontSize:11.5,color:T.red}}>{sendTextError}</div>
           )}
-          <div style={{display:"flex",alignItems:"center",gap:8,padding:"12px 16px",borderTop:`1px solid ${pp.border}`}}>
+          {/* Bug fix, 2026-09-05 user report: Studlin AI's floating bubble
+              is deliberately global (fixed bottom:20/right:20, above
+              everything -- see its own mount comment) so it's reachable
+              from every tab, this chat panel included. That's real, kept
+              behavior, not something to scope down to just Calendar --
+              but this panel's own input row used to run flush to that
+              same corner with no clearance, so the bubble sat directly on
+              top of the Message field/Send button. Right padding pushes
+              the actual controls clear of that corner instead; the bubble
+              now floats over blank panel background there, not over
+              anything clickable.
+          */}
+          <div style={{display:"flex",alignItems:"center",gap:8,padding:"12px 90px 12px 16px",borderTop:`1px solid ${pp.border}`}}>
             <button onClick={()=>{setQuickOpen(q=>!q);setDeckPicker(false);}} style={{width:34,height:34,borderRadius:9,border:`1px solid ${quickOpen?T.lime+"55":pp.border}`,background:quickOpen?T.lime+"20":pp.card2,color:quickOpen?T.lime:pp.muted,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.plus}</button>
             <input value={input} onChange={e=>{setInput(e.target.value);if(sendTextError)setSendTextError("");}} onKeyDown={e=>{if(e.key==="Enter")sendText();}} placeholder="Message…" style={{flex:1,background:pp.card2,border:`1px solid ${sendTextError?T.red+"88":pp.border}`,borderRadius:9,padding:"9px 12px",color:pp.text,fontSize:13,fontFamily:T.font,outline:"none"}} />
             <button onClick={sendText} style={{width:34,height:34,borderRadius:9,border:"none",background:input.trim()?T.lime:pp.card2,color:input.trim()?T.bg:pp.faint,display:"grid",placeItems:"center",cursor:input.trim()?"pointer":"default",flexShrink:0}}>{Icon.send}</button>
