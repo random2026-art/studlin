@@ -23540,7 +23540,14 @@ function RescheduleModal({task,events,commit,onClose,onManual}){
                 <div key={c.date} onClick={()=>setSelectedIdx(i)} style={{cursor:"pointer",padding:"12px 14px",borderRadius:12,border:`1px solid ${selectedIdx===i?T.lime+"66":T.border}`,background:selectedIdx===i?T.lime+"14":T.card2}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                     <span style={{fontSize:13,fontWeight:600,color:selectedIdx===i?T.lime:T.white}}>
-                      {i===0?"Lightest day — ":""}{new Date(c.date+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}
+                      {/* Bug fix, 2026-09-06 user report: this only ever
+                          showed the day, never the actual time Studlin
+                          picked -- computeRescheduleCandidates already
+                          computes a real placement.time for every
+                          candidate (confirm() below reads it directly),
+                          it just never made it into this card's own
+                          label. */}
+                      {i===0?"Lightest day — ":""}{new Date(c.date+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})} at {fmtClock12(c.placement.time)}
                     </span>
                     {selectedIdx===i&&<span style={{color:T.lime,fontSize:12}}>✓</span>}
                   </div>
