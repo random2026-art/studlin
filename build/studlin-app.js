@@ -1207,6 +1207,12 @@ function buildDeferredCalendarReviewQueue(existingQueue, sub, newEvents, classif
   const entry = { reviewPayload: { subId: sub.id, url: sub.url || null, label: sub.label, sourceType: sub.sourceType, events: reviewEvents, skippedAllDay: 0, classified: true, viaToken: !!sub.viaToken } };
   return { queue: [...filtered, entry], reviewEvents };
 }
+function summarizeImportReviewQueue(queue) {
+  const entries = (queue || []).filter((q) => q && typeof q === "object" && q.reviewPayload && q.reviewPayload.events && q.reviewPayload.events.length > 0);
+  if (entries.length === 0) return null;
+  const totalCount = entries.reduce((sum, q) => sum + q.reviewPayload.events.length, 0);
+  return { totalCount, sourceCount: entries.length, labels: entries.map((q) => q.reviewPayload.label) };
+}
 const PLATFORM_HELP = {
   schoology: {
     label: "Schoology",
@@ -2288,12 +2294,25 @@ function surfaceReconcileResult(result) {
   const entries = result.moved.map((m) => ({ kind: "moved", ...m })).concat(result.needsAttention.map((a) => ({ kind: "attention", ...a })));
   if (entries.length > 0) lsSet("pendingScheduleChangeAlerts", [...lsGet("pendingScheduleChangeAlerts", []), ...entries]);
 }
+function diffNewGoogleEvents(previousGcalEvents, freshGcalEvents) {
+  const previousIds = new Set((previousGcalEvents || []).map((e) => e.id));
+  return (freshGcalEvents || []).filter((e) => !previousIds.has(e.id));
+}
+function describeNewGoogleEvents(newlyAdded) {
+  if (!newlyAdded || newlyAdded.length === 0) return "";
+  const titles = newlyAdded.map((e) => e.title).filter(Boolean);
+  const shown = titles.slice(0, 3).join(", ");
+  const extra = titles.length > 3 ? " +" + (titles.length - 3) + " more" : "";
+  return "Added " + newlyAdded.length + " event" + (newlyAdded.length !== 1 ? "s" : "") + " from Google Calendar: " + shown + extra;
+}
 function applyGoogleEvents(gcalEvents) {
+  const previousGcal = lsGet("events", []).filter((e) => e.id.startsWith("gcal-"));
+  const newlyAdded = diffNewGoogleEvents(previousGcal, gcalEvents);
   const existing = lsGet("events", []).filter((e) => !e.id.startsWith("gcal-"));
   lsSet("events", existing);
   const result = reconcileFixedEventConflicts(gcalEvents);
   surfaceReconcileResult(result);
-  return result;
+  return { ...result, newlyAdded };
 }
 function connectGoogleCalendar() {
   return new Promise((resolve) => {
@@ -4648,6 +4667,14 @@ function shouldShowWeekBalanceNudge() {
 }
 function dismissWeekBalanceNudge() {
   lsSet("weekBalanceNudgeDismissedAt", Date.now());
+}
+const IMPORT_REVIEW_NUDGE_COOLDOWN_MS = 12 * 36e5;
+function shouldShowImportReviewNudge() {
+  const dismissedAt = lsGet("importReviewNudgeDismissedAt", 0);
+  return Date.now() - dismissedAt >= IMPORT_REVIEW_NUDGE_COOLDOWN_MS;
+}
+function dismissImportReviewNudge() {
+  lsSet("importReviewNudgeDismissedAt", Date.now());
 }
 const SYLLABUS_NUDGE_COOLDOWN_MS = 3 * 864e5;
 function shouldShowSyllabusNudge() {
@@ -20861,11 +20888,35 @@ function App() {
   const [detailEventId, setDetailEventId] = useState(null);
   const calendarSetEventsRef = useRef(null);
   const calendarSkipSetEventsRef = useRef(null);
+  const [googleSyncToast, setGoogleSyncToast] = useState("");
   useEffect(() => {
-    pullGoogleCalendarIfConnected().then((result) => {
-      if (!result) return;
-      if (calendarSkipSetEventsRef.current) calendarSkipSetEventsRef.current(lsGet("events", []));
-    });
+    const checkGoogleCalendarSync = () => {
+      pullGoogleCalendarIfConnected().then((result) => {
+        if (!result) return;
+        if (calendarSkipSetEventsRef.current) calendarSkipSetEventsRef.current(lsGet("events", []));
+        const announcement = describeNewGoogleEvents(result.reconcileResult && result.reconcileResult.newlyAdded);
+        if (announcement) {
+          setGoogleSyncToast(announcement);
+          setTimeout(() => setGoogleSyncToast(""), 6e3);
+        }
+      });
+    };
+    checkGoogleCalendarSync();
+    const interval = setInterval(checkGoogleCalendarSync, 10 * 6e4);
+    return () => clearInterval(interval);
+  }, []);
+  const [importReviewSummary, setImportReviewSummary] = useState(null);
+  useEffect(() => {
+    const checkImportReviewQueue = () => {
+      if (!shouldShowImportReviewNudge()) {
+        setImportReviewSummary(null);
+        return;
+      }
+      setImportReviewSummary(summarizeImportReviewQueue(lsGet("openImportCalQueue", [])));
+    };
+    checkImportReviewQueue();
+    const interval = setInterval(checkImportReviewQueue, 10 * 6e4);
+    return () => clearInterval(interval);
   }, []);
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifAnchor, setNotifAnchor] = useState(null);
@@ -21692,7 +21743,13 @@ function App() {
     lsSet("cal-onboard-done", true);
     if (worksJob !== null) lsSet("has-job", worksJob);
     setCalOnboardDone(true);
-  } }, "Skip for now")), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, textAlign: "center", marginTop: 14, lineHeight: 1.5 } }, "You can connect or disconnect calendars anytime in Settings \u2192 Integrations."))), /* @__PURE__ */ React.createElement(StudlinAiBubble, { onClick: () => setStudlinAiOpen(true), hasProactive: !!studlinAiProactive }), /* @__PURE__ */ React.createElement(
+  } }, "Skip for now")), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, textAlign: "center", marginTop: 14, lineHeight: 1.5 } }, "You can connect or disconnect calendars anytime in Settings \u2192 Integrations."))), googleSyncToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: STUDLIN_AI_BUBBLE_CLEARANCE, right: 20, zIndex: 999, padding: "11px 18px", borderRadius: 10, background: T.teal, color: "#fff", fontSize: 13, fontWeight: 600, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 360 } }, googleSyncToast), importReviewSummary && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 20, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10, lineHeight: 1.5 } }, importReviewSummary.totalCount, " item", importReviewSummary.totalCount !== 1 ? "s" : "", " from ", importReviewSummary.labels.join(", "), " ", importReviewSummary.totalCount !== 1 ? "are" : "is", " ready to review before they go on your calendar."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: () => {
+    setImportReviewSummary(null);
+    setActive("settings");
+  }, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Review"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: () => {
+    dismissImportReviewNudge();
+    setImportReviewSummary(null);
+  }, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Not now"))), /* @__PURE__ */ React.createElement(StudlinAiBubble, { onClick: () => setStudlinAiOpen(true), hasProactive: !!studlinAiProactive }), /* @__PURE__ */ React.createElement(
     StudlinAiDrawer,
     {
       open: studlinAiOpen,

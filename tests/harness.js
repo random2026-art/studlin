@@ -204,7 +204,9 @@ function loadStudlinModule(options) {
     "getAiMemory","saveAiMemory","mergeAiMemoryFacts","removeAiMemoryFact","AI_MEMORY_FACT_CAP",
     "currentClockLabel","formatAiMemoryForPrompt",
     "buildImportSyllabusItemsProposal","extractSyllabusItemsFromChatText",
-    "getRoutineOccurrenceNote","saveRoutineOccurrenceNote","blendOverBg"];
+    "getRoutineOccurrenceNote","saveRoutineOccurrenceNote","blendOverBg",
+    "diffNewGoogleEvents","describeNewGoogleEvents","summarizeImportReviewQueue",
+    "shouldShowImportReviewNudge","dismissImportReviewNudge","IMPORT_REVIEW_NUDGE_COOLDOWN_MS"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }

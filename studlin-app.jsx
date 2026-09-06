@@ -1849,6 +1849,24 @@ function buildDeferredCalendarReviewQueue(existingQueue,sub,newEvents,classifica
   const entry={reviewPayload:{subId:sub.id,url:sub.url||null,label:sub.label,sourceType:sub.sourceType,events:reviewEvents,skippedAllDay:0,classified:true,viaToken:!!sub.viaToken}};
   return {queue:[...filtered,entry],reviewEvents};
 }
+// Pure -- summarizes whatever's currently sitting in openImportCalQueue
+// for a real, always-visible banner (rendered at App level, regardless
+// of which tab is open), not just the one-time toast resyncCalendar
+// shows -- which only ever fires if the student happens to already be
+// sitting in Settings at the exact moment the silent daily auto-resync
+// runs (2026-09-06 user report: this is the same class of "silent
+// surprise" gap Google Calendar's own direct-write sync has, just via a
+// different mechanism -- an unreviewed Canvas/Schoology/Moodle batch can
+// sit here for days with zero indication anywhere else in the app).
+// Skips the onboarding wizard's own plain queued hints (true, or
+// {hint}) -- those just open a blank connect form next, there's nothing
+// "waiting to review" about them yet.
+function summarizeImportReviewQueue(queue){
+  const entries=(queue||[]).filter(q=>q&&typeof q==="object"&&q.reviewPayload&&q.reviewPayload.events&&q.reviewPayload.events.length>0);
+  if(entries.length===0)return null;
+  const totalCount=entries.reduce((sum,q)=>sum+q.reviewPayload.events.length,0);
+  return {totalCount,sourceCount:entries.length,labels:entries.map(q=>q.reviewPayload.label)};
+}
 // Step-by-step, platform-specific instructions shown inside the connect
 // modal itself (not a separate help page, not a hover tooltip -- the old
 // Canvas tooltip was hover-only, which doesn't work on touch and collapses
@@ -3866,16 +3884,45 @@ function surfaceReconcileResult(result){
 // scope (not SettingsTab-local) so it's the one place Settings' own
 // connect/pull flow AND the first-run onboarding overlay both land,
 // instead of two independent implementations that can drift.
+// Pure -- given the gcal-* events already on record right before a fresh
+// pull, and the fresh batch Google just returned, returns only the ones
+// genuinely never seen before (a real new addition, not a re-fetch of
+// something already known). applyGoogleEvents wipes and fully replaces
+// the gcal-* set on every call, so this has to be computed against the
+// PRE-wipe snapshot -- there's nothing left to diff against afterward.
+// Used to build an honest "N new events from Google Calendar" surface
+// (2026-09-06 user report: a background Google sync landed silently,
+// with zero announcement anywhere, and the student had no way to know
+// something new had shown up until they happened to notice it).
+function diffNewGoogleEvents(previousGcalEvents,freshGcalEvents){
+  const previousIds=new Set((previousGcalEvents||[]).map(e=>e.id));
+  return (freshGcalEvents||[]).filter(e=>!previousIds.has(e.id));
+}
+// Short, honest announcement string for newly-added Google Calendar
+// events -- never claims more than genuinely new (a re-synced item
+// already seen before never counts, see diffNewGoogleEvents), never
+// invents a title beyond what Google actually sent. Empty string (not
+// shown) when nothing is actually new, which is the common case for
+// most syncs.
+function describeNewGoogleEvents(newlyAdded){
+  if(!newlyAdded||newlyAdded.length===0)return "";
+  const titles=newlyAdded.map(e=>e.title).filter(Boolean);
+  const shown=titles.slice(0,3).join(", ");
+  const extra=titles.length>3?" +"+(titles.length-3)+" more":"";
+  return "Added "+newlyAdded.length+" event"+(newlyAdded.length!==1?"s":"")+" from Google Calendar: "+shown+extra;
+}
 function applyGoogleEvents(gcalEvents){
   // Strip stale gcal- events first (Google is authoritative for its own
   // prefix -- one deleted on Google's side should disappear here too),
   // so reconcileFixedEventConflicts' own lsGet reads the clean state and
   // only ever treats the fresh batch as "new."
+  const previousGcal=lsGet("events",[]).filter(e=>e.id.startsWith("gcal-"));
+  const newlyAdded=diffNewGoogleEvents(previousGcal,gcalEvents);
   const existing=lsGet("events",[]).filter(e=>!e.id.startsWith("gcal-"));
   lsSet("events",existing);
   const result=reconcileFixedEventConflicts(gcalEvents);
   surfaceReconcileResult(result);
-  return result;
+  return {...result,newlyAdded};
 }
 // The one real, server-backed Google Calendar connection flow --
 // authorization-code OAuth (not the old implicit token flow), which is
@@ -7489,6 +7536,19 @@ function shouldShowWeekBalanceNudge(){
 }
 function dismissWeekBalanceNudge(){
   lsSet("weekBalanceNudgeDismissedAt",Date.now());
+}
+// Shorter cooldown than the week-balance nudge above -- this one
+// represents real, undone work (unreviewed assignments/exams pulled
+// from an academic calendar sync), not a scheduling suggestion that
+// simply goes stale. A same-day re-surface is worth the mild repetition
+// given a review item could genuinely be due soon.
+const IMPORT_REVIEW_NUDGE_COOLDOWN_MS=12*3600000;
+function shouldShowImportReviewNudge(){
+  const dismissedAt=lsGet("importReviewNudgeDismissedAt",0);
+  return Date.now()-dismissedAt>=IMPORT_REVIEW_NUDGE_COOLDOWN_MS;
+}
+function dismissImportReviewNudge(){
+  lsSet("importReviewNudgeDismissedAt",Date.now());
 }
 // "Scan my whole schedule" (college) and the HS bulk-schedule import both
 // read a schedule GRID -- class names + meeting times, plus any exam dates
@@ -34788,11 +34848,58 @@ function App() {
   // bogus "undo" entry, exactly what "undo and redo aren't working"
   // looks like from the outside), so it's reflected immediately rather
   // than only on CalendarTab's next full remount.
+  //
+  // Bug fix, 2026-09-06 user report: "I added it in Google, it never
+  // showed up in Studlin" -- this used to run exactly ONCE, at the
+  // moment the app first loaded. A student who kept the tab open for a
+  // long session (or added the event moments after loading) would never
+  // get a second check until their next full page refresh, even once
+  // the server-side cache genuinely had caught up. Now also re-checks
+  // every 10 minutes while the app stays open. Also surfaces an honest
+  // toast (describeNewGoogleEvents) the moment a check actually finds
+  // something genuinely new -- the silent background path previously
+  // told the student nothing at all, ever, even on a fully successful
+  // sync, which is exactly what made a real new item feel like a
+  // surprise later.
+  const [googleSyncToast,setGoogleSyncToast]=useState("");
   useEffect(()=>{
-    pullGoogleCalendarIfConnected().then(result=>{
-      if(!result)return;
-      if(calendarSkipSetEventsRef.current)calendarSkipSetEventsRef.current(lsGet("events",[]));
-    });
+    const checkGoogleCalendarSync=()=>{
+      pullGoogleCalendarIfConnected().then(result=>{
+        if(!result)return;
+        if(calendarSkipSetEventsRef.current)calendarSkipSetEventsRef.current(lsGet("events",[]));
+        const announcement=describeNewGoogleEvents(result.reconcileResult&&result.reconcileResult.newlyAdded);
+        if(announcement){
+          setGoogleSyncToast(announcement);
+          setTimeout(()=>setGoogleSyncToast(""),6000);
+        }
+      });
+    };
+    checkGoogleCalendarSync();
+    const interval=setInterval(checkGoogleCalendarSync,10*60000);
+    return ()=>clearInterval(interval);
+  },[]);
+  // Same "silent surprise" gap as Google Calendar above, just via a
+  // different mechanism: Canvas/Schoology/Moodle/Blackboard's own once-
+  // a-day auto-resync (see resyncCalendar in SettingsTab) already defers
+  // new academic items to a real review screen instead of merging them
+  // unreviewed -- but the ONLY announcement of that (a toast) only fires
+  // if the student happens to already be sitting in Settings at the
+  // exact moment that daily check runs. This is a real, always-visible
+  // banner instead, checked at the same cadence as the Google check
+  // above, so an unreviewed batch is never just silently sitting there
+  // with nothing anywhere else in the app pointing at it. Deliberately
+  // doesn't move WHEN the daily check itself runs (still Settings-gated,
+  // a bigger change) -- this only fixes whether the student ever finds
+  // out about whatever it already queued.
+  const [importReviewSummary,setImportReviewSummary]=useState(null);
+  useEffect(()=>{
+    const checkImportReviewQueue=()=>{
+      if(!shouldShowImportReviewNudge()){setImportReviewSummary(null);return;}
+      setImportReviewSummary(summarizeImportReviewQueue(lsGet("openImportCalQueue",[])));
+    };
+    checkImportReviewQueue();
+    const interval=setInterval(checkImportReviewQueue,10*60000);
+    return ()=>clearInterval(interval);
   },[]);
   const [notifOpen,setNotifOpen]=useState(false);
   // {bottom,left}|null, captured on open -- the sidebar column has
@@ -36405,6 +36512,41 @@ function App() {
               <Btn variant="subtle" style={{flex:1,justifyContent:"center"}} onClick={()=>{lsSet("cal-onboard-done",true);if(worksJob!==null)lsSet("has-job",worksJob);setCalOnboardDone(true);}}>Skip for now</Btn>
             </div>
             <div style={{fontSize:11,color:T.faint,textAlign:"center",marginTop:14,lineHeight:1.5}}>You can connect or disconnect calendars anytime in Settings → Integrations.</div>
+          </div>
+        </div>
+      )}
+      {/* Bug fix, 2026-09-06 user report: a background Google Calendar
+          sync that actually found something new used to tell the
+          student literally nothing, ever -- see the sync effect above
+          for the fuller comment. Bottom-right at the bubble's own
+          established clearance so it never repeats the exact overlap
+          this file already fixed once (see the chat-input clearance
+          fix) -- this is a transient toast, not a persistent element,
+          so it only ever needs to clear the bubble's footprint while
+          visible, same as every other bottom-right toast in this file. */}
+      {googleSyncToast&&(
+        <div style={{position:"fixed",bottom:STUDLIN_AI_BUBBLE_CLEARANCE,right:20,zIndex:999,padding:"11px 18px",borderRadius:10,background:T.teal,color:"#fff",fontSize:13,fontWeight:600,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:360}}>
+          {googleSyncToast}
+        </div>
+      )}
+      {/* Bug fix, 2026-09-06 user report: an unreviewed Canvas/Schoology/
+          Moodle batch (see the review-queue effect above) used to have
+          exactly one chance to be noticed -- a toast that only fires if
+          the student happens to already be in Settings the moment the
+          silent daily resync runs. This is a real, persistent banner
+          instead, visible on every tab, so it can't just be missed. Top-
+          left specifically to avoid every other established corner
+          already spoken for in this file (Studlin AI's bubble owns
+          bottom-right, Calendar's own week-balance nudge owns bottom-
+          left while that tab is open). */}
+      {importReviewSummary&&(
+        <div style={{position:"fixed",top:20,left:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
+          <div style={{fontSize:13,color:T.white,marginBottom:10,lineHeight:1.5}}>
+            {importReviewSummary.totalCount} item{importReviewSummary.totalCount!==1?"s":""} from {importReviewSummary.labels.join(", ")} {importReviewSummary.totalCount!==1?"are":"is"} ready to review before they go on your calendar.
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <Btn onClick={()=>{setImportReviewSummary(null);setActive("settings");}} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Review</Btn>
+            <Btn variant="ghost" onClick={()=>{dismissImportReviewNudge();setImportReviewSummary(null);}} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Not now</Btn>
           </div>
         </div>
       )}
