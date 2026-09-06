@@ -3021,6 +3021,24 @@ function isReorderableTask(e){
 // exactly the "why does this say 9 AM" confusion this fixes. WeeklyPlanner
 // already excluded these correctly; Day view never did.
 function isDuePill(ev){return !ev.checklist&&!ev.duration&&!!(ev.kind==="deadline"||ev.kind==="exam"||(ev.kind==="reminder"&&ev.timeUnconfirmed));}
+// A reminder with a real confirmed time (isDuePill already sends the
+// no-real-time kind elsewhere) still has zero actual duration -- it's a
+// nudge at an instant, not blocked time. WeeklyPlanner/DayPlanner used to
+// run it through the exact same computeEventBlockHeightPx floor as a real
+// task, so a reminder rendered as an ordinary-looking short block with
+// nothing telling a student "this isn't occupying time." 2026-09-06 user
+// request: give it its own thin marker treatment instead of a filled box.
+function isZeroDurationTimedReminder(ev){return ev.kind==="reminder"&&!ev.checklist&&!ev.duration&&!ev.timeUnconfirmed&&!!ev.time;}
+// Drag payload MIME for EventDetailModal's "+ Add my own time block" ->
+// WeeklyPlanner's hour grid (2026-09-06 user request: drag-to-place as an
+// alternative to typing a date/time, not a replacement -- both stay).
+// Plain HTML5 dataTransfer, not React state, on purpose: the modal and
+// WeeklyPlanner are siblings under a shared ancestor (see EventDetailModal's
+// own mount comment), not parent/child, so there's no React state both
+// could share the way CalendarTab's own sidebarDragChip works for its
+// in-tree drag sources. dataTransfer crosses that boundary for free since
+// it's tracked by the browser itself, not by either component tree.
+const MANUAL_BLOCK_DRAG_MIME="application/x-studlin-manual-block";
 function isTier0Missed(ev,todayKey){
   if(ev.status!=="pending")return false;
   if(ev.checklist)return false;
@@ -19497,7 +19515,7 @@ function AcceptanceRoster({memberUids, memberNames, responses}) {
   );
 }
 
-function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent, selectedRoutineKey, onSelectRoutineOccurrence, blockRefs, flipOldRectsRef, flipSeq, newItemHighlightIds, gsBusyByDate, gsRecommended}) {
+function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropManualBlockRequest, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent, selectedRoutineKey, onSelectRoutineOccurrence, blockRefs, flipOldRectsRef, flipSeq, newItemHighlightIds, gsBusyByDate, gsRecommended}) {
   // "Watch it happen" FLIP playback (see CalendarTab's captureFlip) --
   // flipSeq changing means flipOldRectsRef.current now holds a snapshot
   // of every block's on-screen position from right before events just
@@ -19895,6 +19913,14 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
       // Routed through the same guarded moveEvent the Monthly grid uses, so
       // the deadline Hard Wall (Tier 2) has one enforcement point, not two.
       moveEvent(wkDragId, dk, time);
+    } else if (e.dataTransfer && e.dataTransfer.getData(MANUAL_BLOCK_DRAG_MIME) && onDropManualBlockRequest) {
+      // See MANUAL_BLOCK_DRAG_MIME's own comment -- this is the one case
+      // here whose drag source lives outside this component tree entirely
+      // (EventDetailModal), so it's read straight off the native event
+      // instead of a sidebarDragChip-style prop/state value.
+      let payload=null;
+      try{payload=JSON.parse(e.dataTransfer.getData(MANUAL_BLOCK_DRAG_MIME));}catch(err){payload=null;}
+      if(payload)onDropManualBlockRequest(payload, dk, time);
     } else {
       return;
     }
@@ -20150,7 +20176,13 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   // ELSE branch's plain `dur` (the raw, pre-change value),
                   // discarding the pending preview entirely. Same condition
                   // as effDuration's own fallback now.
-                  const heightPx = (isResizing||pendingForThis) ? Math.max(22, effDuration * (WK_PX_HR / 60)) : computeEventBlockHeightPx(dur, nextInCol ? nextInCol.start - start : null, WK_PX_HR);
+                  // Reminder marker (2026-09-06): a thin line/dot instead of
+                  // the normal floored block, so a zero-duration reminder
+                  // never looks like it's occupying real time. Fixed 13px --
+                  // deliberately not run through computeEventBlockHeightPx
+                  // at all, that floor is exactly what this replaces.
+                  const isReminderMarker = isZeroDurationTimedReminder(ev);
+                  const heightPx = isReminderMarker ? 13 : (isResizing||pendingForThis) ? Math.max(22, effDuration * (WK_PX_HR / 60)) : computeEventBlockHeightPx(dur, nextInCol ? nextInCol.start - start : null, WK_PX_HR);
                   const isDone = ev.status === "done";
                   const over = daysOverdue(ev);
                   const subjectColor = ev.color||colorOf(ev.courseId||ev.subject);
@@ -20177,11 +20209,13 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   // but flattens it to one solid hex against this Card's
                   // real background (T.card), so the lines underneath can
                   // no longer show through at all.
-                  const kindStyle = isStudy
-                    ? {background:tokens.color.accent,color:T.ink}
-                    : isWarningKind
-                      ? {background:blendOverBg(T.amber,0.12,T.card),border:`1px solid ${tokens.color.warning}`,color:tokens.color.warning}
-                      : {background:blendOverBg(subjectColor,0.1176,T.card),color:subjectColor};
+                  const kindStyle = isReminderMarker
+                    ? {background:"transparent",color:subjectColor}
+                    : isStudy
+                      ? {background:tokens.color.accent,color:T.ink}
+                      : isWarningKind
+                        ? {background:blendOverBg(T.amber,0.12,T.card),border:`1px solid ${tokens.color.warning}`,color:tokens.color.warning}
+                        : {background:blendOverBg(subjectColor,0.1176,T.card),color:subjectColor};
                   const dimmedByRoutineMode = editRoutineMode && !isRoutine;
                   const highlightedByRoutineMode = editRoutineMode && isRoutine;
                   // Schedule with Friends / Find Shared Study Window: a
@@ -20292,7 +20326,23 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                       // that's no longer rendered here doesn't leave a
                       // stale/detached node in the map.
                       ref={el=>{ if(el)blockRefs.current.set(ev.id,el); else blockRefs.current.delete(ev.id); }}
-                      style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:5,padding:"2px 5px 2px 8px",cursor:"grab",overflow:"hidden",zIndex:3,opacity:dimmedByRoutineMode?0.3:(isPendingAcceptance||isDone?0.6:1),boxSizing:"border-box",userSelect:"none",...kindStyle,...(highlightedByRoutineMode?{outline:`2px solid ${T.lime}`,outlineOffset:1}:{}),...(newItemBoxShadow?{boxShadow:newItemBoxShadow}:{}),...((isSelected||isRoutineSelected)?{outline:`2px solid ${T.lime}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.lime}22`}:{}),...(!isRoutine&&highlightedSessionId===ev.id?{outline:`2px solid ${T.amber}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.amber}33`}:{})}}>
+                      style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:5,padding:isReminderMarker?"0 4px":"2px 5px 2px 8px",cursor:"grab",overflow:"hidden",zIndex:3,opacity:dimmedByRoutineMode?0.3:(isPendingAcceptance||isDone?0.6:1),boxSizing:"border-box",userSelect:"none",...kindStyle,...(highlightedByRoutineMode?{outline:`2px solid ${T.lime}`,outlineOffset:1}:{}),...(newItemBoxShadow?{boxShadow:newItemBoxShadow}:{}),...((isSelected||isRoutineSelected)?{outline:`2px solid ${T.lime}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.lime}22`}:{}),...(!isRoutine&&highlightedSessionId===ev.id?{outline:`2px solid ${T.amber}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.amber}33`}:{})}}>
+                      {isReminderMarker ? (
+                        // Compact treatment: dot + thin line + title, no
+                        // filled box, no time/location/details lines, no
+                        // resize handles -- there's no duration to resize
+                        // and no room for progressive-disclosure lines in
+                        // 13px anyway. Deliberately skips all the badges
+                        // (overdue dot, overflow count, acceptance/conflict)
+                        // that the normal block below carries -- a reminder
+                        // never has those states in practice, and the
+                        // marker is meant to read as minimal.
+                        <div style={{display:"flex",alignItems:"center",gap:5,height:"100%"}}>
+                          <span style={{width:6,height:6,borderRadius:"50%",background:subjectColor,flexShrink:0,boxShadow:`0 0 0 2px ${subjectColor}2a`}} />
+                          <span style={{flex:"0 1 auto",minWidth:8,height:2,background:subjectColor+"77",borderRadius:1}} />
+                          <span style={{fontSize:9,fontWeight:700,color:subjectColor,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ev.title}</span>
+                        </div>
+                      ) : (<>
                       {/* Subject marker -- see comment above kindStyle */}
                       <div style={{position:"absolute",left:0,top:0,bottom:0,width:3,background:subjectColor,borderRadius:"5px 0 0 5px"}} />
                       {/* Suppressed while a Catch Me Up rebuild is pending -- the
@@ -20348,6 +20398,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                           Details
                         </div>
                       )}
+                      </>)}
                       {/* Drag-to-resize edge handles -- routine occurrences
                           included now (startWkResize/onUp branch on
                           isRoutine and route through onResizeRoutineOccurrence's
@@ -20356,7 +20407,8 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                           draggable={false} stops the parent block's native
                           HTML5 drag from starting when the grab begins here,
                           so it doesn't fight with the custom mouse-tracking
-                          resize below. */}
+                          resize below. Skipped for a reminder marker -- zero
+                          duration means there's nothing to resize. */}
                       {/* Seeded from effStartMin/effDuration (the currently
                           DISPLAYED values -- pending-aware), not raw
                           origStartMin/dur (the true stored original).
@@ -20364,14 +20416,14 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                           resize now continues the drag from where it
                           visually is instead of silently resetting the
                           delta-math baseline back to the pre-pending size. */}
-                      <div draggable={false}
+                      {!isReminderMarker && <div draggable={false}
                         onMouseDown={(e)=>startWkResize(ev,"top",e,effStartMin,effDuration)}
                         onClick={(e)=>e.stopPropagation()}
-                        style={{position:"absolute",top:-2,left:0,right:0,height:6,cursor:"ns-resize",zIndex:4}} />
-                      <div draggable={false}
+                        style={{position:"absolute",top:-2,left:0,right:0,height:6,cursor:"ns-resize",zIndex:4}} />}
+                      {!isReminderMarker && <div draggable={false}
                         onMouseDown={(e)=>startWkResize(ev,"bottom",e,effStartMin,effDuration)}
                         onClick={(e)=>e.stopPropagation()}
-                        style={{position:"absolute",bottom:-2,left:0,right:0,height:6,cursor:"ns-resize",zIndex:4}} />
+                        style={{position:"absolute",bottom:-2,left:0,right:0,height:6,cursor:"ns-resize",zIndex:4}} />}
                       {isRoutine&&editRoutineMode&&hoveredRoutineId===ev.routineId&&(
                         <button onClick={(e)=>{e.stopPropagation();if(onDeleteRoutine)onDeleteRoutine(ev.routineId);if(setHoveredRoutineId)setHoveredRoutineId(null);}} title="Delete this routine block (every week)"
                           style={{position:"absolute",top:-8,right:-8,width:18,height:18,borderRadius:"50%",border:`1px solid ${T.border}`,background:T.card,color:T.red,fontSize:11,lineHeight:1,cursor:"pointer",display:"grid",placeItems:"center",boxShadow:"0 4px 10px -2px rgba(0,0,0,0.4)"}}>×</button>
@@ -22773,7 +22825,10 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
               // just never surfaced as a warning anywhere on screen.
               const conflictTitles=totalCols>1?dayLaidOut.filter(o=>o.ev.id!==ev.id&&o.start<end&&start<o.end).map(o=>o.ev.title):[];
               const nextInCol=dayLaidOut.filter(o=>o.col===col&&o.start>start).sort((a,b)=>a.start-b.start)[0];
-              const heightPx=computeEventBlockHeightPx(dur,nextInCol?nextInCol.start-start:null,pxPerHr);
+              // Same reminder-marker treatment as WeeklyPlanner -- see
+              // isZeroDurationTimedReminder's own comment.
+              const isReminderMarker=isZeroDurationTimedReminder(ev);
+              const heightPx=isReminderMarker?13:computeEventBlockHeightPx(dur,nextInCol?nextInCol.start-start:null,pxPerHr);
               const isDone=ev.status==="done";
               const over=daysOverdue(ev);
               // Same acceptance dim/badge as WeeklyPlanner -- see its own
@@ -22796,11 +22851,13 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
               // matching fix/comment. Same blendOverBg treatment: identical
               // perceived tint, but flattened to one solid hex so the lines
               // underneath stop showing through.
-              const kindStyle=isStudy
-                ?{background:color,borderLeft:"none",color:T.ink}
-                :isExam
-                  ?{background:T.ink,border:`2px solid ${color}`,borderLeft:`2px solid ${color}`,boxShadow:`0 0 10px -1px ${color}, inset 0 0 10px ${color}22`,color:T.cream}
-                  :{background:blendOverBg(color,0.1176,T.card),borderLeft:`3px solid ${color}`,color};
+              const kindStyle=isReminderMarker
+                ?{background:"transparent",borderLeft:"none",color}
+                :isStudy
+                  ?{background:color,borderLeft:"none",color:T.ink}
+                  :isExam
+                    ?{background:T.ink,border:`2px solid ${color}`,borderLeft:`2px solid ${color}`,boxShadow:`0 0 10px -1px ${color}, inset 0 0 10px ${color}22`,color:T.cream}
+                    :{background:blendOverBg(color,0.1176,T.card),borderLeft:`3px solid ${color}`,color};
               const leftPct=(displayCol/displayTotalCols)*100;
               const widthPct=100/displayTotalCols;
               // Same "just added/imported" marker as WeeklyPlanner's own
@@ -22843,8 +22900,15 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
                     }
                     isDone?uncrossDone(ev.id):markDone(ev.id);
                   }}
-                  title={(isNewlyAdded?"Just added · ":"")+(ev.isRoutine?"Double-click to edit":isPendingAcceptance?"Click to see who's accepted":"Click to toggle done, double-click to edit")}
-                  style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:6,padding:"4px 8px",cursor:"pointer",overflow:"hidden",zIndex:3,opacity:(isPendingAcceptance||isDone)?0.6:1,boxSizing:"border-box",...kindStyle,...(newItemBoxShadow?{boxShadow:newItemBoxShadow}:{})}}>
+                  title={(isNewlyAdded?"Just added · ":"")+(isReminderMarker?"Reminder · click to toggle done, double-click to edit":ev.isRoutine?"Double-click to edit":isPendingAcceptance?"Click to see who's accepted":"Click to toggle done, double-click to edit")}
+                  style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:6,padding:isReminderMarker?"0 4px":"4px 8px",cursor:"pointer",overflow:"hidden",zIndex:3,opacity:(isPendingAcceptance||isDone)?0.6:1,boxSizing:"border-box",...kindStyle,...(newItemBoxShadow?{boxShadow:newItemBoxShadow}:{})}}>
+                  {isReminderMarker ? (
+                    <div style={{display:"flex",alignItems:"center",gap:5,height:"100%"}}>
+                      <span style={{width:6,height:6,borderRadius:"50%",background:color,flexShrink:0,boxShadow:`0 0 0 2px ${color}2a`}} />
+                      <span style={{flex:"0 1 auto",minWidth:8,height:2,background:color+"77",borderRadius:1}} />
+                      <span style={{fontSize:10,fontWeight:700,color,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",textDecoration:isDone?"line-through":"none"}}>{ev.title}</span>
+                    </div>
+                  ) : (<>
                   {!catchUpPending&&over>0&&<span title={over+"d overdue"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:`0 0 0 1.5px ${isExam?T.ink:"#fff"}`,zIndex:1}} />}
                   {overflowCount>0&&<span title={overflowCount+" more at this time"} style={{position:"absolute",bottom:2,right:2,fontSize:8,fontWeight:800,color:kindStyle.color,background:"rgba(0,0,0,0.18)",borderRadius:8,padding:"1px 4px",lineHeight:1.3,zIndex:1}}>+{overflowCount}</span>}
                   {isPendingAcceptance&&<span title={isDeclined?"Declined":acceptanceSummary.accepted+"/"+acceptanceSummary.total+" accepted"} style={{position:"absolute",bottom:2,left:2,fontSize:8,fontWeight:800,color:isDeclined?"#fff":kindStyle.color,background:isDeclined?T.red+"cc":"rgba(0,0,0,0.18)",borderRadius:8,padding:"1px 4px",lineHeight:1.3,zIndex:1}}>{isDeclined?"Declined":acceptanceSummary.accepted+"/"+acceptanceSummary.total}</span>}
@@ -22861,6 +22925,7 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
                       Details
                     </div>
                   )}
+                  </>)}
                 </div>
                 {ev.commuteAfter>0 && (
                   <div title={ev.commuteAfter+" min commute"} style={commuteStripStyle(ev.commuteAfter,"after")}>
@@ -23074,10 +23139,21 @@ function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime
               const dur=ev.duration||30;
               const conflictTitles=totalCols>1?dayLaidOut.filter(o=>o.ev.id!==ev.id&&o.start<end&&start<o.end).map(o=>o.ev.title):[];
               const nextInCol=dayLaidOut.filter(o=>o.col===col&&o.start>start).sort((a,b)=>a.start-b.start)[0];
-              const heightPx=computeEventBlockHeightPx(dur,nextInCol?nextInCol.start-start:null,pxPerHr);
+              // Same reminder-marker treatment as WeeklyPlanner/DayPlanner.
+              const isReminderMarker=isZeroDurationTimedReminder(ev);
+              const heightPx=isReminderMarker?13:computeEventBlockHeightPx(dur,nextInCol?nextInCol.start-start:null,pxPerHr);
               const color=ev.color||colorOf(ev.courseId||ev.subject);
               const leftPct=(displayCol/displayTotalCols)*100;
               const widthPct=100/displayTotalCols;
+              if(isReminderMarker){
+                return(
+                  <div key={ev.id} style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,display:"flex",alignItems:"center",gap:5,padding:"0 4px",zIndex:3,boxSizing:"border-box"}}>
+                    <span style={{width:6,height:6,borderRadius:"50%",background:color,flexShrink:0,boxShadow:`0 0 0 2px ${color}2a`}} />
+                    <span style={{flex:"0 1 auto",minWidth:8,height:2,background:color+"77",borderRadius:1}} />
+                    <span style={{fontSize:10.5,fontWeight:700,color,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ev.title}</span>
+                  </div>
+                );
+              }
               return(
                 <div key={ev.id} style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:8,padding:"6px 10px",overflow:"hidden",zIndex:3,boxSizing:"border-box",background:color+"22",border:`1px solid ${color}55`,display:"flex",flexDirection:"column",justifyContent:"center"}}>
                   {conflictTitles.length>0&&<span title={"Overlaps with "+conflictTitles.join(", ")} style={{position:"absolute",top:2,right:2,fontSize:9,lineHeight:1,zIndex:1,filter:"drop-shadow(0 1px 1px rgba(0,0,0,0.35))"}}>⚠️</span>}
@@ -24657,6 +24733,37 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
               <div style={{display:"flex",gap:8,marginTop:10}}>
                 <BtnSm onClick={addManualLinkedBlock} disabled={!manualDate}>Add block</BtnSm>
                 <BtnSm variant="ghost" onClick={()=>setAddManualBlock(false)}>Cancel</BtnSm>
+              </div>
+              {/* Drag-to-place alternative, 2026-09-06 user request -- both
+                  ways stay, this doesn't replace the typed fields above (a
+                  student scheduling a date not currently on screen still
+                  needs to type it). Same visual language as the sidebar's
+                  own "drag onto the calendar" session chips (dashed border,
+                  grab cursor) so it reads as the same gesture everywhere in
+                  the app. See MANUAL_BLOCK_DRAG_MIME's own comment for why
+                  this crosses into WeeklyPlanner via dataTransfer instead of
+                  the sidebarDragChip state those chips use -- this modal
+                  isn't in the same component tree as the calendar grid.
+                  Closing the modal the instant the drag starts (rather than
+                  on drop) is deliberate: the modal's own backdrop would
+                  otherwise sit on top of the grid and swallow the drop. */}
+              <div style={{display:"flex",alignItems:"center",gap:8,margin:"12px 0 8px"}}>
+                <div style={{flex:1,height:1,background:T.border}} />
+                <span style={{fontSize:9.5,color:T.faint,fontWeight:700,letterSpacing:"0.06em"}}>OR</span>
+                <div style={{flex:1,height:1,background:T.border}} />
+              </div>
+              <div
+                draggable
+                onDragStart={(e)=>{
+                  e.dataTransfer.setData(MANUAL_BLOCK_DRAG_MIME, JSON.stringify({dueEventId:ev.id,title:"Work on: "+(title.trim()||ev.title),subject:ev.subject||"",deadline:ev.deadline||null,duration:manualDuration}));
+                  e.dataTransfer.effectAllowed="copy";
+                  if(setActive)setActive("calendar");
+                  onClose();
+                }}
+                title="Drag onto the calendar to place it exactly where you want"
+                style={{display:"flex",alignItems:"center",gap:8,fontSize:11.5,fontWeight:600,color:T.text,padding:"8px 10px",borderRadius:6,border:`1px dashed ${T.lime}77`,cursor:"grab",background:T.lime+"0c"}}>
+                <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>Drag onto the calendar</span>
+                <span style={{fontSize:9.5,color:T.faint,flexShrink:0}}>{manualDuration} min</span>
               </div>
             </div>
           )}
@@ -26901,6 +27008,24 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       anchorX:(anchorPoint&&anchorPoint.x)||null,anchorY:(anchorPoint&&anchorPoint.y)||null});
     setNewEventOpen(true);
   };
+  // Drag-to-place counterpart of EventDetailModal's "+ Add my own time
+  // block" (see MANUAL_BLOCK_DRAG_MIME's own comment for why this crosses
+  // the modal/tab boundary via dataTransfer instead of sidebarDragChip).
+  // Everything needed (title, subject, deadline, duration) was already
+  // gathered inside that modal -- only the date/time was missing, and the
+  // drop itself supplies that -- so this commits directly, same as that
+  // modal's own addManualLinkedBlock does on typed submit, no separate
+  // confirm step.
+  const commitManualBlockDrop=(payload,dateKey,time)=>{
+    if(!payload||!payload.dueEventId)return;
+    const block={id:"manual-"+payload.dueEventId+"-"+Date.now(),title:payload.title||"Work on this",date:dateKey,time,
+      subject:payload.subject||"",kind:"study block",notes:"",priority:5,difficulty:5,deadline:payload.deadline||null,
+      duration:payload.duration||30,status:"pending",timeSpent:0,completedAt:null,dueEventId:payload.dueEventId};
+    const next=events.concat([block]);
+    setEvents(next);lsSet("events",next);
+    setPlacementToast("Block added — "+fmtTimeRange(time,block.duration)+".");
+    setTimeout(()=>setPlacementToast(""),3200);
+  };
   // ── Schedule with Friends ────────────────────────────────────────────
   const openGroupSchedule=async()=>{
     setGsOpen(true);setGsStep("pick");setGsSelected([]);setGsLoading(true);setGsSearchQuery("");
@@ -29070,6 +29195,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           onEditRoutine={(routineId,date)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule,date);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
           selDay={selDay} setSelDay={setSelDay} onDeleteEvent={deleteEventWithUndo} catchUpPending={catchUpPending}
           sidebarDragChip={sidebarDragChip} onDropSidebarChip={(dk,time,anchorPoint)=>{openNewEventForDrop(sidebarDragChip,dk,time,anchorPoint);setSidebarDragChip(null);}}
+          onDropManualBlockRequest={commitManualBlockDrop}
           onDropRoutineOccurrence={onDropRoutineOccurrence} onResizeRoutineOccurrence={onResizeRoutineOccurrence} pendingRoutineChange={routineDropPending} onRoutineDragStateChange={setRoutineDragActive}
           previewEvent={gsOpen&&gsStep==="place"?gsDraft:previewEvent} highlightedSessionId={highlightedSessionId}
           blockRefs={blockRefs} flipOldRectsRef={flipOldRectsRef} flipSeq={flipSeq}

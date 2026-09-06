@@ -1787,6 +1787,10 @@ function isReorderableTask(e) {
 function isDuePill(ev) {
   return !ev.checklist && !ev.duration && !!(ev.kind === "deadline" || ev.kind === "exam" || ev.kind === "reminder" && ev.timeUnconfirmed);
 }
+function isZeroDurationTimedReminder(ev) {
+  return ev.kind === "reminder" && !ev.checklist && !ev.duration && !ev.timeUnconfirmed && !!ev.time;
+}
+const MANUAL_BLOCK_DRAG_MIME = "application/x-studlin-manual-block";
 function isTier0Missed(ev, todayKey) {
   if (ev.status !== "pending") return false;
   if (ev.checklist) return false;
@@ -11949,7 +11953,7 @@ function AcceptanceRoster({ memberUids, memberNames, responses }) {
     return /* @__PURE__ */ React.createElement("div", { key: uid, style: { display: "flex", alignItems: "center", gap: 9 } }, /* @__PURE__ */ React.createElement(Av, { initials: name.split(" ").map((x) => x[0]).join(""), color: T.lime, size: 24, picUrl: "" }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 600, color: T.text, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: statusColor[status] || T.muted, flexShrink: 0 } }, statusLabel[status] || "Pending"));
   }));
 }
-function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime: fmtTime2, fmtTimeRange: fmtTimeRange2, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent, selectedRoutineKey, onSelectRoutineOccurrence, blockRefs, flipOldRectsRef, flipSeq, newItemHighlightIds, gsBusyByDate, gsRecommended }) {
+function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime: fmtTime2, fmtTimeRange: fmtTimeRange2, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropManualBlockRequest, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent, selectedRoutineKey, onSelectRoutineOccurrence, blockRefs, flipOldRectsRef, flipSeq, newItemHighlightIds, gsBusyByDate, gsRecommended }) {
   const [exitGhosts, setExitGhosts] = useState([]);
   useLayoutEffect(() => {
     if (!flipSeq || !flipOldRectsRef) return;
@@ -12250,6 +12254,14 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
       onDropRoutineOccurrence(wkDragRoutineOccurrence.routineId, wkDragRoutineOccurrence.fromDate, dk, time, { x: rect ? rect.right : e.clientX, y: e.clientY });
     } else if (wkDragId) {
       moveEvent(wkDragId, dk, time);
+    } else if (e.dataTransfer && e.dataTransfer.getData(MANUAL_BLOCK_DRAG_MIME) && onDropManualBlockRequest) {
+      let payload = null;
+      try {
+        payload = JSON.parse(e.dataTransfer.getData(MANUAL_BLOCK_DRAG_MIME));
+      } catch (err) {
+        payload = null;
+      }
+      if (payload) onDropManualBlockRequest(payload, dk, time);
     } else {
       return;
     }
@@ -12395,14 +12407,15 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
           const effDuration = isResizing && wkResize.liveDuration != null ? wkResize.liveDuration : pendingForThis && pendingForThis.newDuration != null ? pendingForThis.newDuration : dur;
           const topPx = effStartMin * (WK_PX_HR / 60);
           const nextInCol = dayLaidOut.filter((o) => o.col === col && o.start > start).sort((a, b) => a.start - b.start)[0];
-          const heightPx = isResizing || pendingForThis ? Math.max(22, effDuration * (WK_PX_HR / 60)) : computeEventBlockHeightPx(dur, nextInCol ? nextInCol.start - start : null, WK_PX_HR);
+          const isReminderMarker = isZeroDurationTimedReminder(ev);
+          const heightPx = isReminderMarker ? 13 : isResizing || pendingForThis ? Math.max(22, effDuration * (WK_PX_HR / 60)) : computeEventBlockHeightPx(dur, nextInCol ? nextInCol.start - start : null, WK_PX_HR);
           const isDone = ev.status === "done";
           const over = daysOverdue(ev);
           const subjectColor = ev.color || colorOf(ev.courseId || ev.subject);
           const isStudy = ev.kind === "study block";
           const isExam = ev.kind === "exam";
           const isWarningKind = isExam || ev.kind === "deadline";
-          const kindStyle = isStudy ? { background: tokens.color.accent, color: T.ink } : isWarningKind ? { background: blendOverBg(T.amber, 0.12, T.card), border: `1px solid ${tokens.color.warning}`, color: tokens.color.warning } : { background: blendOverBg(subjectColor, 0.1176, T.card), color: subjectColor };
+          const kindStyle = isReminderMarker ? { background: "transparent", color: subjectColor } : isStudy ? { background: tokens.color.accent, color: T.ink } : isWarningKind ? { background: blendOverBg(T.amber, 0.12, T.card), border: `1px solid ${tokens.color.warning}`, color: tokens.color.warning } : { background: blendOverBg(subjectColor, 0.1176, T.card), color: subjectColor };
           const dimmedByRoutineMode = editRoutineMode && !isRoutine;
           const highlightedByRoutineMode = editRoutineMode && isRoutine;
           const acceptanceSummary = ev.proposalMemberUids ? computeAcceptanceSummary(ev.proposalMemberUids, ev.proposalResponses) : null;
@@ -12468,26 +12481,28 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
                 if (el) blockRefs.current.set(ev.id, el);
                 else blockRefs.current.delete(ev.id);
               },
-              style: { position: "absolute", top: topPx, left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`, height: heightPx, borderRadius: 5, padding: "2px 5px 2px 8px", cursor: "grab", overflow: "hidden", zIndex: 3, opacity: dimmedByRoutineMode ? 0.3 : isPendingAcceptance || isDone ? 0.6 : 1, boxSizing: "border-box", userSelect: "none", ...kindStyle, ...highlightedByRoutineMode ? { outline: `2px solid ${T.lime}`, outlineOffset: 1 } : {}, ...newItemBoxShadow ? { boxShadow: newItemBoxShadow } : {}, ...isSelected || isRoutineSelected ? { outline: `2px solid ${T.lime}`, outlineOffset: 1, boxShadow: `0 0 0 4px ${T.lime}22` } : {}, ...!isRoutine && highlightedSessionId === ev.id ? { outline: `2px solid ${T.amber}`, outlineOffset: 1, boxShadow: `0 0 0 4px ${T.amber}33` } : {} }
+              style: { position: "absolute", top: topPx, left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`, height: heightPx, borderRadius: 5, padding: isReminderMarker ? "0 4px" : "2px 5px 2px 8px", cursor: "grab", overflow: "hidden", zIndex: 3, opacity: dimmedByRoutineMode ? 0.3 : isPendingAcceptance || isDone ? 0.6 : 1, boxSizing: "border-box", userSelect: "none", ...kindStyle, ...highlightedByRoutineMode ? { outline: `2px solid ${T.lime}`, outlineOffset: 1 } : {}, ...newItemBoxShadow ? { boxShadow: newItemBoxShadow } : {}, ...isSelected || isRoutineSelected ? { outline: `2px solid ${T.lime}`, outlineOffset: 1, boxShadow: `0 0 0 4px ${T.lime}22` } : {}, ...!isRoutine && highlightedSessionId === ev.id ? { outline: `2px solid ${T.amber}`, outlineOffset: 1, boxShadow: `0 0 0 4px ${T.amber}33` } : {} }
             },
-            /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: subjectColor, borderRadius: "5px 0 0 5px" } }),
-            !catchUpPending && over > 0 && /* @__PURE__ */ React.createElement("span", { title: over + "d overdue", style: { position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: "50%", background: T.red, boxShadow: "0 0 0 1.5px rgba(255,255,255,0.9)", zIndex: 1 } }),
-            overflowCount > 0 && /* @__PURE__ */ React.createElement("span", { title: overflowCount + " more at this time \u2014 open the day to see them", style: { position: "absolute", bottom: 2, right: 2, fontSize: 8, fontWeight: 800, color: kindStyle.color, background: "rgba(0,0,0,0.18)", borderRadius: 8, padding: "1px 4px", lineHeight: 1.3, zIndex: 1 } }, "+", overflowCount),
-            isPendingAcceptance && /* @__PURE__ */ React.createElement("span", { title: isDeclined ? "Declined" : acceptanceSummary.accepted + "/" + acceptanceSummary.total + " accepted", style: { position: "absolute", bottom: 2, left: 2, fontSize: 8, fontWeight: 800, color: isDeclined ? "#fff" : kindStyle.color, background: isDeclined ? T.red + "cc" : "rgba(0,0,0,0.18)", borderRadius: 8, padding: "1px 4px", lineHeight: 1.3, zIndex: 1 } }, isDeclined ? "Declined" : acceptanceSummary.accepted + "/" + acceptanceSummary.total),
-            conflictTitles.length > 0 && /* @__PURE__ */ React.createElement("span", { title: "Overlaps with " + conflictTitles.join(", "), style: { position: "absolute", top: 2, left: 2, fontSize: 9, lineHeight: 1, zIndex: 1, filter: "drop-shadow(0 1px 1px rgba(0,0,0,0.35))" } }, "\u26A0\uFE0F"),
-            isRoutine && (ev.dayNote || ev.dayTodo && ev.dayTodo.length > 0) && /* @__PURE__ */ React.createElement("span", { title: "This class has notes saved", style: { position: "absolute", top: 3, right: 3, width: 6, height: 6, borderRadius: "50%", background: T.lime, boxShadow: "0 0 0 1.5px rgba(255,255,255,0.9)", zIndex: 1 } }),
-            /* @__PURE__ */ React.createElement("div", { style: { fontSize: 9.5, fontWeight: 700, color: kindStyle.color, lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, isExam ? "EXAM \xB7 " : "", ev.title),
-            heightPx > 34 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 8.5, color: isStudy ? T.ink + "aa" : isWarningKind ? tokens.color.warning : tokens.color.textSecondary, marginTop: 1 } }, fmtTimeRange2(String(Math.floor(effStartMin / 60)).padStart(2, "0") + ":" + String(effStartMin % 60).padStart(2, "0"), effDuration)),
-            heightPx > 40 && ev.location && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 8.5, color: isStudy ? T.ink + "aa" : isWarningKind ? tokens.color.warning : tokens.color.textSecondary, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.location),
-            heightPx > 40 && (isRoutine ? ev.dayNote : ev.notes) && /* @__PURE__ */ React.createElement("div", { onClick: (e) => {
+            isReminderMarker ? (
+              // Compact treatment: dot + thin line + title, no
+              // filled box, no time/location/details lines, no
+              // resize handles -- there's no duration to resize
+              // and no room for progressive-disclosure lines in
+              // 13px anyway. Deliberately skips all the badges
+              // (overdue dot, overflow count, acceptance/conflict)
+              // that the normal block below carries -- a reminder
+              // never has those states in practice, and the
+              // marker is meant to read as minimal.
+              /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 5, height: "100%" } }, /* @__PURE__ */ React.createElement("span", { style: { width: 6, height: 6, borderRadius: "50%", background: subjectColor, flexShrink: 0, boxShadow: `0 0 0 2px ${subjectColor}2a` } }), /* @__PURE__ */ React.createElement("span", { style: { flex: "0 1 auto", minWidth: 8, height: 2, background: subjectColor + "77", borderRadius: 1 } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, fontWeight: 700, color: subjectColor, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, ev.title))
+            ) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: subjectColor, borderRadius: "5px 0 0 5px" } }), !catchUpPending && over > 0 && /* @__PURE__ */ React.createElement("span", { title: over + "d overdue", style: { position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: "50%", background: T.red, boxShadow: "0 0 0 1.5px rgba(255,255,255,0.9)", zIndex: 1 } }), overflowCount > 0 && /* @__PURE__ */ React.createElement("span", { title: overflowCount + " more at this time \u2014 open the day to see them", style: { position: "absolute", bottom: 2, right: 2, fontSize: 8, fontWeight: 800, color: kindStyle.color, background: "rgba(0,0,0,0.18)", borderRadius: 8, padding: "1px 4px", lineHeight: 1.3, zIndex: 1 } }, "+", overflowCount), isPendingAcceptance && /* @__PURE__ */ React.createElement("span", { title: isDeclined ? "Declined" : acceptanceSummary.accepted + "/" + acceptanceSummary.total + " accepted", style: { position: "absolute", bottom: 2, left: 2, fontSize: 8, fontWeight: 800, color: isDeclined ? "#fff" : kindStyle.color, background: isDeclined ? T.red + "cc" : "rgba(0,0,0,0.18)", borderRadius: 8, padding: "1px 4px", lineHeight: 1.3, zIndex: 1 } }, isDeclined ? "Declined" : acceptanceSummary.accepted + "/" + acceptanceSummary.total), conflictTitles.length > 0 && /* @__PURE__ */ React.createElement("span", { title: "Overlaps with " + conflictTitles.join(", "), style: { position: "absolute", top: 2, left: 2, fontSize: 9, lineHeight: 1, zIndex: 1, filter: "drop-shadow(0 1px 1px rgba(0,0,0,0.35))" } }, "\u26A0\uFE0F"), isRoutine && (ev.dayNote || ev.dayTodo && ev.dayTodo.length > 0) && /* @__PURE__ */ React.createElement("span", { title: "This class has notes saved", style: { position: "absolute", top: 3, right: 3, width: 6, height: 6, borderRadius: "50%", background: T.lime, boxShadow: "0 0 0 1.5px rgba(255,255,255,0.9)", zIndex: 1 } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 9.5, fontWeight: 700, color: kindStyle.color, lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, isExam ? "EXAM \xB7 " : "", ev.title), heightPx > 34 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 8.5, color: isStudy ? T.ink + "aa" : isWarningKind ? tokens.color.warning : tokens.color.textSecondary, marginTop: 1 } }, fmtTimeRange2(String(Math.floor(effStartMin / 60)).padStart(2, "0") + ":" + String(effStartMin % 60).padStart(2, "0"), effDuration)), heightPx > 40 && ev.location && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 8.5, color: isStudy ? T.ink + "aa" : isWarningKind ? tokens.color.warning : tokens.color.textSecondary, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.location), heightPx > 40 && (isRoutine ? ev.dayNote : ev.notes) && /* @__PURE__ */ React.createElement("div", { onClick: (e) => {
               e.stopPropagation();
               if (isRoutine) {
                 if (onEditRoutine) onEditRoutine(ev.routineId, ev.date);
               } else {
                 openEdit(ev);
               }
-            }, title: "Has notes -- click to view", style: { fontSize: 8.5, color: isStudy ? T.ink + "aa" : isWarningKind ? tokens.color.warning : tokens.color.textSecondary, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 2 } }, "Details"),
-            /* @__PURE__ */ React.createElement(
+            }, title: "Has notes -- click to view", style: { fontSize: 8.5, color: isStudy ? T.ink + "aa" : isWarningKind ? tokens.color.warning : tokens.color.textSecondary, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 2 } }, "Details")),
+            !isReminderMarker && /* @__PURE__ */ React.createElement(
               "div",
               {
                 draggable: false,
@@ -12496,7 +12511,7 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
                 style: { position: "absolute", top: -2, left: 0, right: 0, height: 6, cursor: "ns-resize", zIndex: 4 }
               }
             ),
-            /* @__PURE__ */ React.createElement(
+            !isReminderMarker && /* @__PURE__ */ React.createElement(
               "div",
               {
                 draggable: false,
@@ -13840,7 +13855,8 @@ function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf,
     const dur = ev.duration || 30;
     const conflictTitles = totalCols > 1 ? dayLaidOut.filter((o) => o.ev.id !== ev.id && o.start < end && start < o.end).map((o) => o.ev.title) : [];
     const nextInCol = dayLaidOut.filter((o) => o.col === col && o.start > start).sort((a, b) => a.start - b.start)[0];
-    const heightPx = computeEventBlockHeightPx(dur, nextInCol ? nextInCol.start - start : null, pxPerHr);
+    const isReminderMarker = isZeroDurationTimedReminder(ev);
+    const heightPx = isReminderMarker ? 13 : computeEventBlockHeightPx(dur, nextInCol ? nextInCol.start - start : null, pxPerHr);
     const isDone = ev.status === "done";
     const over = daysOverdue(ev);
     const acceptanceSummary = ev.proposalMemberUids ? computeAcceptanceSummary(ev.proposalMemberUids, ev.proposalResponses) : null;
@@ -13849,7 +13865,7 @@ function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf,
     const color = ev.color || colorOf(ev.courseId || ev.subject);
     const isStudy = ev.kind === "study block";
     const isExam = ev.kind === "exam";
-    const kindStyle = isStudy ? { background: color, borderLeft: "none", color: T.ink } : isExam ? { background: T.ink, border: `2px solid ${color}`, borderLeft: `2px solid ${color}`, boxShadow: `0 0 10px -1px ${color}, inset 0 0 10px ${color}22`, color: T.cream } : { background: blendOverBg(color, 0.1176, T.card), borderLeft: `3px solid ${color}`, color };
+    const kindStyle = isReminderMarker ? { background: "transparent", borderLeft: "none", color } : isStudy ? { background: color, borderLeft: "none", color: T.ink } : isExam ? { background: T.ink, border: `2px solid ${color}`, borderLeft: `2px solid ${color}`, boxShadow: `0 0 10px -1px ${color}, inset 0 0 10px ${color}22`, color: T.cream } : { background: blendOverBg(color, 0.1176, T.card), borderLeft: `3px solid ${color}`, color };
     const leftPct = displayCol / displayTotalCols * 100;
     const widthPct = 100 / displayTotalCols;
     const isNewlyAdded = !!newItemHighlightIds && (newItemHighlightIds.has(ev.id) || ev.routineId && newItemHighlightIds.has(ev.routineId));
@@ -13874,24 +13890,17 @@ function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf,
           }
           isDone ? uncrossDone(ev.id) : markDone(ev.id);
         },
-        title: (isNewlyAdded ? "Just added \xB7 " : "") + (ev.isRoutine ? "Double-click to edit" : isPendingAcceptance ? "Click to see who's accepted" : "Click to toggle done, double-click to edit"),
-        style: { position: "absolute", top: topPx, left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`, height: heightPx, borderRadius: 6, padding: "4px 8px", cursor: "pointer", overflow: "hidden", zIndex: 3, opacity: isPendingAcceptance || isDone ? 0.6 : 1, boxSizing: "border-box", ...kindStyle, ...newItemBoxShadow ? { boxShadow: newItemBoxShadow } : {} }
+        title: (isNewlyAdded ? "Just added \xB7 " : "") + (isReminderMarker ? "Reminder \xB7 click to toggle done, double-click to edit" : ev.isRoutine ? "Double-click to edit" : isPendingAcceptance ? "Click to see who's accepted" : "Click to toggle done, double-click to edit"),
+        style: { position: "absolute", top: topPx, left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`, height: heightPx, borderRadius: 6, padding: isReminderMarker ? "0 4px" : "4px 8px", cursor: "pointer", overflow: "hidden", zIndex: 3, opacity: isPendingAcceptance || isDone ? 0.6 : 1, boxSizing: "border-box", ...kindStyle, ...newItemBoxShadow ? { boxShadow: newItemBoxShadow } : {} }
       },
-      !catchUpPending && over > 0 && /* @__PURE__ */ React.createElement("span", { title: over + "d overdue", style: { position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: "50%", background: T.red, boxShadow: `0 0 0 1.5px ${isExam ? T.ink : "#fff"}`, zIndex: 1 } }),
-      overflowCount > 0 && /* @__PURE__ */ React.createElement("span", { title: overflowCount + " more at this time", style: { position: "absolute", bottom: 2, right: 2, fontSize: 8, fontWeight: 800, color: kindStyle.color, background: "rgba(0,0,0,0.18)", borderRadius: 8, padding: "1px 4px", lineHeight: 1.3, zIndex: 1 } }, "+", overflowCount),
-      isPendingAcceptance && /* @__PURE__ */ React.createElement("span", { title: isDeclined ? "Declined" : acceptanceSummary.accepted + "/" + acceptanceSummary.total + " accepted", style: { position: "absolute", bottom: 2, left: 2, fontSize: 8, fontWeight: 800, color: isDeclined ? "#fff" : kindStyle.color, background: isDeclined ? T.red + "cc" : "rgba(0,0,0,0.18)", borderRadius: 8, padding: "1px 4px", lineHeight: 1.3, zIndex: 1 } }, isDeclined ? "Declined" : acceptanceSummary.accepted + "/" + acceptanceSummary.total),
-      conflictTitles.length > 0 && /* @__PURE__ */ React.createElement("span", { title: "Overlaps with " + conflictTitles.join(", "), style: { position: "absolute", top: 2, left: 2, fontSize: 9, lineHeight: 1, zIndex: 1, filter: "drop-shadow(0 1px 1px rgba(0,0,0,0.35))" } }, "\u26A0\uFE0F"),
-      /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, fontWeight: 700, color: kindStyle.color, lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: isDone ? "line-through" : "none" } }, isExam ? "EXAM \xB7 " : "", ev.title),
-      heightPx > 34 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 9.5, color: isStudy ? T.ink + "aa" : isExam ? color : T.muted, marginTop: 2 } }, fmtTimeRange2(ev.time, dur)),
-      heightPx > 40 && ev.location && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 9.5, color: isStudy ? T.ink + "aa" : isExam ? color : T.muted, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.location),
-      heightPx > 40 && (ev.isRoutine ? ev.dayNote : ev.notes) && /* @__PURE__ */ React.createElement("div", { onClick: (e) => {
+      isReminderMarker ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 5, height: "100%" } }, /* @__PURE__ */ React.createElement("span", { style: { width: 6, height: 6, borderRadius: "50%", background: color, flexShrink: 0, boxShadow: `0 0 0 2px ${color}2a` } }), /* @__PURE__ */ React.createElement("span", { style: { flex: "0 1 auto", minWidth: 8, height: 2, background: color + "77", borderRadius: 1 } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10, fontWeight: 700, color, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", textDecoration: isDone ? "line-through" : "none" } }, ev.title)) : /* @__PURE__ */ React.createElement(React.Fragment, null, !catchUpPending && over > 0 && /* @__PURE__ */ React.createElement("span", { title: over + "d overdue", style: { position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: "50%", background: T.red, boxShadow: `0 0 0 1.5px ${isExam ? T.ink : "#fff"}`, zIndex: 1 } }), overflowCount > 0 && /* @__PURE__ */ React.createElement("span", { title: overflowCount + " more at this time", style: { position: "absolute", bottom: 2, right: 2, fontSize: 8, fontWeight: 800, color: kindStyle.color, background: "rgba(0,0,0,0.18)", borderRadius: 8, padding: "1px 4px", lineHeight: 1.3, zIndex: 1 } }, "+", overflowCount), isPendingAcceptance && /* @__PURE__ */ React.createElement("span", { title: isDeclined ? "Declined" : acceptanceSummary.accepted + "/" + acceptanceSummary.total + " accepted", style: { position: "absolute", bottom: 2, left: 2, fontSize: 8, fontWeight: 800, color: isDeclined ? "#fff" : kindStyle.color, background: isDeclined ? T.red + "cc" : "rgba(0,0,0,0.18)", borderRadius: 8, padding: "1px 4px", lineHeight: 1.3, zIndex: 1 } }, isDeclined ? "Declined" : acceptanceSummary.accepted + "/" + acceptanceSummary.total), conflictTitles.length > 0 && /* @__PURE__ */ React.createElement("span", { title: "Overlaps with " + conflictTitles.join(", "), style: { position: "absolute", top: 2, left: 2, fontSize: 9, lineHeight: 1, zIndex: 1, filter: "drop-shadow(0 1px 1px rgba(0,0,0,0.35))" } }, "\u26A0\uFE0F"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, fontWeight: 700, color: kindStyle.color, lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: isDone ? "line-through" : "none" } }, isExam ? "EXAM \xB7 " : "", ev.title), heightPx > 34 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 9.5, color: isStudy ? T.ink + "aa" : isExam ? color : T.muted, marginTop: 2 } }, fmtTimeRange2(ev.time, dur)), heightPx > 40 && ev.location && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 9.5, color: isStudy ? T.ink + "aa" : isExam ? color : T.muted, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.location), heightPx > 40 && (ev.isRoutine ? ev.dayNote : ev.notes) && /* @__PURE__ */ React.createElement("div", { onClick: (e) => {
         e.stopPropagation();
         if (ev.isRoutine) {
           if (onEditRoutine) onEditRoutine(ev.routineId, ev.date);
         } else {
           openEdit(ev);
         }
-      }, title: "Has notes -- click to view", style: { fontSize: 9.5, color: isStudy ? T.ink + "aa" : isExam ? color : T.muted, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 2 } }, "Details")
+      }, title: "Has notes -- click to view", style: { fontSize: 9.5, color: isStudy ? T.ink + "aa" : isExam ? color : T.muted, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 2 } }, "Details"))
     ), ev.commuteAfter > 0 && /* @__PURE__ */ React.createElement("div", { title: ev.commuteAfter + " min commute", style: commuteStripStyle(ev.commuteAfter, "after") }, ev.commuteAfter * (pxPerHr / 60) > 13 && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color, fontWeight: 600, whiteSpace: "nowrap" } }, ev.commuteAfter, "m commute")));
   }))))), /* @__PURE__ */ React.createElement(DayPreviewModal, { open: dayPreviewOpen, onClose: () => setDayPreviewOpen(false), dayEvents, selDay, dayLabel: niceDayLabel, colorOf, fmtTime: fmtTime2, fmtTimeRange: fmtTimeRange2, catchUpPending, openNew }), whoInAnchor && (() => {
     const ev = (dayEvents || []).find((e) => e.id === whoInAnchor.id);
@@ -14000,10 +14009,14 @@ function DayPreviewModal({ open, onClose, dayEvents, selDay, dayLabel, colorOf, 
       const dur = ev.duration || 30;
       const conflictTitles = totalCols > 1 ? dayLaidOut.filter((o) => o.ev.id !== ev.id && o.start < end && start < o.end).map((o) => o.ev.title) : [];
       const nextInCol = dayLaidOut.filter((o) => o.col === col && o.start > start).sort((a, b) => a.start - b.start)[0];
-      const heightPx = computeEventBlockHeightPx(dur, nextInCol ? nextInCol.start - start : null, pxPerHr);
+      const isReminderMarker = isZeroDurationTimedReminder(ev);
+      const heightPx = isReminderMarker ? 13 : computeEventBlockHeightPx(dur, nextInCol ? nextInCol.start - start : null, pxPerHr);
       const color = ev.color || colorOf(ev.courseId || ev.subject);
       const leftPct = displayCol / displayTotalCols * 100;
       const widthPct = 100 / displayTotalCols;
+      if (isReminderMarker) {
+        return /* @__PURE__ */ React.createElement("div", { key: ev.id, style: { position: "absolute", top: topPx, left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`, height: heightPx, display: "flex", alignItems: "center", gap: 5, padding: "0 4px", zIndex: 3, boxSizing: "border-box" } }, /* @__PURE__ */ React.createElement("span", { style: { width: 6, height: 6, borderRadius: "50%", background: color, flexShrink: 0, boxShadow: `0 0 0 2px ${color}2a` } }), /* @__PURE__ */ React.createElement("span", { style: { flex: "0 1 auto", minWidth: 8, height: 2, background: color + "77", borderRadius: 1 } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, fontWeight: 700, color, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, ev.title));
+      }
       return /* @__PURE__ */ React.createElement("div", { key: ev.id, style: { position: "absolute", top: topPx, left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`, height: heightPx, borderRadius: 8, padding: "6px 10px", overflow: "hidden", zIndex: 3, boxSizing: "border-box", background: color + "22", border: `1px solid ${color}55`, display: "flex", flexDirection: "column", justifyContent: "center" } }, conflictTitles.length > 0 && /* @__PURE__ */ React.createElement("span", { title: "Overlaps with " + conflictTitles.join(", "), style: { position: "absolute", top: 2, right: 2, fontSize: 9, lineHeight: 1, zIndex: 1, filter: "drop-shadow(0 1px 1px rgba(0,0,0,0.35))" } }, "\u26A0\uFE0F"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6 } }, /* @__PURE__ */ React.createElement("span", { style: { color, display: "flex", flexShrink: 0 } }, iconFor(ev.kind)), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, fontWeight: 700, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.title)), heightPx > 30 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.muted, marginTop: 2, marginLeft: 19 } }, fmtTimeRange2(ev.time, dur)), overflowCount > 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 9.5, fontWeight: 700, color, marginTop: 1, marginLeft: 19 } }, "+", overflowCount, " more at this time"));
     })))
   );
@@ -14848,7 +14861,22 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
     }))),
     pace && pace.behind && !paceDismissed && /* @__PURE__ */ React.createElement("div", { style: { background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 8, padding: "10px 12px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, marginBottom: 2 } }, "Behind pace on this one"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 8 } }, Math.round(pace.loggedMins), " of an expected ", Math.round(pace.expectedMins), " min logged so far, aiming to finish by ", pace.gate.finishByDate, "."), paceProposal ? paceProposal.date ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.text } }, paceProposal.date, " \xB7 ", paceProposal.time, " \xB7 ", paceProposal.duration, "min"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: confirmPaceProposal }, "Add it"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setPaceProposal(null) }, "Never mind"))) : /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted } }, "Couldn't find an open slot before the deadline -- try adding a time manually below.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: proposePaceBlock }, "Propose a catch-up block"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: dismissPaceOffer }, "Not now"))),
     pace && pace.ahead && /* @__PURE__ */ React.createElement("div", { style: { background: T.teal + "14", border: `1px solid ${T.teal}33`, borderRadius: 8, padding: "10px 12px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, marginBottom: 2 } }, "Ahead of pace on this one"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted } }, Math.round(pace.loggedMins), " of an expected ", Math.round(pace.expectedMins), " min logged so far \u2014 nice work.")),
-    kind !== "exam" && !ev.isAttackBlock && !ev.dueEventId && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, !addManualBlock ? /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setAddManualBlock(true), style: { background: "none", border: "none", color: T.lime, fontSize: 12, fontWeight: 600, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, "+ Add my own time block") : /* @__PURE__ */ React.createElement("div", { style: { background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 8 } }, "A specific time you'll work on this -- shows up on your calendar like any other block, drag/resize it same as usual."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Input, { type: "date", value: manualDate, onChange: (e) => setManualDate(e.target.value), style: { width: 140 } }), /* @__PURE__ */ React.createElement(TimeInput, { value: manualTime, onChange: setManualTime }), /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, fontSize: 11 } }, "\u2013"), /* @__PURE__ */ React.createElement(TimeInput, { value: minutesToTime(timeToMinutes(manualTime) + manualDuration), onChange: (v) => setManualDuration(Math.max(5, timeToMinutes(v) - timeToMinutes(manualTime))) })), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: addManualLinkedBlock, disabled: !manualDate }, "Add block"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setAddManualBlock(false) }, "Cancel")))),
+    kind !== "exam" && !ev.isAttackBlock && !ev.dueEventId && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, !addManualBlock ? /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setAddManualBlock(true), style: { background: "none", border: "none", color: T.lime, fontSize: 12, fontWeight: 600, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, "+ Add my own time block") : /* @__PURE__ */ React.createElement("div", { style: { background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 8 } }, "A specific time you'll work on this -- shows up on your calendar like any other block, drag/resize it same as usual."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Input, { type: "date", value: manualDate, onChange: (e) => setManualDate(e.target.value), style: { width: 140 } }), /* @__PURE__ */ React.createElement(TimeInput, { value: manualTime, onChange: setManualTime }), /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, fontSize: 11 } }, "\u2013"), /* @__PURE__ */ React.createElement(TimeInput, { value: minutesToTime(timeToMinutes(manualTime) + manualDuration), onChange: (v) => setManualDuration(Math.max(5, timeToMinutes(v) - timeToMinutes(manualTime))) })), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: addManualLinkedBlock, disabled: !manualDate }, "Add block"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setAddManualBlock(false) }, "Cancel")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, margin: "12px 0 8px" } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: 1, background: T.border } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9.5, color: T.faint, fontWeight: 700, letterSpacing: "0.06em" } }, "OR"), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: 1, background: T.border } })), /* @__PURE__ */ React.createElement(
+      "div",
+      {
+        draggable: true,
+        onDragStart: (e) => {
+          e.dataTransfer.setData(MANUAL_BLOCK_DRAG_MIME, JSON.stringify({ dueEventId: ev.id, title: "Work on: " + (title.trim() || ev.title), subject: ev.subject || "", deadline: ev.deadline || null, duration: manualDuration }));
+          e.dataTransfer.effectAllowed = "copy";
+          if (setActive) setActive("calendar");
+          onClose();
+        },
+        title: "Drag onto the calendar to place it exactly where you want",
+        style: { display: "flex", alignItems: "center", gap: 8, fontSize: 11.5, fontWeight: 600, color: T.text, padding: "8px 10px", borderRadius: 6, border: `1px dashed ${T.lime}77`, cursor: "grab", background: T.lime + "0c" }
+      },
+      /* @__PURE__ */ React.createElement("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 } }, "Drag onto the calendar"),
+      /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9.5, color: T.faint, flexShrink: 0 } }, manualDuration, " min")
+    ))),
     ev.phases && ev.phases.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 } }, "Phases"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, ev.phases.map((ph, pi) => /* @__PURE__ */ React.createElement("div", { key: pi, style: { display: "flex", alignItems: "center", gap: 6 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, fontWeight: 700, color: ph.status === "done" ? T.lime : ph.status === "active" ? T.amber : T.faint, width: 44, flexShrink: 0, textTransform: "uppercase" } }, ph.status), /* @__PURE__ */ React.createElement(Input, { value: ph.name, onChange: (e) => writePhases(ev.phases.map((p, ppi) => ppi === pi ? { ...p, name: e.target.value } : p)), style: { flex: 1, fontSize: 12, padding: "5px 8px" } }), ph.status === "pending" && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => writePhases(ev.phases.filter((_, ppi) => ppi !== pi)), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 15, lineHeight: 1, padding: 2, flexShrink: 0 } }, "\xD7"))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => writePhases([...ev.phases, { name: "", status: "pending" }]), style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline", textAlign: "left" } }, "+ Add phase"))),
     ev.outline && ev.outline.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 } }, "Outline"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, ev.outline.map((o, oi) => /* @__PURE__ */ React.createElement("div", { key: oi, style: { display: "flex", alignItems: "center", gap: 6 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: o.done, onChange: () => writeOutline(ev.outline.map((x, xi) => xi === oi ? { ...x, done: !x.done } : x)), style: { accentColor: T.lime, cursor: "pointer" } }), /* @__PURE__ */ React.createElement(Input, { value: o.text, onChange: (e) => writeOutline(ev.outline.map((x, xi) => xi === oi ? { ...x, text: e.target.value } : x)), style: { flex: 1, fontSize: 12, padding: "5px 8px", textDecoration: o.done ? "line-through" : "none" } }), /* @__PURE__ */ React.createElement(Input, { type: "date", value: o.dueDate || "", onChange: (e) => writeOutline(ev.outline.map((x, xi) => xi === oi ? { ...x, dueDate: e.target.value } : x)), title: "Due date for this step (optional)", style: { width: 120, fontSize: 11, padding: "5px 6px", flexShrink: 0 } }), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => writeOutline(ev.outline.filter((_, xi) => xi !== oi)), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 15, lineHeight: 1, padding: 2, flexShrink: 0 } }, "\xD7"))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => writeOutline([...ev.outline, { text: "", done: false }]), style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline", textAlign: "left" } }, "+ Add step")), chainIdForReschedule && /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", style: { marginTop: 8 }, onClick: () => {
       reoptimizeAttackChain(chainIdForReschedule);
@@ -16103,6 +16131,31 @@ function CalendarTab({ setActive = () => {
       anchorY: anchorPoint && anchorPoint.y || null
     });
     setNewEventOpen(true);
+  };
+  const commitManualBlockDrop = (payload, dateKey, time) => {
+    if (!payload || !payload.dueEventId) return;
+    const block = {
+      id: "manual-" + payload.dueEventId + "-" + Date.now(),
+      title: payload.title || "Work on this",
+      date: dateKey,
+      time,
+      subject: payload.subject || "",
+      kind: "study block",
+      notes: "",
+      priority: 5,
+      difficulty: 5,
+      deadline: payload.deadline || null,
+      duration: payload.duration || 30,
+      status: "pending",
+      timeSpent: 0,
+      completedAt: null,
+      dueEventId: payload.dueEventId
+    };
+    const next = events.concat([block]);
+    setEvents2(next);
+    lsSet("events", next);
+    setPlacementToast("Block added \u2014 " + fmtTimeRange(time, block.duration) + ".");
+    setTimeout(() => setPlacementToast(""), 3200);
   };
   const openGroupSchedule = async () => {
     setGsOpen(true);
@@ -17823,6 +17876,7 @@ Examples:
         openNewEventForDrop(sidebarDragChip, dk, time, anchorPoint);
         setSidebarDragChip(null);
       },
+      onDropManualBlockRequest: commitManualBlockDrop,
       onDropRoutineOccurrence,
       onResizeRoutineOccurrence,
       pendingRoutineChange: routineDropPending,
