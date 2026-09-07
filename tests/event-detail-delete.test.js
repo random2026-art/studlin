@@ -34,13 +34,13 @@ describe("EventDetailModal: Delete button + confirm modal", () => {
 
   test("has its own deleteConfirmOpen state, independent of the pre-existing cancelConfirmOpen state", () => {
     const idx = SOURCE.indexOf("function EventDetailModal(");
-    const body = SOURCE.slice(idx, idx + 40000);
+    const body = SOURCE.slice(idx, idx + 48000);
     assert.match(body, /const \[deleteConfirmOpen,setDeleteConfirmOpen\]=useState\(false\);/);
   });
 
   test("the main modal footer has a Delete button that opens the confirm modal, not an immediate delete", () => {
     const idx = SOURCE.indexOf("function EventDetailModal(");
-    const body = SOURCE.slice(idx, idx + 40000);
+    const body = SOURCE.slice(idx, idx + 48000);
     assert.match(body, /<Btn variant="danger" onClick=\{\(\)=>setDeleteConfirmOpen\(true\)\}>Delete<\/Btn>/);
   });
 
