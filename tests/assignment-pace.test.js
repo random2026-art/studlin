@@ -79,16 +79,26 @@ describe("computeAssignmentPace", () => {
     assert.equal(Math.round(result.expectedMins), 600);
   });
 
-  test("falls back to ATTACK_BLOCK_DEFAULT_ESTIMATE_HOURS when unset", () => {
+  // Bug fix, 2026-09-07 user report: this used to fall back to
+  // ATTACK_BLOCK_DEFAULT_ESTIMATE_HOURS (3hr) and compute a full pace
+  // verdict from that fabricated number -- a "behind pace" judgment built
+  // on a total Studlin invented, not one it actually knows. The user's
+  // own framing: Attack Block's whole point is finding the real duration
+  // FROM a probe session specifically so Studlin never has to guess up
+  // front -- a pace verdict is a judgment, not a scheduling bootstrap, and
+  // there's no real number to correct a fabricated one with. No real
+  // estimate now means no verdict at all, not an invented one.
+  test("returns null (no verdict) when there's no real estimate, rather than fabricating one from ATTACK_BLOCK_DEFAULT_ESTIMATE_HOURS", () => {
     const m = loadStudlinModule();
-    const noEstimate = { ...BASE_EV, estimatedHours: null };
-    const withDefault = { ...BASE_EV, estimatedHours: m.ATTACK_BLOCK_DEFAULT_ESTIMATE_HOURS };
-    // Same gate/expected math either way -- confirms the fallback is
-    // actually wired in, not silently producing a different (e.g. null)
-    // gate for the unset case.
-    const a = m.computeAssignmentPace(noEstimate, [], "2026-09-13");
-    const b = m.computeAssignmentPace(withDefault, [], "2026-09-13");
-    assert.deepEqual(a, b);
+    assert.equal(m.computeAssignmentPace({ ...BASE_EV, estimatedHours: null }, [], "2026-09-13"), null);
+    assert.equal(m.computeAssignmentPace({ ...BASE_EV, estimatedHours: undefined }, [], "2026-09-13"), null);
+    assert.equal(m.computeAssignmentPace({ ...BASE_EV, estimatedHours: 0 }, [], "2026-09-13"), null);
+  });
+
+  test("still gives a real verdict once a real estimate exists, fabricated or not is irrelevant to the math itself", () => {
+    const m = loadStudlinModule();
+    const result = m.computeAssignmentPace(BASE_EV, [], "2026-09-13");
+    assert.ok(result, "BASE_EV has a real estimatedHours:10, so a verdict is expected");
   });
 
   test("regression: with uniform hours (the default), an explicit prefs arg matches the no-prefs fallback exactly", () => {

@@ -2661,7 +2661,8 @@ const ASSIGNMENT_AHEAD_THRESHOLD = 1.5;
 function computeAssignmentPace(ev, allEvents, todayKey, prefs) {
   if (!ev || ev.checklist || ev.status !== "pending" || !ev.date) return null;
   if (ev.kind !== "deadline" && ev.kind !== "study block") return null;
-  const totalMins = (ev.estimatedHours || ATTACK_BLOCK_DEFAULT_ESTIMATE_HOURS) * 60;
+  if (!ev.estimatedHours) return null;
+  const totalMins = ev.estimatedHours * 60;
   const deadlineKey = ev.deadline || ev.date;
   const gate = computeAttackBlockStartDate(deadlineKey, totalMins, "2000-01-01");
   if (!gate || todayKey < gate.startDate) return null;
@@ -9900,7 +9901,20 @@ function buildSyllabusEventBatch(existing, noteId, tag, items, sourceMaterial, r
       // Stored (not just used in-the-moment) so the daily actionable-window
       // sweep can compare against this exact same computation later without
       // needing to re-derive it — see the sweep in App().
-      ...wantsAttack ? { estimatedHours: it.estimatedHours || ATTACK_BLOCK_DEFAULT_ESTIMATE_HOURS, attackStartDate: gate ? gate.startDate : null } : {},
+      // Bug fix, 2026-09-07 user report: this used to fall back to the
+      // same ATTACK_BLOCK_DEFAULT_ESTIMATE_HOURS bootstrap
+      // attackBlockActionableDate itself already falls back to
+      // internally -- storing that fabricated number here too meant
+      // computeAssignmentPace's own "no real estimate, say nothing"
+      // guard (see its comment) never actually caught this case, since
+      // it had no way to tell a real AI guess apart from an invented
+      // one once both were stored as the same plain number. attackStartDate
+      // still gets a real value either way (attackBlockActionableDate's
+      // own bootstrap default), since deciding roughly WHEN to suggest
+      // starting is a legitimate guess a real probe later corrects --
+      // only the stored "this is a known total" field is withheld when
+      // it isn't actually known.
+      ...wantsAttack ? { ...it.estimatedHours > 0 ? { estimatedHours: it.estimatedHours } : {}, attackStartDate: gate ? gate.startDate : null } : {},
       // Only ever a plan of NAMES — see proposeProjectPhases. Stored
       // regardless of isActionableNow (same as estimatedHours/
       // attackStartDate above) so a deferred prepPending item doesn't lose
