@@ -141,7 +141,14 @@ module.exports = withSentry(async (req, res) => {
       return res.status(422).json({ error: 'That link didn\'t return real calendar data - double-check you copied the "Calendar Feed" (.ics) link, not a regular calendar page URL.' });
     }
     const includeAllDay = isAcademicCalendarHost(parsed.hostname, platform);
-    const { events, skippedAllDay } = parseICS(ics, { includeAllDay });
+    // Optional -- see convertUtcToLocal's own comment for why a UTC-flagged
+    // ICS time needs the STUDENT's real timezone to convert correctly (the
+    // server itself runs in whatever zone Vercel happens to use, not
+    // theirs). Length-capped defensively; an invalid/bogus IANA name just
+    // falls through convertUtcToLocal's own try/catch unconverted, never a
+    // crash either way.
+    const targetTz = typeof req.query.tz === 'string' && req.query.tz.length <= 100 ? req.query.tz : undefined;
+    const { events, skippedAllDay } = parseICS(ics, { includeAllDay, targetTz });
     return res.status(200).json({ ok: true, events, count: events.length, skippedAllDay });
   } catch (e) {
     return res.status(e.status || 500).json({ error: e.message || 'Server error' });
@@ -165,6 +172,42 @@ function parseDt(s) {
     return yr + '-' + mo + '-' + dy + 'T' + hr + ':' + mn;
   }
   return yr + '-' + mo + '-' + dy;
+}
+
+// Bug fix, 2026-09-07 user report (with screenshot): Course Site/Moodle
+// items imported at a wrong, wildly-off clock time (e.g. everything
+// landing near 3am). Root cause: parseDt above reads the hour/minute
+// straight out of the raw ICS digits with zero regard for whether the
+// timestamp is UTC (a trailing "Z", RFC 5545) or already local/floating.
+// A Moodle-style feed that exports real times in UTC had every single
+// one silently misread as if it were already the student's own local
+// time -- off by whatever the UTC offset happens to be.
+// Scoped deliberately to the Z-suffixed case only (not a TZID param,
+// which parseICS's key-stripping already discards) -- that's the
+// concrete, confirmed case, and a real IANA TZID->instant conversion has
+// its own DST-at-that-exact-date subtlety not worth taking on blind for
+// a case not yet seen in practice. Native Intl.DateTimeFormat handles
+// the actual UTC->local math (including DST), no timezone library
+// needed. targetTz is optional and this returns the input unchanged
+// without it -- every existing caller that never passes a timezone (the
+// cron resync in api/me.js, see its own comment) keeps today's exact
+// behavior, not a silent new conversion it never asked for.
+function convertUtcToLocal(naiveDateTime, targetTz) {
+  if (!targetTz || !naiveDateTime || naiveDateTime.length <= 10) return naiveDateTime;
+  try {
+    const utcDate = new Date(naiveDateTime + 'Z');
+    if (isNaN(utcDate.getTime())) return naiveDateTime;
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: targetTz, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    }).formatToParts(utcDate);
+    const get = (t) => (parts.find((p) => p.type === t) || {}).value || '';
+    let hh = get('hour');
+    if (hh === '24') hh = '00'; // Intl quirk in some runtimes: midnight as "24", not "00"
+    return get('year') + '-' + get('month') + '-' + get('day') + 'T' + hh + ':' + get('minute');
+  } catch (e) {
+    return naiveDateTime;
+  }
 }
 
 function pad2(n) { return String(n).padStart(2, '0'); }
@@ -287,6 +330,12 @@ function expandRecurringEvent(ev) {
 
 function parseICS(text, opts) {
   const includeAllDay = !!(opts && opts.includeAllDay);
+  // Optional -- see convertUtcToLocal's own comment. Only the interactive
+  // connect/resync client calls (studlin-app.jsx, detectTz()) pass this;
+  // the daily cron resync (api/me.js) currently doesn't have a per-user
+  // timezone to send, so it deliberately keeps today's unconverted
+  // behavior rather than guessing one.
+  const targetTz = opts && opts.targetTz;
   const lines = text
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
@@ -324,8 +373,13 @@ function parseICS(text, opts) {
     const val = line.slice(ci + 1).trim();
 
     if (key === 'SUMMARY') ev.summary = val;
-    else if (key === 'DTSTART') ev.dtstart = parseDt(val);
-    else if (key === 'DTEND') ev.dtend = parseDt(val);
+    // dtstartUtc/dtendUtc: a trailing "Z" on the raw value is RFC 5545's
+    // own marker for "this is a real UTC instant" -- captured here, right
+    // where the raw string (before parseDt strips nothing but does keep
+    // the Z where it already was, past the minutes) is still in hand. See
+    // convertUtcToLocal's own comment for why only this case is handled.
+    else if (key === 'DTSTART') { ev.dtstart = parseDt(val); ev.dtstartUtc = /Z$/.test(val); }
+    else if (key === 'DTEND') { ev.dtend = parseDt(val); ev.dtendUtc = /Z$/.test(val); }
     else if (key === 'DESCRIPTION') ev.description = val;
     else if (key === 'LOCATION') ev.location = val;
     else if (key === 'STATUS') ev.status = val;
@@ -404,17 +458,26 @@ function parseICS(text, opts) {
   const outEvents = timed.map(e => {
     let duration = 60;
     if (e.dtend && e.dtend.length > 10) {
+      // Computed from the raw (pre-conversion) values, deliberately --
+      // shifting both endpoints by the same real-world offset never
+      // changes their difference, so this is correct whether or not a
+      // conversion happens below, and it keeps the one existing duration
+      // calculation untouched.
       const startMs = new Date(e.dtstart).getTime();
       const endMs = new Date(e.dtend).getTime();
       if (!isNaN(startMs) && !isNaN(endMs) && endMs > startMs) {
         duration = Math.round((endMs - startMs) / 60000);
       }
     }
+    // Only a value this parser actually marked UTC (a trailing "Z" on the
+    // raw ICS line) gets converted -- a floating/local or TZID-qualified
+    // value passes through exactly as parsed, unchanged from today.
+    const displayStart = e.dtstartUtc ? convertUtcToLocal(e.dtstart, targetTz) : e.dtstart;
     return {
       id: 'apple-' + Math.random().toString(36).slice(2, 10),
       uid: e.uid || null,
-      date: e.dtstart.slice(0, 10),
-      time: e.dtstart.slice(11, 16),
+      date: displayStart.slice(0, 10),
+      time: displayStart.slice(11, 16),
       duration,
       title: e.summary || 'Untitled',
       // Kept (truncated) so the client-side Schoology/Canvas classification

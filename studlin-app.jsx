@@ -31231,7 +31231,13 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
       // isCalendarHostAllowedForPlatform. Harmless to send for every other
       // platform/hint too; the server only acts on it for "blackboard".
       const platformParam=importCalPlatformHint?"&platform="+encodeURIComponent(importCalPlatformHint):"";
-      const res=await fetch("/api/cal-proxy?url="+encodeURIComponent(url)+platformParam);
+      // Bug fix, 2026-09-07 user report: a feed exporting real times in
+      // UTC (a trailing "Z", common for Moodle-style platforms like
+      // Course Site) landed every item at the wrong clock time -- the
+      // server has no idea what timezone the student is actually in.
+      // detectTz() is the same live Intl-based lookup the profile/
+      // onboarding flow already uses.
+      const res=await fetch("/api/cal-proxy?url="+encodeURIComponent(url)+platformParam+"&tz="+encodeURIComponent(detectTz()));
       const data=await res.json();
       if(!res.ok||!data.ok)throw new Error(data.error||"Couldn't read that calendar link.");
       const label=importCalLabel||detectCalendarSourceType(url);
@@ -31372,7 +31378,10 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
         // sourced from the subscription's own sourceType so a Blackboard
         // custom-domain resync (auto or manual) keeps passing the check.
         const platformParam=sub.sourceType==="Blackboard"?"&platform=blackboard":"";
-        const res=await fetch("/api/cal-proxy?url="+encodeURIComponent(sub.url)+platformParam);
+        // Same UTC-timezone fix as fetchCalendarPreview's own identical
+        // call -- a resync must apply it too, or a UTC-exporting feed's
+        // items would flip back to the wrong time on every refresh.
+        const res=await fetch("/api/cal-proxy?url="+encodeURIComponent(sub.url)+platformParam+"&tz="+encodeURIComponent(detectTz()));
         data=await res.json();
         if(!res.ok||!data.ok)return;
       }

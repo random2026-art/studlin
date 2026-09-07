@@ -19075,7 +19075,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     setImportCalLoading(true);
     try {
       const platformParam = importCalPlatformHint ? "&platform=" + encodeURIComponent(importCalPlatformHint) : "";
-      const res = await fetch("/api/cal-proxy?url=" + encodeURIComponent(url) + platformParam);
+      const res = await fetch("/api/cal-proxy?url=" + encodeURIComponent(url) + platformParam + "&tz=" + encodeURIComponent(detectTz()));
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error || "Couldn't read that calendar link.");
       const label = importCalLabel || detectCalendarSourceType(url);
@@ -19156,7 +19156,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
         }
       } else {
         const platformParam = sub.sourceType === "Blackboard" ? "&platform=blackboard" : "";
-        const res = await fetch("/api/cal-proxy?url=" + encodeURIComponent(sub.url) + platformParam);
+        const res = await fetch("/api/cal-proxy?url=" + encodeURIComponent(sub.url) + platformParam + "&tz=" + encodeURIComponent(detectTz()));
         data = await res.json();
         if (!res.ok || !data.ok) return;
       }
