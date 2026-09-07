@@ -151,7 +151,7 @@ function loadStudlinModule(options) {
     "deleteCourseWithCascade","undoCourseDelete",
     "routineMeetingsOverlap","newMeetingTimesForCourse","dedupCourseClassRoutines","mergeCourses","courseIdForLabelFuzzy","normalizeCourseLabel","findDuplicateCourseGroups",
     "deriveFreePeriodsFromPeriods","getHsSchoolHours","saveHsSchoolHours",
-    "subtractIntervals","effectiveLeadIn","effectiveTrailOut","effectiveLeadInForManualPlacement","effectiveTrailOutForManualPlacement","isLeadInFixed","isDuePill","formatRealWorldScheduleForDate","findNowConflict",
+    "subtractIntervals","effectiveLeadIn","effectiveTrailOut","effectiveLeadInForManualPlacement","effectiveTrailOutForManualPlacement","isLeadInFixed","isDuePill","isZeroDurationTimedReminder","formatRealWorldScheduleForDate","findNowConflict",
     "assembleStudlinAiDigest","routeStudlinAiQuestion","STUDLIN_AI_DIGEST_DAYS",
     "buildCreateTaskProposal","buildMoveFixedProposal","buildMoveFlexTaskProposal","buildStudlinAiActionProposal",
     "describeCreateProposal","commitStudlinAiTasks","commitStudlinAiFixedMove","commitStudlinAiFlexMove",
