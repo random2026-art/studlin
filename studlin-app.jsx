@@ -9566,7 +9566,7 @@ async function extractFileText(file,onProgress){
 // elsewhere (generateFlashcardsFromText/generateQuizFromText,
 // linkDeckToExamStorage, buildSpacedSessionPreviews, computeExamReadiness)
 // instead of inventing a parallel system.
-function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
+function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()=>{},onDeclinePrep=()=>{}}={}){
   const [tab,setTab]=useState("exams"); // exams | assignments | projects | flashcards | practiceExams
   // Single-select, one at a time -- an earlier pass tried a multi-select
   // filter here (pick Exams+Projects together), reverted per direct
@@ -11059,7 +11059,31 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                         options={[{value:"low",label:"Low"},{value:"medium",label:"Med"},{value:"high",label:"High"}]} />
                       <CustomSelect value={bucketOf(a.difficulty)} onChange={v=>patchExam(a.id,{difficulty:BUCKET_VALS[v]})}
                         options={[{value:"low",label:"Easy"},{value:"medium",label:"Med"},{value:"high",label:"Hard"}]} />
-                      <div onClick={()=>setDetailEventId(a.id)} style={{fontSize:10.5,fontWeight:rowPace&&(rowPace.behind||rowPace.ahead)?700:400,color:rowPace&&rowPace.behind?T.amber:rowPace&&rowPace.ahead?T.teal:T.muted,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title="Click to open">{statusLabel}</div>
+                      {/* Bug fix, 2026-09-07 user report: a syllabus-
+                          scanned assignment too far out to get real prep
+                          time yet (prepPending, see commitSyllabusEvents/
+                          the actionable-window sweep in App()) had no
+                          visible control anywhere -- it just silently sat
+                          there until the sweep's own accept/decline banner
+                          happened to catch its attackStartDate, which the
+                          student could easily miss or dismiss. This surfaces
+                          the same accept/decline actions directly on the
+                          row, any time, not just when the banner happens to
+                          be showing. onStartPrepNow/onDeclinePrep are the
+                          exact same acceptPrepPrompt/declinePrepPrompt the
+                          banner itself calls (threaded down from App()) --
+                          one real implementation, two entry points. */}
+                      {a.prepPending?(
+                        <div style={{fontSize:10,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={a.attackStartDate?"Studlin will suggest starting prep on "+a.attackStartDate:undefined}>
+                          Prep starts {a.attackStartDate||"soon"}
+                          {" · "}
+                          <button type="button" onClick={(e)=>{e.stopPropagation();onStartPrepNow({id:a.id,title:a.title,date:a.date,noteId:a.noteId,priority:a.priority,difficulty:a.difficulty,phases:a.phases?a.phases.map(p=>p.name):null});}} style={{background:"none",border:"none",color:T.lime,fontSize:10,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>Start now</button>
+                          {" · "}
+                          <button type="button" onClick={(e)=>{e.stopPropagation();onDeclinePrep({id:a.id});}} style={{background:"none",border:"none",color:T.muted,fontSize:10,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>Not needed</button>
+                        </div>
+                      ):(
+                        <div onClick={()=>setDetailEventId(a.id)} style={{fontSize:10.5,fontWeight:rowPace&&(rowPace.behind||rowPace.ahead)?700:400,color:rowPace&&rowPace.behind?T.amber:rowPace&&rowPace.ahead?T.teal:T.muted,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title="Click to open">{statusLabel}</div>
+                      )}
                     </div>
                   );
                 })}
@@ -22266,8 +22290,18 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
 
           {step==="classes"&&addMode==="scan"&&(<>
             <TitleSub title={status==="highschool"?"Scan assignments":"Scan a syllabus"} sub={status==="highschool"?"A unit calendar, worksheet, handout, whatever your teacher gave you -- PDF, Word doc, text, or a photo. Studlin reads it and fills in the review below.":"PDF, Word doc, text, or a photo/screenshot — Studlin reads it and fills in the review below."} />
+            {/* Bug fix, 2026-09-07 user report: this was the one syllabus-
+                scan entry point still showing the old plain "Reading your
+                syllabus…" text while its two sibling entry points
+                (collegeSchedule/hsSchedule, just above/below) already show
+                real incremental progress -- confirmed via the actual
+                extraction/review pipeline that this path DOES extract
+                real assignments/exams (CLASS_SYLLABUS_JSON_CONTRACT), it
+                was only ever the loading UI that never got upgraded, which
+                is exactly what made this look like a different, older,
+                schedule-only scanner. */}
             {scanning
-              ? <div style={{padding:"40px 0",textAlign:"center",color:T.muted,fontSize:13}}>Reading your syllabus…</div>
+              ? <div style={{padding:"20px 0"}}><ExtractionProgress fileName="Your syllabus" stage="analyze" analyzeLabel="Finding assignments and exam dates..." /></div>
               : pasteMode ? (
                 <div>
                   <textarea value={pasteText} onChange={e=>setPasteText(e.target.value)} placeholder="Paste the syllabus text here" rows={8}
@@ -23252,7 +23286,15 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
   // its linked subject's color via colorOf, so a second, separate color
   // choice there would be redundant. Only busy/free/habit ("Activities")
   // have no color of their own today.
-  const [color,setColor]=useState(SUBJECT_COLORS[0]);
+  // Bug fix, 2026-09-07 user report: this used to always start (and reset
+  // back to) the exact same SUBJECT_COLORS[0], same bug class
+  // nextAvailableSubjectColor was already built to fix for Subjects (see
+  // its own comment) -- just never wired up here. Fed by colors already in
+  // use across BOTH subjects and other routines, since two Activities
+  // could otherwise still collide with each other even while correctly
+  // avoiding every subject's color.
+  const usedRoutineAndSubjectColors=()=>[...userSubjects.map(s=>s.color),...(routines||[]).filter(r=>r.color).map(r=>r.color)];
+  const [color,setColor]=useState(()=>nextAvailableSubjectColor(usedRoutineAndSubjectColors()));
   // Previously the only way to give a recurring class/activity a commute
   // buffer was to add it here with none, then separately go find it on
   // the calendar and double-click into NewEventModal's editRoutine mode
@@ -23307,7 +23349,7 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
     saveHolidays(next);
   };
   useEffect(()=>{ if(!open)setAddingRoutine(false); },[open]);
-  const resetForm=()=>{setTitle("");setKind("busy");setDays([]);setStartTime("15:30");setDuration(60);setColor(SUBJECT_COLORS[0]);setCommuteBefore("");setCommuteAfter("");};
+  const resetForm=()=>{setTitle("");setKind("busy");setDays([]);setStartTime("15:30");setDuration(60);setColor(nextAvailableSubjectColor(usedRoutineAndSubjectColors()));setCommuteBefore("");setCommuteAfter("");};
   const toggleDay=(i)=>setDays(d=>d.includes(i)?d.filter(x=>x!==i):[...d,i]);
   const isFree=kind==="free";
   const isHabit=kind==="habit";
@@ -24260,7 +24302,19 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   // got a chance to win. saveChecklistItem now stamps both flags at
   // creation time (see its own comment in CalendarTab); checking them
   // before asChecklist here is what actually surfaces that fix.
-  const typeChoice=asProject?"project":asGeneralTask?"task":asAssignment?"assignment":asChecklist?"todo":kind;
+  // Bug fix, 2026-09-07 live report with screenshot: the Type SelectChip's
+  // "Assignment" option changed value from "deadline" to "assignment" as
+  // part of the same taxonomy fix above, but this fallback still returned
+  // the raw `kind` string for anything with none of the UI-level flags
+  // set -- exactly what a syllabus-scanned assignment, or literally any
+  // deadline-kind item that predates isAssignment, actually looks like.
+  // Result: NOTHING showed selected in the Type picker for those items,
+  // since "deadline" no longer matches any option's value at all. kind
+  // "deadline" always meant Assignment regardless of this flag -- it's
+  // only kind:"study block" that's genuinely ambiguous between Assignment
+  // and Study Session, which is the one case isAssignment/asAssignment
+  // actually needs to disambiguate.
+  const typeChoice=asProject?"project":asGeneralTask?"task":asAssignment?"assignment":asChecklist?"todo":kind==="deadline"?"assignment":kind;
   const onTypeChange=(v)=>{
     if(v==="project"){setAsProject(true);setAsChecklist(false);setAsGeneralTask(false);setAsAssignment(false);setKind("deadline");}
     else if(v==="todo"){setAsChecklist(true);setAsProject(false);setAsGeneralTask(false);setAsAssignment(false);setKind("deadline");}
@@ -25367,6 +25421,14 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
     setRepeatDays([jsDay===0?6:jsDay-1]);
     setCommuteBefore("");setCommuteAfter("");
     setLocation("");setMovable(false);
+    // Bug fix, 2026-09-07 user report ("the color didnt switch"): the
+    // Color field below was gated on editRoutine, so a brand-new routine
+    // never showed a color picker at all and silently kept whatever
+    // routineColor's own useState(T.lime) default was. Same
+    // nextAvailableSubjectColor fix as RoutineControlCenterModal's
+    // identical bug, fed by colors already in use across both subjects
+    // and other routines.
+    setRoutineColor(nextAvailableSubjectColor([...getSubjects().map(s=>s.color),...(routines||[]).filter(r=>r.color).map(r=>r.color)]));
   },[open,initialTitle,initialDate,initialStartTime,editRoutine]);
 
   // Dragging the live preview block on the calendar (WeeklyPlanner's
@@ -25616,7 +25678,12 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
           {(editRoutine||repeat==="selected"||repeat==="weekly")&&(<>
             <Field label="Type"><SelectChip options={[{value:"class",label:"Class"},{value:"busy",label:"Activity"},{value:"free",label:"Free Period"},{value:"habit",label:"Habit"}]} value={evKind} onChange={setEvKind} /></Field>
             {evKind==="class"&&subjectOptions&&<Field label="Subject"><CustomSelect boxed options={subjectOptions} value={subject} onChange={setSubject} minWidth={220} /></Field>}
-            {editRoutine&&evKind!=="class"&&<Field label="Color"><ColorSelect value={routineColor} onChange={setRoutineColor} /></Field>}
+            {/* Bug fix, 2026-09-07: this used to also require editRoutine,
+                so a brand-new routine (this whole section already only
+                renders once it's a real repeating routine -- see the
+                wrapping condition above) never showed a color picker at
+                all during creation, only once you came back to edit it. */}
+            {evKind!=="class"&&<Field label="Color"><ColorSelect value={routineColor} onChange={setRoutineColor} /></Field>}
           </>)}
           </>)}
           {/* Inline label+pill row, matching Shovel's own plain-text
@@ -27375,6 +27442,24 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       // reading as unrelated duplicates.
       const base={title,kind,groupId:"grp-"+Date.now()+"-"+Math.round(Math.random()*1000),...(subj?{subject:subj}:{}),...(cid?{courseId:cid}:{}),...common};
       persistRoutines([...routines,...buildRoutineObjectsForDays(base,repeatDays,startTime,duration||60,dayTimes)]);
+      // Bug fix, 2026-09-07 user report: a brand-new Habit due today never
+      // actually showed up until the NEXT full page load on a new
+      // calendar day -- materializeHabitsForDate only ever ran from
+      // App()'s once-a-day tick, gated on lastLoginDay, which is already
+      // stamped for today by the time a student navigates to Routine
+      // settings mid-session. Materializing right here, once, the instant
+      // a habit is actually saved, means it shows up immediately instead
+      // of silently waiting for tomorrow. Idempotent/dedups against
+      // anything already materialized (see its own comment) and is a
+      // total no-op for a non-habit kind (busy/class/free), so this is
+      // safe to call unconditionally rather than checking kind first.
+      if(kind==="habit"){
+        const createdHabits=materializeHabitsForDate(dayKey(),events);
+        if(createdHabits.length>0){
+          const next=events.concat(createdHabits);
+          setEvents(next);lsSet("events",next);
+        }
+      }
     }
     setNewEventOpen(false);
     setSidebarDragChip(null);
@@ -36102,7 +36187,7 @@ function App() {
            active==="notes"?<Notes setActive={setActive} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
            active==="profile"?<Profile setActive={setActive} seriousMode={seriousMode} />:
-           active==="prep"?<StudlinPrep setActive={setActive} setDetailEventId={setDetailEventId} />:
+           active==="prep"?<StudlinPrep setActive={setActive} setDetailEventId={setDetailEventId} onStartPrepNow={acceptPrepPrompt} onDeclinePrep={declinePrepPrompt} />:
            active==="flashcards"?<Flashcards setActive={setActive} />:
            ActivePage?<ActivePage />:null}
         </div>
