@@ -16003,7 +16003,13 @@ function planBrainDumpTasks(items,events,routines,prefs){
         slot=findReliableSlotFor(working,routines,prefs,today,prefs.workStartTime,duration,it.dueDate||null,5);
       }
       if(!slot){downgrade(it);return;}
-      const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:slot.date,time:slot.time,subject:"",kind:"study block",notes:"",priority:5,difficulty:5,deadline:it.dueDate||null,duration,status:"pending",timeSpent:0,completedAt:null,placementReason:slot.reason||null};
+      // isAssignment (2026-09-06): this "study" item already has exactly
+      // what an Assignment means elsewhere in the app (a real due date,
+      // Studlin finds the time) -- see the Add Task Type picker's own
+      // isAssignment comment. Stamped here so reopening it to edit shows
+      // "Assignment", matching the Brain Dump review chip's own label
+      // (see its SelectChip -- same underlying "study" kind, relabeled).
+      const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:slot.date,time:slot.time,subject:"",kind:"study block",notes:"",priority:5,difficulty:5,deadline:it.dueDate||null,duration,status:"pending",timeSpent:0,completedAt:null,placementReason:slot.reason||null,isAssignment:true};
       studyTasks.push(task);working=working.concat([task]);
       cursorDate=slot.date;cursorTime=minutesToTime(timeToMinutes(slot.time)+duration);
     }
@@ -23851,6 +23857,9 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   const [time,setTime]=useState("14:30");
   const [duration,setDuration]=useState(60);
   const [deadline,setDeadline]=useState("");
+  // Real, persisted due-time -- 2026-09-06 fix, see buildTask's own
+  // comment in CalendarTab for the full "why this never existed" story.
+  const [deadlineTime,setDeadlineTime]=useState("");
   const [deadlineErr,setDeadlineErr]=useState("");
   const [detailErr,setDetailErr]=useState("");
   const [priority,setPriority]=useState(500);
@@ -23880,6 +23889,18 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   // this an existing Task always reopened here as a plain "Assignment
   // (scheduled)" with no way to tell it apart or switch back to it.
   const [asGeneralTask,setAsGeneralTask]=useState(false);
+  // Same exact bug, same exact fix, for Assignment (2026-09-06 user
+  // report: "assignment and study session should be different"). Add
+  // Task's manual-mode Assignment is ALSO kind:"study block" under the
+  // hood (see resolveAssignmentKind in CalendarTab) -- without this flag,
+  // reopening one always showed "Study Session", with no way to tell it
+  // was really an Assignment or switch it back. Also doubled, before this
+  // fix, as the "checklist mode" bug: saveChecklistItem never stamped
+  // isGeneralTask OR isAssignment at all, so typeChoice's own asChecklist
+  // check (below) always won regardless of which was originally picked --
+  // fixed at the source in saveChecklistItem, and here by checking both
+  // flags before asChecklist in typeChoice.
+  const [asAssignment,setAsAssignment]=useState(false);
   const [notes,setNotes]=useState("");
   const [cancelConfirmOpen,setCancelConfirmOpen]=useState(false);
   // Real gap found live: this modal had no way to delete the item it was
@@ -23977,11 +23998,11 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   useEffect(()=>{
     if(!ev)return;
     setTitle(ev.title||"");setDate(ev.date||dayKey());setTime(ev.time||"14:30");
-    setDuration(ev.duration||60);setDeadline(ev.deadline||"");setDeadlineErr("");
+    setDuration(ev.duration||60);setDeadline(ev.deadline||"");setDeadlineTime(ev.deadlineTime||"");setDeadlineErr("");
     setPriority(toSliderVal(ev.priority,5));setDifficulty(toSliderVal(ev.difficulty,5));
     setMoreOpen(!!(ev.priority&&(ev.priority>10?ev.priority!==500:ev.priority!==5)));
     setSubject(ev.subject||"None");setKind(ev.kind||"deadline");setNotes(ev.notes||"");
-    setAsProject(isProjectMarker(ev));setAsChecklist(!!ev.checklist);setAsGeneralTask(!!ev.isGeneralTask);
+    setAsProject(isProjectMarker(ev));setAsChecklist(!!ev.checklist);setAsGeneralTask(!!ev.isGeneralTask);setAsAssignment(!!ev.isAssignment);
     setCancelConfirmOpen(false);setDetailErr("");
     setExamSwitchAwayConfirm(false);setProjectSwitchAwayConfirm(false);
     setAddAttackBlock(false);setAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);
@@ -24114,12 +24135,20 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   // saved state, asProject the current picker) -- an already-existing
   // project's phases/outline are edited via the display blocks above/below,
   // not regenerated on every save.
-  const typeChoice=asChecklist?"todo":asProject?"project":asGeneralTask?"task":kind;
+  // Bug fix, 2026-09-06 user report ("it switched it from task to to
+  // do"): asChecklist used to be checked FIRST, so ANY checklist item
+  // (no schedule yet) always showed as "To-do" regardless of whether it
+  // was really a Task or an Assignment -- asGeneralTask/asAssignment never
+  // got a chance to win. saveChecklistItem now stamps both flags at
+  // creation time (see its own comment in CalendarTab); checking them
+  // before asChecklist here is what actually surfaces that fix.
+  const typeChoice=asProject?"project":asGeneralTask?"task":asAssignment?"assignment":asChecklist?"todo":kind;
   const onTypeChange=(v)=>{
-    if(v==="project"){setAsProject(true);setAsChecklist(false);setAsGeneralTask(false);setKind("deadline");}
-    else if(v==="todo"){setAsChecklist(true);setAsProject(false);setAsGeneralTask(false);setKind("deadline");}
-    else if(v==="task"){setAsGeneralTask(true);setAsProject(false);setAsChecklist(false);setKind("study block");}
-    else{setAsProject(false);setAsChecklist(false);setAsGeneralTask(false);setKind(v);}
+    if(v==="project"){setAsProject(true);setAsChecklist(false);setAsGeneralTask(false);setAsAssignment(false);setKind("deadline");}
+    else if(v==="todo"){setAsChecklist(true);setAsProject(false);setAsGeneralTask(false);setAsAssignment(false);setKind("deadline");}
+    else if(v==="task"){setAsGeneralTask(true);setAsProject(false);setAsChecklist(false);setAsAssignment(false);setKind("study block");}
+    else if(v==="assignment"){setAsAssignment(true);setAsProject(false);setAsGeneralTask(false);setAsChecklist(false);setKind("deadline");}
+    else{setAsProject(false);setAsChecklist(false);setAsGeneralTask(false);setAsAssignment(false);setKind(v);}
   };
   const requiresProjectDetail=asProject&&!isProject;
   const openCollabPicker=async()=>{
@@ -24222,7 +24251,11 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
         time:asChecklist?"":time,
         duration:asChecklist?0:duration,
         deadline:asChecklist?(date||null):(deadline||null),
-        priority,difficulty,subject,courseId:courseIdForLabel(subject),kind,notes,checklist:asChecklist,isGeneralTask:asGeneralTask||undefined,...(timeChanged?{userPinned:true}:{}),
+        // Real, persisted due-time -- 2026-09-06 fix, see the Deadline/
+        // Due date Fields' own comments for the paired time inputs this
+        // reads from.
+        deadlineTime:deadlineTime||null,
+        priority,difficulty,subject,courseId:courseIdForLabel(subject),kind,notes,checklist:asChecklist,isGeneralTask:asGeneralTask||undefined,isAssignment:asAssignment||undefined,...(timeChanged?{userPinned:true}:{}),
         ...(kind==="exam"?{sourceMaterials:examPlan.materialFiles,referenceLinks:examPlan.materialLinks,
           importanceLevel:examImportanceLevel,examWeight:examWeightFromImportance(examImportanceLevel),
           ...(examGradeWeightPercent!=null?{gradeWeightPercent:examGradeWeightPercent}:{})}:{}),
@@ -24433,7 +24466,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
           picks here (not one merged "Assignment" the way Add Task infers
           it) since this modal edits an existing real kind directly, not a
           type that resolves to one at save time. */}
-      <Field label="Type"><SelectChip options={[{value:"study block",label:"Study Session"},{value:"deadline",label:"Assignment"},{value:"task",label:"Task"},{value:"project",label:"Project"},{value:"todo",label:"To-do"},"exam","class","reminder",{value:"busy block",label:"Activity"}]} value={typeChoice} onChange={onTypeChange} /></Field>
+      <Field label="Type"><SelectChip options={[{value:"assignment",label:"Assignment"},{value:"study block",label:"Study Session"},{value:"task",label:"Task"},{value:"project",label:"Project"},{value:"todo",label:"To-do"},"exam","class","reminder",{value:"busy block",label:"Activity"}]} value={typeChoice} onChange={onTypeChange} /></Field>
       {/* Was a SelectChip wall (every subject as its own full pill button,
           wrapping across several rows for anyone with a real course load)
           -- a dropdown reads exactly the same info in one line, matching
@@ -24461,8 +24494,13 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
           pass's own comment). Moved in here for real, 2026-09-04, so Date/
           Start/End actually read as one row instead of two unrelated
           ones. */}
-      <div style={{display:"grid",gridTemplateColumns:asChecklist?"1fr":(kind==="reminder"?"1fr 1fr":"1fr 1fr 1fr"),gap:12}}>
+      <div style={{display:"grid",gridTemplateColumns:asChecklist?(date?"1fr 1fr":"1fr"):(kind==="reminder"?"1fr 1fr":"1fr 1fr 1fr"),gap:12}}>
         <Field label={asChecklist?"Due date (optional)":"Scheduled date"}><Input type="date" value={date} onChange={e=>{setDate(e.target.value);setDeadlineErr("");}} /></Field>
+        {/* 2026-09-06 fix: a To-do/checklist-mode due date had no way to
+            say what time of day it's due -- same real gap as the
+            AI-schedule Due Time field, now fixed in one place both modes
+            share. */}
+        {asChecklist&&date&&<Field label="Due time"><BoxedTimeInput value={deadlineTime} onChange={setDeadlineTime} /></Field>}
         {!asChecklist&&<Field label={kind==="reminder"?"Reminder time":"Start time"}><BoxedTimeInput value={time} onChange={setTime} /></Field>}
         {!asChecklist&&kind!=="reminder"&&<Field label="End time"><BoxedTimeInput value={minutesToTime(timeToMinutes(time)+duration)} onChange={v=>setDuration(Math.max(5,timeToMinutes(v)-timeToMinutes(time)))} /></Field>}
       </div>
@@ -24836,7 +24874,10 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
       {deadlineErr&&<div style={{fontSize:12,color:T.red,marginTop:-8,marginBottom:14}}>{deadlineErr}</div>}
       {kind!=="exam"&&kind!=="class"&&kind!=="reminder"&&!asChecklist&&(
         <>
-          <Field label="Deadline" hint="When this must be done by"><Input type="date" value={deadline} onChange={e=>{setDeadline(e.target.value);setDeadlineErr("");}} /></Field>
+          <div style={{display:"grid",gridTemplateColumns:deadline?"1fr 1fr":"1fr",gap:12}}>
+            <Field label="Deadline" hint="When this must be done by"><Input type="date" value={deadline} onChange={e=>{setDeadline(e.target.value);setDeadlineErr("");}} /></Field>
+            {deadline&&<Field label="Deadline time"><BoxedTimeInput value={deadlineTime} onChange={setDeadlineTime} /></Field>}
+          </div>
           {moreOpen ? (
             <>
               <Field label={`Impact: ${Math.round(priority/10)}%`} hint="How critical this is, independent of its due date — higher-impact tasks get scheduled earlier">
@@ -27320,6 +27361,15 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     }
     if(k!=="assignment"&&k!=="task")setAsChecklist(false);
     if(k!=="task"){setTaskRepeatDays([]);setTaskRepeatMode("none");}
+    // Study Session (2026-09-06) is always a directly-scheduled block --
+    // no Scheduling toggle, no AI placement, no due date, matching what
+    // "Assignment" used to silently become once you picked "I'll pick the
+    // time" (see resolveAssignmentKind's own comment). Forcing manual mode
+    // here means every existing taskMode==="manual" gate (Date/Start Time,
+    // Duration, the exam-link picker) already renders correctly for it
+    // with no separate studySession-specific field gating needed -- see
+    // isFixedKind/isTaskKind, unchanged.
+    if(k==="studySession"){setTaskMode("manual");setEvAttackBlock(false);}
     // Exam material/session drafts and Project phases/outline drafts are
     // both purely local to whichever type is currently picked -- carrying
     // either across a switch to a different type (or between exam <->
@@ -27347,7 +27397,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // isProjectMarker filter). Attack Block bypasses this entirely (see
   // saveManual/aiArrange) -- startAttackBlockChain hardcodes its own
   // "study block" kind for the actual scheduled probe session.
-  const resolveAssignmentKind=()=>(evKind==="assignment"||evKind==="task")?(taskMode==="ai"?"deadline":"study block"):(evKind==="project"?"deadline":evKind);
+  const resolveAssignmentKind=()=>(evKind==="assignment"||evKind==="task")?(taskMode==="ai"?"deadline":"study block"):(evKind==="studySession"?"study block":evKind==="project"?"deadline":evKind);
   const buildTask=(date,time,titleSuffix,splitInfo)=>{
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
     // Split session 2+ of a Project never gets its own copy of phases/
@@ -27361,7 +27411,16 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     const isSplitFollowup=splitInfo&&splitInfo.splitIndex>1;
     const projectPhases=evKind==="project"&&evProjectPlan.phases&&!isSplitFollowup?evProjectPlan.phases.map(p=>p.trim()).filter(Boolean):[];
     const projectOutline=evKind==="project"&&evProjectPlan.outline&&!isSplitFollowup?normalizeOutlineDraft(evProjectPlan.outline):[];
-    return {id:String(Date.now()+Math.random()*1000),title:evTitle.trim()+(titleSuffix||""),date,time,subject:subj,courseId:courseIdForLabel(subj),kind:resolveAssignmentKind(),notes:evNotes,priority:evPriority,difficulty:evDifficulty,deadline:evDeadline||null,duration:splitInfo?Math.round(evDuration/evSplitCount):evDuration,status:"pending",timeSpent:0,completedAt:null,
+    return {id:String(Date.now()+Math.random()*1000),title:evTitle.trim()+(titleSuffix||""),date,time,subject:subj,courseId:courseIdForLabel(subj),kind:resolveAssignmentKind(),notes:evNotes,priority:evPriority,difficulty:evDifficulty,deadline:evDeadline||null,
+      // Real, persisted due-time -- 2026-09-06 fix. Only ever collected for
+      // Assignment/Task (see the "Due Date & Time"/"Due date (optional)"
+      // fields), and only meaningful once a due date actually exists.
+      // Previously evDeadlineTime existed as a form field in AI mode but
+      // was never written here at all -- it fed a prompt hint for the AI's
+      // own placement reasoning, then got silently discarded, so a
+      // student's stated due time never actually stuck.
+      deadlineTime:evDeadline?(evDeadlineTime||null):null,
+      duration:splitInfo?Math.round(evDuration/evSplitCount):evDuration,status:"pending",timeSpent:0,completedAt:null,
       // Other has no matching entry in userSubjects for colorOf to find, so
       // without this every "Other" task would silently fall back to the
       // same default lime as an untagged one -- an explicit color here is
@@ -27375,17 +27434,24 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       // effectiveTrailOut already read commuteBefore/commuteAfter off any
       // event, just needed a real value to read.
       ...(isFixedKind&&(+evCommuteBefore>0||+evCommuteAfter>0)?{commuteBefore:Math.max(0,+evCommuteBefore||0),commuteAfter:Math.max(0,+evCommuteAfter||0)}:{}),
-      // Optional exam link, Study Session only (manual-mode assignment) --
-      // see evLinkedExamId's own declaration for why this is the same
+      // Optional exam link, Assignment (manual mode) and Study Session only
+      // -- see evLinkedExamId's own declaration for why this is the same
       // dueEventId every other exam-linked session already uses. Never
       // reachable for evKind==="task" -- the picker itself only renders
-      // for evKind==="assignment" (see its own comment), so evLinkedExamId
-      // stays null for a Task regardless.
+      // for evKind==="assignment"/"studySession" (see its own comment), so
+      // evLinkedExamId stays null for a Task regardless.
       ...(evLinkedExamId&&resolveAssignmentKind()==="study block"?{dueEventId:evLinkedExamId}:{}),
-      // See resolveAssignmentKind's own comment -- the one thing that
-      // actually distinguishes a Task from a real Study Session under the
-      // hood, since both otherwise share the exact same kind/scheduling.
+      // isGeneralTask/isAssignment (2026-09-06): the one thing that
+      // actually distinguishes a Task, or an Assignment worked on at a
+      // specific manually-picked time, from a real standalone Study
+      // Session under the hood -- all three otherwise share the exact same
+      // kind/scheduling (kind:"study block"). Without isAssignment here,
+      // reopening a manual-mode Assignment to edit it had no way to tell
+      // it apart from a genuine Study Session -- it always looked like the
+      // latter, which is the literal "assignment and study session should
+      // be different" bug report this fixes.
       ...(evKind==="task"?{isGeneralTask:true}:{}),
+      ...(evKind==="assignment"?{isAssignment:true}:{}),
       ...(splitInfo||{})};
   };
   const commitTasks=(newTasks,opts)=>{
@@ -27494,10 +27560,26 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // so it's excluded from the calendar grid, agenda, and AI day-planning
   // (advancedSchedulePlanner) everywhere those filter on that flag, and
   // instead only ever shows up in the Dashboard checklist.
+  // Bug fix, 2026-09-06 user report: this used to write kind:"deadline",
+  // checklist:true with NO isGeneralTask/isAssignment stamp at all,
+  // regardless of whether Type was Assignment or Task -- indistinguishable
+  // from a genuine plain To-do. EventDetailModal's own typeChoice checks
+  // asChecklist before either flag, so reopening ANY checklist item
+  // (Assignment or Task) to edit always showed "To-do", silently
+  // discarding whatever the student actually picked. Stamping both flags
+  // here, same as buildTask already does for the scheduled path, fixes it
+  // at the source instead of only in the reverse derivation.
   const saveChecklistItem=()=>{
     if(!evTitle.trim())return;
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
-    const item={id:String(Date.now()+Math.random()*1000),title:evTitle.trim(),date:evDeadline||"",time:"",subject:subj,kind:"deadline",notes:evNotes,checklist:true,deadline:evDeadline||null,priority:5,difficulty:5,duration:0,status:"pending",timeSpent:0,completedAt:null};
+    const item={id:String(Date.now()+Math.random()*1000),title:evTitle.trim(),date:evDeadline||"",time:"",subject:subj,kind:"deadline",notes:evNotes,checklist:true,deadline:evDeadline||null,
+      // Same real due-time fix as buildTask's own -- a checklist item is
+      // the ONE place this was reachable at all before today's fix (the
+      // AI-mode Due Time field existed but was never saved anywhere).
+      deadlineTime:evDeadline?(evDeadlineTime||null):null,
+      priority:5,difficulty:5,duration:0,status:"pending",timeSpent:0,completedAt:null,
+      ...(evKind==="task"?{isGeneralTask:true}:{}),
+      ...(evKind==="assignment"?{isAssignment:true}:{})};
     commitTasks([item]);
   };
   // Task + Repeat (see taskRepeatDays' own comment): reuses the exact same
@@ -29519,10 +29601,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             changing between "Study Session" and "Assignment" looked like a
             type had gone missing instead of a mode having changed. Same
             segmented-control look Studlin Prep's own tab switcher uses.
-            Only meaningful for Assignment/Project (isTaskKind) -- exam/
-            class/reminder/Activity already always use exact Date+Start
-            Time regardless of mode, so the toggle would do nothing there. */}
-        {isTaskKind&&taskRepeatDays.length===0&&(
+            Excludes Study Session (2026-09-06) -- it's always directly
+            scheduled (forced manual mode on kind switch, see
+            onEvKindChange), so this toggle would do nothing for it. */}
+        {isTaskKind&&evKind!=="studySession"&&taskRepeatDays.length===0&&(
           <Field label="Scheduling">
             {/* "No schedule yet" restored 2026-09-01 as a real 3rd choice
                 (see isChecklistMode's own comment) -- picking it sets
@@ -29566,17 +29648,27 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             narrow 3-per-row block while Type sat there with empty space.
             Full-width stacked rows let each list wrap at its own natural
             width instead of fighting the other for room. */}
-        {/* "Assignment" resolves to a real wire kind at save time
-            (resolveAssignmentKind): manual mode writes "study block" -- a
-            session at the exact time you picked, the same concept Brain
-            Dump's review screen calls "Study Session" -- while AI mode
-            writes "deadline" and lets Studlin pick the time before it's
-            due. Labeling/hinting it per-mode instead of a flat "Assignment"
-            answers "where's Study Session as a type" with Studlin's own
-            existing vocabulary instead of introducing a second, competing
-            type that would also need its own resolution logic. */}
-        <Field label="Type" hint={isFixedKind?"Won't be moved or rescheduled.":isRepeatingTask?"Repeats on the days you pick below.":isChecklistMode?"Just a due date -- no calendar time yet.":(evKind==="assignment"||evKind==="task")?(taskMode==="manual"?(evKind==="task"?"Happens at this exact time.":"A study session at this exact time."):"Studlin finds the time before it's due."):undefined}>
-          <SelectChip options={[{value:"assignment",label:taskMode==="manual"?"Study Session":"Assignment"},{value:"task",label:"Task"},{value:"project",label:"Project"},"exam","class",{value:"busy block",label:"Activity"},"reminder"]} value={evKind} onChange={onEvKindChange} />
+        {/* Assignment and Study Session used to be the SAME evKind value
+            ("assignment"), relabeled between "Assignment"/"Study Session"
+            purely based on which Scheduling mode was picked -- direct,
+            repeated user feedback that this reads as broken/confusing, not
+            clever: picking "I'll pick the time" made "Assignment" vanish
+            from the Type picker entirely, replaced by a same-slot "Study
+            Session" label, so there was no way to keep something tagged as
+            an Assignment while also picking your own time for it. Split
+            2026-09-06 into two real, always-correctly-labeled, coexisting
+            options: "assignment" keeps its full Scheduling toggle (no
+            schedule yet / pick the time / AI finds the time) and now also
+            gets its own optional due date in manual mode (see the Due
+            date field below); "studySession" is new -- always a directly-
+            scheduled block (manual mode forced on kind switch, see
+            onEvKindChange), no due date, no Scheduling toggle, exactly
+            what "Assignment + manual mode" used to silently become. Both
+            still resolve to kind:"study block" when scheduled (see
+            resolveAssignmentKind) -- isAssignment is the flag that keeps
+            them distinguishable on reopen (see buildTask's own comment). */}
+        <Field label="Type" hint={isFixedKind?"Won't be moved or rescheduled.":isRepeatingTask?"Repeats on the days you pick below.":isChecklistMode?"Just a due date -- no calendar time yet.":evKind==="studySession"?"A focused block of study time at the exact time you pick.":evKind==="task"?(taskMode==="manual"?"Happens at this exact time.":"Studlin finds the time before it's due."):evKind==="assignment"?(taskMode==="manual"?"You pick when you'll work on it -- due date is optional.":"Studlin finds the time before it's due."):undefined}>
+          <SelectChip options={[{value:"assignment",label:"Assignment"},{value:"studySession",label:"Study Session"},{value:"task",label:"Task"},{value:"project",label:"Project"},"exam","class",{value:"busy block",label:"Activity"},"reminder"]} value={evKind} onChange={onEvKindChange} />
         </Field>
         {/* Same fix as EventDetailModal's identical Subject field
             (2026-09-04) -- a SelectChip wall wrapping across several rows
@@ -29638,7 +29730,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             unrelated block. Same picker-modal pattern already used for
             linking a flashcard deck or a practice exam to an exam (see
             LINK DECK TO EXAM), reused rather than invented fresh. */}
-        {evKind==="assignment"&&taskMode==="manual"&&evSubject!=="None"&&(()=>{
+        {(evKind==="studySession"||(evKind==="assignment"&&taskMode==="manual"))&&evSubject!=="None"&&(()=>{
           const linkedExam=evLinkedExamId?upcomingExams().find(ex=>ex.id===evLinkedExamId):null;
           return (
             <Field label="Link to a test (optional)" hint="Shows this session on that exam's page in Studlin Prep too.">
@@ -29653,7 +29745,16 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         })()}
 
         {isChecklistMode&&(
-          <Field label="Due date (optional)"><Input type="date" value={evDeadline} onChange={ev=>setEvDeadline(ev.target.value)} /></Field>
+          <div style={{display:"grid",gridTemplateColumns:evDeadline?"1fr 1fr":"1fr",gap:12}}>
+            <Field label="Due date (optional)"><Input type="date" value={evDeadline} onChange={ev=>setEvDeadline(ev.target.value)} /></Field>
+            {/* 2026-09-06 fix: a due date with no way to say WHEN that day
+                it's due (morning vs. 11:59pm) was a real reported gap --
+                only shown once a date is actually picked, same
+                progressive-disclosure the AI-mode Due Time field already
+                uses. Real, persisted field now -- see buildTask/
+                saveChecklistItem's own deadlineTime comment. */}
+            {evDeadline&&<Field label="Due time"><BoxedTimeInput value={evDeadlineTime} onChange={setEvDeadlineTime} /></Field>}
+          </div>
         )}
 
         {!isTaskKind&&(
@@ -29846,6 +29947,23 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           </div>
         )}
 
+        {/* Assignment-only, manual mode (2026-09-06 fix): the scheduled
+            Date/Start Time above is WHEN you'll work on it -- an
+            assignment can separately have a real due date that's a
+            different day entirely (work on it tonight, due Friday). This
+            never existed for manual mode before -- only AI mode had a due
+            date field at all, so a manually-scheduled Assignment had no
+            due-date concept, which also fed the "looks identical to a
+            Study Session" problem (see isAssignment's own comment in
+            buildTask). Optional -- leaving it blank is fine for something
+            you're just doing tonight with no separate deadline. */}
+        {evKind==="assignment"&&taskMode==="manual"&&taskRepeatDays.length===0&&(
+          <div style={{display:"grid",gridTemplateColumns:evDeadline?"1fr 1fr":"1fr",gap:12}}>
+            <Field label="Due date (optional)"><Input type="date" value={evDeadline} onChange={ev=>setEvDeadline(ev.target.value)} /></Field>
+            {evDeadline&&<Field label="Due time"><BoxedTimeInput value={evDeadlineTime} onChange={setEvDeadlineTime} /></Field>}
+          </div>
+        )}
+
         {isTaskKind&&!isChecklistMode&&taskRepeatDays.length===0&&taskMode==="ai"&&(
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
             <Field label="Due Date & Time" hint="When this must be done by">
@@ -29874,8 +29992,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             so showing this toggle for Task would flip a switch that
             silently does nothing on save; a probe-session/"figure out how
             long this really takes" flow doesn't fit a known-length chore
-            like "laundry" anyway. */}
-        {isTaskKind&&!isChecklistMode&&evKind!=="task"&&(evSplitEnabled?(
+            like "laundry" anyway. Also excluded for Study Session
+            (2026-09-06) for the same reason -- you're already picking the
+            exact time and duration directly, there's no "figure out how
+            long this really takes" ambiguity to probe. */}
+        {isTaskKind&&!isChecklistMode&&evKind!=="task"&&evKind!=="studySession"&&(evSplitEnabled?(
           <div style={{fontSize:11,color:T.faint,marginBottom:14}}>"I don't know how long this takes" isn't available while Split into sessions is on — turn Split off below to use it instead.</div>
         ):(<>
           <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:14}}>
@@ -30031,8 +30152,18 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                         (planBrainDumpTasks builds it identically either
                         way; only this display label changed). "To-Do"
                         recased to "To-do" to match EventDetailModal's own
-                        Type chip exactly, same underlying concept. */}
-                    <SelectChip options={[{value:"study",label:"Study Session"},{value:"todo",label:"To-do"},{value:"event",label:"Activity"},{value:"exam",label:"Exam"},{value:"project",label:"Project"},{value:"reminder",label:"Reminder"},{value:"unavailable",label:"Vacation/Break"}]} value={it.kind} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v,proposeSessions:false,sessionCount:x.sessionCount||4}:x)}))} />
+                        Type chip exactly, same underlying concept.
+                        "Study Session" relabeled "Assignment" (2026-09-06,
+                        user report: "there was no option for assignment")
+                        -- same underlying "study" kind, unchanged
+                        (planBrainDumpTasks stamps isAssignment:true on the
+                        built task so reopening it to edit shows the
+                        matching label). It already had exactly what an
+                        Assignment means everywhere else in the app (a real
+                        due date, Studlin finds the time) -- it was never a
+                        standalone "pick your own exact time" Study
+                        Session, just mislabeled as one. */}
+                    <SelectChip options={[{value:"study",label:"Assignment"},{value:"todo",label:"To-do"},{value:"event",label:"Activity"},{value:"exam",label:"Exam"},{value:"project",label:"Project"},{value:"reminder",label:"Reminder"},{value:"unavailable",label:"Vacation/Break"}]} value={it.kind} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v,proposeSessions:false,sessionCount:x.sessionCount||4}:x)}))} />
                     {it.kind==="project"&&(
                       <Input type="date" value={it.dueDate} onChange={ev=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,dueDate:ev.target.value}:x)}))} style={{width:138}} />
                     )}
