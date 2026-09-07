@@ -922,6 +922,28 @@ function normalizeCourseLabel(label){
 function normalizeExamTitleForDedup(title){
   return (title||"").trim().toLowerCase().replace(/\bexam\b/g,"").replace(/\s+/g," ").trim();
 }
+// User report, 2026-09-07: an exam held during its own class's normal
+// meeting time showed a false "Overlaps with [class]" warning in Week/Day
+// view -- the overlap check that badge is built from only knows "does
+// anything else occupy this slot," not why, so a fully-expected in-class
+// exam looked identical to an accidental double-booking. This is the one
+// exception: true only for an exam/class pair that share the same real
+// course. courseId is checked first (most reliable, and now actually
+// present on a materialized routine occurrence -- see
+// expandRoutineOccurrences' own comment); normalized subject label is the
+// fallback for older data or a routine that never got backfilled one.
+// Order-independent (either argument can be the exam or the class) since
+// both call sites just pass "this block" and "the other block it
+// overlaps," not a fixed pairing.
+function isExpectedInClassOverlap(a,b){
+  const exam=a.kind==="exam"?a:(b.kind==="exam"?b:null);
+  const cls=a.kind==="class"?a:(b.kind==="class"?b:null);
+  if(!exam||!cls)return false;
+  if(exam.courseId&&cls.courseId)return exam.courseId===cls.courseId;
+  const examLabel=normalizeCourseLabel(exam.subject||"");
+  const clsLabel=normalizeCourseLabel(cls.subject||cls.title||"");
+  return !!examLabel&&examLabel===clsLabel;
+}
 const courseIdForLabelFuzzy=(label)=>{
   if(!label)return null;
   const subjects=getSubjects();
@@ -2174,6 +2196,11 @@ function expandRoutineOccurrences(routines,startDateKey,endDateKey){
         duration:override&&override.duration!=null?override.duration:(r.duration||30),
         kind:ROUTINE_KIND_TO_EVENT_KIND[r.kind]||"class",
         subject:r.subject||"",
+        // Same "forgot to copy this onto the materialized occurrence" gap
+        // as commuteBefore/After below (see that fix's own comment) --
+        // needed so isExpectedInClassOverlap can match an exam to its own
+        // class by real courseId, not just a normalized subject label.
+        courseId:r.courseId||null,
         color:r.color||null,
         status:"pending",
         isRoutine:true,
@@ -20161,7 +20188,9 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   // screen ever saying so, unlike the New Event form's own
                   // inline overlap check (findOverlapConflict), which only
                   // ever ran there, never for drag-and-drop.
-                  const conflictTitles = totalCols>1 ? dayLaidOut.filter(o=>o.ev.id!==ev.id&&o.start<end&&start<o.end).map(o=>o.ev.title) : [];
+                  // isExpectedInClassOverlap excludes an exam overlapping
+                  // its own class's meeting time -- see its own comment.
+                  const conflictTitles = totalCols>1 ? dayLaidOut.filter(o=>o.ev.id!==ev.id&&o.start<end&&start<o.end&&!isExpectedInClassOverlap(ev,o.ev)).map(o=>o.ev.title) : [];
                   const isResizing = wkResize && wkResize.id===ev.id;
                   // A same-day resize/retime still awaiting a "just this
                   // one / every week" answer -- keeps the block showing the
@@ -22840,7 +22869,8 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
               // Same reasoning as WeeklyPlanner's identical addition --
               // totalCols>1 already meant a genuine real-time overlap, it
               // just never surfaced as a warning anywhere on screen.
-              const conflictTitles=totalCols>1?dayLaidOut.filter(o=>o.ev.id!==ev.id&&o.start<end&&start<o.end).map(o=>o.ev.title):[];
+              // isExpectedInClassOverlap exception -- see its own comment.
+              const conflictTitles=totalCols>1?dayLaidOut.filter(o=>o.ev.id!==ev.id&&o.start<end&&start<o.end&&!isExpectedInClassOverlap(ev,o.ev)).map(o=>o.ev.title):[];
               const nextInCol=dayLaidOut.filter(o=>o.col===col&&o.start>start).sort((a,b)=>a.start-b.start)[0];
               // Same reminder-marker treatment as WeeklyPlanner -- see
               // isZeroDurationTimedReminder's own comment.
@@ -23154,7 +23184,8 @@ function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime
               if(hidden)return null;
               const topPx=(start-spanStart)*(pxPerHr/60);
               const dur=ev.duration||30;
-              const conflictTitles=totalCols>1?dayLaidOut.filter(o=>o.ev.id!==ev.id&&o.start<end&&start<o.end).map(o=>o.ev.title):[];
+              // isExpectedInClassOverlap exception -- see its own comment.
+              const conflictTitles=totalCols>1?dayLaidOut.filter(o=>o.ev.id!==ev.id&&o.start<end&&start<o.end&&!isExpectedInClassOverlap(ev,o.ev)).map(o=>o.ev.title):[];
               const nextInCol=dayLaidOut.filter(o=>o.col===col&&o.start>start).sort((a,b)=>a.start-b.start)[0];
               // Same reminder-marker treatment as WeeklyPlanner/DayPlanner.
               const isReminderMarker=isZeroDurationTimedReminder(ev);

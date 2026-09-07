@@ -600,6 +600,15 @@ function normalizeCourseLabel(label) {
 function normalizeExamTitleForDedup(title) {
   return (title || "").trim().toLowerCase().replace(/\bexam\b/g, "").replace(/\s+/g, " ").trim();
 }
+function isExpectedInClassOverlap(a, b) {
+  const exam = a.kind === "exam" ? a : b.kind === "exam" ? b : null;
+  const cls = a.kind === "class" ? a : b.kind === "class" ? b : null;
+  if (!exam || !cls) return false;
+  if (exam.courseId && cls.courseId) return exam.courseId === cls.courseId;
+  const examLabel = normalizeCourseLabel(exam.subject || "");
+  const clsLabel = normalizeCourseLabel(cls.subject || cls.title || "");
+  return !!examLabel && examLabel === clsLabel;
+}
 const courseIdForLabelFuzzy = (label) => {
   if (!label) return null;
   const subjects = getSubjects();
@@ -1407,6 +1416,11 @@ function expandRoutineOccurrences(routines, startDateKey, endDateKey) {
         duration: override && override.duration != null ? override.duration : r.duration || 30,
         kind: ROUTINE_KIND_TO_EVENT_KIND[r.kind] || "class",
         subject: r.subject || "",
+        // Same "forgot to copy this onto the materialized occurrence" gap
+        // as commuteBefore/After below (see that fix's own comment) --
+        // needed so isExpectedInClassOverlap can match an exam to its own
+        // class by real courseId, not just a normalized subject label.
+        courseId: r.courseId || null,
         color: r.color || null,
         status: "pending",
         isRoutine: true,
@@ -12399,7 +12413,7 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
           const origStartMin = hh * 60 + mm;
           const dur = ev.duration || 30;
           const isRoutine = !!ev.isRoutine;
-          const conflictTitles = totalCols > 1 ? dayLaidOut.filter((o) => o.ev.id !== ev.id && o.start < end && start < o.end).map((o) => o.ev.title) : [];
+          const conflictTitles = totalCols > 1 ? dayLaidOut.filter((o) => o.ev.id !== ev.id && o.start < end && start < o.end && !isExpectedInClassOverlap(ev, o.ev)).map((o) => o.ev.title) : [];
           const isResizing = wkResize && wkResize.id === ev.id;
           const pendingForThis = isRoutine && pendingRoutineChange && pendingRoutineChange.fromDate === pendingRoutineChange.toDate && pendingRoutineChange.routineId === ev.routineId && pendingRoutineChange.fromDate === ev.date ? pendingRoutineChange : null;
           const pendingStartMin = pendingForThis ? timeToMinutes(pendingForThis.toTime) : null;
@@ -13853,7 +13867,7 @@ function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf,
     if (hidden) return null;
     const topPx = (start - spanStart) * (pxPerHr / 60);
     const dur = ev.duration || 30;
-    const conflictTitles = totalCols > 1 ? dayLaidOut.filter((o) => o.ev.id !== ev.id && o.start < end && start < o.end).map((o) => o.ev.title) : [];
+    const conflictTitles = totalCols > 1 ? dayLaidOut.filter((o) => o.ev.id !== ev.id && o.start < end && start < o.end && !isExpectedInClassOverlap(ev, o.ev)).map((o) => o.ev.title) : [];
     const nextInCol = dayLaidOut.filter((o) => o.col === col && o.start > start).sort((a, b) => a.start - b.start)[0];
     const isReminderMarker = isZeroDurationTimedReminder(ev);
     const heightPx = isReminderMarker ? 13 : computeEventBlockHeightPx(dur, nextInCol ? nextInCol.start - start : null, pxPerHr);
@@ -14007,7 +14021,7 @@ function DayPreviewModal({ open, onClose, dayEvents, selDay, dayLabel, colorOf, 
       if (hidden) return null;
       const topPx = (start - spanStart) * (pxPerHr / 60);
       const dur = ev.duration || 30;
-      const conflictTitles = totalCols > 1 ? dayLaidOut.filter((o) => o.ev.id !== ev.id && o.start < end && start < o.end).map((o) => o.ev.title) : [];
+      const conflictTitles = totalCols > 1 ? dayLaidOut.filter((o) => o.ev.id !== ev.id && o.start < end && start < o.end && !isExpectedInClassOverlap(ev, o.ev)).map((o) => o.ev.title) : [];
       const nextInCol = dayLaidOut.filter((o) => o.col === col && o.start > start).sort((a, b) => a.start - b.start)[0];
       const isReminderMarker = isZeroDurationTimedReminder(ev);
       const heightPx = isReminderMarker ? 13 : computeEventBlockHeightPx(dur, nextInCol ? nextInCol.start - start : null, pxPerHr);
