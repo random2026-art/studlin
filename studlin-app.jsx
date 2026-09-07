@@ -2230,6 +2230,15 @@ function expandRoutineOccurrences(routines,startDateKey,endDateKey){
         // supposed to have that location on the block... but it doesn't
         // work" -- reproduced exactly on a recurring class.
         location:r.location||"",
+        // Same class of bug as commuteBefore/commuteAfter/location/courseId
+        // above: the Fixed/Free toggle (saveRoutineEditFromModal) already
+        // saved `movable` correctly onto the rule, but this function never
+        // copied it onto the materialized occurrence -- so isLeadInFixed
+        // (and every buffer/conflict check built on it) always treated a
+        // recurring class/activity as fixed regardless of the toggle,
+        // silently doing nothing for the one case (a recurring gym/practice
+        // block marked "Free") the toggle exists for.
+        movable:!!r.movable,
       });
     });
   }
@@ -2573,7 +2582,7 @@ function materializeHabitsForDate(dateKey,workingEvents){
     if(alreadyDone.has(r.id))return;
     const time=findHabitSlotForToday(working,routinesNow,prefsNow,dateKey,r.duration||30);
     if(!time)return; // no room today — skip gracefully, never rolls to tomorrow
-    const ev={id:"habit-"+r.id+"-"+dateKey,title:r.title,date:dateKey,time,subject:r.subject||"",color:r.color||null,kind:"study block",notes:"",priority:5,difficulty:5,deadline:null,duration:r.duration||30,status:"pending",timeSpent:0,completedAt:null,routineId:r.id};
+    const ev={id:"habit-"+r.id+"-"+dateKey,title:r.title,date:dateKey,time,subject:r.subject||"",color:r.color||null,kind:"study block",notes:"",priority:5,difficulty:5,deadline:null,duration:r.duration||30,status:"pending",timeSpent:0,completedAt:null,routineId:r.id,...(r.isGeneralTask?{isGeneralTask:true}:{})};
     created.push(ev);
     working=working.concat([ev]);
   });
@@ -3899,7 +3908,13 @@ function reconcileFixedEventConflicts(newFixedEvents){
   let working=existing.slice();
   timed.forEach(nf=>{
     working.filter(e=>isLeadInFixed(e)&&e.time).forEach(e=>{
-      if(overlaps(nf,e))needsAttention.push({newEvent:nf,conflictsWith:e});
+      // Same false-positive isExpectedInClassOverlap already suppresses on
+      // the visual conflictTitles badge (WeeklyPlanner/DayPlanner/
+      // DayPreviewModal) -- this is a second, independent overlap check
+      // (drives the "N conflicts need your attention" banner instead of a
+      // block-level badge) that never got the same fix, so an exam created/
+      // imported during its own class's meeting time still triggered it.
+      if(overlaps(nf,e)&&!isExpectedInClassOverlap(nf,e))needsAttention.push({newEvent:nf,conflictsWith:e});
     });
     working=working.map(e=>{
       if(e.kind!=="study block"||e.status==="done"||e.checklist||e.userPinned||isCoopStudySession(e))return e;
@@ -6457,10 +6472,18 @@ function applyHoursTarget(sessionCount,sessionDuration,hoursTarget){
 // final (post-hours-cap) sessionCount/sessionDuration so the copy always
 // matches what's actually on screen, including after a manual
 // adjustBuildPlanCount tweak -- never a stale snapshot from generation time.
-function studyPlanReasoning(confidenceLevel,importanceLevel,materialCharCount,hadHistoricalDuration,hoursTargetAdjusted,sessionCount,sessionDuration,hasTaperedLastSession,daysUntil,weekPressured){
-  const confPhrase=confidenceLevel==="shaky"?"you said you're shaky on this material"
+function studyPlanReasoning(confidenceLevel,importanceLevel,materialCharCount,hadHistoricalDuration,hoursTargetAdjusted,sessionCount,sessionDuration,hasTaperedLastSession,daysUntil,weekPressured,confidenceKnown=true){
+  // confidenceKnown=false means buildPlanConfidence is still just its
+  // uninitialized default (no real confidenceLog, never tapped this time)
+  // -- saying "you said you're feeling X" would be attributing a self-report
+  // the student never made, the same fabricate-then-state-as-fact pattern
+  // already fixed for Attack Block pace. Fine to still use that default
+  // VALUE for the actual session-count/duration math above (a bootstrap),
+  // just never claim it came from the student.
+  const confPhrase=!confidenceKnown?"there's no confidence read on this yet, so this starts from a standard baseline"
+    :confidenceLevel==="shaky"?"you said you're shaky on this material"
     :confidenceLevel==="solid"?"you're already feeling solid on this material"
-    :"you're feeling okay but not solid on this material";
+    :"you said you're feeling okay but not solid on this material";
   const importancePhrase=importanceLevel&&importanceLevel!=="moderate"?", and it's a "+importanceLevel+" exam":"";
   const countLine=sessionCount+" session"+(sessionCount!==1?"s":"")+" -- "+confPhrase+importancePhrase+".";
   const durBits=[];
@@ -8074,7 +8097,18 @@ function buildCreateTaskProposal(parsed,events,routines,prefs){
     const daysUntil=Math.round((new Date(parsed.dueDate+"T12:00:00")-new Date(dayKey()+"T12:00:00"))/86400000);
     sessionCount=defaultSessionCountFor("major",null,daysUntil);
   }
-  const item={title:parsed.title,kind,dueDate:parsed.dueDate||null,dueTime:parsed.dueTime||null,durationMin:parsed.durationMin||null,phases:[],proposeSessions:isExam,sessionCount};
+  // Brain Dump's own parser sets attackBlock:!!it.needsDuration for a
+  // "study" item -- when it genuinely can't tell how long something will
+  // take, it defers to Attack Block's real probe-then-learn flow instead of
+  // guessing. Studlin AI chat's create_task never did this: with no
+  // durationMin mentioned (the common case -- "add a task to finish my
+  // history essay, due Friday" gives no duration), it silently fell through
+  // to a single flat 30-minute placeholder block via findReliableSlotFor
+  // instead. Same fix, same reasoning as the already-fixed pace/
+  // estimatedHours fabrication: don't invent a duration, let Attack Block
+  // find the real one.
+  const needsDuration=kind==="study"&&!parsed.durationMin;
+  const item={title:parsed.title,kind,dueDate:parsed.dueDate||null,dueTime:parsed.dueTime||null,durationMin:parsed.durationMin||null,phases:[],proposeSessions:isExam,sessionCount,needsDuration,attackBlock:needsDuration};
   const{tasks:rawTasks,unplaced}=planBrainDumpTasks([item],events,routines,prefs);
   // Real consumer of studyStylePrefs.sessionOrder -- see
   // applySessionOrderPreference's own comment. A no-op for anyone who
@@ -8291,7 +8325,15 @@ function buildImportSyllabusItemsProposal(parsed,items,routines){
     const dateLabel=new Date(it.date+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"});
     return it.title+" ("+dateLabel+")"+(it.gradeWeightPercent!=null?" -- "+it.gradeWeightPercent+"%":"")+(it.dayMismatch?" [doesn't look like a "+subject+" day -- double check]":"");
   }).join(", ");
-  const label="Add "+normalized.length+" item"+(normalized.length!==1?"s":"")+(subject?" to "+subject:"")+": "+listText+"?";
+  // Every non-exam item here gets attackBlock:true with no per-item choice
+  // (unlike the syllabus-review screen's own checkbox for the same thing)
+  // -- confirming this card can immediately schedule real study time, not
+  // just add due-date markers. Disclose that up front, matching how the
+  // create_task exam branch already appends its own session-plan summary
+  // before the card is shown, rather than surprising the student after.
+  const attackCount=normalized.filter(it=>it.attackBlock).length;
+  const label="Add "+normalized.length+" item"+(normalized.length!==1?"s":"")+(subject?" to "+subject:"")+": "+listText+"?"+
+    (attackCount>0?" Studlin will start finding real study time for the "+attackCount+" assignment"+(attackCount!==1?"s":"")+" here.":"");
   return{ok:true,kind:"import_syllabus_items",items:normalized,subject,mismatchCount:mismatched.length,label};
 }
 // Top-level dispatcher StudlinAiDrawer calls once a message classifies as
@@ -9660,6 +9702,19 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
   // already uses, kept as separate state so it doesn't cross-talk with
   // that other, unrelated instance of the same idea.
   const [buildPlanConfidence,setBuildPlanConfidence]=useState("okay");
+  // Whether buildPlanConfidence reflects something REAL (a past confidenceLog
+  // entry, or the student actually tapping shaky/okay/solid this time) or is
+  // just its uninitialized "okay" default. The default is a fine bootstrap
+  // for the plan's own math (computeStudyPlanParams needs SOME value to
+  // start from), but studyPlanReasoning's copy literally says "you said
+  // you're feeling okay" -- stating a self-report the student never made is
+  // exactly the fabricate-then-present-as-fact pattern already fixed for
+  // Attack Block pace (see computeAssignmentPace's own comment). Most acute
+  // when material is attached: the confidence buttons don't even render
+  // then (a real first-pass diagnosis replaces self-report), so the default
+  // would otherwise be silently attributed to the student with no UI they
+  // could have touched at all.
+  const [buildPlanConfidenceKnown,setBuildPlanConfidenceKnown]=useState(false);
   const [buildPlanMaterialOpen,setBuildPlanMaterialOpen]=useState(false);
   // Collapsed by default -- importance/grade-weight/flashcard+PE toggles/
   // hours target all have a sensible default already (importance derives
@@ -10033,6 +10088,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
     // plan" never actually showed you what you'd said last time.
     const log=exam.confidenceLog||[];
     setBuildPlanConfidence(log.length>0?confidenceZoneOf(log[log.length-1]):"okay");
+    setBuildPlanConfidenceKnown(log.length>0);
     // Zero sessions -> Build (show the Generate/Manual choice). Any
     // sessions already scheduled -> Redo, skip straight to calibration,
     // now pre-filled and editable instead of silently re-running the
@@ -10159,7 +10215,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
     const focusesPromise=(hasMaterial&&dates.length>0)?proposeSessionFocuses(buildPlanExam.title,buildPlanMaterialText,dates.length,buildPlanExam.subject):Promise.resolve(null);
     const [focuses]=await Promise.all([focusesPromise,minDelay]);
     setBuildPlanPreview({sessionCount:dates.length,sessionDuration,difficultyValue:params.difficultyValue,dates,
-      reasoningInputs:{confidenceLevel:buildPlanConfidence,importanceLevel:buildPlanExam.importanceLevel,materialCharCount:buildPlanMaterialText.length,
+      reasoningInputs:{confidenceLevel:buildPlanConfidence,confidenceKnown:buildPlanConfidenceKnown,importanceLevel:buildPlanExam.importanceLevel,materialCharCount:buildPlanMaterialText.length,
         hadHistoricalDuration:historicalDuration!=null,
         // Compared against pressureAdjusted, not the raw params -- this
         // should only reflect the student's OWN typed-in hours target,
@@ -11917,7 +11973,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                 <div style={{fontSize:12,color:T.muted,marginBottom:6}}>How confident are you on this material?</div>
                 <div style={{display:"flex",gap:8}}>
                   {["shaky","okay","solid"].map(level=>(
-                    <button key={level} type="button" onClick={()=>setBuildPlanConfidence(level)}
+                    <button key={level} type="button" onClick={()=>{setBuildPlanConfidence(level);setBuildPlanConfidenceKnown(true);}}
                       style={{flex:1,padding:"8px",borderRadius:7,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,textTransform:"capitalize",
                         background:buildPlanConfidence===level?T.lime+"14":T.card2,color:buildPlanConfidence===level?T.lime:T.muted,
                         border:`1px solid ${buildPlanConfidence===level?T.lime+"44":T.border}`}}>{level}</button>
@@ -12066,7 +12122,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
               return (
                 <div style={{fontSize:12,color:T.text,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",marginBottom:14,lineHeight:1.6}}>
                   <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Why this plan</div>
-                  {studyPlanReasoning(buildPlanPreview.reasoningInputs.confidenceLevel,buildPlanPreview.reasoningInputs.importanceLevel,buildPlanPreview.reasoningInputs.materialCharCount,buildPlanPreview.reasoningInputs.hadHistoricalDuration,buildPlanPreview.reasoningInputs.hoursTargetAdjusted,buildPlanPreview.sessionCount,buildPlanPreview.sessionDuration,lastIsLighter,buildPlanPreview.reasoningInputs.daysUntil,buildPlanPreview.reasoningInputs.weekPressured).map((line,i)=>(
+                  {studyPlanReasoning(buildPlanPreview.reasoningInputs.confidenceLevel,buildPlanPreview.reasoningInputs.importanceLevel,buildPlanPreview.reasoningInputs.materialCharCount,buildPlanPreview.reasoningInputs.hadHistoricalDuration,buildPlanPreview.reasoningInputs.hoursTargetAdjusted,buildPlanPreview.sessionCount,buildPlanPreview.sessionDuration,lastIsLighter,buildPlanPreview.reasoningInputs.daysUntil,buildPlanPreview.reasoningInputs.weekPressured,buildPlanPreview.reasoningInputs.confidenceKnown).map((line,i)=>(
                     <div key={i}>{line}</div>
                   ))}
                 </div>
@@ -15983,6 +16039,21 @@ function planBrainDumpTasks(items,events,routines,prefs){
     const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:it.dueDate||"",time:"",subject:"",kind:"deadline",notes:"",checklist:true,deadline:it.dueDate||null,priority:5,difficulty:5,duration:0,status:"pending",timeSpent:0,completedAt:null};
     todoTasks.push(task);unplaced.push(task);
   };
+  // Bug fix: "then"/"chained" only ever chained off wherever the PREVIOUS
+  // study/timeless-event item landed, because cursorDate/cursorTime (below)
+  // were only ever updated inside the main ordered items.forEach loop --
+  // the fixed-time-event/reminder/exam/project passes above and below it
+  // all fold their placements into `working` but never touched the cursor.
+  // Repro: "I have work 3-11pm today, then I'll do my chem homework" --
+  // "chem homework" is chained:true but cursorTime was still null when it
+  // was reached, so the explicit "right after work" instruction was
+  // silently dropped and it landed on any reliable slot on any day
+  // instead. Fixed by recording where each timed item actually landed here
+  // (keyed by the item object itself), then having the main loop below
+  // catch the cursor up to it when walking items in original order -- so
+  // "then" always means "after whatever came right before it," regardless
+  // of which of these five passes actually placed that previous item.
+  const anchorEnd=new Map();
   // Only a REAL stated clock time makes an event an unmovable fixed
   // obstacle, same as the "busy block" kind in the manual Add Task flow —
   // placed first (folded into `working`) so everything chained/placed
@@ -15995,6 +16066,7 @@ function planBrainDumpTasks(items,events,routines,prefs){
     const duration=Math.max(5,it.durationMin||30);
     const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:it.dueDate||today,time:it.dueTime,subject:"",kind:"busy block",notes:"",priority:5,difficulty:5,deadline:null,duration,status:"pending",timeSpent:0,completedAt:null};
     eventTasks.push(task);working=working.concat([task]);
+    anchorEnd.set(it,{date:task.date,time:minutesToTime(timeToMinutes(task.time)+duration)});
   });
   // A real, typed reminder time commits as-is. When one was never given (a
   // brain-dumped "grab dinner" or "call mom" -- most reminders don't come
@@ -16008,6 +16080,10 @@ function planBrainDumpTasks(items,events,routines,prefs){
     const hasRealTime=!!it.dueTime;
     const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:it.dueDate||today,time:hasRealTime?it.dueTime:"09:00",subject:"",kind:"reminder",notes:"",priority:5,difficulty:5,deadline:null,duration:0,status:"pending",timeSpent:0,completedAt:null,...(hasRealTime?{}:{timeUnconfirmed:true})};
     reminderTasks.push(task);working=working.concat([task]);
+    // Only a REAL time is a meaningful chain anchor -- a placeholder "09:00"
+    // for a time-unconfirmed reminder isn't something "then" should ever
+    // land relative to.
+    if(hasRealTime)anchorEnd.set(it,{date:task.date,time:task.time});
   });
   // Exam items are a due-date fact, same shape as a syllabus-scanned exam
   // marker (no real duration — see isDuePill). Real exam times are common
@@ -16029,6 +16105,8 @@ function planBrainDumpTasks(items,events,routines,prefs){
       const sessions=buildExamSessionEvents(it.title,examDate,"",it.sessionCount||4,"bdexam-"+examTask.id,working,routines,prefs,{dueEventId:examTask.id},it.difficulty,undefined,examTask.examWeight,examTask.confidenceLog);
       examTasks.push(...sessions);working=working.concat(sessions);
     }
+    // Same real-time-only anchor rule as the reminder pass above.
+    if(examHasRealTime)anchorEnd.set(it,{date:examDate,time:it.dueTime});
   });
   // Project items -- same due-date-marker-plus-Attack-Block-chain shape Add
   // Task/EventDetailModal already build for a Project (buildAssignmentAttackBlockPair),
@@ -16044,6 +16122,7 @@ function planBrainDumpTasks(items,events,routines,prefs){
     const pair=buildAssignmentAttackBlockPair(markerId,{title:it.title,subject:"",notes:it.detail||"",deadline:it.dueDate||null,priority:5,difficulty:5,outline},phases,working,routines,prefs,today,prefs.workStartTime);
     if(!pair){downgrade(it);return;}
     projectTasks.push(pair.marker,pair.task);working=working.concat([pair.marker,pair.task]);
+    anchorEnd.set(it,{date:pair.task.date,time:minutesToTime(timeToMinutes(pair.task.time)+(pair.task.duration||0))});
   });
   // Study-kind items (and timeless events, see above) get a real slot via
   // the same deterministic placement engine every other scheduling path
@@ -16108,6 +16187,12 @@ function planBrainDumpTasks(items,events,routines,prefs){
       studyTasks.push(task);working=working.concat([task]);
       cursorDate=slot.date;cursorTime=minutesToTime(timeToMinutes(slot.time)+duration);
     }
+    // Catch the cursor up to wherever a fixed-time event/reminder/exam/
+    // project item (placed in one of the four passes above, out of
+    // original order) actually landed, once we reach its real position
+    // walking `items` in order -- see anchorEnd's own comment above.
+    const anchor=anchorEnd.get(it);
+    if(anchor){cursorDate=anchor.date;cursorTime=anchor.time;}
   });
   // Todo-kind items skip scheduling entirely, same shape as saveChecklistItem.
   items.filter(it=>it.kind==="todo").forEach(it=>{
@@ -16145,6 +16230,21 @@ function planBrainDumpTasks(items,events,routines,prefs){
 // its own fileTexts state) -- sourceMaterials on the real event is exactly
 // that same shape, so nothing downstream needs its own separate merge logic.
 function buildSyllabusEventBatch(existing,noteId,tag,items,sourceMaterial,routines,prefs,courseId){
+  // Two independent review screens feed this function with different
+  // vocabularies for "plain assignment": the Notes-canvas syllabus scan
+  // stamps kind:"deadline" (matches every check below directly), but
+  // ClassSetupWizard's own review (buildReviewFromExtraction, ITEM_KIND_OPTIONS)
+  // stamps kind:"assignment" instead -- and every gate below (gates,
+  // wantsAttack, the stored `deadline` field) only ever checked for the
+  // literal string "deadline", so a ClassSetupWizard-scanned assignment
+  // silently never got estimatedHours/attackStartDate/prepPending stamped
+  // and never entered the Attack Block chain-building loop at all, even
+  // with "Schedule an Attack Block" checked. The function's own OUTPUT
+  // kind already collapses everything non-exam/non-project to "deadline"
+  // (see kind:it.kind==="exam"?"exam":"deadline" below) -- "assignment" was
+  // always meant to mean the same thing, just never normalized on the way
+  // in. Normalizing once, up front, fixes every downstream check at once.
+  items=items.map(it=>it.kind==="assignment"?{...it,kind:"deadline"}:it);
   const today=dayKey();
   // One computation per item, reused by both the marker-building pass below
   // and the immediate-scheduling pass after it, so the two can never
@@ -17626,7 +17726,7 @@ async function classifyStudlinAiMessage(text,history){
     "\"move_flex_task\" is for relocating ONE existing FLEXIBLE item the student themselves controls the timing of -- a homework/study task, assignment, or to-do, not a fixed real-world commitment -- \"target\" is its name as the student said it, \"targetDate\" is the date it's currently on (default today's date above if not mentioned), \"destDate\" is the day they want it moved to (null if they said \"sometime\"/didn't specify).\n"+
     "\"move_event\" is ONLY for a fixed real-world commitment (a class, practice, gym, appointment, meeting) that can't happen at its current time and should be relocated whole -- same target/targetDate/destDate fields as move_flex_task.\n"+
     "\"retime_event\" is for when ONE fixed thing's own time changed (not cancelled) and everything else should fit around the new time -- \"target\"/\"targetDate\" as above, \"newStart\" 24h HH:MM, \"newDuration\" in minutes if a range was given, null if only a start time was given.\n"+
-    "\"shift\" pushes everything from today onward back by a day count, only with an explicit or clearly implied number, never invent one. \"clear_day\" empties one specific date (resolve relative phrases against today's date above). \"clear_week\" clears the next 7 days, no parameters. \"skip_class\" is for not physically attending class/school on a specific day, opening that time for other work.\n"+
+    "\"shift\" pushes everything from today onward back by a day count, only with an explicit or clearly implied number, never invent one. \"clear_day\" empties one specific date (resolve relative phrases against today's date above). \"clear_week\" clears the next 7 days, no parameters. \"skip_class\" is for not physically attending class/school on a specific day, opening that time for other work -- \"date\" (not targetDate) is that day, resolved against today's date above (default today if no day was named).\n"+
     "\"generate_study_material\" is for when the student pastes real study material (notes, a definition list, an excerpt, a transcript) directly in their message and asks to be quizzed on it or have flashcards made from it -- \"genFormat\" is \"flashcards\" for card/flashcard requests, \"quiz\" for quiz/test/practice-exam requests (default to \"flashcards\" if genuinely ambiguous which they want). Only classify this way when the message actually contains real pasted content to learn from, not just a bare request -- \"quiz me on chapter 3\" with nothing pasted is coaching or unsupported instead, never this.\n"+
     "\"import_syllabus_items\" is for when the student pastes or lists MULTIPLE distinct graded items at once (quizzes, exams, assignments, each with its own date), typically copied straight from a syllabus, and asks to add them -- \"subject\" is the class they named (as they said it, e.g. \"econ\" or \"my econ class\"). Only classify this way when there are genuinely two or more distinct dated items being requested together -- a single item with one date is create_task instead, never this. Do not try to extract the individual items yourself here -- leave title/dueDate/etc null, only \"subject\" (and \"duringClass\", see below) matter for this intent, the items are re-read from the original message separately. \"duringClass\": set true when EITHER the student's own words say these items happen/are done/are due DURING class or lecture time itself (e.g. \"done during class,\" \"we do these in class\"), OR the pasted syllabus/material text ITSELF says so for these items, even if the student added no comment of their own (e.g. a pasted line reading \"in-class worksheet,\" \"completed during lecture,\" \"due in class,\" \"submit at the start of class\") -- read the whole pasted block for this, not just what the student typed around it. When true, each item's date gets checked against that class's real meeting days and flagged if one doesn't line up. False for ordinary homework/assignments/exams with no such statement anywhere in the message -- most of the time this is false, never guess it true just because a class was named.\n"+
     "Leave every field the chosen intent/kind doesn't use as null. Relative-date phrases are never off by less than what they literally say: \"tomorrow\" is exactly today's date above + 1 day. \"next week\" (no specific weekday named) means "+nextWeekSameDay+" (today's date above + 7 days), never less than 7 days out, never treated the same as \"tomorrow.\" \"next Monday\"/\"next Friday\"/etc. resolve to that exact date within the next 7 days.\n"+
@@ -17649,6 +17749,8 @@ async function classifyStudlinAiMessage(text,history){
     "\"I can't make the gym today, move it to tomorrow\" -> {\"kind\":\"action\",\"intent\":\"move_event\",\"days\":null,\"date\":null,\"target\":\"gym\",\"targetDate\":\""+today+"\",\"destDate\":\""+tomorrow+"\",\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
     "\"my track practice got moved to 7-9pm\" -> {\"kind\":\"action\",\"intent\":\"retime_event\",\"days\":null,\"date\":null,\"target\":\"track practice\",\"targetDate\":\""+today+"\",\"destDate\":null,\"newStart\":\"19:00\",\"newDuration\":120,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
     "\"I'm sick, push everything back 3 days\" -> {\"kind\":\"action\",\"intent\":\"shift\",\"days\":3,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
+    "\"I'm sick, skip class Friday\" -> the day goes in \"date\" (not targetDate) -- {\"kind\":\"action\",\"intent\":\"skip_class\",\"days\":null,\"date\":\"<the real date of this Friday>\",\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
+    "\"no school tomorrow\" -> {\"kind\":\"action\",\"intent\":\"skip_class\",\"days\":null,\"date\":\""+tomorrow+"\",\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
     "\"cancel everything forever\" -> {\"kind\":\"unsupported\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
     "\"add a task to finish my essay\" (no date mentioned at all) -> {\"kind\":\"unsupported\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":\"When is that due?\"}\n"+
     "\"I actually focus way better in the evening than in the morning\" -> {\"kind\":\"action\",\"intent\":\"set_peak_hours\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"peakHours\":\"evening\",\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
@@ -19257,7 +19359,7 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
                 </label>
               ))}
             </div>
-            <div style={{fontSize:13,color:T.text,marginBottom:24}}>Studlin will schedule <strong>+{abEffectiveRecMins}m</strong> to finish it up.</div>
+            <div style={{fontSize:13,color:T.text,marginBottom:24}}>Studlin's rough estimate: <strong>+{abEffectiveRecMins}m</strong> to finish it up.</div>
             <div style={{display:"flex",gap:10}}>
               <Btn variant="subtle" onClick={()=>setAbStep("choice")} style={{flex:1,justifyContent:"center"}}>Back</Btn>
               <Btn onClick={onScheduleFollowUp} style={{flex:1,justifyContent:"center"}}>Schedule +{abEffectiveRecMins}m</Btn>
@@ -27880,7 +27982,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const saveRepeatingTask=()=>{
     if(!evTitle.trim()||taskRepeatDays.length===0)return;
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
-    const base={title:evTitle.trim(),kind:"habit",...(subj?{subject:subj}:{}),notes:evNotes||undefined};
+    const base={title:evTitle.trim(),kind:"habit",...(subj?{subject:subj}:{}),notes:evNotes||undefined,isGeneralTask:true};
     persistRoutines([...routines,...buildRoutineObjectsForDays(base,taskRepeatDays,"09:00",evDuration||30,{})]);
     resetForm();
   };
@@ -34263,6 +34365,17 @@ function App() {
       const events=lsGet("events",[]);
       const todayK=dayKey();
       const now=Date.now();
+      // Bug fix: anything scheduled in the first ~10 minutes after midnight
+      // used to never get a lead-time notification at all. The date filters
+      // below only ever looked at todayK's events/occurrences -- a 00:05
+      // event's 10-min-lead window falls at 23:55 the PRIOR day, when
+      // todayK was still that prior day, so the event was filtered out
+      // before remindItem's own (correct) minsUntil math ever got a chance
+      // to run. remindItem already gates strictly to a 1-minute-wide window
+      // regardless of which day something's dated, so it's harmless to also
+      // hand it tomorrow's items every poll -- only ones actually inside
+      // that window ever notify.
+      const tomorrowK=dayKey(new Date(now+86400000));
       // Real per-day, once-only nudge (see shouldFireStreakNudge) -- the
       // "Streak reminders" toggle used to gate nothing, since no engine like
       // this existed at all. Persisted (not just in notifiedRef) so a reload
@@ -34311,7 +34424,7 @@ function App() {
         // was always available anyway.
       };
       events.forEach(ev=>{
-        if(ev.date!==todayK)return;
+        if(ev.date!==todayK&&ev.date!==tomorrowK)return;
         if(!reminderCategoryAllowed(ev.kind,settings.deadline))return;
         remindItem(ev);
       });
@@ -34326,6 +34439,7 @@ function App() {
       // everyone the moment this ships.
       if(settings.classReminders===true){
         getRoutineOccurrencesForDate(todayK).forEach(remindItem);
+        getRoutineOccurrencesForDate(tomorrowK).forEach(remindItem);
       }
     };
     check();

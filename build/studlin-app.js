@@ -1449,7 +1449,16 @@ function expandRoutineOccurrences(routines, startDateKey, endDateKey) {
         // worked. User report, 2026-09-04: "once i add location its
         // supposed to have that location on the block... but it doesn't
         // work" -- reproduced exactly on a recurring class.
-        location: r.location || ""
+        location: r.location || "",
+        // Same class of bug as commuteBefore/commuteAfter/location/courseId
+        // above: the Fixed/Free toggle (saveRoutineEditFromModal) already
+        // saved `movable` correctly onto the rule, but this function never
+        // copied it onto the materialized occurrence -- so isLeadInFixed
+        // (and every buffer/conflict check built on it) always treated a
+        // recurring class/activity as fixed regardless of the toggle,
+        // silently doing nothing for the one case (a recurring gym/practice
+        // block marked "Free") the toggle exists for.
+        movable: !!r.movable
       });
     });
   }
@@ -1620,7 +1629,7 @@ function materializeHabitsForDate(dateKey, workingEvents) {
     if (alreadyDone.has(r.id)) return;
     const time = findHabitSlotForToday(working, routinesNow, prefsNow, dateKey, r.duration || 30);
     if (!time) return;
-    const ev = { id: "habit-" + r.id + "-" + dateKey, title: r.title, date: dateKey, time, subject: r.subject || "", color: r.color || null, kind: "study block", notes: "", priority: 5, difficulty: 5, deadline: null, duration: r.duration || 30, status: "pending", timeSpent: 0, completedAt: null, routineId: r.id };
+    const ev = { id: "habit-" + r.id + "-" + dateKey, title: r.title, date: dateKey, time, subject: r.subject || "", color: r.color || null, kind: "study block", notes: "", priority: 5, difficulty: 5, deadline: null, duration: r.duration || 30, status: "pending", timeSpent: 0, completedAt: null, routineId: r.id, ...r.isGeneralTask ? { isGeneralTask: true } : {} };
     created.push(ev);
     working = working.concat([ev]);
   });
@@ -2288,7 +2297,7 @@ function reconcileFixedEventConflicts(newFixedEvents) {
   let working = existing.slice();
   timed.forEach((nf) => {
     working.filter((e) => isLeadInFixed(e) && e.time).forEach((e) => {
-      if (overlaps(nf, e)) needsAttention.push({ newEvent: nf, conflictsWith: e });
+      if (overlaps(nf, e) && !isExpectedInClassOverlap(nf, e)) needsAttention.push({ newEvent: nf, conflictsWith: e });
     });
     working = working.map((e) => {
       if (e.kind !== "study block" || e.status === "done" || e.checklist || e.userPinned || isCoopStudySession(e)) return e;
@@ -3940,8 +3949,8 @@ function applyHoursTarget(sessionCount, sessionDuration, hoursTarget) {
   const perSession = Math.max(10, Math.round(targetMins / sessionCount / 5) * 5);
   return { sessionCount, sessionDuration: perSession };
 }
-function studyPlanReasoning(confidenceLevel, importanceLevel, materialCharCount, hadHistoricalDuration, hoursTargetAdjusted, sessionCount, sessionDuration, hasTaperedLastSession, daysUntil, weekPressured) {
-  const confPhrase = confidenceLevel === "shaky" ? "you said you're shaky on this material" : confidenceLevel === "solid" ? "you're already feeling solid on this material" : "you're feeling okay but not solid on this material";
+function studyPlanReasoning(confidenceLevel, importanceLevel, materialCharCount, hadHistoricalDuration, hoursTargetAdjusted, sessionCount, sessionDuration, hasTaperedLastSession, daysUntil, weekPressured, confidenceKnown = true) {
+  const confPhrase = !confidenceKnown ? "there's no confidence read on this yet, so this starts from a standard baseline" : confidenceLevel === "shaky" ? "you said you're shaky on this material" : confidenceLevel === "solid" ? "you're already feeling solid on this material" : "you said you're feeling okay but not solid on this material";
   const importancePhrase = importanceLevel && importanceLevel !== "moderate" ? ", and it's a " + importanceLevel + " exam" : "";
   const countLine = sessionCount + " session" + (sessionCount !== 1 ? "s" : "") + " -- " + confPhrase + importancePhrase + ".";
   const durBits = [];
@@ -4949,7 +4958,8 @@ function buildCreateTaskProposal(parsed, events, routines, prefs) {
     const daysUntil = Math.round((/* @__PURE__ */ new Date(parsed.dueDate + "T12:00:00") - /* @__PURE__ */ new Date(dayKey() + "T12:00:00")) / 864e5);
     sessionCount = defaultSessionCountFor("major", null, daysUntil);
   }
-  const item = { title: parsed.title, kind, dueDate: parsed.dueDate || null, dueTime: parsed.dueTime || null, durationMin: parsed.durationMin || null, phases: [], proposeSessions: isExam, sessionCount };
+  const needsDuration = kind === "study" && !parsed.durationMin;
+  const item = { title: parsed.title, kind, dueDate: parsed.dueDate || null, dueTime: parsed.dueTime || null, durationMin: parsed.durationMin || null, phases: [], proposeSessions: isExam, sessionCount, needsDuration, attackBlock: needsDuration };
   const { tasks: rawTasks, unplaced } = planBrainDumpTasks([item], events, routines, prefs);
   const tasks = applySessionOrderPreference(rawTasks, prefs.studyStylePrefs && prefs.studyStylePrefs.sessionOrder);
   if (tasks.length === 0) return { ok: false, label: `Couldn't find room for "` + parsed.title + '" -- try a different date.' };
@@ -5059,7 +5069,8 @@ function buildImportSyllabusItemsProposal(parsed, items, routines) {
     const dateLabel = (/* @__PURE__ */ new Date(it.date + "T12:00:00")).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
     return it.title + " (" + dateLabel + ")" + (it.gradeWeightPercent != null ? " -- " + it.gradeWeightPercent + "%" : "") + (it.dayMismatch ? " [doesn't look like a " + subject + " day -- double check]" : "");
   }).join(", ");
-  const label = "Add " + normalized.length + " item" + (normalized.length !== 1 ? "s" : "") + (subject ? " to " + subject : "") + ": " + listText + "?";
+  const attackCount = normalized.filter((it) => it.attackBlock).length;
+  const label = "Add " + normalized.length + " item" + (normalized.length !== 1 ? "s" : "") + (subject ? " to " + subject : "") + ": " + listText + "?" + (attackCount > 0 ? " Studlin will start finding real study time for the " + attackCount + " assignment" + (attackCount !== 1 ? "s" : "") + " here." : "");
   return { ok: true, kind: "import_syllabus_items", items: normalized, subject, mismatchCount: mismatched.length, label };
 }
 function buildStudlinAiActionProposal(parsed, events, routines, prefs, forcedId, rawText) {
@@ -5847,6 +5858,7 @@ function StudlinPrep({ setActive = () => {
   const [buildPlanFocuses, setBuildPlanFocuses] = useState([]);
   const [buildPlanOverrides, setBuildPlanOverrides] = useState([]);
   const [buildPlanConfidence, setBuildPlanConfidence] = useState("okay");
+  const [buildPlanConfidenceKnown, setBuildPlanConfidenceKnown] = useState(false);
   const [buildPlanMaterialOpen, setBuildPlanMaterialOpen] = useState(false);
   const [manualSessionRows, setManualSessionRows] = useState([]);
   const addManualSessionRow = () => setManualSessionRows((rows) => [...rows, { text: "", date: "", time: "", duration: 25 }]);
@@ -6076,6 +6088,7 @@ function StudlinPrep({ setActive = () => {
     setBuildPlanMaterialOpen(!hasMaterial);
     const log = exam.confidenceLog || [];
     setBuildPlanConfidence(log.length > 0 ? confidenceZoneOf(log[log.length - 1]) : "okay");
+    setBuildPlanConfidenceKnown(log.length > 0);
     const hasSessions = lsGet("events", []).some((e) => e.dueEventId === exam.id);
     setBuildPlanStep(hasSessions ? "confidence" : "choice");
   };
@@ -6129,6 +6142,7 @@ function StudlinPrep({ setActive = () => {
       dates,
       reasoningInputs: {
         confidenceLevel: buildPlanConfidence,
+        confidenceKnown: buildPlanConfidenceKnown,
         importanceLevel: buildPlanExam.importanceLevel,
         materialCharCount: buildPlanMaterialText.length,
         hadHistoricalDuration: historicalDuration != null,
@@ -7091,7 +7105,10 @@ function StudlinPrep({ setActive = () => {
         {
           key: level,
           type: "button",
-          onClick: () => setBuildPlanConfidence(level),
+          onClick: () => {
+            setBuildPlanConfidence(level);
+            setBuildPlanConfidenceKnown(true);
+          },
           style: {
             flex: 1,
             padding: "8px",
@@ -7177,7 +7194,7 @@ function StudlinPrep({ setActive = () => {
     ) : /* @__PURE__ */ React.createElement(React.Fragment, null, buildPlanPreview.reasoningInputs && (() => {
       const lastOv = buildPlanOverrides[buildPlanOverrides.length - 1];
       const lastIsLighter = buildPlanPreview.dates.length >= 3 && lastOv && lastOv.duration && lastOv.duration < buildPlanPreview.sessionDuration;
-      return /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.text, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", marginBottom: 14, lineHeight: 1.6 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "Why this plan"), studyPlanReasoning(buildPlanPreview.reasoningInputs.confidenceLevel, buildPlanPreview.reasoningInputs.importanceLevel, buildPlanPreview.reasoningInputs.materialCharCount, buildPlanPreview.reasoningInputs.hadHistoricalDuration, buildPlanPreview.reasoningInputs.hoursTargetAdjusted, buildPlanPreview.sessionCount, buildPlanPreview.sessionDuration, lastIsLighter, buildPlanPreview.reasoningInputs.daysUntil, buildPlanPreview.reasoningInputs.weekPressured).map((line, i) => /* @__PURE__ */ React.createElement("div", { key: i }, line)));
+      return /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.text, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", marginBottom: 14, lineHeight: 1.6 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "Why this plan"), studyPlanReasoning(buildPlanPreview.reasoningInputs.confidenceLevel, buildPlanPreview.reasoningInputs.importanceLevel, buildPlanPreview.reasoningInputs.materialCharCount, buildPlanPreview.reasoningInputs.hadHistoricalDuration, buildPlanPreview.reasoningInputs.hoursTargetAdjusted, buildPlanPreview.sessionCount, buildPlanPreview.sessionDuration, lastIsLighter, buildPlanPreview.reasoningInputs.daysUntil, buildPlanPreview.reasoningInputs.weekPressured, buildPlanPreview.reasoningInputs.confidenceKnown).map((line, i) => /* @__PURE__ */ React.createElement("div", { key: i }, line)));
     })(), (buildPlanGenFlashcards || buildPlanGenPE) && materialText.trim() && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.text, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", marginBottom: 14, lineHeight: 1.6 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "Also included"), buildPlanGenFlashcards && /* @__PURE__ */ React.createElement("div", null, "~", scaledFlashcardCount(materialText.length), " flashcards", buildPlanWeaveCards ? ", woven into every session below as a quick review before you start." : " -- created on their own, not part of these sessions. Schedule review time separately from Flashcards."), buildPlanGenPE && /* @__PURE__ */ React.createElement("div", null, "A ", scaledQuizCount(materialText.length), "-question practice exam", buildPlanWeavePE ? " -- your last session becomes a sit-down for it instead of new material." : " -- created on its own, not part of these sessions. Schedule it separately from Practice Exams.")), buildPlanPreview.dates.length > 0 && (() => {
       const pressure = weekPrepLoad(buildPlanPreview.dates[0], buildPlanExam, lsGet("events", []), getSchedulePreferences());
       if (!pressure.isPressured) return null;
@@ -9759,17 +9776,20 @@ function planBrainDumpTasks(items, events, routines, prefs) {
     todoTasks.push(task);
     unplaced.push(task);
   };
+  const anchorEnd = /* @__PURE__ */ new Map();
   items.filter((it) => it.kind === "event" && it.dueTime).forEach((it) => {
     const duration = Math.max(5, it.durationMin || 30);
     const task = { id: String(Date.now() + Math.random() * 1e3), title: it.title, date: it.dueDate || today, time: it.dueTime, subject: "", kind: "busy block", notes: "", priority: 5, difficulty: 5, deadline: null, duration, status: "pending", timeSpent: 0, completedAt: null };
     eventTasks.push(task);
     working = working.concat([task]);
+    anchorEnd.set(it, { date: task.date, time: minutesToTime(timeToMinutes(task.time) + duration) });
   });
   items.filter((it) => it.kind === "reminder").forEach((it) => {
     const hasRealTime = !!it.dueTime;
     const task = { id: String(Date.now() + Math.random() * 1e3), title: it.title, date: it.dueDate || today, time: hasRealTime ? it.dueTime : "09:00", subject: "", kind: "reminder", notes: "", priority: 5, difficulty: 5, deadline: null, duration: 0, status: "pending", timeSpent: 0, completedAt: null, ...hasRealTime ? {} : { timeUnconfirmed: true } };
     reminderTasks.push(task);
     working = working.concat([task]);
+    if (hasRealTime) anchorEnd.set(it, { date: task.date, time: task.time });
   });
   items.filter((it) => it.kind === "exam").forEach((it) => {
     const examDate = it.dueDate || today;
@@ -9782,6 +9802,7 @@ function planBrainDumpTasks(items, events, routines, prefs) {
       examTasks.push(...sessions);
       working = working.concat(sessions);
     }
+    if (examHasRealTime) anchorEnd.set(it, { date: examDate, time: it.dueTime });
   });
   items.filter((it) => it.kind === "project").forEach((it) => {
     const phases = (it.phases || []).map((p) => p.trim()).filter(Boolean);
@@ -9794,6 +9815,7 @@ function planBrainDumpTasks(items, events, routines, prefs) {
     }
     projectTasks.push(pair.marker, pair.task);
     working = working.concat([pair.marker, pair.task]);
+    anchorEnd.set(it, { date: pair.task.date, time: minutesToTime(timeToMinutes(pair.task.time) + (pair.task.duration || 0)) });
   });
   let cursorDate = null, cursorTime = null;
   items.forEach((it) => {
@@ -9841,6 +9863,11 @@ function planBrainDumpTasks(items, events, routines, prefs) {
       cursorDate = slot.date;
       cursorTime = minutesToTime(timeToMinutes(slot.time) + duration);
     }
+    const anchor = anchorEnd.get(it);
+    if (anchor) {
+      cursorDate = anchor.date;
+      cursorTime = anchor.time;
+    }
   });
   items.filter((it) => it.kind === "todo").forEach((it) => {
     todoTasks.push({ id: String(Date.now() + Math.random() * 1e3), title: it.title, date: it.dueDate || "", time: "", subject: "", kind: "deadline", notes: "", checklist: true, deadline: it.dueDate || null, priority: 5, difficulty: 5, duration: 0, status: "pending", timeSpent: 0, completedAt: null });
@@ -9848,6 +9875,7 @@ function planBrainDumpTasks(items, events, routines, prefs) {
   return { tasks: [...studyTasks, ...todoTasks, ...eventTasks, ...reminderTasks, ...examTasks, ...projectTasks], unplaced };
 }
 function buildSyllabusEventBatch(existing, noteId, tag, items, sourceMaterial, routines, prefs, courseId) {
+  items = items.map((it) => it.kind === "assignment" ? { ...it, kind: "deadline" } : it);
   const today = dayKey();
   const gates = items.map((it) => (it.kind === "deadline" || it.kind === "project") && it.attackBlock && !it.noDate ? attackBlockActionableDate(it.estimatedHours, it.date, today) : null);
   const normKind = (it) => it.kind === "exam" ? "exam" : "deadline";
@@ -10729,7 +10757,7 @@ Rules: "question" is asking for a real FACT about their schedule/workload/streak
 "move_flex_task" is for relocating ONE existing FLEXIBLE item the student themselves controls the timing of -- a homework/study task, assignment, or to-do, not a fixed real-world commitment -- "target" is its name as the student said it, "targetDate" is the date it's currently on (default today's date above if not mentioned), "destDate" is the day they want it moved to (null if they said "sometime"/didn't specify).
 "move_event" is ONLY for a fixed real-world commitment (a class, practice, gym, appointment, meeting) that can't happen at its current time and should be relocated whole -- same target/targetDate/destDate fields as move_flex_task.
 "retime_event" is for when ONE fixed thing's own time changed (not cancelled) and everything else should fit around the new time -- "target"/"targetDate" as above, "newStart" 24h HH:MM, "newDuration" in minutes if a range was given, null if only a start time was given.
-"shift" pushes everything from today onward back by a day count, only with an explicit or clearly implied number, never invent one. "clear_day" empties one specific date (resolve relative phrases against today's date above). "clear_week" clears the next 7 days, no parameters. "skip_class" is for not physically attending class/school on a specific day, opening that time for other work.
+"shift" pushes everything from today onward back by a day count, only with an explicit or clearly implied number, never invent one. "clear_day" empties one specific date (resolve relative phrases against today's date above). "clear_week" clears the next 7 days, no parameters. "skip_class" is for not physically attending class/school on a specific day, opening that time for other work -- "date" (not targetDate) is that day, resolved against today's date above (default today if no day was named).
 "generate_study_material" is for when the student pastes real study material (notes, a definition list, an excerpt, a transcript) directly in their message and asks to be quizzed on it or have flashcards made from it -- "genFormat" is "flashcards" for card/flashcard requests, "quiz" for quiz/test/practice-exam requests (default to "flashcards" if genuinely ambiguous which they want). Only classify this way when the message actually contains real pasted content to learn from, not just a bare request -- "quiz me on chapter 3" with nothing pasted is coaching or unsupported instead, never this.
 "import_syllabus_items" is for when the student pastes or lists MULTIPLE distinct graded items at once (quizzes, exams, assignments, each with its own date), typically copied straight from a syllabus, and asks to add them -- "subject" is the class they named (as they said it, e.g. "econ" or "my econ class"). Only classify this way when there are genuinely two or more distinct dated items being requested together -- a single item with one date is create_task instead, never this. Do not try to extract the individual items yourself here -- leave title/dueDate/etc null, only "subject" (and "duringClass", see below) matter for this intent, the items are re-read from the original message separately. "duringClass": set true when EITHER the student's own words say these items happen/are done/are due DURING class or lecture time itself (e.g. "done during class," "we do these in class"), OR the pasted syllabus/material text ITSELF says so for these items, even if the student added no comment of their own (e.g. a pasted line reading "in-class worksheet," "completed during lecture," "due in class," "submit at the start of class") -- read the whole pasted block for this, not just what the student typed around it. When true, each item's date gets checked against that class's real meeting days and flagged if one doesn't line up. False for ordinary homework/assignments/exams with no such statement anywhere in the message -- most of the time this is false, never guess it true just because a class was named.
 Leave every field the chosen intent/kind doesn't use as null. Relative-date phrases are never off by less than what they literally say: "tomorrow" is exactly today's date above + 1 day. "next week" (no specific weekday named) means ` + nextWeekSameDay + ` (today's date above + 7 days), never less than 7 days out, never treated the same as "tomorrow." "next Monday"/"next Friday"/etc. resolve to that exact date within the next 7 days.
@@ -10747,6 +10775,8 @@ Examples:
 "delete my old chem homework task" -> {"kind":"action","intent":"delete_task","days":null,"date":null,"target":"chem homework","targetDate":"` + today + '","destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null}\n"cancel my dentist appointment tomorrow" -> {"kind":"action","intent":"delete_task","days":null,"date":null,"target":"dentist appointment","targetDate":"' + tomorrow + '","destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null}\n"delete all my chem classes" -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null}\n"move my chem homework to tomorrow" -> {"kind":"action","intent":"move_flex_task","days":null,"date":null,"target":"chem homework","targetDate":"' + today + '","destDate":"' + tomorrow + `","newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null}
 "I can't make the gym today, move it to tomorrow" -> {"kind":"action","intent":"move_event","days":null,"date":null,"target":"gym","targetDate":"` + today + '","destDate":"' + tomorrow + '","newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null}\n"my track practice got moved to 7-9pm" -> {"kind":"action","intent":"retime_event","days":null,"date":null,"target":"track practice","targetDate":"' + today + `","destDate":null,"newStart":"19:00","newDuration":120,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null}
 "I'm sick, push everything back 3 days" -> {"kind":"action","intent":"shift","days":3,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null}
+"I'm sick, skip class Friday" -> the day goes in "date" (not targetDate) -- {"kind":"action","intent":"skip_class","days":null,"date":"<the real date of this Friday>","target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null}
+"no school tomorrow" -> {"kind":"action","intent":"skip_class","days":null,"date":"` + tomorrow + `","target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null}
 "cancel everything forever" -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null}
 "add a task to finish my essay" (no date mentioned at all) -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":"When is that due?"}
 "I actually focus way better in the evening than in the morning" -> {"kind":"action","intent":"set_peak_hours","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"peakHours":"evening","subject":null,"duringClass":false,"clarify":null}
@@ -11818,7 +11848,7 @@ function TaskTimerModal({ task, onClose, onComplete, onAssignmentComplete, onAss
         onChange: (e) => setAbItemPct(parseInt(e.target.value, 10)),
         style: { width: "100%", marginBottom: 8 }
       }
-    ), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.lime, marginBottom: 20 } }, abItemPct, "% into this step")), /* @__PURE__ */ React.createElement("div", { style: { textAlign: "left", display: "flex", flexDirection: "column", gap: 8, marginBottom: 20, maxHeight: 180, overflowY: "auto" } }, abOutline.map((o, oi) => /* @__PURE__ */ React.createElement("label", { key: oi, style: { display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: o.done ? T.faint : T.text, cursor: "pointer", textDecoration: o.done ? "line-through" : "none" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: o.done, onChange: () => toggleAbOutlineItem(oi), style: { accentColor: T.lime, cursor: "pointer" } }), o.text))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, marginBottom: 24 } }, "Studlin will schedule ", /* @__PURE__ */ React.createElement("strong", null, "+", abEffectiveRecMins, "m"), " to finish it up."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setAbStep("choice"), style: { flex: 1, justifyContent: "center" } }, "Back"), /* @__PURE__ */ React.createElement(Btn, { onClick: onScheduleFollowUp, style: { flex: 1, justifyContent: "center" } }, "Schedule +", abEffectiveRecMins, "m"))), abStep === "slider" && !abOutline && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 17, fontWeight: 700, color: T.white, marginBottom: 8 } }, "How far along are you?"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, marginBottom: 24, lineHeight: 1.6 } }, 'Drag to estimate how much of "', task.title, '" is done overall.'), /* @__PURE__ */ React.createElement(
+    ), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.lime, marginBottom: 20 } }, abItemPct, "% into this step")), /* @__PURE__ */ React.createElement("div", { style: { textAlign: "left", display: "flex", flexDirection: "column", gap: 8, marginBottom: 20, maxHeight: 180, overflowY: "auto" } }, abOutline.map((o, oi) => /* @__PURE__ */ React.createElement("label", { key: oi, style: { display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: o.done ? T.faint : T.text, cursor: "pointer", textDecoration: o.done ? "line-through" : "none" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: o.done, onChange: () => toggleAbOutlineItem(oi), style: { accentColor: T.lime, cursor: "pointer" } }), o.text))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, marginBottom: 24 } }, "Studlin's rough estimate: ", /* @__PURE__ */ React.createElement("strong", null, "+", abEffectiveRecMins, "m"), " to finish it up."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setAbStep("choice"), style: { flex: 1, justifyContent: "center" } }, "Back"), /* @__PURE__ */ React.createElement(Btn, { onClick: onScheduleFollowUp, style: { flex: 1, justifyContent: "center" } }, "Schedule +", abEffectiveRecMins, "m"))), abStep === "slider" && !abOutline && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 17, fontWeight: 700, color: T.white, marginBottom: 8 } }, "How far along are you?"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, marginBottom: 24, lineHeight: 1.6 } }, 'Drag to estimate how much of "', task.title, '" is done overall.'), /* @__PURE__ */ React.createElement(
       "input",
       {
         type: "range",
@@ -16828,7 +16858,7 @@ function CalendarTab({ setActive = () => {
   const saveRepeatingTask = () => {
     if (!evTitle.trim() || taskRepeatDays.length === 0) return;
     const subj = evSubject === "None" ? "" : evSubject === "Other" && evCustom.trim() ? evCustom.trim() : evSubject;
-    const base = { title: evTitle.trim(), kind: "habit", ...subj ? { subject: subj } : {}, notes: evNotes || void 0 };
+    const base = { title: evTitle.trim(), kind: "habit", ...subj ? { subject: subj } : {}, notes: evNotes || void 0, isGeneralTask: true };
     persistRoutines([...routines, ...buildRoutineObjectsForDays(base, taskRepeatDays, "09:00", evDuration || 30, {})]);
     resetForm();
   };
@@ -20352,6 +20382,7 @@ function App() {
       const events = lsGet("events", []);
       const todayK = dayKey();
       const now = Date.now();
+      const tomorrowK = dayKey(new Date(now + 864e5));
       if (settings.streak !== false && shouldFireStreakNudge((/* @__PURE__ */ new Date()).getHours(), getStreakNudgeSentDate() === todayK, lsGet("sessions", []).filter((s) => s.d === todayK))) {
         markStreakNudgeSent(todayK);
         try {
@@ -20379,12 +20410,13 @@ function App() {
         });
       };
       events.forEach((ev) => {
-        if (ev.date !== todayK) return;
+        if (ev.date !== todayK && ev.date !== tomorrowK) return;
         if (!reminderCategoryAllowed(ev.kind, settings.deadline)) return;
         remindItem(ev);
       });
       if (settings.classReminders === true) {
         getRoutineOccurrencesForDate(todayK).forEach(remindItem);
+        getRoutineOccurrencesForDate(tomorrowK).forEach(remindItem);
       }
     };
     check();
