@@ -29956,8 +29956,19 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             due-date concept, which also fed the "looks identical to a
             Study Session" problem (see isAssignment's own comment in
             buildTask). Optional -- leaving it blank is fine for something
-            you're just doing tonight with no separate deadline. */}
-        {evKind==="assignment"&&taskMode==="manual"&&taskRepeatDays.length===0&&(
+            you're just doing tonight with no separate deadline.
+            Bug fix, same day, live user report with screenshot: missing
+            !isChecklistMode here (every other taskMode==="manual" field in
+            this modal has it) meant clicking "I'll pick the time" then
+            "No schedule yet" left taskMode stuck at "manual" (the
+            Scheduling toggle's "No schedule yet" branch only ever sets
+            asChecklist, it never resets taskMode) -- with both this block
+            AND isChecklistMode's own due-date block now true at once, the
+            form rendered two separate "Due date (optional)" fields
+            stacked on top of each other. Reproduced live and confirmed
+            fixed by adding the same guard every sibling field already
+            has. */}
+        {evKind==="assignment"&&!isChecklistMode&&taskMode==="manual"&&taskRepeatDays.length===0&&(
           <div style={{display:"grid",gridTemplateColumns:evDeadline?"1fr 1fr":"1fr",gap:12}}>
             <Field label="Due date (optional)"><Input type="date" value={evDeadline} onChange={ev=>setEvDeadline(ev.target.value)} /></Field>
             {evDeadline&&<Field label="Due time"><BoxedTimeInput value={evDeadlineTime} onChange={setEvDeadlineTime} /></Field>}

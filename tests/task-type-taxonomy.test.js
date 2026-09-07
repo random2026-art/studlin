@@ -105,6 +105,24 @@ describe("CalendarTab's buildTask stamps isAssignment for the scheduled (non-che
   });
 });
 
+describe("NewEventModal: Assignment's manual-mode due-date field doesn't double up with checklist mode's own due-date field (live user report, reproduced in-browser)", () => {
+  test("the manual-mode due-date block requires !isChecklistMode, same guard every sibling taskMode==\"manual\" field already has", () => {
+    // Real bug: clicking \"I'll pick the time\" then \"No schedule yet\"
+    // left taskMode stuck at \"manual\" (the Scheduling toggle's \"No
+    // schedule yet\" branch only ever sets asChecklist, never resets
+    // taskMode) -- without this guard, BOTH this block and
+    // isChecklistMode's own due-date block rendered at once, producing
+    // two stacked \"Due date (optional)\" fields.
+    const idx = SOURCE.indexOf('evKind==="assignment"&&!isChecklistMode&&taskMode==="manual"&&taskRepeatDays.length===0&&(');
+    assert.notEqual(idx, -1, "the manual-mode due-date block must exclude isChecklistMode");
+  });
+
+  test("every other taskMode===\"manual\" field in this modal already carries the same guard, for consistency", () => {
+    const count = (SOURCE.match(/isTaskKind&&!isChecklistMode&&taskRepeatDays\.length===0&&taskMode==="manual"/g) || []).length;
+    assert.ok(count >= 1, "the Date/Start Time manual-mode block is the established pattern this fix now matches");
+  });
+});
+
 describe("NewEventModal's Type picker offers Assignment and Study Session as two real, always-correctly-labeled, coexisting options", () => {
   test("Type SelectChip has separate assignment and studySession entries, neither relabeled by mode", () => {
     const idx = SOURCE.indexOf('<SelectChip options={[{value:"assignment",label:"Assignment"},{value:"studySession",label:"Study Session"}');
