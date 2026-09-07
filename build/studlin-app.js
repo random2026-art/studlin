@@ -5819,6 +5819,8 @@ async function extractFileText(file, onProgress) {
 }
 function StudlinPrep({ setActive = () => {
 }, setDetailEventId = () => {
+}, onStartPrepNow = () => {
+}, onDeclinePrep = () => {
 } } = {}) {
   const [tab, setTab] = useState("exams");
   const [selectedExamId, setSelectedExamId] = useState(() => {
@@ -6737,7 +6739,13 @@ function StudlinPrep({ setActive = () => {
           onChange: (v) => patchExam(a.id, { difficulty: BUCKET_VALS[v] }),
           options: [{ value: "low", label: "Easy" }, { value: "medium", label: "Med" }, { value: "high", label: "Hard" }]
         }
-      ), /* @__PURE__ */ React.createElement("div", { onClick: () => setDetailEventId(a.id), style: { fontSize: 10.5, fontWeight: rowPace && (rowPace.behind || rowPace.ahead) ? 700 : 400, color: rowPace && rowPace.behind ? T.amber : rowPace && rowPace.ahead ? T.teal : T.muted, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: "Click to open" }, statusLabel));
+      ), a.prepPending ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: a.attackStartDate ? "Studlin will suggest starting prep on " + a.attackStartDate : void 0 }, "Prep starts ", a.attackStartDate || "soon", " \xB7 ", /* @__PURE__ */ React.createElement("button", { type: "button", onClick: (e) => {
+        e.stopPropagation();
+        onStartPrepNow({ id: a.id, title: a.title, date: a.date, noteId: a.noteId, priority: a.priority, difficulty: a.difficulty, phases: a.phases ? a.phases.map((p) => p.name) : null });
+      }, style: { background: "none", border: "none", color: T.lime, fontSize: 10, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, "Start now"), " \xB7 ", /* @__PURE__ */ React.createElement("button", { type: "button", onClick: (e) => {
+        e.stopPropagation();
+        onDeclinePrep({ id: a.id });
+      }, style: { background: "none", border: "none", color: T.muted, fontSize: 10, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, "Not needed")) : /* @__PURE__ */ React.createElement("div", { onClick: () => setDetailEventId(a.id), style: { fontSize: 10.5, fontWeight: rowPace && (rowPace.behind || rowPace.ahead) ? 700 : 400, color: rowPace && rowPace.behind ? T.amber : rowPace && rowPace.ahead ? T.teal : T.muted, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: "Click to open" }, statusLabel));
     }))));
   })(), tab === "projects" && (() => {
     const today = dayKey();
@@ -13613,7 +13621,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
   ), /* @__PURE__ */ React.createElement(Btn, { onClick: handleCollegeSchedulePaste, disabled: !pasteText.trim(), style: { marginTop: 10, width: "100%", justifyContent: "center", opacity: pasteText.trim() ? 1 : 0.45 } }, "Scan this text")) : /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => collegeScheduleFileRef.current && collegeScheduleFileRef.current.click(), style: { width: "100%", padding: "32px", borderRadius: 12, border: `1.5px dashed ${T.borderHover}`, background: T.card2, color: T.muted, cursor: "pointer", fontFamily: T.font, fontSize: 13, textAlign: "center" } }, "Tap to choose a file, or one or more photos"), /* @__PURE__ */ React.createElement("input", { ref: collegeScheduleFileRef, type: "file", accept: ".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,.gif", style: { display: "none" }, onChange: handleCollegeScheduleFile, multiple: true }), scanError && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: 10 } }, scanError), !scanning && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
     setPasteMode((m) => !m);
     setScanError("");
-  }, style: { marginTop: 12, background: "none", border: "none", color: T.muted, fontSize: 12, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, pasteMode ? "Upload a file instead" : "File didn't work? Paste the text instead")), step === "classes" && addMode === "scan" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: status === "highschool" ? "Scan assignments" : "Scan a syllabus", sub: status === "highschool" ? "A unit calendar, worksheet, handout, whatever your teacher gave you -- PDF, Word doc, text, or a photo. Studlin reads it and fills in the review below." : "PDF, Word doc, text, or a photo/screenshot \u2014 Studlin reads it and fills in the review below." }), scanning ? /* @__PURE__ */ React.createElement("div", { style: { padding: "40px 0", textAlign: "center", color: T.muted, fontSize: 13 } }, "Reading your syllabus\u2026") : pasteMode ? /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(
+  }, style: { marginTop: 12, background: "none", border: "none", color: T.muted, fontSize: 12, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, pasteMode ? "Upload a file instead" : "File didn't work? Paste the text instead")), step === "classes" && addMode === "scan" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: status === "highschool" ? "Scan assignments" : "Scan a syllabus", sub: status === "highschool" ? "A unit calendar, worksheet, handout, whatever your teacher gave you -- PDF, Word doc, text, or a photo. Studlin reads it and fills in the review below." : "PDF, Word doc, text, or a photo/screenshot \u2014 Studlin reads it and fills in the review below." }), scanning ? /* @__PURE__ */ React.createElement("div", { style: { padding: "20px 0" } }, /* @__PURE__ */ React.createElement(ExtractionProgress, { fileName: "Your syllabus", stage: "analyze", analyzeLabel: "Finding assignments and exam dates..." })) : pasteMode ? /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(
     "textarea",
     {
       value: pasteText,
@@ -14047,7 +14055,8 @@ function RoutineControlCenterModal({ open, onClose, routines, fmtTime: fmtTime2,
   const [days, setDays] = useState([]);
   const [startTime, setStartTime] = useState("15:30");
   const [duration, setDuration] = useState(60);
-  const [color, setColor] = useState(SUBJECT_COLORS[0]);
+  const usedRoutineAndSubjectColors = () => [...userSubjects.map((s) => s.color), ...(routines || []).filter((r) => r.color).map((r) => r.color)];
+  const [color, setColor] = useState(() => nextAvailableSubjectColor(usedRoutineAndSubjectColors()));
   const [commuteBefore, setCommuteBefore] = useState("");
   const [commuteAfter, setCommuteAfter] = useState("");
   const [termStart, setTermStartState] = useState(() => {
@@ -14096,7 +14105,7 @@ function RoutineControlCenterModal({ open, onClose, routines, fmtTime: fmtTime2,
     setDays([]);
     setStartTime("15:30");
     setDuration(60);
-    setColor(SUBJECT_COLORS[0]);
+    setColor(nextAvailableSubjectColor(usedRoutineAndSubjectColors()));
     setCommuteBefore("");
     setCommuteAfter("");
   };
@@ -14563,7 +14572,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
   const showsPhaseDetail = addAttackBlock && isPhaseCandidate;
   const isProject2 = isProjectMarker(ev);
   const droppedProject = isProject2 && !asProject;
-  const typeChoice = asProject ? "project" : asGeneralTask ? "task" : asAssignment ? "assignment" : asChecklist ? "todo" : kind;
+  const typeChoice = asProject ? "project" : asGeneralTask ? "task" : asAssignment ? "assignment" : asChecklist ? "todo" : kind === "deadline" ? "assignment" : kind;
   const onTypeChange = (v) => {
     if (v === "project") {
       setAsProject(true);
@@ -15182,6 +15191,7 @@ function NewEventModal({ open, initialTitle, initialDate, initialStartTime, init
     setCommuteAfter("");
     setLocation("");
     setMovable(false);
+    setRoutineColor(nextAvailableSubjectColor([...getSubjects().map((s) => s.color), ...(routines || []).filter((r) => r.color).map((r) => r.color)]));
   }, [open, initialTitle, initialDate, initialStartTime, editRoutine]);
   useEffect(() => {
     if (!open || !liveOverride) return;
@@ -15288,7 +15298,7 @@ function NewEventModal({ open, initialTitle, initialDate, initialStartTime, init
         );
       })());
     }));
-  })(), (editRoutine || repeat === "selected" || repeat === "weekly") && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "Type" }, /* @__PURE__ */ React.createElement(SelectChip, { options: [{ value: "class", label: "Class" }, { value: "busy", label: "Activity" }, { value: "free", label: "Free Period" }, { value: "habit", label: "Habit" }], value: evKind, onChange: setEvKind })), evKind === "class" && subjectOptions && /* @__PURE__ */ React.createElement(Field, { label: "Subject" }, /* @__PURE__ */ React.createElement(CustomSelect, { boxed: true, options: subjectOptions, value: subject, onChange: setSubject, minWidth: 220 })), editRoutine && evKind !== "class" && /* @__PURE__ */ React.createElement(Field, { label: "Color" }, /* @__PURE__ */ React.createElement(ColorSelect, { value: routineColor, onChange: setRoutineColor })))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, fontSize: 11, color: T.muted, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 5 } }, "Commute before:", /* @__PURE__ */ React.createElement(
+  })(), (editRoutine || repeat === "selected" || repeat === "weekly") && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "Type" }, /* @__PURE__ */ React.createElement(SelectChip, { options: [{ value: "class", label: "Class" }, { value: "busy", label: "Activity" }, { value: "free", label: "Free Period" }, { value: "habit", label: "Habit" }], value: evKind, onChange: setEvKind })), evKind === "class" && subjectOptions && /* @__PURE__ */ React.createElement(Field, { label: "Subject" }, /* @__PURE__ */ React.createElement(CustomSelect, { boxed: true, options: subjectOptions, value: subject, onChange: setSubject, minWidth: 220 })), evKind !== "class" && /* @__PURE__ */ React.createElement(Field, { label: "Color" }, /* @__PURE__ */ React.createElement(ColorSelect, { value: routineColor, onChange: setRoutineColor })))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, fontSize: 11, color: T.muted, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 5 } }, "Commute before:", /* @__PURE__ */ React.createElement(
     "input",
     {
       type: "number",
@@ -16447,6 +16457,14 @@ function CalendarTab({ setActive = () => {
       const cid = isCourse ? courseId : kind === "class" && subj ? courseIdForLabelFuzzy(subj) : null;
       const base = { title, kind, groupId: "grp-" + Date.now() + "-" + Math.round(Math.random() * 1e3), ...subj ? { subject: subj } : {}, ...cid ? { courseId: cid } : {}, ...common };
       persistRoutines([...routines, ...buildRoutineObjectsForDays(base, repeatDays, startTime, duration || 60, dayTimes)]);
+      if (kind === "habit") {
+        const createdHabits = materializeHabitsForDate(dayKey(), events);
+        if (createdHabits.length > 0) {
+          const next = events.concat(createdHabits);
+          setEvents2(next);
+          lsSet("events", next);
+        }
+      }
     }
     setNewEventOpen(false);
     setSidebarDragChip(null);
@@ -21556,7 +21574,7 @@ function App() {
     calendarSetEventsRef.current = fn;
   }, registerSkipSetEvents: (fn) => {
     calendarSkipSetEventsRef.current = fn;
-  }, onTaskCompleted: handleTaskCompleted, catchUpPending: !!catchUpBanner, onWizardOpenChange: setCalendarWizardOpen, jumpToSessionOnMount: pendingJumpSession, onJumpSessionConsumed: () => setPendingJumpSession(null), setPricingOpen }) : active === "notes" ? /* @__PURE__ */ React.createElement(Notes, { setActive }) : active === "friends" ? /* @__PURE__ */ React.createElement(FriendsChat, { onFriendRequestSent: askNotifIfNeeded, onActiveChatChange: setOpenChatRoomId, initialTarget: pendingChatTarget, onInitialTargetConsumed: () => setPendingChatTarget(null) }) : active === "profile" ? /* @__PURE__ */ React.createElement(Profile, { setActive, seriousMode }) : active === "prep" ? /* @__PURE__ */ React.createElement(StudlinPrep, { setActive, setDetailEventId }) : active === "flashcards" ? /* @__PURE__ */ React.createElement(Flashcards, { setActive }) : ActivePage ? /* @__PURE__ */ React.createElement(ActivePage, null) : null)), rescheduleTask && /* @__PURE__ */ React.createElement(RescheduleModal, { task: rescheduleTask, events: lsGet("events", []), onClose: () => setRescheduleTask(null), onManual: () => {
+  }, onTaskCompleted: handleTaskCompleted, catchUpPending: !!catchUpBanner, onWizardOpenChange: setCalendarWizardOpen, jumpToSessionOnMount: pendingJumpSession, onJumpSessionConsumed: () => setPendingJumpSession(null), setPricingOpen }) : active === "notes" ? /* @__PURE__ */ React.createElement(Notes, { setActive }) : active === "friends" ? /* @__PURE__ */ React.createElement(FriendsChat, { onFriendRequestSent: askNotifIfNeeded, onActiveChatChange: setOpenChatRoomId, initialTarget: pendingChatTarget, onInitialTargetConsumed: () => setPendingChatTarget(null) }) : active === "profile" ? /* @__PURE__ */ React.createElement(Profile, { setActive, seriousMode }) : active === "prep" ? /* @__PURE__ */ React.createElement(StudlinPrep, { setActive, setDetailEventId, onStartPrepNow: acceptPrepPrompt, onDeclinePrep: declinePrepPrompt }) : active === "flashcards" ? /* @__PURE__ */ React.createElement(Flashcards, { setActive }) : ActivePage ? /* @__PURE__ */ React.createElement(ActivePage, null) : null)), rescheduleTask && /* @__PURE__ */ React.createElement(RescheduleModal, { task: rescheduleTask, events: lsGet("events", []), onClose: () => setRescheduleTask(null), onManual: () => {
     setActive("calendar");
     setPendingJumpSession(rescheduleTask);
   }, commit: (next, evictedCount) => {

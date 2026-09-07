@@ -64,7 +64,7 @@ describe("nextAvailableSubjectColor: the centralized picker itself", () => {
   });
 });
 
-describe("All 5 call sites now route through nextAvailableSubjectColor instead of a bare local-count index", () => {
+describe("Every real color-assignment call site routes through nextAvailableSubjectColor instead of a bare local-count index", () => {
   test("no call site still does SUBJECT_COLORS[<count>.length%SUBJECT_COLORS.length] for a *new subject/course/period* (the flawed pattern that caused the bug)", () => {
     assert.doesNotMatch(SOURCE, /color:SUBJECT_COLORS\[subjects\.length%SUBJECT_COLORS\.length\]/);
     assert.doesNotMatch(SOURCE, /color:SUBJECT_COLORS\[subs\.length%SUBJECT_COLORS\.length\]/);
@@ -95,8 +95,22 @@ describe("All 5 call sites now route through nextAvailableSubjectColor instead o
     assert.match(SOURCE, /color:nextAvailableSubjectColor\(s\.map\(x=>x\.color\)\),termEnd:term\?term\.end:null/);
   });
 
-  test("unrelated color-picker defaults (Activities templates, a new-event form's initial SUBJECT_COLORS[0]) were deliberately left alone -- they aren't subjects and aren't part of this bug", () => {
+  test("the one remaining SUBJECT_COLORS[0] is a fixed preset example (Activities' 'Morning Routine' template), not a real color-assignment collision point", () => {
     assert.match(SOURCE, /title:"Morning Routine",color:SUBJECT_COLORS\[0\]/);
-    assert.match(SOURCE, /useState\(SUBJECT_COLORS\[0\]\)/);
+  });
+
+  // 2026-09-07 follow-up, user report: Activities/Habits were explicitly
+  // called out as still colliding ("ensure studlin is aware of the colors
+  // already used so it always suggests different color") -- these two
+  // call sites (RoutineControlCenterModal's own Add form, and NewEventModal's
+  // routine-creation Color field) used to be the ones deliberately left
+  // alone by the original 2026-08-27 fix above; now folded into the same
+  // nextAvailableSubjectColor pattern. See
+  // tests/prep-and-routine-fixes-2026-09-07.test.js for the full coverage
+  // of both.
+  test("RoutineControlCenterModal and NewEventModal's routine Color field no longer hardcode SUBJECT_COLORS[0] either", () => {
+    assert.doesNotMatch(SOURCE, /const \[color,setColor\]=useState\(SUBJECT_COLORS\[0\]\)/);
+    assert.doesNotMatch(SOURCE, /setColor\(SUBJECT_COLORS\[0\]\)/);
+    assert.doesNotMatch(SOURCE, /const \[routineColor,setRoutineColor\]=useState\(SUBJECT_COLORS\[0\]\)/);
   });
 });
