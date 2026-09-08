@@ -887,7 +887,7 @@ const ColorSelect = ({ value, onChange }) => {
       title: "Choose a color",
       style: { width: 26, height: 26, borderRadius: "50%", background: value, border: `2px solid ${T.white}30`, cursor: "pointer", padding: 0, flexShrink: 0 }
     }
-  ), open && anchor && ReactDOM.createPortal(/* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: () => setOpen(false), style: { position: "fixed", inset: 0, zIndex: 998 } }), /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { position: "fixed", top: anchor.top, left: anchor.left, zIndex: 999, background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, width: 190, boxShadow: "0 12px 28px -12px rgba(0,0,0,0.5)", animation: "studlinPop 0.15s cubic-bezier(.2,.85,.3,1)" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 4, marginBottom: 8 } }, Object.keys(COLOR_PRESET_TIERS).map((t) => /* @__PURE__ */ React.createElement(
+  ), open && anchor && ReactDOM.createPortal(/* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: () => setOpen(false), style: { position: "fixed", inset: 0, zIndex: 1998 } }), /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { position: "fixed", top: anchor.top, left: anchor.left, zIndex: 1999, background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, padding: 10, width: 190, boxShadow: "0 12px 28px -12px rgba(0,0,0,0.5)", animation: "studlinPop 0.15s cubic-bezier(.2,.85,.3,1)" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 4, marginBottom: 8 } }, Object.keys(COLOR_PRESET_TIERS).map((t) => /* @__PURE__ */ React.createElement(
     "button",
     {
       key: t,
@@ -14153,13 +14153,20 @@ function RoutineControlCenterModal({ open, onClose, routines, fmtTime: fmtTime2,
     setCommuteBefore("");
     setCommuteAfter("");
   };
+  const [addedSummary, setAddedSummary] = useState(null);
+  useEffect(() => {
+    if (!addedSummary) return;
+    const t = setTimeout(() => setAddedSummary(null), 6e3);
+    return () => clearTimeout(t);
+  }, [addedSummary]);
   const toggleDay = (i) => setDays((d) => d.includes(i) ? d.filter((x) => x !== i) : [...d, i]);
   const isFree = kind === "free";
   const isHabit = kind === "habit";
   const submitAdd = () => {
     if (!isFree && !title.trim() || isHabit && days.length === 0) return;
+    const savedTitle = isFree ? title.trim() || "Free Period" : title.trim();
     onAddRoutine({
-      title: isFree ? title.trim() || "Free Period" : title.trim(),
+      title: savedTitle,
       kind,
       days: [...days],
       startTime: isHabit ? null : startTime,
@@ -14171,6 +14178,9 @@ function RoutineControlCenterModal({ open, onClose, routines, fmtTime: fmtTime2,
       // are this form's own two no-fixed-time exceptions.
       ...!isHabit && !isFree && (+commuteBefore > 0 || +commuteAfter > 0) ? { commuteBefore: Math.max(0, +commuteBefore || 0), commuteAfter: Math.max(0, +commuteAfter || 0) } : {}
     });
+    setAddedSummary(
+      isHabit ? savedTitle + " added \u2014 Studlin will fit it in daily on " + formatDays(days) + ", no fixed time." : days.length > 0 ? savedTitle + " added to your calendar, " + formatDays(days) + " " + fmtTime2(startTime) + "\u2013" + fmtTime2(minutesToTime(timeToMinutes(startTime) + duration)) + "." : savedTitle + " added, but not on the calendar yet \u2014 drag it onto a day to set when."
+    );
     resetForm();
     setAddingRoutine(false);
   };
@@ -14180,7 +14190,10 @@ function RoutineControlCenterModal({ open, onClose, routines, fmtTime: fmtTime2,
     if (sorted.length === 5 && sorted.every((v, i) => v === i)) return "Mon\u2013Fri";
     return sorted.map((i) => ROUTINE_DOW[i]).join(", ");
   };
-  return /* @__PURE__ */ React.createElement(Modal, { open, onClose, title: "Manage your Weekly Routine", sub: "Locked recurring blocks Studlin always schedules around. Add, edit, or clear one anytime.", width: 560 }, !addingRoutine ? /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setAddingRoutine(true), style: { width: "100%", justifyContent: "center", marginBottom: 16 } }, "+ Add Recurring Activity") : /* @__PURE__ */ React.createElement("div", { style: { border: `1px solid ${T.border}`, borderRadius: 10, padding: 14, marginBottom: 16 } }, !isFree && /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement(Input, { value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Track Practice", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Type" }, /* @__PURE__ */ React.createElement(SelectChip, { options: [{ value: "class", label: "Class" }, { value: "busy", label: "Activity" }, { value: "free", label: "Free Period" }, { value: "habit", label: "Habit" }], value: kind, onChange: setKind })), kind !== "class" && /* @__PURE__ */ React.createElement(Field, { label: "Color" }, /* @__PURE__ */ React.createElement(ColorSelect, { value: color, onChange: setColor })), isHabit && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginTop: -6, marginBottom: 14 } }, "No fixed time \u2014 Studlin fits it in wherever there's room each day."), /* @__PURE__ */ React.createElement(Field, { label: "Repeats on", hint: days.length === 0 ? isHabit ? "Pick at least one day" : "Optional \u2014 skip this and drag it onto your calendar to set when" : void 0 }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } }, ROUTINE_DOW.map((d, i) => {
+  return /* @__PURE__ */ React.createElement(Modal, { open, onClose, title: "Manage your Weekly Routine", sub: "Locked recurring blocks Studlin always schedules around. Add, edit, or clear one anytime.", width: 560 }, addedSummary && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, background: T.lime + "14", border: `1px solid ${T.lime}44`, borderRadius: 8, padding: "10px 12px", marginBottom: 16, lineHeight: 1.5 } }, addedSummary), !addingRoutine ? /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => {
+    setAddingRoutine(true);
+    setAddedSummary(null);
+  }, style: { width: "100%", justifyContent: "center", marginBottom: 16 } }, "+ Add Recurring Activity") : /* @__PURE__ */ React.createElement("div", { style: { border: `1px solid ${T.border}`, borderRadius: 10, padding: 14, marginBottom: 16 } }, !isFree && /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement(Input, { value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Track Practice", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Type" }, /* @__PURE__ */ React.createElement(SelectChip, { options: [{ value: "class", label: "Class" }, { value: "busy", label: "Activity" }, { value: "free", label: "Free Period" }, { value: "habit", label: "Habit" }], value: kind, onChange: setKind })), kind !== "class" && /* @__PURE__ */ React.createElement(Field, { label: "Color" }, /* @__PURE__ */ React.createElement(ColorSelect, { value: color, onChange: setColor })), isHabit && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginTop: -6, marginBottom: 14 } }, "No fixed time \u2014 Studlin fits it in wherever there's room each day."), /* @__PURE__ */ React.createElement(Field, { label: "Repeats on", hint: days.length === 0 ? isHabit ? "Pick at least one day" : "Optional \u2014 skip this and drag it onto your calendar to set when" : void 0 }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } }, ROUTINE_DOW.map((d, i) => {
     const sel = days.includes(i);
     return /* @__PURE__ */ React.createElement("button", { key: i, type: "button", onClick: () => toggleDay(i), style: { padding: "6px 12px", borderRadius: 7, fontSize: 12, fontWeight: sel ? 600 : 400, cursor: "pointer", border: `1px solid ${sel ? T.lime + "66" : T.border}`, background: sel ? T.lime + "14" : "transparent", color: sel ? T.lime : T.muted, fontFamily: T.font } }, d);
   }))), isHabit ? /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement(Field, { label: "Duration (minutes)" }, /* @__PURE__ */ React.createElement(NumField, { min: 5, max: 480, fallback: 30, value: duration, onChange: setDuration }))) : /* @__PURE__ */ React.createElement(Field, { label: "Start \u2013 End" }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 5 } }, /* @__PURE__ */ React.createElement(TimeInput, { value: startTime, onChange: setStartTime }), /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, fontSize: 11 } }, "\u2013"), /* @__PURE__ */ React.createElement(TimeInput, { value: minutesToTime(timeToMinutes(startTime) + duration), onChange: (v) => setDuration(Math.max(5, timeToMinutes(v) - timeToMinutes(startTime))) }))), !isHabit && !isFree && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, fontSize: 11, color: T.muted, flexWrap: "wrap", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 5 } }, "Commute before:", /* @__PURE__ */ React.createElement(

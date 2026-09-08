@@ -1351,10 +1351,18 @@ const ColorSelect=({value,onChange})=>{
     <>
       <button ref={triggerRef} type="button" onClick={openPopover}
         title="Choose a color" style={{width:26,height:26,borderRadius:"50%",background:value,border:`2px solid ${T.white}30`,cursor:"pointer",padding:0,flexShrink:0}} />
+      {/* Bug fix, 2026-09-07 (user report: adding a Gym Activity via
+          Routine, couldn't change the color): this portal's z-index
+          (998/999) sat BELOW Modal's own backdrop (zIndex:1000) -- the
+          exact same bug already found and fixed for CustomSelect on
+          2026-09-04 (bumped to 1998/1999 there), just never applied here.
+          Every ColorSelect used inside a Modal (this Add Activity form
+          included) had its swatch clicks actually land on the Modal's own
+          backdrop onClick={onClose} instead of the swatch underneath it. */}
       {open&&anchor&&ReactDOM.createPortal((
         <>
-          <div onClick={()=>setOpen(false)} style={{position:"fixed",inset:0,zIndex:998}} />
-          <div onClick={e=>e.stopPropagation()} style={{position:"fixed",top:anchor.top,left:anchor.left,zIndex:999,background:T.card,border:`1px solid ${T.border}`,borderRadius:10,padding:10,width:190,boxShadow:"0 12px 28px -12px rgba(0,0,0,0.5)",animation:"studlinPop 0.15s cubic-bezier(.2,.85,.3,1)"}}>
+          <div onClick={()=>setOpen(false)} style={{position:"fixed",inset:0,zIndex:1998}} />
+          <div onClick={e=>e.stopPropagation()} style={{position:"fixed",top:anchor.top,left:anchor.left,zIndex:1999,background:T.card,border:`1px solid ${T.border}`,borderRadius:10,padding:10,width:190,boxShadow:"0 12px 28px -12px rgba(0,0,0,0.5)",animation:"studlinPop 0.15s cubic-bezier(.2,.85,.3,1)"}}>
             <div style={{display:"flex",gap:4,marginBottom:8}}>
               {Object.keys(COLOR_PRESET_TIERS).map(t=>(
                 <button key={t} type="button" onClick={()=>setTier(t)}
@@ -23480,6 +23488,22 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
   };
   useEffect(()=>{ if(!open)setAddingRoutine(false); },[open]);
   const resetForm=()=>{setTitle("");setKind("busy");setDays([]);setStartTime("15:30");setDuration(60);setColor(nextAvailableSubjectColor(usedRoutineAndSubjectColors()));setCommuteBefore("");setCommuteAfter("");};
+  // Bug fix, 2026-09-07 user report: adding an Activity closed the form
+  // and dropped the student straight back into the list with zero
+  // confirmation of what actually happened -- whether it landed on the
+  // calendar with a real day/time, or (the common "Optional -- skip this
+  // and drag it onto your calendar" path, see the Repeats-on hint below)
+  // saved with no schedule at all and is just sitting in this list until
+  // dragged on. Both are legitimate outcomes, but silence made either one
+  // look like nothing happened, or like the calendar should already show
+  // it when it might not yet. Self-dismisses; a new Add or closing the
+  // modal clears it too via the cleanup below.
+  const [addedSummary,setAddedSummary]=useState(null);
+  useEffect(()=>{
+    if(!addedSummary)return;
+    const t=setTimeout(()=>setAddedSummary(null),6000);
+    return ()=>clearTimeout(t);
+  },[addedSummary]);
   const toggleDay=(i)=>setDays(d=>d.includes(i)?d.filter(x=>x!==i):[...d,i]);
   const isFree=kind==="free";
   const isHabit=kind==="habit";
@@ -23493,12 +23517,21 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
   // forced to pick a day before it's even allowed to exist.
   const submitAdd=()=>{
     if((!isFree&&!title.trim())||(isHabit&&days.length===0))return;
-    onAddRoutine({title:isFree?(title.trim()||"Free Period"):title.trim(),kind,days:[...days],startTime:isHabit?null:startTime,duration,...(kind!=="class"?{color}:{}),
+    const savedTitle=isFree?(title.trim()||"Free Period"):title.trim();
+    onAddRoutine({title:savedTitle,kind,days:[...days],startTime:isHabit?null:startTime,duration,...(kind!=="class"?{color}:{}),
       // Only meaningful for something with a real fixed meeting time --
       // same isFixedKind-style gating "New task"'s own commute row uses,
       // just expressed here as "not habit, not free period" since those
       // are this form's own two no-fixed-time exceptions.
       ...(!isHabit&&!isFree&&(+commuteBefore>0||+commuteAfter>0)?{commuteBefore:Math.max(0,+commuteBefore||0),commuteAfter:Math.max(0,+commuteAfter||0)}:{})});
+    // Captured before resetForm() clears days/startTime/duration back to
+    // their blank defaults -- see addedSummary's own comment above for why
+    // this exists.
+    setAddedSummary(
+      isHabit?savedTitle+" added — Studlin will fit it in daily on "+formatDays(days)+", no fixed time."
+      :days.length>0?savedTitle+" added to your calendar, "+formatDays(days)+" "+fmtTime(startTime)+"–"+fmtTime(minutesToTime(timeToMinutes(startTime)+duration))+"."
+      :savedTitle+" added, but not on the calendar yet — drag it onto a day to set when."
+    );
     resetForm();
     setAddingRoutine(false);
   };
@@ -23517,8 +23550,11 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
           there first, and got worse the more you'd already added. Matches
           the Calendar sidebar's own Courses/Activities "+ Add new"
           placement (top of the section, not the bottom). */}
+      {addedSummary&&(
+        <div style={{fontSize:12.5,color:T.text,background:T.lime+"14",border:`1px solid ${T.lime}44`,borderRadius:8,padding:"10px 12px",marginBottom:16,lineHeight:1.5}}>{addedSummary}</div>
+      )}
       {!addingRoutine
-        ? <Btn variant="subtle" onClick={()=>setAddingRoutine(true)} style={{width:"100%",justifyContent:"center",marginBottom:16}}>+ Add Recurring Activity</Btn>
+        ? <Btn variant="subtle" onClick={()=>{setAddingRoutine(true);setAddedSummary(null);}} style={{width:"100%",justifyContent:"center",marginBottom:16}}>+ Add Recurring Activity</Btn>
         : (
           <div style={{border:`1px solid ${T.border}`,borderRadius:10,padding:14,marginBottom:16}}>
             {!isFree&&<Field label="Name"><Input value={title} onChange={e=>setTitle(e.target.value)} placeholder="e.g. Track Practice" autoFocus /></Field>}
