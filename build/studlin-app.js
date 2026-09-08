@@ -14486,6 +14486,8 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
   const [collabCandidates, setCollabCandidates] = useState([]);
   const [collabSelected, setCollabSelected] = useState([]);
   const [collabLoading, setCollabLoading] = useState(false);
+  const [collabLoadError, setCollabLoadError] = useState(false);
+  const [collabSearchQuery, setCollabSearchQuery] = useState("");
   const [addAttackBlock, setAddAttackBlock] = useState(false);
   const [attackProbeMins, setAttackProbeMins] = useState(ATTACK_BLOCK_DEFAULT_PROBE_MINS);
   const [attackSlotPicker, setAttackSlotPicker] = useState(null);
@@ -14673,13 +14675,20 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
     setCollabPickerOpen(true);
     setCollabSelected([]);
     setCollabLoading(true);
-    const myUid = firebase.auth().currentUser?.uid;
-    const uids = myUid ? await getAcceptedFriendUids(myUid) : [];
-    const docs = await Promise.all(uids.map((uid) => fsdb().collection("profiles").doc(uid).get().catch(() => null)));
-    setCollabCandidates(uids.map((uid, i) => {
-      const p = docs[i] && docs[i].exists ? docs[i].data() : null;
-      return { uid, name: p && p.name || "Studlin User" };
-    }));
+    setCollabLoadError(false);
+    setCollabSearchQuery("");
+    try {
+      const myUid = firebase.auth().currentUser?.uid;
+      const uids = myUid ? await getAcceptedFriendUids(myUid) : [];
+      const docs = await Promise.all(uids.map((uid) => fsdb().collection("profiles").doc(uid).get().catch(() => null)));
+      setCollabCandidates(uids.map((uid, i) => {
+        const p = docs[i] && docs[i].exists ? docs[i].data() : null;
+        return { uid, name: p && p.name || "Studlin User" };
+      }));
+    } catch (e) {
+      reportError("openCollabPicker")(e);
+      setCollabLoadError(true);
+    }
     setCollabLoading(false);
   };
   const toggleCollabSelected = (uid) => setCollabSelected((s) => s.includes(uid) ? s.filter((x) => x !== uid) : [...s, uid]);
@@ -15148,7 +15157,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
       footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setCollabPickerOpen(false) }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: confirmAddCollaborators, disabled: collabSelected.length === 0 }, "Send ", collabSelected.length || "", " invite", collabSelected.length !== 1 ? "s" : ""))
     },
     (ev.phases && ev.phases.length > 0 || ev.outline && ev.outline.length > 0) && /* @__PURE__ */ React.createElement("div", { style: { background: T.amber + "0A", border: `1px solid ${T.amber}33`, borderRadius: 8, padding: "10px 12px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, fontWeight: 600, color: T.text, marginBottom: 6 } }, "This plan was generated from your notes"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginBottom: 8, lineHeight: 1.5 } }, "Collaborators will see everything below once they accept. Close this and edit it above first if anything's too personal to share."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4, maxHeight: 140, overflowY: "auto" } }, (ev.phases || []).map((p, i) => /* @__PURE__ */ React.createElement("div", { key: "ph" + i, style: { fontSize: 11.5, color: T.text } }, "\u2022 " + p.name)), (ev.outline || []).map((o, i) => /* @__PURE__ */ React.createElement("div", { key: "ol" + i, style: { fontSize: 11.5, color: T.text } }, "\u2022 " + o.text)))),
-    collabLoading ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "Loading your friends\u2026") : collabCandidates.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "No friends yet \u2014 add some in Studlin Network first.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, collabCandidates.map((c) => /* @__PURE__ */ React.createElement("label", { key: c.uid, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 8, border: `1px solid ${T.border}`, cursor: "pointer", background: collabSelected.includes(c.uid) ? T.card2 : "transparent" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: collabSelected.includes(c.uid), onChange: () => toggleCollabSelected(c.uid), style: { cursor: "pointer" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text } }, c.name))))
+    collabLoading ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "Loading your friends\u2026") : collabLoadError ? /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginBottom: 10 } }, "Couldn't load your friends list -- check your connection and try again."), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: openCollabPicker }, "Try again")) : collabCandidates.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "No friends yet \u2014 add some in Studlin Network first.") : /* @__PURE__ */ React.createElement(React.Fragment, null, collabCandidates.length > 5 && /* @__PURE__ */ React.createElement(Input, { value: collabSearchQuery, onChange: (e) => setCollabSearchQuery(e.target.value), placeholder: "Search friends", style: { marginBottom: 10, width: "100%" } }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, collabCandidates.filter((c) => c.name.toLowerCase().includes(collabSearchQuery.trim().toLowerCase())).map((c) => /* @__PURE__ */ React.createElement("label", { key: c.uid, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 8, border: `1px solid ${T.border}`, cursor: "pointer", background: collabSelected.includes(c.uid) ? T.card2 : "transparent" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: collabSelected.includes(c.uid), onChange: () => toggleCollabSelected(c.uid), style: { cursor: "pointer" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text } }, c.name))), collabSearchQuery.trim() && collabCandidates.filter((c) => c.name.toLowerCase().includes(collabSearchQuery.trim().toLowerCase())).length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, 'No friends match "', collabSearchQuery.trim(), '".')))
   ), attackSlotPicker && /* @__PURE__ */ React.createElement(
     NewSlotPickerModal,
     {
@@ -15440,6 +15449,7 @@ function CalendarTab({ setActive = () => {
   const [gsSearchQuery, setGsSearchQuery] = useState("");
   const [gsLoading, setGsLoading] = useState(false);
   const [gsLoadError, setGsLoadError] = useState(false);
+  const [gsConfirmLoadError, setGsConfirmLoadError] = useState(false);
   const [gsRoomId, setGsRoomId] = useState(null);
   const [gsMemberUids, setGsMemberUids] = useState([]);
   const [gsMemberNames, setGsMemberNames] = useState({});
@@ -15635,16 +15645,25 @@ function CalendarTab({ setActive = () => {
   const [evCollabCandidates, setEvCollabCandidates] = useState([]);
   const [evCollabSelected, setEvCollabSelected] = useState([]);
   const [evCollabLoading, setEvCollabLoading] = useState(false);
+  const [evCollabLoadError, setEvCollabLoadError] = useState(false);
+  const [evCollabSearchQuery, setEvCollabSearchQuery] = useState("");
   const openEvCollabPicker = async () => {
     setEvCollabPickerOpen(true);
     setEvCollabLoading(true);
-    const myUid = firebase.auth().currentUser?.uid;
-    const uids = myUid ? await getAcceptedFriendUids(myUid) : [];
-    const docs = await Promise.all(uids.map((uid) => fsdb().collection("profiles").doc(uid).get().catch(() => null)));
-    setEvCollabCandidates(uids.map((uid, i) => {
-      const p = docs[i] && docs[i].exists ? docs[i].data() : null;
-      return { uid, name: p && p.name || "Studlin User" };
-    }));
+    setEvCollabLoadError(false);
+    setEvCollabSearchQuery("");
+    try {
+      const myUid = firebase.auth().currentUser?.uid;
+      const uids = myUid ? await getAcceptedFriendUids(myUid) : [];
+      const docs = await Promise.all(uids.map((uid) => fsdb().collection("profiles").doc(uid).get().catch(() => null)));
+      setEvCollabCandidates(uids.map((uid, i) => {
+        const p = docs[i] && docs[i].exists ? docs[i].data() : null;
+        return { uid, name: p && p.name || "Studlin User" };
+      }));
+    } catch (e) {
+      reportError("openEvCollabPicker")(e);
+      setEvCollabLoadError(true);
+    }
     setEvCollabLoading(false);
   };
   const toggleEvCollabSelected = (uid) => setEvCollabSelected((s) => s.includes(uid) ? s.filter((x) => x !== uid) : [...s, uid]);
@@ -16275,6 +16294,7 @@ function CalendarTab({ setActive = () => {
     setGsSelected([]);
     setGsLoading(true);
     setGsLoadError(false);
+    setGsConfirmLoadError(false);
     setGsSearchQuery("");
     setGsRoomId(null);
     setGsMemberUids([]);
@@ -16315,50 +16335,56 @@ function CalendarTab({ setActive = () => {
     const myUid = firebase.auth().currentUser?.uid;
     if (!myUid || gsSelected.length === 0) return;
     setGsLoading(true);
-    const names = {};
-    gsSelected.forEach((uid) => {
-      names[uid] = (gsCandidates.find((c) => c.uid === uid) || {}).name || "Studlin User";
-    });
-    const myName = getUserName() || "You";
-    const now2 = (/* @__PURE__ */ new Date()).toISOString();
-    let roomId;
-    if (gsSelected.length === 1) {
-      const otherUid = gsSelected[0];
-      roomId = dmRoomId(myUid, otherUid);
-      await fsdb().collection("chatRooms").doc(roomId).set({ type: "dm", memberUids: [myUid, otherUid].sort(), createdBy: myUid, createdAt: now2, updatedAt: now2, lastMessage: null }, { merge: true });
-    } else {
-      const doc = await fsdb().collection("chatRooms").add({
-        type: "group",
-        memberUids: [myUid, ...gsSelected],
-        createdBy: myUid,
-        name: gsSelected.map((uid) => names[uid]).join(", ") + " & " + myName,
-        groupType: "permanent",
-        expiresAt: null,
-        memberNames: { [myUid]: myName, ...names },
-        createdAt: now2,
-        updatedAt: now2,
-        lastMessage: null
+    setGsConfirmLoadError(false);
+    try {
+      const names = {};
+      gsSelected.forEach((uid) => {
+        names[uid] = (gsCandidates.find((c) => c.uid === uid) || {}).name || "Studlin User";
       });
-      roomId = doc.id;
+      const myName = getUserName() || "You";
+      const now2 = (/* @__PURE__ */ new Date()).toISOString();
+      let roomId;
+      if (gsSelected.length === 1) {
+        const otherUid = gsSelected[0];
+        roomId = dmRoomId(myUid, otherUid);
+        await fsdb().collection("chatRooms").doc(roomId).set({ type: "dm", memberUids: [myUid, otherUid].sort(), createdBy: myUid, createdAt: now2, updatedAt: now2, lastMessage: null }, { merge: true });
+      } else {
+        const doc = await fsdb().collection("chatRooms").add({
+          type: "group",
+          memberUids: [myUid, ...gsSelected],
+          createdBy: myUid,
+          name: gsSelected.map((uid) => names[uid]).join(", ") + " & " + myName,
+          groupType: "permanent",
+          expiresAt: null,
+          memberNames: { [myUid]: myName, ...names },
+          createdAt: now2,
+          updatedAt: now2,
+          lastMessage: null
+        });
+        roomId = doc.id;
+      }
+      const memberUids = [myUid, ...gsSelected];
+      const memberNames = { [myUid]: myName, ...names };
+      setGsRoomId(roomId);
+      setGsMemberUids(memberUids);
+      setGsMemberNames(memberNames);
+      const { byDate: friendsBusy, sharedUids } = await fetchFriendsBusyIntervals(gsSelected);
+      const busyObj = {};
+      friendsBusy.forEach((intervals, date) => {
+        busyObj[date] = intervals;
+      });
+      setGsBusyByDate(busyObj);
+      setGsSharedUids(sharedUids);
+      const rec = await findSharedStudyWindow(myUid, gsSelected, { timeMode: "anytime", lookAheadDayRange: 7, durationInMinutes: 60 });
+      const opts = rec.noneFound ? [] : rec.options;
+      setGsRecommendedOptions(opts);
+      setGsRecommended(opts.find((o) => o.isBest) || opts[0] || null);
+      setGsStep("place");
+    } catch (e) {
+      reportError("confirmGsPeople")(e);
+      setGsConfirmLoadError(true);
     }
-    const memberUids = [myUid, ...gsSelected];
-    const memberNames = { [myUid]: myName, ...names };
-    setGsRoomId(roomId);
-    setGsMemberUids(memberUids);
-    setGsMemberNames(memberNames);
-    const { byDate: friendsBusy, sharedUids } = await fetchFriendsBusyIntervals(gsSelected);
-    const busyObj = {};
-    friendsBusy.forEach((intervals, date) => {
-      busyObj[date] = intervals;
-    });
-    setGsBusyByDate(busyObj);
-    setGsSharedUids(sharedUids);
-    const rec = await findSharedStudyWindow(myUid, gsSelected, { timeMode: "anytime", lookAheadDayRange: 7, durationInMinutes: 60 });
-    const opts = rec.noneFound ? [] : rec.options;
-    setGsRecommendedOptions(opts);
-    setGsRecommended(opts.find((o) => o.isBest) || opts[0] || null);
     setGsLoading(false);
-    setGsStep("place");
   };
   const placeGroupScheduleChip = (chip, dateKey, startTime) => {
     const start = timeToMinutes(startTime || "09:00");
@@ -18131,7 +18157,21 @@ Examples:
       width: 420,
       footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeGroupSchedule }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: confirmGsPeople, disabled: gsSelected.length === 0 || gsLoading }, gsLoading ? "\u2026" : "Continue"))
     },
-    gsLoading ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "Loading your friends\u2026") : gsLoadError ? /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginBottom: 10 } }, "Couldn't load your friends list -- check your connection and try again."), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: openGroupSchedule }, "Try again")) : gsCandidates.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "No friends yet -- add some in Studlin Network first.") : /* @__PURE__ */ React.createElement(React.Fragment, null, gsCandidates.length > 5 && /* @__PURE__ */ React.createElement(Input, { value: gsSearchQuery, onChange: (e) => setGsSearchQuery(e.target.value), placeholder: "Search friends", style: { marginBottom: 10, width: "100%" } }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, gsCandidates.filter((c) => c.name.toLowerCase().includes(gsSearchQuery.trim().toLowerCase())).map((c) => /* @__PURE__ */ React.createElement("label", { key: c.uid, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 8, border: `1px solid ${T.border}`, cursor: "pointer", background: gsSelected.includes(c.uid) ? T.card2 : "transparent" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: gsSelected.includes(c.uid), onChange: () => toggleGsSelected(c.uid), style: { cursor: "pointer" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text } }, c.name))), gsSearchQuery.trim() && gsCandidates.filter((c) => c.name.toLowerCase().includes(gsSearchQuery.trim().toLowerCase())).length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, 'No friends match "', gsSearchQuery.trim(), '".')))
+    gsLoading ? (
+      // gsLoading is shared between the initial friends-list fetch and
+      // confirmGsPeople's own "Continue" step (creating/finding the
+      // chat room, checking shared availability) -- gsSelected is only
+      // ever non-empty during the latter, so it doubles as a cheap,
+      // accurate discriminator without a third loading-phase state.
+      /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, gsSelected.length > 0 ? "Checking everyone's availability\u2026" : "Loading your friends\u2026")
+    ) : gsLoadError ? /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginBottom: 10 } }, "Couldn't load your friends list -- check your connection and try again."), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: openGroupSchedule }, "Try again")) : gsConfirmLoadError ? (
+      // Bug fix, 2026-09-08 user report: this is the ACTUAL "click a
+      // friend's name, stuck on 'loading friend' forever" bug -- see
+      // confirmGsPeople's own comment. Without this branch, a failure
+      // here fell through to the plain candidate list below with zero
+      // indication anything had gone wrong.
+      /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginBottom: 10 } }, "Couldn't check everyone's availability -- check your connection and try again."), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: confirmGsPeople }, "Try again"))
+    ) : gsCandidates.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "No friends yet -- add some in Studlin Network first.") : /* @__PURE__ */ React.createElement(React.Fragment, null, gsCandidates.length > 5 && /* @__PURE__ */ React.createElement(Input, { value: gsSearchQuery, onChange: (e) => setGsSearchQuery(e.target.value), placeholder: "Search friends", style: { marginBottom: 10, width: "100%" } }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, gsCandidates.filter((c) => c.name.toLowerCase().includes(gsSearchQuery.trim().toLowerCase())).map((c) => /* @__PURE__ */ React.createElement("label", { key: c.uid, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 8, border: `1px solid ${T.border}`, cursor: "pointer", background: gsSelected.includes(c.uid) ? T.card2 : "transparent" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: gsSelected.includes(c.uid), onChange: () => toggleGsSelected(c.uid), style: { cursor: "pointer" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text } }, c.name))), gsSearchQuery.trim() && gsCandidates.filter((c) => c.name.toLowerCase().includes(gsSearchQuery.trim().toLowerCase())).length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, 'No friends match "', gsSearchQuery.trim(), '".')))
   ), gsOpen && gsStep === "place" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 70, background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10, maxWidth: 600 } }, gsSelected.filter((uid) => !gsSharedUids.has(uid)).length > 0 && (() => {
     const nonSharing = gsSelected.filter((uid) => !gsSharedUids.has(uid));
     const stillToAsk = nonSharing.filter((uid) => !shareAskSentUids.has(uid));
@@ -18277,7 +18317,7 @@ Examples:
       footer: /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setEvCollabPickerOpen(false) }, "Done")
     },
     (evProjectPlan.phases && evProjectPlan.phases.length > 0 || evProjectPlan.outline && evProjectPlan.outline.length > 0) && /* @__PURE__ */ React.createElement("div", { style: { background: T.amber + "0A", border: `1px solid ${T.amber}33`, borderRadius: 8, padding: "10px 12px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, fontWeight: 600, color: T.text, marginBottom: 6 } }, "This plan was generated from your notes"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginBottom: 8, lineHeight: 1.5 } }, "Collaborators will see everything below once they accept. Close this and edit it above first if anything's too personal to share."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4, maxHeight: 140, overflowY: "auto" } }, (evProjectPlan.phases || []).map((p, i) => /* @__PURE__ */ React.createElement("div", { key: "ph" + i, style: { fontSize: 11.5, color: T.text } }, "\u2022 " + (typeof p === "string" ? p : p.name || ""))), (evProjectPlan.outline || []).map((o, i) => /* @__PURE__ */ React.createElement("div", { key: "ol" + i, style: { fontSize: 11.5, color: T.text } }, "\u2022 " + (typeof o === "string" ? o : o.text || ""))))),
-    evCollabLoading ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "Loading your friends\u2026") : evCollabCandidates.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "No friends yet \u2014 add some in Studlin Network first.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, evCollabCandidates.map((c) => /* @__PURE__ */ React.createElement("label", { key: c.uid, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 10, border: `1px solid ${T.border}`, cursor: "pointer", background: evCollabSelected.includes(c.uid) ? T.card2 : "transparent" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: evCollabSelected.includes(c.uid), onChange: () => toggleEvCollabSelected(c.uid), style: { cursor: "pointer" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text } }, c.name))))
+    evCollabLoading ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "Loading your friends\u2026") : evCollabLoadError ? /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginBottom: 10 } }, "Couldn't load your friends list -- check your connection and try again."), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: openEvCollabPicker }, "Try again")) : evCollabCandidates.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "No friends yet \u2014 add some in Studlin Network first.") : /* @__PURE__ */ React.createElement(React.Fragment, null, evCollabCandidates.length > 5 && /* @__PURE__ */ React.createElement(Input, { value: evCollabSearchQuery, onChange: (e) => setEvCollabSearchQuery(e.target.value), placeholder: "Search friends", style: { marginBottom: 10, width: "100%" } }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, evCollabCandidates.filter((c) => c.name.toLowerCase().includes(evCollabSearchQuery.trim().toLowerCase())).map((c) => /* @__PURE__ */ React.createElement("label", { key: c.uid, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 10, border: `1px solid ${T.border}`, cursor: "pointer", background: evCollabSelected.includes(c.uid) ? T.card2 : "transparent" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: evCollabSelected.includes(c.uid), onChange: () => toggleEvCollabSelected(c.uid), style: { cursor: "pointer" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text } }, c.name))), evCollabSearchQuery.trim() && evCollabCandidates.filter((c) => c.name.toLowerCase().includes(evCollabSearchQuery.trim().toLowerCase())).length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, 'No friends match "', evCollabSearchQuery.trim(), '".')))
   ), toast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.lime, color: T.ink, fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 8 } }, Icon.check, " Task added"), placementToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.lime, color: T.ink, fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 8 } }, Icon.check, " ", placementToast), deadlineToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.red, color: "#fff", fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)" } }, deadlineToast), rescheduleToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.lime, color: T.ink, fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 8 } }, Icon.check, " ", rescheduleToast), reconcileToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.amber, color: T.ink, fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 8 } }, Icon.check, " ", reconcileToast), calClipToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.lime, color: T.ink, fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 8 } }, Icon.check, " ", calClipToast), deleteUndoToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.card, border: `1px solid ${T.border}`, color: T.white, fontSize: 12.5, fontWeight: 600, padding: "10px 16px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("span", null, deleteUndoToast), /* @__PURE__ */ React.createElement("button", { onClick: undoDelete, style: { background: "none", border: "none", color: T.lime, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: T.font, textDecoration: "underline", padding: 0 } }, "Undo")), moveUndoToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.card, border: `1px solid ${T.border}`, color: T.white, fontSize: 12.5, fontWeight: 600, padding: "10px 16px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("span", null, moveUndoToast), /* @__PURE__ */ React.createElement("button", { onClick: undoMove, style: { background: "none", border: "none", color: T.lime, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: T.font, textDecoration: "underline", padding: 0 } }, "Undo")), fillPrompt && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: dismissFillPrompt, style: { position: "fixed", inset: 0, zIndex: 79 } }), /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 360 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, "Freed up ", fmtMinsDur(fillPrompt.duration), " at ", fmtTime2(fillPrompt.time), fillPrompt.date !== dayKey() ? " on " + (/* @__PURE__ */ new Date(fillPrompt.date + "T12:00:00")).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) : "", ". Fill it with something?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 10, maxHeight: 160, overflowY: "auto" } }, fillPrompt.suggestions.map((s) => /* @__PURE__ */ React.createElement("button", { key: s.id, onClick: () => acceptFillSuggestion(s.id), style: { display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12, padding: "8px 10px", background: T.card2, borderRadius: 8, border: `1px solid ${T.border}`, color: T.text, cursor: "pointer", fontFamily: T.font, textAlign: "left" } }, /* @__PURE__ */ React.createElement("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, s.title), /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, flexShrink: 0 } }, s.duration, "m")))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => openNewAtSlot(fillPrompt.date, fillPrompt.time, fillPrompt.duration), style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Add something"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: dismissFillPrompt, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Leave it")))), rescheduleTask && /* @__PURE__ */ React.createElement(RescheduleModal, { task: rescheduleTask, events, onClose: () => setRescheduleTask(null), onManual: () => jumpToSession(rescheduleTask), commit: (next, evictedCount) => {
     setEvents2(next);
     lsSet("events", next);

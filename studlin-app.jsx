@@ -24280,6 +24280,11 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   const [collabCandidates,setCollabCandidates]=useState([]);
   const [collabSelected,setCollabSelected]=useState([]);
   const [collabLoading,setCollabLoading]=useState(false);
+  const [collabLoadError,setCollabLoadError]=useState(false);
+  // Same optional search field "Schedule with Friends" already has for a
+  // long candidate list (gsSearchQuery) -- mirrored here, not a new
+  // mechanism.
+  const [collabSearchQuery,setCollabSearchQuery]=useState("");
   // Retroactive Attack Block for a deadline marker that never got one --
   // closes the gap where an assignment added without Attack Block had no
   // way to get one later. Only offered for a plain marker with nothing
@@ -24509,14 +24514,23 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   };
   const requiresProjectDetail=asProject&&!isProject;
   const openCollabPicker=async()=>{
-    setCollabPickerOpen(true);setCollabSelected([]);setCollabLoading(true);
-    const myUid=firebase.auth().currentUser?.uid;
-    const uids=myUid?await getAcceptedFriendUids(myUid):[];
-    const docs=await Promise.all(uids.map(uid=>fsdb().collection('profiles').doc(uid).get().catch(()=>null)));
-    setCollabCandidates(uids.map((uid,i)=>{
-      const p=docs[i]&&docs[i].exists?docs[i].data():null;
-      return {uid,name:(p&&p.name)||"Studlin User"};
-    }));
+    setCollabPickerOpen(true);setCollabSelected([]);setCollabLoading(true);setCollabLoadError(false);setCollabSearchQuery("");
+    // Same missing-error-handling gap already found and fixed for
+    // "Schedule with Friends" (openGroupSchedule) -- any failure here used
+    // to leave this modal stuck on "Loading your friends…" forever, since
+    // nothing ever set collabLoading back to false on a thrown error.
+    try{
+      const myUid=firebase.auth().currentUser?.uid;
+      const uids=myUid?await getAcceptedFriendUids(myUid):[];
+      const docs=await Promise.all(uids.map(uid=>fsdb().collection('profiles').doc(uid).get().catch(()=>null)));
+      setCollabCandidates(uids.map((uid,i)=>{
+        const p=docs[i]&&docs[i].exists?docs[i].data():null;
+        return {uid,name:(p&&p.name)||"Studlin User"};
+      }));
+    }catch(e){
+      reportError("openCollabPicker")(e);
+      setCollabLoadError(true);
+    }
     setCollabLoading(false);
   };
   const toggleCollabSelected=(uid)=>setCollabSelected(s=>s.includes(uid)?s.filter(x=>x!==uid):[...s,uid]);
@@ -25388,18 +25402,29 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
       )}
       {collabLoading?(
         <div style={{fontSize:12.5,color:T.muted}}>Loading your friends…</div>
+      ):collabLoadError?(
+        <div>
+          <div style={{fontSize:12.5,color:T.muted,marginBottom:10}}>Couldn't load your friends list -- check your connection and try again.</div>
+          <Btn variant="subtle" onClick={openCollabPicker}>Try again</Btn>
+        </div>
       ):collabCandidates.length===0?(
         <div style={{fontSize:12.5,color:T.muted}}>No friends yet — add some in Studlin Network first.</div>
-      ):(
+      ):(<>
+        {collabCandidates.length>5&&(
+          <Input value={collabSearchQuery} onChange={e=>setCollabSearchQuery(e.target.value)} placeholder="Search friends" style={{marginBottom:10,width:"100%"}} />
+        )}
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
-          {collabCandidates.map(c=>(
+          {collabCandidates.filter(c=>c.name.toLowerCase().includes(collabSearchQuery.trim().toLowerCase())).map(c=>(
             <label key={c.uid} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:8,border:`1px solid ${T.border}`,cursor:"pointer",background:collabSelected.includes(c.uid)?T.card2:"transparent"}}>
               <input type="checkbox" checked={collabSelected.includes(c.uid)} onChange={()=>toggleCollabSelected(c.uid)} style={{cursor:"pointer"}} />
               <div style={{fontSize:13,fontWeight:600,color:T.text}}>{c.name}</div>
             </label>
           ))}
+          {collabSearchQuery.trim()&&collabCandidates.filter(c=>c.name.toLowerCase().includes(collabSearchQuery.trim().toLowerCase())).length===0&&(
+            <div style={{fontSize:12.5,color:T.muted}}>No friends match "{collabSearchQuery.trim()}".</div>
+          )}
         </div>
-      )}
+      </>)}
     </Modal>
     {attackSlotPicker&&(
       <NewSlotPickerModal title="Choose when to start" sub="Studlin found a few real options for your first session:"
@@ -26075,6 +26100,19 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // synchronously first), so the student was left staring at "Loading your
   // friends…" with no error, no retry, and no way out except Cancel.
   const [gsLoadError,setGsLoadError]=useState(false);
+  // Bug fix, 2026-09-08 user report -- the ACTUAL hang, distinct from the
+  // one above: clicking Continue after picking a friend runs
+  // confirmGsPeople, which awaits FOUR separate Firestore calls (creating/
+  // merging the chat room, fetchFriendsBusyIntervals, findSharedStudyWindow)
+  // with zero try/catch around any of them. Any one of those failing threw
+  // out of the async function before setGsLoading(false) ever ran, and
+  // since this same gsLoading flag is what the picker step's own render
+  // checks to show "Loading your friends…", a failure here looked
+  // IDENTICAL to the friends-list never loading in the first place --
+  // "once i click on my friend's name it just says loading friend and
+  // stays like that" -- even though the friends list itself had already
+  // loaded successfully by this point.
+  const [gsConfirmLoadError,setGsConfirmLoadError]=useState(false);
   const [gsRoomId,setGsRoomId]=useState(null);
   const [gsMemberUids,setGsMemberUids]=useState([]);
   const [gsMemberNames,setGsMemberNames]=useState({});
@@ -26522,15 +26560,25 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const [evCollabCandidates,setEvCollabCandidates]=useState([]);
   const [evCollabSelected,setEvCollabSelected]=useState([]);
   const [evCollabLoading,setEvCollabLoading]=useState(false);
+  const [evCollabLoadError,setEvCollabLoadError]=useState(false);
+  const [evCollabSearchQuery,setEvCollabSearchQuery]=useState("");
   const openEvCollabPicker=async()=>{
-    setEvCollabPickerOpen(true);setEvCollabLoading(true);
-    const myUid=firebase.auth().currentUser?.uid;
-    const uids=myUid?await getAcceptedFriendUids(myUid):[];
-    const docs=await Promise.all(uids.map(uid=>fsdb().collection('profiles').doc(uid).get().catch(()=>null)));
-    setEvCollabCandidates(uids.map((uid,i)=>{
-      const p=docs[i]&&docs[i].exists?docs[i].data():null;
-      return {uid,name:(p&&p.name)||"Studlin User"};
-    }));
+    setEvCollabPickerOpen(true);setEvCollabLoading(true);setEvCollabLoadError(false);setEvCollabSearchQuery("");
+    // Same missing-error-handling gap already found and fixed for
+    // openGroupSchedule/openCollabPicker -- any failure here used to leave
+    // this modal stuck on "Loading your friends…" forever.
+    try{
+      const myUid=firebase.auth().currentUser?.uid;
+      const uids=myUid?await getAcceptedFriendUids(myUid):[];
+      const docs=await Promise.all(uids.map(uid=>fsdb().collection('profiles').doc(uid).get().catch(()=>null)));
+      setEvCollabCandidates(uids.map((uid,i)=>{
+        const p=docs[i]&&docs[i].exists?docs[i].data():null;
+        return {uid,name:(p&&p.name)||"Studlin User"};
+      }));
+    }catch(e){
+      reportError("openEvCollabPicker")(e);
+      setEvCollabLoadError(true);
+    }
     setEvCollabLoading(false);
   };
   const toggleEvCollabSelected=(uid)=>setEvCollabSelected(s=>s.includes(uid)?s.filter(x=>x!==uid):[...s,uid]);
@@ -27388,7 +27436,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   };
   // ── Schedule with Friends ────────────────────────────────────────────
   const openGroupSchedule=async()=>{
-    setGsOpen(true);setGsStep("pick");setGsSelected([]);setGsLoading(true);setGsLoadError(false);setGsSearchQuery("");
+    setGsOpen(true);setGsStep("pick");setGsSelected([]);setGsLoading(true);setGsLoadError(false);setGsConfirmLoadError(false);setGsSearchQuery("");
     setGsRoomId(null);setGsMemberUids([]);setGsMemberNames({});setGsBusyByDate({});setGsSharedUids(new Set());setShareAskSentUids(new Set());setGsRecommended(null);setGsRecommendedOptions([]);setGsDraft(null);
     try{
       const myUid=firebase.auth().currentUser?.uid;
@@ -27431,43 +27479,49 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const confirmGsPeople=async()=>{
     const myUid=firebase.auth().currentUser?.uid;
     if(!myUid||gsSelected.length===0)return;
-    setGsLoading(true);
-    const names={};
-    gsSelected.forEach(uid=>{names[uid]=(gsCandidates.find(c=>c.uid===uid)||{}).name||"Studlin User";});
-    const myName=getUserName()||"You";
-    const now=new Date().toISOString();
-    let roomId;
-    if(gsSelected.length===1){
-      const otherUid=gsSelected[0];
-      roomId=dmRoomId(myUid,otherUid);
-      await fsdb().collection('chatRooms').doc(roomId).set({type:"dm",memberUids:[myUid,otherUid].sort(),createdBy:myUid,createdAt:now,updatedAt:now,lastMessage:null},{merge:true});
-    }else{
-      const doc=await fsdb().collection('chatRooms').add({
-        type:"group",memberUids:[myUid,...gsSelected],createdBy:myUid,
-        name:gsSelected.map(uid=>names[uid]).join(", ")+" & "+myName,
-        groupType:"permanent",expiresAt:null,memberNames:{[myUid]:myName,...names},
-        createdAt:now,updatedAt:now,lastMessage:null,
-      });
-      roomId=doc.id;
+    setGsLoading(true);setGsConfirmLoadError(false);
+    try{
+      const names={};
+      gsSelected.forEach(uid=>{names[uid]=(gsCandidates.find(c=>c.uid===uid)||{}).name||"Studlin User";});
+      const myName=getUserName()||"You";
+      const now=new Date().toISOString();
+      let roomId;
+      if(gsSelected.length===1){
+        const otherUid=gsSelected[0];
+        roomId=dmRoomId(myUid,otherUid);
+        await fsdb().collection('chatRooms').doc(roomId).set({type:"dm",memberUids:[myUid,otherUid].sort(),createdBy:myUid,createdAt:now,updatedAt:now,lastMessage:null},{merge:true});
+      }else{
+        const doc=await fsdb().collection('chatRooms').add({
+          type:"group",memberUids:[myUid,...gsSelected],createdBy:myUid,
+          name:gsSelected.map(uid=>names[uid]).join(", ")+" & "+myName,
+          groupType:"permanent",expiresAt:null,memberNames:{[myUid]:myName,...names},
+          createdAt:now,updatedAt:now,lastMessage:null,
+        });
+        roomId=doc.id;
+      }
+      const memberUids=[myUid,...gsSelected];
+      const memberNames={[myUid]:myName,...names};
+      setGsRoomId(roomId);setGsMemberUids(memberUids);setGsMemberNames(memberNames);
+      // This user's own occupied time is computed per-day straight off
+      // getDayOccupiedIntervals as the grid renders -- only friends' opted-in
+      // busy time needs fetching up front here.
+      const {byDate:friendsBusy,sharedUids}=await fetchFriendsBusyIntervals(gsSelected);
+      const busyObj={};
+      friendsBusy.forEach((intervals,date)=>{busyObj[date]=intervals;});
+      setGsBusyByDate(busyObj);
+      setGsSharedUids(sharedUids);
+      // Recommended ghost block -- a visual suggestion only (see gsRecommended
+      // state comment); manual placement anywhere else stays fully available.
+      const rec=await findSharedStudyWindow(myUid,gsSelected,{timeMode:"anytime",lookAheadDayRange:7,durationInMinutes:60});
+      const opts=rec.noneFound?[]:rec.options;
+      setGsRecommendedOptions(opts);
+      setGsRecommended(opts.find(o=>o.isBest)||opts[0]||null);
+      setGsStep("place");
+    }catch(e){
+      reportError("confirmGsPeople")(e);
+      setGsConfirmLoadError(true);
     }
-    const memberUids=[myUid,...gsSelected];
-    const memberNames={[myUid]:myName,...names};
-    setGsRoomId(roomId);setGsMemberUids(memberUids);setGsMemberNames(memberNames);
-    // This user's own occupied time is computed per-day straight off
-    // getDayOccupiedIntervals as the grid renders -- only friends' opted-in
-    // busy time needs fetching up front here.
-    const {byDate:friendsBusy,sharedUids}=await fetchFriendsBusyIntervals(gsSelected);
-    const busyObj={};
-    friendsBusy.forEach((intervals,date)=>{busyObj[date]=intervals;});
-    setGsBusyByDate(busyObj);
-    setGsSharedUids(sharedUids);
-    // Recommended ghost block -- a visual suggestion only (see gsRecommended
-    // state comment); manual placement anywhere else stays fully available.
-    const rec=await findSharedStudyWindow(myUid,gsSelected,{timeMode:"anytime",lookAheadDayRange:7,durationInMinutes:60});
-    const opts=rec.noneFound?[]:rec.options;
-    setGsRecommendedOptions(opts);
-    setGsRecommended(opts.find(o=>o.isBest)||opts[0]||null);
-    setGsLoading(false);setGsStep("place");
+    setGsLoading(false);
   };
   // Dropping the Meeting or Study Session sidebar chip -- default to a 1hr
   // block at the drop point, immediately draggable/resizable from there via
@@ -29742,11 +29796,26 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       <Modal open={gsOpen&&gsStep==="pick"} onClose={closeGroupSchedule} title="Schedule with Friends" sub="Pick who you want to find time with. They only see this once you send it." width={420}
         footer={<><Btn variant="subtle" onClick={closeGroupSchedule}>Cancel</Btn><Btn onClick={confirmGsPeople} disabled={gsSelected.length===0||gsLoading}>{gsLoading?"…":"Continue"}</Btn></>}>
         {gsLoading?(
-          <div style={{fontSize:12.5,color:T.muted}}>Loading your friends…</div>
+          // gsLoading is shared between the initial friends-list fetch and
+          // confirmGsPeople's own "Continue" step (creating/finding the
+          // chat room, checking shared availability) -- gsSelected is only
+          // ever non-empty during the latter, so it doubles as a cheap,
+          // accurate discriminator without a third loading-phase state.
+          <div style={{fontSize:12.5,color:T.muted}}>{gsSelected.length>0?"Checking everyone's availability…":"Loading your friends…"}</div>
         ):gsLoadError?(
           <div>
             <div style={{fontSize:12.5,color:T.muted,marginBottom:10}}>Couldn't load your friends list -- check your connection and try again.</div>
             <Btn variant="subtle" onClick={openGroupSchedule}>Try again</Btn>
+          </div>
+        ):gsConfirmLoadError?(
+          // Bug fix, 2026-09-08 user report: this is the ACTUAL "click a
+          // friend's name, stuck on 'loading friend' forever" bug -- see
+          // confirmGsPeople's own comment. Without this branch, a failure
+          // here fell through to the plain candidate list below with zero
+          // indication anything had gone wrong.
+          <div>
+            <div style={{fontSize:12.5,color:T.muted,marginBottom:10}}>Couldn't check everyone's availability -- check your connection and try again.</div>
+            <Btn variant="subtle" onClick={confirmGsPeople}>Try again</Btn>
           </div>
         ):gsCandidates.length===0?(
           <div style={{fontSize:12.5,color:T.muted}}>No friends yet -- add some in Studlin Network first.</div>
@@ -29987,18 +30056,29 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         )}
         {evCollabLoading?(
           <div style={{fontSize:12.5,color:T.muted}}>Loading your friends…</div>
+        ):evCollabLoadError?(
+          <div>
+            <div style={{fontSize:12.5,color:T.muted,marginBottom:10}}>Couldn't load your friends list -- check your connection and try again.</div>
+            <Btn variant="subtle" onClick={openEvCollabPicker}>Try again</Btn>
+          </div>
         ):evCollabCandidates.length===0?(
           <div style={{fontSize:12.5,color:T.muted}}>No friends yet — add some in Studlin Network first.</div>
-        ):(
+        ):(<>
+          {evCollabCandidates.length>5&&(
+            <Input value={evCollabSearchQuery} onChange={e=>setEvCollabSearchQuery(e.target.value)} placeholder="Search friends" style={{marginBottom:10,width:"100%"}} />
+          )}
           <div style={{display:"flex",flexDirection:"column",gap:8}}>
-            {evCollabCandidates.map(c=>(
+            {evCollabCandidates.filter(c=>c.name.toLowerCase().includes(evCollabSearchQuery.trim().toLowerCase())).map(c=>(
               <label key={c.uid} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer",background:evCollabSelected.includes(c.uid)?T.card2:"transparent"}}>
                 <input type="checkbox" checked={evCollabSelected.includes(c.uid)} onChange={()=>toggleEvCollabSelected(c.uid)} style={{cursor:"pointer"}} />
                 <div style={{fontSize:13,fontWeight:600,color:T.text}}>{c.name}</div>
               </label>
             ))}
+            {evCollabSearchQuery.trim()&&evCollabCandidates.filter(c=>c.name.toLowerCase().includes(evCollabSearchQuery.trim().toLowerCase())).length===0&&(
+              <div style={{fontSize:12.5,color:T.muted}}>No friends match "{evCollabSearchQuery.trim()}".</div>
+            )}
           </div>
-        )}
+        </>)}
       </Modal>
       {toast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} Task added</div>
