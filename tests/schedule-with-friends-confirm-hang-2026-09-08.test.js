@@ -57,23 +57,24 @@ describe("confirmGsPeople never leaves the picker stuck on a misleading 'loading
     assert.match(body, /gsSelected\.length>0\?"Checking everyone's availability…":"Loading your friends…"/);
   });
 
-  // Root cause, found via direct Firestore inspection against the user's
-  // real account: the single-friend DM branch's chatRooms merge-set write
-  // is the EXACT same shape ChatDrawer's own lazy DM-room-creation already
-  // uses (type/memberUids/createdBy/createdAt/updatedAt/lastMessage) --
-  // firestore.rules' chatRooms `update` rule only allows lastMessage/
-  // updatedAt/groupType/expiresAt/lastReadAt to change, so this correctly,
-  // predictably gets rejected with permission-denied for ANY conversation
-  // that already exists (createdAt differs from what's stored). ChatDrawer
-  // already treats this as a harmless no-op via .catch(()=>{}) -- this
-  // call was missing that exact safety net, so an everyday, expected
-  // rejection is what actually threw here in the first place, not some
-  // rare edge case.
-  test("the single-friend chatRoom write is caught the same proven-safe way ChatDrawer's own DM-room creation already is", () => {
+  // Root cause, confirmed via a live instrumented replay of this exact
+  // code path against a real account: firestore.rules' chatRooms `update`
+  // rule only allows lastMessage/updatedAt/groupType/expiresAt/lastReadAt
+  // to change, so a merge-set that also touches type/memberUids/
+  // createdBy/createdAt (even to identical values) genuinely gets
+  // rejected with permission-denied for ANY conversation that already
+  // exists. Updated after a live instrumented replay against a real account showed
+  // .catch(()=>{}) alone was NOT a reliable suppression for this specific
+  // rejection (offline persistence made the failure surface unpredictably
+  // through this same await chain) -- checking existence first with a
+  // plain .get() avoids the problematic write path entirely instead.
+  test("the single-friend branch checks whether the room already exists before ever attempting the write that trips the update-rule mismatch", () => {
     const idx = SOURCE.indexOf("const confirmGsPeople=async()=>{");
-    const body = SOURCE.slice(idx, idx + 3000);
-    assert.match(body, /collection\('chatRooms'\)\.doc\(roomId\)\.set\(\{type:"dm",memberUids:\[myUid,otherUid\]\.sort\(\),createdBy:myUid,createdAt:now,updatedAt:now,lastMessage:null\},\{merge:true\}\)\.catch\(\(\)=>\{\}\);/,
-      "without .catch(()=>{}), this write's everyday permission-denied rejection for an already-existing room throws uncaught out of confirmGsPeople");
+    const body = SOURCE.slice(idx, idx + 3400);
+    assert.match(body, /const existingRoom=await fsdb\(\)\.collection\('chatRooms'\)\.doc\(roomId\)\.get\(\)\.catch\(\(\)=>null\);/,
+      "must check existence first rather than blindly attempting a merge-set that collides with the update-rule allowlist for an already-existing room");
+    assert.match(body, /if\(!existingRoom\|\|!existingRoom\.exists\)\{/,
+      "the write must only run for a genuinely new room");
   });
 });
 

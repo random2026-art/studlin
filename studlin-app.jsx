@@ -27489,22 +27489,29 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       if(gsSelected.length===1){
         const otherUid=gsSelected[0];
         roomId=dmRoomId(myUid,otherUid);
-        // Root cause of the actual live hang (found via direct Firestore
-        // inspection): this exact write shape already exists in
-        // ChatDrawer's own lazy DM-room-creation (ChatDrawer's mount
-        // effect) and is a real no-op .catch(()=>{}) there -- firestore.
-        // rules' chatRooms `update` rule only allows
-        // lastMessage/updatedAt/groupType/expiresAt/lastReadAt to change,
-        // so this merge-set genuinely, correctly gets rejected with
-        // permission-denied for ANY conversation that already exists
-        // (createdAt differs from what's already stored) -- harmless
-        // there since the room already has everything this write would
-        // set anyway. This call copied the same write but without the
-        // same .catch, so that same everyday, expected rejection was
-        // exactly what threw out of confirmGsPeople uncaught. Swallowed
-        // the same proven-safe way -- the room existing is all this step
-        // actually needs, not this specific write succeeding.
-        await fsdb().collection('chatRooms').doc(roomId).set({type:"dm",memberUids:[myUid,otherUid].sort(),createdBy:myUid,createdAt:now,updatedAt:now,lastMessage:null},{merge:true}).catch(()=>{});
+        // Root cause of the actual live hang (confirmed via direct
+        // Firestore inspection against a real account, including a live
+        // instrumented replay of this exact code path): firestore.rules'
+        // chatRooms `update` rule only allows lastMessage/updatedAt/
+        // groupType/expiresAt/lastReadAt to change, so a merge-set that
+        // also touches type/memberUids/createdBy/createdAt (even to
+        // identical values) genuinely gets rejected with permission-denied
+        // for ANY conversation that already exists. ChatDrawer's own
+        // near-identical write hits the exact same rejection every time
+        // too (relies on a bare .catch(()=>{}) to shrug it off) -- but
+        // with offline persistence enabled, a .set()'s returned promise
+        // doesn't reliably surface a later server-side rejection back
+        // through that same await chain, so relying on .catch() here
+        // was never actually a safe suppression, just one that happened
+        // to look safe in a quick isolated test. Checking existence
+        // first with a plain .get() (a read, always allowed for a
+        // member) and only creating when the room is genuinely new
+        // avoids the problematic write entirely instead of trying to
+        // catch its way around it.
+        const existingRoom=await fsdb().collection('chatRooms').doc(roomId).get().catch(()=>null);
+        if(!existingRoom||!existingRoom.exists){
+          await fsdb().collection('chatRooms').doc(roomId).set({type:"dm",memberUids:[myUid,otherUid].sort(),createdBy:myUid,createdAt:now,updatedAt:now,lastMessage:null}).catch(()=>{});
+        }
       }else{
         const doc=await fsdb().collection('chatRooms').add({
           type:"group",memberUids:[myUid,...gsSelected],createdBy:myUid,
