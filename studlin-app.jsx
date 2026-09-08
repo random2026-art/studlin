@@ -5195,10 +5195,20 @@ function advanceProjectPhase(completedTask,events,routines,prefs,todayKey){
   const updatedMarker={...marker,phases:updatedPhases};
   let working=events.map(e=>e.id===marker.id?updatedMarker:e);
   if(hasNext){
+    // Plan Part C2 (2026-09-08, approved): every phase after the first
+    // used to silently fall back to startAttackBlockChain's own bare
+    // ATTACK_BLOCK_DEFAULT_PROBE_MINS regardless of what the student
+    // actually knows about this specific part -- probeMins was never
+    // forwarded here at all. A student who set a real estimate on this
+    // phase (see EventDetailModal's own per-phase estimate field) gets it
+    // used directly instead of a generic guess; one left unset still
+    // falls through to startAttackBlockChain's existing default exactly
+    // as before.
     const nextTask=startAttackBlockChain({
       title:marker.title+": "+marker.phases[nextIdx].name,
       deadline:marker.deadline,priority:marker.priority,difficulty:marker.difficulty,
       noteId:marker.noteId,dueEventId:marker.id,
+      probeMins:marker.phases[nextIdx].probeMins||undefined,
     },working,routines,prefs,todayKey||dayKey(),prefs.workStartTime);
     working=working.concat([{...nextTask,projectPhaseIndex:nextIdx,phaseName:marker.phases[nextIdx].name,projectTitle:marker.title}]);
   }
@@ -24245,6 +24255,10 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   // moment you reopen it.
   const [asProject,setAsProject]=useState(false);
   const [asChecklist,setAsChecklist]=useState(false);
+  // Plan Part C1 (2026-09-08, approved): which phase's sub-checklist (if
+  // any) is currently expanded -- only ever the active one, reset per
+  // modal open since there's no reason to remember it across items.
+  const [expandedPhaseIdx,setExpandedPhaseIdx]=useState(null);
   // Same UI-level-choice pattern as asProject/asChecklist above -- a Task
   // (2026-08-26, Add Task's "do laundry" type) is also kind:"study block"
   // under the hood, distinguished only by isGeneralTask:true, so without
@@ -24803,6 +24817,27 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   const confirmProjectSwitchAway=()=>{setProjectSwitchAwayConfirm(false);proceedSave();};
   const writePhases=(nextPhases)=>commit(allEvents.map(x=>x.id===ev.id?{...x,phases:nextPhases}:x));
   const writeOutline=(nextOutline)=>commit(allEvents.map(x=>x.id===ev.id?{...x,outline:nextOutline}:x));
+  // Plan Part C3 (2026-09-08, approved): "right now it says first part is
+  // active but how am i supposed to work on it how am i supposed to
+  // indicate we finished that part." The real mechanism (finishing the
+  // phase's scheduled session in the Lock-In Timer, which fires
+  // advanceProjectPhase) was never explained anywhere in this modal, and
+  // there was no manual escape hatch for when the work happened outside
+  // the timer. This runs the exact same transition finishing the timer
+  // does -- advanceProjectPhase only ever reads dueEventId/
+  // projectPhaseIndex off its first argument, so a small synthetic object
+  // is enough, no need to locate the real scheduled task first. Any
+  // already-scheduled pending session for this phase is marked done
+  // alongside it, so it doesn't linger as a dangling duplicate once the
+  // phase itself is closed out by hand.
+  const markPhaseDone=()=>{
+    const activeIdx=(ev.phases||[]).findIndex(p=>p.status==="active");
+    if(activeIdx===-1)return;
+    const doneAt=new Date().toISOString();
+    const withSessionClosed=allEvents.map(e=>(e.dueEventId===ev.id&&e.projectPhaseIndex===activeIdx&&e.status==="pending")?{...e,status:"done",completedAt:doneAt}:e);
+    const next=advanceProjectPhase({dueEventId:ev.id,projectPhaseIndex:activeIdx},withSessionClosed,getWeeklyRoutine(),getSchedulePreferences(),dayKey());
+    commit(next);
+  };
   const confirmCancelSessions=()=>{
     const next=allEvents.filter(e=>!(e.dueEventId===ev.id&&e.status==="pending"));
     commit(next);setCancelConfirmOpen(false);onClose();
@@ -25139,16 +25174,73 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
         <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",marginBottom:14}}>
           <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Phases</div>
           <div style={{display:"flex",flexDirection:"column",gap:6}}>
-            {ev.phases.map((ph,pi)=>(
-              <div key={pi} style={{display:"flex",alignItems:"center",gap:6}}>
-                <span style={{fontSize:9,fontWeight:700,color:ph.status==="done"?T.lime:ph.status==="active"?T.amber:T.faint,width:44,flexShrink:0,textTransform:"uppercase"}}>{ph.status}</span>
-                <Input value={ph.name} onChange={e=>writePhases(ev.phases.map((p,ppi)=>ppi===pi?{...p,name:e.target.value}:p))} style={{flex:1,fontSize:12,padding:"5px 8px"}} />
+            {ev.phases.map((ph,pi)=>{
+              // Plan Part C1 (2026-09-08, approved): only the ACTIVE phase
+              // gets an expand affordance -- a pending phase's sub-detail
+              // isn't relevant yet, matching the plan's own scoping.
+              const isActive=ph.status==="active";
+              const isExpanded=isActive&&expandedPhaseIdx===pi;
+              const checklist=ph.checklist||[];
+              const writePhaseChecklist=(next)=>writePhases(ev.phases.map((p,ppi)=>ppi===pi?{...p,checklist:next}:p));
+              return (
+              <div key={pi}>
+                <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  <span style={{fontSize:9,fontWeight:700,color:ph.status==="done"?T.lime:isActive?T.amber:T.faint,width:44,flexShrink:0,textTransform:"uppercase"}}>{ph.status}</span>
+                  <Input value={ph.name} onChange={e=>writePhases(ev.phases.map((p,ppi)=>ppi===pi?{...p,name:e.target.value}:p))} style={{flex:1,fontSize:12,padding:"5px 8px"}} />
+                  {isActive&&(
+                    <button type="button" onClick={()=>setExpandedPhaseIdx(isExpanded?null:pi)} title="Break this part into smaller steps" style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:11,padding:2,flexShrink:0}}>{isExpanded?"▾":"▸"}</button>
+                  )}
+                  {ph.status==="pending"&&(
+                    <button type="button" onClick={()=>writePhases(ev.phases.filter((_,ppi)=>ppi!==pi))} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:15,lineHeight:1,padding:2,flexShrink:0}}>×</button>
+                  )}
+                </div>
                 {ph.status==="pending"&&(
-                  <button type="button" onClick={()=>writePhases(ev.phases.filter((_,ppi)=>ppi!==pi))} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:15,lineHeight:1,padding:2,flexShrink:0}}>×</button>
+                  // Plan Part C2 (2026-09-08, approved): every phase after
+                  // the first used to silently reuse the project's generic
+                  // default probe length -- see advanceProjectPhase's own
+                  // comment. Left blank, that default still applies
+                  // unchanged ("let Studlin figure it out"); a real number
+                  // here feeds that phase's own session directly once it
+                  // activates.
+                  <div style={{marginLeft:50,marginTop:3,display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{fontSize:10.5,color:T.faint}}>About how long?</span>
+                    <input type="number" min={5} step={5} value={ph.probeMins||""} placeholder="Studlin decides"
+                      onChange={e=>{const v=e.target.value?Math.max(5,parseInt(e.target.value,10)||0):null;writePhases(ev.phases.map((p,ppi)=>ppi===pi?{...p,probeMins:v||undefined}:p));}}
+                      style={{width:100,background:"transparent",border:`1px solid ${T.border}`,borderRadius:5,padding:"3px 6px",color:T.text,fontSize:10.5,fontFamily:T.font,outline:"none"}} />
+                    <span style={{fontSize:10.5,color:T.faint}}>min</span>
+                  </div>
+                )}
+                {isExpanded&&(
+                  <div style={{marginLeft:50,marginTop:6,paddingLeft:10,borderLeft:`2px solid ${T.border}`,display:"flex",flexDirection:"column",gap:5}}>
+                    {checklist.map((c,ci)=>(
+                      <label key={ci} style={{display:"flex",alignItems:"center",gap:6,fontSize:11.5,color:c.done?T.faint:T.text,cursor:"pointer",textDecoration:c.done?"line-through":"none"}}>
+                        <input type="checkbox" checked={!!c.done} onChange={()=>writePhaseChecklist(checklist.map((x,xi)=>xi===ci?{...x,done:!x.done}:x))} style={{accentColor:T.lime,cursor:"pointer"}} />
+                        <span style={{flex:1}}>{c.text}</span>
+                        <button type="button" onClick={()=>writePhaseChecklist(checklist.filter((_,xi)=>xi!==ci))} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:13,lineHeight:1,padding:0}}>×</button>
+                      </label>
+                    ))}
+                    <button type="button" onClick={()=>writePhaseChecklist([...checklist,{text:"",done:false}])} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>+ Add step</button>
+                    {checklist.some(c=>c.text==="")&&(
+                      <Input autoFocus value={checklist.find(c=>c.text==="").text} onChange={e=>{const idx=checklist.findIndex(c=>c.text==="");writePhaseChecklist(checklist.map((x,xi)=>xi===idx?{...x,text:e.target.value}:x));}} placeholder="What's this step?" style={{fontSize:11.5,padding:"4px 7px"}} />
+                    )}
+                  </div>
                 )}
               </div>
-            ))}
+              );
+            })}
             <button type="button" onClick={()=>writePhases([...ev.phases,{name:"",status:"pending"}])} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>+ Add phase</button>
+          </div>
+          {/* Plan Part C3 (2026-09-08, approved): explains the real
+              mechanism (finishing the phase's session in the Lock-In Timer
+              advances it automatically) plus a manual escape hatch for
+              when the work happened outside the timer -- both run the
+              exact same advanceProjectPhase transition, just two doors
+              into it. */}
+          <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+            <div style={{fontSize:10.5,color:T.faint,lineHeight:1.4}}>Finish the active phase's session in the Lock-In Timer to move to the next part.</div>
+            {ev.phases.some(p=>p.status==="active")&&(
+              <button type="button" onClick={markPhaseDone} style={{background:"none",border:`1px solid ${T.border}`,borderRadius:6,color:T.text,fontSize:10.5,fontWeight:600,fontFamily:T.font,cursor:"pointer",padding:"5px 9px",flexShrink:0,whiteSpace:"nowrap"}}>Mark phase done</button>
+            )}
           </div>
         </div>
       )}

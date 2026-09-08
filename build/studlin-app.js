@@ -3050,7 +3050,8 @@ function advanceProjectPhase(completedTask, events, routines, prefs, todayKey) {
       priority: marker.priority,
       difficulty: marker.difficulty,
       noteId: marker.noteId,
-      dueEventId: marker.id
+      dueEventId: marker.id,
+      probeMins: marker.phases[nextIdx].probeMins || void 0
     }, working, routines, prefs, todayKey || dayKey(), prefs.workStartTime);
     working = working.concat([{ ...nextTask, projectPhaseIndex: nextIdx, phaseName: marker.phases[nextIdx].name, projectTitle: marker.title }]);
   }
@@ -14473,6 +14474,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
   const [kind, setKind] = useState("deadline");
   const [asProject, setAsProject] = useState(false);
   const [asChecklist, setAsChecklist] = useState(false);
+  const [expandedPhaseIdx, setExpandedPhaseIdx] = useState(null);
   const [asGeneralTask, setAsGeneralTask] = useState(false);
   const [asAssignment, setAsAssignment] = useState(false);
   const [notes, setNotes] = useState("");
@@ -14900,6 +14902,14 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
   };
   const writePhases = (nextPhases) => commit(allEvents.map((x) => x.id === ev.id ? { ...x, phases: nextPhases } : x));
   const writeOutline = (nextOutline) => commit(allEvents.map((x) => x.id === ev.id ? { ...x, outline: nextOutline } : x));
+  const markPhaseDone = () => {
+    const activeIdx = (ev.phases || []).findIndex((p) => p.status === "active");
+    if (activeIdx === -1) return;
+    const doneAt = (/* @__PURE__ */ new Date()).toISOString();
+    const withSessionClosed = allEvents.map((e) => e.dueEventId === ev.id && e.projectPhaseIndex === activeIdx && e.status === "pending" ? { ...e, status: "done", completedAt: doneAt } : e);
+    const next = advanceProjectPhase({ dueEventId: ev.id, projectPhaseIndex: activeIdx }, withSessionClosed, getWeeklyRoutine(), getSchedulePreferences(), dayKey());
+    commit(next);
+  };
   const confirmCancelSessions = () => {
     const next = allEvents.filter((e) => !(e.dueEventId === ev.id && e.status === "pending"));
     commit(next);
@@ -14996,7 +15006,37 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
       /* @__PURE__ */ React.createElement("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 } }, "Drag onto the calendar"),
       /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9.5, color: T.faint, flexShrink: 0 } }, manualDuration, " min")
     ))),
-    ev.phases && ev.phases.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 } }, "Phases"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, ev.phases.map((ph, pi) => /* @__PURE__ */ React.createElement("div", { key: pi, style: { display: "flex", alignItems: "center", gap: 6 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, fontWeight: 700, color: ph.status === "done" ? T.lime : ph.status === "active" ? T.amber : T.faint, width: 44, flexShrink: 0, textTransform: "uppercase" } }, ph.status), /* @__PURE__ */ React.createElement(Input, { value: ph.name, onChange: (e) => writePhases(ev.phases.map((p, ppi) => ppi === pi ? { ...p, name: e.target.value } : p)), style: { flex: 1, fontSize: 12, padding: "5px 8px" } }), ph.status === "pending" && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => writePhases(ev.phases.filter((_, ppi) => ppi !== pi)), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 15, lineHeight: 1, padding: 2, flexShrink: 0 } }, "\xD7"))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => writePhases([...ev.phases, { name: "", status: "pending" }]), style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline", textAlign: "left" } }, "+ Add phase"))),
+    ev.phases && ev.phases.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 } }, "Phases"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, ev.phases.map((ph, pi) => {
+      const isActive = ph.status === "active";
+      const isExpanded = isActive && expandedPhaseIdx === pi;
+      const checklist = ph.checklist || [];
+      const writePhaseChecklist = (next) => writePhases(ev.phases.map((p, ppi) => ppi === pi ? { ...p, checklist: next } : p));
+      return /* @__PURE__ */ React.createElement("div", { key: pi }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, fontWeight: 700, color: ph.status === "done" ? T.lime : isActive ? T.amber : T.faint, width: 44, flexShrink: 0, textTransform: "uppercase" } }, ph.status), /* @__PURE__ */ React.createElement(Input, { value: ph.name, onChange: (e) => writePhases(ev.phases.map((p, ppi) => ppi === pi ? { ...p, name: e.target.value } : p)), style: { flex: 1, fontSize: 12, padding: "5px 8px" } }), isActive && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setExpandedPhaseIdx(isExpanded ? null : pi), title: "Break this part into smaller steps", style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 11, padding: 2, flexShrink: 0 } }, isExpanded ? "\u25BE" : "\u25B8"), ph.status === "pending" && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => writePhases(ev.phases.filter((_, ppi) => ppi !== pi)), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 15, lineHeight: 1, padding: 2, flexShrink: 0 } }, "\xD7")), ph.status === "pending" && // Plan Part C2 (2026-09-08, approved): every phase after
+      // the first used to silently reuse the project's generic
+      // default probe length -- see advanceProjectPhase's own
+      // comment. Left blank, that default still applies
+      // unchanged ("let Studlin figure it out"); a real number
+      // here feeds that phase's own session directly once it
+      // activates.
+      /* @__PURE__ */ React.createElement("div", { style: { marginLeft: 50, marginTop: 3, display: "flex", alignItems: "center", gap: 6 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: T.faint } }, "About how long?"), /* @__PURE__ */ React.createElement(
+        "input",
+        {
+          type: "number",
+          min: 5,
+          step: 5,
+          value: ph.probeMins || "",
+          placeholder: "Studlin decides",
+          onChange: (e) => {
+            const v = e.target.value ? Math.max(5, parseInt(e.target.value, 10) || 0) : null;
+            writePhases(ev.phases.map((p, ppi) => ppi === pi ? { ...p, probeMins: v || void 0 } : p));
+          },
+          style: { width: 100, background: "transparent", border: `1px solid ${T.border}`, borderRadius: 5, padding: "3px 6px", color: T.text, fontSize: 10.5, fontFamily: T.font, outline: "none" }
+        }
+      ), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: T.faint } }, "min")), isExpanded && /* @__PURE__ */ React.createElement("div", { style: { marginLeft: 50, marginTop: 6, paddingLeft: 10, borderLeft: `2px solid ${T.border}`, display: "flex", flexDirection: "column", gap: 5 } }, checklist.map((c, ci) => /* @__PURE__ */ React.createElement("label", { key: ci, style: { display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: c.done ? T.faint : T.text, cursor: "pointer", textDecoration: c.done ? "line-through" : "none" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: !!c.done, onChange: () => writePhaseChecklist(checklist.map((x, xi) => xi === ci ? { ...x, done: !x.done } : x)), style: { accentColor: T.lime, cursor: "pointer" } }), /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, c.text), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => writePhaseChecklist(checklist.filter((_, xi) => xi !== ci)), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 13, lineHeight: 1, padding: 0 } }, "\xD7"))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => writePhaseChecklist([...checklist, { text: "", done: false }]), style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline", textAlign: "left" } }, "+ Add step"), checklist.some((c) => c.text === "") && /* @__PURE__ */ React.createElement(Input, { autoFocus: true, value: checklist.find((c) => c.text === "").text, onChange: (e) => {
+        const idx = checklist.findIndex((c) => c.text === "");
+        writePhaseChecklist(checklist.map((x, xi) => xi === idx ? { ...x, text: e.target.value } : x));
+      }, placeholder: "What's this step?", style: { fontSize: 11.5, padding: "4px 7px" } })));
+    }), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => writePhases([...ev.phases, { name: "", status: "pending" }]), style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline", textAlign: "left" } }, "+ Add phase")), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10, paddingTop: 10, borderTop: `1px solid ${T.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.faint, lineHeight: 1.4 } }, "Finish the active phase's session in the Lock-In Timer to move to the next part."), ev.phases.some((p) => p.status === "active") && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: markPhaseDone, style: { background: "none", border: `1px solid ${T.border}`, borderRadius: 6, color: T.text, fontSize: 10.5, fontWeight: 600, fontFamily: T.font, cursor: "pointer", padding: "5px 9px", flexShrink: 0, whiteSpace: "nowrap" } }, "Mark phase done"))),
     ev.outline && ev.outline.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 } }, "Outline"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, ev.outline.map((o, oi) => /* @__PURE__ */ React.createElement("div", { key: oi, style: { display: "flex", alignItems: "center", gap: 6 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: o.done, onChange: () => writeOutline(ev.outline.map((x, xi) => xi === oi ? { ...x, done: !x.done } : x)), style: { accentColor: T.lime, cursor: "pointer" } }), /* @__PURE__ */ React.createElement(Input, { value: o.text, onChange: (e) => writeOutline(ev.outline.map((x, xi) => xi === oi ? { ...x, text: e.target.value } : x)), style: { flex: 1, fontSize: 12, padding: "5px 8px", textDecoration: o.done ? "line-through" : "none" } }), /* @__PURE__ */ React.createElement(Input, { type: "date", value: o.dueDate || "", onChange: (e) => writeOutline(ev.outline.map((x, xi) => xi === oi ? { ...x, dueDate: e.target.value } : x)), title: "Due date for this step (optional)", style: { width: 120, fontSize: 11, padding: "5px 6px", flexShrink: 0 } }), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => writeOutline(ev.outline.filter((_, xi) => xi !== oi)), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 15, lineHeight: 1, padding: 2, flexShrink: 0 } }, "\xD7"))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => writeOutline([...ev.outline, { text: "", done: false }]), style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline", textAlign: "left" } }, "+ Add step")), chainIdForReschedule && /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", style: { marginTop: 8 }, onClick: () => {
       reoptimizeAttackChain(chainIdForReschedule);
       commit(lsGet("events", []));
