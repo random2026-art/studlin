@@ -33,7 +33,7 @@ describe("confirmGsPeople never leaves the picker stuck on a misleading 'loading
   test("the whole body is wrapped in try/catch, and setGsLoading(false) runs even on failure", () => {
     const idx = SOURCE.indexOf("const confirmGsPeople=async()=>{");
     assert.notEqual(idx, -1, "confirmGsPeople must exist");
-    const body = SOURCE.slice(idx, idx + 3200);
+    const body = SOURCE.slice(idx, idx + 4800);
     assert.match(body, /try\{/, "the four awaited Firestore calls must be inside a try block");
     assert.match(body, /\}catch\(e\)\{/, "a failure must be caught, not left as an unhandled rejection");
     const catchIdx = body.indexOf("}catch(e){");
@@ -55,6 +55,25 @@ describe("confirmGsPeople never leaves the picker stuck on a misleading 'loading
     const idx = SOURCE.indexOf('title="Schedule with Friends"');
     const body = SOURCE.slice(idx, idx + 1200);
     assert.match(body, /gsSelected\.length>0\?"Checking everyone's availability…":"Loading your friends…"/);
+  });
+
+  // Root cause, found via direct Firestore inspection against the user's
+  // real account: the single-friend DM branch's chatRooms merge-set write
+  // is the EXACT same shape ChatDrawer's own lazy DM-room-creation already
+  // uses (type/memberUids/createdBy/createdAt/updatedAt/lastMessage) --
+  // firestore.rules' chatRooms `update` rule only allows lastMessage/
+  // updatedAt/groupType/expiresAt/lastReadAt to change, so this correctly,
+  // predictably gets rejected with permission-denied for ANY conversation
+  // that already exists (createdAt differs from what's stored). ChatDrawer
+  // already treats this as a harmless no-op via .catch(()=>{}) -- this
+  // call was missing that exact safety net, so an everyday, expected
+  // rejection is what actually threw here in the first place, not some
+  // rare edge case.
+  test("the single-friend chatRoom write is caught the same proven-safe way ChatDrawer's own DM-room creation already is", () => {
+    const idx = SOURCE.indexOf("const confirmGsPeople=async()=>{");
+    const body = SOURCE.slice(idx, idx + 3000);
+    assert.match(body, /collection\('chatRooms'\)\.doc\(roomId\)\.set\(\{type:"dm",memberUids:\[myUid,otherUid\]\.sort\(\),createdBy:myUid,createdAt:now,updatedAt:now,lastMessage:null\},\{merge:true\}\)\.catch\(\(\)=>\{\}\);/,
+      "without .catch(()=>{}), this write's everyday permission-denied rejection for an already-existing room throws uncaught out of confirmGsPeople");
   });
 });
 

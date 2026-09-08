@@ -16347,7 +16347,8 @@ function CalendarTab({ setActive = () => {
       if (gsSelected.length === 1) {
         const otherUid = gsSelected[0];
         roomId = dmRoomId(myUid, otherUid);
-        await fsdb().collection("chatRooms").doc(roomId).set({ type: "dm", memberUids: [myUid, otherUid].sort(), createdBy: myUid, createdAt: now2, updatedAt: now2, lastMessage: null }, { merge: true });
+        await fsdb().collection("chatRooms").doc(roomId).set({ type: "dm", memberUids: [myUid, otherUid].sort(), createdBy: myUid, createdAt: now2, updatedAt: now2, lastMessage: null }, { merge: true }).catch(() => {
+        });
       } else {
         const doc = await fsdb().collection("chatRooms").add({
           type: "group",

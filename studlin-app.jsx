@@ -27489,7 +27489,22 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       if(gsSelected.length===1){
         const otherUid=gsSelected[0];
         roomId=dmRoomId(myUid,otherUid);
-        await fsdb().collection('chatRooms').doc(roomId).set({type:"dm",memberUids:[myUid,otherUid].sort(),createdBy:myUid,createdAt:now,updatedAt:now,lastMessage:null},{merge:true});
+        // Root cause of the actual live hang (found via direct Firestore
+        // inspection): this exact write shape already exists in
+        // ChatDrawer's own lazy DM-room-creation (ChatDrawer's mount
+        // effect) and is a real no-op .catch(()=>{}) there -- firestore.
+        // rules' chatRooms `update` rule only allows
+        // lastMessage/updatedAt/groupType/expiresAt/lastReadAt to change,
+        // so this merge-set genuinely, correctly gets rejected with
+        // permission-denied for ANY conversation that already exists
+        // (createdAt differs from what's already stored) -- harmless
+        // there since the room already has everything this write would
+        // set anyway. This call copied the same write but without the
+        // same .catch, so that same everyday, expected rejection was
+        // exactly what threw out of confirmGsPeople uncaught. Swallowed
+        // the same proven-safe way -- the room existing is all this step
+        // actually needs, not this specific write succeeding.
+        await fsdb().collection('chatRooms').doc(roomId).set({type:"dm",memberUids:[myUid,otherUid].sort(),createdBy:myUid,createdAt:now,updatedAt:now,lastMessage:null},{merge:true}).catch(()=>{});
       }else{
         const doc=await fsdb().collection('chatRooms').add({
           type:"group",memberUids:[myUid,...gsSelected],createdBy:myUid,
