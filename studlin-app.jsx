@@ -19484,8 +19484,25 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
                   ?"Couldn't find room before the deadline -- add it manually in your calendar."
                   :attackPlacement.sessions.length===1
                   ?"Next session: "+fmtPlacementDate(attackPlacement.sessions[0].date)+" · "+fmtPlacementTime(attackPlacement.sessions[0].time)
-                  :"Scheduled across "+attackPlacement.sessions.length+" sessions, starting "+fmtPlacementDate(attackPlacement.sessions[0].date)+" · "+fmtPlacementTime(attackPlacement.sessions[0].time)}
-                {attackPlacement.sessions.length>0&&!attackPlacement.allPlaced&&" -- couldn't fit all of it before the deadline."}
+                  :(<>
+                    <div style={{marginBottom:6}}>Rest of the plan -- {attackPlacement.sessions.length} sessions:</div>
+                    {/* Plan Part A2 (2026-09-08, approved): scheduleAttackBlockFollowUp
+                        already splits a long remaining estimate into several
+                        real sessions (see its own 90-min CHUNK/ramp-offset
+                        logic) -- this used to only ever say "starting X,"
+                        leaving every session after the first invisible unless
+                        the student went hunting on the calendar. Each row here
+                        is already a normal calendar event underneath, so
+                        moving one around is just the same drag-and-drop any
+                        other block already supports -- nothing new needed for
+                        that part. */}
+                    <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                      {attackPlacement.sessions.map((s,i)=>(
+                        <div key={s.id||i} style={{fontSize:12,color:T.text}}>{fmtPlacementDate(s.date)+" · "+fmtPlacementTime(s.time)+" ("+s.duration+"m)"}</div>
+                      ))}
+                    </div>
+                  </>)}
+                {attackPlacement.sessions.length>0&&!attackPlacement.allPlaced&&<div style={{marginTop:6}}>Couldn't fit all of it before the deadline.</div>}
               </div>
             )}
 
@@ -28093,6 +28110,17 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       // gives a newly added class -- both the due-date marker and the real
       // scheduled probe session are new, so both get flagged.
       setNewItemHighlightIds([pair.marker.id,pair.task.id]);
+      // Plan Part A1 (2026-09-08, approved): an Attack Block used to only
+      // ever flash the calendar highlight -- if the calendar wasn't the
+      // visible tab (or the student had already scrolled/navigated away),
+      // there was zero indication of WHEN the probe actually landed short
+      // of going and looking for it. Same placementToast mechanism
+      // commitManualBlockDrop's own "Block added — 3:00–4:00 PM." already
+      // uses, just with a date qualifier since an Attack Block's slot can
+      // land days out, unlike a same-day manual drop.
+      const dateLabel=pair.task.date===dayKey()?"":" on "+new Date(pair.task.date+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"});
+      setPlacementToast("Attack Block scheduled"+dateLabel+" — "+fmtTimeRange(pair.task.time,pair.task.duration)+".");
+      setTimeout(()=>setPlacementToast(""),3200);
     };
     const candidates=computeNewSlotCandidates(events,routines,prefs,desiredDate,desiredTime,probeMins,fields.deadline||null,fields.difficulty);
     if(candidates.length===0){finish(null);return;}
