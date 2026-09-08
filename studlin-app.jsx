@@ -7787,6 +7787,25 @@ function computeFillSuggestions(freedDate,freedTime,freedDuration){
   // clock.
   const nowMins=(()=>{const n=new Date();return n.getHours()*60+n.getMinutes();})();
   if(freedDate===dayKey()&&timeToMinutes(freedTime)+freedDuration<=nowMins)return [];
+  // Bug fix, 2026-09-08 user report: deleted a stray block sitting at 1am
+  // (an old leftover/import artifact, not something the student put there
+  // on purpose) and Studlin still offered "Fill it with something? --
+  // Studying for math." Nothing here ever checked whether the freed slot
+  // falls within a reasonable AWAKE window before suggesting real work for
+  // it. Deliberately NOT schedulePreferences' workStartTime/bedtime --
+  // those are a STUDY-hours preference (a HS student's workStart often
+  // defaults to right after school lets out), not "when am I awake at
+  // all" -- an 8am freed slot is completely normal to offer even if study
+  // hours don't start until 10am. getWakeSleep is the real, distinct
+  // signal for that (see its own comment); falls back to a conservative
+  // 6am-midnight sane default for a student who's never set it, since
+  // "somewhere in the middle of the night" is true regardless of whether
+  // they've filled in the Settings field.
+  const freedStartMins=timeToMinutes(freedTime);
+  const wakeSleep=getWakeSleep();
+  const wakingStart=wakeSleep?timeToMinutes(wakeSleep.wakeTime):360;
+  const wakingEnd=wakeSleep?timeToMinutes(wakeSleep.sleepTime):timeToMinutes("24:00");
+  if(freedStartMins<wakingStart||freedStartMins>=wakingEnd)return [];
   const all=lsGet("events",[]);
   // Reminders are point-in-time nudges with duration:0 by design (see
   // isQualifying's own comment above) -- legitimately reschedulable by the

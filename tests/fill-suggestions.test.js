@@ -101,3 +101,42 @@ describe("computeFillSuggestions", () => {
     assert.equal(suggestions[0].id, "t1");
   });
 });
+
+// Bug fix, 2026-09-08 user report: deleted a stray block sitting at 1am
+// (leftover/import artifact) and Studlin still offered "Fill it with
+// something? -- Studying for math." Nothing checked whether the freed
+// slot itself was a reasonable AWAKE hour before suggesting real work.
+describe("computeFillSuggestions never suggests filling a genuinely absurd hour", () => {
+  test("a freed slot at 1am is never offered, even with a real qualifying task available", () => {
+    const m = loadStudlinModule({ now: "2026-07-28T12:00:00" });
+    seedQualifyingTask(m, "2026-07-29", "10:00", 30);
+    const suggestions = m.computeFillSuggestions("2026-07-29", "01:00", 60);
+    assert.equal(suggestions.length, 0);
+  });
+
+  test("a freed slot at 3am is never offered either", () => {
+    const m = loadStudlinModule({ now: "2026-07-28T12:00:00" });
+    seedQualifyingTask(m, "2026-07-29", "10:00", 30);
+    const suggestions = m.computeFillSuggestions("2026-07-29", "03:00", 60);
+    assert.equal(suggestions.length, 0);
+  });
+
+  test("a freed slot at 8am IS still offered, even though it's before the default study-hours workStartTime (10:00) -- wake/sleep is a distinct, more permissive signal than study prefs", () => {
+    const m = loadStudlinModule({ now: "2026-07-28T12:00:00" });
+    seedQualifyingTask(m, "2026-07-29", "10:00", 30);
+    const suggestions = m.computeFillSuggestions("2026-07-29", "08:00", 60);
+    assert.equal(suggestions.length, 1);
+  });
+
+  test("once the student has set real wake/sleep hours, those are respected instead of the conservative default", () => {
+    const m = loadStudlinModule({ now: "2026-07-28T12:00:00" });
+    m.saveWakeSleep({ wakeTime: "09:00", sleepTime: "22:00" });
+    seedQualifyingTask(m, "2026-07-29", "10:00", 30);
+    // 8am is before this student's own real 9am wake time now.
+    assert.equal(m.computeFillSuggestions("2026-07-29", "08:00", 60).length, 0);
+    // 9:30pm is still before their real 10pm sleep time.
+    assert.equal(m.computeFillSuggestions("2026-07-29", "21:30", 30).length, 1);
+    // 11pm is after their real 10pm sleep time.
+    assert.equal(m.computeFillSuggestions("2026-07-29", "23:00", 30).length, 0);
+  });
+});

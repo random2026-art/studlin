@@ -4758,6 +4758,11 @@ function computeFillSuggestions(freedDate, freedTime, freedDuration) {
     return n.getHours() * 60 + n.getMinutes();
   })();
   if (freedDate === dayKey() && timeToMinutes(freedTime) + freedDuration <= nowMins) return [];
+  const freedStartMins = timeToMinutes(freedTime);
+  const wakeSleep = getWakeSleep();
+  const wakingStart = wakeSleep ? timeToMinutes(wakeSleep.wakeTime) : 360;
+  const wakingEnd = wakeSleep ? timeToMinutes(wakeSleep.sleepTime) : timeToMinutes("24:00");
+  if (freedStartMins < wakingStart || freedStartMins >= wakingEnd) return [];
   const all = lsGet("events", []);
   return all.filter((ev) => isQualifying(ev) && ev.kind !== "reminder" && ev.date >= freedDate && ev.duration <= freedDuration).sort((a, b) => {
     const da = a.deadline || "9999-99-99", db = b.deadline || "9999-99-99";
