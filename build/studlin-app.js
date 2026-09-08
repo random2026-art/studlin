@@ -14866,6 +14866,10 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
       setDetailErr("Add a bit of detail so Studlin can suggest real phases, not a generic template.");
       return;
     }
+    if (requiresProjectDetail && !(projectPlan.phases && projectPlan.phases.length > 0) && !(projectPlan.outline && projectPlan.outline.length > 0)) {
+      setDetailErr("Break this into phases or a checklist below first -- otherwise it's just a plain deadline, not a real project Studlin can track.");
+      return;
+    }
     setDetailErr("");
     if (ev.kind === "exam" && kind !== "exam" && hasExamPrepData) {
       setExamSwitchAwayConfirm(true);
@@ -17066,10 +17070,15 @@ function CalendarTab({ setActive = () => {
     recordQuizGen();
     return createPracticeExam(examTask.title, examTask.subject, examTask.id, questions);
   };
+  const projectMissingBreakdown = () => evKind === "project" && !(evProjectPlan.phases && evProjectPlan.phases.length > 0) && !(evProjectPlan.outline && evProjectPlan.outline.length > 0);
   const saveManual = () => {
     if (!evTitle.trim() || !evDate.trim() || !evTime.trim()) return;
     if (evKind === "project" && !evNotes.trim()) {
       setEvDetailErr("Add a bit of detail so Studlin can suggest real phases, not a generic template.");
+      return;
+    }
+    if (projectMissingBreakdown()) {
+      setEvDetailErr("Break this into phases or a checklist below first -- otherwise it's just a plain deadline, not a real project Studlin can track.");
       return;
     }
     setEvDetailErr("");
@@ -17206,6 +17215,10 @@ function CalendarTab({ setActive = () => {
   };
   const placeAssignmentManually = () => {
     if (!evTitle.trim()) return;
+    if (projectMissingBreakdown()) {
+      setEvDetailErr("Break this into phases or a checklist below first -- otherwise it's just a plain deadline, not a real project Studlin can track.");
+      return;
+    }
     const subj = evSubject === "None" ? "" : evSubject === "Other" && evCustom.trim() ? evCustom.trim() : evSubject;
     const phases = evKind === "project" ? (evProjectPlan.phases || []).map((p) => p.trim()).filter(Boolean) : [];
     const outline = evKind === "project" ? normalizeOutlineDraft(evProjectPlan.outline) : [];
@@ -17226,6 +17239,10 @@ function CalendarTab({ setActive = () => {
     if (taskMode === "manual") return;
     if (evKind === "project" && !evNotes.trim()) {
       setEvDetailErr("Add a bit of detail so Studlin can suggest real phases, not a generic template.");
+      return;
+    }
+    if (projectMissingBreakdown()) {
+      setEvDetailErr("Break this into phases or a checklist below first -- otherwise it's just a plain deadline, not a real project Studlin can track.");
       return;
     }
     setEvDetailErr("");
@@ -17562,9 +17579,13 @@ Examples:
     return d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) + " \u2013 " + end.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
   })();
   const selectedCourse = selectedCourseId ? userSubjects.find((s) => s.id === selectedCourseId) : null;
+  const dueKeyOf = (item) => item.deadline || item.date;
   const sidebarUpcomingItems = (() => {
     const matches = selectedCourse ? (item) => item.courseId === selectedCourse.id || item.subject === selectedCourse.label : () => true;
-    return events.filter((e) => e.status !== "done" && e.date && (!e.checklist || e.subject) && matches(e) && (e.kind === "deadline" || e.kind === "exam" && e.date >= todayK)).sort((a, b) => a.date === b.date ? (a.time || "").localeCompare(b.time || "") : a.date.localeCompare(b.date)).slice(0, 20);
+    return events.filter((e) => e.status !== "done" && e.date && (!e.checklist || e.subject) && matches(e) && (e.kind === "deadline" || e.kind === "exam" && e.date >= todayK)).sort((a, b) => {
+      const ka = dueKeyOf(a), kb = dueKeyOf(b);
+      return ka === kb ? (a.time || "").localeCompare(b.time || "") : ka.localeCompare(kb);
+    }).slice(0, 20);
   })();
   const dueDateLabel = (dateKey) => {
     if (dateKey < todayK) return "Overdue";
@@ -17574,12 +17595,12 @@ Examples:
     if (days > 1 && days < 7) return dayOfWeekLabel(dateKey);
     return (/* @__PURE__ */ new Date(dateKey + "T12:00:00")).toLocaleDateString("en-US", { month: "short", day: "numeric" });
   };
-  const sidebarOverdueItems = sidebarUpcomingItems.filter((item) => item.date < todayK);
-  const sidebarDueTodayItems = sidebarUpcomingItems.filter((item) => item.date === todayK);
+  const sidebarOverdueItems = sidebarUpcomingItems.filter((item) => dueKeyOf(item) < todayK);
+  const sidebarDueTodayItems = sidebarUpcomingItems.filter((item) => dueKeyOf(item) === todayK);
   const sidebarUpcomingGroups = (() => {
     const groups = [];
-    sidebarUpcomingItems.filter((item) => item.date > todayK).forEach((item) => {
-      const label = dueDateLabel(item.date);
+    sidebarUpcomingItems.filter((item) => dueKeyOf(item) > todayK).forEach((item) => {
+      const label = dueDateLabel(dueKeyOf(item));
       const last = groups[groups.length - 1];
       if (last && last.label === label) last.items.push(item);
       else groups.push({ label, items: [item] });

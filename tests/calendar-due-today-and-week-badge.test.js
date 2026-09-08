@@ -40,11 +40,15 @@ describe("Fix 1: sidebar \"Due Today\" replaces \"Recently created\"", () => {
   });
 
   test("sidebarDueTodayItems is a real filter of the same due-items list Overdue already uses, not a separate ad-hoc query", () => {
-    assert.match(SOURCE, /const sidebarDueTodayItems=sidebarUpcomingItems\.filter\(item=>item\.date===todayK\);/);
+    // 2026-09-08 fix: keyed off dueKeyOf(item) (deadline||date), not raw
+    // .date -- see that fix's own comment. Still the same shared
+    // sidebarUpcomingItems list, just a more correct "what's actually due"
+    // key.
+    assert.match(SOURCE, /const sidebarDueTodayItems=sidebarUpcomingItems\.filter\(item=>dueKeyOf\(item\)===todayK\);/);
   });
 
   test("the date-grouped list below no longer double-shows today's items now that they have their own dedicated section (mirrors how Overdue is already excluded)", () => {
-    assert.match(SOURCE, /sidebarUpcomingItems\.filter\(item=>item\.date>todayK\)\.forEach\(item=>\{/,
+    assert.match(SOURCE, /sidebarUpcomingItems\.filter\(item=>dueKeyOf\(item\)>todayK\)\.forEach\(item=>\{/,
       "without excluding today here, an item due today would appear twice: once in the new Due Today section, once again under the 'Due: Today' group");
   });
 

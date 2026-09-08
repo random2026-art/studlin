@@ -24745,6 +24745,14 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
     if(!title.trim())return;
     if(deadline&&date>deadline){setDeadlineErr("Can't schedule past the deadline ("+deadline+").");return;}
     if((showsPhaseDetail||requiresProjectDetail)&&!notes.trim()){setDetailErr("Add a bit of detail so Studlin can suggest real phases, not a generic template.");return;}
+    // Same gap as NewEventModal's saveManual/aiArrange (see their own
+    // comment): PhasesOutlineEditor's suggestion buttons are entirely
+    // optional, so switching an existing item's Type to Project here and
+    // saving without ever clicking either one produced a plain kind
+    // change with no phases/outline -- isProjectMarker never recognized
+    // it, so it silently never showed up in Studlin Prep or Dashboard's
+    // project list despite the Type picker saying "Project."
+    if(requiresProjectDetail&&!(projectPlan.phases&&projectPlan.phases.length>0)&&!(projectPlan.outline&&projectPlan.outline.length>0)){setDetailErr("Break this into phases or a checklist below first -- otherwise it's just a plain deadline, not a real project Studlin can track.");return;}
     setDetailErr("");
     // Switching the Type away from Exam when there's real linked prep work
     // (pending prep sessions, a linked flashcard deck, a linked practice
@@ -28337,9 +28345,25 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     recordQuizGen();
     return createPracticeExam(examTask.title,examTask.subject,examTask.id,questions);
   };
+  // Bug fix, 2026-09-08 user report: created a Project (real notes, a real
+  // due date) that never showed up as a project anywhere -- not Studlin
+  // Prep, not Dashboard's project list. Root cause: isProjectMarker (see
+  // its own comment) requires phases.length>0 or outline.length>0, but
+  // PhasesOutlineEditor's own "Break it into phases?"/"Add a step-by-step
+  // checklist?" buttons are both entirely optional, click-to-generate --
+  // evProjectPlan.phases/outline just stay undefined forever if neither is
+  // ever clicked, and every save path (saveManual, aiArrange,
+  // placeAssignmentManually) happily builds a plain kind:"deadline" event
+  // with no phases/outline in that case, indistinguishable from a normal
+  // Assignment. Same "block with a clear, actionable message" convention
+  // the existing empty-notes gate right below already uses, rather than
+  // silently letting a "Project" save as something that structurally isn't
+  // one.
+  const projectMissingBreakdown=()=>evKind==="project"&&!(evProjectPlan.phases&&evProjectPlan.phases.length>0)&&!(evProjectPlan.outline&&evProjectPlan.outline.length>0);
   const saveManual=()=>{
     if(!evTitle.trim()||!evDate.trim()||!evTime.trim())return;
     if(evKind==="project"&&!evNotes.trim()){setEvDetailErr("Add a bit of detail so Studlin can suggest real phases, not a generic template.");return;}
+    if(projectMissingBreakdown()){setEvDetailErr("Break this into phases or a checklist below first -- otherwise it's just a plain deadline, not a real project Studlin can track.");return;}
     setEvDetailErr("");
     if(evSaveToRoutine&&(evKind==="exam"||evKind==="class"||evKind==="busy block")){saveToRoutineFromForm();return;}
     // Attack Block used to only be reachable through AI-schedule mode --
@@ -28529,6 +28553,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // algorithm would have picked.
   const placeAssignmentManually=()=>{
     if(!evTitle.trim())return;
+    if(projectMissingBreakdown()){setEvDetailErr("Break this into phases or a checklist below first -- otherwise it's just a plain deadline, not a real project Studlin can track.");return;}
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
     const phases=evKind==="project"?(evProjectPlan.phases||[]).map(p=>p.trim()).filter(Boolean):[];
     const outline=evKind==="project"?normalizeOutlineDraft(evProjectPlan.outline):[];
@@ -28549,6 +28574,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     if(evKind==="exam"||evKind==="class"||evKind==="busy block")return; // fixed real-world blocks — AI never touches these
     if(taskMode==="manual")return; // Manual Placement is active — use Save to Calendar instead
     if(evKind==="project"&&!evNotes.trim()){setEvDetailErr("Add a bit of detail so Studlin can suggest real phases, not a generic template.");return;}
+    if(projectMissingBreakdown()){setEvDetailErr("Break this into phases or a checklist below first -- otherwise it's just a plain deadline, not a real project Studlin can track.");return;}
     setEvDetailErr("");
     setAiLoading(true);
     const now=new Date();
@@ -28969,6 +28995,18 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // view using the same pattern (no cross-component shared-helper
   // mechanism in this file, same as colorOf being component-local).
   const selectedCourse=selectedCourseId?userSubjects.find(s=>s.id===selectedCourseId):null;
+  // Bug fix, 2026-09-08 user report: a manually-scheduled Project/
+  // Assignment (saveManual's plain, non-Attack-Block path -- see
+  // buildTask) stores its real due date in `deadline`, but `date`/`time`
+  // are the actual work-session slot the student picked, which can be any
+  // day at all. Sorting/grouping/bucketing below all used to key off
+  // `.date` alone -- a project due a month out but with its one work
+  // session scheduled for TODAY sorted to the top and showed up as "Due
+  // Today," while its real deadline was ignored entirely. Falls back to
+  // `.date` when there's no separate deadline (the common case -- a plain
+  // syllabus-scanned marker always has date===deadline by convention), so
+  // this only changes behavior for the genuinely-diverged case.
+  const dueKeyOf=(item)=>item.deadline||item.date;
   const sidebarUpcomingItems=(()=>{
     const matches=selectedCourse?(item)=>item.courseId===selectedCourse.id||item.subject===selectedCourse.label:()=>true;
     // Same "what's actually due" definition Dashboard's masterAssignments/
@@ -28987,7 +29025,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // Prep's class view but silently vanish from this sidebar.
     return events
       .filter(e=>e.status!=="done"&&e.date&&(!e.checklist||e.subject)&&matches(e)&&(e.kind==="deadline"||(e.kind==="exam"&&e.date>=todayK)))
-      .sort((a,b)=>a.date===b.date?(a.time||"").localeCompare(b.time||""):a.date.localeCompare(b.date))
+      .sort((a,b)=>{const ka=dueKeyOf(a),kb=dueKeyOf(b);return ka===kb?(a.time||"").localeCompare(b.time||""):ka.localeCompare(kb);})
       .slice(0,20);
   })();
   // "Due: Tomorrow" / "Due: Monday" style grouping (Shovel's right column
@@ -29009,12 +29047,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // "Recently created" section (newest-by-creation-order, not actually
   // date-relevant); replaced since what's due today is a far more useful
   // thing to lead with than when something happened to be added.
-  const sidebarOverdueItems=sidebarUpcomingItems.filter(item=>item.date<todayK);
-  const sidebarDueTodayItems=sidebarUpcomingItems.filter(item=>item.date===todayK);
+  const sidebarOverdueItems=sidebarUpcomingItems.filter(item=>dueKeyOf(item)<todayK);
+  const sidebarDueTodayItems=sidebarUpcomingItems.filter(item=>dueKeyOf(item)===todayK);
   const sidebarUpcomingGroups=(()=>{
     const groups=[];
-    sidebarUpcomingItems.filter(item=>item.date>todayK).forEach(item=>{
-      const label=dueDateLabel(item.date);
+    sidebarUpcomingItems.filter(item=>dueKeyOf(item)>todayK).forEach(item=>{
+      const label=dueDateLabel(dueKeyOf(item));
       const last=groups[groups.length-1];
       if(last&&last.label===label)last.items.push(item);
       else groups.push({label,items:[item]});
