@@ -26039,6 +26039,15 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // that list gets long, same as any other search-to-filter field.
   const [gsSearchQuery,setGsSearchQuery]=useState("");
   const [gsLoading,setGsLoading]=useState(false);
+  // Bug fix, 2026-09-08 user report ("taking forever" -- actually stuck
+  // forever, not slow): openGroupSchedule had no error handling at all
+  // around its two awaited Firestore calls. Any failure (offline, a
+  // transient permission hiccup, anything) threw out of the async function
+  // before setGsLoading(false) ever ran, since nothing here awaited it or
+  // attached a .catch -- the modal was already open (setGsOpen(true) runs
+  // synchronously first), so the student was left staring at "Loading your
+  // friends…" with no error, no retry, and no way out except Cancel.
+  const [gsLoadError,setGsLoadError]=useState(false);
   const [gsRoomId,setGsRoomId]=useState(null);
   const [gsMemberUids,setGsMemberUids]=useState([]);
   const [gsMemberNames,setGsMemberNames]=useState({});
@@ -27352,15 +27361,20 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   };
   // ── Schedule with Friends ────────────────────────────────────────────
   const openGroupSchedule=async()=>{
-    setGsOpen(true);setGsStep("pick");setGsSelected([]);setGsLoading(true);setGsSearchQuery("");
+    setGsOpen(true);setGsStep("pick");setGsSelected([]);setGsLoading(true);setGsLoadError(false);setGsSearchQuery("");
     setGsRoomId(null);setGsMemberUids([]);setGsMemberNames({});setGsBusyByDate({});setGsSharedUids(new Set());setShareAskSentUids(new Set());setGsRecommended(null);setGsRecommendedOptions([]);setGsDraft(null);
-    const myUid=firebase.auth().currentUser?.uid;
-    const uids=myUid?await getAcceptedFriendUids(myUid):[];
-    const docs=await Promise.all(uids.map(uid=>fsdb().collection('profiles').doc(uid).get().catch(()=>null)));
-    setGsCandidates(uids.map((uid,i)=>{
-      const p=docs[i]&&docs[i].exists?docs[i].data():null;
-      return {uid,name:(p&&p.name)||"Studlin User"};
-    }));
+    try{
+      const myUid=firebase.auth().currentUser?.uid;
+      const uids=myUid?await getAcceptedFriendUids(myUid):[];
+      const docs=await Promise.all(uids.map(uid=>fsdb().collection('profiles').doc(uid).get().catch(()=>null)));
+      setGsCandidates(uids.map((uid,i)=>{
+        const p=docs[i]&&docs[i].exists?docs[i].data():null;
+        return {uid,name:(p&&p.name)||"Studlin User"};
+      }));
+    }catch(e){
+      reportError("openGroupSchedule")(e);
+      setGsLoadError(true);
+    }
     setGsLoading(false);
   };
   // Soft cap at 8 -- past that a row-per-person busy overlay gets visually
@@ -29672,6 +29686,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         footer={<><Btn variant="subtle" onClick={closeGroupSchedule}>Cancel</Btn><Btn onClick={confirmGsPeople} disabled={gsSelected.length===0||gsLoading}>{gsLoading?"…":"Continue"}</Btn></>}>
         {gsLoading?(
           <div style={{fontSize:12.5,color:T.muted}}>Loading your friends…</div>
+        ):gsLoadError?(
+          <div>
+            <div style={{fontSize:12.5,color:T.muted,marginBottom:10}}>Couldn't load your friends list -- check your connection and try again.</div>
+            <Btn variant="subtle" onClick={openGroupSchedule}>Try again</Btn>
+          </div>
         ):gsCandidates.length===0?(
           <div style={{fontSize:12.5,color:T.muted}}>No friends yet -- add some in Studlin Network first.</div>
         ):(<>

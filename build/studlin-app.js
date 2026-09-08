@@ -15430,6 +15430,7 @@ function CalendarTab({ setActive = () => {
   const [gsSelected, setGsSelected] = useState([]);
   const [gsSearchQuery, setGsSearchQuery] = useState("");
   const [gsLoading, setGsLoading] = useState(false);
+  const [gsLoadError, setGsLoadError] = useState(false);
   const [gsRoomId, setGsRoomId] = useState(null);
   const [gsMemberUids, setGsMemberUids] = useState([]);
   const [gsMemberNames, setGsMemberNames] = useState({});
@@ -16264,6 +16265,7 @@ function CalendarTab({ setActive = () => {
     setGsStep("pick");
     setGsSelected([]);
     setGsLoading(true);
+    setGsLoadError(false);
     setGsSearchQuery("");
     setGsRoomId(null);
     setGsMemberUids([]);
@@ -16274,13 +16276,18 @@ function CalendarTab({ setActive = () => {
     setGsRecommended(null);
     setGsRecommendedOptions([]);
     setGsDraft(null);
-    const myUid = firebase.auth().currentUser?.uid;
-    const uids = myUid ? await getAcceptedFriendUids(myUid) : [];
-    const docs = await Promise.all(uids.map((uid) => fsdb().collection("profiles").doc(uid).get().catch(() => null)));
-    setGsCandidates(uids.map((uid, i) => {
-      const p = docs[i] && docs[i].exists ? docs[i].data() : null;
-      return { uid, name: p && p.name || "Studlin User" };
-    }));
+    try {
+      const myUid = firebase.auth().currentUser?.uid;
+      const uids = myUid ? await getAcceptedFriendUids(myUid) : [];
+      const docs = await Promise.all(uids.map((uid) => fsdb().collection("profiles").doc(uid).get().catch(() => null)));
+      setGsCandidates(uids.map((uid, i) => {
+        const p = docs[i] && docs[i].exists ? docs[i].data() : null;
+        return { uid, name: p && p.name || "Studlin User" };
+      }));
+    } catch (e) {
+      reportError("openGroupSchedule")(e);
+      setGsLoadError(true);
+    }
     setGsLoading(false);
   };
   const toggleGsSelected = (uid) => setGsSelected((s) => s.includes(uid) ? s.filter((x) => x !== uid) : s.length >= 8 ? s : [...s, uid]);
@@ -18098,7 +18105,7 @@ Examples:
       width: 420,
       footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeGroupSchedule }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: confirmGsPeople, disabled: gsSelected.length === 0 || gsLoading }, gsLoading ? "\u2026" : "Continue"))
     },
-    gsLoading ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "Loading your friends\u2026") : gsCandidates.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "No friends yet -- add some in Studlin Network first.") : /* @__PURE__ */ React.createElement(React.Fragment, null, gsCandidates.length > 5 && /* @__PURE__ */ React.createElement(Input, { value: gsSearchQuery, onChange: (e) => setGsSearchQuery(e.target.value), placeholder: "Search friends", style: { marginBottom: 10, width: "100%" } }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, gsCandidates.filter((c) => c.name.toLowerCase().includes(gsSearchQuery.trim().toLowerCase())).map((c) => /* @__PURE__ */ React.createElement("label", { key: c.uid, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 8, border: `1px solid ${T.border}`, cursor: "pointer", background: gsSelected.includes(c.uid) ? T.card2 : "transparent" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: gsSelected.includes(c.uid), onChange: () => toggleGsSelected(c.uid), style: { cursor: "pointer" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text } }, c.name))), gsSearchQuery.trim() && gsCandidates.filter((c) => c.name.toLowerCase().includes(gsSearchQuery.trim().toLowerCase())).length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, 'No friends match "', gsSearchQuery.trim(), '".')))
+    gsLoading ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "Loading your friends\u2026") : gsLoadError ? /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginBottom: 10 } }, "Couldn't load your friends list -- check your connection and try again."), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: openGroupSchedule }, "Try again")) : gsCandidates.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "No friends yet -- add some in Studlin Network first.") : /* @__PURE__ */ React.createElement(React.Fragment, null, gsCandidates.length > 5 && /* @__PURE__ */ React.createElement(Input, { value: gsSearchQuery, onChange: (e) => setGsSearchQuery(e.target.value), placeholder: "Search friends", style: { marginBottom: 10, width: "100%" } }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, gsCandidates.filter((c) => c.name.toLowerCase().includes(gsSearchQuery.trim().toLowerCase())).map((c) => /* @__PURE__ */ React.createElement("label", { key: c.uid, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 8, border: `1px solid ${T.border}`, cursor: "pointer", background: gsSelected.includes(c.uid) ? T.card2 : "transparent" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: gsSelected.includes(c.uid), onChange: () => toggleGsSelected(c.uid), style: { cursor: "pointer" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text } }, c.name))), gsSearchQuery.trim() && gsCandidates.filter((c) => c.name.toLowerCase().includes(gsSearchQuery.trim().toLowerCase())).length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, 'No friends match "', gsSearchQuery.trim(), '".')))
   ), gsOpen && gsStep === "place" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 70, background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10, maxWidth: 600 } }, gsSelected.filter((uid) => !gsSharedUids.has(uid)).length > 0 && (() => {
     const nonSharing = gsSelected.filter((uid) => !gsSharedUids.has(uid));
     const stillToAsk = nonSharing.filter((uid) => !shareAskSentUids.has(uid));
