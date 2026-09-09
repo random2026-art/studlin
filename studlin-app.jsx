@@ -3952,10 +3952,29 @@ function reconcileFixedEventConflicts(newFixedEvents){
 // arrival, not missed, so this is its own single banner covering both
 // outcomes of the same trigger (something moved / something needs a
 // human) rather than two disconnected floating panels.
+// Bug fix, 2026-09-08 user report (screenshot showed the exact same
+// conflict line three times): the Google Calendar poll re-reconciles the
+// WHOLE fresh batch every 10 minutes (see applyGoogleEvents), not just
+// what's newly added -- a still-unresolved conflict between two fixed
+// events that genuinely can't move (neither side ever changes) gets
+// re-detected and re-appended on every single poll, with nothing anywhere
+// in this chain ever deduping against an already-known/already-shown
+// alert. Keyed by the actual pair (or the moved event's id) rather than
+// object identity, since each poll builds entirely new plain objects for
+// the same real conflict.
+function dedupeScheduleAlerts(alerts){
+  const seen=new Set();
+  return (alerts||[]).filter(a=>{
+    const key=a.kind==="moved"?"moved:"+a.id:"attention:"+(a.newEvent&&a.newEvent.id)+"|"+(a.conflictsWith&&a.conflictsWith.id);
+    if(seen.has(key))return false;
+    seen.add(key);
+    return true;
+  });
+}
 function surfaceReconcileResult(result){
   const entries=result.moved.map(m=>({kind:"moved",...m}))
     .concat(result.needsAttention.map(a=>({kind:"attention",...a})));
-  if(entries.length>0)lsSet("pendingScheduleChangeAlerts",[...lsGet("pendingScheduleChangeAlerts",[]),...entries]);
+  if(entries.length>0)lsSet("pendingScheduleChangeAlerts",dedupeScheduleAlerts([...lsGet("pendingScheduleChangeAlerts",[]),...entries]));
 }
 // Merges a batch of server-shaped gcal-* events (googleItemToEvent's
 // shape, produced identically by connectGoogleCalendar's response and by
@@ -20501,7 +20520,15 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   // ever ran there, never for drag-and-drop.
                   // isExpectedInClassOverlap excludes an exam overlapping
                   // its own class's meeting time -- see its own comment.
-                  const conflictTitles = totalCols>1 ? dayLaidOut.filter(o=>o.ev.id!==ev.id&&o.start<end&&start<o.end&&!isExpectedInClassOverlap(ev,o.ev)).map(o=>o.ev.title) : [];
+                  // Bug fix, 2026-09-08 user report: dragging something onto
+                  // an already-completed task's slot warned about a "real
+                  // schedule conflict" -- a done task's time is free real
+                  // estate (every other overlap check in this file already
+                  // excludes status==="done", see getDayOccupiedIntervals/
+                  // moveEvent/findAllOverlaps), this was the one place that
+                  // still counted it. Should only warn against a genuinely
+                  // still-pending sibling.
+                  const conflictTitles = totalCols>1 ? dayLaidOut.filter(o=>o.ev.id!==ev.id&&o.ev.status!=="done"&&o.start<end&&start<o.end&&!isExpectedInClassOverlap(ev,o.ev)).map(o=>o.ev.title) : [];
                   const isResizing = wkResize && wkResize.id===ev.id;
                   // A same-day resize/retime still awaiting a "just this
                   // one / every week" answer -- keeps the block showing the
@@ -23150,7 +23177,10 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
               // totalCols>1 already meant a genuine real-time overlap, it
               // just never surfaced as a warning anywhere on screen.
               // isExpectedInClassOverlap exception -- see its own comment.
-              const conflictTitles=totalCols>1?dayLaidOut.filter(o=>o.ev.id!==ev.id&&o.start<end&&start<o.end&&!isExpectedInClassOverlap(ev,o.ev)).map(o=>o.ev.title):[];
+              // Bug fix, 2026-09-08 user report: a done sibling's slot is
+              // free real estate, not a real conflict -- see this same fix
+              // in the other layoutDayEvents view above.
+              const conflictTitles=totalCols>1?dayLaidOut.filter(o=>o.ev.id!==ev.id&&o.ev.status!=="done"&&o.start<end&&start<o.end&&!isExpectedInClassOverlap(ev,o.ev)).map(o=>o.ev.title):[];
               const nextInCol=dayLaidOut.filter(o=>o.col===col&&o.start>start).sort((a,b)=>a.start-b.start)[0];
               // Same reminder-marker treatment as WeeklyPlanner -- see
               // isZeroDurationTimedReminder's own comment.
@@ -23465,7 +23495,10 @@ function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime
               const topPx=(start-spanStart)*(pxPerHr/60);
               const dur=ev.duration||30;
               // isExpectedInClassOverlap exception -- see its own comment.
-              const conflictTitles=totalCols>1?dayLaidOut.filter(o=>o.ev.id!==ev.id&&o.start<end&&start<o.end&&!isExpectedInClassOverlap(ev,o.ev)).map(o=>o.ev.title):[];
+              // Bug fix, 2026-09-08 user report: a done sibling's slot is
+              // free real estate, not a real conflict -- see this same fix
+              // in the other layoutDayEvents view above.
+              const conflictTitles=totalCols>1?dayLaidOut.filter(o=>o.ev.id!==ev.id&&o.ev.status!=="done"&&o.start<end&&start<o.end&&!isExpectedInClassOverlap(ev,o.ev)).map(o=>o.ev.title):[];
               const nextInCol=dayLaidOut.filter(o=>o.col===col&&o.start>start).sort((a,b)=>a.start-b.start)[0];
               // Same reminder-marker treatment as WeeklyPlanner/DayPlanner.
               const isReminderMarker=isZeroDurationTimedReminder(ev);
@@ -35358,7 +35391,7 @@ function App() {
     const pending=lsGet("pendingScheduleChangeAlerts",[]);
     if(pending.length>0){
       lsSet("pendingScheduleChangeAlerts",[]);
-      setScheduleChangeAlerts(a=>[...a,...pending]);
+      setScheduleChangeAlerts(a=>dedupeScheduleAlerts([...a,...pending]));
     }
   },[]);
   // Actionable-window prep prompt — same "silent trigger, visible result"
@@ -36633,7 +36666,7 @@ function App() {
         lsSet("events",existing);
         const result=reconcileFixedEventConflicts(data.events);
         const entries=result.moved.map(m=>({kind:"moved",...m})).concat(result.needsAttention.map(a=>({kind:"attention",...a})));
-        if(entries.length>0)setScheduleChangeAlerts(a=>[...a,...entries]);
+        if(entries.length>0)setScheduleChangeAlerts(a=>dedupeScheduleAlerts([...a,...entries]));
         if(data.lastSyncedAt)lsSet("cal-google-last-synced",new Date(data.lastSyncedAt).getTime());
       }catch(e){}
     })();

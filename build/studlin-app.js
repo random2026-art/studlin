@@ -2317,9 +2317,18 @@ function reconcileFixedEventConflicts(newFixedEvents) {
   lsSet("events", finalEvents);
   return { events: finalEvents, moved, needsAttention };
 }
+function dedupeScheduleAlerts(alerts) {
+  const seen = /* @__PURE__ */ new Set();
+  return (alerts || []).filter((a) => {
+    const key = a.kind === "moved" ? "moved:" + a.id : "attention:" + (a.newEvent && a.newEvent.id) + "|" + (a.conflictsWith && a.conflictsWith.id);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
 function surfaceReconcileResult(result) {
   const entries = result.moved.map((m) => ({ kind: "moved", ...m })).concat(result.needsAttention.map((a) => ({ kind: "attention", ...a })));
-  if (entries.length > 0) lsSet("pendingScheduleChangeAlerts", [...lsGet("pendingScheduleChangeAlerts", []), ...entries]);
+  if (entries.length > 0) lsSet("pendingScheduleChangeAlerts", dedupeScheduleAlerts([...lsGet("pendingScheduleChangeAlerts", []), ...entries]));
 }
 function diffNewGoogleEvents(previousGcalEvents, freshGcalEvents) {
   const previousIds = new Set((previousGcalEvents || []).map((e) => e.id));
@@ -12551,7 +12560,7 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
           const origStartMin = hh * 60 + mm;
           const dur = ev.duration || 30;
           const isRoutine = !!ev.isRoutine;
-          const conflictTitles = totalCols > 1 ? dayLaidOut.filter((o) => o.ev.id !== ev.id && o.start < end && start < o.end && !isExpectedInClassOverlap(ev, o.ev)).map((o) => o.ev.title) : [];
+          const conflictTitles = totalCols > 1 ? dayLaidOut.filter((o) => o.ev.id !== ev.id && o.ev.status !== "done" && o.start < end && start < o.end && !isExpectedInClassOverlap(ev, o.ev)).map((o) => o.ev.title) : [];
           const isResizing = wkResize && wkResize.id === ev.id;
           const pendingForThis = isRoutine && pendingRoutineChange && pendingRoutineChange.fromDate === pendingRoutineChange.toDate && pendingRoutineChange.routineId === ev.routineId && pendingRoutineChange.fromDate === ev.date ? pendingRoutineChange : null;
           const pendingStartMin = pendingForThis ? timeToMinutes(pendingForThis.toTime) : null;
@@ -13982,7 +13991,7 @@ function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf,
     if (hidden) return null;
     const topPx = (start - spanStart) * (pxPerHr / 60);
     const dur = ev.duration || 30;
-    const conflictTitles = totalCols > 1 ? dayLaidOut.filter((o) => o.ev.id !== ev.id && o.start < end && start < o.end && !isExpectedInClassOverlap(ev, o.ev)).map((o) => o.ev.title) : [];
+    const conflictTitles = totalCols > 1 ? dayLaidOut.filter((o) => o.ev.id !== ev.id && o.ev.status !== "done" && o.start < end && start < o.end && !isExpectedInClassOverlap(ev, o.ev)).map((o) => o.ev.title) : [];
     const nextInCol = dayLaidOut.filter((o) => o.col === col && o.start > start).sort((a, b) => a.start - b.start)[0];
     const isReminderMarker = isZeroDurationTimedReminder(ev);
     const heightPx = isReminderMarker ? 13 : computeEventBlockHeightPx(dur, nextInCol ? nextInCol.start - start : null, pxPerHr);
@@ -14136,7 +14145,7 @@ function DayPreviewModal({ open, onClose, dayEvents, selDay, dayLabel, colorOf, 
       if (hidden) return null;
       const topPx = (start - spanStart) * (pxPerHr / 60);
       const dur = ev.duration || 30;
-      const conflictTitles = totalCols > 1 ? dayLaidOut.filter((o) => o.ev.id !== ev.id && o.start < end && start < o.end && !isExpectedInClassOverlap(ev, o.ev)).map((o) => o.ev.title) : [];
+      const conflictTitles = totalCols > 1 ? dayLaidOut.filter((o) => o.ev.id !== ev.id && o.ev.status !== "done" && o.start < end && start < o.end && !isExpectedInClassOverlap(ev, o.ev)).map((o) => o.ev.title) : [];
       const nextInCol = dayLaidOut.filter((o) => o.col === col && o.start > start).sort((a, b) => a.start - b.start)[0];
       const isReminderMarker = isZeroDurationTimedReminder(ev);
       const heightPx = isReminderMarker ? 13 : computeEventBlockHeightPx(dur, nextInCol ? nextInCol.start - start : null, pxPerHr);
@@ -20883,7 +20892,7 @@ function App() {
     const pending = lsGet("pendingScheduleChangeAlerts", []);
     if (pending.length > 0) {
       lsSet("pendingScheduleChangeAlerts", []);
-      setScheduleChangeAlerts((a) => [...a, ...pending]);
+      setScheduleChangeAlerts((a) => dedupeScheduleAlerts([...a, ...pending]));
     }
   }, []);
   const [prepPromptBatch, setPrepPromptBatch] = useState([]);
@@ -21745,7 +21754,7 @@ function App() {
         lsSet("events", existing);
         const result = reconcileFixedEventConflicts(data.events);
         const entries = result.moved.map((m) => ({ kind: "moved", ...m })).concat(result.needsAttention.map((a) => ({ kind: "attention", ...a })));
-        if (entries.length > 0) setScheduleChangeAlerts((a) => [...a, ...entries]);
+        if (entries.length > 0) setScheduleChangeAlerts((a) => dedupeScheduleAlerts([...a, ...entries]));
         if (data.lastSyncedAt) lsSet("cal-google-last-synced", new Date(data.lastSyncedAt).getTime());
       } catch (e) {
       }
