@@ -199,12 +199,17 @@ describe("Growth banner copy: real days-of-trial framing, not the old unbacked c
     assert.doesNotMatch(APP_SOURCE, /bonus AI credits/);
     assert.doesNotMatch(APP_SOURCE, /bonus AI scheduling credits/);
   });
-  test("both banners state the real, shared REFERRAL_TRIAL_DAYS constant, not a hardcoded number that could drift from the real grant", () => {
-    // Bug fix, 2026-09-04 audit: "Pro-Limited" (the internal plan enum)
-    // was leaking verbatim into this copy -- both banners now route the
-    // display text through planDisplayName() instead of the raw literal.
-    const matches = APP_SOURCE.match(/\{REFERRAL_TRIAL_DAYS\} days of \{planDisplayName\("Pro-Limited"\)\}/g) || [];
-    assert.equal(matches.length, 2, "expected both the Network-tab banner and the invite modal to reference the same constant");
+  test("neither banner states a day count anymore -- superseded 2026-09-09", () => {
+    // Superseded, 2026-09-09 user request: stating "3 days" up front and
+    // then having it quietly run out reads worse than never promising a
+    // duration at all -- removed from both promotional spots. Still
+    // routes through planDisplayName() rather than the raw "Pro-Limited"
+    // enum leaking into copy (that part of the 2026-09-04 fix stands).
+    // The real end date still shows honestly once you're actually on the
+    // trial -- that's account status, not a pitch (see planLabel).
+    const matches = APP_SOURCE.match(/\{planDisplayName\("Pro-Limited"\)\}/g) || [];
+    assert.ok(matches.length >= 2, "expected both the Network-tab banner and the invite modal to still route through planDisplayName()");
+    assert.doesNotMatch(APP_SOURCE, /days of \{planDisplayName\("Pro-Limited"\)\}/, "promotional copy must not state a day count");
   });
 });
 
@@ -253,5 +258,57 @@ describe("Server: handleReferralTrialGrant (api/me.js) (source-level regression 
   });
   test("referralTrialExpiresAt is returned in the profile payload so the client can show a real countdown", () => {
     assert.match(ME_SOURCE, /referralTrialExpiresAt: data\.referralTrialExpiresAt \|\| null,/);
+  });
+});
+
+describe("Paywall CTA (2026-09-09): the referral trial existed but was only ever promoted in Network, never at the actual paywall moment", () => {
+  test("the pricing modal offers it, hidden for someone already on Pro-Limited or real Pro", () => {
+    const idx = APP_SOURCE.indexOf('title="Studlin plans"');
+    assert.notEqual(idx, -1);
+    const body = APP_SOURCE.slice(idx, idx + 4400);
+    assert.match(body, /getPlan\(\)!=="Pro"&&getPlan\(\)!=="Pro-Limited"&&\(/, "must hide for both real Pro (never reaches this modal anyway) and someone already mid-trial (chaining referrals to dodge a real paywall isn't a case worth designing toward)");
+  });
+  test("does not state a day count here either, matching the Network banner's own fix", () => {
+    const idx = APP_SOURCE.indexOf('title="Studlin plans"');
+    const body = APP_SOURCE.slice(idx, idx + 4400);
+    assert.doesNotMatch(body, /REFERRAL_TRIAL_DAYS/);
+  });
+  test("branches copy on whether referralTrialExpiresAt has ever been set -- that field survives a trial's own expiry, so it's an honest 'used this before' signal", () => {
+    const idx = APP_SOURCE.indexOf('title="Studlin plans"');
+    const body = APP_SOURCE.slice(idx, idx + 4400);
+    assert.match(body, /lsGet\("referralTrialExpiresAt",null\)\s*\n?\s*\?<>Used your free trial already\?/);
+  });
+  test("the invite button hands off to Network via the same one-shot deep-link idiom the file already uses elsewhere, not a duplicate inline invite UI", () => {
+    const idx = APP_SOURCE.indexOf('title="Studlin plans"');
+    const body = APP_SOURCE.slice(idx, idx + 4400);
+    assert.match(body, /lsSet\("pendingOpenInvite",true\);setPricingOpen\(false\);setActive\("friends"\);/);
+  });
+  test("FriendsChat reads and clears that same one-shot flag on mount", () => {
+    assert.match(APP_SOURCE, /if\(!lsGet\("pendingOpenInvite",false\)\)return;/);
+    assert.match(APP_SOURCE, /localStorage\.removeItem\("studlin-pendingOpenInvite"\);/);
+  });
+});
+
+describe("Expiration announcement (2026-09-09): a trial reverting to Free used to be completely silent", () => {
+  test("fetchUserProfile detects the exact Pro-Limited -> anything-else transition and sets a one-shot flag", () => {
+    const idx = APP_SOURCE.indexOf("async function fetchUserProfile()");
+    assert.notEqual(idx, -1);
+    const body = APP_SOURCE.slice(idx, idx + 700);
+    assert.match(body, /const prevPlan=lsGet\("plan","Free"\);/);
+    assert.match(body, /if\(prevPlan==="Pro-Limited"&&\(d\.plan\|\|"Free"\)!=="Pro-Limited"\)lsSet\("referralTrialJustExpired",true\);/);
+  });
+  test("App reads and clears the flag once on load and shows it via the existing dashToast mechanism, not a new one", () => {
+    const idx = APP_SOURCE.indexOf('if(!lsGet("referralTrialJustExpired",false))return;');
+    assert.notEqual(idx, -1);
+    const body = APP_SOURCE.slice(idx, idx + 300);
+    assert.match(body, /lsSet\("referralTrialJustExpired",false\);/);
+    assert.match(body, /setDashToast\("Your free Pro-Limited access just ended/);
+  });
+  test("the message mentions both real paths forward (upgrade or refer again), not just upgrade", () => {
+    const idx = APP_SOURCE.indexOf('setDashToast("Your free Pro-Limited access just ended');
+    assert.notEqual(idx, -1);
+    const line = APP_SOURCE.slice(idx, idx + 200);
+    assert.match(line, /upgrade to Pro/i);
+    assert.match(line, /invite another friend/i);
   });
 });

@@ -5519,7 +5519,16 @@ const prioLabel=(v)=>{const p=v/10;return p<=20?"Low":p<=40?"Low–Medium":p<=60
 const diffLabel=(v)=>{const p=v/10;return p<=20?"Very Easy":p<=40?"Easy":p<=60?"Medium":p<=80?"Hard":"Very Hard";};
 async function getAuthToken(){try{const u=firebase.auth().currentUser;if(!u)return null;return await u.getIdToken();}catch(e){return null;}}
 async function authFetch(url,opts={}){try{const token=await getAuthToken();const h=Object.assign({},opts.headers||{});if(token)h["Authorization"]="Bearer "+token;return fetch(url,Object.assign({},opts,{headers:h}));}catch(e){return fetch(url,opts);}}
-async function fetchUserProfile(){try{const res=await authFetch("/api/me");if(!res.ok)return null;const d=await res.json();lsSet("credits",d.credits);lsSet("plan",d.plan||"Free");["stripeSubscriptionId","subscriptionStatus","subscriptionInterval","subscriptionCancelAtPeriodEnd","subscriptionCurrentPeriodEnd","subscriptionEndsAt","betaTrialExpiresAt","referralTrialExpiresAt"].forEach(k=>lsSet(k,d[k]===undefined?null:d[k]));
+async function fetchUserProfile(){try{const res=await authFetch("/api/me");if(!res.ok)return null;const d=await res.json();
+  // 2026-09-09: the referral trial (Pro-Limited) self-expires server-side
+  // with nothing anywhere ever announcing it -- a student would just find
+  // AI features capped again with no explanation. One-shot flag; App's
+  // own effect reads and clears it, same idiom as every other one-shot
+  // deep-link flag in this file (openNoteId etc.), just triggered by a
+  // state transition instead of a click.
+  const prevPlan=lsGet("plan","Free");
+  if(prevPlan==="Pro-Limited"&&(d.plan||"Free")!=="Pro-Limited")lsSet("referralTrialJustExpired",true);
+  lsSet("credits",d.credits);lsSet("plan",d.plan||"Free");["stripeSubscriptionId","subscriptionStatus","subscriptionInterval","subscriptionCancelAtPeriodEnd","subscriptionCurrentPeriodEnd","subscriptionEndsAt","betaTrialExpiresAt","referralTrialExpiresAt"].forEach(k=>lsSet(k,d[k]===undefined?null:d[k]));
   // Onboarding's one-free-schedule-scan/one-free-syllabus-scan flags (see
   // ClassSetupWizard's canFreeOnboardingScan) -- only ever upgrades
   // false->true here, same reasoning as "onboarded" just below: a slow/
@@ -14365,6 +14374,16 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
   const [createGroupOpen,setCreateGroupOpen]=useState(false);
   const [chatTarget,setChatTarget]=useState(null);
 
+  // One-shot deep-link flag (same idiom as openNoteId/openPrepExamId) --
+  // 2026-09-09: the pricing modal's own "invite a friend" CTA sends the
+  // student here instead of duplicating a second copy-link UI inline in
+  // the paywall itself.
+  useEffect(()=>{
+    if(!lsGet("pendingOpenInvite",false))return;
+    try{localStorage.removeItem("studlin-pendingOpenInvite");}catch(e){}
+    setInviteOpen(true);
+  },[]);
+
   // First-run Network tour — fires the first time this tab mounts (i.e. the
   // first manual click into Studlin Network), a simple 3-slide copy-block
   // carousel since there's no single control to anchor to here.
@@ -15009,7 +15028,13 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
       <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderRadius:10,background:T.lime+"0C",border:`1px solid ${T.lime}22`,marginBottom:24}}>
         <div style={{width:28,height:28,borderRadius:8,background:T.lime+"1A",border:`1px solid ${T.lime}30`,display:"flex",alignItems:"center",justifyContent:"center",color:T.lime,flexShrink:0}}>{Icon.zap}</div>
         <div style={{flex:1,fontSize:12.5,color:T.muted,lineHeight:1.5}}>
-          <span style={{color:T.text,fontWeight:600}}>Invite classmates to unlock collective scheduling.</span>{" "}For every friend who joins, you <strong style={{color:T.lime}}>both</strong> get <span style={{color:T.lime,fontWeight:600}}>{REFERRAL_TRIAL_DAYS} days of {planDisplayName("Pro-Limited")}</span>, free.
+          {/* 2026-09-09 user request: don't advertise the day count here --
+              not a lie either way, but stating a number up front and then
+              having it quietly run out reads worse than never promising a
+              duration at all. The real end date still shows honestly once
+              you're actually on the trial (Settings' own plan-status line,
+              planLabel), since that's account status, not a pitch. */}
+          <span style={{color:T.text,fontWeight:600}}>Invite classmates to unlock collective scheduling.</span>{" "}For every friend who joins, you <strong style={{color:T.lime}}>both</strong> get <span style={{color:T.lime,fontWeight:600}}>{planDisplayName("Pro-Limited")}</span>, free.
         </div>
         <button onClick={()=>setInviteOpen(true)} style={{flexShrink:0,padding:"7px 16px",borderRadius:7,background:T.lime,color:T.ink,border:"none",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:T.font,whiteSpace:"nowrap"}}>
           Invite friends
@@ -15093,7 +15118,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
               </button>
             </div>
             <div style={{padding:"10px 14px",background:T.lime+"0A",border:`1px solid ${T.lime}22`,borderRadius:8,fontSize:12,color:T.text,marginBottom:20,lineHeight:1.6}}>
-              For every friend who joins via your link, you <strong style={{color:T.lime}}>both</strong> unlock <strong style={{color:T.lime}}>{REFERRAL_TRIAL_DAYS} days of {planDisplayName("Pro-Limited")}</strong>, free.
+              For every friend who joins via your link, you <strong style={{color:T.lime}}>both</strong> unlock <strong style={{color:T.lime}}>{planDisplayName("Pro-Limited")}</strong>, free.
             </div>
             <div style={{display:"flex",gap:10}}>
               <Btn onClick={()=>setInviteOpen(false)} variant="subtle" style={{flex:1,justifyContent:"center"}}>Close</Btn>
@@ -36249,6 +36274,21 @@ function App() {
     const interval=setInterval(checkGoogleCalendarSync,10*60000);
     return ()=>clearInterval(interval);
   },[]);
+  // 2026-09-09 user request: a referral trial (Pro-Limited) silently
+  // reverting to Free had nothing anywhere announcing it -- fetchUserProfile
+  // now sets a one-shot flag the moment it detects that exact transition
+  // (see its own comment); this just checks for it once on load and shows
+  // it via the same dashToast every other App-level announcement already
+  // uses. Mentions both real paths forward -- re-referring is genuinely
+  // still available, not a one-time perk, so only offering "upgrade" would
+  // be honest by omission in the same way the un-dated invite copy could
+  // have been.
+  useEffect(()=>{
+    if(!lsGet("referralTrialJustExpired",false))return;
+    lsSet("referralTrialJustExpired",false);
+    setDashToast("Your free Pro-Limited access just ended — upgrade to Pro, or invite another friend for more.");
+    setTimeout(()=>setDashToast(""),6000);
+  },[]);
   // Same "silent surprise" gap as Google Calendar above, just via a
   // different mechanism: Canvas/Schoology/Moodle/Blackboard's own once-
   // a-day auto-resync (see resyncCalendar in SettingsTab) already defers
@@ -37121,6 +37161,27 @@ function App() {
           </div>
           <div style={{fontSize:12,color:T.muted}}>All plans include a 14-day money-back guarantee. No credit card needed for Free.</div>
         </div>
+        {/* 2026-09-09 user request: the referral trial (Pro-Limited) already
+            existed but was only ever promoted in Studlin Network -- the
+            actual moment someone hits a paywall never mentioned it at all.
+            Hidden for someone already on Pro-Limited (chaining referrals
+            purely to dodge a real paywall indefinitely isn't a case worth
+            designing toward, even though the grant itself doesn't block
+            it) and for real Pro (never reaches this modal anyway). Copy
+            branches on whether referralTrialExpiresAt has ever been set --
+            same field survives a trial's own expiry, so it doubles as an
+            honest "have they done this before" signal. No day-count stated
+            here either, matching the Network banner's own fix. */}
+        {getPlan()!=="Pro"&&getPlan()!=="Pro-Limited"&&(
+          <div style={{marginTop:12,padding:"14px 18px",background:T.lime+"0C",borderRadius:12,border:`1px solid ${T.lime}22`,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
+            <div style={{fontSize:12.5,color:T.text,lineHeight:1.5}}>
+              {lsGet("referralTrialExpiresAt",null)
+                ?<>Used your free trial already? <strong style={{color:T.lime}}>Invite another friend</strong> and you'll both get {planDisplayName("Pro-Limited")} again, free.</>
+                :<>Not ready to pay? <strong style={{color:T.lime}}>Invite a friend</strong> instead — you'll both get {planDisplayName("Pro-Limited")}, free.</>}
+            </div>
+            <button type="button" onClick={()=>{lsSet("pendingOpenInvite",true);setPricingOpen(false);setActive("friends");}} style={{flexShrink:0,padding:"8px 16px",borderRadius:8,background:T.lime,color:T.ink,border:"none",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:T.font,whiteSpace:"nowrap"}}>Invite a friend</button>
+          </div>
+        )}
       </Modal>
       <Modal open={creditsOpen} onClose={()=>setCreditsOpen(false)} title="AI Credits" sub="Upgrade to Pro for full AI access, or check your balance below." width={620}
         footer={<Btn variant="subtle" onClick={()=>setCreditsOpen(false)}>Close</Btn>}>
