@@ -5668,6 +5668,23 @@ async function declineSharedProject(projectId,myUid){
     ["participants."+myUid+".state"]:"declined",updatedAt:new Date().toISOString(),
   }).catch(()=>{});
 }
+// Projects Redesign (2026-09-08): phase edits made directly in
+// EventDetailModal (checklist toggles, detail/estimate/target-date/
+// schedule-mode changes, markPhaseDone) never pushed to the shared doc --
+// only ProjectCheckInModal's own outline push (see its submit()) and the
+// invite/accept flow did. Mirrors that exact update shape so every
+// accepted collaborator's own onSnapshot listener (the App-level
+// sharedProjectId reconciliation effect) picks phase changes up the same
+// way it already does for outline changes.
+function pushSharedProjectUpdate(sharedProjectId,phases,progressNote){
+  const myName=getUserName()||"A collaborator";
+  fsdb().collection('sharedProjects').doc(sharedProjectId).update({
+    phases,
+    lastProgressBy:myName,
+    lastProgressNote:progressNote||(myName+" updated this project."),
+    updatedAt:new Date().toISOString(),
+  }).catch(()=>{});
+}
 const slugUsername=(name)=>(name||"").toLowerCase().replace(/[^a-z0-9]/g,"").slice(0,24)||"student";
 // Creates/refreshes this user's public directory entry so they're searchable
 // and their name/school stay current. Safe to call anytime a signed-in user
@@ -11238,6 +11255,14 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                   const hasPhases=p.phases&&p.phases.length>0;
                   const steps=hasPhases?p.phases:(p.outline||[]);
                   const doneCount=hasPhases?steps.filter(s=>s.status==="done").length:steps.filter(s=>s.done).length;
+                  // Projects Redesign (2026-09-08 user report): a bare
+                  // "0/5 steps" told a student nothing about what to
+                  // actually do next -- naming the active phase turns this
+                  // into a real status glance instead of a dead counter.
+                  // Only meaningful for the phases path; an outline-only
+                  // project has no "active" concept, so it keeps the
+                  // original plain fraction unchanged.
+                  const activePhase=hasPhases?steps.find(s=>s.status==="active"):null;
                   return (
                     <div key={p.id} style={{display:"grid",gridTemplateColumns:gridCols,gap:8,padding:"7px 10px",borderBottom:`1px solid ${T.border}`,alignItems:"center"}}>
                       <div onClick={()=>setDetailEventId(p.id)} style={{fontSize:11.5,fontWeight:600,color:T.white,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={p.title}>{p.title}</div>
@@ -11248,7 +11273,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                         options={[{value:"low",label:"Low"},{value:"medium",label:"Med"},{value:"high",label:"High"}]} />
                       <CustomSelect value={bucketOf(p.difficulty)} onChange={v=>patchExam(p.id,{difficulty:BUCKET_VALS[v]})}
                         options={[{value:"low",label:"Easy"},{value:"medium",label:"Med"},{value:"high",label:"Hard"}]} />
-                      <div onClick={()=>setDetailEventId(p.id)} style={{fontSize:10.5,color:T.muted,cursor:"pointer"}} title="Click to open">{steps.length===0?"no checklist yet":doneCount+"/"+steps.length+" steps"}</div>
+                      <div onClick={()=>setDetailEventId(p.id)} style={{fontSize:10.5,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",cursor:"pointer"}} title="Click to open">{steps.length===0?"no checklist yet":doneCount+"/"+steps.length+(hasPhases?" phases":" steps")+(activePhase&&activePhase.name?" — "+activePhase.name:"")}</div>
                     </div>
                   );
                 })}
@@ -15919,6 +15944,84 @@ function buildExamSessionEvents(examTitle,examDate,subject,count,idPrefix,workin
     built.push(ev);
   });
   return built;
+}
+// Projects Redesign (2026-09-08): a phase with both a stated time estimate
+// and a target date gets a real multi-session plan, same backward-planning
+// shape Build Study Plan already uses for exams -- computeReviewDates lays
+// out the dates, findReliableSlotFor places each one, exactly like
+// buildExamSessionEvents above. Not a new algorithm, a phase-shaped
+// variant of it. Session count comes from defaultSessionCountFor's runway
+// math (examWeight/importanceLevel left undefined -- a phase isn't a
+// quiz/final, the plain "everything else" ceiling of 4 is the reasonable
+// default); applyHoursTarget then redistributes the student's stated
+// total across however many sessions that runway allows, the exact same
+// bidirectional scaling Build Study Plan's own optional hours-target field
+// already does.
+// Returns null only when NOT ONE session could be placed at all (mirrors
+// buildAssignmentAttackBlockPair's own null-on-total-failure convention,
+// so callers use the same "couldn't find room" error pattern already
+// established there). A PARTIAL placement (some but not all requested
+// dates found a slot) comes back as {sessions,allPlaced:false} instead of
+// silently dropping the rest without saying so.
+function buildPhaseSessionPlan(markerId,phaseIdx,phaseName,projectTitle,totalEstimateMins,targetDate,deadline,subject,priority,difficulty,events,routines,prefs,todayKey){
+  const today=todayKey||dayKey();
+  const daysUntil=Math.round((new Date(targetDate+"T12:00:00")-new Date(today+"T12:00:00"))/86400000);
+  if(daysUntil<0)return null;
+  const rawCount=defaultSessionCountFor(undefined,undefined,daysUntil);
+  const {sessionCount,sessionDuration}=applyHoursTarget(rawCount,25,Math.max(0,totalEstimateMins||0)/60);
+  const dates=computeReviewDates(targetDate,today,sessionCount);
+  let localWorking=events;
+  const built=[];
+  dates.forEach((date,si)=>{
+    const slot=findReliableSlotFor(localWorking,routines,prefs,date,prefs.workStartTime,sessionDuration,targetDate,difficulty??500);
+    if(!slot)return;
+    const sess={
+      id:"phase-"+markerId+"-"+phaseIdx+"-"+Date.now()+"-"+si,
+      title:"Work on: "+phaseName,date:slot.date,time:slot.time,
+      subject,notes:"",kind:"study block",duration:sessionDuration,
+      priority:priority??500,difficulty:difficulty??500,deadline:deadline||targetDate,
+      status:"pending",timeSpent:0,completedAt:null,
+      placementReason:slot.reason||null,
+      dueEventId:markerId,projectPhaseIndex:phaseIdx,phaseName,projectTitle,
+    };
+    localWorking=localWorking.concat([sess]);
+    built.push(sess);
+  });
+  if(built.length===0)return null;
+  return {sessions:built,allPlaced:built.length===dates.length};
+}
+// Projects Redesign (2026-09-08): converting one checklist item into its
+// own scheduled block should REUSE the phase's already-planned time
+// rather than stacking a new, separate commitment on top of it -- claims
+// one still-unclaimed pending session for this phase (relabels it for the
+// specific item, tags checklistItemText back on so this same lookup skips
+// it next time) so the phase's total planned time never silently doubles
+// just because a student also clicked "Schedule this" on a piece of it.
+// Only creates a brand-new small block when no unclaimed session exists to
+// claim (e.g. today's single-probe default already claimed by an earlier
+// item, or a phase nobody ever built a plan for) -- same 30-minute default
+// duration manual blocks already use, placed via the same
+// findLegalSlotOrNull every other "just fit this somewhere" path in this
+// file already calls. Returns null only when even that fallback can't find
+// a legal slot at all.
+function claimOrCreatePhaseSessionForChecklistItem(markerId,phaseIdx,itemText,deadline,subject,priority,difficulty,events,routines,prefs,todayKey){
+  const unclaimed=events.find(e=>e.dueEventId===markerId&&e.projectPhaseIndex===phaseIdx&&e.status==="pending"&&!e.checklistItemText);
+  if(unclaimed){
+    const next=events.map(e=>e.id===unclaimed.id?{...e,title:"Work on: "+itemText,checklistItemText:itemText}:e);
+    return {events:next,scheduledEventId:unclaimed.id};
+  }
+  const today=todayKey||dayKey();
+  const slot=findLegalSlotOrNull(events,routines,prefs,today,prefs.workStartTime,30,deadline||null);
+  if(!slot)return null;
+  const sess={
+    id:"phase-item-"+markerId+"-"+phaseIdx+"-"+Date.now(),
+    title:"Work on: "+itemText,date:slot.date,time:slot.time,
+    subject,notes:"",kind:"study block",duration:30,
+    priority:priority??500,difficulty:difficulty??500,deadline:deadline||null,
+    status:"pending",timeSpent:0,completedAt:null,
+    dueEventId:markerId,projectPhaseIndex:phaseIdx,checklistItemText:itemText,
+  };
+  return {events:events.concat([sess]),scheduledEventId:sess.id};
 }
 // A generic "Study: <examTitle>" session (from the syllabus scan above)
 // and a kit-titled session ("Review: <deck>"/"Practice Exam: <set>", see
@@ -21150,33 +21253,45 @@ function MaterialEditor({item,onChange,label,idPrefix}){
   );
 }
 
-// Shared phases (a big project's coarse-grained plan -- only the first
-// ever gets a real scheduled chain, see proposeProjectPhases) + outline (a
-// flat, more granular checklist, see proposeOutline) editor. Used by Class
-// Setup Wizard's review screen, Add Task, and Edit Task so "break this
-// into phases"/"add a checklist" is one implementation, not three.
-// `item` needs title/detail/phases/phasesLoading/outline/outlineLoading;
-// `onChange` receives a partial patch, same convention as MaterialEditor
-// above; `subject` feeds the AI prompts the same way it always has.
+// Breaks a new Project into phases (a coarse-grained plan -- only the
+// first ever gets a real scheduled chain, see proposeProjectPhases). Used
+// by Class Setup Wizard's review screen, Add Task, and Edit Task so
+// "break this into phases" is one implementation, not three.
+// `item` needs title/detail/phases/phasesLoading; `onChange` receives a
+// partial patch, same convention as MaterialEditor above; `subject` feeds
+// the AI prompt the same way it always has.
 // onGateBlocked defaults to a no-op -- this component is reused across
 // Add Task, Edit Task, and (per its own original comment) possibly other
 // review screens with different access to a pricing-modal trigger, so it
-// can't assume one exists. Real AI cost lives entirely in these two
-// suggest* calls (proposeProjectPhases/proposeOutline) -- was previously
-// completely ungated here, the actual point project breakdown's cost is
-// incurred, while every canBreakDownProject() check elsewhere in the app
-// only fires at a later commit step. recordProjectBreakdown() fires once
-// per real call (phases and outline independently), not once per
-// "session" -- a user can suggest just one or the other.
-// Pure -- proposeProjectPhases/proposeOutline already refuse to invent a
-// fake breakdown from a bare title with nothing else to go on (they come
-// back with an empty array, which correctly renders PhasesOutlineEditor's
-// own "Not enough detail here" message). But that still meant a real AI
-// call went out -- and a gated use got spent, see canBreakDownProject/
+// can't assume one exists. Real AI cost lives entirely in this one
+// suggest* call (proposeProjectPhases) -- was previously completely
+// ungated here, the actual point project breakdown's cost is incurred,
+// while every canBreakDownProject() check elsewhere in the app only fires
+// at a later commit step.
+// Pure -- proposeProjectPhases already refuses to invent a fake breakdown
+// from a bare title with nothing else to go on (comes back with an empty
+// array, which correctly renders PhasesOutlineEditor's own "Not enough
+// detail here" message). But that still meant a real AI call went out --
+// and a gated use got spent, see canBreakDownProject/
 // recordProjectBreakdown -- for a request that was always going to return
-// nothing. Checked client-side, before either button ever calls the
-// network, so an empty/too-short Detail skips the call entirely instead of
-// paying for a guaranteed-empty result.
+// nothing. Checked client-side, before the button ever calls the network,
+// so an empty/too-short Detail skips the call entirely instead of paying
+// for a guaranteed-empty result.
+// Projects Redesign (2026-09-08): this used to also offer a second,
+// independent "Add a step-by-step checklist?" flat-outline structure
+// (proposeOutline, item.outline) alongside phases -- two disconnected
+// ways to describe "the parts of my project," only one of which (phases)
+// actually drove scheduling or status tracking. Removed for NEW projects;
+// phases is now the one structure, richer per-phase detail lives in
+// EventDetailModal's own Phases display block instead (checklist,
+// probeMins, detail, targetDate, scheduleMode -- see markPhaseDone's
+// comment). An EXISTING project that already has ev.outline with no
+// phases keeps rendering and editing exactly as before (see the
+// `ev.outline&&ev.outline.length>0` display block in EventDetailModal) --
+// nothing here touches already-committed data, only what gets offered to
+// a brand-new project going forward. proposeOutline itself is left
+// intact (still harness-exported/tested) since it's dead code, not
+// broken code, and deleting it isn't required for this fix.
 const MIN_DETAIL_CHARS_FOR_BREAKDOWN=10;
 function hasEnoughDetailForBreakdown(detail){
   return (detail||"").trim().length>=MIN_DETAIL_CHARS_FOR_BREAKDOWN;
@@ -21194,14 +21309,6 @@ function PhasesOutlineEditor({item,onChange,subject,onGateBlocked=()=>{},onNeeds
     const names=await proposeProjectPhases(item.title,item.detail||"",subject);
     recordProjectBreakdown();
     onChange({phasesLoading:false,phases:names||[]});
-  };
-  const suggestOutline=async()=>{
-    if(!hasEnoughDetail){onNeedsDetail();return;}
-    if(!canBreakDownProject()){onGateBlocked(canBreakDownProjectReason());return;}
-    onChange({outlineLoading:true});
-    const steps=await proposeOutline(item.title,item.detail||"",subject);
-    recordProjectBreakdown();
-    onChange({outlineLoading:false,outline:steps||[]});
   };
   return (<>
     <div style={{marginTop:8}}>
@@ -21222,51 +21329,6 @@ function PhasesOutlineEditor({item,onChange,subject,onGateBlocked=()=>{},onNeeds
             </div>
           ))}
           <button type="button" onClick={()=>onChange({phases:[...item.phases,""]})} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>+ Add phase</button>
-        </div>
-      )}
-    </div>
-    <div style={{marginTop:8}}>
-      {item.outline===undefined?(
-        <button type="button" disabled={!!item.outlineLoading} onClick={suggestOutline} style={{background:"none",border:`1px dashed ${T.borderHover}`,borderRadius:6,color:T.muted,fontSize:11,fontFamily:T.font,cursor:item.outlineLoading?"default":"pointer",padding:"5px 10px",opacity:item.outlineLoading?0.6:1}}>
-          {item.outlineLoading?"Drafting a checklist…":"Add a step-by-step checklist?"}
-        </button>
-      ):item.outline.length===0?(
-        <div style={{fontSize:11,color:T.muted}}>Not enough detail here for a checklist. Add detail above, or skip it.</div>
-      ):(
-        <div style={{display:"flex",flexDirection:"column",gap:6}}>
-          <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Checklist</div>
-          {item.outline.map((s,si)=>{
-            // Outline steps start as plain strings (proposeOutline's raw
-            // AI output) and only ever become {text,dueDate} objects once a
-            // mini due date gets set on one -- normalized here rather than
-            // forced everywhere else outline is read, so plain-string
-            // outlines elsewhere in the file (the marker's stored version,
-            // once committed) are untouched by this optional feature.
-            const stepText=typeof s==="string"?s:(s.text||"");
-            const stepDue=typeof s==="string"?"":(s.dueDate||"");
-            const patchStep=(patch)=>onChange({outline:item.outline.map((step,ssi)=>{
-              if(ssi!==si)return step;
-              const base=typeof step==="string"?{text:step}:step;
-              return {...base,...patch};
-            })});
-            return (
-              <div key={si} style={{display:"flex",alignItems:"center",gap:6}}>
-                <span style={{fontSize:10,color:T.faint,width:14,flexShrink:0,fontFamily:T.mono}}>{si+1}</span>
-                <Input value={stepText} onChange={e=>patchStep({text:e.target.value})} style={{flex:1,fontSize:12,padding:"5px 8px"}} />
-                <Input type="date" value={stepDue} onChange={e=>patchStep({dueDate:e.target.value})} title="Due date for this step (optional)" style={{width:120,fontSize:11,padding:"5px 6px",flexShrink:0}} />
-                <button type="button" onClick={()=>onChange({outline:item.outline.filter((_,ssi)=>ssi!==si)})} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:15,lineHeight:1,padding:2,flexShrink:0}}>×</button>
-              </div>
-            );
-          })}
-          <button type="button" onClick={()=>onChange({outline:[...item.outline,""]})} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>+ Add step</button>
-          {/* O11 in the audit: this component is shared across HS and
-              college contexts (New Task's Project type, syllabus-scan
-              review) but had no status awareness at all -- reads
-              getProfile().status directly rather than threading a new
-              prop through all 3 call sites, matching how the course menu
-              already branches "Scan assignments" vs "Import syllabus"
-              copy elsewhere in this file. */}
-          <div style={{fontSize:10,color:T.faint}}>Add a date on any step your {getProfile().status==="highschool"?"teacher":"professor"} gave its own due date for -- optional, only tightens scheduling for that step.</div>
         </div>
       )}
     </div>
@@ -24259,6 +24321,18 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   // any) is currently expanded -- only ever the active one, reset per
   // modal open since there's no reason to remember it across items.
   const [expandedPhaseIdx,setExpandedPhaseIdx]=useState(null);
+  // Projects Redesign (2026-09-08): phasePlanForm holds the "I want to plan
+  // this myself" draft (detail/estimate/target date/manual toggle+fields)
+  // for whichever phase has it open -- null when closed. Nothing here
+  // writes to the phase itself until Save, same "draft state, commit on
+  // save" convention attackProbeMins/addAttackBlock already use.
+  const [phasePlanForm,setPhasePlanForm]=useState(null);
+  // checklistScheduler holds the inline "Studlin picks the time / I'll
+  // pick the time / find a time with others" mini-picker for whichever
+  // checklist item has it open -- null when closed. One object rather than
+  // several separate useState calls, same shape convention projectPlan
+  // already uses.
+  const [checklistScheduler,setChecklistScheduler]=useState(null);
   // Same UI-level-choice pattern as asProject/asChecklist above -- a Task
   // (2026-08-26, Add Task's "do laundry" type) is also kind:"study block"
   // under the hood, distinguished only by isGeneralTask:true, so without
@@ -24395,6 +24469,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
     setExamHoursTarget("");setExamAdvancedOpen(false);
     setGenFlashcards(false);setGenPE(false);setWeaveCards(true);setWeavePE(true);
     setProjectPlan({phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false});
+    setExpandedPhaseIdx(null);setPhasePlanForm(null);setChecklistScheduler(null);
   },[eventId]);
   // Same "derive a default, never overwrite a manual edit" convention as
   // Add Task's identical effect -- confidence (+ attached material) sets
@@ -25190,7 +25265,130 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
               const isActive=ph.status==="active";
               const isExpanded=isActive&&expandedPhaseIdx===pi;
               const checklist=ph.checklist||[];
-              const writePhaseChecklist=(next)=>writePhases(ev.phases.map((p,ppi)=>ppi===pi?{...p,checklist:next}:p));
+              // Projects Redesign (2026-09-08): checking off every item
+              // auto-advances the phase, same close-out-pending-then-
+              // advance sequence markPhaseDone already runs by hand --
+              // one mechanism, two doors into it, same pattern C3 already
+              // established for the manual button.
+              const writePhaseChecklist=(next)=>{
+                if(next.length>0&&next.every(c=>c.done)){
+                  const doneAt=new Date().toISOString();
+                  const withChecklistAndSessionClosed=allEvents.map(e=>{
+                    if(e.id===ev.id)return {...e,phases:ev.phases.map((p,ppi)=>ppi===pi?{...p,checklist:next}:p)};
+                    if(e.dueEventId===ev.id&&e.projectPhaseIndex===pi&&e.status==="pending")return {...e,status:"done",completedAt:doneAt};
+                    return e;
+                  });
+                  const nextEvents=advanceProjectPhase({dueEventId:ev.id,projectPhaseIndex:pi},withChecklistAndSessionClosed,getWeeklyRoutine(),getSchedulePreferences(),dayKey());
+                  commit(nextEvents);
+                  const updatedMarker=nextEvents.find(e=>e.id===ev.id);
+                  if(ev.sharedProjectId&&updatedMarker)pushSharedProjectUpdate(ev.sharedProjectId,updatedMarker.phases,(getUserName()||"A collaborator")+" finished \""+ph.name+"\".");
+                  return;
+                }
+                writePhases(ev.phases.map((p,ppi)=>ppi===pi?{...p,checklist:next}:p));
+                if(ev.sharedProjectId)pushSharedProjectUpdate(ev.sharedProjectId,ev.phases.map((p,ppi)=>ppi===pi?{...p,checklist:next}:p));
+              };
+              const planSessions=isActive?allEvents.filter(e=>e.dueEventId===ev.id&&e.projectPhaseIndex===pi):[];
+              const pendingPlanSessions=planSessions.filter(e=>e.status==="pending");
+              const hasRealPlan=!!ph.targetDate&&pendingPlanSessions.length>0;
+              const formOpen=phasePlanForm&&phasePlanForm.phaseIdx===pi;
+              const openPlanForm=()=>setPhasePlanForm({phaseIdx:pi,detail:ph.detail||"",estimateMins:ph.probeMins?String(ph.probeMins):"",targetDate:ph.targetDate||"",manual:ph.scheduleMode==="manual",manualDate:"",manualTime:"16:00"});
+              const chooseAuto=()=>{
+                const nextPhases=ev.phases.map((p,ppi)=>ppi===pi?{...p,scheduleMode:"auto"}:p);
+                writePhases(nextPhases);
+                if(ev.sharedProjectId)pushSharedProjectUpdate(ev.sharedProjectId,nextPhases);
+              };
+              const savePlanForm=()=>{
+                const f=phasePlanForm;
+                const estimateMins=parseInt(f.estimateMins,10)||0;
+                const patchedPhases=ev.phases.map((p,ppi)=>ppi===pi?{...p,detail:f.detail||undefined,targetDate:f.targetDate||undefined,probeMins:estimateMins||undefined,scheduleMode:f.manual?"manual":"auto"}:p);
+                if(f.manual){
+                  if(!f.manualDate){setDetailErr("Pick a date for this block first.");return;}
+                  const withoutStalePending=allEvents.filter(e=>!(e.dueEventId===ev.id&&e.projectPhaseIndex===pi&&e.status==="pending"));
+                  const sess={id:"phase-manual-"+ev.id+"-"+pi+"-"+Date.now(),title:"Work on: "+ph.name,date:f.manualDate,time:f.manualTime,subject,notes:"",kind:"study block",duration:60,priority,difficulty,deadline:ev.deadline||ev.date||null,status:"pending",timeSpent:0,completedAt:null,dueEventId:ev.id,projectPhaseIndex:pi,phaseName:ph.name,projectTitle:ev.title};
+                  const nextEvents=withoutStalePending.map(e=>e.id===ev.id?{...e,phases:patchedPhases}:e).concat([sess]);
+                  commit(nextEvents);
+                  if(ev.sharedProjectId)pushSharedProjectUpdate(ev.sharedProjectId,patchedPhases,(getUserName()||"A collaborator")+" is planning \""+ph.name+"\" themselves.");
+                  setPhasePlanForm(null);
+                  return;
+                }
+                if(!(estimateMins>0&&f.targetDate)){
+                  // Not enough to build a real plan from -- persist
+                  // whatever detail was typed and fall back to exactly the
+                  // "Let Studlin handle it" default, same as if that
+                  // button had been pressed instead. Never leaves a phase
+                  // with nothing scheduled.
+                  const nextEvents=allEvents.map(e=>e.id===ev.id?{...e,phases:patchedPhases}:e);
+                  commit(nextEvents);
+                  if(ev.sharedProjectId)pushSharedProjectUpdate(ev.sharedProjectId,patchedPhases);
+                  setPhasePlanForm(null);
+                  return;
+                }
+                const withoutStalePending=allEvents.filter(e=>!(e.dueEventId===ev.id&&e.projectPhaseIndex===pi&&e.status==="pending"));
+                const plan=buildPhaseSessionPlan(ev.id,pi,ph.name,ev.title,estimateMins,f.targetDate,ev.deadline||ev.date,subject,priority,difficulty,withoutStalePending,getWeeklyRoutine(),getSchedulePreferences(),dayKey());
+                if(!plan){setDetailErr("Couldn't find room for a plan before "+f.targetDate+" -- try a later date, or turn on \"I'll schedule this myself.\"");return;}
+                const nextEvents=withoutStalePending.map(e=>e.id===ev.id?{...e,phases:patchedPhases}:e).concat(plan.sessions);
+                commit(nextEvents);
+                if(ev.sharedProjectId)pushSharedProjectUpdate(ev.sharedProjectId,patchedPhases,(getUserName()||"A collaborator")+" built a plan for \""+ph.name+"\".");
+                if(!plan.allPlaced&&onToast)onToast("Couldn't fit everything before "+f.targetDate+" -- scheduled what would fit.");
+                setPhasePlanForm(null);
+              };
+              const openChecklistScheduler=(ci)=>setChecklistScheduler({phaseIdx:pi,itemIdx:ci,mode:"auto",manualDate:"",manualTime:"16:00",sharedCandidates:null,sharedSelected:[],sharedSharedUids:new Set(),sharedOptions:null,sharedLoading:false});
+              const confirmChecklistSchedule=async(ci)=>{
+                const cs=checklistScheduler;
+                const item=checklist[ci];
+                if(cs.mode==="manual"){
+                  if(!cs.manualDate){setDetailErr("Pick a date first.");return;}
+                  const sess={id:"phase-item-"+ev.id+"-"+pi+"-"+Date.now(),title:"Work on: "+item.text,date:cs.manualDate,time:cs.manualTime,subject,notes:"",kind:"study block",duration:30,priority,difficulty,deadline:ev.deadline||ev.date||null,status:"pending",timeSpent:0,completedAt:null,dueEventId:ev.id,projectPhaseIndex:pi,checklistItemText:item.text};
+                  commit(allEvents.concat([sess]));
+                  writePhaseChecklist(checklist.map((c,cci)=>cci===ci?{...c,scheduledEventId:sess.id}:c));
+                  setChecklistScheduler(null);
+                  return;
+                }
+                if(cs.mode==="shared"&&cs.sharedOptions&&cs.sharedSelectedOption){
+                  const opt=cs.sharedSelectedOption;
+                  const sess={id:"phase-item-"+ev.id+"-"+pi+"-"+Date.now(),title:"Work on: "+item.text+" (with "+cs.sharedSelected.map(uid=>(cs.sharedCandidates.find(c=>c.uid===uid)||{}).name).join(", ")+")",date:opt.date,time:opt.time,subject,notes:"",kind:"study block",duration:opt.duration||30,priority,difficulty,deadline:ev.deadline||ev.date||null,status:"pending",timeSpent:0,completedAt:null,dueEventId:ev.id,projectPhaseIndex:pi,checklistItemText:item.text};
+                  commit(allEvents.concat([sess]));
+                  writePhaseChecklist(checklist.map((c,cci)=>cci===ci?{...c,scheduledEventId:sess.id}:c));
+                  setChecklistScheduler(null);
+                  return;
+                }
+                const result=claimOrCreatePhaseSessionForChecklistItem(ev.id,pi,item.text,ev.deadline||ev.date,subject,priority,difficulty,allEvents,getWeeklyRoutine(),getSchedulePreferences(),dayKey());
+                if(!result){setDetailErr("Couldn't find room to schedule this -- try picking a time yourself instead.");return;}
+                commit(result.events);
+                writePhaseChecklist(checklist.map((c,cci)=>cci===ci?{...c,scheduledEventId:result.scheduledEventId}:c));
+                setChecklistScheduler(null);
+              };
+              const openSharedTimeFinder=async()=>{
+                setChecklistScheduler(cs=>({...cs,mode:"shared",sharedLoading:true}));
+                try{
+                  const myUid=firebase.auth().currentUser?.uid;
+                  const [projectDoc,friendUids]=await Promise.all([
+                    ev.sharedProjectId?fsdb().collection('sharedProjects').doc(ev.sharedProjectId).get().catch(()=>null):null,
+                    myUid?getAcceptedFriendUids(myUid):[],
+                  ]);
+                  const memberUids=(projectDoc&&projectDoc.exists?Object.keys(projectDoc.data().participants||{}):[]).filter(uid=>uid!==myUid);
+                  // Gap #2 in the plan: mutual-availability checks only work
+                  // for collaborators who are ALSO friends (fetchFriendsBusyIntervals/
+                  // askFriendsToShareAvailability both depend on friendship-gated
+                  // rules) -- a collaborator who isn't a friend yet is silently
+                  // not offered here, same graceful degradation acceptSharedProject
+                  // itself already does when nobody's shared anything.
+                  const candidateUids=memberUids.filter(uid=>friendUids.includes(uid));
+                  const docs=await Promise.all(candidateUids.map(uid=>fsdb().collection('profiles').doc(uid).get().catch(()=>null)));
+                  const candidates=candidateUids.map((uid,i)=>({uid,name:(docs[i]&&docs[i].exists&&docs[i].data().name)||"Studlin User"}));
+                  setChecklistScheduler(cs=>({...cs,mode:"shared",sharedCandidates:candidates,sharedSelected:candidates.map(c=>c.uid),sharedLoading:false}));
+                }catch(e){
+                  reportError("openSharedTimeFinder")(e);
+                  setChecklistScheduler(cs=>({...cs,mode:"shared",sharedCandidates:[],sharedLoading:false}));
+                }
+              };
+              const findSharedTimes=async()=>{
+                const cs=checklistScheduler;
+                setChecklistScheduler(s=>({...s,sharedLoading:true}));
+                const {byDate,sharedUids}=await fetchFriendsBusyIntervals(cs.sharedSelected);
+                const result=await findSharedStudyWindow(firebase.auth().currentUser?.uid,cs.sharedSelected,{timeMode:"anytime",lookAheadDayRange:7,durationInMinutes:30});
+                setChecklistScheduler(s=>({...s,sharedSharedUids:sharedUids,sharedOptions:result.options||[],sharedLoading:false}));
+              };
               return (
               <div key={pi}>
                 <div style={{display:"flex",alignItems:"center",gap:6}}>
@@ -25220,18 +25418,148 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
                   </div>
                 )}
                 {isExpanded&&(
-                  <div style={{marginLeft:50,marginTop:6,paddingLeft:10,borderLeft:`2px solid ${T.border}`,display:"flex",flexDirection:"column",gap:5}}>
-                    {checklist.map((c,ci)=>(
-                      <label key={ci} style={{display:"flex",alignItems:"center",gap:6,fontSize:11.5,color:c.done?T.faint:T.text,cursor:"pointer",textDecoration:c.done?"line-through":"none"}}>
-                        <input type="checkbox" checked={!!c.done} onChange={()=>writePhaseChecklist(checklist.map((x,xi)=>xi===ci?{...x,done:!x.done}:x))} style={{accentColor:T.lime,cursor:"pointer"}} />
-                        <span style={{flex:1}}>{c.text}</span>
-                        <button type="button" onClick={()=>writePhaseChecklist(checklist.filter((_,xi)=>xi!==ci))} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:13,lineHeight:1,padding:0}}>×</button>
-                      </label>
-                    ))}
-                    <button type="button" onClick={()=>writePhaseChecklist([...checklist,{text:"",done:false}])} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>+ Add step</button>
-                    {checklist.some(c=>c.text==="")&&(
-                      <Input autoFocus value={checklist.find(c=>c.text==="").text} onChange={e=>{const idx=checklist.findIndex(c=>c.text==="");writePhaseChecklist(checklist.map((x,xi)=>xi===idx?{...x,text:e.target.value}:x));}} placeholder="What's this step?" style={{fontSize:11.5,padding:"4px 7px"}} />
+                  <div style={{marginLeft:50,marginTop:6,paddingLeft:10,borderLeft:`2px solid ${T.border}`,display:"flex",flexDirection:"column",gap:8}}>
+                    {/* Projects Redesign (2026-09-08): "Let Studlin handle
+                        it" vs "I want to plan this myself" -- the two-choice
+                        screen only shows once, until scheduleMode is set;
+                        reopening this panel afterward goes straight to the
+                        relevant state instead of asking again. */}
+                    {!ph.scheduleMode&&!formOpen?(
+                      <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                        <button type="button" onClick={chooseAuto} style={{background:T.lime,color:"#10160F",border:"none",borderRadius:7,padding:"9px 11px",fontSize:11.5,fontWeight:700,fontFamily:T.font,cursor:"pointer",textAlign:"left"}}>
+                          Let Studlin handle it
+                          <div style={{fontWeight:500,fontSize:10,marginTop:1,opacity:0.75}}>A short probe session -- Studlin figures out the rest as you go.</div>
+                        </button>
+                        <button type="button" onClick={openPlanForm} style={{background:"none",border:"none",color:T.muted,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>I want to plan this myself →</button>
+                      </div>
+                    ):formOpen?(
+                      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                        <div>
+                          <div style={{fontSize:10,color:T.faint,marginBottom:3}}>What do you need to do? (optional)</div>
+                          <Textarea value={phasePlanForm.detail} onChange={e=>setPhasePlanForm(f=>({...f,detail:e.target.value}))} style={{fontSize:11.5,padding:"6px 8px",height:44}} />
+                        </div>
+                        <div style={{display:"flex",gap:8}}>
+                          <div style={{flex:1}}>
+                            <div style={{fontSize:10,color:T.faint,marginBottom:3}}>About how long? (total, min)</div>
+                            <input type="number" min={5} step={5} value={phasePlanForm.estimateMins} onChange={e=>setPhasePlanForm(f=>({...f,estimateMins:e.target.value}))} style={{width:"100%",boxSizing:"border-box",background:"transparent",border:`1px solid ${T.border}`,borderRadius:5,padding:"5px 7px",color:T.text,fontSize:11,fontFamily:T.font,outline:"none"}} />
+                          </div>
+                          <div style={{flex:1}}>
+                            <div style={{fontSize:10,color:T.faint,marginBottom:3}}>Done by</div>
+                            <Input type="date" value={phasePlanForm.targetDate} max={ev.deadline||ev.date||undefined} onChange={e=>setPhasePlanForm(f=>({...f,targetDate:e.target.value}))} style={{fontSize:11,padding:"5px 7px",width:"100%",boxSizing:"border-box"}} />
+                          </div>
+                        </div>
+                        <div style={{border:`1px solid ${T.border}`,borderRadius:7,padding:"8px 10px"}}>
+                          <div onClick={()=>setPhasePlanForm(f=>({...f,manual:!f.manual}))} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+                            <span style={{fontSize:11,fontWeight:600,color:T.text}}>I'll schedule this myself</span>
+                            <div style={{width:30,height:17,borderRadius:9,background:phasePlanForm.manual?T.lime:T.faint,position:"relative",transition:"background 0.2s",flexShrink:0}}><div style={{width:13,height:13,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:phasePlanForm.manual?15:2,transition:"left 0.2s"}} /></div>
+                          </div>
+                          {phasePlanForm.manual&&(
+                            <div style={{display:"flex",gap:6,marginTop:8,alignItems:"center",flexWrap:"wrap"}}>
+                              <Input type="date" value={phasePlanForm.manualDate} onChange={e=>setPhasePlanForm(f=>({...f,manualDate:e.target.value}))} style={{width:130,fontSize:11}} />
+                              <TimeInput value={phasePlanForm.manualTime} onChange={v=>setPhasePlanForm(f=>({...f,manualTime:v}))} />
+                            </div>
+                          )}
+                        </div>
+                        <div style={{display:"flex",gap:8}}>
+                          <BtnSm onClick={savePlanForm}>Save</BtnSm>
+                          <BtnSm variant="ghost" onClick={()=>setPhasePlanForm(null)}>Cancel</BtnSm>
+                        </div>
+                      </div>
+                    ):hasRealPlan?(
+                      <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                        <div style={{fontSize:10,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Scheduled for {ph.name}</div>
+                        {planSessions.map(s=>(
+                          <div key={s.id} style={{display:"flex",alignItems:"center",gap:8,fontSize:11,color:s.status==="done"?T.faint:T.text}}>
+                            <span style={{width:6,height:6,borderRadius:"50%",background:s.status==="done"?T.teal:T.lime,flexShrink:0}} />
+                            <span>{s.date} · {s.time}</span>
+                            {s.status==="done"&&<span style={{fontSize:9,color:T.teal,fontWeight:700,textTransform:"uppercase"}}>done</span>}
+                          </div>
+                        ))}
+                        <div style={{fontSize:10,color:T.faint,lineHeight:1.4}}>Want to move just one? Open it on your calendar like any other block. Changing the whole plan only touches sessions that haven't happened yet.</div>
+                        <button type="button" onClick={openPlanForm} style={{background:"none",border:"none",color:T.muted,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>Edit plan (change time or deadline) →</button>
+                      </div>
+                    ):(
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+                        <div style={{fontSize:11,color:T.muted}}>{ph.scheduleMode==="manual"?"You're planning this yourself.":"Studlin will handle this."}</div>
+                        <button type="button" onClick={openPlanForm} style={{background:"none",border:"none",color:T.lime,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>Change</button>
+                      </div>
                     )}
+                    {/* Checklist -- always available regardless of
+                        scheduling mode above; each item can optionally be
+                        scheduled on its own, claiming one of the phase's
+                        already-planned sessions rather than stacking a new
+                        one on top. */}
+                    <div style={{marginTop:2,paddingTop:8,borderTop:`1px solid ${T.border}`,display:"flex",flexDirection:"column",gap:5}}>
+                      {checklist.map((c,ci)=>(
+                        <div key={ci}>
+                          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11.5,color:c.done?T.faint:T.text,cursor:"pointer",textDecoration:c.done?"line-through":"none"}}>
+                            <input type="checkbox" checked={!!c.done} onChange={()=>writePhaseChecklist(checklist.map((x,xi)=>xi===ci?{...x,done:!x.done}:x))} style={{accentColor:T.lime,cursor:"pointer"}} />
+                            <span style={{flex:1}}>{c.text}</span>
+                            {!c.done&&c.text&&(c.scheduledEventId?(
+                              <span style={{fontSize:9,color:T.teal,fontWeight:700,textTransform:"uppercase"}}>scheduled</span>
+                            ):(
+                              <button type="button" onClick={()=>openChecklistScheduler(ci)} style={{background:"none",border:`1px solid ${T.border}`,borderRadius:5,color:T.muted,fontSize:9.5,fontFamily:T.font,padding:"2px 6px",cursor:"pointer",flexShrink:0}}>Schedule</button>
+                            ))}
+                            <button type="button" onClick={()=>writePhaseChecklist(checklist.filter((_,xi)=>xi!==ci))} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:13,lineHeight:1,padding:0}}>×</button>
+                          </label>
+                          {checklistScheduler&&checklistScheduler.phaseIdx===pi&&checklistScheduler.itemIdx===ci&&(
+                            <div style={{marginLeft:22,marginTop:5,background:T.card,border:`1px dashed ${T.borderHover}`,borderRadius:7,padding:"8px 9px",display:"flex",flexDirection:"column",gap:7}}>
+                              <div style={{display:"flex",gap:6}}>
+                                <button type="button" onClick={()=>setChecklistScheduler(s=>({...s,mode:"auto"}))} style={{flex:1,fontSize:10,fontWeight:600,padding:"5px 4px",borderRadius:5,border:`1px solid ${checklistScheduler.mode==="auto"?T.lime:T.border}`,background:checklistScheduler.mode==="auto"?T.lime+"22":"transparent",color:checklistScheduler.mode==="auto"?T.lime:T.muted,cursor:"pointer",fontFamily:T.font}}>Studlin picks the time</button>
+                                <button type="button" onClick={()=>setChecklistScheduler(s=>({...s,mode:"manual"}))} style={{flex:1,fontSize:10,fontWeight:600,padding:"5px 4px",borderRadius:5,border:`1px solid ${checklistScheduler.mode==="manual"?T.lime:T.border}`,background:checklistScheduler.mode==="manual"?T.lime+"22":"transparent",color:checklistScheduler.mode==="manual"?T.lime:T.muted,cursor:"pointer",fontFamily:T.font}}>I'll pick the time</button>
+                                {ev.sharedProjectId&&(
+                                  <button type="button" onClick={openSharedTimeFinder} style={{flex:1,fontSize:10,fontWeight:600,padding:"5px 4px",borderRadius:5,border:`1px solid ${checklistScheduler.mode==="shared"?T.lime:T.border}`,background:checklistScheduler.mode==="shared"?T.lime+"22":"transparent",color:checklistScheduler.mode==="shared"?T.lime:T.muted,cursor:"pointer",fontFamily:T.font}}>Find a time with others</button>
+                                )}
+                              </div>
+                              {checklistScheduler.mode==="manual"&&(
+                                <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                                  <Input type="date" value={checklistScheduler.manualDate} onChange={e=>setChecklistScheduler(s=>({...s,manualDate:e.target.value}))} style={{width:120,fontSize:10.5}} />
+                                  <TimeInput value={checklistScheduler.manualTime} onChange={v=>setChecklistScheduler(s=>({...s,manualTime:v}))} />
+                                </div>
+                              )}
+                              {checklistScheduler.mode==="shared"&&(
+                                checklistScheduler.sharedLoading?(
+                                  <div style={{fontSize:10.5,color:T.muted}}>Loading…</div>
+                                ):checklistScheduler.sharedCandidates===null?null:checklistScheduler.sharedCandidates.length===0?(
+                                  <div style={{fontSize:10.5,color:T.muted}}>None of your collaborators on this project are friends yet -- add them in Studlin Network to check their availability.</div>
+                                ):(
+                                  <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                                    {checklistScheduler.sharedCandidates.map(c2=>(
+                                      <label key={c2.uid} style={{display:"flex",alignItems:"center",gap:6,fontSize:10.5,color:T.text,cursor:"pointer"}}>
+                                        <input type="checkbox" checked={checklistScheduler.sharedSelected.includes(c2.uid)} onChange={()=>setChecklistScheduler(s=>({...s,sharedSelected:s.sharedSelected.includes(c2.uid)?s.sharedSelected.filter(u=>u!==c2.uid):[...s.sharedSelected,c2.uid]}))} style={{accentColor:T.lime,cursor:"pointer"}} />
+                                        {c2.name}
+                                      </label>
+                                    ))}
+                                    {!checklistScheduler.sharedOptions?(
+                                      <BtnSm onClick={findSharedTimes} disabled={checklistScheduler.sharedSelected.length===0}>Find a time</BtnSm>
+                                    ):checklistScheduler.sharedOptions.length===0?(
+                                      <div style={{fontSize:10.5,color:T.muted}}>No shared free time found in the next week.</div>
+                                    ):(<>
+                                      {checklistScheduler.sharedSelected.some(uid=>!checklistScheduler.sharedSharedUids.has(uid))&&(
+                                        <div style={{fontSize:10,color:T.amber}}>Some of them haven't shared their free/busy time -- Studlin can only see who has.</div>
+                                      )}
+                                      <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                                        {checklistScheduler.sharedOptions.map((opt,oi)=>(
+                                          <button type="button" key={oi} onClick={()=>setChecklistScheduler(s=>({...s,sharedSelectedOption:opt}))} style={{textAlign:"left",fontSize:10.5,padding:"5px 7px",borderRadius:5,border:`1px solid ${checklistScheduler.sharedSelectedOption===opt?T.lime:T.border}`,background:checklistScheduler.sharedSelectedOption===opt?T.lime+"18":"transparent",color:T.text,cursor:"pointer",fontFamily:T.font}}>{opt.dayLabel} · {opt.timeLabel}</button>
+                                        ))}
+                                      </div>
+                                    </>)}
+                                  </div>
+                                )
+                              )}
+                              <div style={{display:"flex",gap:6}}>
+                                <BtnSm onClick={()=>confirmChecklistSchedule(ci)} disabled={checklistScheduler.mode==="shared"&&!checklistScheduler.sharedSelectedOption}>Confirm</BtnSm>
+                                <BtnSm variant="ghost" onClick={()=>setChecklistScheduler(null)}>Cancel</BtnSm>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      <button type="button" onClick={()=>writePhaseChecklist([...checklist,{text:"",done:false}])} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>+ Add step</button>
+                      {checklist.some(c=>c.text==="")&&(
+                        <Input autoFocus value={checklist.find(c=>c.text==="").text} onChange={e=>{const idx=checklist.findIndex(c=>c.text==="");writePhaseChecklist(checklist.map((x,xi)=>xi===idx?{...x,text:e.target.value}:x));}} placeholder="What's this step?" style={{fontSize:11.5,padding:"4px 7px"}} />
+                      )}
+                    </div>
                   </div>
                 )}
               </div>

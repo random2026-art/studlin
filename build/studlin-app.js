@@ -3447,6 +3447,16 @@ async function declineSharedProject(projectId, myUid) {
   }).catch(() => {
   });
 }
+function pushSharedProjectUpdate(sharedProjectId, phases, progressNote) {
+  const myName = getUserName() || "A collaborator";
+  fsdb().collection("sharedProjects").doc(sharedProjectId).update({
+    phases,
+    lastProgressBy: myName,
+    lastProgressNote: progressNote || myName + " updated this project.",
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }).catch(() => {
+  });
+}
 const slugUsername = (name) => (name || "").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 24) || "student";
 async function upsertProfile(extra = {}) {
   const u = firebase.auth().currentUser;
@@ -6792,6 +6802,7 @@ function StudlinPrep({ setActive = () => {
       const hasPhases = p.phases && p.phases.length > 0;
       const steps = hasPhases ? p.phases : p.outline || [];
       const doneCount = hasPhases ? steps.filter((s) => s.status === "done").length : steps.filter((s) => s.done).length;
+      const activePhase = hasPhases ? steps.find((s) => s.status === "active") : null;
       return /* @__PURE__ */ React.createElement("div", { key: p.id, style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, padding: "7px 10px", borderBottom: `1px solid ${T.border}`, alignItems: "center" } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setDetailEventId(p.id), style: { fontSize: 11.5, fontWeight: 600, color: T.white, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: p.title }, p.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, p.subject || "\u2014"), /* @__PURE__ */ React.createElement("input", { type: "date", value: p.date || "", onChange: (e) => e.target.value && patchExam(p.id, { date: e.target.value, checklist: false, time: p.time || "23:59" }), style: { ...cellSelStyle } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: daysUntil == null ? T.amber : daysUntil <= 1 ? T.red : T.muted, fontStyle: daysUntil == null ? "italic" : "normal" } }, daysLabel), /* @__PURE__ */ React.createElement(
         CustomSelect,
         {
@@ -6806,7 +6817,7 @@ function StudlinPrep({ setActive = () => {
           onChange: (v) => patchExam(p.id, { difficulty: BUCKET_VALS[v] }),
           options: [{ value: "low", label: "Easy" }, { value: "medium", label: "Med" }, { value: "high", label: "Hard" }]
         }
-      ), /* @__PURE__ */ React.createElement("div", { onClick: () => setDetailEventId(p.id), style: { fontSize: 10.5, color: T.muted, cursor: "pointer" }, title: "Click to open" }, steps.length === 0 ? "no checklist yet" : doneCount + "/" + steps.length + " steps"));
+      ), /* @__PURE__ */ React.createElement("div", { onClick: () => setDetailEventId(p.id), style: { fontSize: 10.5, color: T.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer" }, title: "Click to open" }, steps.length === 0 ? "no checklist yet" : doneCount + "/" + steps.length + (hasPhases ? " phases" : " steps") + (activePhase && activePhase.name ? " \u2014 " + activePhase.name : "")));
     }))));
   })(), tab === "exams" && selectedExam && (() => {
     const readiness = computeExamReadiness(selectedExam, lsGet("events", []), dayKey());
@@ -9705,6 +9716,75 @@ function buildExamSessionEvents(examTitle, examDate, subject, count, idPrefix, w
     built.push(ev);
   });
   return built;
+}
+function buildPhaseSessionPlan(markerId, phaseIdx, phaseName, projectTitle, totalEstimateMins, targetDate, deadline, subject, priority, difficulty, events, routines, prefs, todayKey) {
+  const today = todayKey || dayKey();
+  const daysUntil = Math.round((/* @__PURE__ */ new Date(targetDate + "T12:00:00") - /* @__PURE__ */ new Date(today + "T12:00:00")) / 864e5);
+  if (daysUntil < 0) return null;
+  const rawCount = defaultSessionCountFor(void 0, void 0, daysUntil);
+  const { sessionCount, sessionDuration } = applyHoursTarget(rawCount, 25, Math.max(0, totalEstimateMins || 0) / 60);
+  const dates = computeReviewDates(targetDate, today, sessionCount);
+  let localWorking = events;
+  const built = [];
+  dates.forEach((date, si) => {
+    const slot = findReliableSlotFor(localWorking, routines, prefs, date, prefs.workStartTime, sessionDuration, targetDate, difficulty ?? 500);
+    if (!slot) return;
+    const sess = {
+      id: "phase-" + markerId + "-" + phaseIdx + "-" + Date.now() + "-" + si,
+      title: "Work on: " + phaseName,
+      date: slot.date,
+      time: slot.time,
+      subject,
+      notes: "",
+      kind: "study block",
+      duration: sessionDuration,
+      priority: priority ?? 500,
+      difficulty: difficulty ?? 500,
+      deadline: deadline || targetDate,
+      status: "pending",
+      timeSpent: 0,
+      completedAt: null,
+      placementReason: slot.reason || null,
+      dueEventId: markerId,
+      projectPhaseIndex: phaseIdx,
+      phaseName,
+      projectTitle
+    };
+    localWorking = localWorking.concat([sess]);
+    built.push(sess);
+  });
+  if (built.length === 0) return null;
+  return { sessions: built, allPlaced: built.length === dates.length };
+}
+function claimOrCreatePhaseSessionForChecklistItem(markerId, phaseIdx, itemText, deadline, subject, priority, difficulty, events, routines, prefs, todayKey) {
+  const unclaimed = events.find((e) => e.dueEventId === markerId && e.projectPhaseIndex === phaseIdx && e.status === "pending" && !e.checklistItemText);
+  if (unclaimed) {
+    const next = events.map((e) => e.id === unclaimed.id ? { ...e, title: "Work on: " + itemText, checklistItemText: itemText } : e);
+    return { events: next, scheduledEventId: unclaimed.id };
+  }
+  const today = todayKey || dayKey();
+  const slot = findLegalSlotOrNull(events, routines, prefs, today, prefs.workStartTime, 30, deadline || null);
+  if (!slot) return null;
+  const sess = {
+    id: "phase-item-" + markerId + "-" + phaseIdx + "-" + Date.now(),
+    title: "Work on: " + itemText,
+    date: slot.date,
+    time: slot.time,
+    subject,
+    notes: "",
+    kind: "study block",
+    duration: 30,
+    priority: priority ?? 500,
+    difficulty: difficulty ?? 500,
+    deadline: deadline || null,
+    status: "pending",
+    timeSpent: 0,
+    completedAt: null,
+    dueEventId: markerId,
+    projectPhaseIndex: phaseIdx,
+    checklistItemText: itemText
+  };
+  return { events: events.concat([sess]), scheduledEventId: sess.id };
 }
 function removeGenericExamPrepSessions(events, examId) {
   return events.filter((e) => !(e.dueEventId === examId && e.status === "pending" && e.isExamPrepSession && (e.interleavedReview || !e.deckId && !e.practiceExamId)));
@@ -12849,30 +12929,7 @@ function PhasesOutlineEditor({ item, onChange, subject, onGateBlocked = () => {
     recordProjectBreakdown();
     onChange({ phasesLoading: false, phases: names || [] });
   };
-  const suggestOutline = async () => {
-    if (!hasEnoughDetail) {
-      onNeedsDetail();
-      return;
-    }
-    if (!canBreakDownProject()) {
-      onGateBlocked(canBreakDownProjectReason());
-      return;
-    }
-    onChange({ outlineLoading: true });
-    const steps = await proposeOutline(item.title, item.detail || "", subject);
-    recordProjectBreakdown();
-    onChange({ outlineLoading: false, outline: steps || [] });
-  };
-  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { marginTop: 8 } }, item.phases === void 0 ? /* @__PURE__ */ React.createElement("button", { type: "button", disabled: !!item.phasesLoading, onClick: suggestPhases, style: { background: "none", border: `1px dashed ${T.borderHover}`, borderRadius: 6, color: T.muted, fontSize: 11, fontFamily: T.font, cursor: item.phasesLoading ? "default" : "pointer", padding: "5px 10px", opacity: item.phasesLoading ? 0.6 : 1 } }, item.phasesLoading ? "Thinking through phases\u2026" : "This looks big. Break it into phases?") : item.phases.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted } }, "Not enough detail here to break into phases. Add detail above, or leave it as one Attack Block.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Phases: only the first gets scheduled now"), item.phases.map((ph, pi) => /* @__PURE__ */ React.createElement("div", { key: pi, style: { display: "flex", alignItems: "center", gap: 6 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10, color: T.faint, width: 14, flexShrink: 0, fontFamily: T.mono } }, pi + 1), /* @__PURE__ */ React.createElement(Input, { value: ph, onChange: (e) => onChange({ phases: item.phases.map((p, ppi) => ppi === pi ? e.target.value : p) }), style: { flex: 1, fontSize: 12, padding: "5px 8px" } }), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => onChange({ phases: item.phases.filter((_, ppi) => ppi !== pi) }), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 15, lineHeight: 1, padding: 2, flexShrink: 0 } }, "\xD7"))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => onChange({ phases: [...item.phases, ""] }), style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline", textAlign: "left" } }, "+ Add phase"))), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 8 } }, item.outline === void 0 ? /* @__PURE__ */ React.createElement("button", { type: "button", disabled: !!item.outlineLoading, onClick: suggestOutline, style: { background: "none", border: `1px dashed ${T.borderHover}`, borderRadius: 6, color: T.muted, fontSize: 11, fontFamily: T.font, cursor: item.outlineLoading ? "default" : "pointer", padding: "5px 10px", opacity: item.outlineLoading ? 0.6 : 1 } }, item.outlineLoading ? "Drafting a checklist\u2026" : "Add a step-by-step checklist?") : item.outline.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted } }, "Not enough detail here for a checklist. Add detail above, or skip it.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Checklist"), item.outline.map((s, si) => {
-    const stepText = typeof s === "string" ? s : s.text || "";
-    const stepDue = typeof s === "string" ? "" : s.dueDate || "";
-    const patchStep = (patch) => onChange({ outline: item.outline.map((step, ssi) => {
-      if (ssi !== si) return step;
-      const base = typeof step === "string" ? { text: step } : step;
-      return { ...base, ...patch };
-    }) });
-    return /* @__PURE__ */ React.createElement("div", { key: si, style: { display: "flex", alignItems: "center", gap: 6 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10, color: T.faint, width: 14, flexShrink: 0, fontFamily: T.mono } }, si + 1), /* @__PURE__ */ React.createElement(Input, { value: stepText, onChange: (e) => patchStep({ text: e.target.value }), style: { flex: 1, fontSize: 12, padding: "5px 8px" } }), /* @__PURE__ */ React.createElement(Input, { type: "date", value: stepDue, onChange: (e) => patchStep({ dueDate: e.target.value }), title: "Due date for this step (optional)", style: { width: 120, fontSize: 11, padding: "5px 6px", flexShrink: 0 } }), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => onChange({ outline: item.outline.filter((_, ssi) => ssi !== si) }), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 15, lineHeight: 1, padding: 2, flexShrink: 0 } }, "\xD7"));
-  }), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => onChange({ outline: [...item.outline, ""] }), style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline", textAlign: "left" } }, "+ Add step"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.faint } }, "Add a date on any step your ", getProfile().status === "highschool" ? "teacher" : "professor", " gave its own due date for -- optional, only tightens scheduling for that step."))));
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { marginTop: 8 } }, item.phases === void 0 ? /* @__PURE__ */ React.createElement("button", { type: "button", disabled: !!item.phasesLoading, onClick: suggestPhases, style: { background: "none", border: `1px dashed ${T.borderHover}`, borderRadius: 6, color: T.muted, fontSize: 11, fontFamily: T.font, cursor: item.phasesLoading ? "default" : "pointer", padding: "5px 10px", opacity: item.phasesLoading ? 0.6 : 1 } }, item.phasesLoading ? "Thinking through phases\u2026" : "This looks big. Break it into phases?") : item.phases.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted } }, "Not enough detail here to break into phases. Add detail above, or leave it as one Attack Block.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Phases: only the first gets scheduled now"), item.phases.map((ph, pi) => /* @__PURE__ */ React.createElement("div", { key: pi, style: { display: "flex", alignItems: "center", gap: 6 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10, color: T.faint, width: 14, flexShrink: 0, fontFamily: T.mono } }, pi + 1), /* @__PURE__ */ React.createElement(Input, { value: ph, onChange: (e) => onChange({ phases: item.phases.map((p, ppi) => ppi === pi ? e.target.value : p) }), style: { flex: 1, fontSize: 12, padding: "5px 8px" } }), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => onChange({ phases: item.phases.filter((_, ppi) => ppi !== pi) }), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 15, lineHeight: 1, padding: 2, flexShrink: 0 } }, "\xD7"))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => onChange({ phases: [...item.phases, ""] }), style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline", textAlign: "left" } }, "+ Add phase"))));
 }
 const WIZARD_STEP_ORDER = ["term", "status", "awake", "personalize", "classes", "activities", "calendarSync", "finalReview"];
 const WIZARD_STEPPER = [
@@ -14475,6 +14532,8 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
   const [asProject, setAsProject] = useState(false);
   const [asChecklist, setAsChecklist] = useState(false);
   const [expandedPhaseIdx, setExpandedPhaseIdx] = useState(null);
+  const [phasePlanForm, setPhasePlanForm] = useState(null);
+  const [checklistScheduler, setChecklistScheduler] = useState(null);
   const [asGeneralTask, setAsGeneralTask] = useState(false);
   const [asAssignment, setAsAssignment] = useState(false);
   const [notes, setNotes] = useState("");
@@ -14554,6 +14613,9 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
     setWeaveCards(true);
     setWeavePE(true);
     setProjectPlan({ phases: void 0, phasesLoading: false, outline: void 0, outlineLoading: false });
+    setExpandedPhaseIdx(null);
+    setPhasePlanForm(null);
+    setChecklistScheduler(null);
   }, [eventId]);
   useEffect(() => {
     if (!ev || kind !== "exam" || !examPlan.proposeSessions || examSessionCountTouched) return;
@@ -15014,7 +15076,126 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
       const isActive = ph.status === "active";
       const isExpanded = isActive && expandedPhaseIdx === pi;
       const checklist = ph.checklist || [];
-      const writePhaseChecklist = (next) => writePhases(ev.phases.map((p, ppi) => ppi === pi ? { ...p, checklist: next } : p));
+      const writePhaseChecklist = (next) => {
+        if (next.length > 0 && next.every((c) => c.done)) {
+          const doneAt = (/* @__PURE__ */ new Date()).toISOString();
+          const withChecklistAndSessionClosed = allEvents.map((e) => {
+            if (e.id === ev.id) return { ...e, phases: ev.phases.map((p, ppi) => ppi === pi ? { ...p, checklist: next } : p) };
+            if (e.dueEventId === ev.id && e.projectPhaseIndex === pi && e.status === "pending") return { ...e, status: "done", completedAt: doneAt };
+            return e;
+          });
+          const nextEvents = advanceProjectPhase({ dueEventId: ev.id, projectPhaseIndex: pi }, withChecklistAndSessionClosed, getWeeklyRoutine(), getSchedulePreferences(), dayKey());
+          commit(nextEvents);
+          const updatedMarker = nextEvents.find((e) => e.id === ev.id);
+          if (ev.sharedProjectId && updatedMarker) pushSharedProjectUpdate(ev.sharedProjectId, updatedMarker.phases, (getUserName() || "A collaborator") + ' finished "' + ph.name + '".');
+          return;
+        }
+        writePhases(ev.phases.map((p, ppi) => ppi === pi ? { ...p, checklist: next } : p));
+        if (ev.sharedProjectId) pushSharedProjectUpdate(ev.sharedProjectId, ev.phases.map((p, ppi) => ppi === pi ? { ...p, checklist: next } : p));
+      };
+      const planSessions = isActive ? allEvents.filter((e) => e.dueEventId === ev.id && e.projectPhaseIndex === pi) : [];
+      const pendingPlanSessions = planSessions.filter((e) => e.status === "pending");
+      const hasRealPlan = !!ph.targetDate && pendingPlanSessions.length > 0;
+      const formOpen = phasePlanForm && phasePlanForm.phaseIdx === pi;
+      const openPlanForm = () => setPhasePlanForm({ phaseIdx: pi, detail: ph.detail || "", estimateMins: ph.probeMins ? String(ph.probeMins) : "", targetDate: ph.targetDate || "", manual: ph.scheduleMode === "manual", manualDate: "", manualTime: "16:00" });
+      const chooseAuto = () => {
+        const nextPhases = ev.phases.map((p, ppi) => ppi === pi ? { ...p, scheduleMode: "auto" } : p);
+        writePhases(nextPhases);
+        if (ev.sharedProjectId) pushSharedProjectUpdate(ev.sharedProjectId, nextPhases);
+      };
+      const savePlanForm = () => {
+        const f = phasePlanForm;
+        const estimateMins = parseInt(f.estimateMins, 10) || 0;
+        const patchedPhases = ev.phases.map((p, ppi) => ppi === pi ? { ...p, detail: f.detail || void 0, targetDate: f.targetDate || void 0, probeMins: estimateMins || void 0, scheduleMode: f.manual ? "manual" : "auto" } : p);
+        if (f.manual) {
+          if (!f.manualDate) {
+            setDetailErr("Pick a date for this block first.");
+            return;
+          }
+          const withoutStalePending2 = allEvents.filter((e) => !(e.dueEventId === ev.id && e.projectPhaseIndex === pi && e.status === "pending"));
+          const sess = { id: "phase-manual-" + ev.id + "-" + pi + "-" + Date.now(), title: "Work on: " + ph.name, date: f.manualDate, time: f.manualTime, subject, notes: "", kind: "study block", duration: 60, priority, difficulty, deadline: ev.deadline || ev.date || null, status: "pending", timeSpent: 0, completedAt: null, dueEventId: ev.id, projectPhaseIndex: pi, phaseName: ph.name, projectTitle: ev.title };
+          const nextEvents2 = withoutStalePending2.map((e) => e.id === ev.id ? { ...e, phases: patchedPhases } : e).concat([sess]);
+          commit(nextEvents2);
+          if (ev.sharedProjectId) pushSharedProjectUpdate(ev.sharedProjectId, patchedPhases, (getUserName() || "A collaborator") + ' is planning "' + ph.name + '" themselves.');
+          setPhasePlanForm(null);
+          return;
+        }
+        if (!(estimateMins > 0 && f.targetDate)) {
+          const nextEvents2 = allEvents.map((e) => e.id === ev.id ? { ...e, phases: patchedPhases } : e);
+          commit(nextEvents2);
+          if (ev.sharedProjectId) pushSharedProjectUpdate(ev.sharedProjectId, patchedPhases);
+          setPhasePlanForm(null);
+          return;
+        }
+        const withoutStalePending = allEvents.filter((e) => !(e.dueEventId === ev.id && e.projectPhaseIndex === pi && e.status === "pending"));
+        const plan = buildPhaseSessionPlan(ev.id, pi, ph.name, ev.title, estimateMins, f.targetDate, ev.deadline || ev.date, subject, priority, difficulty, withoutStalePending, getWeeklyRoutine(), getSchedulePreferences(), dayKey());
+        if (!plan) {
+          setDetailErr("Couldn't find room for a plan before " + f.targetDate + ` -- try a later date, or turn on "I'll schedule this myself."`);
+          return;
+        }
+        const nextEvents = withoutStalePending.map((e) => e.id === ev.id ? { ...e, phases: patchedPhases } : e).concat(plan.sessions);
+        commit(nextEvents);
+        if (ev.sharedProjectId) pushSharedProjectUpdate(ev.sharedProjectId, patchedPhases, (getUserName() || "A collaborator") + ' built a plan for "' + ph.name + '".');
+        if (!plan.allPlaced && onToast) onToast("Couldn't fit everything before " + f.targetDate + " -- scheduled what would fit.");
+        setPhasePlanForm(null);
+      };
+      const openChecklistScheduler = (ci) => setChecklistScheduler({ phaseIdx: pi, itemIdx: ci, mode: "auto", manualDate: "", manualTime: "16:00", sharedCandidates: null, sharedSelected: [], sharedSharedUids: /* @__PURE__ */ new Set(), sharedOptions: null, sharedLoading: false });
+      const confirmChecklistSchedule = async (ci) => {
+        const cs = checklistScheduler;
+        const item = checklist[ci];
+        if (cs.mode === "manual") {
+          if (!cs.manualDate) {
+            setDetailErr("Pick a date first.");
+            return;
+          }
+          const sess = { id: "phase-item-" + ev.id + "-" + pi + "-" + Date.now(), title: "Work on: " + item.text, date: cs.manualDate, time: cs.manualTime, subject, notes: "", kind: "study block", duration: 30, priority, difficulty, deadline: ev.deadline || ev.date || null, status: "pending", timeSpent: 0, completedAt: null, dueEventId: ev.id, projectPhaseIndex: pi, checklistItemText: item.text };
+          commit(allEvents.concat([sess]));
+          writePhaseChecklist(checklist.map((c, cci) => cci === ci ? { ...c, scheduledEventId: sess.id } : c));
+          setChecklistScheduler(null);
+          return;
+        }
+        if (cs.mode === "shared" && cs.sharedOptions && cs.sharedSelectedOption) {
+          const opt = cs.sharedSelectedOption;
+          const sess = { id: "phase-item-" + ev.id + "-" + pi + "-" + Date.now(), title: "Work on: " + item.text + " (with " + cs.sharedSelected.map((uid) => (cs.sharedCandidates.find((c) => c.uid === uid) || {}).name).join(", ") + ")", date: opt.date, time: opt.time, subject, notes: "", kind: "study block", duration: opt.duration || 30, priority, difficulty, deadline: ev.deadline || ev.date || null, status: "pending", timeSpent: 0, completedAt: null, dueEventId: ev.id, projectPhaseIndex: pi, checklistItemText: item.text };
+          commit(allEvents.concat([sess]));
+          writePhaseChecklist(checklist.map((c, cci) => cci === ci ? { ...c, scheduledEventId: sess.id } : c));
+          setChecklistScheduler(null);
+          return;
+        }
+        const result = claimOrCreatePhaseSessionForChecklistItem(ev.id, pi, item.text, ev.deadline || ev.date, subject, priority, difficulty, allEvents, getWeeklyRoutine(), getSchedulePreferences(), dayKey());
+        if (!result) {
+          setDetailErr("Couldn't find room to schedule this -- try picking a time yourself instead.");
+          return;
+        }
+        commit(result.events);
+        writePhaseChecklist(checklist.map((c, cci) => cci === ci ? { ...c, scheduledEventId: result.scheduledEventId } : c));
+        setChecklistScheduler(null);
+      };
+      const openSharedTimeFinder = async () => {
+        setChecklistScheduler((cs) => ({ ...cs, mode: "shared", sharedLoading: true }));
+        try {
+          const myUid = firebase.auth().currentUser?.uid;
+          const [projectDoc, friendUids] = await Promise.all([
+            ev.sharedProjectId ? fsdb().collection("sharedProjects").doc(ev.sharedProjectId).get().catch(() => null) : null,
+            myUid ? getAcceptedFriendUids(myUid) : []
+          ]);
+          const memberUids = (projectDoc && projectDoc.exists ? Object.keys(projectDoc.data().participants || {}) : []).filter((uid) => uid !== myUid);
+          const candidateUids = memberUids.filter((uid) => friendUids.includes(uid));
+          const docs = await Promise.all(candidateUids.map((uid) => fsdb().collection("profiles").doc(uid).get().catch(() => null)));
+          const candidates = candidateUids.map((uid, i) => ({ uid, name: docs[i] && docs[i].exists && docs[i].data().name || "Studlin User" }));
+          setChecklistScheduler((cs) => ({ ...cs, mode: "shared", sharedCandidates: candidates, sharedSelected: candidates.map((c) => c.uid), sharedLoading: false }));
+        } catch (e) {
+          reportError("openSharedTimeFinder")(e);
+          setChecklistScheduler((cs) => ({ ...cs, mode: "shared", sharedCandidates: [], sharedLoading: false }));
+        }
+      };
+      const findSharedTimes = async () => {
+        const cs = checklistScheduler;
+        setChecklistScheduler((s) => ({ ...s, sharedLoading: true }));
+        const { byDate, sharedUids } = await fetchFriendsBusyIntervals(cs.sharedSelected);
+        const result = await findSharedStudyWindow(firebase.auth().currentUser?.uid, cs.sharedSelected, { timeMode: "anytime", lookAheadDayRange: 7, durationInMinutes: 30 });
+        setChecklistScheduler((s) => ({ ...s, sharedSharedUids: sharedUids, sharedOptions: result.options || [], sharedLoading: false }));
+      };
       return /* @__PURE__ */ React.createElement("div", { key: pi }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, fontWeight: 700, color: ph.status === "done" ? T.lime : isActive ? T.amber : T.faint, width: 44, flexShrink: 0, textTransform: "uppercase" } }, ph.status), /* @__PURE__ */ React.createElement(Input, { value: ph.name, onChange: (e) => writePhases(ev.phases.map((p, ppi) => ppi === pi ? { ...p, name: e.target.value } : p)), style: { flex: 1, fontSize: 12, padding: "5px 8px" } }), isActive && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setExpandedPhaseIdx(isExpanded ? null : pi), title: "Break this part into smaller steps", style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 11, padding: 2, flexShrink: 0 } }, isExpanded ? "\u25BE" : "\u25B8"), ph.status === "pending" && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => writePhases(ev.phases.filter((_, ppi) => ppi !== pi)), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 15, lineHeight: 1, padding: 2, flexShrink: 0 } }, "\xD7")), ph.status === "pending" && // Plan Part C2 (2026-09-08, approved): every phase after
       // the first used to silently reuse the project's generic
       // default probe length -- see advanceProjectPhase's own
@@ -15036,10 +15217,10 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
           },
           style: { width: 100, background: "transparent", border: `1px solid ${T.border}`, borderRadius: 5, padding: "3px 6px", color: T.text, fontSize: 10.5, fontFamily: T.font, outline: "none" }
         }
-      ), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: T.faint } }, "min")), isExpanded && /* @__PURE__ */ React.createElement("div", { style: { marginLeft: 50, marginTop: 6, paddingLeft: 10, borderLeft: `2px solid ${T.border}`, display: "flex", flexDirection: "column", gap: 5 } }, checklist.map((c, ci) => /* @__PURE__ */ React.createElement("label", { key: ci, style: { display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: c.done ? T.faint : T.text, cursor: "pointer", textDecoration: c.done ? "line-through" : "none" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: !!c.done, onChange: () => writePhaseChecklist(checklist.map((x, xi) => xi === ci ? { ...x, done: !x.done } : x)), style: { accentColor: T.lime, cursor: "pointer" } }), /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, c.text), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => writePhaseChecklist(checklist.filter((_, xi) => xi !== ci)), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 13, lineHeight: 1, padding: 0 } }, "\xD7"))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => writePhaseChecklist([...checklist, { text: "", done: false }]), style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline", textAlign: "left" } }, "+ Add step"), checklist.some((c) => c.text === "") && /* @__PURE__ */ React.createElement(Input, { autoFocus: true, value: checklist.find((c) => c.text === "").text, onChange: (e) => {
+      ), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: T.faint } }, "min")), isExpanded && /* @__PURE__ */ React.createElement("div", { style: { marginLeft: 50, marginTop: 6, paddingLeft: 10, borderLeft: `2px solid ${T.border}`, display: "flex", flexDirection: "column", gap: 8 } }, !ph.scheduleMode && !formOpen ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: chooseAuto, style: { background: T.lime, color: "#10160F", border: "none", borderRadius: 7, padding: "9px 11px", fontSize: 11.5, fontWeight: 700, fontFamily: T.font, cursor: "pointer", textAlign: "left" } }, "Let Studlin handle it", /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 500, fontSize: 10, marginTop: 1, opacity: 0.75 } }, "A short probe session -- Studlin figures out the rest as you go.")), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: openPlanForm, style: { background: "none", border: "none", color: T.muted, fontSize: 11, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline", textAlign: "left" } }, "I want to plan this myself \u2192")) : formOpen ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.faint, marginBottom: 3 } }, "What do you need to do? (optional)"), /* @__PURE__ */ React.createElement(Textarea, { value: phasePlanForm.detail, onChange: (e) => setPhasePlanForm((f) => ({ ...f, detail: e.target.value })), style: { fontSize: 11.5, padding: "6px 8px", height: 44 } })), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.faint, marginBottom: 3 } }, "About how long? (total, min)"), /* @__PURE__ */ React.createElement("input", { type: "number", min: 5, step: 5, value: phasePlanForm.estimateMins, onChange: (e) => setPhasePlanForm((f) => ({ ...f, estimateMins: e.target.value })), style: { width: "100%", boxSizing: "border-box", background: "transparent", border: `1px solid ${T.border}`, borderRadius: 5, padding: "5px 7px", color: T.text, fontSize: 11, fontFamily: T.font, outline: "none" } })), /* @__PURE__ */ React.createElement("div", { style: { flex: 1 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.faint, marginBottom: 3 } }, "Done by"), /* @__PURE__ */ React.createElement(Input, { type: "date", value: phasePlanForm.targetDate, max: ev.deadline || ev.date || void 0, onChange: (e) => setPhasePlanForm((f) => ({ ...f, targetDate: e.target.value })), style: { fontSize: 11, padding: "5px 7px", width: "100%", boxSizing: "border-box" } }))), /* @__PURE__ */ React.createElement("div", { style: { border: `1px solid ${T.border}`, borderRadius: 7, padding: "8px 10px" } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setPhasePlanForm((f) => ({ ...f, manual: !f.manual })), style: { display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.text } }, "I'll schedule this myself"), /* @__PURE__ */ React.createElement("div", { style: { width: 30, height: 17, borderRadius: 9, background: phasePlanForm.manual ? T.lime : T.faint, position: "relative", transition: "background 0.2s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 13, height: 13, borderRadius: "50%", background: "#fff", position: "absolute", top: 2, left: phasePlanForm.manual ? 15 : 2, transition: "left 0.2s" } }))), phasePlanForm.manual && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 8, alignItems: "center", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Input, { type: "date", value: phasePlanForm.manualDate, onChange: (e) => setPhasePlanForm((f) => ({ ...f, manualDate: e.target.value })), style: { width: 130, fontSize: 11 } }), /* @__PURE__ */ React.createElement(TimeInput, { value: phasePlanForm.manualTime, onChange: (v) => setPhasePlanForm((f) => ({ ...f, manualTime: v })) }))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: savePlanForm }, "Save"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setPhasePlanForm(null) }, "Cancel"))) : hasRealPlan ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Scheduled for ", ph.name), planSessions.map((s) => /* @__PURE__ */ React.createElement("div", { key: s.id, style: { display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: s.status === "done" ? T.faint : T.text } }, /* @__PURE__ */ React.createElement("span", { style: { width: 6, height: 6, borderRadius: "50%", background: s.status === "done" ? T.teal : T.lime, flexShrink: 0 } }), /* @__PURE__ */ React.createElement("span", null, s.date, " \xB7 ", s.time), s.status === "done" && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.teal, fontWeight: 700, textTransform: "uppercase" } }, "done"))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.faint, lineHeight: 1.4 } }, "Want to move just one? Open it on your calendar like any other block. Changing the whole plan only touches sessions that haven't happened yet."), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: openPlanForm, style: { background: "none", border: "none", color: T.muted, fontSize: 11, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline", textAlign: "left" } }, "Edit plan (change time or deadline) \u2192")) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted } }, ph.scheduleMode === "manual" ? "You're planning this yourself." : "Studlin will handle this."), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: openPlanForm, style: { background: "none", border: "none", color: T.lime, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, "Change")), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 2, paddingTop: 8, borderTop: `1px solid ${T.border}`, display: "flex", flexDirection: "column", gap: 5 } }, checklist.map((c, ci) => /* @__PURE__ */ React.createElement("div", { key: ci }, /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: c.done ? T.faint : T.text, cursor: "pointer", textDecoration: c.done ? "line-through" : "none" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: !!c.done, onChange: () => writePhaseChecklist(checklist.map((x, xi) => xi === ci ? { ...x, done: !x.done } : x)), style: { accentColor: T.lime, cursor: "pointer" } }), /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, c.text), !c.done && c.text && (c.scheduledEventId ? /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.teal, fontWeight: 700, textTransform: "uppercase" } }, "scheduled") : /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => openChecklistScheduler(ci), style: { background: "none", border: `1px solid ${T.border}`, borderRadius: 5, color: T.muted, fontSize: 9.5, fontFamily: T.font, padding: "2px 6px", cursor: "pointer", flexShrink: 0 } }, "Schedule")), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => writePhaseChecklist(checklist.filter((_, xi) => xi !== ci)), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 13, lineHeight: 1, padding: 0 } }, "\xD7")), checklistScheduler && checklistScheduler.phaseIdx === pi && checklistScheduler.itemIdx === ci && /* @__PURE__ */ React.createElement("div", { style: { marginLeft: 22, marginTop: 5, background: T.card, border: `1px dashed ${T.borderHover}`, borderRadius: 7, padding: "8px 9px", display: "flex", flexDirection: "column", gap: 7 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setChecklistScheduler((s) => ({ ...s, mode: "auto" })), style: { flex: 1, fontSize: 10, fontWeight: 600, padding: "5px 4px", borderRadius: 5, border: `1px solid ${checklistScheduler.mode === "auto" ? T.lime : T.border}`, background: checklistScheduler.mode === "auto" ? T.lime + "22" : "transparent", color: checklistScheduler.mode === "auto" ? T.lime : T.muted, cursor: "pointer", fontFamily: T.font } }, "Studlin picks the time"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setChecklistScheduler((s) => ({ ...s, mode: "manual" })), style: { flex: 1, fontSize: 10, fontWeight: 600, padding: "5px 4px", borderRadius: 5, border: `1px solid ${checklistScheduler.mode === "manual" ? T.lime : T.border}`, background: checklistScheduler.mode === "manual" ? T.lime + "22" : "transparent", color: checklistScheduler.mode === "manual" ? T.lime : T.muted, cursor: "pointer", fontFamily: T.font } }, "I'll pick the time"), ev.sharedProjectId && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: openSharedTimeFinder, style: { flex: 1, fontSize: 10, fontWeight: 600, padding: "5px 4px", borderRadius: 5, border: `1px solid ${checklistScheduler.mode === "shared" ? T.lime : T.border}`, background: checklistScheduler.mode === "shared" ? T.lime + "22" : "transparent", color: checklistScheduler.mode === "shared" ? T.lime : T.muted, cursor: "pointer", fontFamily: T.font } }, "Find a time with others")), checklistScheduler.mode === "manual" && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center" } }, /* @__PURE__ */ React.createElement(Input, { type: "date", value: checklistScheduler.manualDate, onChange: (e) => setChecklistScheduler((s) => ({ ...s, manualDate: e.target.value })), style: { width: 120, fontSize: 10.5 } }), /* @__PURE__ */ React.createElement(TimeInput, { value: checklistScheduler.manualTime, onChange: (v) => setChecklistScheduler((s) => ({ ...s, manualTime: v })) })), checklistScheduler.mode === "shared" && (checklistScheduler.sharedLoading ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.muted } }, "Loading\u2026") : checklistScheduler.sharedCandidates === null ? null : checklistScheduler.sharedCandidates.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.muted } }, "None of your collaborators on this project are friends yet -- add them in Studlin Network to check their availability.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 5 } }, checklistScheduler.sharedCandidates.map((c2) => /* @__PURE__ */ React.createElement("label", { key: c2.uid, style: { display: "flex", alignItems: "center", gap: 6, fontSize: 10.5, color: T.text, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: checklistScheduler.sharedSelected.includes(c2.uid), onChange: () => setChecklistScheduler((s) => ({ ...s, sharedSelected: s.sharedSelected.includes(c2.uid) ? s.sharedSelected.filter((u) => u !== c2.uid) : [...s.sharedSelected, c2.uid] })), style: { accentColor: T.lime, cursor: "pointer" } }), c2.name)), !checklistScheduler.sharedOptions ? /* @__PURE__ */ React.createElement(BtnSm, { onClick: findSharedTimes, disabled: checklistScheduler.sharedSelected.length === 0 }, "Find a time") : checklistScheduler.sharedOptions.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.muted } }, "No shared free time found in the next week.") : /* @__PURE__ */ React.createElement(React.Fragment, null, checklistScheduler.sharedSelected.some((uid) => !checklistScheduler.sharedSharedUids.has(uid)) && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.amber } }, "Some of them haven't shared their free/busy time -- Studlin can only see who has."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4 } }, checklistScheduler.sharedOptions.map((opt, oi) => /* @__PURE__ */ React.createElement("button", { type: "button", key: oi, onClick: () => setChecklistScheduler((s) => ({ ...s, sharedSelectedOption: opt })), style: { textAlign: "left", fontSize: 10.5, padding: "5px 7px", borderRadius: 5, border: `1px solid ${checklistScheduler.sharedSelectedOption === opt ? T.lime : T.border}`, background: checklistScheduler.sharedSelectedOption === opt ? T.lime + "18" : "transparent", color: T.text, cursor: "pointer", fontFamily: T.font } }, opt.dayLabel, " \xB7 ", opt.timeLabel)))))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => confirmChecklistSchedule(ci), disabled: checklistScheduler.mode === "shared" && !checklistScheduler.sharedSelectedOption }, "Confirm"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setChecklistScheduler(null) }, "Cancel"))))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => writePhaseChecklist([...checklist, { text: "", done: false }]), style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline", textAlign: "left" } }, "+ Add step"), checklist.some((c) => c.text === "") && /* @__PURE__ */ React.createElement(Input, { autoFocus: true, value: checklist.find((c) => c.text === "").text, onChange: (e) => {
         const idx = checklist.findIndex((c) => c.text === "");
         writePhaseChecklist(checklist.map((x, xi) => xi === idx ? { ...x, text: e.target.value } : x));
-      }, placeholder: "What's this step?", style: { fontSize: 11.5, padding: "4px 7px" } })));
+      }, placeholder: "What's this step?", style: { fontSize: 11.5, padding: "4px 7px" } }))));
     }), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => writePhases([...ev.phases, { name: "", status: "pending" }]), style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline", textAlign: "left" } }, "+ Add phase")), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10, paddingTop: 10, borderTop: `1px solid ${T.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.faint, lineHeight: 1.4 } }, "Finish the active phase's session in the Lock-In Timer to move to the next part."), ev.phases.some((p) => p.status === "active") && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: markPhaseDone, style: { background: "none", border: `1px solid ${T.border}`, borderRadius: 6, color: T.text, fontSize: 10.5, fontWeight: 600, fontFamily: T.font, cursor: "pointer", padding: "5px 9px", flexShrink: 0, whiteSpace: "nowrap" } }, "Mark phase done"))),
     ev.outline && ev.outline.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 } }, "Outline"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, ev.outline.map((o, oi) => /* @__PURE__ */ React.createElement("div", { key: oi, style: { display: "flex", alignItems: "center", gap: 6 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: o.done, onChange: () => writeOutline(ev.outline.map((x, xi) => xi === oi ? { ...x, done: !x.done } : x)), style: { accentColor: T.lime, cursor: "pointer" } }), /* @__PURE__ */ React.createElement(Input, { value: o.text, onChange: (e) => writeOutline(ev.outline.map((x, xi) => xi === oi ? { ...x, text: e.target.value } : x)), style: { flex: 1, fontSize: 12, padding: "5px 8px", textDecoration: o.done ? "line-through" : "none" } }), /* @__PURE__ */ React.createElement(Input, { type: "date", value: o.dueDate || "", onChange: (e) => writeOutline(ev.outline.map((x, xi) => xi === oi ? { ...x, dueDate: e.target.value } : x)), title: "Due date for this step (optional)", style: { width: 120, fontSize: 11, padding: "5px 6px", flexShrink: 0 } }), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => writeOutline(ev.outline.filter((_, xi) => xi !== oi)), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 15, lineHeight: 1, padding: 2, flexShrink: 0 } }, "\xD7"))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => writeOutline([...ev.outline, { text: "", done: false }]), style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline", textAlign: "left" } }, "+ Add step")), chainIdForReschedule && /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", style: { marginTop: 8 }, onClick: () => {
       reoptimizeAttackChain(chainIdForReschedule);
