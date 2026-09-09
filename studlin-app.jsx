@@ -21232,7 +21232,12 @@ function RosterList({items,setItems,makeNewItem,addLabel}){
 // own original radius (6px/8px) and get a local borderRadius:10 override
 // only at this wizard's own call sites instead, same net visual result
 // without touching a shared component's default.
-const classSetupChoiceStyle={width:"100%",textAlign:"left",padding:"14px 16px",borderRadius:10,border:`1.5px solid ${T.border}`,background:T.card2,color:T.text,cursor:"pointer",fontFamily:T.font};
+// Bug fix, 2026-09-09 user request (screenshot showed cream bubbles inside
+// a white modal): background was T.card2, the light theme's cream/off-white
+// card tone (#F0EBE0) -- reads fine against a page background but reads as
+// dirty/off against this wizard's own white modal (T.card). Plain white +
+// the existing border is enough to read as a distinct, clickable card here.
+const classSetupChoiceStyle={width:"100%",textAlign:"left",padding:"14px 16px",borderRadius:10,border:`1.5px solid ${T.border}`,background:T.card,color:T.text,cursor:"pointer",fontFamily:T.font};
 
 // Shared by Class Setup Wizard's exam review step, Add Task, and Edit
 // Task -- one file/paste/link editor instead of three copies that could
@@ -22584,10 +22589,20 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                   <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Scan my whole schedule</div>
                   <div style={{fontSize:12,color:T.muted}}>Upload a screenshot, photo, or paste your full schedule — Studlin splits it into classes and finds each one's meeting time and exam dates automatically.</div>
                 </button>
-                <button type="button" onClick={()=>{setScanError("");setPasteMode(false);setPasteText("");setAddMode("scan");}} style={classSetupChoiceStyle}>
-                  <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Scan a syllabus</div>
-                  <div style={{fontSize:12,color:T.muted}}>Upload a file or photo — Studlin reads the class name, meeting time, and deadlines.</div>
-                </button>
+                {/* 2026-09-09 user decision: scan-whole-schedule-first, then
+                    syllabus per class -- offering both as equal parallel
+                    choices before a single class exists meant nothing
+                    steered a student toward the faster, one-shot path.
+                    "Scan a syllabus" now only appears once at least one
+                    class already exists this session (staged or, for a
+                    prior HS bell-schedule commit, already committed) --
+                    exactly the "for each class" ordering asked for. */}
+                {(pendingClasses.length>0||hsClassesCommitted>0)&&(
+                  <button type="button" onClick={()=>{setScanError("");setPasteMode(false);setPasteText("");setAddMode("scan");}} style={classSetupChoiceStyle}>
+                    <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Scan a syllabus</div>
+                    <div style={{fontSize:12,color:T.muted}}>Upload a file or photo — Studlin reads the class name, meeting time, and deadlines.</div>
+                  </button>
+                )}
               </>)}
               <button type="button" onClick={startManual} style={classSetupChoiceStyle}>
                 <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Enter manually</div>
@@ -29798,6 +29813,22 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const currentTerm=getSchoolTerm();
   const currentTermSubjects=userSubjects.filter(s=>!s.termEnd||!currentTerm||s.termEnd===currentTerm.end);
   const pastTermSubjects=userSubjects.filter(s=>s.termEnd&&currentTerm&&s.termEnd!==currentTerm.end);
+  // Bug fix, 2026-09-09 user request ("i want it to be one time thing"):
+  // the missing-syllabus nudge used to sit permanently in the Courses
+  // sidebar flow until manually dismissed. Now it's a floating toast (see
+  // its own render further down) that shows itself once and auto-dismisses
+  // a few seconds later -- reusing dismissSyllabusNudge's existing 3-day
+  // cooldown, so it still isn't gone forever: a genuinely new unscanned
+  // class from a later bulk scan gets a fresh one-time showing once that
+  // cooldown clears, same as it always has. Depends on the boolean
+  // (needSyllabusCount>0), not the count itself, so the timer isn't
+  // restarted every time a class gets marked/unmarked while it's showing.
+  const needSyllabusCount=currentTermSubjects.filter(s=>s.needsSyllabus).length;
+  useEffect(()=>{
+    if(needSyllabusCount===0||syllabusNudgeDismissed||!shouldShowSyllabusNudge())return;
+    const id=setTimeout(()=>{dismissSyllabusNudge();setSyllabusNudgeDismissed(true);},8000);
+    return ()=>clearTimeout(id);
+  },[needSyllabusCount>0,syllabusNudgeDismissed]);
   // Extracted from what used to be a plain inline .map so the identical
   // row markup (rename/delete-confirm/drag/3-dot menu) can be reused for
   // both the current-term list and the collapsed past-terms section
@@ -29969,30 +30000,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             <span style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Courses</span>
             <button type="button" onClick={()=>setQuickScanOpen(true)} style={{background:"none",border:"none",color:T.lime,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:0}}>+ Add new</button>
           </div>
-          {(()=>{
-            // A "Scan my whole schedule" (or HS bell-schedule) import can
-            // only ever produce classes + meeting times, never real
-            // assignments -- see needsSyllabus in commitAllToCalendar.
-            // Surface that gap right where "Import syllabus"/"Scan
-            // assignments" already lives per-course, instead of leaving it
-            // undiscoverable until someone happens to open a course's menu.
-            const needSyllabus=currentTermSubjects.filter(s=>s.needsSyllabus);
-            if(needSyllabus.length===0||syllabusNudgeDismissed||!shouldShowSyllabusNudge())return null;
-            return (
-              <div style={{padding:"9px 10px",borderRadius:8,border:`1px solid ${T.lime}33`,background:T.lime+"0f",marginBottom:10}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:6}}>
-                  <div style={{fontSize:11,color:T.text,lineHeight:1.4}}>{needSyllabus.length===1?"1 class is":needSyllabus.length+" classes are"} missing a syllabus scan -- add one to auto-fill assignments and exams.</div>
-                  <button type="button" onClick={()=>{dismissSyllabusNudge();setSyllabusNudgeDismissed(true);}} title="Dismiss" style={{background:"none",border:"none",color:T.faint,fontSize:13,lineHeight:1,cursor:"pointer",padding:0,flexShrink:0}}>×</button>
-                </div>
-                <div style={{display:"flex",flexWrap:"wrap",gap:5,marginTop:7}}>
-                  {needSyllabus.map(s=>(
-                    <button key={s.id} type="button" onClick={()=>{setQuickScanTargetCourseId(s.id);setQuickScanOpen(true);}}
-                      style={{fontSize:10.5,fontWeight:600,padding:"4px 8px",borderRadius:6,border:`1px solid ${s.color}55`,background:s.color+"18",color:T.text,cursor:"pointer",fontFamily:T.font}}>{s.label}</button>
-                  ))}
-                </div>
-              </div>
-            );
-          })()}
+          {/* Missing-syllabus nudge used to render inline here, permanently
+              until manually dismissed -- now a floating toast, see its own
+              render further down (search needSyllabusCount). */}
           <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:18}}>
             {currentTermSubjects.length===0&&<div style={{fontSize:11,color:T.faint,padding:"4px 0 8px"}}>No courses yet.</div>}
             {currentTermSubjects.map(renderCourseRow)}
@@ -30779,6 +30789,24 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       )}
       {deadlineToast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.red,color:"#fff",fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)"}}>{deadlineToast}</div>
+      )}
+      {/* Missing-syllabus nudge, now a one-time floating toast instead of a
+          permanent sidebar fixture -- see needSyllabusCount's own comment
+          for why. Still directly actionable (a chip per class opens that
+          class's syllabus scan in one click) and still dismissible early. */}
+      {needSyllabusCount>0&&!syllabusNudgeDismissed&&shouldShowSyllabusNudge()&&(
+        <div style={{position:"fixed",bottom:24,left:20,zIndex:80,maxWidth:300,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.lime}33`,background:T.card,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",animation:"studlinPop 0.2s ease"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:6}}>
+            <div style={{fontSize:11,color:T.text,lineHeight:1.4}}>{needSyllabusCount===1?"1 class is":needSyllabusCount+" classes are"} missing a syllabus scan -- add one to auto-fill assignments and exams.</div>
+            <button type="button" onClick={()=>{dismissSyllabusNudge();setSyllabusNudgeDismissed(true);}} title="Dismiss" style={{background:"none",border:"none",color:T.faint,fontSize:13,lineHeight:1,cursor:"pointer",padding:0,flexShrink:0}}>×</button>
+          </div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:5,marginTop:7}}>
+            {currentTermSubjects.filter(s=>s.needsSyllabus).map(s=>(
+              <button key={s.id} type="button" onClick={()=>{dismissSyllabusNudge();setSyllabusNudgeDismissed(true);setQuickScanTargetCourseId(s.id);setQuickScanOpen(true);}}
+                style={{fontSize:10.5,fontWeight:600,padding:"4px 8px",borderRadius:6,border:`1px solid ${s.color}55`,background:s.color+"18",color:T.text,cursor:"pointer",fontFamily:T.font}}>{s.label}</button>
+            ))}
+          </div>
+        </div>
       )}
       {rescheduleToast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {rescheduleToast}</div>
