@@ -166,7 +166,7 @@ describe("EventDetailModal: typeChoice checks the real flags before asChecklist 
   test("finishSave persists both isAssignment and a real deadlineTime", () => {
     const idx = SOURCE.indexOf("const finishSave=(forcedAttackSlot)=>{");
     assert.notEqual(idx, -1);
-    const body = SOURCE.slice(idx, idx + 4500);
+    const body = SOURCE.slice(idx, idx + 5600);
     assert.match(body, /isAssignment:asAssignment\|\|undefined/);
     assert.match(body, /deadlineTime:deadlineTime\|\|null/);
   });

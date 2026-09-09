@@ -24636,6 +24636,15 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
       const outline=isPhaseCandidate?normalizeOutlineDraft(projectPlan.outline):[];
       const desiredDate=date&&date>=dayKey()?date:dayKey();
       attackPair=buildAssignmentAttackBlockPair(ev.id,{title:title.trim(),subject,courseId:courseIdForLabel(subject),notes,deadline:deadline||null,priority,difficulty,probeMins:attackProbeMins,outline},phases,allEvents,routines,prefs,desiredDate,prefs.workStartTime,false,forcedAttackSlot);
+      // Bug fix, 2026-09-08 user report ("when i turn it on it doesnt do
+      // anything"): buildAssignmentAttackBlockPair returns null when no
+      // legal slot exists before the deadline (e.g. a deadline that's
+      // already too close) -- this used to fall straight through to the
+      // plain field-update path below with the toggle silently ignored,
+      // no error, nothing on the calendar. Every other Attack Block entry
+      // point (saveManual/aiArrange's startAttackBlockWithChoice) already
+      // shows a real message for this exact failure; this path never did.
+      if(!attackPair){setDetailErr("Couldn't find room for a probe session before the deadline -- try a later deadline or turn Attack Block off.");return;}
     }
     const updated=allEvents.map(e=>{
       if(e.id!==ev.id)return e;
@@ -25519,9 +25528,13 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
       ):collabCandidates.length===0?(
         <div style={{fontSize:12.5,color:T.muted}}>No friends yet — add some in Studlin Network first.</div>
       ):(<>
-        {collabCandidates.length>5&&(
-          <Input value={collabSearchQuery} onChange={e=>setCollabSearchQuery(e.target.value)} placeholder="Search friends" style={{marginBottom:10,width:"100%"}} />
-        )}
+        {/* Bug fix, 2026-09-08 user report: this used to only render past 5
+            candidates (matching "Schedule with Friends"'s own threshold) --
+            for anyone with fewer friends than that, a real, shipped feature
+            was permanently invisible with no way to tell it existed at all.
+            Always shown now -- a search box costs nothing to look at with
+            only 1-2 names in the list. */}
+        <Input value={collabSearchQuery} onChange={e=>setCollabSearchQuery(e.target.value)} placeholder="Search friends" style={{marginBottom:10,width:"100%"}} />
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
           {collabCandidates.filter(c=>c.name.toLowerCase().includes(collabSearchQuery.trim().toLowerCase())).map(c=>(
             <label key={c.uid} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:8,border:`1px solid ${T.border}`,cursor:"pointer",background:collabSelected.includes(c.uid)?T.card2:"transparent"}}>
@@ -27574,11 +27587,28 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     const nonSharing=gsSelected.filter(uid=>!gsSharedUids.has(uid)&&!shareAskSentUids.has(uid));
     if(nonSharing.length===0)return;
     setShareAskSentUids(prev=>new Set([...prev,...nonSharing]));
-    await Promise.all(nonSharing.map(uid=>
-      authFetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"shareAvailabilityRequest",recipientUid:uid})}).catch(()=>{})
+    // Bug fix, 2026-09-08 user report: this used to show "Asked them" as a
+    // flat success regardless of what actually happened -- api/notify.js's
+    // shareAvailabilityRequest handler silently returns {ok:true,sent:0}
+    // whenever the recipient has no push notifications enabled at all
+    // (a DIFFERENT setting than "Share my free/busy time," which is the
+    // one they'd actually gone and turned on) or has no registered
+    // device token, and this call never even read that field before
+    // declaring success. Now actually checks how many pushes went out and
+    // says so honestly -- "may not have notifications turned on" isn't as
+    // satisfying as a guaranteed delivery, but it's true, unlike the old
+    // message.
+    const results=await Promise.all(nonSharing.map(uid=>
+      authFetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"shareAvailabilityRequest",recipientUid:uid})})
+        .then(r=>r.json()).then(d=>({uid,sent:!!(d&&d.sent>0)})).catch(()=>({uid,sent:false}))
     ));
-    setPlacementToast("Asked "+(nonSharing.length===1?"them":nonSharing.length+" friends")+" to turn on sharing their busy time.");
-    setTimeout(()=>setPlacementToast(""),3200);
+    const delivered=results.filter(r=>r.sent).length;
+    setPlacementToast(delivered===0
+      ?"Couldn't reach "+(nonSharing.length===1?"them":"any of them")+" -- they may not have notifications turned on in Studlin. Ask them directly instead?"
+      :delivered<nonSharing.length
+      ?"Reached "+delivered+" of "+nonSharing.length+" -- the rest may not have notifications turned on."
+      :"Asked "+(nonSharing.length===1?"them":nonSharing.length+" friends")+" to turn on sharing their busy time.");
+    setTimeout(()=>setPlacementToast(""),delivered===0?5000:3200);
   };
   // Resolves (or creates) the chat room to post the proposal into -- a
   // single friend reuses the existing deterministic-id DM pattern, 2+
@@ -30206,9 +30236,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         ):evCollabCandidates.length===0?(
           <div style={{fontSize:12.5,color:T.muted}}>No friends yet — add some in Studlin Network first.</div>
         ):(<>
-          {evCollabCandidates.length>5&&(
-            <Input value={evCollabSearchQuery} onChange={e=>setEvCollabSearchQuery(e.target.value)} placeholder="Search friends" style={{marginBottom:10,width:"100%"}} />
-          )}
+          {/* Bug fix, 2026-09-08 user report: see collabCandidates' own
+              identical fix -- a 5+ threshold made this permanently
+              invisible for anyone with fewer friends, with no way to tell
+              it existed. Always shown now. */}
+          <Input value={evCollabSearchQuery} onChange={e=>setEvCollabSearchQuery(e.target.value)} placeholder="Search friends" style={{marginBottom:10,width:"100%"}} />
           <div style={{display:"flex",flexDirection:"column",gap:8}}>
             {evCollabCandidates.filter(c=>c.name.toLowerCase().includes(evCollabSearchQuery.trim().toLowerCase())).map(c=>(
               <label key={c.uid} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer",background:evCollabSelected.includes(c.uid)?T.card2:"transparent"}}>

@@ -95,15 +95,22 @@ describe("Project collaborator pickers get the same error-handling + search bar 
     assert.match(body, /setEvCollabLoadError\(true\)/);
   });
 
-  test("both collaborator picker modals render a search bar once candidates exceed 5, same threshold as Schedule with Friends", () => {
+  test("both collaborator picker modals render a search bar for any nonzero candidate count", () => {
+    // Superseded 2026-09-08: originally shipped with the same >5 threshold
+    // "Schedule with Friends" uses, but the user has exactly 1 friend --
+    // that threshold made a real, shipped feature permanently invisible to
+    // them ("im mad at you because you also said theres search bar but
+    // thereisnt"). The threshold is gone; see
+    // collab-search-and-notify-honesty-2026-09-08.test.js for the fix's own
+    // regression guard.
     const collabIdx = SOURCE.indexOf("{collabLoading?(");
     const collabBody = SOURCE.slice(collabIdx, collabIdx + 1400);
-    assert.match(collabBody, /collabCandidates\.length>5&&\(/);
+    assert.doesNotMatch(collabBody, /collabCandidates\.length>5&&\(/);
     assert.match(collabBody, /placeholder="Search friends"/);
 
     const evCollabIdx = SOURCE.indexOf("{evCollabLoading?(");
     const evCollabBody = SOURCE.slice(evCollabIdx, evCollabIdx + 1600);
-    assert.match(evCollabBody, /evCollabCandidates\.length>5&&\(/);
+    assert.doesNotMatch(evCollabBody, /evCollabCandidates\.length>5&&\(/);
     assert.match(evCollabBody, /placeholder="Search friends"/);
   });
 });
