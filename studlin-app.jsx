@@ -3094,6 +3094,34 @@ function isZeroDurationTimedReminder(ev){return ev.kind==="reminder"&&!ev.checkl
 // in-tree drag sources. dataTransfer crosses that boundary for free since
 // it's tracked by the browser itself, not by either component tree.
 const MANUAL_BLOCK_DRAG_MIME="application/x-studlin-manual-block";
+// 2026-09-09 user request: New Task's "I'll pick the time" only ever
+// offered typed Date/Start Time fields, no drag alternative -- unlike the
+// one above, there's no existing event to attach a block to yet (this
+// CREATES the task), so it needs its own payload shape (full draft
+// fields, not a dueEventId reference) and its own MIME rather than
+// overloading MANUAL_BLOCK_DRAG_MIME's dueEventId-required contract.
+const NEW_TASK_DRAG_MIME="application/x-studlin-new-task";
+// Small gap (under an hour) between the drop point and whatever's next on
+// the calendar that day -> fill exactly that gap, since the whole point
+// of dragging instead of typing is not having to already know how long
+// something takes. No gap, or a gap an hour or more, -> a plain 1-hour
+// default (arbitrary but reasonable for "I don't know yet," same role
+// findLegalSlotOrNull's own defaults play elsewhere). Floors at 5 minutes
+// rather than 0/negative for the edge case of dropping exactly on an
+// existing block's boundary.
+function computeDropDuration(events,routines,prefs,date,time){
+  // computeOccupiedIntervals (not getDayOccupiedIntervals, which reads
+  // lsGet("events") directly and ignores whatever's passed to it) is the
+  // one that actually respects the events array a caller hands it --
+  // needed here since CalendarTab's own in-memory `events` state can be
+  // ahead of what's persisted at drop time.
+  const occupied=computeOccupiedIntervals(events,routines,prefs,date);
+  const dropStart=timeToMinutes(time);
+  const nextStart=occupied.map(o=>o.start).filter(s=>s>dropStart).sort((a,b)=>a-b)[0];
+  if(nextStart===undefined)return 60;
+  const gap=nextStart-dropStart;
+  return gap>=60?60:Math.max(5,gap);
+}
 function isTier0Missed(ev,todayKey){
   if(ev.status!=="pending")return false;
   if(ev.checklist)return false;
@@ -19914,7 +19942,7 @@ function AcceptanceRoster({memberUids, memberNames, responses}) {
   );
 }
 
-function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropManualBlockRequest, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent, selectedRoutineKey, onSelectRoutineOccurrence, blockRefs, flipOldRectsRef, flipSeq, newItemHighlightIds, gsBusyByDate, gsRecommended}) {
+function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropManualBlockRequest, onDropNewTaskRequest, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent, selectedRoutineKey, onSelectRoutineOccurrence, blockRefs, flipOldRectsRef, flipSeq, newItemHighlightIds, gsBusyByDate, gsRecommended}) {
   // "Watch it happen" FLIP playback (see CalendarTab's captureFlip) --
   // flipSeq changing means flipOldRectsRef.current now holds a snapshot
   // of every block's on-screen position from right before events just
@@ -20320,6 +20348,14 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
       let payload=null;
       try{payload=JSON.parse(e.dataTransfer.getData(MANUAL_BLOCK_DRAG_MIME));}catch(err){payload=null;}
       if(payload)onDropManualBlockRequest(payload, dk, time);
+    } else if (e.dataTransfer && e.dataTransfer.getData(NEW_TASK_DRAG_MIME) && onDropNewTaskRequest) {
+      // See NEW_TASK_DRAG_MIME's own comment -- same "drag source lives
+      // outside this component tree" shape as MANUAL_BLOCK_DRAG_MIME just
+      // above (New Task's modal, not EventDetailModal), just creating a
+      // brand-new task instead of linking a block to an existing one.
+      let payload=null;
+      try{payload=JSON.parse(e.dataTransfer.getData(NEW_TASK_DRAG_MIME));}catch(err){payload=null;}
+      if(payload)onDropNewTaskRequest(payload, dk, time);
     } else {
       return;
     }
@@ -26015,7 +26051,7 @@ function findAllOverlaps(events,todayKey){
 // editRoutine (the rule being edited) is the one thing that switches this
 // between create and edit mode -- present means Save+Delete, absent means
 // Create.
-function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKind,anchorX,anchorY,color,hideRepeat,onPreviewChange,liveOverride,events,routines,hidden,editRoutine,editRoutineDate,subjectOptions,onClose,onCreate,onSave,onDelete}){
+function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKind,anchorX,anchorY,color,hideRepeat,onPreviewChange,liveOverride,events,routines,hidden,editRoutine,editRoutineDate,subjectOptions,onClose,onCreate,onSave,onDelete,setActive=()=>{}}){
   const [title,setTitle]=useState("");
   const [date,setDate]=useState("");
   const [startTime,setStartTime]=useState("09:00");
@@ -27942,6 +27978,26 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     setPlacementToast("Block added — "+fmtTimeRange(time,block.duration)+".");
     setTimeout(()=>setPlacementToast(""),3200);
   };
+  // 2026-09-09 user request: New Task's "I'll pick the time" drag chip --
+  // unlike commitManualBlockDrop above, there's no dueEventId (nothing
+  // exists yet, this CREATES the task). Duration comes from
+  // computeDropDuration -- fills a real gap under an hour so a small,
+  // imprecise task doesn't overrun into whatever's next, defaults to an
+  // hour when there's nothing to fit around.
+  const commitNewTaskDrop=(payload,dateKey,time)=>{
+    if(!payload||!payload.title)return;
+    const duration=computeDropDuration(events,routines,getSchedulePreferences(),dateKey,time);
+    const subj=payload.subject||"";
+    const task={id:"newtask-"+Date.now(),title:payload.title,date:dateKey,time,
+      subject:subj,courseId:courseIdForLabel(subj),kind:payload.kind,notes:payload.notes||"",
+      priority:5,difficulty:5,deadline:payload.deadline||null,duration,status:"pending",timeSpent:0,completedAt:null,
+      ...(payload.isGeneralTask?{isGeneralTask:true}:{}),
+      ...(payload.isAssignment?{isAssignment:true}:{})};
+    const next=events.concat([task]);
+    setEvents(next);lsSet("events",next);
+    setPlacementToast((payload.title.length>28?payload.title.slice(0,28)+"…":payload.title)+" added — "+fmtTimeRange(time,duration)+".");
+    setTimeout(()=>setPlacementToast(""),3200);
+  };
   // ── Schedule with Friends ────────────────────────────────────────────
   const openGroupSchedule=async()=>{
     setGsOpen(true);setGsStep("pick");setGsSelected([]);setGsLoading(true);setGsLoadError(false);setGsConfirmLoadError(false);setGsSearchQuery("");
@@ -29570,6 +29626,33 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const isTaskKind=!isFixedKind&&!isReminderKind;
   const isExamKind=evKind==="exam";
   const isProjectKind=evKind==="project";
+  // 2026-09-09 user request: "I'll pick the time" only ever offered typed
+  // Date/Start Time fields -- for a small, imprecise thing ("do this
+  // sometime this afternoon") not knowing the exact time OR duration up
+  // front is the whole reason to drag instead of type. Excluded: Project
+  // (saveManual hard-requires notes/phases before it'll save at all --
+  // dragging would just hit the same block), Exam/Class (real-world
+  // commitments with an already-known, precise time -- a fuzzy drop
+  // doesn't fit what they are), and an Assignment with Attack Block on
+  // (Studlin finds the time itself there; a manually-picked date/time
+  // isn't even a guaranteed placement in that path). Duration itself is
+  // computed at DROP time from the actual gap on the calendar
+  // (computeDropDuration), not here -- this only needs to carry the
+  // draft's own fields, no dueEventId since nothing exists yet.
+  const canDragNewTask=(isTaskKind&&!isProjectKind&&!(evKind==="assignment"&&evAttackBlock))||isReminderKind||evKind==="busy block";
+  const dragNewTaskPayload=()=>{
+    const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
+    // Task/Assignment/Study Session all share the same real kind
+    // ("study block") -- isGeneralTask/isAssignment (2026-09-06) is what
+    // actually distinguishes them under the hood, same convention
+    // buildTask's own manual-mode resolution already uses. Resolved here
+    // (not in CalendarTab's drop handler) since evKind/evSubject/etc. are
+    // this modal's own closure state, gone once it closes.
+    const resolvedKind=(evKind==="assignment"||evKind==="task"||evKind==="studySession")?"study block":evKind;
+    return {title:evTitle.trim()||"Untitled",kind:resolvedKind,subject:subj,deadline:evDeadline||null,notes:evNotes||"",
+      ...(evKind==="task"?{isGeneralTask:true}:{}),
+      ...(evKind==="assignment"?{isAssignment:true}:{})};
+  };
   // Restored 2026-09-01 (was assignment-only, forced permanently
   // unreachable since 2026-07-30 -- see the "No specific time" comment
   // below) and extended to Task: a due-date-only Task is exactly as
@@ -30261,7 +30344,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           onEditRoutine={(routineId,date)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule,date);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
           selDay={selDay} setSelDay={setSelDay} onDeleteEvent={deleteEventWithUndo} catchUpPending={catchUpPending}
           sidebarDragChip={sidebarDragChip} onDropSidebarChip={(dk,time,anchorPoint)=>{openNewEventForDrop(sidebarDragChip,dk,time,anchorPoint);setSidebarDragChip(null);}}
-          onDropManualBlockRequest={commitManualBlockDrop}
+          onDropManualBlockRequest={commitManualBlockDrop} onDropNewTaskRequest={commitNewTaskDrop}
           onDropRoutineOccurrence={onDropRoutineOccurrence} onResizeRoutineOccurrence={onResizeRoutineOccurrence} pendingRoutineChange={routineDropPending} onRoutineDragStateChange={setRoutineDragActive}
           previewEvent={gsOpen&&gsStep==="place"?gsDraft:previewEvent} highlightedSessionId={highlightedSessionId}
           blockRefs={blockRefs} flipOldRectsRef={flipOldRectsRef} flipSeq={flipSeq}
@@ -30476,7 +30559,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         editRoutine={routineEditItem} editRoutineDate={routineEditDate} subjectOptions={SUBJ}
         onSave={saveRoutineEditFromModal} onDelete={deleteRoutineEdit}
         onClose={()=>{setNewEventOpen(false);setPreviewEvent(null);setPreviewOverride(null);closeRoutineEdit();}}
-        onCreate={(payload)=>{setPreviewEvent(null);setPreviewOverride(null);commitNewEvent(payload);}} />
+        onCreate={(payload)=>{setPreviewEvent(null);setPreviewOverride(null);commitNewEvent(payload);}}
+        setActive={setActive} />
       {/* Phase 7e: dropped a routine occurrence somewhere new -- ask scope
           before touching anything. "Just this one" only offered when the
           drop landed on the same date it started on (see
@@ -30906,6 +30990,24 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             <Field label={isReminderKind?"Reminder time":"Start time"}><BoxedTimeInput value={evTime} onChange={setEvTime} /></Field>
           </div>
         )}
+        {!isTaskKind&&canDragNewTask&&(
+          <div style={{display:"flex",alignItems:"center",gap:8,margin:"10px 0"}}>
+            <div style={{flex:1,height:1,background:T.border}} />
+            <span style={{fontSize:9.5,color:T.faint,fontWeight:700,letterSpacing:"0.06em"}}>OR</span>
+            <div style={{flex:1,height:1,background:T.border}} />
+          </div>
+        )}
+        {!isTaskKind&&canDragNewTask&&(
+          <div draggable onDragStart={(e)=>{
+              e.dataTransfer.setData(NEW_TASK_DRAG_MIME,JSON.stringify(dragNewTaskPayload()));
+              e.dataTransfer.effectAllowed="copy";
+              setTimeout(()=>{ setActive("calendar"); onClose(); }, 0);
+            }}
+            title="Drag onto the calendar to place it exactly where you want"
+            style={{display:"flex",alignItems:"center",gap:8,fontSize:11.5,fontWeight:600,color:T.text,padding:"8px 10px",borderRadius:6,border:`1px dashed ${T.lime}77`,cursor:"grab",background:T.lime+"0c",marginBottom:12}}>
+            <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>Don't know exactly when? Drag onto the calendar</span>
+          </div>
+        )}
 
         {isFixedKind&&(
           <>
@@ -31087,6 +31189,24 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
             <Field label="Date"><Input type="date" value={evDate} onChange={ev=>setEvDate(ev.target.value)} /></Field>
             <Field label="Start Time"><BoxedTimeInput value={evTime} onChange={setEvTime} /></Field>
+          </div>
+        )}
+        {isTaskKind&&!isChecklistMode&&taskRepeatDays.length===0&&taskMode==="manual"&&canDragNewTask&&(
+          <div style={{display:"flex",alignItems:"center",gap:8,margin:"10px 0"}}>
+            <div style={{flex:1,height:1,background:T.border}} />
+            <span style={{fontSize:9.5,color:T.faint,fontWeight:700,letterSpacing:"0.06em"}}>OR</span>
+            <div style={{flex:1,height:1,background:T.border}} />
+          </div>
+        )}
+        {isTaskKind&&!isChecklistMode&&taskRepeatDays.length===0&&taskMode==="manual"&&canDragNewTask&&(
+          <div draggable onDragStart={(e)=>{
+              e.dataTransfer.setData(NEW_TASK_DRAG_MIME,JSON.stringify(dragNewTaskPayload()));
+              e.dataTransfer.effectAllowed="copy";
+              setTimeout(()=>{ setActive("calendar"); onClose(); }, 0);
+            }}
+            title="Drag onto the calendar to place it exactly where you want"
+            style={{display:"flex",alignItems:"center",gap:8,fontSize:11.5,fontWeight:600,color:T.text,padding:"8px 10px",borderRadius:6,border:`1px dashed ${T.lime}77`,cursor:"grab",background:T.lime+"0c",marginBottom:12}}>
+            <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>Don't know exactly when? Drag onto the calendar</span>
           </div>
         )}
 
