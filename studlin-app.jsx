@@ -4883,7 +4883,7 @@ const CLASS_SYLLABUS_JSON_CONTRACT=
   "\"meetingTimes\":[{\"days\":[0,2,4],\"startTime\":\"10:00\",\"duration\":50}],"+
   "\"deadlines\":[{\"title\":\"Problem Set 3\",\"date\":\"2026-09-22\",\"kind\":\"assignment\",\"confidence\":\"high\",\"estimatedHours\":2,\"difficulty\":450}]}. "+
   "\"subject.name\" is the class name as it would appear on a schedule (e.g. \"Biology 101\", \"AP English IV\") -- if genuinely not stated anywhere, use your best guess from context, never leave it blank. "+
-  "\"meetingTimes\" is when the class actually meets each week -- \"days\" uses 0=Monday..6=Sunday, \"startTime\" is 24-hour \"HH:MM\", \"duration\" is minutes. Include one entry per distinct day/time pattern (e.g. a class meeting Mon/Wed/Fri at one time and Tue/Thu at another is two entries). Omit \"meetingTimes\" entirely (empty array) if no recurring meeting time is stated anywhere in the source. "+
+  "\"meetingTimes\" is when the class ITSELF actually meets each week -- \"days\" uses 0=Monday..6=Sunday, \"startTime\" is 24-hour \"HH:MM\", \"duration\" is minutes. Include one entry per distinct day/time pattern (e.g. a class meeting Mon/Wed/Fri at one time and Tue/Thu at another is two entries). Office hours, optional review/help sessions, drop-in tutoring, or a TA's own separate hours are NEVER a meeting time even when a recurring day/time is given for them -- they are not the class meeting. Omit \"meetingTimes\" entirely (empty array) if no recurring meeting time is stated anywhere in the source. "+
   "\"deadlines\" follows the same rules as before, plus a third \"kind\": \"title\" short, \"date\" YYYY-MM-DD (never omit even if uncertain), "+
   "\"kind\" is \"exam\" for quizzes/tests/midterms/finals, \"project\" for a genuinely multi-step, multi-week deliverable (a research paper, a term project, a presentation with real preparation involved -- not just a due date, an actual body of work), or \"assignment\" for everything else (problem sets, readings, short papers, labs, quick responses). "+
   "\"examType\" (exams only: \"quiz\" for a quiz or short in-class test, \"midterm\" for a midterm exam, \"final\" for a final exam, \"project\" for a project defense/presentation exam, \"other\" for anything else exam-like), "+
@@ -4970,6 +4970,7 @@ const COLLEGE_SCHEDULE_JSON_CONTRACT=
   "One entry in \"classes\" per distinct course. \"subject.name\" is the class name as it would appear on a schedule -- if genuinely not stated, use your best guess from context, never leave it blank. "+
   "\"meetingTimes\" is the class's REAL RECURRING weekly pattern only -- \"days\" uses 0=Monday..6=Sunday, \"startTime\" is 24-hour \"HH:MM\", \"duration\" is minutes, and it should only ever describe something that repeats across a semester-long date range. Include one entry per distinct day/time pattern (e.g. a class meeting Mon/Wed/Fri at one time and a separate recitation Tue/Thu at another time are two entries, possibly even two different \"classes\" entries if the recitation has its own name). "+
   "Any entry with a SINGLE date instead of a recurring range -- especially anything labeled Exam, Midterm, Final, or Common Hour Exam, even if its listed time differs from the class's regular meeting time -- is NOT a meeting time. It belongs in that same class's own \"deadlines\" array as \"kind\":\"exam\" with that real date, exactly like any other exam. Never fold a one-off exam date into \"meetingTimes\". "+
+  "Office hours, optional review/help sessions, drop-in tutoring, or a TA's own separate hours are NEVER a meeting time even when a recurring day/time is given for them -- they are not the class meeting. "+
   "\"scheduleConfidence\" is separate from any given deadline's own \"confidence\" below -- it covers ONLY \"subject.name\" and \"meetingTimes\": \"low\" when the class name or a meeting time/day was blurry, cut off, or otherwise genuinely hard to read and you had to guess at it; \"high\" otherwise, including the common case where nothing needed guessing at all. "+
   "\"deadlines\" otherwise follows the same rules as a normal exam/assignment: \"title\" short, \"date\" YYYY-MM-DD (never omit even if uncertain), \"kind\" is \"exam\" for quizzes/tests/midterms/finals/common-hour-exams, \"project\" for a genuinely multi-step multi-week deliverable, or \"assignment\" for everything else. "+
   "\"examType\" (exams only: \"quiz\"/\"midterm\"/\"final\"/\"project\"/\"other\"), \"gradeWeightPercent\" (exams only, ONLY when the source explicitly states a percentage of the final grade, a plain number like 20, never guessed), "+
@@ -33254,6 +33255,23 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <Row label="Share my free/busy time" sub="Lets accepted friends' 'Find Shared Study Window' searches see your busy times too — never event titles or subjects, and only current friends. Off by default." k="shareAvailability" highlight={highlightSetting==="shareAvailability"} right={
                 <div onClick={()=>{
                   const next=!toggles.shareAvailability;
+                  // Bug fix, 2026-09-09 user report ("she already had her
+                  // settings on so something's wrong"): publishBusyWindows
+                  // gates on lsGet("settings",{}).shareAvailability as its
+                  // very first line, precisely so other call sites can
+                  // invoke it unconditionally -- but tog()'s own lsSet
+                  // write happens inside a React state updater, whose
+                  // timing relative to this very next line isn't
+                  // guaranteed. Losing that race meant the toggle visually
+                  // flipped on while publishBusyWindows read the stale
+                  // (still-off) value and silently no-op'd -- nothing ever
+                  // actually reached Firestore, permanently, until the
+                  // student happened to trigger one of the only two other
+                  // callers (flipping the toggle again, or using Find
+                  // Shared Study Window in a chat) themselves. Writing the
+                  // new value straight to localStorage here first removes
+                  // any dependency on that timing.
+                  lsSet("settings",{...lsGet("settings",{}),shareAvailability:next});
                   tog("shareAvailability");
                   if(next)publishBusyWindows();else unpublishBusyWindows();
                 }} style={{width:38,height:20,borderRadius:10,background:toggles.shareAvailability?T.lime:T.card2,border:`1px solid ${toggles.shareAvailability?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
