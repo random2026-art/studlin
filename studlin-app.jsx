@@ -25075,7 +25075,18 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
           picks here (not one merged "Assignment" the way Add Task infers
           it) since this modal edits an existing real kind directly, not a
           type that resolves to one at save time. */}
-      <Field label="Type"><SelectChip options={[{value:"assignment",label:"Assignment"},{value:"study block",label:"Study Session"},{value:"task",label:"Task"},{value:"project",label:"Project"},{value:"todo",label:"To-do"},"exam","class","reminder",{value:"busy block",label:"Activity"}]} value={typeChoice} onChange={onTypeChange} /></Field>
+      {/* Bug fix, 2026-09-09 user report (screenshot showed "Edit task" on
+          a class with no repeat/day-of-week field anywhere): "class" used
+          to be pickable here and in Add Task's own Type row below, but
+          neither modal has any concept of a recurring weekly rule --
+          picking it just set kind:"class" on what stays a plain one-off
+          events[] entry, permanently broken (it can never repeat, unlike
+          every real class, which is a routine). A real class can only be
+          created correctly through Courses' own "+ Add new" -> the
+          syllabus-scan/Class Setup wizard, which actually builds a routine
+          -- removed as an option in both places rather than left as a
+          trap with no way to make it work right. */}
+      <Field label="Type"><SelectChip options={[{value:"assignment",label:"Assignment"},{value:"study block",label:"Study Session"},{value:"task",label:"Task"},{value:"project",label:"Project"},{value:"todo",label:"To-do"},"exam","reminder",{value:"busy block",label:"Activity"}]} value={typeChoice} onChange={onTypeChange} /></Field>
       {/* Was a SelectChip wall (every subject as its own full pill button,
           wrapping across several rows for anyone with a real course load)
           -- a dropdown reads exactly the same info in one line, matching
@@ -30929,8 +30940,14 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             still resolve to kind:"study block" when scheduled (see
             resolveAssignmentKind) -- isAssignment is the flag that keeps
             them distinguishable on reopen (see buildTask's own comment). */}
+        {/* Bug fix, 2026-09-09 user report: "class" used to be pickable
+            here too -- see EventDetailModal's identical Type row for the
+            full explanation. This modal has no day-of-week/repeat concept
+            for anything but Task, so a class made here could never
+            actually repeat weekly like a real one. Removed; a real class
+            only comes out right through Courses' own "+ Add new" wizard. */}
         <Field label="Type" hint={isFixedKind?"Won't be moved or rescheduled.":isRepeatingTask?"Repeats on the days you pick below.":isChecklistMode?"Just a due date -- no calendar time yet.":evKind==="studySession"?"A focused block of study time at the exact time you pick.":evKind==="task"?(taskMode==="manual"?"Happens at this exact time.":"Studlin finds the time before it's due."):evKind==="assignment"?(taskMode==="manual"?"You pick when you'll work on it -- due date is optional.":"Studlin finds the time before it's due."):undefined}>
-          <SelectChip options={[{value:"assignment",label:"Assignment"},{value:"studySession",label:"Study Session"},{value:"task",label:"Task"},{value:"project",label:"Project"},"exam","class",{value:"busy block",label:"Activity"},"reminder"]} value={evKind} onChange={onEvKindChange} />
+          <SelectChip options={[{value:"assignment",label:"Assignment"},{value:"studySession",label:"Study Session"},{value:"task",label:"Task"},{value:"project",label:"Project"},"exam",{value:"busy block",label:"Activity"},"reminder"]} value={evKind} onChange={onEvKindChange} />
         </Field>
         {/* Same fix as EventDetailModal's identical Subject field
             (2026-09-04) -- a SelectChip wall wrapping across several rows
