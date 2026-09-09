@@ -11238,6 +11238,14 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                   const hasPhases=p.phases&&p.phases.length>0;
                   const steps=hasPhases?p.phases:(p.outline||[]);
                   const doneCount=hasPhases?steps.filter(s=>s.status==="done").length:steps.filter(s=>s.done).length;
+                  // Projects Redesign (2026-09-08 user report): a bare
+                  // "0/5 steps" told a student nothing about what to
+                  // actually do next -- naming the active phase turns this
+                  // into a real status glance instead of a dead counter.
+                  // Only meaningful for the phases path; an outline-only
+                  // project has no "active" concept, so it keeps the
+                  // original plain fraction unchanged.
+                  const activePhase=hasPhases?steps.find(s=>s.status==="active"):null;
                   return (
                     <div key={p.id} style={{display:"grid",gridTemplateColumns:gridCols,gap:8,padding:"7px 10px",borderBottom:`1px solid ${T.border}`,alignItems:"center"}}>
                       <div onClick={()=>setDetailEventId(p.id)} style={{fontSize:11.5,fontWeight:600,color:T.white,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={p.title}>{p.title}</div>
@@ -11248,7 +11256,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                         options={[{value:"low",label:"Low"},{value:"medium",label:"Med"},{value:"high",label:"High"}]} />
                       <CustomSelect value={bucketOf(p.difficulty)} onChange={v=>patchExam(p.id,{difficulty:BUCKET_VALS[v]})}
                         options={[{value:"low",label:"Easy"},{value:"medium",label:"Med"},{value:"high",label:"Hard"}]} />
-                      <div onClick={()=>setDetailEventId(p.id)} style={{fontSize:10.5,color:T.muted,cursor:"pointer"}} title="Click to open">{steps.length===0?"no checklist yet":doneCount+"/"+steps.length+" steps"}</div>
+                      <div onClick={()=>setDetailEventId(p.id)} style={{fontSize:10.5,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",cursor:"pointer"}} title="Click to open">{steps.length===0?"no checklist yet":doneCount+"/"+steps.length+(hasPhases?" phases":" steps")+(activePhase&&activePhase.name?" — "+activePhase.name:"")}</div>
                     </div>
                   );
                 })}
@@ -21150,33 +21158,45 @@ function MaterialEditor({item,onChange,label,idPrefix}){
   );
 }
 
-// Shared phases (a big project's coarse-grained plan -- only the first
-// ever gets a real scheduled chain, see proposeProjectPhases) + outline (a
-// flat, more granular checklist, see proposeOutline) editor. Used by Class
-// Setup Wizard's review screen, Add Task, and Edit Task so "break this
-// into phases"/"add a checklist" is one implementation, not three.
-// `item` needs title/detail/phases/phasesLoading/outline/outlineLoading;
-// `onChange` receives a partial patch, same convention as MaterialEditor
-// above; `subject` feeds the AI prompts the same way it always has.
+// Breaks a new Project into phases (a coarse-grained plan -- only the
+// first ever gets a real scheduled chain, see proposeProjectPhases). Used
+// by Class Setup Wizard's review screen, Add Task, and Edit Task so
+// "break this into phases" is one implementation, not three.
+// `item` needs title/detail/phases/phasesLoading; `onChange` receives a
+// partial patch, same convention as MaterialEditor above; `subject` feeds
+// the AI prompt the same way it always has.
 // onGateBlocked defaults to a no-op -- this component is reused across
 // Add Task, Edit Task, and (per its own original comment) possibly other
 // review screens with different access to a pricing-modal trigger, so it
-// can't assume one exists. Real AI cost lives entirely in these two
-// suggest* calls (proposeProjectPhases/proposeOutline) -- was previously
-// completely ungated here, the actual point project breakdown's cost is
-// incurred, while every canBreakDownProject() check elsewhere in the app
-// only fires at a later commit step. recordProjectBreakdown() fires once
-// per real call (phases and outline independently), not once per
-// "session" -- a user can suggest just one or the other.
-// Pure -- proposeProjectPhases/proposeOutline already refuse to invent a
-// fake breakdown from a bare title with nothing else to go on (they come
-// back with an empty array, which correctly renders PhasesOutlineEditor's
-// own "Not enough detail here" message). But that still meant a real AI
-// call went out -- and a gated use got spent, see canBreakDownProject/
+// can't assume one exists. Real AI cost lives entirely in this one
+// suggest* call (proposeProjectPhases) -- was previously completely
+// ungated here, the actual point project breakdown's cost is incurred,
+// while every canBreakDownProject() check elsewhere in the app only fires
+// at a later commit step.
+// Pure -- proposeProjectPhases already refuses to invent a fake breakdown
+// from a bare title with nothing else to go on (comes back with an empty
+// array, which correctly renders PhasesOutlineEditor's own "Not enough
+// detail here" message). But that still meant a real AI call went out --
+// and a gated use got spent, see canBreakDownProject/
 // recordProjectBreakdown -- for a request that was always going to return
-// nothing. Checked client-side, before either button ever calls the
-// network, so an empty/too-short Detail skips the call entirely instead of
-// paying for a guaranteed-empty result.
+// nothing. Checked client-side, before the button ever calls the network,
+// so an empty/too-short Detail skips the call entirely instead of paying
+// for a guaranteed-empty result.
+// Projects Redesign (2026-09-08): this used to also offer a second,
+// independent "Add a step-by-step checklist?" flat-outline structure
+// (proposeOutline, item.outline) alongside phases -- two disconnected
+// ways to describe "the parts of my project," only one of which (phases)
+// actually drove scheduling or status tracking. Removed for NEW projects;
+// phases is now the one structure, richer per-phase detail lives in
+// EventDetailModal's own Phases display block instead (checklist,
+// probeMins, detail, targetDate, scheduleMode -- see markPhaseDone's
+// comment). An EXISTING project that already has ev.outline with no
+// phases keeps rendering and editing exactly as before (see the
+// `ev.outline&&ev.outline.length>0` display block in EventDetailModal) --
+// nothing here touches already-committed data, only what gets offered to
+// a brand-new project going forward. proposeOutline itself is left
+// intact (still harness-exported/tested) since it's dead code, not
+// broken code, and deleting it isn't required for this fix.
 const MIN_DETAIL_CHARS_FOR_BREAKDOWN=10;
 function hasEnoughDetailForBreakdown(detail){
   return (detail||"").trim().length>=MIN_DETAIL_CHARS_FOR_BREAKDOWN;
@@ -21194,14 +21214,6 @@ function PhasesOutlineEditor({item,onChange,subject,onGateBlocked=()=>{},onNeeds
     const names=await proposeProjectPhases(item.title,item.detail||"",subject);
     recordProjectBreakdown();
     onChange({phasesLoading:false,phases:names||[]});
-  };
-  const suggestOutline=async()=>{
-    if(!hasEnoughDetail){onNeedsDetail();return;}
-    if(!canBreakDownProject()){onGateBlocked(canBreakDownProjectReason());return;}
-    onChange({outlineLoading:true});
-    const steps=await proposeOutline(item.title,item.detail||"",subject);
-    recordProjectBreakdown();
-    onChange({outlineLoading:false,outline:steps||[]});
   };
   return (<>
     <div style={{marginTop:8}}>
@@ -21222,51 +21234,6 @@ function PhasesOutlineEditor({item,onChange,subject,onGateBlocked=()=>{},onNeeds
             </div>
           ))}
           <button type="button" onClick={()=>onChange({phases:[...item.phases,""]})} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>+ Add phase</button>
-        </div>
-      )}
-    </div>
-    <div style={{marginTop:8}}>
-      {item.outline===undefined?(
-        <button type="button" disabled={!!item.outlineLoading} onClick={suggestOutline} style={{background:"none",border:`1px dashed ${T.borderHover}`,borderRadius:6,color:T.muted,fontSize:11,fontFamily:T.font,cursor:item.outlineLoading?"default":"pointer",padding:"5px 10px",opacity:item.outlineLoading?0.6:1}}>
-          {item.outlineLoading?"Drafting a checklist…":"Add a step-by-step checklist?"}
-        </button>
-      ):item.outline.length===0?(
-        <div style={{fontSize:11,color:T.muted}}>Not enough detail here for a checklist. Add detail above, or skip it.</div>
-      ):(
-        <div style={{display:"flex",flexDirection:"column",gap:6}}>
-          <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Checklist</div>
-          {item.outline.map((s,si)=>{
-            // Outline steps start as plain strings (proposeOutline's raw
-            // AI output) and only ever become {text,dueDate} objects once a
-            // mini due date gets set on one -- normalized here rather than
-            // forced everywhere else outline is read, so plain-string
-            // outlines elsewhere in the file (the marker's stored version,
-            // once committed) are untouched by this optional feature.
-            const stepText=typeof s==="string"?s:(s.text||"");
-            const stepDue=typeof s==="string"?"":(s.dueDate||"");
-            const patchStep=(patch)=>onChange({outline:item.outline.map((step,ssi)=>{
-              if(ssi!==si)return step;
-              const base=typeof step==="string"?{text:step}:step;
-              return {...base,...patch};
-            })});
-            return (
-              <div key={si} style={{display:"flex",alignItems:"center",gap:6}}>
-                <span style={{fontSize:10,color:T.faint,width:14,flexShrink:0,fontFamily:T.mono}}>{si+1}</span>
-                <Input value={stepText} onChange={e=>patchStep({text:e.target.value})} style={{flex:1,fontSize:12,padding:"5px 8px"}} />
-                <Input type="date" value={stepDue} onChange={e=>patchStep({dueDate:e.target.value})} title="Due date for this step (optional)" style={{width:120,fontSize:11,padding:"5px 6px",flexShrink:0}} />
-                <button type="button" onClick={()=>onChange({outline:item.outline.filter((_,ssi)=>ssi!==si)})} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:15,lineHeight:1,padding:2,flexShrink:0}}>×</button>
-              </div>
-            );
-          })}
-          <button type="button" onClick={()=>onChange({outline:[...item.outline,""]})} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>+ Add step</button>
-          {/* O11 in the audit: this component is shared across HS and
-              college contexts (New Task's Project type, syllabus-scan
-              review) but had no status awareness at all -- reads
-              getProfile().status directly rather than threading a new
-              prop through all 3 call sites, matching how the course menu
-              already branches "Scan assignments" vs "Import syllabus"
-              copy elsewhere in this file. */}
-          <div style={{fontSize:10,color:T.faint}}>Add a date on any step your {getProfile().status==="highschool"?"teacher":"professor"} gave its own due date for -- optional, only tightens scheduling for that step.</div>
         </div>
       )}
     </div>
