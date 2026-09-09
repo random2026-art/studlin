@@ -348,7 +348,7 @@ async function createGoogleDoc(essay) {
 }
 
 // ─── SHARED PRIMITIVES ────────────────────────────────────────────────────────
-const Btn = ({children,onClick,style={},variant="lime",disabled=false}) => {
+const Btn = ({children,onClick,style={},variant="lime",disabled=false,title}) => {
   const base = {display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",borderRadius:6,fontSize:12,fontWeight:600,cursor:disabled?"not-allowed":"pointer",border:"none",fontFamily:T.font,letterSpacing:"0.01em",transition:"opacity 0.15s"};
   const variants = {
     lime:{background:T.lime,color:T.bg},
@@ -356,7 +356,7 @@ const Btn = ({children,onClick,style={},variant="lime",disabled=false}) => {
     subtle:{background:T.card2,color:T.text,border:`1px solid ${T.border}`},
     danger:{background:"rgba(224,90,71,0.1)",color:T.red,border:"1px solid rgba(224,90,71,0.2)"},
   };
-  return <button onClick={onClick} disabled={disabled} style={{...base,...variants[variant],...style}}>{children}</button>;
+  return <button onClick={onClick} disabled={disabled} title={title} style={{...base,...variants[variant],...style}}>{children}</button>;
 };
 const BtnSm = ({children,onClick,style={},variant="lime",disabled=false}) => <Btn onClick={onClick} disabled={disabled} style={{padding:"5px 12px",fontSize:11,...style}} variant={variant}>{children}</Btn>;
 
@@ -26696,6 +26696,22 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // same two modes ChatDrawer's scheduleGroupSession already knows about.
   const [gsDraft,setGsDraft]=useState(null);
   const [gsSending,setGsSending]=useState(false);
+  // 2026-09-09 user report ("drag onto calendar doesn't work"): unlike
+  // EventDetailModal's one-shot "+Add my own time block" drag (which
+  // closes its whole modal the instant the drag starts, precisely because
+  // "the modal's own backdrop would otherwise sit on top of the grid and
+  // swallow the drop" -- see MANUAL_BLOCK_DRAG_MIME's own comment), this
+  // floating panel has to stay open and visible AFTER the drop too (so the
+  // block can still be moved/resized and Done clicked) -- it can't just
+  // unmount on dragstart. Its position:fixed footprint still covers a real
+  // chunk of the calendar though (see the screenshot: evening slots sit
+  // right under it), so any drop landing on the panel's own DOM instead of
+  // the grid beneath silently did nothing. Toggling pointerEvents off for
+  // the panel only while a chip drag is actually in flight lets the drop
+  // pass straight through to whatever calendar cell is underneath it,
+  // without needing to hide the panel (or losing Cancel/Done) the rest of
+  // the time.
+  const [gsChipDragging,setGsChipDragging]=useState(false);
   // Phase 7e: set when a routine occurrence was just dropped somewhere new,
   // waiting on the student to pick "just this one" or "every week".
   const [routineDropPending,setRoutineDropPending]=useState(null); // {routineId,fromDate,toDate,toTime,newDuration?}|null -- newDuration only set by a resize
@@ -28126,16 +28142,22 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     }
     setGsLoading(false);
   };
-  // Dropping the Meeting or Study Session sidebar chip -- default to a 1hr
-  // block at the drop point, immediately draggable/resizable from there via
+  // Dropping the Meeting or Study Session sidebar chip -- same
+  // computeDropDuration rule as New Task's drag-to-place (commitNewTaskDrop):
+  // fills the real gap on MY calendar when it's under an hour rather than
+  // always defaulting to a full hour, since friends' busy time is only a
+  // visual overlay here (see the "you can still place there" copy above)
+  // and doesn't factor into what counts as occupied for this. Placed block
+  // stays immediately draggable/resizable from there via
   // gsPreviewMove/gsPreviewResize below.
   const placeGroupScheduleChip=(chip,dateKey,startTime)=>{
     const start=timeToMinutes(startTime||"09:00");
-    setGsDraft({date:dateKey,startTime:startTime||"09:00",endTime:minutesToTime(start+60),mode:chip.mode,title:chip.title,color:chip.color});
+    const duration=computeDropDuration(events,routines,getSchedulePreferences(),dateKey,startTime||"09:00");
+    setGsDraft({date:dateKey,startTime:startTime||"09:00",endTime:minutesToTime(start+duration),mode:chip.mode,title:chip.title,color:chip.color});
   };
   const gsPreviewMove=(date,startTime,endTime)=>setGsDraft(d=>d?({...d,date,startTime,endTime}):d);
   const gsPreviewResize=(endTime)=>setGsDraft(d=>d?({...d,endTime}):d);
-  const closeGroupSchedule=()=>{setGsOpen(false);setGsStep("pick");setGsDraft(null);};
+  const closeGroupSchedule=()=>{setGsOpen(false);setGsStep("pick");setGsDraft(null);setGsChipDragging(false);};
   // Sends the placed block as a proposal -- writes straight to
   // status:"proposed" (skipping the "unscheduled, pick one of 3 options"
   // stage ChatDrawer's own auto-find posts) since the organizer already
@@ -30484,9 +30506,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           a Modal -- the whole point is seeing/using the real calendar
           underneath, so it must never dim or block it. Busy overlay +
           recommended ghost block render inside WeeklyPlanner itself (see
-          gsBusyByDate/gsRecommended props above). ── */}
+          gsBusyByDate/gsRecommended props above). pointerEvents flips off
+          while gsChipDragging so the panel's own footprint (which sits
+          right over evening slots at the bottom of the grid) can't swallow
+          the drop the way a Modal backdrop would -- see gsChipDragging's
+          own comment. ── */}
       {gsOpen&&gsStep==="place"&&(
-        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:70,background:T.card,border:`1px solid ${T.border}`,borderRadius:12,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",padding:"14px 18px",display:"flex",flexDirection:"column",gap:10,maxWidth:600}}>
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:70,background:T.card,border:`1px solid ${T.border}`,borderRadius:12,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",padding:"14px 18px",display:"flex",flexDirection:"column",gap:10,maxWidth:600,pointerEvents:gsChipDragging?"none":"auto",opacity:gsChipDragging?0.5:1}}>
           {/* "Grayed-out time is when someone's busy" (below) used to be the
               only explanation offered -- a friend who never turned on
               "Share my free/busy time" just showed as a plain empty
@@ -30539,13 +30565,22 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
               <div style={{fontSize:11.5,fontWeight:700,color:T.text}}>Drag onto an open slot</div>
               <div style={{fontSize:10.5,color:T.muted}}>Grayed-out time is when someone's busy -- you can still place there.</div>
             </div>
-            <div draggable onDragStart={()=>setSidebarDragChip({title:"Meeting",kind:"groupSession",mode:"busy block",color:T.lime})} onDragEnd={()=>setSidebarDragChip(null)}
+            <div draggable onDragStart={()=>{setSidebarDragChip({title:"Meeting",kind:"groupSession",mode:"busy block",color:T.lime});setGsChipDragging(true);}} onDragEnd={()=>{setSidebarDragChip(null);setGsChipDragging(false);}}
               style={{padding:"8px 14px",borderRadius:8,background:T.lime+"18",border:`1px solid ${T.lime}55`,color:T.lime,fontSize:12,fontWeight:700,cursor:"grab",whiteSpace:"nowrap"}}>Meeting</div>
-            <div draggable onDragStart={()=>setSidebarDragChip({title:"Study Session",kind:"groupSession",mode:"study block",color:T.teal})} onDragEnd={()=>setSidebarDragChip(null)}
+            <div draggable onDragStart={()=>{setSidebarDragChip({title:"Study Session",kind:"groupSession",mode:"study block",color:T.teal});setGsChipDragging(true);}} onDragEnd={()=>{setSidebarDragChip(null);setGsChipDragging(false);}}
               style={{padding:"8px 14px",borderRadius:8,background:T.teal+"18",border:`1px solid ${T.teal}55`,color:T.teal,fontSize:12,fontWeight:700,cursor:"grab",whiteSpace:"nowrap"}}>Study Session</div>
             <div style={{display:"flex",gap:8,marginLeft:"auto"}}>
               <Btn variant="subtle" onClick={closeGroupSchedule}>Cancel</Btn>
-              <Btn onClick={postGroupSchedule} disabled={!gsDraft||gsSending}>{gsSending?"Sending…":"Done"}</Btn>
+              {/* Bug fix, 2026-09-09 user report ("i keep hitting done"):
+                  Btn's disabled state only changes the cursor, not the
+                  background -- against this button's solid lime fill that
+                  read as fully clickable even before anything was dragged
+                  onto the calendar (gsDraft still null), so clicking it did
+                  nothing with no visible reason why. Dimming it here (scoped
+                  to this one button rather than Btn itself, which many other
+                  call sites rely on looking the same disabled or not) makes
+                  "drop something first" visible instead of silent. */}
+              <Btn onClick={postGroupSchedule} disabled={!gsDraft||gsSending} style={!gsDraft||gsSending?{opacity:0.45}:{}} title={!gsDraft?"Drag a Meeting or Study Session block onto the calendar first":undefined}>{gsSending?"Sending…":"Done"}</Btn>
             </div>
           </div>
         </div>

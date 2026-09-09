@@ -318,7 +318,7 @@ async function createGoogleDoc(essay) {
     tokenClient.requestAccessToken({ prompt: "" });
   });
 }
-const Btn = ({ children, onClick, style = {}, variant = "lime", disabled = false }) => {
+const Btn = ({ children, onClick, style = {}, variant = "lime", disabled = false, title }) => {
   const base = { display: "inline-flex", alignItems: "center", gap: 7, padding: "9px 18px", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: disabled ? "not-allowed" : "pointer", border: "none", fontFamily: T.font, letterSpacing: "0.01em", transition: "opacity 0.15s" };
   const variants = {
     lime: { background: T.lime, color: T.bg },
@@ -326,7 +326,7 @@ const Btn = ({ children, onClick, style = {}, variant = "lime", disabled = false
     subtle: { background: T.card2, color: T.text, border: `1px solid ${T.border}` },
     danger: { background: "rgba(224,90,71,0.1)", color: T.red, border: "1px solid rgba(224,90,71,0.2)" }
   };
-  return /* @__PURE__ */ React.createElement("button", { onClick, disabled, style: { ...base, ...variants[variant], ...style } }, children);
+  return /* @__PURE__ */ React.createElement("button", { onClick, disabled, title, style: { ...base, ...variants[variant], ...style } }, children);
 };
 const BtnSm = ({ children, onClick, style = {}, variant = "lime", disabled = false }) => /* @__PURE__ */ React.createElement(Btn, { onClick, disabled, style: { padding: "5px 12px", fontSize: 11, ...style }, variant }, children);
 const Badge = ({ children, color = T.lime }) => /* @__PURE__ */ React.createElement("span", { style: { display: "inline-flex", alignItems: "center", padding: "3px 9px", borderRadius: 4, fontSize: 11, fontWeight: 600, letterSpacing: "0.03em", background: color + "18", color, border: `1px solid ${color}22` } }, children);
@@ -15722,6 +15722,7 @@ function CalendarTab({ setActive = () => {
   const [gsRecommendedOptions, setGsRecommendedOptions] = useState([]);
   const [gsDraft, setGsDraft] = useState(null);
   const [gsSending, setGsSending] = useState(false);
+  const [gsChipDragging, setGsChipDragging] = useState(false);
   const [routineDropPending, setRoutineDropPending] = useState(null);
   const [routineDragActive, setRoutineDragActive] = useState(false);
   const [selectedCourseId, setSelectedCourseId] = useState(null);
@@ -16683,7 +16684,8 @@ function CalendarTab({ setActive = () => {
   };
   const placeGroupScheduleChip = (chip, dateKey, startTime) => {
     const start = timeToMinutes(startTime || "09:00");
-    setGsDraft({ date: dateKey, startTime: startTime || "09:00", endTime: minutesToTime(start + 60), mode: chip.mode, title: chip.title, color: chip.color });
+    const duration = computeDropDuration(events, routines, getSchedulePreferences(), dateKey, startTime || "09:00");
+    setGsDraft({ date: dateKey, startTime: startTime || "09:00", endTime: minutesToTime(start + duration), mode: chip.mode, title: chip.title, color: chip.color });
   };
   const gsPreviewMove = (date, startTime, endTime) => setGsDraft((d) => d ? { ...d, date, startTime, endTime } : d);
   const gsPreviewResize = (endTime) => setGsDraft((d) => d ? { ...d, endTime } : d);
@@ -16691,6 +16693,7 @@ function CalendarTab({ setActive = () => {
     setGsOpen(false);
     setGsStep("pick");
     setGsDraft(null);
+    setGsChipDragging(false);
   };
   const postGroupSchedule = async () => {
     const myUid = firebase.auth().currentUser?.uid;
@@ -18485,7 +18488,7 @@ Examples:
       // indication anything had gone wrong.
       /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginBottom: 10 } }, "Couldn't check everyone's availability -- check your connection and try again."), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: confirmGsPeople }, "Try again"))
     ) : gsCandidates.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "No friends yet -- add some in Studlin Network first.") : /* @__PURE__ */ React.createElement(React.Fragment, null, gsCandidates.length > 5 && /* @__PURE__ */ React.createElement(Input, { value: gsSearchQuery, onChange: (e) => setGsSearchQuery(e.target.value), placeholder: "Search friends", style: { marginBottom: 10, width: "100%" } }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, gsCandidates.filter((c) => c.name.toLowerCase().includes(gsSearchQuery.trim().toLowerCase())).map((c) => /* @__PURE__ */ React.createElement("label", { key: c.uid, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 8, border: `1px solid ${T.border}`, cursor: "pointer", background: gsSelected.includes(c.uid) ? T.card2 : "transparent" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: gsSelected.includes(c.uid), onChange: () => toggleGsSelected(c.uid), style: { cursor: "pointer" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text } }, c.name))), gsSearchQuery.trim() && gsCandidates.filter((c) => c.name.toLowerCase().includes(gsSearchQuery.trim().toLowerCase())).length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, 'No friends match "', gsSearchQuery.trim(), '".')))
-  ), gsOpen && gsStep === "place" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 70, background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10, maxWidth: 600 } }, gsSelected.filter((uid) => !gsSharedUids.has(uid)).length > 0 && (() => {
+  ), gsOpen && gsStep === "place" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 70, background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10, maxWidth: 600, pointerEvents: gsChipDragging ? "none" : "auto", opacity: gsChipDragging ? 0.5 : 1 } }, gsSelected.filter((uid) => !gsSharedUids.has(uid)).length > 0 && (() => {
     const nonSharing = gsSelected.filter((uid) => !gsSharedUids.has(uid));
     const stillToAsk = nonSharing.filter((uid) => !shareAskSentUids.has(uid));
     return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, fontSize: 10.5, color: T.amber, background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 8, padding: "7px 10px", lineHeight: 1.4 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1 } }, nonSharing.map((uid) => gsMemberNames[uid] || "This friend").join(", "), nonSharing.length === 1 ? " hasn't" : " haven't", " turned on sharing their free/busy time yet, so their calendar can't show as busy here \u2014 you'll only see your own schedule for ", nonSharing.length === 1 ? "them" : "those friends", "."), /* @__PURE__ */ React.createElement(
@@ -18528,8 +18531,14 @@ Examples:
     "div",
     {
       draggable: true,
-      onDragStart: () => setSidebarDragChip({ title: "Meeting", kind: "groupSession", mode: "busy block", color: T.lime }),
-      onDragEnd: () => setSidebarDragChip(null),
+      onDragStart: () => {
+        setSidebarDragChip({ title: "Meeting", kind: "groupSession", mode: "busy block", color: T.lime });
+        setGsChipDragging(true);
+      },
+      onDragEnd: () => {
+        setSidebarDragChip(null);
+        setGsChipDragging(false);
+      },
       style: { padding: "8px 14px", borderRadius: 8, background: T.lime + "18", border: `1px solid ${T.lime}55`, color: T.lime, fontSize: 12, fontWeight: 700, cursor: "grab", whiteSpace: "nowrap" }
     },
     "Meeting"
@@ -18537,12 +18546,18 @@ Examples:
     "div",
     {
       draggable: true,
-      onDragStart: () => setSidebarDragChip({ title: "Study Session", kind: "groupSession", mode: "study block", color: T.teal }),
-      onDragEnd: () => setSidebarDragChip(null),
+      onDragStart: () => {
+        setSidebarDragChip({ title: "Study Session", kind: "groupSession", mode: "study block", color: T.teal });
+        setGsChipDragging(true);
+      },
+      onDragEnd: () => {
+        setSidebarDragChip(null);
+        setGsChipDragging(false);
+      },
       style: { padding: "8px 14px", borderRadius: 8, background: T.teal + "18", border: `1px solid ${T.teal}55`, color: T.teal, fontSize: 12, fontWeight: 700, cursor: "grab", whiteSpace: "nowrap" }
     },
     "Study Session"
-  ), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginLeft: "auto" } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeGroupSchedule }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: postGroupSchedule, disabled: !gsDraft || gsSending }, gsSending ? "Sending\u2026" : "Done")))), /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginLeft: "auto" } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeGroupSchedule }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: postGroupSchedule, disabled: !gsDraft || gsSending, style: !gsDraft || gsSending ? { opacity: 0.45 } : {}, title: !gsDraft ? "Drag a Meeting or Study Session block onto the calendar first" : void 0 }, gsSending ? "Sending\u2026" : "Done")))), /* @__PURE__ */ React.createElement(
     NewEventModal,
     {
       open: newEventOpen || !!routineEditItem,
