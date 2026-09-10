@@ -1573,7 +1573,7 @@ const IMMEDIATE_NOW_BUFFER_MINS = 0;
 function computeOccupiedIntervals(events, routines, prefs, dateKey) {
   return events.filter((e) => e.date === dateKey && e.time && !e.timeUnconfirmed && e.status !== "done").concat(expandRoutineOccurrences(routines, dateKey, dateKey).filter((o) => o.kind !== "free period")).map((e) => ({ start: timeToMinutes(e.time) - effectiveLeadIn(e), end: timeToMinutes(e.time) + (e.duration || 30) + effectiveTrailOut(e) }));
 }
-const BUSY_WINDOW_DAYS_AHEAD = 21;
+const BUSY_WINDOW_DAYS_AHEAD = 60;
 function computeBusyWindowsPayload(events, routines, prefs, todayKey) {
   const intervals = [];
   for (let i = 0; i < BUSY_WINDOW_DAYS_AHEAD; i++) {
@@ -16691,7 +16691,7 @@ function CalendarTab({ setActive = () => {
       });
       setGsBusyByDate(busyObj);
       setGsSharedUids(sharedUids);
-      const rec = await findSharedStudyWindow(myUid, gsSelected, { timeMode: "anytime", lookAheadDayRange: 7, durationInMinutes: 60 });
+      const rec = await findSharedStudyWindow(myUid, gsSelected, { timeMode: "anytime", lookAheadDayRange: 60, durationInMinutes: 60 });
       const opts = rec.noneFound ? [] : rec.options;
       setGsRecommendedOptions(opts);
       setGsRecommended(opts.find((o) => o.isBest) || opts[0] || null);

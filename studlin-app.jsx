@@ -2484,7 +2484,13 @@ function computeOccupiedIntervals(events,routines,prefs,dateKey){
 // seeing what they're doing. Reuses computeOccupiedIntervals (same
 // interval math findOpenSlotFor and every other scheduling path already
 // trusts) rather than re-deriving busy time from scratch.
-const BUSY_WINDOW_DAYS_AHEAD=21;
+// 2026-09-10 user request: was 21 (3 weeks) -- past that, a friend's
+// calendar read as fully free rather than genuinely unknown the moment
+// you scrolled the Schedule with Friends grid a few weeks out, since
+// there was simply no published data there at all. Bumped to ~2 months,
+// the upper end of what was actually asked for ("1 or 2 months, that's
+// it" -- explicitly not indefinite).
+const BUSY_WINDOW_DAYS_AHEAD=60;
 function computeBusyWindowsPayload(events,routines,prefs,todayKey){
   const intervals=[];
   for(let i=0;i<BUSY_WINDOW_DAYS_AHEAD;i++){
@@ -28178,7 +28184,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       setGsSharedUids(sharedUids);
       // Recommended ghost block -- a visual suggestion only (see gsRecommended
       // state comment); manual placement anywhere else stays fully available.
-      const rec=await findSharedStudyWindow(myUid,gsSelected,{timeMode:"anytime",lookAheadDayRange:7,durationInMinutes:60});
+      // 2026-09-10 user request: was 7 days -- matches BUSY_WINDOW_DAYS_AHEAD's
+      // own bump to ~2 months, so this search actually covers as much of the
+      // calendar as the busy overlay now has real data for, instead of only
+      // ever proposing a window inside the first week.
+      const rec=await findSharedStudyWindow(myUid,gsSelected,{timeMode:"anytime",lookAheadDayRange:60,durationInMinutes:60});
       const opts=rec.noneFound?[]:rec.options;
       setGsRecommendedOptions(opts);
       setGsRecommended(opts.find(o=>o.isBest)||opts[0]||null);
