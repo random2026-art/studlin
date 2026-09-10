@@ -26710,6 +26710,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // student doesn't fire the same push five times in a row), not a real
   // rate limit or a durable "already asked" record anywhere.
   const [shareAskSentUids,setShareAskSentUids]=useState(new Set());
+  // 2026-09-10 user report ("landon did turn on share free time... didnt
+  // communicate back to my laptop"): gsSharedUids/gsBusyByDate above are
+  // only ever fetched once, at confirmGsPeople time -- if a friend turns
+  // sharing on AFTER this panel is already open (e.g. right after being
+  // asked), there was no way to see that short of closing the whole flow
+  // and re-picking the same friends again. See refreshGsSharing below.
+  const [gsRefreshing,setGsRefreshing]=useState(false);
   // Top-ranked findSharedStudyWindow option, rendered as a dashed
   // "Studlin recommends this time" ghost block -- suggestion only. Whichever
   // one of gsRecommendedOptions below the student currently has selected
@@ -28198,6 +28205,34 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       setGsConfirmLoadError(true);
     }
     setGsLoading(false);
+  };
+  // Re-runs confirmGsPeople's own busy/shared fetch + recommendation
+  // search without leaving the "place" step or losing a block already
+  // dragged onto the calendar (gsDraft untouched) -- see gsRefreshing's
+  // own comment for why this exists. A student who's just asked a friend
+  // to turn on sharing, and knows they actually did, needs a way to see
+  // that reflected here without closing the whole flow and re-picking
+  // the same friends from scratch.
+  const refreshGsSharing=async()=>{
+    if(gsRefreshing||gsSelected.length===0)return;
+    setGsRefreshing(true);
+    try{
+      const myUid=firebase.auth().currentUser?.uid;
+      const {byDate:friendsBusy,sharedUids}=await fetchFriendsBusyIntervals(gsSelected);
+      const busyObj={};
+      friendsBusy.forEach((intervals,date)=>{busyObj[date]=intervals;});
+      setGsBusyByDate(busyObj);
+      setGsSharedUids(sharedUids);
+      if(myUid){
+        const rec=await findSharedStudyWindow(myUid,gsSelected,{timeMode:"anytime",lookAheadDayRange:60,durationInMinutes:60});
+        const opts=rec.noneFound?[]:rec.options;
+        setGsRecommendedOptions(opts);
+        setGsRecommended(opts.find(o=>o.isBest)||opts[0]||null);
+      }
+    }catch(e){
+      reportError("refreshGsSharing")(e);
+    }
+    setGsRefreshing(false);
   };
   // Dropping the Meeting or Study Session sidebar chip -- same
   // computeDropDuration rule as New Task's drag-to-place (commitNewTaskDrop):
@@ -30584,6 +30619,15 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                 <button type="button" onClick={askFriendsToShareAvailability} disabled={stillToAsk.length===0}
                   style={{flexShrink:0,fontSize:10,fontWeight:700,color:stillToAsk.length===0?T.muted:T.amber,background:"none",border:`1px solid ${stillToAsk.length===0?T.border:T.amber+"55"}`,borderRadius:6,padding:"5px 9px",cursor:stillToAsk.length===0?"default":"pointer",fontFamily:T.font,whiteSpace:"nowrap"}}>
                   {stillToAsk.length===0?"Asked ✓":"Ask them to turn it on"}
+                </button>
+                {/* This panel's own busy/shared read happens exactly once,
+                    when it first opens -- if a friend turns sharing on
+                    AFTER that (e.g. right after being asked), nothing here
+                    would ever reflect it without this. See
+                    refreshGsSharing's own comment. */}
+                <button type="button" onClick={refreshGsSharing} disabled={gsRefreshing} title="Check again if they've turned it on since you opened this"
+                  style={{flexShrink:0,fontSize:10,fontWeight:700,color:T.amber,background:"none",border:`1px solid ${T.amber}55`,borderRadius:6,padding:"5px 9px",cursor:gsRefreshing?"default":"pointer",fontFamily:T.font,whiteSpace:"nowrap"}}>
+                  {gsRefreshing?"Checking…":"Refresh"}
                 </button>
               </div>
             );

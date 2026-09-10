@@ -15718,6 +15718,7 @@ function CalendarTab({ setActive = () => {
   const [gsBusyByDate, setGsBusyByDate] = useState({});
   const [gsSharedUids, setGsSharedUids] = useState(/* @__PURE__ */ new Set());
   const [shareAskSentUids, setShareAskSentUids] = useState(/* @__PURE__ */ new Set());
+  const [gsRefreshing, setGsRefreshing] = useState(false);
   const [gsRecommended, setGsRecommended] = useState(null);
   const [gsRecommendedOptions, setGsRecommendedOptions] = useState([]);
   const [gsDraft, setGsDraft] = useState(null);
@@ -16701,6 +16702,29 @@ function CalendarTab({ setActive = () => {
       setGsConfirmLoadError(true);
     }
     setGsLoading(false);
+  };
+  const refreshGsSharing = async () => {
+    if (gsRefreshing || gsSelected.length === 0) return;
+    setGsRefreshing(true);
+    try {
+      const myUid = firebase.auth().currentUser?.uid;
+      const { byDate: friendsBusy, sharedUids } = await fetchFriendsBusyIntervals(gsSelected);
+      const busyObj = {};
+      friendsBusy.forEach((intervals, date) => {
+        busyObj[date] = intervals;
+      });
+      setGsBusyByDate(busyObj);
+      setGsSharedUids(sharedUids);
+      if (myUid) {
+        const rec = await findSharedStudyWindow(myUid, gsSelected, { timeMode: "anytime", lookAheadDayRange: 60, durationInMinutes: 60 });
+        const opts = rec.noneFound ? [] : rec.options;
+        setGsRecommendedOptions(opts);
+        setGsRecommended(opts.find((o) => o.isBest) || opts[0] || null);
+      }
+    } catch (e) {
+      reportError("refreshGsSharing")(e);
+    }
+    setGsRefreshing(false);
   };
   const placeGroupScheduleChip = (chip, dateKey, startTime) => {
     const start = timeToMinutes(startTime || "09:00");
@@ -18510,6 +18534,16 @@ Examples:
         style: { flexShrink: 0, fontSize: 10, fontWeight: 700, color: stillToAsk.length === 0 ? T.muted : T.amber, background: "none", border: `1px solid ${stillToAsk.length === 0 ? T.border : T.amber + "55"}`, borderRadius: 6, padding: "5px 9px", cursor: stillToAsk.length === 0 ? "default" : "pointer", fontFamily: T.font, whiteSpace: "nowrap" }
       },
       stillToAsk.length === 0 ? "Asked \u2713" : "Ask them to turn it on"
+    ), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        type: "button",
+        onClick: refreshGsSharing,
+        disabled: gsRefreshing,
+        title: "Check again if they've turned it on since you opened this",
+        style: { flexShrink: 0, fontSize: 10, fontWeight: 700, color: T.amber, background: "none", border: `1px solid ${T.amber}55`, borderRadius: 6, padding: "5px 9px", cursor: gsRefreshing ? "default" : "pointer", fontFamily: T.font, whiteSpace: "nowrap" }
+      },
+      gsRefreshing ? "Checking\u2026" : "Refresh"
     ));
   })(), gsRecommendedOptions.length > 1 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, whiteSpace: "nowrap" } }, "Found ", gsRecommendedOptions.length, " windows that work:"), gsRecommendedOptions.map((o, i) => {
     const active = gsRecommended && gsRecommended.date === o.date && gsRecommended.time === o.time;
