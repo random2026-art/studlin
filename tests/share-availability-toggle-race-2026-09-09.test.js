@@ -16,6 +16,13 @@
 //
 // Source-level regression guard (component-closure UI) -- same
 // mixed-coverage convention this session uses elsewhere. Run with `npm test`.
+//
+// Updated 2026-09-10: publishBusyWindows/unpublishBusyWindows now return an
+// honest {ok,reason} result instead of undefined (see
+// tests/busy-windows-silent-failures-2026-09-10.test.js), and the toggle's
+// onClick awaits that result to show a real error toast on failure. The
+// race-fix and internal-gate assertions below still hold, just adjusted for
+// the call now being wrapped in a ternary + .then() instead of a bare if/else.
 const { test, describe } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("fs");
@@ -27,7 +34,7 @@ describe("Share my free/busy time toggle publishes without a read-after-write ra
   test("the toggle's onClick writes the new value to localStorage before tog()/publishBusyWindows() run", () => {
     const idx = SOURCE.indexOf('label="Share my free/busy time"');
     assert.notEqual(idx, -1);
-    const body = SOURCE.slice(idx, idx + 1800);
+    const body = SOURCE.slice(idx, idx + 3000);
     const lsSetIdx = body.indexOf('lsSet("settings"');
     const togIdx = body.indexOf('tog("shareAvailability")');
     const publishIdx = body.indexOf("publishBusyWindows()");
@@ -41,7 +48,7 @@ describe("Share my free/busy time toggle publishes without a read-after-write ra
   test("publishBusyWindows still keeps its own internal gate (defense in depth for its other, unconditional caller)", () => {
     const idx = SOURCE.indexOf("async function publishBusyWindows()");
     assert.notEqual(idx, -1);
-    const body = SOURCE.slice(idx, idx + 200);
-    assert.match(body, /if\(!lsGet\("settings",\{\}\)\.shareAvailability\)return;/);
+    const body = SOURCE.slice(idx, idx + 300);
+    assert.match(body, /if\(!lsGet\("settings",\{\}\)\.shareAvailability\)return\{ok:true,skipped:true\};/);
   });
 });

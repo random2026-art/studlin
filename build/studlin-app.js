@@ -3369,22 +3369,28 @@ async function getAcceptedFriendUids(myUid) {
   return [...uids];
 }
 async function publishBusyWindows() {
-  if (!lsGet("settings", {}).shareAvailability) return;
+  if (!lsGet("settings", {}).shareAvailability) return { ok: true, skipped: true };
   const myUid = firebase.auth().currentUser?.uid;
-  if (!myUid) return;
+  if (!myUid) return { ok: false, reason: "not_signed_in" };
   try {
     const sharedWithUids = await getAcceptedFriendUids(myUid);
     const intervals = computeBusyWindowsPayload(lsGet("events", []), getWeeklyRoutine(), getSchedulePreferences(), dayKey());
     await fsdb().collection("busyWindows").doc(myUid).set({ ownerUid: myUid, sharedWithUids, intervals, updatedAt: (/* @__PURE__ */ new Date()).toISOString() });
+    return { ok: true };
   } catch (e) {
+    reportError("publishBusyWindows")(e);
+    return { ok: false, reason: e && e.code ? e.code : e && e.message || "unknown" };
   }
 }
 async function unpublishBusyWindows() {
   const myUid = firebase.auth().currentUser?.uid;
-  if (!myUid) return;
+  if (!myUid) return { ok: false, reason: "not_signed_in" };
   try {
     await fsdb().collection("busyWindows").doc(myUid).delete();
+    return { ok: true };
   } catch (e) {
+    reportError("unpublishBusyWindows")(e);
+    return { ok: false, reason: e && e.code ? e.code : e && e.message || "unknown" };
   }
 }
 async function fetchFriendsBusyIntervals(otherUids) {
@@ -3401,6 +3407,7 @@ async function fetchFriendsBusyIntervals(otherUids) {
         byDate.get(iv.date).push({ s: iv.s, e: iv.e });
       });
     } catch (e) {
+      if (!e || e.code !== "permission-denied") reportError("fetchFriendsBusyIntervals")(e);
     }
   }));
   return { byDate, sharedUids };
@@ -20079,8 +20086,9 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     const next = !toggles.shareAvailability;
     lsSet("settings", { ...lsGet("settings", {}), shareAvailability: next });
     tog("shareAvailability");
-    if (next) publishBusyWindows();
-    else unpublishBusyWindows();
+    (next ? publishBusyWindows() : unpublishBusyWindows()).then((result) => {
+      if (result && result.ok === false) showToast2("Couldn't " + (next ? "turn on" : "turn off") + " sharing -- " + (result.reason || "try again") + ".", "error");
+    });
   }, style: { width: 38, height: 20, borderRadius: 10, background: toggles.shareAvailability ? T.lime : T.card2, border: `1px solid ${toggles.shareAvailability ? T.lime : T.border}`, position: "relative", cursor: "pointer", transition: "all 0.2s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 14, borderRadius: "50%", background: toggles.shareAvailability ? T.bg : "#fff", position: "absolute", top: 2, left: toggles.shareAvailability ? 21 : 2, transition: "left 0.2s" } })) })), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "Data & AI"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "You own your notes, essays, and recordings."), /* @__PURE__ */ React.createElement(Row, { label: "Use my work to train Studlin AI", sub: "Off by default. We will never share your raw content.", k: "collect" }), /* @__PURE__ */ React.createElement(Row, { label: "Anonymous usage analytics", sub: "Helps us fix bugs and prioritise features.", k: "analytics" }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: exportAllData }, React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 6 } }, Icon.copy, "Export all data")), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: downloadChatHistory, disabled: chatHistoryLoading }, chatHistoryLoading ? "Preparing\u2026" : "Download chat history"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle" }, "Privacy policy"))), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "What Studlin AI remembers"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "Standing preferences it's picked up from your chats \u2014 not one-off requests, just things worth not re-explaining every time."), aiMemoryFacts.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, padding: "16px 0", textAlign: "center", borderTop: `1px solid ${T.border}` } }, "Nothing remembered yet. It'll pick things up naturally as you chat.") : aiMemoryFacts.map((f, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, marginBottom: 8 } }, confirmRemoveFactIdx === i ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, "Forget this?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => removeAiFact(i) }, "Forget"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmRemoveFactIdx(null) }, "Cancel")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, f.text), /* @__PURE__ */ React.createElement("button", { onClick: () => setConfirmRemoveFactIdx(i), style: { background: "none", border: `1px solid ${T.border}`, color: T.muted, cursor: "pointer", borderRadius: 6, padding: "4px 10px", fontSize: 12, fontFamily: T.font, flexShrink: 0 } }, "Remove")))), aiMemoryFacts.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 6 } }, confirmClearMemory ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Forget everything Studlin AI remembers about you?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: clearAiMemory }, "Yes, clear all"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmClearMemory(false) }, "Cancel")) : /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmClearMemory(true) }, "Clear all"))), /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 10 } }, "Account security"), /* @__PURE__ */ React.createElement(Row, { label: "Two-factor authentication", sub: "Add a one-time code on every sign in.", k: "twofa", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: true, style: { opacity: 0.4, cursor: "not-allowed" } }, "Coming Soon") }), /* @__PURE__ */ React.createElement(Row, { label: "Active sessions", sub: "See and sign out other signed-in devices.", k: "sessions", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: true, style: { opacity: 0.4, cursor: "not-allowed" } }, "Coming Soon") }), /* @__PURE__ */ React.createElement(Row, { label: "Change password", sub: passwordResetSent ? "Reset link sent to " + profile.email + "." : "We'll email you a secure link to set a new one.", k: "pw", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: passwordResetLoading, onClick: sendPasswordReset }, passwordResetLoading ? "Sending\u2026" : passwordResetSent ? "Resend" : "Email reset link") }))), active === "Subjects & Labels" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Manage Subjects & Labels"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Color-code your classes. These labels appear on your calendar and tasks globally.")), /* @__PURE__ */ React.createElement(Btn, { onClick: () => {
     const term = getSchoolTerm();
     setMgmtSubjs((s) => [...s, { id: String(Date.now()), label: "", color: nextAvailableSubjectColor(s.map((x) => x.color)), termEnd: term ? term.end : null }]);

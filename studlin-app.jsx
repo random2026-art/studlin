@@ -5608,23 +5608,43 @@ async function getAcceptedFriendUids(myUid){
 // without checking the setting itself first. Recomputes the friend list
 // fresh on every call rather than trusting a stale cache, since a friend
 // removed since the last publish must stop being able to read this.
+// Bug fix, 2026-09-10 user report ("still not working" after multiple
+// live-verified fixes to this exact chain): every step from here through
+// fetchFriendsBusyIntervals silently swallowed its own errors, on both the
+// publishing side and the reading side. A genuinely real failure anywhere
+// in this chain (an offline write, a security-rule mismatch, a malformed
+// events entry breaking computeBusyWindowsPayload) looked EXACTLY like
+// "friend hasn't shared" -- indistinguishable from working-as-designed,
+// with zero trace anywhere a student (or a debugging session) could see.
+// Now returns an honest result instead of swallowing to undefined, so the
+// caller (the Settings toggle) can actually show what happened.
 async function publishBusyWindows(){
-  if(!lsGet("settings",{}).shareAvailability)return;
+  if(!lsGet("settings",{}).shareAvailability)return{ok:true,skipped:true};
   const myUid=firebase.auth().currentUser?.uid;
-  if(!myUid)return;
+  if(!myUid)return{ok:false,reason:"not_signed_in"};
   try{
     const sharedWithUids=await getAcceptedFriendUids(myUid);
     const intervals=computeBusyWindowsPayload(lsGet("events",[]),getWeeklyRoutine(),getSchedulePreferences(),dayKey());
     await fsdb().collection('busyWindows').doc(myUid).set({ownerUid:myUid,sharedWithUids,intervals,updatedAt:new Date().toISOString()});
-  }catch(e){}
+    return{ok:true};
+  }catch(e){
+    reportError("publishBusyWindows")(e);
+    return{ok:false,reason:e&&e.code?e.code:(e&&e.message)||"unknown"};
+  }
 }
 // Withdraws consent immediately (toggling the setting off) rather than
 // leaving a stale, no-longer-authorized copy of this student's busy times
 // sitting in Firestore until it happens to get overwritten.
 async function unpublishBusyWindows(){
   const myUid=firebase.auth().currentUser?.uid;
-  if(!myUid)return;
-  try{await fsdb().collection('busyWindows').doc(myUid).delete();}catch(e){}
+  if(!myUid)return{ok:false,reason:"not_signed_in"};
+  try{
+    await fsdb().collection('busyWindows').doc(myUid).delete();
+    return{ok:true};
+  }catch(e){
+    reportError("unpublishBusyWindows")(e);
+    return{ok:false,reason:e&&e.code?e.code:(e&&e.message)||"unknown"};
+  }
 }
 // Reads whichever of `otherUids` have opted in AND currently share with
 // this signed-in user. A permission-denied read (not shared with us) or a
@@ -5652,7 +5672,17 @@ async function fetchFriendsBusyIntervals(otherUids){
         if(!byDate.has(iv.date))byDate.set(iv.date,[]);
         byDate.get(iv.date).push({s:iv.s,e:iv.e});
       });
-    }catch(e){/* not shared with us, or offline -- degrade gracefully */}
+    }catch(e){
+      // permission-denied is the expected, extremely common case (this
+      // friend genuinely hasn't shared with us, or the doc doesn't exist
+      // at all -- firestore.rules denies both identically) -- reporting
+      // that would just be noise. Anything else (a real network failure,
+      // a malformed intervals entry throwing inside the forEach above) is
+      // a genuine, unexpected failure that used to vanish completely with
+      // zero trace anywhere -- see publishBusyWindows' own 2026-09-10 fix
+      // for the write-side half of this same silent-failure pattern.
+      if(!e||e.code!=="permission-denied")reportError("fetchFriendsBusyIntervals")(e);
+    }
   }));
   return {byDate,sharedUids};
 }
@@ -33375,7 +33405,20 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                   // any dependency on that timing.
                   lsSet("settings",{...lsGet("settings",{}),shareAvailability:next});
                   tog("shareAvailability");
-                  if(next)publishBusyWindows();else unpublishBusyWindows();
+                  // Bug fix, 2026-09-10 user report ("still not working"
+                  // after the race above was already fixed and verified
+                  // live): publishBusyWindows/unpublishBusyWindows used to
+                  // swallow their own errors completely -- a genuinely
+                  // real failure (offline, a security-rule mismatch, bad
+                  // data) looked EXACTLY like "working as designed,"
+                  // indistinguishable to the student and to anyone trying
+                  // to debug it after the fact. Now awaited and reported
+                  // honestly -- silence on success (matches every other
+                  // toggle in this list), a real error otherwise instead
+                  // of nothing.
+                  (next?publishBusyWindows():unpublishBusyWindows()).then(result=>{
+                    if(result&&result.ok===false)showToast("Couldn't "+(next?"turn on":"turn off")+" sharing -- "+(result.reason||"try again")+".","error");
+                  });
                 }} style={{width:38,height:20,borderRadius:10,background:toggles.shareAvailability?T.lime:T.card2,border:`1px solid ${toggles.shareAvailability?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
                   <div style={{width:14,height:14,borderRadius:"50%",background:toggles.shareAvailability?T.bg:"#fff",position:"absolute",top:2,left:toggles.shareAvailability?21:2,transition:"left 0.2s"}} />
                 </div>
