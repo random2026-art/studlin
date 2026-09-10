@@ -21774,19 +21774,24 @@ function App() {
       setUnreadCount(0);
       return;
     }
+    let isFirstSnapshot = true;
     const unsub = fsdb().collection("chatRooms").where("memberUids", "array-contains", myUid).onSnapshot((snap) => {
       let n = 0;
+      const missedFrom = [];
       snap.docs.forEach((d) => {
         const room = d.data();
         if (isRoomUnread(room, myUid)) n++;
         const last = room.lastMessage;
         if (!last || last.senderId === myUid) return;
-        const prevTs = lastMsgRef.current[d.id];
-        if (prevTs === void 0) {
+        if (isFirstSnapshot) {
           lastMsgRef.current[d.id] = last.ts;
+          if (isRoomUnread(room, myUid)) {
+            missedFrom.push(room.type === "group" ? room.name || "a group chat" : room.memberNames && room.memberNames[last.senderId] || "Someone");
+          }
           return;
         }
-        if (last.ts <= prevTs) return;
+        const prevTs = lastMsgRef.current[d.id];
+        if (prevTs !== void 0 && last.ts <= prevTs) return;
         lastMsgRef.current[d.id] = last.ts;
         if (timerTaskRef.current) return;
         const settings = lsGet("settings", {});
@@ -21800,6 +21805,13 @@ function App() {
         }
       });
       setUnreadCount(n);
+      if (isFirstSnapshot) {
+        isFirstSnapshot = false;
+        if (missedFrom.length && !timerTaskRef.current && typeof Notification !== "undefined" && Notification.permission === "granted" && lsGet("settings", {}).sysPush === true) {
+          const shown = missedFrom.slice(0, 3).join(", ") + (missedFrom.length > 3 ? ` and ${missedFrom.length - 3} more` : "");
+          new Notification("Studlin", { body: (missedFrom.length === 1 ? "You missed a message from " : `${missedFrom.length} unread chats from `) + shown });
+        }
+      }
     }, () => {
     });
     return unsub;
@@ -21922,13 +21934,7 @@ function App() {
       (reg) => firebase.messaging().getToken({ vapidKey: FCM_VAPID_KEY, serviceWorkerRegistration: reg })
     ).then((token) => {
       if (!token) return;
-      const userRef = fsdb().collection("users").doc(myUid);
-      userRef.get().then((snap) => {
-        const existing = snap.exists && snap.data().fcmTokens || [];
-        if (existing.length <= 5 && existing.includes(token)) return;
-        const next = [...existing.filter((t) => t !== token), token].slice(-5);
-        return userRef.set({ fcmTokens: next, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }, { merge: true });
-      }).catch(() => {
+      fsdb().collection("users").doc(myUid).set({ fcmTokens: firebase.firestore.FieldValue.arrayUnion(token), updatedAt: (/* @__PURE__ */ new Date()).toISOString() }, { merge: true }).catch(() => {
       });
     }).catch(() => {
     });
