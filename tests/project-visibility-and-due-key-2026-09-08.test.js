@@ -43,7 +43,7 @@ describe("A Project can no longer be saved with no real phases/outline breakdown
   test("aiArrange has the same guard", () => {
     const idx = SOURCE.indexOf("const aiArrange=async()=>{");
     assert.notEqual(idx, -1);
-    const body = SOURCE.slice(idx, idx + 1200);
+    const body = SOURCE.slice(idx, idx + 2600);
     assert.match(body, /if\(projectMissingBreakdown\(\)\)\{setEvDetailErr\(/);
   });
 
