@@ -3352,6 +3352,14 @@ async function fetchUserProfile() {
     if (d.freeScheduleScanUsed) lsSet("freeScheduleScanUsed", true);
     if (d.freeSyllabusScanUsed) lsSet("freeSyllabusScanUsed", true);
     if (d.onboarded) lsSet("onboarded", true);
+    if (d.shareAvailability === void 0) {
+      const myUid = firebase.auth().currentUser && firebase.auth().currentUser.uid;
+      if (myUid) fsdb().collection("users").doc(myUid).set({ preferences: { shareAvailability: !!lsGet("settings", {}).shareAvailability }, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }, { merge: true }).catch(() => {
+      });
+    } else {
+      const local = lsGet("settings", {});
+      if (!!local.shareAvailability !== d.shareAvailability) lsSet("settings", { ...local, shareAvailability: d.shareAvailability });
+    }
     return d;
   } catch (e) {
     return null;
@@ -19306,6 +19314,10 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     if (!myUid) return;
     fsdb().collection("users").doc(myUid).update({ "preferences.pushNotificationsEnabled": enabled, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).catch(reportError("syncPushPref"));
   };
+  const syncShareAvailabilityPref = (enabled) => {
+    if (!myUid) return;
+    fsdb().collection("users").doc(myUid).set({ preferences: { shareAvailability: enabled }, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }, { merge: true }).catch(reportError("syncShareAvailabilityPref"));
+  };
   useEffect(() => {
     if (!myUid) return;
     fsdb().collection("users").doc(myUid).get().then((snap) => {
@@ -19313,6 +19325,20 @@ function SettingsTab({ theme = "dark", setTheme = () => {
       setToggles((t) => {
         if (t.sysPush === real) return t;
         const n = { ...t, sysPush: real };
+        lsSet("settings", n);
+        return n;
+      });
+    }).catch(() => {
+    });
+  }, [myUid]);
+  useEffect(() => {
+    if (!myUid) return;
+    fetchUserProfile().then((d) => {
+      if (!d || d.shareAvailability === void 0) return;
+      const real = d.shareAvailability;
+      setToggles((t) => {
+        if (t.shareAvailability === real) return t;
+        const n = { ...t, shareAvailability: real };
         lsSet("settings", n);
         return n;
       });
@@ -20086,6 +20112,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     const next = !toggles.shareAvailability;
     lsSet("settings", { ...lsGet("settings", {}), shareAvailability: next });
     tog("shareAvailability");
+    syncShareAvailabilityPref(next);
     (next ? publishBusyWindows() : unpublishBusyWindows()).then((result) => {
       if (result && result.ok === false) showToast2("Couldn't " + (next ? "turn on" : "turn off") + " sharing -- " + (result.reason || "try again") + ".", "error");
     });

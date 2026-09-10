@@ -1002,6 +1002,21 @@ module.exports = withSentry(async (req, res) => {
       plan = 'Free';
       await ref.set({ plan: 'Free' }, { merge: true });
     }
+    // "Share my free/busy time" (studlin-app.jsx's shareAvailability
+    // toggle) lived only in each browser's localStorage -- turn it on on
+    // your phone and your laptop had no way to find out. users/{uid} is
+    // unreadable directly by any client (see firestore.rules), so this GET
+    // is the only channel a client has to learn the real cross-device
+    // value; the write itself still goes straight to Firestore from the
+    // client (preferences is allowlisted there) since that half was never
+    // blocked. Included ONLY when some device has already written it at
+    // least once -- omitting the key (not defaulting to false) lets the
+    // client tell "really off everywhere" apart from "no device has ever
+    // set this yet," which matters because this account may already have
+    // it on in a browser's localStorage from before this sync existed, and
+    // defaulting a never-written flag to false would silently overwrite
+    // that back to off on next load instead of backfilling it up.
+    const shareAvailability=(data.preferences&&typeof data.preferences.shareAvailability==="boolean")?data.preferences.shareAvailability:undefined;
     return res.status(200).json({
       plan,
       credits: data.credits ?? DEFAULT_CREDITS,
@@ -1017,6 +1032,7 @@ module.exports = withSentry(async (req, res) => {
       onboarded: !!data.onboarded,
       freeScheduleScanUsed: !!data.freeScheduleScanUsed,
       freeSyllabusScanUsed: !!data.freeSyllabusScanUsed,
+      ...(shareAvailability===undefined?{}:{shareAvailability}),
     });
   } catch (err) {
     console.warn('Profile lookup unavailable, returning defaults:', err.message);

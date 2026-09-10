@@ -5577,6 +5577,23 @@ async function fetchUserProfile(){try{const res=await authFetch("/api/me");if(!r
   // reverse — a slow/failed write to this same flag elsewhere shouldn't be
   // able to un-onboard someone mid-session.
   if(d.onboarded)lsSet("onboarded",true);
+  // Cross-device sync for "Share my free/busy time" (shareAvailability) --
+  // this toggle used to live only in localStorage (see
+  // syncShareAvailabilityPref/SettingsTab's own reconciliation effect for
+  // the fuller story and the 2026-09-10 user report that motivated it).
+  // api/me only includes the field once some device has written
+  // preferences.shareAvailability at least once; when it's missing, this
+  // browser is the first to see this account since that sync existed, so
+  // there's nothing real to pull down yet -- push this browser's current
+  // value up instead of quietly treating "never synced" as "off" and
+  // flipping an already-on setting back off.
+  if(d.shareAvailability===undefined){
+    const myUid=firebase.auth().currentUser&&firebase.auth().currentUser.uid;
+    if(myUid)fsdb().collection('users').doc(myUid).set({preferences:{shareAvailability:!!lsGet("settings",{}).shareAvailability},updatedAt:new Date().toISOString()},{merge:true}).catch(()=>{});
+  }else{
+    const local=lsGet("settings",{});
+    if(!!local.shareAvailability!==d.shareAvailability)lsSet("settings",{...local,shareAvailability:d.shareAvailability});
+  }
   return d;}catch(e){return null;}}
 
 // ─── FIRESTORE (client SDK) — live user directory + friend graph ────────────
@@ -32205,6 +32222,19 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     if(!myUid)return;
     fsdb().collection('users').doc(myUid).update({'preferences.pushNotificationsEnabled':enabled,updatedAt:new Date().toISOString()}).catch(reportError("syncPushPref"));
   };
+  // Same reasoning as syncPushPref, for "Share my free/busy time." Without
+  // this, the toggle itself (unlike the busyWindows doc it controls) lived
+  // only in this browser's localStorage -- turn it on on your phone and
+  // your laptop still shows it off, has no idea it's really on, and would
+  // silently skip re-publishing your busy times if it ran the opportunistic
+  // self-refresh (see publishBusyWindows) before you ever opened Settings
+  // there. User report, 2026-09-10: a friend said she'd turned sharing on
+  // and it still showed as not shared -- this cross-device gap was never
+  // ruled out as a contributor.
+  const syncShareAvailabilityPref=(enabled)=>{
+    if(!myUid)return;
+    fsdb().collection('users').doc(myUid).set({preferences:{shareAvailability:enabled},updatedAt:new Date().toISOString()},{merge:true}).catch(reportError("syncShareAvailabilityPref"));
+  };
   // The write above is one-way, so a fresh browser/profile/reinstalled PWA
   // defaults this toggle to "off" locally while the real server-enforced
   // flag (set from a different device or session) could still be true —
@@ -32219,6 +32249,39 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
       setToggles(t=>{
         if(t.sysPush===real)return t;
         const n={...t,sysPush:real};
+        lsSet("settings",n);
+        return n;
+      });
+    }).catch(()=>{});
+  },[myUid]);
+  // Same reconciliation as sysPush above, but the safe default runs the
+  // opposite direction: sysPush can always trust "field missing" to mean
+  // off, since it never existed as a local-only setting before syncPushPref
+  // did. shareAvailability already shipped as a local-only toggle first --
+  // a user who turned it on before this cross-device sync existed has it
+  // true in localStorage with nothing yet written to Firestore, and
+  // treating "missing" as "really off" would silently flip her back off on
+  // the very first load meant to fix that. So: field missing means no
+  // device has ever backfilled it yet -- push this browser's current value
+  // up instead of pulling a false default down. Field present (even false)
+  // means some device already established the real value -- that one wins.
+  // users/{uid} is unreadable directly by any client (firestore.rules:
+  // `allow read: if false`, deliberately -- see api/me.js's own comment;
+  // that same doc also holds credits/plan/billing fields nothing client-
+  // side should see raw). fetchUserProfile()'s GET /api/me is the only
+  // channel that can actually answer "what's the real cross-device value" --
+  // it already applies this exact reconcile-or-backfill logic as a side
+  // effect (see its own comment), this just re-reads the result into
+  // Settings' live toggle state in case fetchUserProfile's own app-boot
+  // call (AuthGate) resolved before this screen ever mounted.
+  useEffect(()=>{
+    if(!myUid)return;
+    fetchUserProfile().then(d=>{
+      if(!d||d.shareAvailability===undefined)return;
+      const real=d.shareAvailability;
+      setToggles(t=>{
+        if(t.shareAvailability===real)return t;
+        const n={...t,shareAvailability:real};
         lsSet("settings",n);
         return n;
       });
@@ -33405,6 +33468,11 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                   // any dependency on that timing.
                   lsSet("settings",{...lsGet("settings",{}),shareAvailability:next});
                   tog("shareAvailability");
+                  // Bug fix, 2026-09-10: this toggle lived only in
+                  // localStorage, so a second device had no way to know it
+                  // was on -- see syncShareAvailabilityPref above for why
+                  // that mattered beyond just the UI showing stale state.
+                  syncShareAvailabilityPref(next);
                   // Bug fix, 2026-09-10 user report ("still not working"
                   // after the race above was already fixed and verified
                   // live): publishBusyWindows/unpublishBusyWindows used to
