@@ -28064,35 +28064,55 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const toggleGsSelected=(uid)=>setGsSelected(s=>s.includes(uid)?s.filter(x=>x!==uid):(s.length>=8?s:[...s,uid]));
   // "Ask them to turn it on" -- the amber non-sharing warning used to just
   // name who hasn't shared with no way to actually do anything about it
-  // from here. Pushes a real notification (server-authorized: api/notify.js
-  // checks they're an actual accepted friend before sending) that deep-links
-  // straight to the Privacy toggle itself (Settings > Privacy > "Share my
-  // free/busy time") -- one tap to get there, not "go dig through Settings."
+  // from here.
+  // Bug fix, 2026-09-10 user report ("she never even got a message... she
+  // already had her settings on"): a push notification (api/notify.js)
+  // was the ONLY channel this ever used, and it silently depends on the
+  // recipient having granted browser notification permission -- a
+  // separate, rarely-granted OS-level permission that has nothing to do
+  // with the in-app "Share my free/busy time" toggle she'd already turned
+  // on. Most real users never grant it, so this was reaching almost
+  // nobody even when it "succeeded" server-side.
+  // Now sends an actual chat message into the DM instead -- the same
+  // proven, already-deployed delivery channel every scheduling proposal
+  // in this app already relies on (unread badge, live listener, no OS
+  // permission needed at all), same check-existence-first DM pattern
+  // confirmGsPeople uses for the identical firestore.rules reason
+  // documented there. Push stays wired as a same-instant bonus when it
+  // does work (fire-and-forget, doesn't gate the toast), but is no longer
+  // the only thing standing between clicking this button and the
+  // recipient actually seeing something.
   const askFriendsToShareAvailability=async()=>{
     const nonSharing=gsSelected.filter(uid=>!gsSharedUids.has(uid)&&!shareAskSentUids.has(uid));
     if(nonSharing.length===0)return;
     setShareAskSentUids(prev=>new Set([...prev,...nonSharing]));
-    // Bug fix, 2026-09-08 user report: this used to show "Asked them" as a
-    // flat success regardless of what actually happened -- api/notify.js's
-    // shareAvailabilityRequest handler silently returns {ok:true,sent:0}
-    // whenever the recipient has no push notifications enabled at all
-    // (a DIFFERENT setting than "Share my free/busy time," which is the
-    // one they'd actually gone and turned on) or has no registered
-    // device token, and this call never even read that field before
-    // declaring success. Now actually checks how many pushes went out and
-    // says so honestly -- "may not have notifications turned on" isn't as
-    // satisfying as a guaranteed delivery, but it's true, unlike the old
-    // message.
-    const results=await Promise.all(nonSharing.map(uid=>
-      authFetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"shareAvailabilityRequest",recipientUid:uid})})
-        .then(r=>r.json()).then(d=>({uid,sent:!!(d&&d.sent>0)})).catch(()=>({uid,sent:false}))
-    ));
-    const delivered=results.filter(r=>r.sent).length;
+    const myUid=firebase.auth().currentUser?.uid;
+    const chatText="Hey! Could you turn on \"Share my free/busy time\" in Settings → Privacy? It'll help Studlin find times that actually work for both of us.";
+    const chatResults=myUid?await Promise.all(nonSharing.map(async(uid)=>{
+      try{
+        const roomId=dmRoomId(myUid,uid);
+        const roomRef=fsdb().collection('chatRooms').doc(roomId);
+        const nowIso=new Date().toISOString();
+        const existingRoom=await roomRef.get().catch(()=>null);
+        if(!existingRoom||!existingRoom.exists){
+          await roomRef.set({type:"dm",memberUids:[myUid,uid].sort(),createdBy:myUid,createdAt:nowIso,updatedAt:nowIso,lastMessage:null});
+        }
+        await roomRef.collection('messages').add({senderId:myUid,ts:Date.now(),kind:"text",text:chatText});
+        await roomRef.update({lastMessage:{text:chatText,kind:"text",ts:Date.now(),senderId:myUid},updatedAt:nowIso}).catch(()=>{});
+        return{uid,ok:true};
+      }catch(e){return{uid,ok:false};}
+    })):nonSharing.map(uid=>({uid,ok:false}));
+    // Fire-and-forget -- a genuine bonus channel now, its own failure
+    // (no push permission granted) no longer means "couldn't reach them."
+    nonSharing.forEach(uid=>{
+      authFetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"shareAvailabilityRequest",recipientUid:uid})}).catch(()=>{});
+    });
+    const delivered=chatResults.filter(r=>r.ok).length;
     setPlacementToast(delivered===0
-      ?"Couldn't reach "+(nonSharing.length===1?"them":"any of them")+" -- they may not have notifications turned on in Studlin. Ask them directly instead?"
+      ?"Couldn't send "+(nonSharing.length===1?"them":"any of them")+" a message -- check your connection and try again."
       :delivered<nonSharing.length
-      ?"Reached "+delivered+" of "+nonSharing.length+" -- the rest may not have notifications turned on."
-      :"Asked "+(nonSharing.length===1?"them":nonSharing.length+" friends")+" to turn on sharing their busy time.");
+      ?"Messaged "+delivered+" of "+nonSharing.length+" -- the rest didn't go through, try again."
+      :"Sent "+(nonSharing.length===1?"them":nonSharing.length+" friends")+" a message asking them to turn on sharing.");
     setTimeout(()=>setPlacementToast(""),delivered===0?5000:3200);
   };
   // Resolves (or creates) the chat room to post the proposal into -- a

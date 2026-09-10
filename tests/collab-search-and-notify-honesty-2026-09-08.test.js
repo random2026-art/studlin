@@ -16,8 +16,16 @@
 //    recipient lacks a DIFFERENT setting (general push-notifications-enabled,
 //    not "share my free/busy time") or has no registered device token --
 //    and the client never read that field before declaring success.
-//    Fix: the client now reads the real `sent` count and shows an honest,
-//    differentiated message.
+//    Fix (this pass): the client read the real `sent` count and showed an
+//    honest, differentiated message. SUPERSEDED 2026-09-10 -- push turned
+//    out to reach almost nobody in practice (that permission is rarely
+//    granted at all), so askFriendsToShareAvailability now sends a real
+//    chat message as its primary, guaranteed channel instead, with push
+//    kept only as a fire-and-forget bonus. See
+//    tests/ask-them-to-turn-it-on-uses-chat-2026-09-10.test.js for current
+//    coverage; the describe block below (testing the old push-response-
+//    parsing shape) is removed rather than left as dead/misleading
+//    coverage of behavior that no longer exists.
 //
 // 3. "when i turn on it doesnt do anything" (Attack Block retroactive toggle)
 //    -- buildAssignmentAttackBlockPair returns null when no legal slot exists
@@ -51,33 +59,6 @@ describe("Collaborator search bar: no longer hidden behind a >5-candidates thres
     const body = SOURCE.slice(idx, idx + 700);
     assert.match(body, /<Input value=\{evCollabSearchQuery\}/, "the search input must render unconditionally in the non-empty branch");
     assert.doesNotMatch(body, /evCollabCandidates\.length>5/, "the old threshold gate must be gone");
-  });
-});
-
-describe("askFriendsToShareAvailability: an honest result instead of a blind 'Asked them'", () => {
-  test("reads the real per-recipient sent count from the server response instead of ignoring it", () => {
-    const idx = SOURCE.indexOf("const askFriendsToShareAvailability=async()=>{");
-    assert.notEqual(idx, -1);
-    const body = SOURCE.slice(idx, idx + 2000);
-    assert.match(body, /\.then\(d=>\(\{uid,sent:!!\(d&&d\.sent>0\)\}\)\)/, "must actually parse the server's sent count per recipient");
-  });
-
-  test("a total delivery failure shows a real 'couldn't reach them' message, not a false success", () => {
-    const idx = SOURCE.indexOf("const askFriendsToShareAvailability=async()=>{");
-    const body = SOURCE.slice(idx, idx + 2000);
-    assert.match(body, /delivered===0\s*\n?\s*\?"Couldn't reach "/, "zero delivered must never be reported as success");
-  });
-
-  test("a partial delivery is reported honestly as partial, not rounded up to full success", () => {
-    const idx = SOURCE.indexOf("const askFriendsToShareAvailability=async()=>{");
-    const body = SOURCE.slice(idx, idx + 2000);
-    assert.match(body, /:delivered<nonSharing\.length\s*\n?\s*\?"Reached "\+delivered\+" of "\+nonSharing\.length/, "a partial send must say how many actually went through");
-  });
-
-  test("full delivery still shows the original success wording unchanged", () => {
-    const idx = SOURCE.indexOf("const askFriendsToShareAvailability=async()=>{");
-    const body = SOURCE.slice(idx, idx + 2000);
-    assert.match(body, /:"Asked "\+\(nonSharing\.length===1\?"them":nonSharing\.length\+" friends"\)\+" to turn on sharing their busy time\."/);
   });
 });
 

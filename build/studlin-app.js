@@ -16616,11 +16616,31 @@ function CalendarTab({ setActive = () => {
     const nonSharing = gsSelected.filter((uid) => !gsSharedUids.has(uid) && !shareAskSentUids.has(uid));
     if (nonSharing.length === 0) return;
     setShareAskSentUids((prev) => /* @__PURE__ */ new Set([...prev, ...nonSharing]));
-    const results = await Promise.all(nonSharing.map(
-      (uid) => authFetch("/api/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "shareAvailabilityRequest", recipientUid: uid }) }).then((r) => r.json()).then((d) => ({ uid, sent: !!(d && d.sent > 0) })).catch(() => ({ uid, sent: false }))
-    ));
-    const delivered = results.filter((r) => r.sent).length;
-    setPlacementToast(delivered === 0 ? "Couldn't reach " + (nonSharing.length === 1 ? "them" : "any of them") + " -- they may not have notifications turned on in Studlin. Ask them directly instead?" : delivered < nonSharing.length ? "Reached " + delivered + " of " + nonSharing.length + " -- the rest may not have notifications turned on." : "Asked " + (nonSharing.length === 1 ? "them" : nonSharing.length + " friends") + " to turn on sharing their busy time.");
+    const myUid = firebase.auth().currentUser?.uid;
+    const chatText = `Hey! Could you turn on "Share my free/busy time" in Settings \u2192 Privacy? It'll help Studlin find times that actually work for both of us.`;
+    const chatResults = myUid ? await Promise.all(nonSharing.map(async (uid) => {
+      try {
+        const roomId = dmRoomId(myUid, uid);
+        const roomRef = fsdb().collection("chatRooms").doc(roomId);
+        const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+        const existingRoom = await roomRef.get().catch(() => null);
+        if (!existingRoom || !existingRoom.exists) {
+          await roomRef.set({ type: "dm", memberUids: [myUid, uid].sort(), createdBy: myUid, createdAt: nowIso, updatedAt: nowIso, lastMessage: null });
+        }
+        await roomRef.collection("messages").add({ senderId: myUid, ts: Date.now(), kind: "text", text: chatText });
+        await roomRef.update({ lastMessage: { text: chatText, kind: "text", ts: Date.now(), senderId: myUid }, updatedAt: nowIso }).catch(() => {
+        });
+        return { uid, ok: true };
+      } catch (e) {
+        return { uid, ok: false };
+      }
+    })) : nonSharing.map((uid) => ({ uid, ok: false }));
+    nonSharing.forEach((uid) => {
+      authFetch("/api/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "shareAvailabilityRequest", recipientUid: uid }) }).catch(() => {
+      });
+    });
+    const delivered = chatResults.filter((r) => r.ok).length;
+    setPlacementToast(delivered === 0 ? "Couldn't send " + (nonSharing.length === 1 ? "them" : "any of them") + " a message -- check your connection and try again." : delivered < nonSharing.length ? "Messaged " + delivered + " of " + nonSharing.length + " -- the rest didn't go through, try again." : "Sent " + (nonSharing.length === 1 ? "them" : nonSharing.length + " friends") + " a message asking them to turn on sharing.");
     setTimeout(() => setPlacementToast(""), delivered === 0 ? 5e3 : 3200);
   };
   const confirmGsPeople = async () => {
