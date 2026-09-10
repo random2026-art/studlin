@@ -117,8 +117,12 @@ describe("Assignment detail page navigation wiring (source-level regression guar
 });
 
 describe("Assignment detail page's Attack Block eligibility mirrors EventDetailModal's canAddAttackBlock (source-level regression guard)", () => {
-  test("both real shapes (deadline marker, legacy study-block item) qualify, and an item already linked to something else never does", () => {
-    assert.match(APP_SOURCE, /const canStartAttackBlock=\(selectedAssignment\.kind==="deadline"\|\|isLegacyBlock\)&&!selectedAssignment\.isAttackBlock&&!selectedAssignment\.dueEventId&&!selectedAssignment\.deckId&&!selectedAssignment\.practiceExamId&&!selectedAssignment\.isExamPrepSession&&linkedSessions\.length===0;/);
+  test("both kind values (deadline marker, legacy study-block item) qualify, and an item already linked to something else never does", () => {
+    assert.match(APP_SOURCE, /const canStartAttackBlock=\(selectedAssignment\.kind==="deadline"\|\|selectedAssignment\.kind==="study block"\)&&!selectedAssignment\.isAttackBlock&&!selectedAssignment\.dueEventId&&!selectedAssignment\.deckId&&!selectedAssignment\.practiceExamId&&!selectedAssignment\.isExamPrepSession&&linkedSessions\.length===0;/);
+  });
+
+  test("the 'your scheduled time' display uses a THIRD shape check (has its own time+duration, nothing linked yet) -- not just kind==='study block' -- since Add Task's aiArrange can commit a kind:'deadline' item that already carries its own real time+duration directly", () => {
+    assert.match(APP_SOURCE, /const hasOwnScheduledTime=!!selectedAssignment\.time&&!!selectedAssignment\.duration&&linkedSessions\.length===0;/);
   });
 
   test("the retroactive conversion reuses buildAssignmentAttackBlockPair with the assignment's own id as the marker id, same convention EventDetailModal's save() already established", () => {

@@ -11399,23 +11399,33 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
       {tab==="assignments"&&selectedAssignment&&(()=>{
         const today=dayKey();
         const allEvents=lsGet("events",[]);
-        // Two real shapes an "assignment" can be underneath (see
-        // upcomingAssignments' own comment for the full story): a real
-        // kind:"deadline" marker (0+ linked sessions via dueEventId), or a
-        // legacy kind:"study block"+isAssignment item that IS its own one
-        // scheduled block, no marker at all. This page handles both.
-        const isLegacyBlock=selectedAssignment.kind==="study block";
         const linkedSessions=allEvents.filter(e=>e.dueEventId===selectedAssignment.id).sort((a,b)=>(a.date+a.time)<(b.date+b.time)?-1:1);
+        // Real bug found live, 2026-09-10: "assignment" turns out to have a
+        // THIRD shape beyond the two upcomingAssignments' own comment
+        // already documents -- Add Task's own aiArrange, when the Attack
+        // Block checkbox is left off (the common case), commits a plain
+        // kind:"deadline" item that ALSO carries a real time+duration
+        // directly on itself, no separate linked session at all (unlike a
+        // syllabus-scanned or Attack-Block-built marker, which is always
+        // duration:null with the real work living in a linked session).
+        // Gating "does this item already have its own scheduled time" on
+        // kind==="study block" alone missed this shape entirely -- opening
+        // one here showed "no plan yet" and offered to start an Attack
+        // Block, hiding the real block it already had. The actual question
+        // is never "what kind is this," it's "does this item carry its own
+        // time with nothing else linked to it yet" -- true for the legacy
+        // study-block shape AND this self-scheduled deadline shape alike.
+        const hasOwnScheduledTime=!!selectedAssignment.time&&!!selectedAssignment.duration&&linkedSessions.length===0;
         const pendingLinked=linkedSessions.filter(s=>s.status!=="done");
         const isCompleted=selectedAssignment.status==="done";
         const daysUntil=selectedAssignment.date?Math.round((new Date(selectedAssignment.date+"T12:00:00")-new Date(today+"T12:00:00"))/86400000):null;
         const countdownLabel=daysUntil==null?"no date yet":daysUntil<0?"past due":daysUntil===0?"due today":daysUntil===1?"due in 1 day":"due in "+daysUntil+" days";
         const pace=computeAssignmentPace(selectedAssignment,allEvents,today);
         // Same eligibility canAddAttackBlock already established in
-        // EventDetailModal (both real shapes qualify -- see that gate's
+        // EventDetailModal (every real shape qualifies -- see that gate's
         // own comment) -- re-derived here rather than imported since this
         // is this component's own copy, not a shared extraction.
-        const canStartAttackBlock=(selectedAssignment.kind==="deadline"||isLegacyBlock)&&!selectedAssignment.isAttackBlock&&!selectedAssignment.dueEventId&&!selectedAssignment.deckId&&!selectedAssignment.practiceExamId&&!selectedAssignment.isExamPrepSession&&linkedSessions.length===0;
+        const canStartAttackBlock=(selectedAssignment.kind==="deadline"||selectedAssignment.kind==="study block")&&!selectedAssignment.isAttackBlock&&!selectedAssignment.dueEventId&&!selectedAssignment.deckId&&!selectedAssignment.practiceExamId&&!selectedAssignment.isExamPrepSession&&linkedSessions.length===0;
 
         const toggleAssignCompleted=()=>{
           if(isCompleted){patchExam(selectedAssignment.id,{status:"pending"});refresh();return;}
@@ -11486,7 +11496,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
           <div>
             <button onClick={()=>setSelectedAssignmentId(null)} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,marginBottom:14,display:"flex",alignItems:"center",gap:4}}>← All assignments</button>
             <div style={{fontSize:24,fontWeight:800,color:T.white,letterSpacing:"-0.01em",marginBottom:4,lineHeight:1.2}}>{selectedAssignment.title} · {countdownLabel}</div>
-            <div style={{fontSize:12.5,color:T.muted,marginBottom:14}}>{[selectedAssignment.subject,selectedAssignment.date?niceDate(selectedAssignment.date):null,linkedSessions.length>0?linkedSessions.length+" block"+(linkedSessions.length!==1?"s":"")+" scheduled":isLegacyBlock?"1 block scheduled":"no plan yet"].filter(Boolean).join(" · ")}</div>
+            <div style={{fontSize:12.5,color:T.muted,marginBottom:14}}>{[selectedAssignment.subject,selectedAssignment.date?niceDate(selectedAssignment.date):null,linkedSessions.length>0?linkedSessions.length+" block"+(linkedSessions.length!==1?"s":"")+" scheduled":hasOwnScheduledTime?"1 block scheduled":"no plan yet"].filter(Boolean).join(" · ")}</div>
             <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:14}}>
               {isCompleted?(
                 <span style={{fontSize:11,fontWeight:700,color:T.lime,background:T.lime+"14",border:`1px solid ${T.lime}44`,borderRadius:6,padding:"4px 10px"}}>COMPLETED</span>
@@ -11509,7 +11519,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                 scheduled block (no separate marker). Shown as a real,
                 editable row same as any linked session, plus the option
                 to upgrade into a full Attack Block plan. */}
-            {isLegacyBlock&&(
+            {hasOwnScheduledTime&&(
               <div style={{marginBottom:14}}>
                 <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>Your scheduled time</div>
                 <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
@@ -11525,7 +11535,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
             {canStartAttackBlock&&(<>
               <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:14}}>
                 <div onClick={()=>setAssignAddAttackBlock(a=>!a)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
-                  <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>{isLegacyBlock?"Turn this into a full Attack Block plan":"Start an Attack Block for this"}</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>A short probe session, scheduled the moment you confirm. Studlin figures out the rest from there.</div></div>
+                  <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>{hasOwnScheduledTime?"Turn this into a full Attack Block plan":"Start an Attack Block for this"}</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>A short probe session, scheduled the moment you confirm. Studlin figures out the rest from there.</div></div>
                   <div style={{width:36,height:20,borderRadius:10,background:assignAddAttackBlock?T.lime:T.faint,position:"relative",transition:"background 0.2s",cursor:"pointer",flexShrink:0}}><div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:assignAddAttackBlock?18:2,transition:"left 0.2s"}} /></div>
                 </div>
                 <AttackBlockExplainer />
