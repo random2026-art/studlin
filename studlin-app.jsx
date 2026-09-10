@@ -6783,8 +6783,28 @@ function itemLifecycleState(item,today){
 // queryable instead of disappearing the moment it's marked done. The name
 // is legacy (kept since nothing outside Prep calls these) -- "upcoming" now
 // really means "every real assignment/project," filtered client-side.
+// Real gap found live, 2026-09-10: "Assignment" has always meant two
+// different things underneath, depending only on which entry point
+// created it. Add Task's own resolveAssignmentKind writes kind:"deadline"
+// when Studlin picks the time (taskMode==="ai"), but kind:"study block"
+// (with isAssignment:true, see its own comment) when the student picks
+// the exact time themselves (taskMode==="manual") -- and Brain Dump/
+// Studlin AI chat's create_task (both routed through the shared
+// planBrainDumpTasks) produce that same kind:"study block"+isAssignment
+// shape as their DEFAULT for a plain "study" item, only ever building a
+// real kind:"deadline" marker when the student explicitly toggled Attack
+// Block on. Since this function filtered on kind==="deadline" alone, an
+// assignment created through any of those "study block" paths was
+// completely invisible in Studlin Prep -- not just missing a plan, gone
+// from the list entirely, with no pace tracking, no completion toggle,
+// nothing. Broadened here (read-side only, nothing about how any of
+// those paths WRITE the event changes) so every assignment shows up
+// regardless of which door it came in through; the new Assignment detail
+// page (selectedAssignmentId) handles both shapes -- a real marker
+// (0+ linked sessions via dueEventId) and this legacy single-block shape
+// (the item IS its own one scheduled block) -- gracefully.
 function upcomingAssignments(){
-  return lsGet("events",[]).filter(e=>e.kind==="deadline"&&(!e.checklist||e.subject)&&!isProjectMarker(e)).sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
+  return lsGet("events",[]).filter(e=>(e.kind==="deadline"||(e.kind==="study block"&&e.isAssignment===true))&&(!e.checklist||e.subject)&&!isProjectMarker(e)).sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
 }
 function upcomingProjects(){
   return lsGet("events",[]).filter(e=>e.kind==="deadline"&&(!e.checklist||e.subject)&&isProjectMarker(e)).sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
@@ -9803,6 +9823,50 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
     if(pending)lsSet("openPrepExamId",null);
     return pending;
   });
+  // Real dedicated Assignment detail page (2026-09-10 user report/request),
+  // same one-shot deep-link handoff idiom as selectedExamId above -- an
+  // assignment used to open the shared EventDetailModal (setDetailEventId),
+  // which meant a real Attack Block plan (once sessions were actually
+  // scheduled) had nowhere persistent to live: canAddAttackBlock's own
+  // toggle disappears the moment linkedSessions.length>0, and nothing in
+  // that modal replaces it for a plain (non-project, non-exam) assignment.
+  // Exams already solved this exact problem with a real page; assignments
+  // get the same treatment now, reusing the identical mechanics
+  // (buildAssignmentAttackBlockPair, the "Scheduled blocks" list, pace
+  // nudges) that EventDetailModal already proved out, rather than
+  // inventing new ones -- kept as this component's own copy (not a shared
+  // extraction) for the same "blast radius on new code only" reasoning
+  // this codebase already uses elsewhere (see commitStudlinAiFixedMove's
+  // own comment for the same precedent).
+  const [selectedAssignmentId,setSelectedAssignmentId]=useState(()=>{
+    const pending=lsGet("openPrepAssignmentId",null);
+    if(pending)lsSet("openPrepAssignmentId",null);
+    return pending;
+  });
+  const [assignAddAttackBlock,setAssignAddAttackBlock]=useState(false);
+  const [assignAttackProbeMins,setAssignAttackProbeMins]=useState(ATTACK_BLOCK_DEFAULT_PROBE_MINS);
+  const [assignAttackErr,setAssignAttackErr]=useState("");
+  const [assignAddManualBlock,setAssignAddManualBlock]=useState(false);
+  const [assignManualDate,setAssignManualDate]=useState("");
+  const [assignManualTime,setAssignManualTime]=useState("16:00");
+  const [assignManualDuration,setAssignManualDuration]=useState(30);
+  const [assignConfirmDeleteBlockId,setAssignConfirmDeleteBlockId]=useState(null);
+  const [assignCompleteSessionPrompt,setAssignCompleteSessionPrompt]=useState(false);
+  const [assignCancelSessionsConfirm,setAssignCancelSessionsConfirm]=useState(false);
+  const [assignPaceProposal,setAssignPaceProposal]=useState(null);
+  const [assignPaceDismissed,setAssignPaceDismissed]=useState(false);
+  // Fresh per assignment, same reasoning EventDetailModal's own
+  // [eventId]-keyed reset effect documents -- without this, a toggle left
+  // open on one assignment (e.g. "Add my own time block") would still be
+  // open when a different assignment is opened next, since this
+  // component (unlike EventDetailModal) stays mounted across the whole
+  // Prep tab rather than remounting per item.
+  useEffect(()=>{
+    setAssignAddAttackBlock(false);setAssignAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setAssignAttackErr("");
+    setAssignAddManualBlock(false);setAssignManualDate(dayKey());setAssignManualTime("16:00");setAssignManualDuration(30);
+    setAssignConfirmDeleteBlockId(null);setAssignCompleteSessionPrompt(false);setAssignCancelSessionsConfirm(false);
+    setAssignPaceProposal(null);setAssignPaceDismissed(selectedAssignmentId?isPaceNudgeDismissed(selectedAssignmentId):false);
+  },[selectedAssignmentId]);
   const [,forceTick]=useState(0);
   const refresh=()=>forceTick(x=>x+1);
   const [upgradeModal,setUpgradeModal]=useState(null); // {feature,detail}
@@ -10620,6 +10684,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
   const allDecks=lsGet("decks",[]);
   const allPracticeExams=lsGet("practiceExams",[]);
   const selectedExam=selectedExamId?lsGet("events",[]).find(e=>e.id===selectedExamId):null;
+  const selectedAssignment=selectedAssignmentId?lsGet("events",[]).find(e=>e.id===selectedAssignmentId):null;
   // Phase 9 table view: patch a single field on one exam in place, same
   // read-mutate-lsSet-refresh convention every other mutation in this
   // component already follows (see commitBuildPlan above) -- no separate
@@ -11072,7 +11137,9 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
   // (nothing to filter -- it's a small set of aggregate visuals, not a
   // list) so it must be excluded here the same way the exam-detail
   // sub-page already is, or tt below reads as undefined.
-  const showTabToolbar=!(tab==="exams"&&selectedExam)&&tab!=="insights";
+  // Assignments now has its own detail sub-page too (selectedAssignment),
+  // same reasoning as the exam one just above.
+  const showTabToolbar=!(tab==="exams"&&selectedExam)&&!(tab==="assignments"&&selectedAssignment)&&tab!=="insights";
   const tt=TOOLBAR_TAB_STATE[tab];
 
   return(
@@ -11089,7 +11156,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,marginBottom:20,flexWrap:"wrap"}}>
         <div style={{display:"flex",gap:2,background:T.card2,padding:2,borderRadius:4,width:"fit-content",flexWrap:"wrap"}}>
           {[{id:"exams",label:"Exams"},{id:"assignments",label:"Assignments"},{id:"projects",label:"Projects"},{id:"flashcards",label:"Flashcards"},{id:"practiceExams",label:"Practice Exams"},{id:"insights",label:"Insights"}].map(v=>(
-            <button key={v.id} onClick={()=>{setTab(v.id);setSelectedExamId(null);}} style={{padding:"5px 12px",borderRadius:4,fontSize:12,fontWeight:tab===v.id?600:400,cursor:"pointer",background:tab===v.id?T.card:"transparent",color:tab===v.id?T.text:T.muted,border:"none",fontFamily:T.font,transition:"all 0.15s",whiteSpace:"nowrap"}}>{v.label}</button>
+            <button key={v.id} onClick={()=>{setTab(v.id);setSelectedExamId(null);setSelectedAssignmentId(null);}} style={{padding:"5px 12px",borderRadius:4,fontSize:12,fontWeight:tab===v.id?600:400,cursor:"pointer",background:tab===v.id?T.card:"transparent",color:tab===v.id?T.text:T.muted,border:"none",fontFamily:T.font,transition:"all 0.15s",whiteSpace:"nowrap"}}>{v.label}</button>
           ))}
         </div>
         {showTabToolbar&&(
@@ -11235,7 +11302,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
           reusing "sessions" verbatim -- Attack Block count for an
           assignment, checklist completion for a project -- rather than
           forcing both through the exam's study-session shape. */}
-      {tab==="assignments"&&(()=>{
+      {tab==="assignments"&&!selectedAssignment&&(()=>{
         const today=dayKey();
         const allAssignments=upcomingAssignments();
         const assignClasses=[...new Set(allAssignments.map(a=>a.subject).filter(Boolean))];
@@ -11282,7 +11349,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                   const statusLabel=rowPace&&rowPace.behind?"behind pace":rowPace&&rowPace.ahead?"ahead of pace":pending.length===0?"no blocks yet":pending.length+" block"+(pending.length!==1?"s":"")+" scheduled";
                   return (
                     <div key={a.id} style={{display:"grid",gridTemplateColumns:gridCols,gap:8,padding:"7px 10px",borderBottom:`1px solid ${T.border}`,alignItems:"center"}}>
-                      <div onClick={()=>setDetailEventId(a.id)} style={{fontSize:11.5,fontWeight:600,color:T.white,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={a.title}>{a.title}</div>
+                      <div onClick={()=>setSelectedAssignmentId(a.id)} style={{fontSize:11.5,fontWeight:600,color:T.white,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={a.title}>{a.title}</div>
                       <div style={{fontSize:10.5,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.subject||"—"}</div>
                       {/* Setting a date on a class-linked no-date-yet item
                           (checklist:true -- see upcomingAssignments' own
@@ -11317,7 +11384,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                           <button type="button" onClick={(e)=>{e.stopPropagation();onDeclinePrep({id:a.id});}} style={{background:"none",border:"none",color:T.muted,fontSize:10,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>Not needed</button>
                         </div>
                       ):(
-                        <div onClick={()=>setDetailEventId(a.id)} style={{fontSize:10.5,fontWeight:rowPace&&(rowPace.behind||rowPace.ahead)?700:400,color:rowPace&&rowPace.behind?T.amber:rowPace&&rowPace.ahead?T.teal:T.muted,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title="Click to open">{statusLabel}</div>
+                        <div onClick={()=>setSelectedAssignmentId(a.id)} style={{fontSize:10.5,fontWeight:rowPace&&(rowPace.behind||rowPace.ahead)?700:400,color:rowPace&&rowPace.behind?T.amber:rowPace&&rowPace.ahead?T.teal:T.muted,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title="Click to open">{statusLabel}</div>
                       )}
                     </div>
                   );
@@ -11325,6 +11392,252 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
               </div>
             </div>
           )}
+          </div>
+        );
+      })()}
+
+      {tab==="assignments"&&selectedAssignment&&(()=>{
+        const today=dayKey();
+        const allEvents=lsGet("events",[]);
+        // Two real shapes an "assignment" can be underneath (see
+        // upcomingAssignments' own comment for the full story): a real
+        // kind:"deadline" marker (0+ linked sessions via dueEventId), or a
+        // legacy kind:"study block"+isAssignment item that IS its own one
+        // scheduled block, no marker at all. This page handles both.
+        const isLegacyBlock=selectedAssignment.kind==="study block";
+        const linkedSessions=allEvents.filter(e=>e.dueEventId===selectedAssignment.id).sort((a,b)=>(a.date+a.time)<(b.date+b.time)?-1:1);
+        const pendingLinked=linkedSessions.filter(s=>s.status!=="done");
+        const isCompleted=selectedAssignment.status==="done";
+        const daysUntil=selectedAssignment.date?Math.round((new Date(selectedAssignment.date+"T12:00:00")-new Date(today+"T12:00:00"))/86400000):null;
+        const countdownLabel=daysUntil==null?"no date yet":daysUntil<0?"past due":daysUntil===0?"due today":daysUntil===1?"due in 1 day":"due in "+daysUntil+" days";
+        const pace=computeAssignmentPace(selectedAssignment,allEvents,today);
+        // Same eligibility canAddAttackBlock already established in
+        // EventDetailModal (both real shapes qualify -- see that gate's
+        // own comment) -- re-derived here rather than imported since this
+        // is this component's own copy, not a shared extraction.
+        const canStartAttackBlock=(selectedAssignment.kind==="deadline"||isLegacyBlock)&&!selectedAssignment.isAttackBlock&&!selectedAssignment.dueEventId&&!selectedAssignment.deckId&&!selectedAssignment.practiceExamId&&!selectedAssignment.isExamPrepSession&&linkedSessions.length===0;
+
+        const toggleAssignCompleted=()=>{
+          if(isCompleted){patchExam(selectedAssignment.id,{status:"pending"});refresh();return;}
+          if(pendingLinked.length>0){setAssignCompleteSessionPrompt(true);return;}
+          patchExam(selectedAssignment.id,{status:"done"});refresh();
+        };
+        const finishMarkingAssignComplete=(cancelSessions)=>{
+          if(cancelSessions){
+            const idsToCancel=new Set(pendingLinked.map(s=>s.id));
+            lsSet("events",lsGet("events",[]).filter(e=>!idsToCancel.has(e.id)));
+          }
+          patchExam(selectedAssignment.id,{status:"done"});
+          setAssignCompleteSessionPrompt(false);
+          refresh();
+        };
+        const confirmCancelAllSessions=()=>{
+          lsSet("events",lsGet("events",[]).filter(e=>!(e.dueEventId===selectedAssignment.id&&e.status==="pending")));
+          setAssignCancelSessionsConfirm(false);
+          refresh();
+        };
+        const jumpToCalendarFromPrep=(sessionId)=>{
+          if(sessionId)lsSet("pendingCalendarJumpSessionId",sessionId);
+          setActive("calendar");
+        };
+        const deleteLinkedBlock=(id)=>{lsSet("events",lsGet("events",[]).filter(e=>e.id!==id));refresh();};
+        const markLinkedBlockDone=(id)=>{lsSet("events",lsGet("events",[]).map(e=>e.id===id?{...e,status:"done",completedAt:Date.now()}:e));refresh();};
+        const addAssignManualBlock=()=>{
+          if(!assignManualDate)return;
+          const block={id:"manual-"+selectedAssignment.id+"-"+Date.now(),title:"Work on: "+selectedAssignment.title,date:assignManualDate,time:assignManualTime,
+            subject:selectedAssignment.subject||"",kind:"study block",notes:"",priority:5,difficulty:5,deadline:selectedAssignment.deadline||selectedAssignment.date||null,
+            duration:assignManualDuration,status:"pending",timeSpent:0,completedAt:null,dueEventId:selectedAssignment.id};
+          lsSet("events",allEvents.concat([block]));
+          setAssignAddManualBlock(false);
+          refresh();
+        };
+        // Retroactive Attack Block -- same buildAssignmentAttackBlockPair
+        // conversion EventDetailModal's own save() already uses
+        // (markerId=selectedAssignment.id turns THIS item into the real
+        // marker in place, same id/position, whatever its prior kind was).
+        const startAssignAttackBlock=()=>{
+          const routines=getWeeklyRoutine();
+          const prefs=getSchedulePreferences();
+          const fields={title:selectedAssignment.title,subject:selectedAssignment.subject,courseId:selectedAssignment.courseId,notes:selectedAssignment.notes,
+            deadline:selectedAssignment.deadline||selectedAssignment.date,priority:selectedAssignment.priority,difficulty:selectedAssignment.difficulty,probeMins:assignAttackProbeMins};
+          const desiredDate=selectedAssignment.date&&selectedAssignment.date>=today?selectedAssignment.date:today;
+          const pair=buildAssignmentAttackBlockPair(selectedAssignment.id,fields,[],allEvents,routines,prefs,desiredDate,prefs.workStartTime,false);
+          if(!pair){setAssignAttackErr("Couldn't find room for a probe session before the deadline -- try a later deadline.");return;}
+          lsSet("events",allEvents.map(e=>e.id===selectedAssignment.id?pair.marker:e).concat([pair.task]));
+          setAssignAddAttackBlock(false);
+          refresh();
+        };
+        const proposeAssignPaceBlock=()=>{
+          const slot=findLegalSlotOrNull(allEvents,getWeeklyRoutine(),getSchedulePreferences(),today,getSchedulePreferences().workStartTime,30,selectedAssignment.deadline||selectedAssignment.date);
+          setAssignPaceProposal(slot?{date:slot.date,time:slot.time,duration:30}:{date:null});
+        };
+        const confirmAssignPaceProposal=()=>{
+          if(!assignPaceProposal||!assignPaceProposal.date)return;
+          const block={id:"pace-"+selectedAssignment.id+"-"+Date.now(),title:"Catch up: "+selectedAssignment.title,date:assignPaceProposal.date,time:assignPaceProposal.time,
+            subject:selectedAssignment.subject||"",kind:"study block",notes:"",priority:5,difficulty:5,deadline:selectedAssignment.deadline||selectedAssignment.date||null,
+            duration:assignPaceProposal.duration,status:"pending",timeSpent:0,completedAt:null,dueEventId:selectedAssignment.id};
+          lsSet("events",allEvents.concat([block]));
+          setAssignPaceProposal(null);
+          refresh();
+        };
+        const dismissAssignPaceOffer=()=>{dismissPaceNudge(selectedAssignment.id);setAssignPaceDismissed(true);setAssignPaceProposal(null);};
+
+        return (
+          <div>
+            <button onClick={()=>setSelectedAssignmentId(null)} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,marginBottom:14,display:"flex",alignItems:"center",gap:4}}>← All assignments</button>
+            <div style={{fontSize:24,fontWeight:800,color:T.white,letterSpacing:"-0.01em",marginBottom:4,lineHeight:1.2}}>{selectedAssignment.title} · {countdownLabel}</div>
+            <div style={{fontSize:12.5,color:T.muted,marginBottom:14}}>{[selectedAssignment.subject,selectedAssignment.date?niceDate(selectedAssignment.date):null,linkedSessions.length>0?linkedSessions.length+" block"+(linkedSessions.length!==1?"s":"")+" scheduled":isLegacyBlock?"1 block scheduled":"no plan yet"].filter(Boolean).join(" · ")}</div>
+            <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:14}}>
+              {isCompleted?(
+                <span style={{fontSize:11,fontWeight:700,color:T.lime,background:T.lime+"14",border:`1px solid ${T.lime}44`,borderRadius:6,padding:"4px 10px"}}>COMPLETED</span>
+              ):itemLifecycleState(selectedAssignment,today)==="past-due"&&(
+                <span style={{fontSize:11,fontWeight:700,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}44`,borderRadius:6,padding:"4px 10px"}}>PAST DUE</span>
+              )}
+              <BtnSm variant={isCompleted?"ghost":"subtle"} onClick={toggleAssignCompleted}>{isCompleted?"Mark as uncomplete":"Mark as completed"}</BtnSm>
+            </div>
+            {assignCompleteSessionPrompt&&(
+              <div style={{background:T.card,border:`1px solid ${T.amber}44`,borderRadius:8,padding:"12px 14px",marginBottom:20,fontSize:12.5,color:T.text,lineHeight:1.5}}>
+                You still have {pendingLinked.length} block{pendingLinked.length!==1?"s":""} scheduled for this — cancel {pendingLinked.length!==1?"them":"it"} too?
+                <div style={{display:"flex",gap:8,marginTop:10}}>
+                  <BtnSm onClick={()=>finishMarkingAssignComplete(true)}>Cancel {pendingLinked.length!==1?"them":"it"}</BtnSm>
+                  <BtnSm variant="ghost" onClick={()=>finishMarkingAssignComplete(false)}>Keep {pendingLinked.length!==1?"them":"it"}</BtnSm>
+                </div>
+              </div>
+            )}
+
+            {/* Legacy single-block shape -- this item IS its own one
+                scheduled block (no separate marker). Shown as a real,
+                editable row same as any linked session, plus the option
+                to upgrade into a full Attack Block plan. */}
+            {isLegacyBlock&&(
+              <div style={{marginBottom:14}}>
+                <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>Your scheduled time</div>
+                <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                  <Input type="date" value={selectedAssignment.date||""} onChange={e=>{patchExam(selectedAssignment.id,{date:e.target.value});refresh();}} style={{width:140}} />
+                  <TimeInput value={selectedAssignment.time||"16:00"} onChange={v=>{patchExam(selectedAssignment.id,{time:v});refresh();}} />
+                  <span style={{color:T.muted,fontSize:11}}>for</span>
+                  <NumField min={5} max={480} step={5} fallback={30} value={selectedAssignment.duration||30} onChange={v=>{patchExam(selectedAssignment.id,{duration:v});refresh();}} />
+                  <span style={{color:T.muted,fontSize:11}}>min</span>
+                </div>
+              </div>
+            )}
+
+            {canStartAttackBlock&&(<>
+              <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:14}}>
+                <div onClick={()=>setAssignAddAttackBlock(a=>!a)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+                  <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>{isLegacyBlock?"Turn this into a full Attack Block plan":"Start an Attack Block for this"}</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>A short probe session, scheduled the moment you confirm. Studlin figures out the rest from there.</div></div>
+                  <div style={{width:36,height:20,borderRadius:10,background:assignAddAttackBlock?T.lime:T.faint,position:"relative",transition:"background 0.2s",cursor:"pointer",flexShrink:0}}><div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:assignAddAttackBlock?18:2,transition:"left 0.2s"}} /></div>
+                </div>
+                <AttackBlockExplainer />
+                {assignAddAttackBlock&&(
+                  <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
+                    <Field label="Probe session length"><NumField min={15} max={60} fallback={ATTACK_BLOCK_DEFAULT_PROBE_MINS} value={assignAttackProbeMins} onChange={setAssignAttackProbeMins} /></Field>
+                    {assignAttackErr&&<div style={{fontSize:11.5,color:T.red,marginTop:8}}>{assignAttackErr}</div>}
+                    <div style={{marginTop:10}}><BtnSm onClick={startAssignAttackBlock}>Schedule probe session</BtnSm></div>
+                  </div>
+                )}
+              </div>
+            </>)}
+
+            {linkedSessions.length>0&&(<>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 2px",marginBottom:10,fontSize:12,color:T.muted}}>
+                <span>Studlin scheduled {linkedSessions.length} block{linkedSessions.length!==1?"s":""} for this{pendingLinked.length<linkedSessions.length?" ("+(linkedSessions.length-pendingLinked.length)+" of "+linkedSessions.length+" done)":""}.</span>
+                {pendingLinked.length>0&&<button type="button" onClick={()=>setAssignCancelSessionsConfirm(true)} style={{background:"none",border:"none",color:T.red,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline"}}>Cancel blocks</button>}
+              </div>
+              {assignCancelSessionsConfirm&&(
+                <div style={{background:T.card,border:`1px solid ${T.red}44`,borderRadius:8,padding:"12px 14px",marginBottom:14,fontSize:12.5,color:T.text,lineHeight:1.5}}>
+                  Cancel all {pendingLinked.length} pending block{pendingLinked.length!==1?"s":""} scheduled for this?
+                  <div style={{display:"flex",gap:8,marginTop:10}}>
+                    <BtnSm variant="danger" onClick={confirmCancelAllSessions}>Cancel {pendingLinked.length!==1?"them":"it"}</BtnSm>
+                    <BtnSm variant="ghost" onClick={()=>setAssignCancelSessionsConfirm(false)}>Never mind</BtnSm>
+                  </div>
+                </div>
+              )}
+              <div style={{marginBottom:14}}>
+                <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>Scheduled blocks</div>
+                <div style={{display:"flex",flexDirection:"column",border:`1px solid ${T.border}`,borderRadius:8,overflow:"hidden"}}>
+                  {linkedSessions.map((s,si)=>{
+                    const isPast=s.status==="pending"&&s.date&&s.date<today;
+                    return (
+                      <div key={s.id} style={{padding:"8px 10px",borderTop:si===0?"none":`1px solid ${T.border}`}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                          <div onClick={()=>jumpToCalendarFromPrep(s.id)} style={{cursor:"pointer",display:"flex",alignItems:"center",gap:6}} title="Jump to calendar">
+                            <span style={{fontSize:12,fontWeight:600,color:s.status==="done"?T.muted:T.text,textDecoration:s.status==="done"?"line-through":"none"}}>{s.date} · {s.time} · {s.duration||30}min</span>
+                          </div>
+                          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                            {assignConfirmDeleteBlockId===s.id?(
+                              <>
+                                <button type="button" onClick={()=>{deleteLinkedBlock(s.id);setAssignConfirmDeleteBlockId(null);}} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:11,fontWeight:700,fontFamily:T.font,textDecoration:"underline"}}>Confirm</button>
+                                <button type="button" onClick={()=>setAssignConfirmDeleteBlockId(null)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline"}}>Cancel</button>
+                              </>
+                            ):(
+                              <button type="button" onClick={()=>setAssignConfirmDeleteBlockId(s.id)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline"}}>Delete</button>
+                            )}
+                          </div>
+                        </div>
+                        {isPast&&(
+                          <div style={{display:"flex",alignItems:"center",gap:8,marginTop:6,paddingTop:6,borderTop:`1px solid ${T.border}`}}>
+                            <span style={{fontSize:11,color:T.amber}}>Did you get to this?</span>
+                            <button type="button" onClick={()=>markLinkedBlockDone(s.id)} style={{background:"none",border:"none",color:T.lime,cursor:"pointer",fontSize:11,fontWeight:600,fontFamily:T.font,textDecoration:"underline"}}>Mark done</button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </>)}
+
+            {pace&&pace.behind&&!assignPaceDismissed&&(
+              <div style={{background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:8,padding:"10px 12px",marginBottom:14}}>
+                <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:2}}>Behind pace on this one</div>
+                <div style={{fontSize:11.5,color:T.muted,marginBottom:8}}>{Math.round(pace.loggedMins)} of an expected {Math.round(pace.expectedMins)} min logged so far, aiming to finish by {pace.gate.finishByDate}.</div>
+                {assignPaceProposal?(
+                  assignPaceProposal.date?(
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+                      <span style={{fontSize:12,color:T.text}}>{assignPaceProposal.date} · {assignPaceProposal.time} · {assignPaceProposal.duration}min</span>
+                      <div style={{display:"flex",gap:8}}>
+                        <BtnSm onClick={confirmAssignPaceProposal}>Add it</BtnSm>
+                        <BtnSm variant="ghost" onClick={()=>setAssignPaceProposal(null)}>Never mind</BtnSm>
+                      </div>
+                    </div>
+                  ):(
+                    <div style={{fontSize:11.5,color:T.muted}}>Couldn't find an open slot before the deadline -- try adding a time manually below.</div>
+                  )
+                ):(
+                  <div style={{display:"flex",gap:10}}>
+                    <BtnSm onClick={proposeAssignPaceBlock}>Propose a catch-up block</BtnSm>
+                    <BtnSm variant="ghost" onClick={dismissAssignPaceOffer}>Not now</BtnSm>
+                  </div>
+                )}
+              </div>
+            )}
+            {pace&&pace.ahead&&(
+              <div style={{background:T.teal+"14",border:`1px solid ${T.teal}33`,borderRadius:8,padding:"10px 12px",marginBottom:14}}>
+                <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:2}}>Ahead of pace on this one</div>
+                <div style={{fontSize:11.5,color:T.muted}}>{Math.round(pace.loggedMins)} of an expected {Math.round(pace.expectedMins)} min logged so far — nice work.</div>
+              </div>
+            )}
+
+            <div style={{marginBottom:14}}>
+              {!assignAddManualBlock?(
+                <button type="button" onClick={()=>setAssignAddManualBlock(true)} style={{background:"none",border:"none",color:T.lime,fontSize:12,fontWeight:600,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>+ Add my own time block</button>
+              ):(
+                <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px"}}>
+                  <div style={{fontSize:11.5,color:T.muted,marginBottom:8}}>A specific time you'll work on this -- shows up on your calendar like any other block, drag/resize it same as usual.</div>
+                  <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                    <Input type="date" value={assignManualDate} onChange={e=>setAssignManualDate(e.target.value)} style={{width:140}} />
+                    <TimeInput value={assignManualTime} onChange={setAssignManualTime} />
+                    <span style={{color:T.muted,fontSize:11}}>–</span>
+                    <TimeInput value={minutesToTime(timeToMinutes(assignManualTime)+assignManualDuration)} onChange={v=>setAssignManualDuration(Math.max(5,timeToMinutes(v)-timeToMinutes(assignManualTime)))} />
+                  </div>
+                  <div style={{display:"flex",gap:8,marginTop:10}}>
+                    <BtnSm onClick={addAssignManualBlock} disabled={!assignManualDate}>Add block</BtnSm>
+                    <BtnSm variant="ghost" onClick={()=>setAssignAddManualBlock(false)}>Cancel</BtnSm>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         );
       })()}
