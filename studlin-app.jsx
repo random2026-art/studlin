@@ -36814,23 +36814,44 @@ function App() {
   },[myUid,active,openChatRoomId]);
   useEffect(()=>{
     if(!myUid){setUnreadCount(0);return;}
+    // True only for this subscription's very first snapshot -- a fresh
+    // page load/reopened laptop/reconnect always re-subscribes, so this is
+    // exactly "what's already unread the moment Studlin comes back," not a
+    // one-time-ever flag. Plain closure var (not a ref): it must reset
+    // whenever this effect re-runs (a new subscription = a new "first"),
+    // which a ref surviving across dependency changes would not give us.
+    let isFirstSnapshot=true;
     const unsub=fsdb().collection('chatRooms').where('memberUids','array-contains',myUid)
       .onSnapshot(snap=>{
         let n=0;
+        // User report, 2026-09-10 ("I want it so that even if I have my
+        // laptop closed, when I reopen it it shows me like 3 missed
+        // notifications from yada yada"): messages that arrived while
+        // this listener wasn't running (laptop asleep, browser closed, or
+        // simply hadn't loaded Studlin yet) used to produce ZERO
+        // notification of any kind -- the very next line down here
+        // deliberately seeded every room's baseline silently and returned,
+        // specifically so a fresh load wouldn't replay every pre-existing
+        // unread message as if it just arrived live. That was the right
+        // call for the live per-message router below (rooms already open
+        // in a chat list, chimes, etc.) but it meant reopening after being
+        // away for real gave no signal at all that anything was missed.
+        // Collected here instead into one batched catch-up notification.
+        const missedFrom=[];
         snap.docs.forEach(d=>{
           const room=d.data();
           if(isRoomUnread(room,myUid))n++;
           const last=room.lastMessage;
           if(!last||last.senderId===myUid)return;
-          const prevTs=lastMsgRef.current[d.id];
-          if(prevTs===undefined){
-            // First time we've ever seen this room — just seed the
-            // baseline. Without this guard, every pre-existing unread
-            // message would fire a notification the moment the app loads.
+          if(isFirstSnapshot){
             lastMsgRef.current[d.id]=last.ts;
+            if(isRoomUnread(room,myUid)){
+              missedFrom.push(room.type==="group"?(room.name||"a group chat"):((room.memberNames&&room.memberNames[last.senderId])||"Someone"));
+            }
             return;
           }
-          if(last.ts<=prevTs)return;
+          const prevTs=lastMsgRef.current[d.id];
+          if(prevTs!==undefined&&last.ts<=prevTs)return;
           lastMsgRef.current[d.id]=last.ts;
           // ── Context-aware notification/chime router (4 rules) ──────────
           if(timerTaskRef.current)return; // Rule 4: lock-in overrules everything
@@ -36846,6 +36867,13 @@ function App() {
           }
         });
         setUnreadCount(n);
+        if(isFirstSnapshot){
+          isFirstSnapshot=false;
+          if(missedFrom.length&&!timerTaskRef.current&&typeof Notification!=="undefined"&&Notification.permission==="granted"&&lsGet("settings",{}).sysPush===true){
+            const shown=missedFrom.slice(0,3).join(", ")+(missedFrom.length>3?` and ${missedFrom.length-3} more`:"");
+            new Notification("Studlin",{body:(missedFrom.length===1?"You missed a message from ":`${missedFrom.length} unread chats from `)+shown});
+          }
+        }
       },()=>{});
     return unsub;
   },[myUid]);
@@ -37005,17 +37033,23 @@ function App() {
   // Registers/refreshes this browser's device token every time Studlin
   // Network is opened with permission already granted — deliberately NOT
   // gated by the one-shot ask above, which only controls the native
-  // permission prompt. Before this split, token registration ran exactly
-  // once per browser ever, so an account that had already piled up stale
-  // tokens (every browser context that ever got this far — including a
-  // fresh service worker + token on each new Incognito session — added its
-  // own entry, and sendPush fires one native popup per token) stayed stuck
-  // at whatever it had: a returning user on the same browser never
-  // re-registered, so the cap-to-5/dedup below never got a chance to run
-  // for them. Re-registering is cheap (getToken mostly returns the same
-  // token unchanged, and the write below short-circuits once already
-  // clean), so existing accounts self-heal the next time they open Studlin
-  // Network instead of needing the manual "Reset devices" link in Settings.
+  // permission prompt.
+  // Real bug found live, 2026-09-10 ("enabled desktop notifications, got
+  // nothing when a friend messaged"): this used to read the existing
+  // fcmTokens array first (userRef.get()) so it could dedup/cap it to 5
+  // client-side before writing. users/{uid} is unreadable directly by ANY
+  // client, even its own owner (firestore.rules: `allow read: if false` --
+  // see api/me.js's own comment on why) -- that read was denied every
+  // single time, silently swallowed by .catch(()=>{}), so the write after
+  // it never ran. This browser's token was never actually added to
+  // fcmTokens, so sendPush (api/notify.js) had nothing to send this
+  // account's background/desktop notifications to, no matter how many
+  // times "Studlin Network" was reopened. arrayUnion needs no read at all
+  // -- Firestore adds the token only if it isn't already present, so this
+  // stays exactly as idempotent as the old dedup was, without the blocked
+  // round trip. The cap-to-5 trim moved server-side, see api/me.js's GET
+  // handler (it already reads this doc with admin access on every app
+  // boot via fetchUserProfile).
   useEffect(()=>{
     if(active!=="friends"||!myUid||!FCM_CONFIGURED)return;
     if(typeof Notification==="undefined"||Notification.permission!=="granted"||!("serviceWorker"in navigator))return;
@@ -37023,13 +37057,7 @@ function App() {
       firebase.messaging().getToken({vapidKey:FCM_VAPID_KEY,serviceWorkerRegistration:reg})
     ).then(token=>{
       if(!token)return;
-      const userRef=fsdb().collection('users').doc(myUid);
-      userRef.get().then(snap=>{
-        const existing=(snap.exists&&snap.data().fcmTokens)||[];
-        if(existing.length<=5&&existing.includes(token))return; // already clean
-        const next=[...existing.filter(t=>t!==token),token].slice(-5);
-        return userRef.set({fcmTokens:next,updatedAt:new Date().toISOString()},{merge:true});
-      }).catch(()=>{});
+      fsdb().collection('users').doc(myUid).set({fcmTokens:firebase.firestore.FieldValue.arrayUnion(token),updatedAt:new Date().toISOString()},{merge:true}).catch(()=>{});
     }).catch(()=>{});
   },[active,myUid]);
 

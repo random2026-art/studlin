@@ -1002,6 +1002,14 @@ module.exports = withSentry(async (req, res) => {
       plan = 'Free';
       await ref.set({ plan: 'Free' }, { merge: true });
     }
+    // Bounds fcmTokens now that the client-side registration effect writes
+    // via arrayUnion (no read, so no client-side place left to cap/dedup --
+    // see that effect's own 2026-09-10 comment). Keeps only the 5 most
+    // recently registered; trimming here (not on every write) is fine since
+    // this GET already runs on every app boot via fetchUserProfile.
+    if (Array.isArray(data.fcmTokens) && data.fcmTokens.length > 5) {
+      await ref.set({ fcmTokens: data.fcmTokens.slice(-5) }, { merge: true });
+    }
     // "Share my free/busy time" (studlin-app.jsx's shareAvailability
     // toggle) lived only in each browser's localStorage -- turn it on on
     // your phone and your laptop had no way to find out. users/{uid} is
