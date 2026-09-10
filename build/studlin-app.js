@@ -10876,10 +10876,11 @@ async function classifyStudlinAiMessage(text, history) {
   const weekday = (/* @__PURE__ */ new Date()).toLocaleDateString("en-US", { weekday: "long" });
   const nowTime = currentClockLabel();
   const memLine = formatAiMemoryForPrompt();
-  const prompt = "You are a message router for a student calendar assistant chat. Today is " + weekday + ", " + today + ". The current time right now is " + nowTime + ". " + (memLine ? memLine + " " : "") + 'The student typed: "' + text + `". Decide whether this is a QUESTION about their existing schedule/study history (a real number/fact), a COACHING ask (wants real study-strategy help, not a fact), an ACTION request (create something new, move/reschedule something that already exists, or turn pasted study material into flashcards/a quiz), or unsupported. Respond with ONLY this JSON, no markdown fences, no explanation:
-{"kind":"question"|"coaching"|"action"|"unsupported","intent":"create_task"|"delete_task"|"set_peak_hours"|"shift"|"clear_day"|"clear_week"|"skip_class"|"move_event"|"retime_event"|"move_flex_task"|"generate_study_material"|"import_syllabus_items"|null,"days":<integer 1-14 or null>,"date":"YYYY-MM-DD or null","target":"<short name of the specific existing item, or null>","targetDate":"YYYY-MM-DD or null","destDate":"YYYY-MM-DD or null","newStart":"HH:MM 24h or null","newDuration":<integer minutes or null>,"title":"<short name of the NEW item to create, or null>","dueDate":"YYYY-MM-DD or null","dueTime":"HH:MM 24h or null","durationMin":<integer minutes or null>,"taskKind":"study"|"todo"|"event"|"reminder"|"exam"|"project"|null,"genFormat":"flashcards"|"quiz"|null,"peakHours":"morning"|"midday"|"afternoon"|"evening"|null,"subject":"<the class/subject name the student named, or null>","duringClass":<true for import_syllabus_items when EITHER the student's own words say these items happen/are due during class, OR the pasted syllabus/material text itself states that for these items (e.g. "completed in class," "due in class," "in-class assignment"), false otherwise>,"clarify":"<a short, specific question, or null>"}
-Rules: "question" is asking for a real FACT about their schedule/workload/streak/pace/productivity (a number, a date, a yes/no). "coaching" is asking for real help or a plan -- "how should I study for X," "help me prepare," "where do I start," "I'm stressed about Y and don't know the material" -- wanting strategy/advice, not a fact, and not (yet) asking to add/move anything. Neither ever changes anything -- leave intent and every other field null for both. "unsupported" covers anything ambiguous, multi-step, deleting/cancelling MULTIPLE things or an entire day/week/recurring routine, or that doesn't clearly match one action below -- never guess. Deleting exactly ONE clearly-named item uses delete_task instead, not unsupported.
-"clarify": if the message clearly WANTS one of the actions below but is missing something required to do it (no title for a new item, no clear name for what to move/retime/delete, no day count for "shift", no class named for "import_syllabus_items"), set kind to "unsupported", intent to null, and "clarify" to ONE short, specific question asking for exactly the missing thing (e.g. "When is that due?", "Which day would you like it moved to?", or "Which class are these for?"). Leave "clarify" null for every other case -- genuinely off-topic, too vague to guess the intended action at all, multi-step, or a bulk/destructive request. Never set clarify when kind is "question", "coaching", or "action".
+  const prompt = "You are a message router for a student calendar assistant chat. Today is " + weekday + ", " + today + ". The current time right now is " + nowTime + ". " + (memLine ? memLine + " " : "") + 'The student typed: "' + text + `". Decide whether this is a QUESTION about their existing schedule/study history (a real number/fact), a COACHING ask (wants real study-strategy help, not a fact), an ACTION request (create something new, move/reschedule something that already exists, or turn pasted study material into flashcards/a quiz), TWO clearly separate action requests in one message, or unsupported. Respond with ONLY this JSON, no markdown fences, no explanation:
+{"kind":"question"|"coaching"|"action"|"multi_action"|"unsupported","intent":"create_task"|"delete_task"|"set_peak_hours"|"shift"|"clear_day"|"clear_week"|"skip_class"|"move_event"|"retime_event"|"move_flex_task"|"generate_study_material"|"import_syllabus_items"|null,"days":<integer 1-14 or null>,"date":"YYYY-MM-DD or null","target":"<short name of the specific existing item, or null>","targetDate":"YYYY-MM-DD or null","destDate":"YYYY-MM-DD or null","newStart":"HH:MM 24h or null","newDuration":<integer minutes or null>,"title":"<short name of the NEW item to create, or null>","dueDate":"YYYY-MM-DD or null","dueTime":"HH:MM 24h or null","durationMin":<integer minutes or null>,"taskKind":"study"|"todo"|"event"|"reminder"|"exam"|"project"|null,"genFormat":"flashcards"|"quiz"|null,"peakHours":"morning"|"midday"|"afternoon"|"evening"|null,"subject":"<the class/subject name the student named, or null>","duringClass":<true for import_syllabus_items when EITHER the student's own words say these items happen/are due during class, OR the pasted syllabus/material text itself states that for these items (e.g. "completed in class," "due in class," "in-class assignment"), false otherwise>,"clarify":"<a short, specific question, or null>","actions":<for kind "multi_action" ONLY, an array of exactly 2 objects, each with the SAME shape as this whole envelope but only intent/days/date/target/targetDate/destDate/newStart/newDuration/title/dueDate/dueTime/durationMin/taskKind/peakHours/subject/duringClass (no kind/clarify/actions inside each one) -- otherwise null>}
+"multi_action" is ONLY for a message containing exactly TWO distinct, clearly separate action requests, each one individually unambiguous enough to qualify as its own single action below with nothing missing (as if you classified each half on its own and both came back clean, no clarify needed for either). Each item in "actions" is restricted to intent "create_task", "delete_task", "move_flex_task", "move_event", "retime_event", or "set_peak_hours" ONLY -- never "shift", "clear_day", "clear_week", "skip_class", "generate_study_material", or "import_syllabus_items" inside a multi_action (those are bulk/complex enough to stay single-action-only, even paired with something simple). If either half would need "clarify", involves more than two distinct requests, mixes in one of the disallowed bulk intents, or the two requests aren't clearly separable from one another, do NOT use multi_action -- fall back to "action" (if only one half is real) or "unsupported" (with "clarify" set, same as today) instead. Never guess a second action that wasn't clearly there.
+Rules: "question" is asking for a real FACT about their schedule/workload/streak/pace/productivity (a number, a date, a yes/no). "coaching" is asking for real help or a plan -- "how should I study for X," "help me prepare," "where do I start," "I'm stressed about Y and don't know the material" -- wanting strategy/advice, not a fact, and not (yet) asking to add/move anything. Neither ever changes anything -- leave intent and every other field null for both. "unsupported" covers anything ambiguous, THREE OR MORE distinct action requests in one message, deleting/cancelling MULTIPLE things or an entire day/week/recurring routine, or that doesn't clearly match one action below -- never guess. Deleting exactly ONE clearly-named item uses delete_task instead, not unsupported. Exactly TWO clean, separable action requests uses multi_action instead of unsupported -- see its own rule below.
+"clarify": if the message clearly WANTS one of the actions below but is missing something required to do it (no title for a new item, no clear name for what to move/retime/delete, no day count for "shift", no class named for "import_syllabus_items"), set kind to "unsupported", intent to null, and "clarify" to ONE short, specific question asking for exactly the missing thing (e.g. "When is that due?", "Which day would you like it moved to?", or "Which class are these for?"). Leave "clarify" null for every other case -- genuinely off-topic, too vague to guess the intended action at all, three-plus distinct requests, or a bulk/destructive request. Never set clarify when kind is "question", "coaching", "action", or "multi_action".
 "create_task" is for adding something NEW that doesn't exist yet -- "title" is required, "dueDate" if a deadline/date was mentioned (resolve relative phrases like "tomorrow"/"Friday" against today's date above), "dueTime" only if a real clock time was mentioned, "durationMin" only if a specific work-time length was mentioned. "taskKind" picks which kind of thing: "exam" for a test/quiz/final, "project" for a multi-step project, "event" for a fixed real-world thing at a specific time (an appointment, a meeting -- not a class or something already on a routine), "reminder" for a simple point-in-time nudge with no real work involved ("remind me to email my professor"), "todo" if the student explicitly just wants a due date tracked with no work time scheduled ("just remind me," "don't schedule time for it"), otherwise "study" (the default -- a task/assignment/homework Studlin finds real time to work on before its deadline). IMPORTANT: only classify as create_task when the student is actually ASKING to add/track/schedule something. A message that merely mentions, describes, or shares feelings about an exam/assignment/deadline (stress, context, background) without asking for it to be added is "question" or "coaching" instead -- the mere presence of a date or an exam name is not itself a request to create anything, look for real intent to add.
 "delete_task" is for permanently removing ONE existing, clearly-named item from the calendar -- a task, assignment, event, exam, or reminder, NEVER a recurring class/routine ("delete my chem homework," "cancel my dentist appointment" -- not "delete all my chem classes") -- "target" is its name as the student said it, "targetDate" is the date it's currently on (default today's date above if not mentioned).
 "set_peak_hours" is for the student declaring or changing when THEY PERSONALLY focus/work best -- "peakHours" is exactly one of "morning" (roughly 6-11am), "midday" (11am-3pm), "afternoon" (3-6pm), "evening" (6-10pm) -- map their own words to the single closest window. If what they said doesn't clearly fit one of these four (e.g. "late at night," "whenever," "it varies"), this doesn't qualify -- leave peakHours null and use clarify to ask which of morning/midday/afternoon/evening fits best instead of guessing.
@@ -10917,7 +10918,8 @@ Examples:
 "these are for my econ class so add them to that: First Quiz (9/21, covers chapters 1 through 8) worth 20% of the total class grade. Second Quiz (10/27, covers chapters 9 through 16) 25%. Final Exam (TBA, cumulative) 35%." (multiple distinct dated graded items, one named class) -> {"kind":"action","intent":"import_syllabus_items","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":"econ","duringClass":false,"clarify":null}
 "quiz 1 is 9/21, quiz 2 is 10/27, final is TBA -- add these" (multiple dated items, no class named anywhere) -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":"Which class are these for?"}
 "these worksheets are done during class for chem, W4 due 9/7, W5 due 9/9, W6 due 9/14" (dated items the student explicitly says happen DURING class time itself) -> {"kind":"action","intent":"import_syllabus_items","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":"chem","duringClass":true,"clarify":null}
-"add these to chem: W4 - Opens Mon 9/7 8:00 AM, Due Mon 9/7 9:30 AM (in-class worksheet). W5 - Opens Wed 9/9 8:00 AM, Due Wed 9/9 9:30 AM (in-class worksheet)." (the STUDENT added no comment of their own about class -- but the pasted text itself says "in-class worksheet" for each item, which counts just as much) -> {"kind":"action","intent":"import_syllabus_items","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":"chem","duringClass":true,"clarify":null}`;
+"add these to chem: W4 - Opens Mon 9/7 8:00 AM, Due Mon 9/7 9:30 AM (in-class worksheet). W5 - Opens Wed 9/9 8:00 AM, Due Wed 9/9 9:30 AM (in-class worksheet)." (the STUDENT added no comment of their own about class -- but the pasted text itself says "in-class worksheet" for each item, which counts just as much) -> {"kind":"action","intent":"import_syllabus_items","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":"chem","duringClass":true,"clarify":null}
+"remove meeting with z and add going hiking from 8:30 pm" (two clean, separable requests -- a clearly-named single item to delete, and a new item with a real time to add) -> {"kind":"multi_action","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null,"actions":[{"intent":"delete_task","target":"meeting with z","targetDate":"` + today + '","destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"peakHours":null,"subject":null,"duringClass":false},{"intent":"create_task","target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Going hiking","dueDate":"' + today + '","dueTime":"20:30","durationMin":null,"taskKind":"event","peakHours":null,"subject":null,"duringClass":false}]}\n"cancel my dentist appointment, move my chem homework to tomorrow, and add a task for my essay due friday" (THREE distinct requests, not two -- too many for multi_action) -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null,"actions":null}\n"delete my old chem homework and clear the rest of this week" (one clean single item plus a BULK intent -- clear_week is never allowed inside multi_action, even paired with something simple) -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null,"actions":null}';
   const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [...history || [], { r: "user", t: prompt }], model: "flash", format: "studlin_ai_intent" }) });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || "classify-failed");
@@ -11234,6 +11236,38 @@ CONVERSATION:
       return next;
     });
   };
+  const MULTI_ACTION_ALLOWED_INTENTS = /* @__PURE__ */ new Set(["create_task", "delete_task", "move_flex_task", "move_event", "retime_event", "set_peak_hours"]);
+  const runMultiAction = async (parsed, rawText) => {
+    const actions = Array.isArray(parsed.actions) ? parsed.actions : [];
+    if (actions.length !== 2 || actions.some((a) => !a || !MULTI_ACTION_ALLOWED_INTENTS.has(a.intent))) {
+      setMessages((m) => [...m, { role: "ai", text: "I can only combine two straightforward changes at once (like removing one thing and adding another) -- try asking for these one at a time instead.", kind: "info" }]);
+      return;
+    }
+    for (const a of actions) {
+      const isCreate = a.intent === "create_task";
+      if (isCreate ? !canUseBrainDump() : !canUseSmartReschedule()) {
+        const reason = isCreate ? canUseBrainDumpReason() : canUseSmartRescheduleReason();
+        setPricingOpen(reason === "free-tier" ? isCreate ? "brainDump" : "smartReschedule" : "aiUsageCap");
+        setMessages((m) => [...m, { role: "ai", text: "Doing both of those through Studlin AI needs Pro. I've opened the upgrade options.", kind: "paywall" }]);
+        return;
+      }
+    }
+    const events = lsGet("events", []);
+    const routines = getWeeklyRoutine();
+    const prefs = getSchedulePreferences();
+    const items = actions.map((a) => buildStudlinAiActionProposal(a, events, routines, prefs, null, rawText));
+    const failed = items.find((p) => !p.ok);
+    if (failed) {
+      setMessages((m) => [...m, { role: "ai", text: "I could only do part of that -- " + failed.label + " Try asking for the two changes separately.", kind: "info" }]);
+      return;
+    }
+    const label = items.map((p) => p.label).join(" ");
+    setMessages((m) => {
+      const next = [...m, { role: "ai", text: label, kind: "proposal", proposal: { ok: true, kind: "multi", items, parsed } }];
+      setPendingIndex(next.length - 1);
+      return next;
+    });
+  };
   const send = async () => {
     const text = input.trim();
     if (!text || loading || pendingIndex != null) return;
@@ -11260,7 +11294,8 @@ CONVERSATION:
         } else {
           setMessages((m) => [...m, { role: "ai", text: "I can answer questions about your schedule, help you plan how to study for something, turn pasted material into flashcards or a quiz, add several syllabus dates at once, or create, move, or delete a task. Try rephrasing that.", kind: "info" }]);
         }
-      } else await runAction(parsed, null, text);
+      } else if (parsed.kind === "multi_action") await runMultiAction(parsed, text);
+      else await runAction(parsed, null, text);
     } catch (e) {
       setMessages((m) => [...m, { role: "ai", text: "Something went wrong. Try again.", kind: "error" }]);
     } finally {
@@ -11291,6 +11326,65 @@ CONVERSATION:
         return [...withResolved, { role: "ai", text: "Done. " + pastTenseProposalLabel(proposal.label), kind: "done" }];
       });
       setPendingIndex(null);
+      return;
+    }
+    if (proposal.kind === "multi") {
+      setLoading(true);
+      try {
+        let next2 = null;
+        const doneParts = [];
+        for (const item of proposal.items) {
+          if (item.kind === "create_task") {
+            if (!canUseBrainDump()) {
+              setPricingOpen(canUseBrainDumpReason() === "free-tier" ? "brainDump" : "aiUsageCap");
+              return;
+            }
+            next2 = commitStudlinAiTasks(item.tasks);
+            recordBrainDump();
+            doneParts.push(pastTenseProposalLabel(item.label));
+          } else if (item.kind === "move_fixed") {
+            if (!canUseSmartReschedule()) {
+              setPricingOpen(canUseSmartRescheduleReason() === "free-tier" ? "smartReschedule" : "aiUsageCap");
+              return;
+            }
+            next2 = commitStudlinAiFixedMove(item.pausePreview);
+            recordSmartReschedule();
+            doneParts.push(pastTenseProposalLabel(item.label, item.moved));
+          } else if (item.kind === "move_flex_task") {
+            if (!canUseSmartReschedule()) {
+              setPricingOpen(canUseSmartRescheduleReason() === "free-tier" ? "smartReschedule" : "aiUsageCap");
+              return;
+            }
+            next2 = commitStudlinAiFlexMove(item.moved);
+            recordSmartReschedule();
+            doneParts.push(pastTenseProposalLabel(item.label, item.moved));
+          } else if (item.kind === "delete_task") {
+            if (!canUseSmartReschedule()) {
+              setPricingOpen(canUseSmartRescheduleReason() === "free-tier" ? "smartReschedule" : "aiUsageCap");
+              return;
+            }
+            onDeleteEvent(item.event);
+            recordSmartReschedule();
+            doneParts.push(pastTenseProposalLabel(item.label));
+          } else if (item.kind === "set_peak_hours") {
+            if (!canUseSmartReschedule()) {
+              setPricingOpen(canUseSmartRescheduleReason() === "free-tier" ? "smartReschedule" : "aiUsageCap");
+              return;
+            }
+            commitStudlinAiPeakHours(getSchedulePreferences(), item.bucketId);
+            recordSmartReschedule();
+            doneParts.push(pastTenseProposalLabel(item.label));
+          }
+        }
+        if (next2) onEventsCommitted(next2);
+        setMessages((m) => {
+          const withResolved = m.map((mm, i) => i === idx ? { ...mm, proposal: { ...mm.proposal, resolved: "confirmed" } } : mm);
+          return [...withResolved, { role: "ai", text: "Done. " + doneParts.join(" "), kind: "done" }];
+        });
+      } finally {
+        setLoading(false);
+        setPendingIndex(null);
+      }
       return;
     }
     if (proposal.kind === "generate_study_material") {
