@@ -360,15 +360,17 @@ const Modal = ({ open, onClose: onClose2, title, sub, children, footer, width = 
   if (!open) return null;
   return ReactDOM.createPortal(/* @__PURE__ */ React.createElement("div", { onClick: onClose2, style: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)", zIndex: 1e3, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, animation: "studlinFade 0.18s ease-out" } }, /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { width: "100%", maxWidth: width, maxHeight: "90vh", background: T.card, borderRadius: 8, border: `1px solid ${T.border}`, overflow: "hidden", display: "flex", flexDirection: "column", animation: "studlinPop 0.22s cubic-bezier(.2,.85,.3,1)", boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)" } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "20px 22px 14px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "flex-start", gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 16, fontWeight: 700, color: T.white, letterSpacing: "-0.01em" } }, title), sub && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginTop: 3 } }, sub)), /* @__PURE__ */ React.createElement("button", { onClick: onClose2, style: { width: 30, height: 30, borderRadius: 8, border: `1px solid ${T.border}`, background: T.card2, color: T.muted, display: "grid", placeItems: "center", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("line", { x1: "18", y1: "6", x2: "6", y2: "18" }), /* @__PURE__ */ React.createElement("line", { x1: "6", y1: "6", x2: "18", y2: "18" })))), /* @__PURE__ */ React.createElement("div", { style: { padding: 22, overflowY: "auto", flex: 1 } }, children), footer && /* @__PURE__ */ React.createElement("div", { style: { padding: "14px 22px", borderTop: `1px solid ${T.border}`, background: T.bg, display: "flex", gap: 10, justifyContent: "flex-end" } }, footer))), document.body);
 };
-function TourStep({ targetRef, title, body, step, total, onNext, onSkip, isLast }) {
+function TourStep({ targetRef, targetSelector, title, body, step, total, onNext, onSkip, isLast }) {
   const [rect, setRect] = useState(null);
   useEffect(() => {
     setRect(null);
-    if (!targetRef) return;
+    if (!targetRef && !targetSelector) return;
     let cancelled = false;
+    const resolveTarget = () => targetRef ? targetRef.current : document.querySelector(targetSelector);
     const measure = () => {
-      if (cancelled || !targetRef.current) return;
-      setRect(targetRef.current.getBoundingClientRect());
+      const el = resolveTarget();
+      if (cancelled || !el) return;
+      setRect(el.getBoundingClientRect());
     };
     const t1 = setTimeout(measure, 100);
     const t2 = setTimeout(measure, 350);
@@ -381,14 +383,15 @@ function TourStep({ targetRef, title, body, step, total, onNext, onSkip, isLast 
       window.removeEventListener("resize", measure);
       window.removeEventListener("scroll", measure, true);
     };
-  }, [targetRef, step]);
+  }, [targetRef, targetSelector, step]);
   const anchored = !!rect;
   const vw = typeof window !== "undefined" ? window.innerWidth : 1200;
   const vh = typeof window !== "undefined" ? window.innerHeight : 800;
   const isRight = anchored && rect.left > vw / 2;
+  const isBottom = anchored && rect.bottom > vh - 240;
   const calloutStyle = anchored ? {
     position: "fixed",
-    top: Math.min(rect.bottom + 16, vh - 240),
+    ...isBottom ? { bottom: Math.max(16, vh - rect.top + 16), top: "auto" } : { top: Math.min(rect.bottom + 16, vh - 240) },
     ...isRight ? { right: Math.max(16, vw - rect.right - 4), left: "auto" } : { left: Math.max(16, rect.left), right: "auto" },
     width: 320
   } : { position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)", width: 380 };
@@ -1533,7 +1536,13 @@ function routeStudlinAiQuestion(text, knownSubjects) {
     needsWorkload: has("busy", "busiest", "lightest", "heaviest", "light day", "free day", "workload", "packed"),
     needsOverdue: has("overdue", "missed", "behind on", "late", "catch up", "catch-up"),
     needsPace: has("pace", "on track", "ahead of", "behind schedule", "progress"),
-    needsAttackRisk: has("attack block", "running out", "won't finish", "wont finish", "won't have time"),
+    // 2026-09-11 hardening pass: tested against a battery of realistic
+    // phrasings before promoting this feature more confidently (see the
+    // Studlin AI tour step). "Will I finish my project in time?" and "Am I
+    // going to run out of time for my paper?" -- both completely natural
+    // ways to ask this -- matched nothing here before; only the gerund
+    // "running out" and a narrow set of exact negations were covered.
+    needsAttackRisk: has("attack block", "running out", "run out", "won't finish", "wont finish", "won't have time", "wont have time", "won't be done", "wont be done", "not going to finish", "not gonna finish"),
     needsStreak: has("streak", "consistent", "consistency", "activity", "engagement"),
     needsPeakHours: has("productive", "peak", "best time", "focus", "when am i", "when do i"),
     needsStrugglingBucket: has("struggl", "worst time", "trouble focusing", "hard time"),
@@ -1981,6 +1990,23 @@ function dismissPeakHourInsight(bucketId) {
   const dismissed = lsGet("peakInsightDismissed", {});
   dismissed[bucketId] = Date.now();
   lsSet("peakInsightDismissed", dismissed);
+}
+const LEARNS_YOU_REVEAL_DELAY_MS = 3 * 24 * 60 * 60 * 1e3;
+function shouldShowLearnsYouReveal() {
+  if (lsGet("seenLearnsYouReveal", false)) return false;
+  const finishedAt = lsGet("onboardingFinishedAt", null);
+  if (!finishedAt || Date.now() - finishedAt < LEARNS_YOU_REVEAL_DELAY_MS) return false;
+  const hasRealActivity = lsGet("sessions", []).length > 0 || lsGet("events", []).some((e) => e.status === "done");
+  return hasRealActivity;
+}
+function dismissLearnsYouReveal() {
+  lsSet("seenLearnsYouReveal", true);
+}
+function shouldShowPrepGuide() {
+  return !lsGet("seenPrepGuide", false);
+}
+function dismissPrepGuide() {
+  lsSet("seenPrepGuide", true);
 }
 const UNSCHEDULED_DUE_SOON_WINDOW_DAYS = 3;
 const UNSCHEDULED_DUE_SOON_COOLDOWN_MS = 2 * 864e5;
@@ -5975,6 +6001,12 @@ function StudlinPrep({ setActive = () => {
 }, onTaskCompleted = () => {
 } } = {}) {
   const [tab, setTab] = useState("exams");
+  const [prepGuideOpen, setPrepGuideOpen] = useState(() => shouldShowPrepGuide());
+  const closePrepGuide = () => {
+    dismissPrepGuide();
+    setPrepGuideOpen(false);
+  };
+  const firstExamRowRef = useRef(null);
   const [selectedExamId, setSelectedExamId] = useState(() => {
     const pending = lsGet("openPrepExamId", null);
     if (pending) lsSet("openPrepExamId", null);
@@ -6797,7 +6829,19 @@ function StudlinPrep({ setActive = () => {
   };
   const showTabToolbar = !(tab === "exams" && selectedExam) && !(tab === "assignments" && selectedAssignment) && tab !== "insights";
   const tt = TOOLBAR_TAB_STATE[tab];
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 20, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 2, background: T.card2, padding: 2, borderRadius: 4, width: "fit-content", flexWrap: "wrap" } }, [{ id: "exams", label: "Exams" }, { id: "assignments", label: "Assignments" }, { id: "projects", label: "Projects" }, { id: "flashcards", label: "Flashcards" }, { id: "practiceExams", label: "Practice Exams" }, { id: "insights", label: "Insights" }].map((v) => /* @__PURE__ */ React.createElement("button", { key: v.id, onClick: () => {
+  return /* @__PURE__ */ React.createElement("div", null, prepGuideOpen && tab === "exams" && !selectedExam && visibleExams.length > 0 && /* @__PURE__ */ React.createElement(
+    TourStep,
+    {
+      targetRef: firstExamRowRef,
+      step: 0,
+      total: 1,
+      isLast: true,
+      title: "Click an exam to build a real study plan",
+      body: "Studlin turns your material into spaced study sessions, with flashcards and a practice exam built in automatically -- not just a countdown to the date.",
+      onNext: closePrepGuide,
+      onSkip: closePrepGuide
+    }
+  ), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 20, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 2, background: T.card2, padding: 2, borderRadius: 4, width: "fit-content", flexWrap: "wrap" } }, [{ id: "exams", label: "Exams" }, { id: "assignments", label: "Assignments" }, { id: "projects", label: "Projects" }, { id: "flashcards", label: "Flashcards" }, { id: "practiceExams", label: "Practice Exams" }, { id: "insights", label: "Insights" }].map((v) => /* @__PURE__ */ React.createElement("button", { key: v.id, onClick: () => {
     setTab(v.id);
     setSelectedExamId(null);
     setSelectedAssignmentId(null);
@@ -6823,6 +6867,7 @@ function StudlinPrep({ setActive = () => {
     }
   ), /* @__PURE__ */ React.createElement(Input, { placeholder: "Search\u2026", value: tt.search, onChange: (e) => tt.setSearch(e.target.value), style: { width: 130, fontSize: 11.5, padding: "7px 10px" } }))), tab === "exams" && !selectedExam && (exams.length === 0 ? /* @__PURE__ */ React.createElement(Card, { style: { padding: "32px 20px", textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, marginBottom: 14 } }, "No upcoming exams yet \u2014 add one from your calendar to start building material for it."), /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => setActive("calendar") }, Icon.plus, " Go to Calendar")) : (() => {
     const viewPlan = (ex) => {
+      if (prepGuideOpen) closePrepGuide();
       setSelectedExamId(ex.id);
       setFileTexts(ex.sourceMaterials && ex.sourceMaterials.length > 0 ? ex.sourceMaterials : ex.sourceMaterial ? [{ name: "From your syllabus", text: ex.sourceMaterial }] : []);
       setGenMsg("");
@@ -6837,7 +6882,7 @@ function StudlinPrep({ setActive = () => {
     };
     const cellSelStyle = { width: "100%", background: "transparent", border: "none", color: T.text, fontSize: 10.5, fontFamily: T.font, outline: "none", cursor: "pointer", padding: "2px 0" };
     const gridCols = "minmax(120px,1.6fr) 84px 64px 68px 104px 56px 70px 70px 120px 76px";
-    return /* @__PURE__ */ React.createElement("div", null, visibleExams.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, textAlign: "center", padding: "14px 0" } }, "No exams match your search."), visibleExams.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { overflowX: "auto", border: `1px solid ${T.border}`, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 760 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, padding: "7px 10px", borderBottom: `1px solid ${T.border}`, background: T.card2 } }, ["Name", "Class", "Type", "Flex", "Due", "Days", "Urgency", "Difficulty", "Sessions", "Prep"].map((h, i) => /* @__PURE__ */ React.createElement("div", { key: h + i, style: { fontSize: 9, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, h))), visibleExams.map((ex) => {
+    return /* @__PURE__ */ React.createElement("div", null, visibleExams.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, textAlign: "center", padding: "14px 0" } }, "No exams match your search."), visibleExams.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { overflowX: "auto", border: `1px solid ${T.border}`, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 760 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, padding: "7px 10px", borderBottom: `1px solid ${T.border}`, background: T.card2 } }, ["Name", "Class", "Type", "Flex", "Due", "Days", "Urgency", "Difficulty", "Sessions", "Prep"].map((h, i) => /* @__PURE__ */ React.createElement("div", { key: h + i, style: { fontSize: 9, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, h))), visibleExams.map((ex, exIdx) => {
       const examSessionsForEx = lsGet("events", []).filter((e) => e.dueEventId === ex.id);
       const pendingSessionsForEx = examSessionsForEx.filter((e) => e.status !== "done");
       const today = dayKey();
@@ -6845,7 +6890,7 @@ function StudlinPrep({ setActive = () => {
       const daysLabel = daysUntil <= 0 ? "Today" : daysUntil + "d";
       const sessionsLabel = examSessionsForEx.length === 0 ? "no plan yet" : pendingSessionsForEx.length + " left";
       const isFlexible = ex.sessionsMovable !== false;
-      return /* @__PURE__ */ React.createElement("div", { key: ex.id, style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, padding: "7px 10px", borderBottom: `1px solid ${T.border}`, alignItems: "center" } }, /* @__PURE__ */ React.createElement("div", { onClick: () => viewPlan(ex), style: { fontSize: 11.5, fontWeight: 600, color: T.white, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: ex.title }, ex.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ex.subject || "\u2014"), /* @__PURE__ */ React.createElement(
+      return /* @__PURE__ */ React.createElement("div", { key: ex.id, ref: exIdx === 0 ? firstExamRowRef : null, style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, padding: "7px 10px", borderBottom: `1px solid ${T.border}`, alignItems: "center" } }, /* @__PURE__ */ React.createElement("div", { onClick: () => viewPlan(ex), style: { fontSize: 11.5, fontWeight: 600, color: T.white, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: ex.title }, ex.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ex.subject || "\u2014"), /* @__PURE__ */ React.createElement(
         CustomSelect,
         {
           value: ex.examType || "",
@@ -11380,16 +11425,25 @@ function renderStudlinAiMarkdown(text) {
   });
 }
 function StudlinAiBubble({ onClick, hasProactive }) {
-  return /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      type: "button",
-      onClick,
-      title: "Ask Studlin AI about your schedule",
-      style: { position: "fixed", bottom: 20, right: 20, width: 52, height: 52, borderRadius: "50%", background: T.lime, color: T.ink, border: "none", cursor: "pointer", display: "grid", placeItems: "center", boxShadow: "0 8px 24px -6px rgba(0,0,0,0.4)", zIndex: STUDLIN_AI_BUBBLE_Z }
-    },
-    Icon.sparkles,
-    hasProactive && /* @__PURE__ */ React.createElement("span", { style: { position: "absolute", top: -2, right: -2, width: 14, height: 14, borderRadius: "50%", background: T.amber, border: `2px solid ${T.bg}` } })
+  return (
+    // id (2026-09-11, post-onboarding tour's 3rd step): this button is
+    // rendered once at App() level, a sibling of CalendarTab (where the
+    // tour itself lives) rather than a child of it -- a plain React ref
+    // can't reach across that boundary, so the tour targets it by this
+    // stable id via document.getElementById instead (see TourStep's own
+    // targetSelector support).
+    /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        id: "studlin-ai-bubble",
+        type: "button",
+        onClick,
+        title: "Ask Studlin AI about your schedule",
+        style: { position: "fixed", bottom: 20, right: 20, width: 52, height: 52, borderRadius: "50%", background: T.lime, color: T.ink, border: "none", cursor: "pointer", display: "grid", placeItems: "center", boxShadow: "0 8px 24px -6px rgba(0,0,0,0.4)", zIndex: STUDLIN_AI_BUBBLE_Z }
+      },
+      Icon.sparkles,
+      hasProactive && /* @__PURE__ */ React.createElement("span", { style: { position: "absolute", top: -2, right: -2, width: 14, height: 14, borderRadius: "50%", background: T.amber, border: `2px solid ${T.bg}` } })
+    )
   );
 }
 function StudlinAiDrawer({ open, onClose: onClose2, setPricingOpen = () => {
@@ -16614,7 +16668,13 @@ function CalendarTab({ setActive = () => {
   const rescheduleBtnRef = useRef(null);
   const CAL_TOUR_STEPS = [
     { targetRef: addTaskBtnRef, title: "Add anything, one place", body: "A class, an assignment, a reminder. Tap Add Task and Studlin finds the time for it." },
-    { targetRef: rescheduleBtnRef, title: "When things don't go as planned", body: "Tell Studlin what happened and it reschedules everything around it. Deadlines stay safe, nothing gets crammed in." }
+    { targetRef: rescheduleBtnRef, title: "When things don't go as planned", body: "Tell Studlin what happened and it reschedules everything around it. Deadlines stay safe, nothing gets crammed in." },
+    // 2026-09-11 user request: "another pop up for studlin ai ask it
+    // anything about your schedule." Targets the bubble by a stable id
+    // (see StudlinAiBubble's own comment) rather than a ref -- it's
+    // rendered once at App() level, a sibling of this component, not a
+    // child of it.
+    { targetSelector: "#studlin-ai-bubble", title: "Ask Studlin AI anything", body: '"Am I behind on anything?" "When am I most productive?" It answers from your real schedule, not a guess.' }
   ];
   const [calTourStep, setCalTourStep] = useState(-1);
   const advanceCalTour = () => {
@@ -16656,6 +16716,7 @@ function CalendarTab({ setActive = () => {
     setClassSetupOpen(false);
     syncClassSetupState();
     if (isFreshAccount && !lsGet("seenCalendarTour", false)) setCalTourStep(0);
+    if (!lsGet("onboardingFinishedAt", null)) lsSet("onboardingFinishedAt", Date.now());
     if (newIds && newIds.length > 0) {
       setNewItemHighlightIds(newIds);
       showToast("Added " + newIds.length + " item" + (newIds.length !== 1 ? "s" : "") + " to your calendar.");
@@ -21486,7 +21547,12 @@ function Dashboard({ setActive, seriousMode = false, rescheduleTask, setReschedu
     lsSet("wrapped-dismissed-" + wrappedWeekKey, true);
     setWrappedOpen(false);
   };
-  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 16, paddingBottom: 40 } }, attackOverrun && /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.red}55`, borderRadius: 8, padding: "18px 20px", display: "flex", alignItems: "flex-start", gap: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, width: 38, height: 38, borderRadius: 8, background: T.red + "1A", display: "flex", alignItems: "center", justifyContent: "center" } }, /* @__PURE__ */ React.createElement("svg", { width: "18", height: "18", viewBox: "0 0 24 24", fill: "none", stroke: T.red, strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("path", { d: "M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" }), /* @__PURE__ */ React.createElement("line", { x1: "12", y1: "9", x2: "12", y2: "13" }), /* @__PURE__ */ React.createElement("line", { x1: "12", y1: "17", x2: "12.01", y2: "17" }))), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, 'Falling behind on "', attackOverrun.title, '"'), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, lineHeight: 1.5, marginBottom: 14 } }, "At a sustainable pace there's only about ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.white } }, (attackOverrun.capacityMins / 60).toFixed(1), "h"), " of runway left before it needs to be done, but the plan still has ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.red } }, (attackOverrun.pendingMins / 60).toFixed(1), "h"), " scheduled. Worth restructuring the week around it now, before it's a last-minute scramble."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: openOverrunRestructure, style: { padding: "7px 14px", fontSize: 12 } }, "Restructure my week"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: dismissOverrun, style: { padding: "7px 14px", fontSize: 12 } }, "I'll handle it")))), /* @__PURE__ */ React.createElement(
+  const [learnsYouReveal, setLearnsYouReveal] = useState(() => shouldShowLearnsYouReveal());
+  const closeLearnsYouReveal = () => {
+    dismissLearnsYouReveal();
+    setLearnsYouReveal(false);
+  };
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 16, paddingBottom: 40 } }, learnsYouReveal && /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.lime}44`, borderRadius: 8, padding: "18px 20px", display: "flex", alignItems: "flex-start", gap: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, width: 38, height: 38, borderRadius: 8, background: T.lime + "1A", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 } }, "\u{1F9E0}"), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "Studlin's been paying attention"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, lineHeight: 1.5, marginBottom: 14 } }, "Every Attack Block session teaches it how long your assignments really take -- not a generic guess. It's also watching which hours you actually get things done in, so it can nudge your schedule toward when you're genuinely at your best. The more you use it, the more it fits you specifically."), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: closeLearnsYouReveal, style: { padding: "7px 14px", fontSize: 12 } }, "Got it"))), attackOverrun && /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.red}55`, borderRadius: 8, padding: "18px 20px", display: "flex", alignItems: "flex-start", gap: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, width: 38, height: 38, borderRadius: 8, background: T.red + "1A", display: "flex", alignItems: "center", justifyContent: "center" } }, /* @__PURE__ */ React.createElement("svg", { width: "18", height: "18", viewBox: "0 0 24 24", fill: "none", stroke: T.red, strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("path", { d: "M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" }), /* @__PURE__ */ React.createElement("line", { x1: "12", y1: "9", x2: "12", y2: "13" }), /* @__PURE__ */ React.createElement("line", { x1: "12", y1: "17", x2: "12.01", y2: "17" }))), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, 'Falling behind on "', attackOverrun.title, '"'), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, lineHeight: 1.5, marginBottom: 14 } }, "At a sustainable pace there's only about ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.white } }, (attackOverrun.capacityMins / 60).toFixed(1), "h"), " of runway left before it needs to be done, but the plan still has ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.red } }, (attackOverrun.pendingMins / 60).toFixed(1), "h"), " scheduled. Worth restructuring the week around it now, before it's a last-minute scramble."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: openOverrunRestructure, style: { padding: "7px 14px", fontSize: 12 } }, "Restructure my week"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: dismissOverrun, style: { padding: "7px 14px", fontSize: 12 } }, "I'll handle it")))), /* @__PURE__ */ React.createElement(
     Modal,
     {
       open: overrunModalOpen,

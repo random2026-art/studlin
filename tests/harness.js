@@ -97,6 +97,8 @@ function loadStudlinModule(options) {
     "checkTimeOffImpact","simulateTimeOffBlock",
     "T","applyTheme","ACCENTS",
     "getWorkWindowMinsFor","detectPeakHourInsight","dismissPeakHourInsight",
+    "shouldShowLearnsYouReveal","dismissLearnsYouReveal","LEARNS_YOU_REVEAL_DELAY_MS",
+    "shouldShowPrepGuide","dismissPrepGuide",
     "detectStrugglingBucket","dismissStrugglingBucket","TIER0_HOUR_BUCKETS","PEAK_BUCKET_LABELS",
     "detectUnscheduledDueSoon","dismissUnscheduledDueSoon",
     "logCompletionOutcome","getBucketReliability","setSchedulePreferences","applyStudyStylePrefs","applySessionOrderPreference",
