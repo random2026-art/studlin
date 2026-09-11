@@ -9807,7 +9807,7 @@ async function extractFileText(file,onProgress){
 // elsewhere (generateFlashcardsFromText/generateQuizFromText,
 // linkDeckToExamStorage, buildSpacedSessionPreviews, computeExamReadiness)
 // instead of inventing a parallel system.
-function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()=>{},onDeclinePrep=()=>{}}={}){
+function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()=>{},onDeclinePrep=()=>{},onTaskCompleted=()=>{}}={}){
   const [tab,setTab]=useState("exams"); // exams | assignments | projects | flashcards | practiceExams
   // Single-select, one at a time -- an earlier pass tried a multi-select
   // filter here (pick Exams+Projects together), reverted per direct
@@ -11451,7 +11451,17 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
           setActive("calendar");
         };
         const deleteLinkedBlock=(id)=>{lsSet("events",lsGet("events",[]).filter(e=>e.id!==id));refresh();};
-        const markLinkedBlockDone=(id)=>{lsSet("events",lsGet("events",[]).map(e=>e.id===id?{...e,status:"done",completedAt:Date.now()}:e));refresh();};
+        const markLinkedBlockDone=(id)=>{
+          lsSet("events",lsGet("events",[]).map(e=>e.id===id?{...e,status:"done",completedAt:Date.now()}:e));
+          // Same order Dashboard/Calendar's own markDone already uses
+          // (see App()'s handleTaskCompleted) -- the status flip commits
+          // first, then this checks whether the just-completed block was a
+          // real Attack Block session (shouldOfferProjectCheckIn) and, if
+          // so, opens the exact same "how much did you get through"
+          // check-in that builds a real follow-up plan for the rest.
+          onTaskCompleted(id);
+          refresh();
+        };
         const addAssignManualBlock=()=>{
           if(!assignManualDate)return;
           const block={id:"manual-"+selectedAssignment.id+"-"+Date.now(),title:"Work on: "+selectedAssignment.title,date:assignManualDate,time:assignManualTime,
@@ -11575,6 +11585,22 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                             <span style={{fontSize:12,fontWeight:600,color:s.status==="done"?T.muted:T.text,textDecoration:s.status==="done"?"line-through":"none"}}>{s.date} · {s.time} · {s.duration||30}min</span>
                           </div>
                           <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                            {/* User report, 2026-09-10 (with a screenshot): a
+                                scheduled Attack Block probe session had no
+                                way to be marked done at all unless it was
+                                already past -- and even then, marking it
+                                done never asked "how much did you get
+                                through" to build a real plan for the rest,
+                                the entire reason Attack Block exists. This
+                                button is now always available for any
+                                pending block, not just past ones (you may
+                                have genuinely finished it early), and
+                                markLinkedBlockDone now routes through the
+                                same onTaskCompleted the Dashboard/Calendar
+                                checkbox-complete paths already use --
+                                StudlinPrep just never received that prop
+                                before. */}
+                            {s.status==="pending"&&<button type="button" onClick={()=>markLinkedBlockDone(s.id)} style={{background:"none",border:"none",color:T.lime,cursor:"pointer",fontSize:11,fontWeight:600,fontFamily:T.font,textDecoration:"underline"}}>Mark done</button>}
                             {assignConfirmDeleteBlockId===s.id?(
                               <>
                                 <button type="button" onClick={()=>{deleteLinkedBlock(s.id);setAssignConfirmDeleteBlockId(null);}} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:11,fontWeight:700,fontFamily:T.font,textDecoration:"underline"}}>Confirm</button>
@@ -38141,7 +38167,7 @@ function App() {
            active==="notes"?<Notes setActive={setActive} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
            active==="profile"?<Profile setActive={setActive} seriousMode={seriousMode} />:
-           active==="prep"?<StudlinPrep setActive={setActive} setDetailEventId={setDetailEventId} onStartPrepNow={acceptPrepPrompt} onDeclinePrep={declinePrepPrompt} />:
+           active==="prep"?<StudlinPrep setActive={setActive} setDetailEventId={setDetailEventId} onStartPrepNow={acceptPrepPrompt} onDeclinePrep={declinePrepPrompt} onTaskCompleted={handleTaskCompleted} />:
            active==="flashcards"?<Flashcards setActive={setActive} />:
            ActivePage?<ActivePage />:null}
         </div>
