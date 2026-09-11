@@ -4835,6 +4835,15 @@ function looksLikeRealDeadlineTitle(title){
   if(/^[a-z]/.test(t))return false;
   return true;
 }
+// Shared shape guard for termStart/termEnd (2026-09-11, class-schedule
+// onboarding reorder) -- the AI is asked to omit these entirely when not
+// stated, but a malformed or hallucinated non-date string slipping through
+// would otherwise land straight in a DateField with no validation at all.
+// Doesn't check the two are in the right order (start<end) -- that's
+// exactly what the still-editable End of Term step itself is for.
+function looksLikeDateString(v){
+  return typeof v==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(v);
+}
 const ANTI_GARBAGE_EXTRACTION_RULE=
   "Only extract an item if it is clearly a specific graded assignment, project, reading, quiz, or exam that is due or occurs on that date -- never extract a course title, professor name, room/location, grading policy, or general encouragement text, even if a date-like number happens to sit near it. Each \"title\" must be a short, specific noun phrase naming the actual assignment (e.g. \"Problem Set 3\", \"Midterm Exam\", \"Ch. 5 Reading\") -- never a full sentence or a fragment of one. If you can't confidently name the specific item due, skip that date entirely rather than guessing a title from nearby text. ";
 // Every real syllabus/schedule this ever gets pointed at looks different --
@@ -4894,9 +4903,11 @@ const CLASS_SYLLABUS_JSON_CONTRACT=
   "Respond with ONLY valid JSON, no markdown fences, no commentary, in this exact shape: "+
   "{\"subject\":{\"name\":\"Biology 101\"},"+
   "\"meetingTimes\":[{\"days\":[0,2,4],\"startTime\":\"10:00\",\"duration\":50}],"+
+  "\"termStart\":\"2026-08-25\",\"termEnd\":\"2026-12-12\","+
   "\"deadlines\":[{\"title\":\"Problem Set 3\",\"date\":\"2026-09-22\",\"kind\":\"assignment\",\"confidence\":\"high\",\"estimatedHours\":2,\"difficulty\":450}]}. "+
   "\"subject.name\" is the class name as it would appear on a schedule (e.g. \"Biology 101\", \"AP English IV\") -- if genuinely not stated anywhere, use your best guess from context, never leave it blank. "+
   "\"meetingTimes\" is when the class ITSELF actually meets each week -- \"days\" uses 0=Monday..6=Sunday, \"startTime\" is 24-hour \"HH:MM\", \"duration\" is minutes. Include one entry per distinct day/time pattern (e.g. a class meeting Mon/Wed/Fri at one time and Tue/Thu at another is two entries). Office hours, optional review/help sessions, drop-in tutoring, or a TA's own separate hours are NEVER a meeting time even when a recurring day/time is given for them -- they are not the class meeting. Omit \"meetingTimes\" entirely (empty array) if no recurring meeting time is stated anywhere in the source. "+
+  "\"termStart\"/\"termEnd\" (YYYY-MM-DD) are the semester/term's own first and last day of classes, ONLY when the source explicitly states them (e.g. \"Fall 2026: August 25 - December 12\") -- omit either or both entirely when not stated. Never infer one from a single assignment/exam date, and never confuse a specific class's own last meeting with the whole term's end unless the source clearly means the same thing. "+
   "\"deadlines\" follows the same rules as before, plus a third \"kind\": \"title\" short, \"date\" YYYY-MM-DD (never omit even if uncertain), "+
   "\"kind\" is \"exam\" for quizzes/tests/midterms/finals, \"project\" for a genuinely multi-step, multi-week deliverable (a research paper, a term project, a presentation with real preparation involved -- not just a due date, an actual body of work), or \"assignment\" for everything else (problem sets, readings, short papers, labs, quick responses). "+
   "\"examType\" (exams only: \"quiz\" for a quiz or short in-class test, \"midterm\" for a midterm exam, \"final\" for a final exam, \"project\" for a project defense/presentation exam, \"other\" for anything else exam-like), "+
@@ -4906,11 +4917,11 @@ const CLASS_SYLLABUS_JSON_CONTRACT=
   ANTI_GARBAGE_EXTRACTION_RULE+SCHEDULE_EXTRACTION_ROBUSTNESS_RULE+
   "If you find no deadlines at all, return an empty \"deadlines\" array -- never omit the key.";
 async function extractClassSyllabusText(text){
-  if(!text||!text.trim())return{subject:null,meetingTimes:[],deadlines:[],error:null};
+  if(!text||!text.trim())return{subject:null,meetingTimes:[],deadlines:[],termStart:null,termEnd:null,error:null};
   try{
     const prompt="This is a class syllabus or schedule (it may include other content too, ignore anything irrelevant). "+
       "Today's date is "+dayKey()+". If a deadline date has no year, infer the most likely upcoming year given today's date. "+
-      "Extract the class's name, its recurring weekly meeting time(s), and every deadline/due date/exam date mentioned. "+
+      "Extract the class's name, its recurring weekly meeting time(s), the term's own start/end dates if stated, and every deadline/due date/exam date mentioned. "+
       CLASS_SYLLABUS_JSON_CONTRACT+"\n\n"+text.slice(0,30000);
     const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard",format:"json"})});
     const data=await res.json();
@@ -4920,7 +4931,7 @@ async function extractClassSyllabusText(text){
     // fixed string whenever the server actually sent one (rate limit, low
     // credits, etc.) -- that's real, specific information a generic
     // fallback would otherwise throw away.
-    if(!res.ok)return{subject:null,meetingTimes:[],deadlines:[],error:data.error||"Couldn't read that text. Try again."};
+    if(!res.ok)return{subject:null,meetingTimes:[],deadlines:[],termStart:null,termEnd:null,error:data.error||"Couldn't read that text. Try again."};
     const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
     let parsed;
     try{parsed=JSON.parse(raw);}
@@ -4932,38 +4943,42 @@ async function extractClassSyllabusText(text){
       // text). Logged so a real occurrence is actually diagnosable instead
       // of vanishing into a generic "try again" with no trace of why.
       console.warn("extractClassSyllabusText: reply was not valid JSON",parseErr.message,raw.slice(0,500));
-      return{subject:null,meetingTimes:[],deadlines:[],error:"Couldn't understand what came back. Try again, or paste a shorter section of the syllabus."};
+      return{subject:null,meetingTimes:[],deadlines:[],termStart:null,termEnd:null,error:"Couldn't understand what came back. Try again, or paste a shorter section of the syllabus."};
     }
     return{
       subject:(parsed&&parsed.subject&&parsed.subject.name)?parsed.subject:null,
       meetingTimes:(parsed&&Array.isArray(parsed.meetingTimes))?parsed.meetingTimes:[],
       deadlines:(parsed&&Array.isArray(parsed.deadlines))?parsed.deadlines.filter(d=>looksLikeRealDeadlineTitle(d&&d.title)).map(withDerivedExamImportance):[],
+      termStart:looksLikeDateString(parsed&&parsed.termStart)?parsed.termStart:null,
+      termEnd:looksLikeDateString(parsed&&parsed.termEnd)?parsed.termEnd:null,
       error:null,
     };
   }catch(e){
     console.warn("extractClassSyllabusText: unexpected failure",e.message);
-    return{subject:null,meetingTimes:[],deadlines:[],error:"Couldn't read that text. Try again."};
+    return{subject:null,meetingTimes:[],deadlines:[],termStart:null,termEnd:null,error:"Couldn't read that text. Try again."};
   }
 }
 async function extractClassSyllabusImage(base64Data,mediaType){
   try{
     const prompt="This image is a screenshot or photo of a class syllabus, schedule, or Canvas weekly view. "+
       "Today's date is "+dayKey()+". If a deadline date has no year, infer the most likely upcoming year given today's date. "+
-      "Extract the class's name, its recurring weekly meeting time(s), and every deadline/due date/exam date visible. "+
+      "Extract the class's name, its recurring weekly meeting time(s), the term's own start/end dates if stated, and every deadline/due date/exam date visible. "+
       "Never invent a URL or link -- a screenshot's visible text has no way to reveal what an actual link points to. "+
       CLASS_SYLLABUS_JSON_CONTRACT;
     const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt,image:{mediaType,data:base64Data}}],model:"standard",format:"json"})});
     const data=await res.json();
-    if(!res.ok)return{subject:null,meetingTimes:[],deadlines:[],error:data.error||"Couldn't read that image. Try again."};
+    if(!res.ok)return{subject:null,meetingTimes:[],deadlines:[],termStart:null,termEnd:null,error:data.error||"Couldn't read that image. Try again."};
     const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
     const parsed=JSON.parse(raw);
     return{
       subject:(parsed&&parsed.subject&&parsed.subject.name)?parsed.subject:null,
       meetingTimes:(parsed&&Array.isArray(parsed.meetingTimes))?parsed.meetingTimes:[],
       deadlines:(parsed&&Array.isArray(parsed.deadlines))?parsed.deadlines.filter(d=>looksLikeRealDeadlineTitle(d&&d.title)).map(withDerivedExamImportance):[],
+      termStart:looksLikeDateString(parsed&&parsed.termStart)?parsed.termStart:null,
+      termEnd:looksLikeDateString(parsed&&parsed.termEnd)?parsed.termEnd:null,
       error:null,
     };
-  }catch(e){return{subject:null,meetingTimes:[],deadlines:[],error:"Couldn't read that image. Try again."};}
+  }catch(e){return{subject:null,meetingTimes:[],deadlines:[],termStart:null,termEnd:null,error:"Couldn't read that image. Try again."};}
 }
 // Whole-semester college schedule scan -- a registrar "my schedule" page
 // (grid or text list) covers SEVERAL classes at once, unlike
@@ -4976,10 +4991,12 @@ async function extractClassSyllabusImage(base64Data,mediaType){
 // deadlines entry, not get mistaken for a second recurring meeting time.
 const COLLEGE_SCHEDULE_JSON_CONTRACT=
   "Respond with ONLY valid JSON, no markdown fences, no commentary, in this exact shape: "+
-  "{\"classes\":[{\"subject\":{\"name\":\"Biology 101\"},"+
+  "{\"termStart\":\"2026-08-25\",\"termEnd\":\"2026-12-12\","+
+  "\"classes\":[{\"subject\":{\"name\":\"Biology 101\"},"+
   "\"meetingTimes\":[{\"days\":[0,2,4],\"startTime\":\"10:00\",\"duration\":50}],"+
   "\"scheduleConfidence\":\"high\","+
   "\"deadlines\":[{\"title\":\"Midterm 1\",\"date\":\"2026-09-24\",\"kind\":\"exam\",\"examType\":\"midterm\",\"confidence\":\"high\"}]}]}. "+
+  "\"termStart\"/\"termEnd\" (YYYY-MM-DD, top-level, ONE pair for the whole schedule, not per-class) are the semester/term's own first and last day of classes, ONLY when the source explicitly states them -- omit either or both entirely when not stated. Never infer one from a single class's own exam date. "+
   "One entry in \"classes\" per distinct course. \"subject.name\" is the class name as it would appear on a schedule -- if genuinely not stated, use your best guess from context, never leave it blank. "+
   "\"meetingTimes\" is the class's REAL RECURRING weekly pattern only -- \"days\" uses 0=Monday..6=Sunday, \"startTime\" is 24-hour \"HH:MM\", \"duration\" is minutes, and it should only ever describe something that repeats across a semester-long date range. Include one entry per distinct day/time pattern (e.g. a class meeting Mon/Wed/Fri at one time and a separate recitation Tue/Thu at another time are two entries, possibly even two different \"classes\" entries if the recitation has its own name). "+
   "Any entry with a SINGLE date instead of a recurring range -- especially anything labeled Exam, Midterm, Final, or Common Hour Exam, even if its listed time differs from the class's regular meeting time -- is NOT a meeting time. It belongs in that same class's own \"deadlines\" array as \"kind\":\"exam\" with that real date, exactly like any other exam. Never fold a one-off exam date into \"meetingTimes\". "+
@@ -4991,15 +5008,15 @@ const COLLEGE_SCHEDULE_JSON_CONTRACT=
   ANTI_GARBAGE_EXTRACTION_RULE+SCHEDULE_EXTRACTION_ROBUSTNESS_RULE+
   "If you find no classes at all, return an empty \"classes\" array -- never omit the key.";
 async function extractCollegeScheduleText(text){
-  if(!text||!text.trim())return{classes:[],error:null};
+  if(!text||!text.trim())return{classes:[],termStart:null,termEnd:null,error:null};
   try{
     const prompt="This is a college student's full class schedule for a term -- it may be a registrar 'my schedule' export, a list of sections, or similar, and it likely covers several different classes at once. "+
       "Today's date is "+dayKey()+". If a date has no year, infer the most likely upcoming year given today's date. "+
-      "Extract every class, its recurring weekly meeting time(s), and every deadline/exam date mentioned for each one. "+
+      "Extract every class, its recurring weekly meeting time(s), the term's own start/end dates if stated, and every deadline/exam date mentioned for each one. "+
       COLLEGE_SCHEDULE_JSON_CONTRACT+"\n\n"+text.slice(0,30000);
     const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard",format:"json"})});
     const data=await res.json();
-    if(!res.ok)return{classes:[],error:data.error||"Couldn't read that. Try again."};
+    if(!res.ok)return{classes:[],termStart:null,termEnd:null,error:data.error||"Couldn't read that. Try again."};
     const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
     let parsed;
     try{parsed=JSON.parse(raw);}
@@ -5009,7 +5026,7 @@ async function extractCollegeScheduleText(text){
       // an unusually long or messy pasted schedule. Logged so a real
       // occurrence is diagnosable instead of vanishing into "try again."
       console.warn("extractCollegeScheduleText: reply was not valid JSON",parseErr.message,raw.slice(0,500));
-      return{classes:[],error:"Couldn't understand what came back. Try again, or paste a shorter section of your schedule."};
+      return{classes:[],termStart:null,termEnd:null,error:"Couldn't understand what came back. Try again, or paste a shorter section of your schedule."};
     }
     const classes=(parsed&&Array.isArray(parsed.classes))?parsed.classes.filter(c=>c&&c.subject&&c.subject.name).map(c=>({
       subject:c.subject,
@@ -5017,10 +5034,10 @@ async function extractCollegeScheduleText(text){
       scheduleConfidence:c.scheduleConfidence==="low"?"low":"high",
       deadlines:(Array.isArray(c.deadlines)?c.deadlines:[]).filter(d=>looksLikeRealDeadlineTitle(d&&d.title)).map(withDerivedExamImportance),
     })):[];
-    return{classes,error:null};
+    return{classes,termStart:looksLikeDateString(parsed&&parsed.termStart)?parsed.termStart:null,termEnd:looksLikeDateString(parsed&&parsed.termEnd)?parsed.termEnd:null,error:null};
   }catch(e){
     console.warn("extractCollegeScheduleText: unexpected failure",e.message);
-    return{classes:[],error:"Couldn't read that. Try again."};
+    return{classes:[],termStart:null,termEnd:null,error:"Couldn't read that. Try again."};
   }
 }
 async function extractCollegeScheduleImage(images){
@@ -5028,13 +5045,13 @@ async function extractCollegeScheduleImage(images){
     const multi=images.length>1;
     const prompt="This "+(multi?"set of images is "+images.length+" screenshots or photos":"image is a screenshot or photo")+" of a college student's full class schedule for a term -- a registrar 'my schedule' grid or similar, likely covering several different classes at once"+(multi?", possibly split across the images (e.g. one screenshot per page, or overlapping views of the same schedule)":"")+". "+
       "Today's date is "+dayKey()+". If a date has no year, infer the most likely upcoming year given today's date. "+
-      "Extract every class, its recurring weekly meeting time(s), and every deadline/exam date visible for each one. "+
+      "Extract every class, its recurring weekly meeting time(s), the term's own start/end dates if stated, and every deadline/exam date visible for each one. "+
       (multi?"If the same class or deadline appears in more than one image, include it only once in the result -- don't duplicate it. ":"")+
       "Never invent a URL or link -- a screenshot's visible text has no way to reveal what an actual link points to. "+
       COLLEGE_SCHEDULE_JSON_CONTRACT;
     const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt,images:images.map(img=>({mediaType:img.mediaType,data:img.data}))}],model:"standard",format:"json"})});
     const data=await res.json();
-    if(!res.ok)return{classes:[],error:data.error||"Couldn't read that image. Try again."};
+    if(!res.ok)return{classes:[],termStart:null,termEnd:null,error:data.error||"Couldn't read that image. Try again."};
     const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
     const parsed=JSON.parse(raw);
     const classes=(parsed&&Array.isArray(parsed.classes))?parsed.classes.filter(c=>c&&c.subject&&c.subject.name).map(c=>({
@@ -5043,8 +5060,8 @@ async function extractCollegeScheduleImage(images){
       scheduleConfidence:c.scheduleConfidence==="low"?"low":"high",
       deadlines:(Array.isArray(c.deadlines)?c.deadlines:[]).filter(d=>looksLikeRealDeadlineTitle(d&&d.title)).map(withDerivedExamImportance),
     })):[];
-    return{classes,error:null};
-  }catch(e){return{classes:[],error:"Couldn't read that image. Try again."};}
+    return{classes,termStart:looksLikeDateString(parsed&&parsed.termStart)?parsed.termStart:null,termEnd:looksLikeDateString(parsed&&parsed.termEnd)?parsed.termEnd:null,error:null};
+  }catch(e){return{classes:[],termStart:null,termEnd:null,error:"Couldn't read that image. Try again."};}
 }
 // High school schedule grid/table -- a single photo of the whole week's
 // periods, no deadlines involved (a schedule grid has no due dates). Returns
@@ -22265,7 +22282,14 @@ function PhasesOutlineEditor({item,onChange,subject,onGateBlocked=()=>{},onNeeds
 // anyway. Same reasoning that already got peak-hours/difficulty cut from
 // the old InitWizard: inferred/deferred, still reachable in Settings for
 // anyone who wants it, one fewer screen for everyone else.
-const WIZARD_STEP_ORDER=["term","status","awake","personalize","classes","activities","calendarSync","finalReview"];
+// 2026-09-11 user request: Courses now comes BEFORE End of Term -- a
+// syllabus or whole-schedule scan can state the term's real start/end
+// dates (see applyExtractedTermDates), so asking for classes first means
+// End of Term might already be pre-filled by the time the student gets
+// there, instead of always being a blank field to type into. status (the
+// HS/college fork) has to stay directly ahead of classes either way, since
+// it's what the classes step's own scan options depend on.
+const WIZARD_STEP_ORDER=["status","classes","term","awake","personalize","activities","calendarSync","finalReview"];
 // The named steps a fresh account walks through, shown as a top progress
 // stepper. "status" (HS/college fork) isn't its own labeled step -- it's
 // the entry to "Courses", same as "classes" itself. Every real step now
@@ -22274,11 +22298,11 @@ const WIZARD_STEP_ORDER=["term","status","awake","personalize","classes","activi
 // of 7 steps -- confusing, looked like progress broke). "personalize"
 // gets its own segment, matching every other named step.
 const WIZARD_STEPPER=[
+  {key:"status",label:"Courses"},
+  {key:"classes",label:"Courses"},
   {key:"term",label:"End of Term"},
   {key:"awake",label:"Awake time"},
   {key:"personalize",label:"Study style"},
-  {key:"status",label:"Courses"},
-  {key:"classes",label:"Courses"},
   {key:"activities",label:"Activities"},
   {key:"calendarSync",label:"Connect"},
   {key:"finalReview",label:"Review"},
@@ -22438,6 +22462,10 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   // could drift out of sync. A legacy account with no status on file
   // (falsy initialStatus) still gets asked, same as before.
   const knowsStatus=!!initialStatus;
+  // 2026-09-11: Courses now runs before End of Term (see WIZARD_STEP_ORDER's
+  // own comment) -- classes' own forward-nav needs to know whether term is
+  // already configured to decide whether "term" is even still ahead of it.
+  const knowsTerm=(()=>{const t=getSchoolTerm();return !!(t&&t.start&&t.end);})();
   const effectiveWizardStepOrder=knowsStatus?WIZARD_STEP_ORDER.filter(s=>s!=="status"):WIZARD_STEP_ORDER;
   // Real Back navigation (2026-07-29 fix) -- null in quickScan mode (that
   // session intentionally starts mid-flow with no earlier step to return
@@ -22480,10 +22508,17 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     // exact bug this fixes. O10 in the audit: this used to start at
     // "timezone", a step with no input at all beyond a mandatory Continue
     // (its own copy says "nothing to set here") -- every brand-new account
-    // paid that extra screen for zero actual configuration. Starts at
-    // "term" now; timezone is still detected live via detectTz() wherever
-    // it's actually used, same as before, just never shown as its own step.
-    setStep(quickScan?"classes":((term&&term.start&&term.end)?"classes":"term"));
+    // paid that extra screen for zero actual configuration. timezone is
+    // still detected live via detectTz() wherever it's actually used, same
+    // as before, just never shown as its own step.
+    // 2026-09-11: Courses now runs before End of Term (see
+    // WIZARD_STEP_ORDER's own comment) -- a fresh account (term not yet
+    // known) starts at "status" if that's ALSO unknown, or straight at
+    // "classes" if status is already on file; either way "term" itself
+    // only shows up after classes finishes (see the classes step's own
+    // Continue/Done handler). Term already known still jumps straight to
+    // "classes" same as before -- nothing left to ask there.
+    setStep(quickScan?"classes":((term&&term.start&&term.end)?"classes":(knowsStatus?"classes":"status")));
     setTimezone(detectTz());
     setTermStart((term&&term.start)||"");
     setTermEnd((term&&term.end)||"");
@@ -22614,6 +22649,23 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
       };
     });
   };
+  // 2026-09-11 user request: "since the class schedule or syllabus might
+  // include start and end term we should ask for that before asking for
+  // start and end term... thats less stuff for the user to have to fill
+  // out." Any scan that happens to state the term's real start/end dates
+  // (not every syllabus does) pre-fills the End of Term step -- first one
+  // found wins, and it stays a completely normal editable field either way
+  // (see the End of Term step itself), never presented as settled fact.
+  // Skipped entirely in quickScan mode (an already-onboarded student
+  // importing one more class's syllabus) -- that flow never shows a term
+  // step at all, and re-stamping an already-configured account's term from
+  // a single class's syllabus would risk overwriting a real, deliberately
+  // set value with a guess.
+  const applyExtractedTermDates=(result)=>{
+    if(quickScan)return;
+    if(result.termStart&&!termStart)setTermStart(result.termStart);
+    if(result.termEnd&&!termEnd)setTermEnd(result.termEnd);
+  };
   // 2026-09-11 user request: reviewing a class that came from a whole-
   // schedule scan (exam dates only, see classNeedsSyllabus's own comment)
   // used to dead-end at "add a syllabus for this class anytime from
@@ -22624,6 +22676,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   // a brand new one. See the "scanForThisClass" addMode branch and the
   // "+ Add syllabus for this class" button in the items review step.
   const mergeExtractionIntoReview=(result,sourceText)=>{
+    applyExtractedTermDates(result);
     setReview(r=>({
       ...r,
       sourceText:r.sourceText||sourceText||"",
@@ -22634,6 +22687,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     setAddMode("review");
   };
   const buildReviewFromExtraction=(result,sourceText)=>{
+    applyExtractedTermDates(result);
     // Importing a syllabus for a course that already exists (targetCourseId
     // set -- the "Import syllabus" action from an existing class's own
     // menu) must reuse that course's real, already-established name and
@@ -22840,6 +22894,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
         if(result.error){setScanError(result.error);return;}
         if(!canScanScreenshot())markFreeScanUsed("schedule");
         recordScreenshotScan();
+        applyExtractedTermDates(result);
         startClassQueue(result.classes);
         return;
       }
@@ -22864,6 +22919,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
       if(result.error){setScanError(result.error);return;}
       if(!canScanSyllabus())markFreeScanUsed("schedule");
       recordSyllabusScan();
+      applyExtractedTermDates(result);
       startClassQueue(result.classes,text);
     }catch(err){setScanError("Couldn't read that file: "+err.message);}
     finally{setScanning(false);}
@@ -22877,6 +22933,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
       if(result.error){setScanError(result.error);return;}
       if(!canScanSyllabus())markFreeScanUsed("schedule");
       recordSyllabusScan();
+      applyExtractedTermDates(result);
       startClassQueue(result.classes,pasteText);
     }catch(err){setScanError("Couldn't read that text: "+err.message);}
     finally{setScanning(false);}
@@ -23384,8 +23441,8 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
           {step==="status"&&(<>
             <TitleSub title="What best describes you?" sub="Studlin builds your week differently for school hours vs. a college schedule." />
             <div style={{display:"flex",gap:10}}>
-              <button type="button" onClick={()=>{setStatus("highschool");setStep("awake");}} style={wizardStatusChipStyle(status==="highschool")}>High School</button>
-              <button type="button" onClick={()=>{setStatus("college");setStep("awake");}} style={wizardStatusChipStyle(status==="college")}>College</button>
+              <button type="button" onClick={()=>{setStatus("highschool");setStep("classes");}} style={wizardStatusChipStyle(status==="highschool")}>High School</button>
+              <button type="button" onClick={()=>{setStatus("college");setStep("classes");}} style={wizardStatusChipStyle(status==="college")}>College</button>
             </div>
           </>)}
 
@@ -23921,16 +23978,26 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
           </div>
           <div style={{display:"flex",gap:10}}>
             {step==="term"&&(<>
-              <Btn variant="subtle" onClick={()=>setStep(knowsStatus?"awake":"status")}>Skip</Btn>
-              <Btn onClick={()=>setStep(knowsStatus?"awake":"status")}>Continue</Btn>
+              {/* 2026-09-11: status is guaranteed already resolved by the
+                  time this step is ever reached now -- Courses (which
+                  needs status first) always runs before End of Term, see
+                  WIZARD_STEP_ORDER's own comment. */}
+              <Btn variant="subtle" onClick={()=>setStep("awake")}>Skip</Btn>
+              <Btn onClick={()=>setStep("awake")}>Continue</Btn>
             </>)}
             {step==="awake"&&(<Btn onClick={()=>setStep("personalize")} disabled={windowInvalid} style={{opacity:windowInvalid?0.45:1}}>Continue</Btn>)}
             {step==="personalize"&&(<>
-              <Btn variant="subtle" onClick={()=>setStep("classes")}>Skip</Btn>
-              <Btn onClick={()=>setStep("classes")}>Continue</Btn>
+              <Btn variant="subtle" onClick={()=>setStep("activities")}>Skip</Btn>
+              <Btn onClick={()=>setStep("activities")}>Continue</Btn>
             </>)}
             {step==="classes"&&addMode===null&&(
-              <Btn onClick={()=>quickScan?setStep("finalReview"):setStep("activities")}>{(pendingClasses.length>0||hsClassesCommitted>0)?"Done adding classes":"Skip, I'll add classes later"}</Btn>
+              // 2026-09-11: Courses now runs before End of Term, so THIS is
+              // where term comes next -- unless it's already configured
+              // (knowsTerm), in which case there's nothing left to ask and
+              // it skips straight to Awake time, same as the old
+              // term-already-known shortcut. quickScan (importing one more
+              // class post-onboarding) never touches term at all.
+              <Btn onClick={()=>quickScan?setStep("finalReview"):setStep(knowsTerm?"awake":"term")}>{(pendingClasses.length>0||hsClassesCommitted>0)?"Done adding classes":"Skip, I'll add classes later"}</Btn>
             )}
             {step==="classes"&&addMode==="review"&&reviewSub==="items"&&(
               // The Sessions sub-step is only worth showing when there's

@@ -33,7 +33,7 @@ describe("Syllabus/schedule extraction prompts explicitly exclude office hours a
   test("COLLEGE_SCHEDULE_JSON_CONTRACT (whole-schedule scan) excludes them too", () => {
     const idx = SOURCE.indexOf("const COLLEGE_SCHEDULE_JSON_CONTRACT=");
     assert.notEqual(idx, -1);
-    const body = SOURCE.slice(idx, idx + 2000);
+    const body = SOURCE.slice(idx, idx + 2600);
     assert.match(body, /Office hours, optional review\/help sessions, drop-in tutoring, or a TA's own separate hours are NEVER a meeting time/);
   });
 

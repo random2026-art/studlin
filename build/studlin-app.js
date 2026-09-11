@@ -2825,6 +2825,9 @@ function looksLikeRealDeadlineTitle(title) {
   if (/^[a-z]/.test(t)) return false;
   return true;
 }
+function looksLikeDateString(v) {
+  return typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+}
 const ANTI_GARBAGE_EXTRACTION_RULE = `Only extract an item if it is clearly a specific graded assignment, project, reading, quiz, or exam that is due or occurs on that date -- never extract a course title, professor name, room/location, grading policy, or general encouragement text, even if a date-like number happens to sit near it. Each "title" must be a short, specific noun phrase naming the actual assignment (e.g. "Problem Set 3", "Midterm Exam", "Ch. 5 Reading") -- never a full sentence or a fragment of one. If you can't confidently name the specific item due, skip that date entirely rather than guessing a title from nearby text. `;
 const SCHEDULE_EXTRACTION_ROBUSTNESS_RULE = `Dates can appear in any format -- MM/DD/YYYY, MM/DD/YY, "Sept 24", "September 24th, 2026", "24 Sept", "Wed 9/24", ISO YYYY-MM-DD, or spelled out in a sentence -- read all of them the same way. When a date has no year stated, infer it from today's date: if the resulting date (with the current year) would already be more than about 30 days in the past, use next year instead, otherwise use the current year -- this keeps a syllabus scanned mid-term from misdating its own already-past early-term items while still landing a January date correctly for a term that started the previous fall. Days of the week can be written many ways -- "MWF", "M/W/F", "Mon, Wed, Fri", full names, or numbers -- read them all the same way. "TTh", "T/Th", "TR", and "Tu/Th" all mean Tuesday AND Thursday, never Tuesday twice -- this specific pair is the most common misread, be careful with it. "MTWRF" or "MTWTF" means all five weekdays (the "R" in some academic notation stands for Thursday, not Tuesday). In a screenshot of a registrar or course-catalog schedule page, meeting days are often shown as a row of letters for every day (commonly "S M T W T F S") where ONLY the letters actually highlighted, bolded, or shaded a solid color are real meeting days -- every other letter in that same row is just part of the label, not a meeting day, even though it's visually present. Read each row's actual shading carefully rather than assuming a common pattern (like every weekday) just because all seven letters are printed -- a class can legitimately meet on only one or two days a week. When one course has multiple listed sections -- most commonly a Lecture and a separate Lab or Recitation, each its own row with its own day/time grid -- treat each section's meeting days and time as completely independent: read each row's own shaded days directly from that row, never assume one section meets on the same days as another section of the same course, and never merge two sections into one guessed day pattern that neither row's own shading actually shows. Times can be 12-hour with am/pm in any spacing/punctuation ("9am", "9:00 AM", "9:00a"), 24-hour ("13:00"), or a range where only the second time states am/pm and it applies to both ("9-9:50am" means 9:00am-9:50am). If a class's meeting time genuinely isn't stated anywhere (fully online/asynchronous, or just not listed), omit that meeting time entirely rather than guessing one. Only extract classes clearly marked as actually registered/enrolled/confirmed -- skip a section explicitly marked Waitlisted, Dropped, or Not Registered, and skip an exact duplicate listing of a section you already extracted (the identical section shown twice). But a second REAL, registered section of a class you're already extracting -- most commonly a lecture plus its own recitation, lab, or discussion section, each with a different meeting time -- is never a duplicate to discard. It's a normal part of that same class: add its meeting time as a second entry in that class's own "meetingTimes" array instead of skipping it or treating it as a separate class. Use a clean, human-readable class name a student would actually recognize (e.g. "Calculus II", "Biology 101") -- strip out CRNs, section numbers, and room/building codes that a course catalog listing bundles into the same line, they don't belong in the name. Office hours, tutoring sessions, review sessions, or an instructor's general availability are never the class's own meeting time, even when they're listed right next to it -- only extract the actual scheduled class meeting. `;
 async function extractSyllabusDeadlinesFromImage(base64Data, mediaType) {
@@ -2841,66 +2844,70 @@ async function extractSyllabusDeadlinesFromImage(base64Data, mediaType) {
     return { items: [], error: "Couldn't read that image. Try again." };
   }
 }
-const CLASS_SYLLABUS_JSON_CONTRACT = `Respond with ONLY valid JSON, no markdown fences, no commentary, in this exact shape: {"subject":{"name":"Biology 101"},"meetingTimes":[{"days":[0,2,4],"startTime":"10:00","duration":50}],"deadlines":[{"title":"Problem Set 3","date":"2026-09-22","kind":"assignment","confidence":"high","estimatedHours":2,"difficulty":450}]}. "subject.name" is the class name as it would appear on a schedule (e.g. "Biology 101", "AP English IV") -- if genuinely not stated anywhere, use your best guess from context, never leave it blank. "meetingTimes" is when the class ITSELF actually meets each week -- "days" uses 0=Monday..6=Sunday, "startTime" is 24-hour "HH:MM", "duration" is minutes. Include one entry per distinct day/time pattern (e.g. a class meeting Mon/Wed/Fri at one time and Tue/Thu at another is two entries). Office hours, optional review/help sessions, drop-in tutoring, or a TA's own separate hours are NEVER a meeting time even when a recurring day/time is given for them -- they are not the class meeting. Omit "meetingTimes" entirely (empty array) if no recurring meeting time is stated anywhere in the source. "deadlines" follows the same rules as before, plus a third "kind": "title" short, "date" YYYY-MM-DD (never omit even if uncertain), "kind" is "exam" for quizzes/tests/midterms/finals, "project" for a genuinely multi-step, multi-week deliverable (a research paper, a term project, a presentation with real preparation involved -- not just a due date, an actual body of work), or "assignment" for everything else (problem sets, readings, short papers, labs, quick responses). "examType" (exams only: "quiz" for a quiz or short in-class test, "midterm" for a midterm exam, "final" for a final exam, "project" for a project defense/presentation exam, "other" for anything else exam-like), "gradeWeightPercent" (exams only, ONLY when the source explicitly states what percentage of the final grade this is worth, e.g. "worth 20% of your grade" -- a plain number like 20, not a string or a % sign; omit entirely if no percentage is stated, never guess one), "confidence" ("high"/"low"), "detail" (optional, only when something concrete is stated beyond the title), "estimatedHours" (assignment/project only, best guess of total hours a typical student needs), "difficulty" (your best guess of how mentally demanding this specific item is for a typical student, an integer 0-1000 where 500 is average -- base it on the title and detail, e.g. a short reading response is well below average, a proof-based problem set or a comprehensive final is well above). ` + ANTI_GARBAGE_EXTRACTION_RULE + SCHEDULE_EXTRACTION_ROBUSTNESS_RULE + 'If you find no deadlines at all, return an empty "deadlines" array -- never omit the key.';
+const CLASS_SYLLABUS_JSON_CONTRACT = `Respond with ONLY valid JSON, no markdown fences, no commentary, in this exact shape: {"subject":{"name":"Biology 101"},"meetingTimes":[{"days":[0,2,4],"startTime":"10:00","duration":50}],"termStart":"2026-08-25","termEnd":"2026-12-12","deadlines":[{"title":"Problem Set 3","date":"2026-09-22","kind":"assignment","confidence":"high","estimatedHours":2,"difficulty":450}]}. "subject.name" is the class name as it would appear on a schedule (e.g. "Biology 101", "AP English IV") -- if genuinely not stated anywhere, use your best guess from context, never leave it blank. "meetingTimes" is when the class ITSELF actually meets each week -- "days" uses 0=Monday..6=Sunday, "startTime" is 24-hour "HH:MM", "duration" is minutes. Include one entry per distinct day/time pattern (e.g. a class meeting Mon/Wed/Fri at one time and Tue/Thu at another is two entries). Office hours, optional review/help sessions, drop-in tutoring, or a TA's own separate hours are NEVER a meeting time even when a recurring day/time is given for them -- they are not the class meeting. Omit "meetingTimes" entirely (empty array) if no recurring meeting time is stated anywhere in the source. "termStart"/"termEnd" (YYYY-MM-DD) are the semester/term's own first and last day of classes, ONLY when the source explicitly states them (e.g. "Fall 2026: August 25 - December 12") -- omit either or both entirely when not stated. Never infer one from a single assignment/exam date, and never confuse a specific class's own last meeting with the whole term's end unless the source clearly means the same thing. "deadlines" follows the same rules as before, plus a third "kind": "title" short, "date" YYYY-MM-DD (never omit even if uncertain), "kind" is "exam" for quizzes/tests/midterms/finals, "project" for a genuinely multi-step, multi-week deliverable (a research paper, a term project, a presentation with real preparation involved -- not just a due date, an actual body of work), or "assignment" for everything else (problem sets, readings, short papers, labs, quick responses). "examType" (exams only: "quiz" for a quiz or short in-class test, "midterm" for a midterm exam, "final" for a final exam, "project" for a project defense/presentation exam, "other" for anything else exam-like), "gradeWeightPercent" (exams only, ONLY when the source explicitly states what percentage of the final grade this is worth, e.g. "worth 20% of your grade" -- a plain number like 20, not a string or a % sign; omit entirely if no percentage is stated, never guess one), "confidence" ("high"/"low"), "detail" (optional, only when something concrete is stated beyond the title), "estimatedHours" (assignment/project only, best guess of total hours a typical student needs), "difficulty" (your best guess of how mentally demanding this specific item is for a typical student, an integer 0-1000 where 500 is average -- base it on the title and detail, e.g. a short reading response is well below average, a proof-based problem set or a comprehensive final is well above). ` + ANTI_GARBAGE_EXTRACTION_RULE + SCHEDULE_EXTRACTION_ROBUSTNESS_RULE + 'If you find no deadlines at all, return an empty "deadlines" array -- never omit the key.';
 async function extractClassSyllabusText(text) {
-  if (!text || !text.trim()) return { subject: null, meetingTimes: [], deadlines: [], error: null };
+  if (!text || !text.trim()) return { subject: null, meetingTimes: [], deadlines: [], termStart: null, termEnd: null, error: null };
   try {
-    const prompt = "This is a class syllabus or schedule (it may include other content too, ignore anything irrelevant). Today's date is " + dayKey() + ". If a deadline date has no year, infer the most likely upcoming year given today's date. Extract the class's name, its recurring weekly meeting time(s), and every deadline/due date/exam date mentioned. " + CLASS_SYLLABUS_JSON_CONTRACT + "\n\n" + text.slice(0, 3e4);
+    const prompt = "This is a class syllabus or schedule (it may include other content too, ignore anything irrelevant). Today's date is " + dayKey() + ". If a deadline date has no year, infer the most likely upcoming year given today's date. Extract the class's name, its recurring weekly meeting time(s), the term's own start/end dates if stated, and every deadline/due date/exam date mentioned. " + CLASS_SYLLABUS_JSON_CONTRACT + "\n\n" + text.slice(0, 3e4);
     const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt }], model: "standard", format: "json" }) });
     const data = await res.json();
-    if (!res.ok) return { subject: null, meetingTimes: [], deadlines: [], error: data.error || "Couldn't read that text. Try again." };
+    if (!res.ok) return { subject: null, meetingTimes: [], deadlines: [], termStart: null, termEnd: null, error: data.error || "Couldn't read that text. Try again." };
     const raw = (data.reply || "").replace(/```json?\n?/gi, "").replace(/```/g, "").trim();
     let parsed;
     try {
       parsed = JSON.parse(raw);
     } catch (parseErr) {
       console.warn("extractClassSyllabusText: reply was not valid JSON", parseErr.message, raw.slice(0, 500));
-      return { subject: null, meetingTimes: [], deadlines: [], error: "Couldn't understand what came back. Try again, or paste a shorter section of the syllabus." };
+      return { subject: null, meetingTimes: [], deadlines: [], termStart: null, termEnd: null, error: "Couldn't understand what came back. Try again, or paste a shorter section of the syllabus." };
     }
     return {
       subject: parsed && parsed.subject && parsed.subject.name ? parsed.subject : null,
       meetingTimes: parsed && Array.isArray(parsed.meetingTimes) ? parsed.meetingTimes : [],
       deadlines: parsed && Array.isArray(parsed.deadlines) ? parsed.deadlines.filter((d) => looksLikeRealDeadlineTitle(d && d.title)).map(withDerivedExamImportance) : [],
+      termStart: looksLikeDateString(parsed && parsed.termStart) ? parsed.termStart : null,
+      termEnd: looksLikeDateString(parsed && parsed.termEnd) ? parsed.termEnd : null,
       error: null
     };
   } catch (e) {
     console.warn("extractClassSyllabusText: unexpected failure", e.message);
-    return { subject: null, meetingTimes: [], deadlines: [], error: "Couldn't read that text. Try again." };
+    return { subject: null, meetingTimes: [], deadlines: [], termStart: null, termEnd: null, error: "Couldn't read that text. Try again." };
   }
 }
 async function extractClassSyllabusImage(base64Data, mediaType) {
   try {
-    const prompt = "This image is a screenshot or photo of a class syllabus, schedule, or Canvas weekly view. Today's date is " + dayKey() + ". If a deadline date has no year, infer the most likely upcoming year given today's date. Extract the class's name, its recurring weekly meeting time(s), and every deadline/due date/exam date visible. Never invent a URL or link -- a screenshot's visible text has no way to reveal what an actual link points to. " + CLASS_SYLLABUS_JSON_CONTRACT;
+    const prompt = "This image is a screenshot or photo of a class syllabus, schedule, or Canvas weekly view. Today's date is " + dayKey() + ". If a deadline date has no year, infer the most likely upcoming year given today's date. Extract the class's name, its recurring weekly meeting time(s), the term's own start/end dates if stated, and every deadline/due date/exam date visible. Never invent a URL or link -- a screenshot's visible text has no way to reveal what an actual link points to. " + CLASS_SYLLABUS_JSON_CONTRACT;
     const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt, image: { mediaType, data: base64Data } }], model: "standard", format: "json" }) });
     const data = await res.json();
-    if (!res.ok) return { subject: null, meetingTimes: [], deadlines: [], error: data.error || "Couldn't read that image. Try again." };
+    if (!res.ok) return { subject: null, meetingTimes: [], deadlines: [], termStart: null, termEnd: null, error: data.error || "Couldn't read that image. Try again." };
     const raw = (data.reply || "").replace(/```json?\n?/gi, "").replace(/```/g, "").trim();
     const parsed = JSON.parse(raw);
     return {
       subject: parsed && parsed.subject && parsed.subject.name ? parsed.subject : null,
       meetingTimes: parsed && Array.isArray(parsed.meetingTimes) ? parsed.meetingTimes : [],
       deadlines: parsed && Array.isArray(parsed.deadlines) ? parsed.deadlines.filter((d) => looksLikeRealDeadlineTitle(d && d.title)).map(withDerivedExamImportance) : [],
+      termStart: looksLikeDateString(parsed && parsed.termStart) ? parsed.termStart : null,
+      termEnd: looksLikeDateString(parsed && parsed.termEnd) ? parsed.termEnd : null,
       error: null
     };
   } catch (e) {
-    return { subject: null, meetingTimes: [], deadlines: [], error: "Couldn't read that image. Try again." };
+    return { subject: null, meetingTimes: [], deadlines: [], termStart: null, termEnd: null, error: "Couldn't read that image. Try again." };
   }
 }
-const COLLEGE_SCHEDULE_JSON_CONTRACT = `Respond with ONLY valid JSON, no markdown fences, no commentary, in this exact shape: {"classes":[{"subject":{"name":"Biology 101"},"meetingTimes":[{"days":[0,2,4],"startTime":"10:00","duration":50}],"scheduleConfidence":"high","deadlines":[{"title":"Midterm 1","date":"2026-09-24","kind":"exam","examType":"midterm","confidence":"high"}]}]}. One entry in "classes" per distinct course. "subject.name" is the class name as it would appear on a schedule -- if genuinely not stated, use your best guess from context, never leave it blank. "meetingTimes" is the class's REAL RECURRING weekly pattern only -- "days" uses 0=Monday..6=Sunday, "startTime" is 24-hour "HH:MM", "duration" is minutes, and it should only ever describe something that repeats across a semester-long date range. Include one entry per distinct day/time pattern (e.g. a class meeting Mon/Wed/Fri at one time and a separate recitation Tue/Thu at another time are two entries, possibly even two different "classes" entries if the recitation has its own name). Any entry with a SINGLE date instead of a recurring range -- especially anything labeled Exam, Midterm, Final, or Common Hour Exam, even if its listed time differs from the class's regular meeting time -- is NOT a meeting time. It belongs in that same class's own "deadlines" array as "kind":"exam" with that real date, exactly like any other exam. Never fold a one-off exam date into "meetingTimes". Office hours, optional review/help sessions, drop-in tutoring, or a TA's own separate hours are NEVER a meeting time even when a recurring day/time is given for them -- they are not the class meeting. "scheduleConfidence" is separate from any given deadline's own "confidence" below -- it covers ONLY "subject.name" and "meetingTimes": "low" when the class name or a meeting time/day was blurry, cut off, or otherwise genuinely hard to read and you had to guess at it; "high" otherwise, including the common case where nothing needed guessing at all. "deadlines" otherwise follows the same rules as a normal exam/assignment: "title" short, "date" YYYY-MM-DD (never omit even if uncertain), "kind" is "exam" for quizzes/tests/midterms/finals/common-hour-exams, "project" for a genuinely multi-step multi-week deliverable, or "assignment" for everything else. "examType" (exams only: "quiz"/"midterm"/"final"/"project"/"other"), "gradeWeightPercent" (exams only, ONLY when the source explicitly states a percentage of the final grade, a plain number like 20, never guessed), "confidence" ("high"/"low", whether THIS deadline's own date/title was clear), "detail" (optional, only when something concrete is stated beyond the title). ` + ANTI_GARBAGE_EXTRACTION_RULE + SCHEDULE_EXTRACTION_ROBUSTNESS_RULE + 'If you find no classes at all, return an empty "classes" array -- never omit the key.';
+const COLLEGE_SCHEDULE_JSON_CONTRACT = `Respond with ONLY valid JSON, no markdown fences, no commentary, in this exact shape: {"termStart":"2026-08-25","termEnd":"2026-12-12","classes":[{"subject":{"name":"Biology 101"},"meetingTimes":[{"days":[0,2,4],"startTime":"10:00","duration":50}],"scheduleConfidence":"high","deadlines":[{"title":"Midterm 1","date":"2026-09-24","kind":"exam","examType":"midterm","confidence":"high"}]}]}. "termStart"/"termEnd" (YYYY-MM-DD, top-level, ONE pair for the whole schedule, not per-class) are the semester/term's own first and last day of classes, ONLY when the source explicitly states them -- omit either or both entirely when not stated. Never infer one from a single class's own exam date. One entry in "classes" per distinct course. "subject.name" is the class name as it would appear on a schedule -- if genuinely not stated, use your best guess from context, never leave it blank. "meetingTimes" is the class's REAL RECURRING weekly pattern only -- "days" uses 0=Monday..6=Sunday, "startTime" is 24-hour "HH:MM", "duration" is minutes, and it should only ever describe something that repeats across a semester-long date range. Include one entry per distinct day/time pattern (e.g. a class meeting Mon/Wed/Fri at one time and a separate recitation Tue/Thu at another time are two entries, possibly even two different "classes" entries if the recitation has its own name). Any entry with a SINGLE date instead of a recurring range -- especially anything labeled Exam, Midterm, Final, or Common Hour Exam, even if its listed time differs from the class's regular meeting time -- is NOT a meeting time. It belongs in that same class's own "deadlines" array as "kind":"exam" with that real date, exactly like any other exam. Never fold a one-off exam date into "meetingTimes". Office hours, optional review/help sessions, drop-in tutoring, or a TA's own separate hours are NEVER a meeting time even when a recurring day/time is given for them -- they are not the class meeting. "scheduleConfidence" is separate from any given deadline's own "confidence" below -- it covers ONLY "subject.name" and "meetingTimes": "low" when the class name or a meeting time/day was blurry, cut off, or otherwise genuinely hard to read and you had to guess at it; "high" otherwise, including the common case where nothing needed guessing at all. "deadlines" otherwise follows the same rules as a normal exam/assignment: "title" short, "date" YYYY-MM-DD (never omit even if uncertain), "kind" is "exam" for quizzes/tests/midterms/finals/common-hour-exams, "project" for a genuinely multi-step multi-week deliverable, or "assignment" for everything else. "examType" (exams only: "quiz"/"midterm"/"final"/"project"/"other"), "gradeWeightPercent" (exams only, ONLY when the source explicitly states a percentage of the final grade, a plain number like 20, never guessed), "confidence" ("high"/"low", whether THIS deadline's own date/title was clear), "detail" (optional, only when something concrete is stated beyond the title). ` + ANTI_GARBAGE_EXTRACTION_RULE + SCHEDULE_EXTRACTION_ROBUSTNESS_RULE + 'If you find no classes at all, return an empty "classes" array -- never omit the key.';
 async function extractCollegeScheduleText(text) {
-  if (!text || !text.trim()) return { classes: [], error: null };
+  if (!text || !text.trim()) return { classes: [], termStart: null, termEnd: null, error: null };
   try {
-    const prompt = "This is a college student's full class schedule for a term -- it may be a registrar 'my schedule' export, a list of sections, or similar, and it likely covers several different classes at once. Today's date is " + dayKey() + ". If a date has no year, infer the most likely upcoming year given today's date. Extract every class, its recurring weekly meeting time(s), and every deadline/exam date mentioned for each one. " + COLLEGE_SCHEDULE_JSON_CONTRACT + "\n\n" + text.slice(0, 3e4);
+    const prompt = "This is a college student's full class schedule for a term -- it may be a registrar 'my schedule' export, a list of sections, or similar, and it likely covers several different classes at once. Today's date is " + dayKey() + ". If a date has no year, infer the most likely upcoming year given today's date. Extract every class, its recurring weekly meeting time(s), the term's own start/end dates if stated, and every deadline/exam date mentioned for each one. " + COLLEGE_SCHEDULE_JSON_CONTRACT + "\n\n" + text.slice(0, 3e4);
     const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt }], model: "standard", format: "json" }) });
     const data = await res.json();
-    if (!res.ok) return { classes: [], error: data.error || "Couldn't read that. Try again." };
+    if (!res.ok) return { classes: [], termStart: null, termEnd: null, error: data.error || "Couldn't read that. Try again." };
     const raw = (data.reply || "").replace(/```json?\n?/gi, "").replace(/```/g, "").trim();
     let parsed;
     try {
       parsed = JSON.parse(raw);
     } catch (parseErr) {
       console.warn("extractCollegeScheduleText: reply was not valid JSON", parseErr.message, raw.slice(0, 500));
-      return { classes: [], error: "Couldn't understand what came back. Try again, or paste a shorter section of your schedule." };
+      return { classes: [], termStart: null, termEnd: null, error: "Couldn't understand what came back. Try again, or paste a shorter section of your schedule." };
     }
     const classes = parsed && Array.isArray(parsed.classes) ? parsed.classes.filter((c) => c && c.subject && c.subject.name).map((c) => ({
       subject: c.subject,
@@ -2908,19 +2915,19 @@ async function extractCollegeScheduleText(text) {
       scheduleConfidence: c.scheduleConfidence === "low" ? "low" : "high",
       deadlines: (Array.isArray(c.deadlines) ? c.deadlines : []).filter((d) => looksLikeRealDeadlineTitle(d && d.title)).map(withDerivedExamImportance)
     })) : [];
-    return { classes, error: null };
+    return { classes, termStart: looksLikeDateString(parsed && parsed.termStart) ? parsed.termStart : null, termEnd: looksLikeDateString(parsed && parsed.termEnd) ? parsed.termEnd : null, error: null };
   } catch (e) {
     console.warn("extractCollegeScheduleText: unexpected failure", e.message);
-    return { classes: [], error: "Couldn't read that. Try again." };
+    return { classes: [], termStart: null, termEnd: null, error: "Couldn't read that. Try again." };
   }
 }
 async function extractCollegeScheduleImage(images) {
   try {
     const multi = images.length > 1;
-    const prompt = "This " + (multi ? "set of images is " + images.length + " screenshots or photos" : "image is a screenshot or photo") + " of a college student's full class schedule for a term -- a registrar 'my schedule' grid or similar, likely covering several different classes at once" + (multi ? ", possibly split across the images (e.g. one screenshot per page, or overlapping views of the same schedule)" : "") + ". Today's date is " + dayKey() + ". If a date has no year, infer the most likely upcoming year given today's date. Extract every class, its recurring weekly meeting time(s), and every deadline/exam date visible for each one. " + (multi ? "If the same class or deadline appears in more than one image, include it only once in the result -- don't duplicate it. " : "") + "Never invent a URL or link -- a screenshot's visible text has no way to reveal what an actual link points to. " + COLLEGE_SCHEDULE_JSON_CONTRACT;
+    const prompt = "This " + (multi ? "set of images is " + images.length + " screenshots or photos" : "image is a screenshot or photo") + " of a college student's full class schedule for a term -- a registrar 'my schedule' grid or similar, likely covering several different classes at once" + (multi ? ", possibly split across the images (e.g. one screenshot per page, or overlapping views of the same schedule)" : "") + ". Today's date is " + dayKey() + ". If a date has no year, infer the most likely upcoming year given today's date. Extract every class, its recurring weekly meeting time(s), the term's own start/end dates if stated, and every deadline/exam date visible for each one. " + (multi ? "If the same class or deadline appears in more than one image, include it only once in the result -- don't duplicate it. " : "") + "Never invent a URL or link -- a screenshot's visible text has no way to reveal what an actual link points to. " + COLLEGE_SCHEDULE_JSON_CONTRACT;
     const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt, images: images.map((img) => ({ mediaType: img.mediaType, data: img.data })) }], model: "standard", format: "json" }) });
     const data = await res.json();
-    if (!res.ok) return { classes: [], error: data.error || "Couldn't read that image. Try again." };
+    if (!res.ok) return { classes: [], termStart: null, termEnd: null, error: data.error || "Couldn't read that image. Try again." };
     const raw = (data.reply || "").replace(/```json?\n?/gi, "").replace(/```/g, "").trim();
     const parsed = JSON.parse(raw);
     const classes = parsed && Array.isArray(parsed.classes) ? parsed.classes.filter((c) => c && c.subject && c.subject.name).map((c) => ({
@@ -2929,9 +2936,9 @@ async function extractCollegeScheduleImage(images) {
       scheduleConfidence: c.scheduleConfidence === "low" ? "low" : "high",
       deadlines: (Array.isArray(c.deadlines) ? c.deadlines : []).filter((d) => looksLikeRealDeadlineTitle(d && d.title)).map(withDerivedExamImportance)
     })) : [];
-    return { classes, error: null };
+    return { classes, termStart: looksLikeDateString(parsed && parsed.termStart) ? parsed.termStart : null, termEnd: looksLikeDateString(parsed && parsed.termEnd) ? parsed.termEnd : null, error: null };
   } catch (e) {
-    return { classes: [], error: "Couldn't read that image. Try again." };
+    return { classes: [], termStart: null, termEnd: null, error: "Couldn't read that image. Try again." };
   }
 }
 const HS_SCHEDULE_JSON_CONTRACT = `For each period return: "subjectName" (the class name as shown, e.g. "English IV", "AP Biology"), "startTime" and "endTime" (24-hour "HH:MM"), "days" (which weekdays this period happens, 0=Monday..6=Sunday -- if the schedule doesn't say otherwise, assume every school day it's shown applies to, most commonly Monday-Friday so [0,1,2,3,4]), "confidence" ("low" when ANYTHING about this row was genuinely uncertain -- the class name or a time was blurry, cut off, handwritten, or otherwise hard to read and you had to guess at it, OR the schedule uses a rotating block system -- "A Day"/"B Day", or a numbered cycle like "Day 1"-"Day 6" -- instead of fixed weekdays, since which actual weekdays a rotating day falls on isn't something a single week's schedule can state with certainty; still give your best guess for whatever was uncertain, just flag the row low-confidence rather than presenting a guess as fact; "high" otherwise). Respond with ONLY valid JSON, no markdown fences, no commentary: {"periods":[{"subjectName":"English IV","startTime":"08:00","endTime":"08:45","days":[0,1,2,3,4],"confidence":"high"}]}. ` + SCHEDULE_EXTRACTION_ROBUSTNESS_RULE;
@@ -13425,13 +13432,13 @@ function PhasesOutlineEditor({ item, onChange, subject, onGateBlocked = () => {
   };
   return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { marginTop: 8 } }, item.phases === void 0 ? /* @__PURE__ */ React.createElement("button", { type: "button", disabled: !!item.phasesLoading, onClick: suggestPhases, style: { background: "none", border: `1px dashed ${T.borderHover}`, borderRadius: 6, color: T.muted, fontSize: 11, fontFamily: T.font, cursor: item.phasesLoading ? "default" : "pointer", padding: "5px 10px", opacity: item.phasesLoading ? 0.6 : 1 } }, item.phasesLoading ? "Thinking through phases\u2026" : "This looks big. Break it into phases?") : item.phases.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted } }, "Not enough detail here to break into phases. Add detail above, or leave it as one Attack Block.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Phases: only the first gets scheduled now"), item.phases.map((ph, pi) => /* @__PURE__ */ React.createElement("div", { key: pi, style: { display: "flex", alignItems: "center", gap: 6 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10, color: T.faint, width: 14, flexShrink: 0, fontFamily: T.mono } }, pi + 1), /* @__PURE__ */ React.createElement(Input, { value: ph, onChange: (e) => onChange({ phases: item.phases.map((p, ppi) => ppi === pi ? e.target.value : p) }), style: { flex: 1, fontSize: 12, padding: "5px 8px" } }), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => onChange({ phases: item.phases.filter((_, ppi) => ppi !== pi) }), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 15, lineHeight: 1, padding: 2, flexShrink: 0 } }, "\xD7"))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => onChange({ phases: [...item.phases, ""] }), style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline", textAlign: "left" } }, "+ Add phase"))));
 }
-const WIZARD_STEP_ORDER = ["term", "status", "awake", "personalize", "classes", "activities", "calendarSync", "finalReview"];
+const WIZARD_STEP_ORDER = ["status", "classes", "term", "awake", "personalize", "activities", "calendarSync", "finalReview"];
 const WIZARD_STEPPER = [
+  { key: "status", label: "Courses" },
+  { key: "classes", label: "Courses" },
   { key: "term", label: "End of Term" },
   { key: "awake", label: "Awake time" },
   { key: "personalize", label: "Study style" },
-  { key: "status", label: "Courses" },
-  { key: "classes", label: "Courses" },
   { key: "activities", label: "Activities" },
   { key: "calendarSync", label: "Connect" },
   { key: "finalReview", label: "Review" }
@@ -13508,6 +13515,10 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     lsSet("classSetupPending", next);
   };
   const knowsStatus = !!initialStatus;
+  const knowsTerm = (() => {
+    const t = getSchoolTerm();
+    return !!(t && t.start && t.end);
+  })();
   const effectiveWizardStepOrder = knowsStatus ? WIZARD_STEP_ORDER.filter((s) => s !== "status") : WIZARD_STEP_ORDER;
   const prevWizardStep = quickScan ? null : (() => {
     const idx = effectiveWizardStepOrder.indexOf(step);
@@ -13529,7 +13540,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     if (!open) return;
     setStatus(initialStatus || "");
     const term = getSchoolTerm();
-    setStep(quickScan ? "classes" : term && term.start && term.end ? "classes" : "term");
+    setStep(quickScan ? "classes" : term && term.start && term.end ? "classes" : knowsStatus ? "classes" : "status");
     setTimezone(detectTz());
     setTermStart(term && term.start || "");
     setTermEnd(term && term.end || "");
@@ -13620,7 +13631,13 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
       };
     });
   };
+  const applyExtractedTermDates = (result) => {
+    if (quickScan) return;
+    if (result.termStart && !termStart) setTermStart(result.termStart);
+    if (result.termEnd && !termEnd) setTermEnd(result.termEnd);
+  };
   const mergeExtractionIntoReview = (result, sourceText) => {
+    applyExtractedTermDates(result);
     setReview((r) => ({
       ...r,
       sourceText: r.sourceText || sourceText || "",
@@ -13631,6 +13648,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     setAddMode("review");
   };
   const buildReviewFromExtraction = (result, sourceText) => {
+    applyExtractedTermDates(result);
     const existingCourse = targetCourseId ? getSubjects().find((s) => s.id === targetCourseId) : null;
     setReview({
       subjectName: existingCourse ? existingCourse.label : result.subject && result.subject.name || "",
@@ -13846,6 +13864,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
         }
         if (!canScanScreenshot()) markFreeScanUsed("schedule");
         recordScreenshotScan();
+        applyExtractedTermDates(result2);
         startClassQueue(result2.classes);
         return;
       }
@@ -13883,6 +13902,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
       }
       if (!canScanSyllabus()) markFreeScanUsed("schedule");
       recordSyllabusScan();
+      applyExtractedTermDates(result);
       startClassQueue(result.classes, text);
     } catch (err) {
       setScanError("Couldn't read that file: " + err.message);
@@ -13906,6 +13926,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
       }
       if (!canScanSyllabus()) markFreeScanUsed("schedule");
       recordSyllabusScan();
+      applyExtractedTermDates(result);
       startClassQueue(result.classes, pasteText);
     } catch (err) {
       setScanError("Couldn't read that text: " + err.message);
@@ -14209,10 +14230,10 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     { value: "finish_one_first", label: "Finish one first" }
   ] })), step === "status" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: "What best describes you?", sub: "Studlin builds your week differently for school hours vs. a college schedule." }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
     setStatus("highschool");
-    setStep("awake");
+    setStep("classes");
   }, style: wizardStatusChipStyle(status === "highschool") }, "High School"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
     setStatus("college");
-    setStep("awake");
+    setStep("classes");
   }, style: wizardStatusChipStyle(status === "college") }, "College"))), step === "classes" && addMode === null && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: "Add your classes", sub: "Scan a syllabus and Studlin reads the class, its meeting time, and its assignments, exams, and projects. Nothing goes on your calendar until you review everything and hit Add to Calendar at the end. Double-click a class to edit it." }), hsClassesCommitted > 0 && pendingClasses.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.lime, background: T.lime + "10", border: `1px solid ${T.lime}30`, borderRadius: 8, padding: "10px 12px", marginBottom: 14 } }, hsClassesCommitted, " class", hsClassesCommitted !== 1 ? "es" : "", " already added from your schedule scan. Add more below, or continue when you're done."), pendingClasses.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 18 } }, pendingClasses.map((cls) => /* @__PURE__ */ React.createElement("div", { key: cls.id, onDoubleClick: () => editPendingClass(cls), style: { ...subjectRowStyle(cls.color), cursor: "pointer", borderRadius: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: 13, fontWeight: 600, color: T.text } }, cls.name), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10, color: T.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" } }, "Staged"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => editPendingClass(cls), title: "Edit", style: { background: "none", border: "none", color: T.muted, cursor: "pointer", display: "flex", padding: "2px 6px" } }, Icon.pen), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => removePendingClass(cls.id), title: "Remove", style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 16, padding: "2px 6px" } }, "\xD7")))), justAdded && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.lime, fontWeight: 600, marginBottom: 12 } }, "Staged ", justAdded, "."), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setAddMode("choose"), style: { width: "100%", padding: "12px", borderRadius: 10, border: `1px dashed ${T.borderHover}`, background: "transparent", color: T.text, cursor: "pointer", fontFamily: T.font, fontSize: 13, fontWeight: 600, marginBottom: 20 } }, "+ Add a class")), step === "classes" && addMode === "choose" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: "How do you want to add it?" }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10 } }, status !== "highschool" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
     setScanError("");
     setPasteMode(false);
@@ -14417,7 +14438,13 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
         }, title: "Remove", style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 14, padding: "0 2px" } }, "\xD7")), itemExpanded && /* @__PURE__ */ React.createElement("div", { style: { padding: "8px 10px", fontSize: 11.5, color: T.muted, lineHeight: 1.5 } }, it.kind === "exam" && (it.proposeSessions ? !pv || pv.sessions.length === 0 ? /* @__PURE__ */ React.createElement("div", null, "No open slot found for any session yet.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 3 } }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, color: T.text } }, "Study sessions"), pv.sessions.map((s, si) => /* @__PURE__ */ React.createElement("div", { key: si }, s.date, " \xB7 ", fmtClock12(s.time), " \xB7 ", s.duration, "min"))) : /* @__PURE__ */ React.createElement("div", null, "No study sessions scheduled for this exam.")), it.kind !== "exam" && (!it.attackBlock ? /* @__PURE__ */ React.createElement("div", null, "No Attack Block for this one.") : !pv || pv.sessions.length === 0 ? /* @__PURE__ */ React.createElement("div", null, "No open slot found before the deadline \u2014 add it manually after committing.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 3 } }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, color: T.text } }, it.kind === "project" ? "See plan" : "First session"), /* @__PURE__ */ React.createElement("div", null, pv.sessions[0].date, " \xB7 ", fmtClock12(pv.sessions[0].time), " \xB7 ", pv.sessions[0].duration, "min", it.phases && it.phases.length > 0 ? " \u2014 " + (it.phases[0] || "Phase 1") : ""), it.phases && it.phases.length > 1 && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 4 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.faint, fontStyle: "italic" } }, "Later phases schedule themselves once the one before finishes, not guessed dates up front:"), it.phases.slice(1).map((ph, pi) => /* @__PURE__ */ React.createElement("div", { key: pi, style: { marginLeft: 8 } }, "\xB7 ", ph)))))));
       })))));
     }));
-  })())), /* @__PURE__ */ React.createElement("div", { style: { padding: "18px 32px", borderTop: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 16 } }, canGoBack && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: goBack, style: { fontSize: 12.5, color: T.muted, background: "none", border: "none", cursor: "pointer", fontFamily: T.font, padding: 0 } }, "\u2190 Back"), quickScan && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onSkip, style: { fontSize: 12.5, color: T.muted, background: "none", border: "none", cursor: "pointer", fontFamily: T.font, padding: 0 } }, "Cancel")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10 } }, step === "term" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setStep(knowsStatus ? "awake" : "status") }, "Skip"), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setStep(knowsStatus ? "awake" : "status") }, "Continue")), step === "awake" && /* @__PURE__ */ React.createElement(Btn, { onClick: () => setStep("personalize"), disabled: windowInvalid, style: { opacity: windowInvalid ? 0.45 : 1 } }, "Continue"), step === "personalize" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setStep("classes") }, "Skip"), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setStep("classes") }, "Continue")), step === "classes" && addMode === null && /* @__PURE__ */ React.createElement(Btn, { onClick: () => quickScan ? setStep("finalReview") : setStep("activities") }, pendingClasses.length > 0 || hsClassesCommitted > 0 ? "Done adding classes" : "Skip, I'll add classes later"), step === "classes" && addMode === "review" && reviewSub === "items" && // The Sessions sub-step is only worth showing when there's
+  })())), /* @__PURE__ */ React.createElement("div", { style: { padding: "18px 32px", borderTop: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 16 } }, canGoBack && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: goBack, style: { fontSize: 12.5, color: T.muted, background: "none", border: "none", cursor: "pointer", fontFamily: T.font, padding: 0 } }, "\u2190 Back"), quickScan && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onSkip, style: { fontSize: 12.5, color: T.muted, background: "none", border: "none", cursor: "pointer", fontFamily: T.font, padding: 0 } }, "Cancel")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10 } }, step === "term" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setStep("awake") }, "Skip"), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setStep("awake") }, "Continue")), step === "awake" && /* @__PURE__ */ React.createElement(Btn, { onClick: () => setStep("personalize"), disabled: windowInvalid, style: { opacity: windowInvalid ? 0.45 : 1 } }, "Continue"), step === "personalize" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setStep("activities") }, "Skip"), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setStep("activities") }, "Continue")), step === "classes" && addMode === null && // 2026-09-11: Courses now runs before End of Term, so THIS is
+  // where term comes next -- unless it's already configured
+  // (knowsTerm), in which case there's nothing left to ask and
+  // it skips straight to Awake time, same as the old
+  // term-already-known shortcut. quickScan (importing one more
+  // class post-onboarding) never touches term at all.
+  /* @__PURE__ */ React.createElement(Btn, { onClick: () => quickScan ? setStep("finalReview") : setStep(knowsTerm ? "awake" : "term") }, pendingClasses.length > 0 || hsClassesCommitted > 0 ? "Done adding classes" : "Skip, I'll add classes later"), step === "classes" && addMode === "review" && reviewSub === "items" && // The Sessions sub-step is only worth showing when there's
   // something dated to plan around -- same predicate it uses
   // itself to render "Nothing dated to plan yet." Skipping
   // straight to finishReviewingClass here is safe: reviewSub
