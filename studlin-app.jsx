@@ -24299,7 +24299,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
 // illegibility on a packed day and clamp to a narrow window on a light
 // one). The container just scrolls, same as any normal calendar, landing
 // near the current time or the first real event on open.
-function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending, openNew, newItemHighlightIds, onEditRoutine, moveEvent, sidebarDragChip, onDropSidebarChip, onDropManualBlockRequest, onDropNewTaskRequest, onDropRoutineOccurrence, onRoutineDragStateChange, quickCreateDraft, onQuickCreateDrag, onQuickCreateDragEnd}) {
+function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending, openNew, newItemHighlightIds, onEditRoutine, moveEvent, sidebarDragChip, onDropSidebarChip, onDropManualBlockRequest, onDropNewTaskRequest, onDropRoutineOccurrence, onRoutineDragStateChange, quickCreateDraft, onQuickCreateDrag, onQuickCreateDragEnd, gsBusyByDate, gsRecommended, gsDraft, onGsPreviewMove, onGsPreviewResize}) {
   const scrollRef=useRef(null);
   // User report, 2026-09-10: dragging an unscheduled item ("Don't know
   // exactly when? Drag onto the calendar", the sidebar's own unscheduled
@@ -24476,6 +24476,50 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
     document.addEventListener("mouseup",onUp);
     return ()=>{ document.removeEventListener("mousemove",onMove); document.removeEventListener("mouseup",onUp); };
   },[creatingDragging]);
+  // Schedule with Friends (2026-09-11 audit fix): this component used to
+  // receive nothing about gsDraft/gsBusyByDate/gsRecommended at all --
+  // onDropSidebarChip already routes a dropped Meeting/Study Session chip
+  // into CalendarTab's gsDraft state correctly (see openNewEventForDrop's
+  // groupSession branch), but nothing here ever rendered it, so the whole
+  // "drag a time onto the calendar" step looked like it silently did
+  // nothing whenever a student's calendar happened to be in Day view.
+  // Move/resize mirrors WeeklyPlanner's own previewDragRef, simplified to
+  // one day -- there's no cross-day column search to do here, dragging in
+  // Day view can only ever change the time, never the date.
+  const gsDraftDragRef=useRef(null); // {mode,origStart,origDur,grabOffsetPx|startClientY}|null
+  const [gsDraftDragging,setGsDraftDragging]=useState(false);
+  useEffect(()=>{
+    if(!gsDraftDragging)return;
+    const onMove=(e)=>{
+      const info=gsDraftDragRef.current;
+      if(!info)return;
+      if(info.mode==="resize"){
+        if(!onGsPreviewResize)return;
+        const deltaMins=Math.round((e.clientY-info.startClientY)/(pxPerHr/60)/15)*15;
+        const newDur=Math.max(15,info.origDur+deltaMins);
+        onGsPreviewResize(minutesToTime(Math.min(1439,timeToMinutes(info.origStart)+newDur)));
+      }else{
+        if(!onGsPreviewMove)return;
+        const el=timelineRef.current;
+        const r=el?el.getBoundingClientRect():null;
+        let newStartMins=timeToMinutes(info.origStart);
+        if(r){
+          const relY=Math.max(0,e.clientY-r.top-info.grabOffsetPx);
+          newStartMins=Math.min(1440-15,Math.max(0,Math.round(relY/(pxPerHr/60)/15)*15));
+        }
+        onGsPreviewMove(selDay,minutesToTime(newStartMins),minutesToTime(Math.min(1439,newStartMins+info.origDur)));
+      }
+    };
+    const onUp=()=>{
+      gsDraftDragRef.current=null;
+      setGsDraftDragging(false);
+      document.body.style.cursor="";
+      document.body.style.userSelect="";
+    };
+    document.addEventListener("mousemove",onMove);
+    document.addEventListener("mouseup",onUp);
+    return ()=>{ document.removeEventListener("mousemove",onMove); document.removeEventListener("mouseup",onUp); };
+  },[gsDraftDragging,pxPerHr,onGsPreviewMove,onGsPreviewResize,selDay]);
   return (
     <>
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,flexWrap:"wrap",gap:8}}>
@@ -24539,6 +24583,55 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
                 <div style={{borderTop:"2px solid #E5484D"}} />
               </div>
             )}
+            {/* Schedule with Friends: same busy overlay/recommended-time/
+                draggable-draft treatment as WeeklyPlanner's own (see that
+                component's matching comment) -- see this component's own
+                comment above gsDraftDragRef for why Day view never had any
+                of this before. */}
+            {gsBusyByDate&&(gsBusyByDate[selDay]||[]).concat(getDayOccupiedIntervals(selDay)).map((iv,ii)=>(
+              <div key={"gsb"+ii} style={{position:"absolute",top:(iv.s-spanStart)*(pxPerHr/60),left:0,right:0,height:Math.max(4,(iv.e-iv.s)*(pxPerHr/60)),background:T.muted+"1E",zIndex:3,pointerEvents:"none"}} />
+            ))}
+            {gsRecommended&&gsRecommended.date===selDay&&(()=>{
+              const rStart=timeToMinutes(gsRecommended.time);
+              const rDur=gsRecommended.duration||60;
+              return (
+                <div style={{position:"absolute",top:(rStart-spanStart)*(pxPerHr/60),left:2,right:2,height:Math.max(22,rDur*(pxPerHr/60)),borderRadius:5,background:T.lime+"10",border:`1.5px dashed ${T.lime}`,zIndex:5,pointerEvents:"none",display:"flex",alignItems:"flex-start",justifyContent:"center",paddingTop:2,boxSizing:"border-box"}}>
+                  <span style={{fontSize:8,fontWeight:700,letterSpacing:"0.05em",color:T.lime,background:T.card,padding:"1px 5px",borderRadius:3,whiteSpace:"nowrap"}}>STUDLIN RECOMMENDS</span>
+                </div>
+              );
+            })()}
+            {gsDraft&&gsDraft.date===selDay&&(()=>{
+              const gStart=timeToMinutes(gsDraft.startTime);
+              const gDur=Math.max(15,timeToMinutes(gsDraft.endTime)-gStart);
+              const draggable=!!(onGsPreviewMove||onGsPreviewResize);
+              const startMove=(e)=>{
+                if(!onGsPreviewMove)return;
+                e.preventDefault();e.stopPropagation();
+                const el=timelineRef.current;
+                const r=el?el.getBoundingClientRect():null;
+                const blockTopClientY=(r?r.top:e.clientY)+(gStart-spanStart)*(pxPerHr/60);
+                gsDraftDragRef.current={mode:"move",origStart:gsDraft.startTime,origDur:gDur,grabOffsetPx:e.clientY-blockTopClientY};
+                setGsDraftDragging(true);
+                document.body.style.cursor="grabbing";document.body.style.userSelect="none";
+              };
+              const startResize=(e)=>{
+                if(!onGsPreviewResize)return;
+                e.preventDefault();e.stopPropagation();
+                gsDraftDragRef.current={mode:"resize",origStart:gsDraft.startTime,origDur:gDur,startClientY:e.clientY};
+                setGsDraftDragging(true);
+                document.body.style.cursor="ns-resize";document.body.style.userSelect="none";
+              };
+              return (
+                <div onMouseDown={startMove} style={{position:"absolute",top:(gStart-spanStart)*(pxPerHr/60),left:2,right:2,height:Math.max(22,gDur*(pxPerHr/60)),borderRadius:5,padding:"2px 5px 2px 8px",background:gsDraft.color+"22",border:`1.5px dashed ${gsDraft.color}`,zIndex:6,pointerEvents:draggable?"auto":"none",cursor:draggable?"grab":"default",boxSizing:"border-box",overflow:"hidden"}}>
+                  <div style={{fontSize:9.5,fontWeight:700,color:gsDraft.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{gsDraft.title||"New event"}</div>
+                  {onGsPreviewResize&&(
+                    <div onMouseDown={startResize} title="Drag to change duration" style={{position:"absolute",bottom:0,left:0,right:0,height:9,cursor:"ns-resize",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                      <div style={{width:26,height:3,borderRadius:99,background:gsDraft.color,opacity:0.65}} />
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             {/* Live drop-time preview while dragging over this day -- same
                 purpose as WeeklyPlanner's own wkDropTime line, so dropping
                 an unscheduled item or moving an existing block gives the
@@ -31904,7 +31997,20 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                 <div key={i} onClick={()=>{setSelDay(c.key);}} onDoubleClick={()=>setDayDetailKey(c.key)}
                   onDragOver={e=>e.preventDefault()} onDrop={e=>{
                     e.preventDefault();
-                    if(sidebarDragChip){openNewEventForDrop(sidebarDragChip,c.key,"09:00",{x:e.clientX,y:e.clientY});setSidebarDragChip(null);}
+                    // Bug fix, 2026-09-11 audit: Month view has no time axis
+                    // at all, so a Schedule with Friends chip dropped here
+                    // used to silently commit a Meeting/Study Session at a
+                    // hardcoded 9:00 AM with zero visual confirmation --
+                    // indistinguishable from the drag doing nothing, and
+                    // clicking Done afterward would have sent a time nobody
+                    // actually chose or saw. Redirect to a view that can
+                    // actually show it instead.
+                    if(sidebarDragChip&&sidebarDragChip.kind==="groupSession"){
+                      setSidebarDragChip(null);
+                      setPlacementToast("Switch to Day or Week view to place a time with friends.");
+                      setTimeout(()=>setPlacementToast(""),3200);
+                    }
+                    else if(sidebarDragChip){openNewEventForDrop(sidebarDragChip,c.key,"09:00",{x:e.clientX,y:e.clientY});setSidebarDragChip(null);}
                     else if(dragId){moveEvent(dragId,c.key);setDragId(null);}
                     // User report, 2026-09-10: dragging an unscheduled item
                     // ("Don't know exactly when? Drag onto the calendar",
@@ -31994,7 +32100,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         <DayPlanner dayEvents={dayEvents} setEvents={setEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} fmtTimeRange={fmtTimeRange} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} catchUpPending={catchUpPending} openNew={openNew} newItemHighlightIds={newItemHighlightSet} onEditRoutine={(routineId,date)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule,date);}}
           moveEvent={moveEvent} sidebarDragChip={sidebarDragChip} onDropSidebarChip={(time,anchorPoint)=>{openNewEventForDrop(sidebarDragChip,selDay,time,anchorPoint);setSidebarDragChip(null);}}
           onDropManualBlockRequest={commitManualBlockDrop} onDropNewTaskRequest={commitNewTaskDrop} onDropRoutineOccurrence={onDropRoutineOccurrence} onRoutineDragStateChange={setRoutineDragActive}
-          quickCreateDraft={quickCreateDraft} onQuickCreateDrag={handleQuickCreateDrag} onQuickCreateDragEnd={handleQuickCreateDragEnd} />
+          quickCreateDraft={quickCreateDraft} onQuickCreateDrag={handleQuickCreateDrag} onQuickCreateDragEnd={handleQuickCreateDragEnd}
+          gsBusyByDate={gsOpen&&gsStep==="place"?gsBusyByDate:null} gsRecommended={gsOpen&&gsStep==="place"?gsRecommended:null}
+          gsDraft={gsOpen&&gsStep==="place"?gsDraft:null} onGsPreviewMove={gsOpen&&gsStep==="place"?gsPreviewMove:undefined} onGsPreviewResize={gsOpen&&gsStep==="place"?gsPreviewResize:undefined} />
       )}
       <QuickCreateTaskPopover draft={quickCreatePopover} anchorX={quickCreatePopover&&quickCreatePopover.anchorX} anchorY={quickCreatePopover&&quickCreatePopover.anchorY}
         onCreate={commitQuickCreateTask} onMoreOptions={quickCreateMoreOptions} onClose={cancelQuickCreate} />
