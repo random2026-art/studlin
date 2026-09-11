@@ -2359,12 +2359,38 @@ function describeNewGoogleEvents(newlyAdded) {
   const extra = titles.length > 3 ? " +" + (titles.length - 3) + " more" : "";
   return "Added " + newlyAdded.length + " event" + (newlyAdded.length !== 1 ? "s" : "") + " from Google Calendar: " + shown + extra;
 }
+function detectGoogleClassCandidates(events, existingLabels) {
+  const existingNorm = new Set((existingLabels || []).filter(Boolean).map(normalizeCourseLabel));
+  const groups = {};
+  (events || []).forEach((e) => {
+    if (!e.id.startsWith("gcal-") || !e.googleRecurringId || !e.time) return;
+    (groups[e.googleRecurringId] = groups[e.googleRecurringId] || []).push(e);
+  });
+  return Object.keys(groups).map((recurId) => {
+    const occs = groups[recurId].slice().sort((a, b) => a.date < b.date ? -1 : 1);
+    const first = occs[0];
+    const days = [...new Set(occs.map((o) => {
+      const dow = (/* @__PURE__ */ new Date(o.date + "T12:00:00")).getDay();
+      return dow === 0 ? 6 : dow - 1;
+    }))].sort((a, b) => a - b);
+    return {
+      recurringId: recurId,
+      title: first.title,
+      occurrenceCount: occs.length,
+      days,
+      startTime: first.time,
+      duration: first.duration || 50
+    };
+  }).filter((c) => c.occurrenceCount >= 2 && !existingNorm.has(normalizeCourseLabel(c.title)));
+}
 function applyGoogleEvents(gcalEvents) {
+  const importedRecurringIds = new Set(lsGet("importedGoogleRecurringIds", []));
+  const filtered = importedRecurringIds.size === 0 ? gcalEvents : gcalEvents.filter((e) => !e.googleRecurringId || !importedRecurringIds.has(e.googleRecurringId));
   const previousGcal = lsGet("events", []).filter((e) => e.id.startsWith("gcal-"));
-  const newlyAdded = diffNewGoogleEvents(previousGcal, gcalEvents);
+  const newlyAdded = diffNewGoogleEvents(previousGcal, filtered);
   const existing = lsGet("events", []).filter((e) => !e.id.startsWith("gcal-"));
   lsSet("events", existing);
-  const result = reconcileFixedEventConflicts(gcalEvents);
+  const result = reconcileFixedEventConflicts(filtered);
   surfaceReconcileResult(result);
   return { ...result, newlyAdded };
 }
@@ -13481,6 +13507,9 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
   const [hsClassesCommitted, setHsClassesCommitted] = useState(0);
   const [wizGoogleLinked, setWizGoogleLinked] = useState(() => lsGet("cal-google", false));
   const [wizGoogleSyncing, setWizGoogleSyncing] = useState(false);
+  const [googleImportCandidates, setGoogleImportCandidates] = useState(null);
+  const [googleImportSelected, setGoogleImportSelected] = useState(() => /* @__PURE__ */ new Set());
+  const [googleImportError, setGoogleImportError] = useState("");
   const [wizPostOnboardConnect, setWizPostOnboardConnect] = useState([]);
   const WIZ_CONNECT_OPTIONS = [
     { value: "canvas", label: "Canvas" },
@@ -13514,7 +13543,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     return idx > 0 ? effectiveWizardStepOrder[idx - 1] : null;
   })();
   const goBack = () => {
-    if (step === "classes" && (addMode === "scan" || addMode === "hsSchedule" || addMode === "collegeSchedule")) {
+    if (step === "classes" && (addMode === "scan" || addMode === "hsSchedule" || addMode === "collegeSchedule" || addMode === "googleImport")) {
       setAddMode("choose");
       return;
     }
@@ -13524,7 +13553,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     }
     if (prevWizardStep) setStep(prevWizardStep);
   };
-  const canGoBack = step === "classes" && (addMode === "scan" || addMode === "hsSchedule" || addMode === "collegeSchedule" || addMode === "choose") || !!prevWizardStep;
+  const canGoBack = step === "classes" && (addMode === "scan" || addMode === "hsSchedule" || addMode === "collegeSchedule" || addMode === "googleImport" || addMode === "choose") || !!prevWizardStep;
   useEffect(() => {
     if (!open) return;
     setStatus(initialStatus || "");
@@ -13800,6 +13829,42 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     }
     buildReviewFromExtraction(classes[0], sourceText);
     setScanQueue(classes.slice(1));
+  };
+  const openGoogleImport = async () => {
+    setAddMode("googleImport");
+    setGoogleImportError("");
+    setGoogleImportCandidates(null);
+    setGoogleImportSelected(/* @__PURE__ */ new Set());
+    if (!wizGoogleLinked) {
+      setWizGoogleSyncing(true);
+      const result = await connectGoogleCalendar();
+      setWizGoogleSyncing(false);
+      if (!result.success) {
+        setGoogleImportError(result.error || "Couldn't connect Google Calendar.");
+        return;
+      }
+      setWizGoogleLinked(true);
+    }
+    const existingLabels = [...pendingClasses.map((c) => c.name), ...getSubjects().map((s) => s.label)];
+    setGoogleImportCandidates(detectGoogleClassCandidates(lsGet("events", []), existingLabels));
+  };
+  const toggleGoogleImportCandidate = (recurringId) => {
+    setGoogleImportSelected((s) => {
+      const next = new Set(s);
+      if (next.has(recurringId)) next.delete(recurringId);
+      else next.add(recurringId);
+      return next;
+    });
+  };
+  const confirmGoogleImport = () => {
+    const chosen = (googleImportCandidates || []).filter((c) => googleImportSelected.has(c.recurringId));
+    if (chosen.length === 0) return;
+    const alreadyImported = lsGet("importedGoogleRecurringIds", []);
+    lsSet("importedGoogleRecurringIds", [.../* @__PURE__ */ new Set([...alreadyImported, ...chosen.map((c) => c.recurringId)])]);
+    const recurIds = new Set(chosen.map((c) => c.recurringId));
+    const purged = lsGet("events", []).filter((e) => !(e.id.startsWith("gcal-") && e.googleRecurringId && recurIds.has(e.googleRecurringId)));
+    lsSet("events", purged);
+    startClassQueue(chosen.map((c) => ({ subject: { name: c.title }, meetingTimes: [{ days: c.days, startTime: c.startTime, duration: c.duration }], deadlines: [] })));
   };
   const MAX_SCHEDULE_IMAGES = 6;
   const handleCollegeScheduleFile = async (e) => {
@@ -14223,10 +14288,13 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     setPasteMode(false);
     setPasteText("");
     setAddMode("scan");
-  }, style: classSetupChoiceStyle }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 700, color: T.text, marginBottom: 3 } }, "Scan a syllabus"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Upload a file or photo \u2014 Studlin reads the class name, meeting time, and deadlines."))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: startManual, style: classSetupChoiceStyle }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 700, color: T.text, marginBottom: 3 } }, "Enter manually"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Type in the class name and when it meets yourself.")), status === "highschool" && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+  }, style: classSetupChoiceStyle }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 700, color: T.text, marginBottom: 3 } }, "Scan a syllabus"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Upload a file or photo \u2014 Studlin reads the class name, meeting time, and deadlines."))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: openGoogleImport, style: classSetupChoiceStyle }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 700, color: T.text, marginBottom: 3 } }, "Import from Google Calendar"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Already on Google Calendar? Studlin can find your recurring classes there and use their real meeting times.")), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: startManual, style: classSetupChoiceStyle }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 700, color: T.text, marginBottom: 3 } }, "Enter manually"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Type in the class name and when it meets yourself.")), status === "highschool" && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
     setScanError("");
     setAddMode("hsSchedule");
-  }, style: classSetupChoiceStyle }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 700, color: T.text, marginBottom: 3 } }, "Upload your class schedule"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "One photo of your whole schedule adds every period at once, color-coded.")))), step === "classes" && addMode === "collegeSchedule" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: "Scan my whole schedule", sub: "A screenshot of your schedule grid, or paste the text list \u2014 Studlin splits it into every class, with its meeting time and any exam dates it finds." }), scanning ? /* @__PURE__ */ React.createElement("div", { style: { padding: "20px 0" } }, /* @__PURE__ */ React.createElement(ExtractionProgress, { fileName: "Your schedule", stage: "analyze", analyzeLabel: "Finding your classes and exam dates..." })) : pasteMode ? /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(
+  }, style: classSetupChoiceStyle }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 700, color: T.text, marginBottom: 3 } }, "Upload your class schedule"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "One photo of your whole schedule adds every period at once, color-coded.")))), step === "classes" && addMode === "googleImport" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: "Import from Google Calendar", sub: "Studlin looked for recurring weekly events on your Google Calendar that might be classes. Pick the real ones -- anything else (a meeting, practice, work shift) is safe to leave unchecked." }), googleImportError ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.red, marginBottom: 12 } }, googleImportError), /* @__PURE__ */ React.createElement(Btn, { onClick: openGoogleImport }, "Try again")) : wizGoogleSyncing || googleImportCandidates === null ? /* @__PURE__ */ React.createElement("div", { style: { padding: "20px 0" } }, /* @__PURE__ */ React.createElement(ExtractionProgress, { fileName: "Google Calendar", stage: "analyze", analyzeLabel: wizGoogleSyncing ? "Connecting to Google Calendar..." : "Looking for recurring classes..." })) : googleImportCandidates.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, textAlign: "center", padding: "20px 0" } }, "No recurring classes found on your Google Calendar yet -- either nothing repeats weekly there, or everything that does is already added. Try scanning a syllabus or entering classes manually instead.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, googleImportCandidates.map((c) => {
+    const picked = googleImportSelected.has(c.recurringId);
+    return /* @__PURE__ */ React.createElement("label", { key: c.recurringId, style: { display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", borderRadius: 10, border: `1px solid ${picked ? T.lime + "55" : T.border}`, background: picked ? T.lime + "0C" : T.card2, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: picked, onChange: () => toggleGoogleImportCandidate(c.recurringId), style: { marginTop: 2, cursor: "pointer" } }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text } }, c.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginTop: 1 } }, formatMeetingTimes([c]))));
+  }))), step === "classes" && addMode === "collegeSchedule" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: "Scan my whole schedule", sub: "A screenshot of your schedule grid, or paste the text list \u2014 Studlin splits it into every class, with its meeting time and any exam dates it finds." }), scanning ? /* @__PURE__ */ React.createElement("div", { style: { padding: "20px 0" } }, /* @__PURE__ */ React.createElement(ExtractionProgress, { fileName: "Your schedule", stage: "analyze", analyzeLabel: "Finding your classes and exam dates..." })) : pasteMode ? /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(
     "textarea",
     {
       value: pasteText,
@@ -14417,7 +14485,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
         }, title: "Remove", style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 14, padding: "0 2px" } }, "\xD7")), itemExpanded && /* @__PURE__ */ React.createElement("div", { style: { padding: "8px 10px", fontSize: 11.5, color: T.muted, lineHeight: 1.5 } }, it.kind === "exam" && (it.proposeSessions ? !pv || pv.sessions.length === 0 ? /* @__PURE__ */ React.createElement("div", null, "No open slot found for any session yet.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 3 } }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, color: T.text } }, "Study sessions"), pv.sessions.map((s, si) => /* @__PURE__ */ React.createElement("div", { key: si }, s.date, " \xB7 ", fmtClock12(s.time), " \xB7 ", s.duration, "min"))) : /* @__PURE__ */ React.createElement("div", null, "No study sessions scheduled for this exam.")), it.kind !== "exam" && (!it.attackBlock ? /* @__PURE__ */ React.createElement("div", null, "No Attack Block for this one.") : !pv || pv.sessions.length === 0 ? /* @__PURE__ */ React.createElement("div", null, "No open slot found before the deadline \u2014 add it manually after committing.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 3 } }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, color: T.text } }, it.kind === "project" ? "See plan" : "First session"), /* @__PURE__ */ React.createElement("div", null, pv.sessions[0].date, " \xB7 ", fmtClock12(pv.sessions[0].time), " \xB7 ", pv.sessions[0].duration, "min", it.phases && it.phases.length > 0 ? " \u2014 " + (it.phases[0] || "Phase 1") : ""), it.phases && it.phases.length > 1 && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 4 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.faint, fontStyle: "italic" } }, "Later phases schedule themselves once the one before finishes, not guessed dates up front:"), it.phases.slice(1).map((ph, pi) => /* @__PURE__ */ React.createElement("div", { key: pi, style: { marginLeft: 8 } }, "\xB7 ", ph)))))));
       })))));
     }));
-  })())), /* @__PURE__ */ React.createElement("div", { style: { padding: "18px 32px", borderTop: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 16 } }, canGoBack && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: goBack, style: { fontSize: 12.5, color: T.muted, background: "none", border: "none", cursor: "pointer", fontFamily: T.font, padding: 0 } }, "\u2190 Back"), quickScan && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onSkip, style: { fontSize: 12.5, color: T.muted, background: "none", border: "none", cursor: "pointer", fontFamily: T.font, padding: 0 } }, "Cancel")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10 } }, step === "term" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setStep(knowsStatus ? "awake" : "status") }, "Skip"), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setStep(knowsStatus ? "awake" : "status") }, "Continue")), step === "awake" && /* @__PURE__ */ React.createElement(Btn, { onClick: () => setStep("personalize"), disabled: windowInvalid, style: { opacity: windowInvalid ? 0.45 : 1 } }, "Continue"), step === "personalize" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setStep("classes") }, "Skip"), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setStep("classes") }, "Continue")), step === "classes" && addMode === null && /* @__PURE__ */ React.createElement(Btn, { onClick: () => quickScan ? setStep("finalReview") : setStep("activities") }, pendingClasses.length > 0 || hsClassesCommitted > 0 ? "Done adding classes" : "Skip, I'll add classes later"), step === "classes" && addMode === "review" && reviewSub === "items" && // The Sessions sub-step is only worth showing when there's
+  })())), /* @__PURE__ */ React.createElement("div", { style: { padding: "18px 32px", borderTop: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 16 } }, canGoBack && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: goBack, style: { fontSize: 12.5, color: T.muted, background: "none", border: "none", cursor: "pointer", fontFamily: T.font, padding: 0 } }, "\u2190 Back"), quickScan && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onSkip, style: { fontSize: 12.5, color: T.muted, background: "none", border: "none", cursor: "pointer", fontFamily: T.font, padding: 0 } }, "Cancel")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10 } }, step === "term" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setStep(knowsStatus ? "awake" : "status") }, "Skip"), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setStep(knowsStatus ? "awake" : "status") }, "Continue")), step === "awake" && /* @__PURE__ */ React.createElement(Btn, { onClick: () => setStep("personalize"), disabled: windowInvalid, style: { opacity: windowInvalid ? 0.45 : 1 } }, "Continue"), step === "personalize" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setStep("classes") }, "Skip"), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setStep("classes") }, "Continue")), step === "classes" && addMode === null && /* @__PURE__ */ React.createElement(Btn, { onClick: () => quickScan ? setStep("finalReview") : setStep("activities") }, pendingClasses.length > 0 || hsClassesCommitted > 0 ? "Done adding classes" : "Skip, I'll add classes later"), step === "classes" && addMode === "googleImport" && googleImportCandidates && googleImportCandidates.length > 0 && /* @__PURE__ */ React.createElement(Btn, { onClick: confirmGoogleImport, disabled: googleImportSelected.size === 0, style: { opacity: googleImportSelected.size === 0 ? 0.45 : 1 } }, "Import ", googleImportSelected.size || "", " class", googleImportSelected.size === 1 ? "" : "es"), step === "classes" && addMode === "review" && reviewSub === "items" && // The Sessions sub-step is only worth showing when there's
   // something dated to plan around -- same predicate it uses
   // itself to render "Nothing dated to plan yet." Skipping
   // straight to finishReviewingClass here is safe: reviewSub

@@ -4050,16 +4050,67 @@ function describeNewGoogleEvents(newlyAdded){
   const extra=titles.length>3?" +"+(titles.length-3)+" more":"";
   return "Added "+newlyAdded.length+" event"+(newlyAdded.length!==1?"s":"")+" from Google Calendar: "+shown+extra;
 }
+// 2026-09-11 user idea: a student who already has their class schedule in
+// Google Calendar shouldn't have to retype every meeting time by hand into
+// a real Studlin course (see ClassSetupWizard's own "Import from Google
+// Calendar" comment for the full design/tradeoffs -- a one-time COPY, not
+// a live link). Groups already-synced gcal- events by the shared
+// googleRecurringId Google itself stamps on every occurrence of the same
+// recurring series (see googleItemToEvent's own comment) and surfaces any
+// series that's repeated enough to plausibly be a real weekly class.
+// Pure and deliberately conservative: a recurring meeting, gym session, or
+// work shift looks IDENTICAL to a class from this data alone, so this only
+// ever produces opt-in candidates for a human to confirm -- never auto-
+// imports anything. existingLabels excludes anything that's already a
+// real class by any path (a manual entry, a syllabus scan, an earlier
+// import), so the same series never gets suggested twice.
+function detectGoogleClassCandidates(events,existingLabels){
+  const existingNorm=new Set((existingLabels||[]).filter(Boolean).map(normalizeCourseLabel));
+  const groups={};
+  (events||[]).forEach(e=>{
+    if(!e.id.startsWith("gcal-")||!e.googleRecurringId||!e.time)return;
+    (groups[e.googleRecurringId]=groups[e.googleRecurringId]||[]).push(e);
+  });
+  return Object.keys(groups).map(recurId=>{
+    const occs=groups[recurId].slice().sort((a,b)=>a.date<b.date?-1:1);
+    const first=occs[0];
+    // Google's own day-of-week (0=Sun..6=Sat) -> this app's Mon-first
+    // 0=Mon..6=Sun, same conversion buildReviewFromExtraction's own
+    // repeatDays default already uses.
+    const days=[...new Set(occs.map(o=>{const dow=new Date(o.date+"T12:00:00").getDay();return dow===0?6:dow-1;}))].sort((a,b)=>a-b);
+    return{
+      recurringId:recurId,
+      title:first.title,
+      occurrenceCount:occs.length,
+      days,
+      startTime:first.time,
+      duration:first.duration||50,
+    };
+  })
+    // Require at least 2 actually-seen occurrences -- a single sighting is
+    // exactly as likely to be a genuine one-off event as the start of a
+    // recurring pattern, and Google already tells one-offs apart from
+    // recurring ones (a real one-off never carries googleRecurringId at
+    // all, see googleItemToEvent -- it's already excluded above).
+    .filter(c=>c.occurrenceCount>=2&&!existingNorm.has(normalizeCourseLabel(c.title)));
+}
 function applyGoogleEvents(gcalEvents){
+  // A series already imported as a real Studlin course (see
+  // detectGoogleClassCandidates/confirmGoogleImport) must never come back
+  // as a duplicate, generic gcal- block on a LATER sync (the initial
+  // connect, the periodic pull, a cron-driven update) -- this is the one
+  // choke point every one of those paths already funnels through.
+  const importedRecurringIds=new Set(lsGet("importedGoogleRecurringIds",[]));
+  const filtered=importedRecurringIds.size===0?gcalEvents:gcalEvents.filter(e=>!e.googleRecurringId||!importedRecurringIds.has(e.googleRecurringId));
   // Strip stale gcal- events first (Google is authoritative for its own
   // prefix -- one deleted on Google's side should disappear here too),
   // so reconcileFixedEventConflicts' own lsGet reads the clean state and
   // only ever treats the fresh batch as "new."
   const previousGcal=lsGet("events",[]).filter(e=>e.id.startsWith("gcal-"));
-  const newlyAdded=diffNewGoogleEvents(previousGcal,gcalEvents);
+  const newlyAdded=diffNewGoogleEvents(previousGcal,filtered);
   const existing=lsGet("events",[]).filter(e=>!e.id.startsWith("gcal-"));
   lsSet("events",existing);
-  const result=reconcileFixedEventConflicts(gcalEvents);
+  const result=reconcileFixedEventConflicts(filtered);
   surfaceReconcileResult(result);
   return {...result,newlyAdded};
 }
@@ -22383,6 +22434,17 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   // Settings itself) sees "Connected" here instead of the button again.
   const [wizGoogleLinked,setWizGoogleLinked]=useState(()=>lsGet("cal-google",false));
   const [wizGoogleSyncing,setWizGoogleSyncing]=useState(false);
+  // "Import from Google Calendar" (2026-09-11 user idea) -- a ONE-TIME
+  // copy into a real Studlin course, not a live link (see the session's
+  // own discussion: a live link would mean teaching the otherwise fully
+  // read-only Google sync system to partially not be read-only anymore,
+  // real added complexity this app has deliberately avoided everywhere
+  // else Google sync touches). null candidates = not detected yet (still
+  // connecting, or about to run detection); [] = connected but genuinely
+  // nothing found; a real array = ready to pick from.
+  const [googleImportCandidates,setGoogleImportCandidates]=useState(null);
+  const [googleImportSelected,setGoogleImportSelected]=useState(()=>new Set());
+  const [googleImportError,setGoogleImportError]=useState("");
   // Canvas/Blackboard/Moodle/work-schedule connect all need the student to
   // leave Studlin, log into another site, and copy a URL back -- unlike
   // Google's single-click popup, that's a real multi-step flow. This
@@ -22457,11 +22519,11 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   // those use their own "Cancel" action (discards a scan/entry in
   // progress), a different, higher-stakes semantic than a plain Back.
   const goBack=()=>{
-    if(step==="classes"&&(addMode==="scan"||addMode==="hsSchedule"||addMode==="collegeSchedule")){setAddMode("choose");return;}
+    if(step==="classes"&&(addMode==="scan"||addMode==="hsSchedule"||addMode==="collegeSchedule"||addMode==="googleImport")){setAddMode("choose");return;}
     if(step==="classes"&&addMode==="choose"){setAddMode(null);return;}
     if(prevWizardStep)setStep(prevWizardStep);
   };
-  const canGoBack=(step==="classes"&&(addMode==="scan"||addMode==="hsSchedule"||addMode==="collegeSchedule"||addMode==="choose"))||!!prevWizardStep;
+  const canGoBack=(step==="classes"&&(addMode==="scan"||addMode==="hsSchedule"||addMode==="collegeSchedule"||addMode==="googleImport"||addMode==="choose"))||!!prevWizardStep;
 
   useEffect(()=>{
     if(!open)return;
@@ -22809,6 +22871,54 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     if(!classes||classes.length===0){setScanError("Couldn't find any classes in that. Try a clearer photo or paste more of the text.");return;}
     buildReviewFromExtraction(classes[0],sourceText);
     setScanQueue(classes.slice(1));
+  };
+  // "Import from Google Calendar" (2026-09-11) -- connects if not already
+  // linked (same connectGoogleCalendar() the calendarSync step itself
+  // uses), then runs detectGoogleClassCandidates against whatever just
+  // landed in local storage. existingLabels covers every class this
+  // session already knows about by any path -- already-staged
+  // pendingClasses, and any real course already saved (a returning
+  // student re-running this wizard, or "Set up next term") -- so the same
+  // series is never suggested twice.
+  const openGoogleImport=async()=>{
+    setAddMode("googleImport");
+    setGoogleImportError("");
+    setGoogleImportCandidates(null);
+    setGoogleImportSelected(new Set());
+    if(!wizGoogleLinked){
+      setWizGoogleSyncing(true);
+      const result=await connectGoogleCalendar();
+      setWizGoogleSyncing(false);
+      if(!result.success){setGoogleImportError(result.error||"Couldn't connect Google Calendar.");return;}
+      setWizGoogleLinked(true);
+    }
+    const existingLabels=[...pendingClasses.map(c=>c.name),...getSubjects().map(s=>s.label)];
+    setGoogleImportCandidates(detectGoogleClassCandidates(lsGet("events",[]),existingLabels));
+  };
+  const toggleGoogleImportCandidate=(recurringId)=>{
+    setGoogleImportSelected(s=>{const next=new Set(s);if(next.has(recurringId))next.delete(recurringId);else next.add(recurringId);return next;});
+  };
+  const confirmGoogleImport=()=>{
+    const chosen=(googleImportCandidates||[]).filter(c=>googleImportSelected.has(c.recurringId));
+    if(chosen.length===0)return;
+    // Persist so applyGoogleEvents' own filter excludes these series from
+    // every FUTURE sync -- without this, the next periodic pull would
+    // silently bring the same occurrences back as duplicate gcal- blocks
+    // sitting right next to the real course this just created.
+    const alreadyImported=lsGet("importedGoogleRecurringIds",[]);
+    lsSet("importedGoogleRecurringIds",[...new Set([...alreadyImported,...chosen.map(c=>c.recurringId)])]);
+    // The filter above only protects future syncs -- THIS session's
+    // already-synced occurrences for these series need removing right now
+    // too, or they'd sit on the calendar as duplicates until the next sync.
+    const recurIds=new Set(chosen.map(c=>c.recurringId));
+    const purged=lsGet("events",[]).filter(e=>!(e.id.startsWith("gcal-")&&e.googleRecurringId&&recurIds.has(e.googleRecurringId)));
+    lsSet("events",purged);
+    // Same one-at-a-time review queue a whole-schedule scan feeds
+    // (startClassQueue) -- each imported class gets the exact same review
+    // screen, including "+ Add syllabus for this class" to fill in real
+    // assignments/exams, since Google Calendar itself has no concept of
+    // those at all.
+    startClassQueue(chosen.map(c=>({subject:{name:c.title},meetingTimes:[{days:c.days,startTime:c.startTime,duration:c.duration}],deadlines:[]})));
   };
   // A whole-schedule photo often needs more than one shot (multiple terms/
   // pages, or a schedule that doesn't fit one screenshot) -- files can now
@@ -23444,6 +23554,17 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                   </button>
                 )}
               </>)}
+              {/* 2026-09-11 user idea: someone who already has their class
+                  schedule in Google Calendar shouldn't have to retype every
+                  meeting time by hand. This is a one-time COPY into a real
+                  Studlin course (see openGoogleImport's own comment for why
+                  not a live link) -- available regardless of HS/college
+                  status, since either could plausibly already have their
+                  schedule on Google Calendar. */}
+              <button type="button" onClick={openGoogleImport} style={classSetupChoiceStyle}>
+                <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Import from Google Calendar</div>
+                <div style={{fontSize:12,color:T.muted}}>Already on Google Calendar? Studlin can find your recurring classes there and use their real meeting times.</div>
+              </button>
               <button type="button" onClick={startManual} style={classSetupChoiceStyle}>
                 <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Enter manually</div>
                 <div style={{fontSize:12,color:T.muted}}>Type in the class name and when it meets yourself.</div>
@@ -23455,6 +23576,35 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                 </button>
               )}
             </div>
+          </>)}
+
+          {step==="classes"&&addMode==="googleImport"&&(<>
+            <TitleSub title="Import from Google Calendar" sub="Studlin looked for recurring weekly events on your Google Calendar that might be classes. Pick the real ones -- anything else (a meeting, practice, work shift) is safe to leave unchecked." />
+            {googleImportError?(
+              <>
+                <div style={{fontSize:12,color:T.red,marginBottom:12}}>{googleImportError}</div>
+                <Btn onClick={openGoogleImport}>Try again</Btn>
+              </>
+            ):wizGoogleSyncing||googleImportCandidates===null?(
+              <div style={{padding:"20px 0"}}><ExtractionProgress fileName="Google Calendar" stage="analyze" analyzeLabel={wizGoogleSyncing?"Connecting to Google Calendar...":"Looking for recurring classes..."} /></div>
+            ):googleImportCandidates.length===0?(
+              <div style={{fontSize:13,color:T.muted,textAlign:"center",padding:"20px 0"}}>No recurring classes found on your Google Calendar yet -- either nothing repeats weekly there, or everything that does is already added. Try scanning a syllabus or entering classes manually instead.</div>
+            ):(
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {googleImportCandidates.map(c=>{
+                  const picked=googleImportSelected.has(c.recurringId);
+                  return (
+                    <label key={c.recurringId} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${picked?T.lime+"55":T.border}`,background:picked?T.lime+"0C":T.card2,cursor:"pointer"}}>
+                      <input type="checkbox" checked={picked} onChange={()=>toggleGoogleImportCandidate(c.recurringId)} style={{marginTop:2,cursor:"pointer"}} />
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:600,color:T.text}}>{c.title}</div>
+                        <div style={{fontSize:11.5,color:T.muted,marginTop:1}}>{formatMeetingTimes([c])}</div>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
           </>)}
 
           {step==="classes"&&addMode==="collegeSchedule"&&(<>
@@ -23931,6 +24081,9 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
             </>)}
             {step==="classes"&&addMode===null&&(
               <Btn onClick={()=>quickScan?setStep("finalReview"):setStep("activities")}>{(pendingClasses.length>0||hsClassesCommitted>0)?"Done adding classes":"Skip, I'll add classes later"}</Btn>
+            )}
+            {step==="classes"&&addMode==="googleImport"&&googleImportCandidates&&googleImportCandidates.length>0&&(
+              <Btn onClick={confirmGoogleImport} disabled={googleImportSelected.size===0} style={{opacity:googleImportSelected.size===0?0.45:1}}>Import {googleImportSelected.size||""} class{googleImportSelected.size===1?"":"es"}</Btn>
             )}
             {step==="classes"&&addMode==="review"&&reviewSub==="items"&&(
               // The Sessions sub-step is only worth showing when there's
