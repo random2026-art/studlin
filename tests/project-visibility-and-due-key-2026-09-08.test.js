@@ -58,7 +58,7 @@ describe("A Project can no longer be saved with no real phases/outline breakdown
     const idx = SOURCE.indexOf("function EventDetailModal(");
     assert.notEqual(idx, -1);
     const saveIdx = SOURCE.indexOf("const save=()=>{", idx);
-    const body = SOURCE.slice(saveIdx, saveIdx + 1400);
+    const body = SOURCE.slice(saveIdx, saveIdx + 2000);
     assert.match(body, /if\(requiresProjectDetail&&!\(projectPlan\.phases&&projectPlan\.phases\.length>0\)&&!\(projectPlan\.outline&&projectPlan\.outline\.length>0\)\)\{setDetailErr\(/);
   });
 });

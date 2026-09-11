@@ -5268,6 +5268,35 @@ async function refreshPendingAcceptance(events, ids) {
   lsSet("events", next);
   return next;
 }
+async function refreshPendingReschedules(events) {
+  const targets = (events || []).filter((ev) => ev.pendingReschedule && ev.chatRoomId && ev.pendingReschedule.chatMessageId);
+  if (targets.length === 0) return null;
+  const fetched = await Promise.all(targets.map(
+    (ev) => fsdb().collection("chatRooms").doc(ev.chatRoomId).collection("messages").doc(ev.pendingReschedule.chatMessageId).get().then((doc) => doc.exists ? { id: ev.id, data: doc.data() } : null).catch(() => null)
+  ));
+  let changed = false;
+  const next = events.map((ev) => {
+    const u = fetched.find((x) => x && x.id === ev.id);
+    if (!u) return ev;
+    const msg = u.data;
+    const memberUids = msg.memberUids || [];
+    const responses = msg.responses || {};
+    const allAccepted = memberUids.length > 0 && memberUids.every((uid) => responses[uid] === "accepted");
+    if (msg.status === "declined") {
+      changed = true;
+      return { ...ev, pendingReschedule: void 0 };
+    }
+    if (allAccepted) {
+      changed = true;
+      const { pendingReschedule, ...rest } = ev;
+      return { ...rest, date: pendingReschedule.newDate, time: pendingReschedule.newTime, userPinned: true };
+    }
+    return ev;
+  });
+  if (!changed) return null;
+  lsSet("events", next);
+  return next;
+}
 function calculateTaskPriority(task, allTasks) {
   let score = 0;
   const prefs = getSchedulePreferences();
@@ -10456,6 +10485,19 @@ function ChatBubble({ m, myUid, onRespond, onSchedule, onCounter }) {
       setPickingMode(i);
     }, disabled: justChosen !== null, style: { flexShrink: 0, padding: "7px 12px", borderRadius: 7, background: justChosen === i ? T.lime : w.isBest ? T.lime : pp.card2, color: justChosen === i ? T.bg : w.isBest ? T.bg : pp.text, border: w.isBest || justChosen === i ? "none" : `1px solid ${pp.border}`, fontSize: 11.5, fontWeight: 700, cursor: justChosen !== null ? "default" : "pointer", fontFamily: T.font, opacity: justChosen !== null && justChosen !== i ? 0.45 : 1, transition: "opacity 0.15s" } }, justChosen === i ? "\u2713 Proposed" : "Choose"))))));
   }
+  if (m.kind === "calendarReschedule") {
+    const responses = m.responses || {};
+    const myResponse = responses[myUid];
+    const needsMyResponse = m.status === "proposed" && m.senderId !== myUid && !myResponse;
+    const fmtT = (t) => {
+      const p = t.split(":");
+      let h = +p[0];
+      const ap = h >= 12 ? "PM" : "AM";
+      h = h % 12 || 12;
+      return h + ":" + p[1] + " " + ap;
+    };
+    return /* @__PURE__ */ React.createElement("div", { style: { alignSelf: "center", width: "100%", padding: "14px 15px", background: T.amber + "1A", border: `1px solid ${T.amber}40`, borderRadius: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 7, marginBottom: 8, color: T.amber, fontSize: 11, fontWeight: 700 } }, "\u{1F553} Reschedule request"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: pp.text, lineHeight: 1.55, marginBottom: m.status === "proposed" ? 10 : 0 } }, m.senderId === myUid ? "You proposed moving " : "Wants to move ", /* @__PURE__ */ React.createElement("strong", null, '"', m.title, '"'), " from ", fmtDateShort(m.oldDate), " at ", fmtT(m.oldTime), " to ", /* @__PURE__ */ React.createElement("strong", null, fmtDateShort(m.newDate), " at ", fmtT(m.newTime)), "."), m.status === "proposed" && (needsMyResponse ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement("button", { onClick: () => onRespond(m.id, "accepted"), style: { flex: 1, padding: "7px 0", borderRadius: 7, background: T.lime, color: T.bg, border: "none", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: T.font } }, "Accept"), /* @__PURE__ */ React.createElement("button", { onClick: () => onRespond(m.id, "declined"), style: { flex: 1, padding: "7px 0", borderRadius: 7, background: "transparent", color: pp.muted, border: `1px solid ${pp.border}`, fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: T.font } }, "Decline")) : /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: myResponse === "declined" ? pp.faint : T.lime, fontWeight: 600 } }, m.senderId === myUid ? "Waiting on them\u2026" : myResponse === "accepted" ? "\u2713 You accepted" : "Waiting\u2026")), m.status === "confirmed" && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.lime, fontWeight: 600 } }, "\u2713 Moved on both calendars"), m.status === "declined" && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: pp.faint, fontWeight: 600 } }, "Declined \u2014 staying at the original time"));
+  }
   if (m.kind === "note" || m.kind === "deck") {
     const isNote = m.kind === "note";
     const incoming = m.senderId !== myUid;
@@ -10506,6 +10548,32 @@ function computeAcceptanceSummary(memberUids, responses) {
   const declined = uids.filter((uid) => r[uid] === "declined").length;
   const pending = total - accepted - declined;
   return { total, accepted, declined, pending, allAccepted: total > 0 && accepted === total };
+}
+function isLockedSharedMeeting(ev) {
+  return !!(ev && ev.proposalMemberUids && computeAcceptanceSummary(ev.proposalMemberUids, ev.proposalResponses).allAccepted);
+}
+function notifyMeetingCancellation(ev) {
+  const myUid = firebase.auth().currentUser?.uid;
+  if (!myUid || !ev) return;
+  if (ev.studySessionId) {
+    fsdb().collection("studySessions").doc(ev.studySessionId).update({
+      status: "cancelled",
+      ["participants." + myUid + ".state"]: "cancelled",
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    }).catch(() => {
+    });
+    return;
+  }
+  if (!ev.chatRoomId || !isLockedSharedMeeting(ev)) return;
+  const roomRef = fsdb().collection("chatRooms").doc(ev.chatRoomId);
+  const ts = Date.now();
+  const text = (getUserName() || "They") + ' cancelled "' + ev.title + '" (' + fmtDateShort(ev.date) + (ev.time ? " at " + fmtTimeRange(ev.time, ev.duration || 30) : "") + ") \u2014 not planning on going.";
+  roomRef.collection("messages").add({ senderId: myUid, ts, kind: "text", text }).catch(() => {
+  });
+  roomRef.update({ lastMessage: { text, kind: "text", ts, senderId: myUid }, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).catch(() => {
+  });
+  authFetch("/api/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "push", roomId: ev.chatRoomId, preview: text }) }).catch(() => {
+  });
 }
 async function findSharedStudyWindow(myUid, otherUids, params) {
   const fmtTimeLabel = (t) => {
@@ -10819,6 +10887,26 @@ function ChatDrawer({ open, target, myUid, onClose: onClose2, onMakePermanent, o
         ["responses." + myUid]: decision,
         status: nextStatus
       }).catch(reportError("respondToShare-calendar"));
+      return;
+    }
+    if (msg.kind === "calendarReschedule") {
+      if (!myUid) return;
+      const memberUids = msg.memberUids || [];
+      const nextResponses = { ...msg.responses || {}, [myUid]: decision };
+      const allAccepted = memberUids.length > 0 && memberUids.every((uid) => nextResponses[uid] === "accepted");
+      if (decision === "accepted" && allAccepted) {
+        const localEvents = lsGet("events", []);
+        const idx = localEvents.findIndex((e) => e.chatMessageId === msg.originalChatMessageId);
+        if (idx > -1) {
+          const next = localEvents.map((e, i) => i === idx ? { ...e, date: msg.newDate, time: msg.newTime, pendingReschedule: void 0, userPinned: true } : e);
+          lsSet("events", next);
+        }
+      }
+      const nextStatus = decision === "declined" ? "declined" : allAccepted ? "confirmed" : "proposed";
+      fsdb().collection("chatRooms").doc(roomId).collection("messages").doc(id).update({
+        ["responses." + myUid]: decision,
+        status: nextStatus
+      }).catch(reportError("respondToShare-calendarReschedule"));
       return;
     }
     if (decision === "approved" && msg.senderId !== myUid) {
@@ -14905,10 +14993,21 @@ function NewSlotPickerModal({ title, sub, candidates, onConfirm, onClose: onClos
 }
 function EventDetailModal({ eventId, onClose: onClose2, commit, onToast, setActive, setPricingOpen = () => {
 }, onDelete = () => {
+}, onProposeReschedule = () => {
 } }) {
   const allEvents = lsGet("events", []);
   const ev = allEvents.find((e) => e.id === eventId);
   const isGoogleSynced = !!(eventId && eventId.indexOf("gcal-") === 0);
+  const isLockedMeeting = isLockedSharedMeeting(ev);
+  const hasPendingReschedule = !!(ev && ev.pendingReschedule);
+  const fmtClockTime = (t) => {
+    if (!t) return "";
+    const p = t.split(":");
+    let h = +p[0];
+    const ap = h >= 12 ? "PM" : "AM";
+    h = h % 12 || 12;
+    return h + ":" + p[1] + " " + ap;
+  };
   const routines = getWeeklyRoutine();
   const userSubjects = getSubjects();
   const SUBJ = [{ value: "None", label: "None", color: T.lime }, ...userSubjects.map((s) => ({ value: s.label, label: s.label, color: s.color })), { value: "Other", label: "Other", color: T.lime }];
@@ -15335,6 +15434,12 @@ function EventDetailModal({ eventId, onClose: onClose2, commit, onToast, setActi
   const save = () => {
     if (isGoogleSynced) return;
     if (!title.trim()) return;
+    if (isLockedMeeting && !hasPendingReschedule && (date !== ev.date || time !== ev.time)) {
+      onProposeReschedule(ev, date, time);
+      setDate(ev.date);
+      setTime(ev.time);
+      return;
+    }
     if (deadline && date > deadline) {
       setDeadlineErr("Can't schedule past the deadline (" + deadline + ").");
       return;
@@ -15438,6 +15543,8 @@ function EventDetailModal({ eventId, onClose: onClose2, commit, onToast, setActi
     }, style: { background: "none", border: "none", color: T.lime, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: T.font, textDecoration: "underline" } }, "Undo")),
     isGoogleSynced && /* @__PURE__ */ React.createElement("div", { style: { padding: "8px 10px", marginBottom: 10, fontSize: 12, color: T.text, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, lineHeight: 1.5 } }, "\u{1F512} Synced from Google Calendar -- read-only here. Edit it in Google Calendar and it'll update on your next sync. You can still remove it from Studlin with Delete."),
     ev.googleRecurringId && /* @__PURE__ */ React.createElement("div", { style: { padding: "6px 2px", marginBottom: 10, fontSize: 12, color: T.muted } }, '\u{1F501} This repeats on your Google Calendar -- each occurrence is its own item here. Delete offers an "all occurrences" option.'),
+    isLockedMeeting && !hasPendingReschedule && /* @__PURE__ */ React.createElement("div", { style: { padding: "8px 10px", marginBottom: 10, fontSize: 12, color: T.text, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, lineHeight: 1.5 } }, "\u{1F512} Everyone's confirmed this time. Changing the date/time above and hitting Save sends a request instead of moving it right away -- it only actually moves once they agree. Delete still works immediately, and lets them know you're not planning on going."),
+    hasPendingReschedule && /* @__PURE__ */ React.createElement("div", { style: { padding: "8px 10px", marginBottom: 10, fontSize: 12, color: T.text, background: T.amber + "14", border: `1px solid ${T.amber}40`, borderRadius: 8, lineHeight: 1.5 } }, "\u{1F553} Waiting on the other side to agree to ", fmtDateShort(ev.pendingReschedule.newDate), " at ", fmtClockTime(ev.pendingReschedule.newTime), ". It'll move automatically once they accept."),
     isDeadlineKind && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 14 } }, isEvCompleted ? /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: T.lime, background: T.lime + "14", border: `1px solid ${T.lime}44`, borderRadius: 6, padding: "4px 10px" } }, "COMPLETED") : itemLifecycleState(ev, dayKey()) === "past-due" && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: T.amber, background: T.amber + "14", border: `1px solid ${T.amber}44`, borderRadius: 6, padding: "4px 10px" } }, "PAST DUE"), /* @__PURE__ */ React.createElement(BtnSm, { variant: isEvCompleted ? "ghost" : "subtle", onClick: toggleEvCompleted }, isEvCompleted ? "Mark as uncomplete" : "Mark as completed")),
     completeSessionPrompt && /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.amber}44`, borderRadius: 8, padding: "12px 14px", marginBottom: 14, fontSize: 12.5, color: T.text, lineHeight: 1.5 } }, "You still have ", evPendingLinked.length, " scheduled block", evPendingLinked.length !== 1 ? "s" : "", " for this \u2014 cancel ", evPendingLinked.length !== 1 ? "them" : "it", " too?", /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => finishMarkingEvComplete(true) }, "Cancel ", evPendingLinked.length !== 1 ? "them" : "it"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => finishMarkingEvComplete(false) }, "Keep them"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setCompleteSessionPrompt(false) }, "Never mind"))),
     ev.placementReason && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", padding: "6px 2px", marginBottom: 10, fontSize: 12, color: T.muted } }, /* @__PURE__ */ React.createElement("span", null, "\u{1F552} ", fmtPlacementReason(ev.placementReason, ev.time))),
@@ -16241,6 +16348,14 @@ function CalendarTab({ setActive = () => {
       }
     });
   }, []);
+  useEffect(() => {
+    refreshPendingReschedules(lsGet("events", [])).then((next) => {
+      if (next) {
+        calHistorySkip.current = true;
+        setEvents2(next);
+      }
+    });
+  }, []);
   const now = /* @__PURE__ */ new Date();
   const [ym, setYm] = useState({ y: now.getFullYear(), m: now.getMonth() });
   const [selDay, setSelDay] = useState(dayKey());
@@ -16408,6 +16523,11 @@ function CalendarTab({ setActive = () => {
   const showDeadlineToast = (deadline) => {
     setDeadlineToast("Can't reschedule past " + deadline + " \u2014 that's the deadline.");
     setTimeout(() => setDeadlineToast(""), 2800);
+  };
+  const [lockedMeetingToast, setLockedMeetingToast] = useState("");
+  const showLockedMeetingToast = () => {
+    setLockedMeetingToast("This is a confirmed meeting \u2014 open it and use Edit to propose a new time instead of dragging it.");
+    setTimeout(() => setLockedMeetingToast(""), 3200);
   };
   const [reconcileToast, setReconcileToast] = useState("");
   const [rescheduleTask, setRescheduleTask] = useState(null);
@@ -18143,17 +18263,7 @@ function CalendarTab({ setActive = () => {
       fsdb().collection("assignments").doc(ev.assignmentId).update({ status: "abandoned", updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).catch(() => {
       });
     }
-    if (ev && ev.studySessionId) {
-      const myUid = firebase.auth().currentUser?.uid;
-      if (myUid) {
-        fsdb().collection("studySessions").doc(ev.studySessionId).update({
-          status: "cancelled",
-          ["participants." + myUid + ".state"]: "cancelled",
-          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-        }).catch(() => {
-        });
-      }
-    }
+    if (ev) notifyMeetingCancellation(ev);
     return isExam ? { prevEvents: events, prevDecks, prevPracticeExams } : null;
   };
   const moveEvent = (id, newDate, newTime) => {
@@ -18161,6 +18271,10 @@ function CalendarTab({ setActive = () => {
     if (!ev) return;
     if (ev.deadline && newDate > ev.deadline) {
       showDeadlineToast(ev.deadline);
+      return;
+    }
+    if (isLockedSharedMeeting(ev)) {
+      showLockedMeetingToast();
       return;
     }
     const checkTime = newTime || ev.time;
@@ -19128,7 +19242,7 @@ Examples:
     },
     (evProjectPlan.phases && evProjectPlan.phases.length > 0 || evProjectPlan.outline && evProjectPlan.outline.length > 0) && /* @__PURE__ */ React.createElement("div", { style: { background: T.amber + "0A", border: `1px solid ${T.amber}33`, borderRadius: 8, padding: "10px 12px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, fontWeight: 600, color: T.text, marginBottom: 6 } }, "This plan was generated from your notes"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginBottom: 8, lineHeight: 1.5 } }, "Collaborators will see everything below once they accept. Close this and edit it above first if anything's too personal to share."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4, maxHeight: 140, overflowY: "auto" } }, (evProjectPlan.phases || []).map((p, i) => /* @__PURE__ */ React.createElement("div", { key: "ph" + i, style: { fontSize: 11.5, color: T.text } }, "\u2022 " + (typeof p === "string" ? p : p.name || ""))), (evProjectPlan.outline || []).map((o, i) => /* @__PURE__ */ React.createElement("div", { key: "ol" + i, style: { fontSize: 11.5, color: T.text } }, "\u2022 " + (typeof o === "string" ? o : o.text || ""))))),
     evCollabLoading ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "Loading your friends\u2026") : evCollabLoadError ? /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginBottom: 10 } }, "Couldn't load your friends list -- check your connection and try again."), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: openEvCollabPicker }, "Try again")) : evCollabCandidates.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "No friends yet \u2014 add some in Studlin Network first.") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Input, { value: evCollabSearchQuery, onChange: (e) => setEvCollabSearchQuery(e.target.value), placeholder: "Search friends", style: { marginBottom: 10, width: "100%" } }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, evCollabCandidates.filter((c) => c.name.toLowerCase().includes(evCollabSearchQuery.trim().toLowerCase())).map((c) => /* @__PURE__ */ React.createElement("label", { key: c.uid, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 10, border: `1px solid ${T.border}`, cursor: "pointer", background: evCollabSelected.includes(c.uid) ? T.card2 : "transparent" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: evCollabSelected.includes(c.uid), onChange: () => toggleEvCollabSelected(c.uid), style: { cursor: "pointer" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text } }, c.name))), evCollabSearchQuery.trim() && evCollabCandidates.filter((c) => c.name.toLowerCase().includes(evCollabSearchQuery.trim().toLowerCase())).length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, 'No friends match "', evCollabSearchQuery.trim(), '".')))
-  ), toast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.lime, color: T.ink, fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 8 } }, Icon.check, " Task added"), placementToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.lime, color: T.ink, fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 8 } }, Icon.check, " ", placementToast), deadlineToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.red, color: "#fff", fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)" } }, deadlineToast), needSyllabusCount > 0 && !syllabusNudgeDismissed && shouldShowSyllabusNudge() && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: 20, zIndex: 80, maxWidth: 300, padding: "10px 12px", borderRadius: 10, border: `1px solid ${T.lime}33`, background: T.card, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", animation: "studlinPop 0.2s ease" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 6 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.text, lineHeight: 1.4 } }, needSyllabusCount === 1 ? "1 class is" : needSyllabusCount + " classes are", " missing a syllabus scan -- add one to auto-fill assignments and exams."), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+  ), toast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.lime, color: T.ink, fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 8 } }, Icon.check, " Task added"), placementToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.lime, color: T.ink, fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 8 } }, Icon.check, " ", placementToast), deadlineToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.red, color: "#fff", fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)" } }, deadlineToast), lockedMeetingToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.red, color: "#fff", fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)" } }, lockedMeetingToast), needSyllabusCount > 0 && !syllabusNudgeDismissed && shouldShowSyllabusNudge() && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: 20, zIndex: 80, maxWidth: 300, padding: "10px 12px", borderRadius: 10, border: `1px solid ${T.lime}33`, background: T.card, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", animation: "studlinPop 0.2s ease" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 6 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.text, lineHeight: 1.4 } }, needSyllabusCount === 1 ? "1 class is" : needSyllabusCount + " classes are", " missing a syllabus scan -- add one to auto-fill assignments and exams."), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
     dismissSyllabusNudge();
     setSyllabusNudgeDismissed(true);
   }, title: "Dismiss", style: { background: "none", border: "none", color: T.faint, fontSize: 13, lineHeight: 1, cursor: "pointer", padding: 0, flexShrink: 0 } }, "\xD7")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 5, marginTop: 7 } }, currentTermSubjects.filter((s) => s.needsSyllabus).map((s) => /* @__PURE__ */ React.createElement(
@@ -22075,12 +22189,46 @@ function App() {
       lsSet("decks", cleanup.decks);
       lsSet("practiceExams", cleanup.practiceExams);
     }
+    notifyMeetingCancellation(ev);
     setEventDeleteUndoSnapshot({ event: ev, ...cleanup || deleteAllOccurrences ? { prevEvents: events, prevDecks, prevPracticeExams } : {} });
     setEventDeleteUndoToast(deleteAllOccurrences ? `Deleted all ${idsToRemove.size} occurrences of "${ev.title}"` : `Deleted "${ev.title}"`);
     setTimeout(() => {
       setEventDeleteUndoToast("");
       setEventDeleteUndoSnapshot(null);
     }, 5e3);
+  };
+  const proposeRescheduleFromDetail = (ev, newDate, newTime) => {
+    const myUid2 = firebase.auth().currentUser?.uid;
+    if (!myUid2 || !ev.chatRoomId || !ev.proposalMemberUids) return;
+    const roomRef = fsdb().collection("chatRooms").doc(ev.chatRoomId);
+    const ts = Date.now();
+    const memberUids = ev.proposalMemberUids;
+    const text = 'Proposed a new time for "' + ev.title + '".';
+    roomRef.collection("messages").add({
+      senderId: myUid2,
+      ts,
+      kind: "calendarReschedule",
+      status: "proposed",
+      title: ev.title,
+      oldDate: ev.date,
+      oldTime: ev.time,
+      newDate,
+      newTime,
+      duration: ev.duration,
+      originalChatMessageId: ev.chatMessageId,
+      memberUids,
+      responses: { [myUid2]: "accepted" }
+    }).then((msgRef) => {
+      roomRef.update({ lastMessage: { text, kind: "calendarReschedule", ts, senderId: myUid2 }, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).catch(() => {
+      });
+      authFetch("/api/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "push", roomId: ev.chatRoomId, preview: text }) }).catch(() => {
+      });
+      const next = lsGet("events", []).map((e) => e.id === ev.id ? { ...e, pendingReschedule: { chatMessageId: msgRef.id, newDate, newTime } } : e);
+      lsSet("events", next);
+      if (calendarSetEventsRef.current) calendarSetEventsRef.current(next);
+    }).catch(reportError("proposeRescheduleFromDetail"));
+    setDashToast("Proposed the new time \u2014 it'll move once everyone agrees.");
+    setTimeout(() => setDashToast(""), 3200);
   };
   const undoEventDeleteFromDetail = () => {
     if (!eventDeleteUndoSnapshot) return;
@@ -22627,6 +22775,7 @@ function App() {
         setTimeout(() => setDashToast(""), 2800);
       },
       onDelete: deleteEventFromDetail,
+      onProposeReschedule: proposeRescheduleFromDetail,
       setActive,
       setPricingOpen
     }

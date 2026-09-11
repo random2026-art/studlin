@@ -8776,6 +8776,47 @@ async function refreshPendingAcceptance(events,ids){
   return next;
 }
 
+// Same fetch-on-mount idiom as refreshPendingAcceptance just above, for the
+// OTHER side of a reschedule negotiation (2026-09-11): the responder's own
+// local event gets patched the instant they hit Accept (see respondToShare's
+// calendarReschedule branch, in the SAME room they're actively viewing) --
+// but the PROPOSER never gets a live push telling them the other person
+// just agreed. This is what the proposer's own client checks on their next
+// visit: re-read the reschedule message their pendingReschedule field
+// points at, and once it's allAccepted, apply the new date/time locally and
+// clear pendingReschedule -- or clear it with nothing applied if declined.
+async function refreshPendingReschedules(events){
+  const targets=(events||[]).filter(ev=>ev.pendingReschedule&&ev.chatRoomId&&ev.pendingReschedule.chatMessageId);
+  if(targets.length===0)return null;
+  const fetched=await Promise.all(targets.map(ev=>
+    fsdb().collection('chatRooms').doc(ev.chatRoomId).collection('messages').doc(ev.pendingReschedule.chatMessageId).get()
+      .then(doc=>doc.exists?{id:ev.id,data:doc.data()}:null)
+      .catch(()=>null)
+  ));
+  let changed=false;
+  const next=events.map(ev=>{
+    const u=fetched.find(x=>x&&x.id===ev.id);
+    if(!u)return ev;
+    const msg=u.data;
+    const memberUids=msg.memberUids||[];
+    const responses=msg.responses||{};
+    const allAccepted=memberUids.length>0&&memberUids.every(uid=>responses[uid]==="accepted");
+    if(msg.status==="declined"){
+      changed=true;
+      return {...ev,pendingReschedule:undefined};
+    }
+    if(allAccepted){
+      changed=true;
+      const {pendingReschedule,...rest}=ev;
+      return {...rest,date:pendingReschedule.newDate,time:pendingReschedule.newTime,userPinned:true};
+    }
+    return ev;
+  });
+  if(!changed)return null;
+  lsSet("events",next);
+  return next;
+}
+
 // Feature 3: Task priority scoring (0-1000 scale with exponential deadline urgency)
 function calculateTaskPriority(task,allTasks){
   let score=0;
@@ -17376,6 +17417,39 @@ function ChatBubble({m,myUid,onRespond,onSchedule,onCounter}){
       </div>
     );
   }
+  // Reschedule request for an already-confirmed shared Meeting/study
+  // session (2026-09-11 user request: "edit time... but it wont update
+  // until the other person or people agree"). Separate message kind from
+  // the original "calendar" proposal above -- that one CREATES a new block
+  // via confirmStudyTime; this one instead patches an EXISTING block in
+  // place once accepted (see respondToShare's own calendarReschedule
+  // branch, and CalendarTab's proposeReschedule/refreshPendingReschedules).
+  if(m.kind==="calendarReschedule"){
+    const responses=m.responses||{};
+    const myResponse=responses[myUid];
+    const needsMyResponse=m.status==="proposed"&&m.senderId!==myUid&&!myResponse;
+    const fmtT=(t)=>{const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+" "+ap;};
+    return (
+      <div style={{alignSelf:"center",width:"100%",padding:"14px 15px",background:T.amber+"1A",border:`1px solid ${T.amber}40`,borderRadius:12}}>
+        <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:8,color:T.amber,fontSize:11,fontWeight:700}}>🕓 Reschedule request</div>
+        <div style={{fontSize:12.5,color:pp.text,lineHeight:1.55,marginBottom:m.status==="proposed"?10:0}}>
+          {m.senderId===myUid?"You proposed moving ":"Wants to move "}<strong>"{m.title}"</strong> from {fmtDateShort(m.oldDate)} at {fmtT(m.oldTime)} to <strong>{fmtDateShort(m.newDate)} at {fmtT(m.newTime)}</strong>.
+        </div>
+        {m.status==="proposed"&&(needsMyResponse?(
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={()=>onRespond(m.id,"accepted")} style={{flex:1,padding:"7px 0",borderRadius:7,background:T.lime,color:T.bg,border:"none",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Accept</button>
+            <button onClick={()=>onRespond(m.id,"declined")} style={{flex:1,padding:"7px 0",borderRadius:7,background:"transparent",color:pp.muted,border:`1px solid ${pp.border}`,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Decline</button>
+          </div>
+        ):(
+          <div style={{fontSize:11,color:myResponse==="declined"?pp.faint:T.lime,fontWeight:600}}>
+            {m.senderId===myUid?"Waiting on them…":myResponse==="accepted"?"✓ You accepted":"Waiting…"}
+          </div>
+        ))}
+        {m.status==="confirmed"&&<div style={{fontSize:11.5,color:T.lime,fontWeight:600}}>✓ Moved on both calendars</div>}
+        {m.status==="declined"&&<div style={{fontSize:11,color:pp.faint,fontWeight:600}}>Declined — staying at the original time</div>}
+      </div>
+    );
+  }
   if(m.kind==="note"||m.kind==="deck"){
     const isNote=m.kind==="note";
     const incoming=m.senderId!==myUid;
@@ -17475,6 +17549,55 @@ function computeAcceptanceSummary(memberUids,responses){
   const declined=uids.filter(uid=>r[uid]==="declined").length;
   const pending=total-accepted-declined;
   return {total,accepted,declined,pending,allAccepted:total>0&&accepted===total};
+}
+// User request, 2026-09-11: "if i plan to meet with a friend and it has
+// the meeting on the calendar make it so that i cant move it." True once
+// every invited person has accepted -- a still-pending proposal is fine to
+// drag freely (only the proposer's own calendar has it at all so far, see
+// confirmStudyTime's own comment). Pure and shared: moveEvent's drag guard
+// and EventDetailModal's Save-becomes-propose guard both need the exact
+// same answer to "is this locked," not two independently-typed checks.
+function isLockedSharedMeeting(ev){
+  return !!(ev&&ev.proposalMemberUids&&computeAcceptanceSummary(ev.proposalMemberUids,ev.proposalResponses).allAccepted);
+}
+// User request, 2026-09-11: "if i plan to meet with a friend... theres
+// option to delete but it will let the other people know or person he
+// deleted it so not planning on going." Deleting a confirmed shared block
+// locally must not leave the other participant(s) silently stood up.
+// Two shapes, two different existing channels:
+//  - A "study block" co-op session has a real live studySessions doc --
+//    flip it to status:"cancelled" and the OTHER participant's own
+//    already-existing coopCancelAlerts listener (App's mount effect)
+//    picks it up and tells them, no new plumbing needed.
+//  - A "busy block" Meeting (scheduleGroupSession's other mode) never
+//    gets a studySessions doc at all -- there was no notify path here
+//    whatsoever until this fix. Sends a plain chat message instead, the
+//    same proven, already-deployed DM channel the "Ask them to turn it
+//    on" fix (2026-09-10) already established as more reliable than a
+//    push notification the recipient may never have granted permission
+//    for.
+// Called from both delete paths this app has (CalendarTab's own
+// deleteEventWithUndo, and App-level deleteEventFromDetail behind the
+// Edit Task modal's Delete button) -- one function, not two independently
+// maintained copies of the same notify logic.
+function notifyMeetingCancellation(ev){
+  const myUid=firebase.auth().currentUser?.uid;
+  if(!myUid||!ev)return;
+  if(ev.studySessionId){
+    fsdb().collection('studySessions').doc(ev.studySessionId).update({
+      status:"cancelled",
+      ["participants."+myUid+".state"]:"cancelled",
+      updatedAt:new Date().toISOString(),
+    }).catch(()=>{});
+    return;
+  }
+  if(!ev.chatRoomId||!isLockedSharedMeeting(ev))return;
+  const roomRef=fsdb().collection('chatRooms').doc(ev.chatRoomId);
+  const ts=Date.now();
+  const text=(getUserName()||"They")+" cancelled \""+ev.title+"\" ("+fmtDateShort(ev.date)+(ev.time?" at "+fmtTimeRange(ev.time,ev.duration||30):"")+") — not planning on going.";
+  roomRef.collection('messages').add({senderId:myUid,ts,kind:"text",text}).catch(()=>{});
+  roomRef.update({lastMessage:{text,kind:"text",ts,senderId:myUid},updatedAt:new Date().toISOString()}).catch(()=>{});
+  authFetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"push",roomId:ev.chatRoomId,preview:text})}).catch(()=>{});
 }
 // Ranks up to 3 shared-availability options for myUid + otherUids, best day
 // first (see scoring below). Lifted out of ChatDrawer (2026-08-21) -- it
@@ -17837,6 +17960,43 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
         ["responses."+myUid]:decision,
         status:nextStatus,
       }).catch(reportError("respondToShare-calendar"));
+      return;
+    }
+    // Reschedule request for an already-confirmed shared block -- see
+    // ChatBubble's own calendarReschedule comment for the full picture.
+    // originalChatMessageId is the stable key linking BOTH sides' own
+    // local calendar copies back to the SAME real-world meeting (there is
+    // no other shared id -- each side's event was created independently
+    // by its own confirmStudyTime call, with its own local id). Applying
+    // the actual date/time change here (the responder's own local event)
+    // mirrors what CalendarTab's refreshPendingReschedules does for the
+    // PROPOSER's side once this same allAccepted flip is visible there.
+    if(msg.kind==="calendarReschedule"){
+      if(!myUid)return;
+      const memberUids=msg.memberUids||[];
+      const nextResponses={...(msg.responses||{}),[myUid]:decision};
+      const allAccepted=memberUids.length>0&&memberUids.every(uid=>nextResponses[uid]==="accepted");
+      if(decision==="accepted"&&allAccepted){
+        const localEvents=lsGet("events",[]);
+        const idx=localEvents.findIndex(e=>e.chatMessageId===msg.originalChatMessageId);
+        if(idx>-1){
+          // Plain lsGet/lsSet, no live-refresh callback -- same convention
+          // confirmStudyTime/addTaskWithRebalance already use for the
+          // original accept flow. ChatDrawer has no bridge to a currently-
+          // mounted CalendarTab's own React state (that bridge only exists
+          // at App level, see calendarSetEventsRef's own comment there);
+          // whoever's on the Calendar tab already sees it on their next
+          // visit/remount, same honest "current as of last look" tradeoff
+          // refreshPendingAcceptance's own comment documents.
+          const next=localEvents.map((e,i)=>i===idx?{...e,date:msg.newDate,time:msg.newTime,pendingReschedule:undefined,userPinned:true}:e);
+          lsSet("events",next);
+        }
+      }
+      const nextStatus=decision==="declined"?"declined":(allAccepted?"confirmed":"proposed");
+      fsdb().collection('chatRooms').doc(roomId).collection('messages').doc(id).update({
+        ["responses."+myUid]:decision,
+        status:nextStatus,
+      }).catch(reportError("respondToShare-calendarReschedule"));
       return;
     }
     if(decision==="approved"&&msg.senderId!==myUid){
@@ -24998,7 +25158,7 @@ function NewSlotPickerModal({title,sub,candidates,onConfirm,onClose,onManual,con
 // CalendarTab) decides once what "persist" means for it, instead of six
 // different inline lsSet calls each needing to remember to also sync
 // whatever local state that caller happens to hold.
-function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOpen=()=>{},onDelete=()=>{}}){
+function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOpen=()=>{},onDelete=()=>{},onProposeReschedule=()=>{}}){
   const allEvents=lsGet("events",[]);
   const ev=allEvents.find(e=>e.id===eventId);
   // Bug fix, 2026-09-04 audit (2nd pass): a Google-synced event (id shape
@@ -25015,6 +25175,15 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   // deleting here only stops Studlin from displaying it locally, it never
   // touches the real Google event, so it's a different, safe operation.
   const isGoogleSynced=!!(eventId&&eventId.indexOf("gcal-")===0);
+  // 2026-09-11 user request: a confirmed shared Meeting/study session
+  // can't have its time silently changed by one side alone -- see
+  // isLockedSharedMeeting's own comment. Title/notes/other fields still
+  // save normally; only date/time changes get intercepted (see save()
+  // below) and routed through onProposeReschedule instead of committing
+  // directly.
+  const isLockedMeeting=isLockedSharedMeeting(ev);
+  const hasPendingReschedule=!!(ev&&ev.pendingReschedule);
+  const fmtClockTime=(t)=>{if(!t)return "";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+" "+ap;};
   const routines=getWeeklyRoutine();
   const userSubjects=getSubjects();
   const SUBJ=[{value:"None",label:"None",color:T.lime},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
@@ -25606,6 +25775,19 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   const save=()=>{
     if(isGoogleSynced)return;
     if(!title.trim())return;
+    // A confirmed shared meeting's date/time isn't yours alone to change --
+    // divert just that into a reschedule request instead of committing it,
+    // and stop here rather than also proceeding with the rest of this
+    // Save (finishSave below reads `date`/`time` from this same closure,
+    // not from `ev` -- proceeding in the same click would still commit the
+    // very time change this is supposed to require agreement for). Any
+    // other field edit (title/notes/etc.) just needs a second, ordinary
+    // Save click once the fields are reset below.
+    if(isLockedMeeting&&!hasPendingReschedule&&(date!==ev.date||time!==ev.time)){
+      onProposeReschedule(ev,date,time);
+      setDate(ev.date);setTime(ev.time);
+      return;
+    }
     if(deadline&&date>deadline){setDeadlineErr("Can't schedule past the deadline ("+deadline+").");return;}
     if((showsPhaseDetail||requiresProjectDetail)&&!notes.trim()){setDetailErr("Add a bit of detail so Studlin can suggest real phases, not a generic template.");return;}
     // Same gap as NewEventModal's saveManual/aiArrange (see their own
@@ -25804,6 +25986,16 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
       {ev.googleRecurringId&&(
         <div style={{padding:"6px 2px",marginBottom:10,fontSize:12,color:T.muted}}>
           🔁 This repeats on your Google Calendar -- each occurrence is its own item here. Delete offers an "all occurrences" option.
+        </div>
+      )}
+      {isLockedMeeting&&!hasPendingReschedule&&(
+        <div style={{padding:"8px 10px",marginBottom:10,fontSize:12,color:T.text,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,lineHeight:1.5}}>
+          🔒 Everyone's confirmed this time. Changing the date/time above and hitting Save sends a request instead of moving it right away -- it only actually moves once they agree. Delete still works immediately, and lets them know you're not planning on going.
+        </div>
+      )}
+      {hasPendingReschedule&&(
+        <div style={{padding:"8px 10px",marginBottom:10,fontSize:12,color:T.text,background:T.amber+"14",border:`1px solid ${T.amber}40`,borderRadius:8,lineHeight:1.5}}>
+          🕓 Waiting on the other side to agree to {fmtDateShort(ev.pendingReschedule.newDate)} at {fmtClockTime(ev.pendingReschedule.newTime)}. It'll move automatically once they accept.
         </div>
       )}
       {isDeadlineKind&&(
@@ -27698,6 +27890,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   useEffect(()=>{
     refreshPendingAcceptance(lsGet("events",[])).then(next=>{ if(next){calHistorySkip.current=true;setEvents(next);} });
   },[]);
+  // Same mount-time check for a reschedule proposal THIS device sent out
+  // for a confirmed Meeting -- see refreshPendingReschedules' own comment.
+  useEffect(()=>{
+    refreshPendingReschedules(lsGet("events",[])).then(next=>{ if(next){calHistorySkip.current=true;setEvents(next);} });
+  },[]);
 
   const now=new Date();
   const [ym,setYm]=useState({y:now.getFullYear(),m:now.getMonth()});
@@ -27959,6 +28156,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // reschedule attempt past a task's own deadline never silently succeeds.
   const [deadlineToast,setDeadlineToast]=useState("");
   const showDeadlineToast=(deadline)=>{setDeadlineToast("Can't reschedule past "+deadline+" — that's the deadline.");setTimeout(()=>setDeadlineToast(""),2800);};
+  // 2026-09-11 user request: a confirmed shared Meeting/study session (both
+  // sides accepted) used to be draggable exactly like any other block --
+  // moving it only ever moved YOUR OWN local copy, silently desyncing you
+  // from the other person's calendar with no warning either of you ever
+  // saw. Same Hard-Wall-rejection idiom as showDeadlineToast just above.
+  const [lockedMeetingToast,setLockedMeetingToast]=useState("");
+  const showLockedMeetingToast=()=>{setLockedMeetingToast("This is a confirmed meeting — open it and use Edit to propose a new time instead of dragging it.");setTimeout(()=>setLockedMeetingToast(""),3200);};
   const [reconcileToast,setReconcileToast]=useState("");
   // Velocity Impact reschedule confirmation — set to the task being
   // rescheduled, null when closed.
@@ -30187,27 +30391,18 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // unlike assignmentId, a note has no status enum anything else reads, so
     // there's no orphan *state* to clean up on the note side — just a
     // noteId on a now-deleted event, which disappears with the event.
-    // Deleting a co-op study session locally must not leave the other
-    // participant(s) silently stood up — signal the shared doc so App's
-    // own listener can tell them, same idiom as the assignmentId cleanup
-    // above. Fields written here are all already allowed by
-    // firestore.rules' studySessions update rule, no rules change needed.
-    if(ev&&ev.studySessionId){
-      const myUid=firebase.auth().currentUser?.uid;
-      if(myUid){
-        fsdb().collection('studySessions').doc(ev.studySessionId).update({
-          status:"cancelled",
-          ["participants."+myUid+".state"]:"cancelled",
-          updatedAt:new Date().toISOString(),
-        }).catch(()=>{});
-      }
-    }
+    // Deleting a confirmed shared block (co-op study session OR a
+    // Meeting) locally must not leave the other participant(s) silently
+    // stood up -- see notifyMeetingCancellation's own comment for the two
+    // channels this picks between.
+    if(ev)notifyMeetingCancellation(ev);
     return isExam?{prevEvents:events,prevDecks,prevPracticeExams}:null;
   };
   const moveEvent=(id,newDate,newTime)=>{
     const ev=events.find(e=>e.id===id);
     if(!ev)return;
     if(ev.deadline&&newDate>ev.deadline){showDeadlineToast(ev.deadline);return;}
+    if(isLockedSharedMeeting(ev)){showLockedMeetingToast();return;}
     // Dropping onto a specific time slot (WeeklyPlanner drag, or any future
     // drag surface that computes one) is a deliberate placement choice —
     // pin it so a later rebalanceDay never picks it back up and moves it
@@ -31565,6 +31760,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       )}
       {deadlineToast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.red,color:"#fff",fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)"}}>{deadlineToast}</div>
+      )}
+      {lockedMeetingToast&&(
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.red,color:"#fff",fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)"}}>{lockedMeetingToast}</div>
       )}
       {/* Missing-syllabus nudge, now a one-time floating toast instead of a
           permanent sidebar fixture -- see needSyllabusCount's own comment
@@ -37267,9 +37465,46 @@ function App() {
     const next=(cleanup?cleanup.events:events).filter(e=>!idsToRemove.has(e.id));
     lsSet("events",next);if(calendarSetEventsRef.current)calendarSetEventsRef.current(next);
     if(cleanup){lsSet("decks",cleanup.decks);lsSet("practiceExams",cleanup.practiceExams);}
+    // Same shared-block notify as CalendarTab's own deleteEventWithUndo --
+    // see notifyMeetingCancellation's own comment. This modal is the OTHER
+    // delete path in the app (Dashboard's "Your Classes" rows, and
+    // Calendar's own Edit Task modal both route Delete through here), so
+    // without this call deleting a confirmed Meeting/co-op session from
+    // here specifically would silently skip notifying the other person.
+    notifyMeetingCancellation(ev);
     setEventDeleteUndoSnapshot({event:ev,...((cleanup||deleteAllOccurrences)?{prevEvents:events,prevDecks,prevPracticeExams}:{})});
     setEventDeleteUndoToast(deleteAllOccurrences?`Deleted all ${idsToRemove.size} occurrences of "${ev.title}"`:`Deleted "${ev.title}"`);
     setTimeout(()=>{setEventDeleteUndoToast("");setEventDeleteUndoSnapshot(null);},5000);
+  };
+  // 2026-09-11 user request: editing a confirmed shared Meeting's time in
+  // the Edit Task modal doesn't move it directly -- it sends a reschedule
+  // request into the same chat room the original invite lives in, and only
+  // actually moves once every invited person accepts (see
+  // refreshPendingReschedules/respondToShare's calendarReschedule branch
+  // for the other half of this). Lives here, not in CalendarTab, for the
+  // same reason deleteEventFromDetail does: this modal is the one shared
+  // edit surface for BOTH Dashboard and Calendar, and only App holds the
+  // calendarSetEventsRef bridge needed to push the pendingReschedule stamp
+  // into a currently-mounted CalendarTab's own live state.
+  const proposeRescheduleFromDetail=(ev,newDate,newTime)=>{
+    const myUid=firebase.auth().currentUser?.uid;
+    if(!myUid||!ev.chatRoomId||!ev.proposalMemberUids)return;
+    const roomRef=fsdb().collection('chatRooms').doc(ev.chatRoomId);
+    const ts=Date.now();
+    const memberUids=ev.proposalMemberUids;
+    const text="Proposed a new time for \""+ev.title+"\".";
+    roomRef.collection('messages').add({
+      senderId:myUid,ts,kind:"calendarReschedule",status:"proposed",
+      title:ev.title,oldDate:ev.date,oldTime:ev.time,newDate,newTime,duration:ev.duration,
+      originalChatMessageId:ev.chatMessageId,memberUids,responses:{[myUid]:"accepted"},
+    }).then(msgRef=>{
+      roomRef.update({lastMessage:{text,kind:"calendarReschedule",ts,senderId:myUid},updatedAt:new Date().toISOString()}).catch(()=>{});
+      authFetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"push",roomId:ev.chatRoomId,preview:text})}).catch(()=>{});
+      const next=lsGet("events",[]).map(e=>e.id===ev.id?{...e,pendingReschedule:{chatMessageId:msgRef.id,newDate,newTime}}:e);
+      lsSet("events",next);if(calendarSetEventsRef.current)calendarSetEventsRef.current(next);
+    }).catch(reportError("proposeRescheduleFromDetail"));
+    setDashToast("Proposed the new time — it'll move once everyone agrees.");
+    setTimeout(()=>setDashToast(""),3200);
   };
   const undoEventDeleteFromDetail=()=>{
     if(!eventDeleteUndoSnapshot)return;
@@ -38223,6 +38458,7 @@ function App() {
           commit={(next)=>{lsSet("events",next);if(calendarSetEventsRef.current)calendarSetEventsRef.current(next);}}
           onToast={(msg)=>{setDashToast(msg);setTimeout(()=>setDashToast(""),2800);}}
           onDelete={deleteEventFromDetail}
+          onProposeReschedule={proposeRescheduleFromDetail}
           setActive={setActive} setPricingOpen={setPricingOpen} />
       )}
       {eventDeleteUndoToast&&(
