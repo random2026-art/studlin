@@ -174,6 +174,7 @@ function loadStudlinModule(options) {
     "computeCapacitySlack","EXAM_READINESS_TIGHT_SLACK_RATIO",
     "applyHoursTarget",
     "computeAssignmentPace","ASSIGNMENT_BEHIND_THRESHOLD","ATTACK_BLOCK_DEFAULT_ESTIMATE_HOURS",
+    "shouldOfferProjectCheckIn",
     "isPaceNudgeDismissed","dismissPaceNudge","PACE_NUDGE_COOLDOWN_MS",
     "computeFillSuggestions","shouldFireStreakNudge","getStreakNudgeSentDate","markStreakNudgeSent",
     "reminderCategoryAllowed","pickLatestQueuedNudgesByKind","CATCHUP_RECOVERY_THRESHOLD",
