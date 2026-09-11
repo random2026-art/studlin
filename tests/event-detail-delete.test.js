@@ -29,7 +29,11 @@ const SOURCE = fs.readFileSync(path.join(__dirname, "..", "studlin-app.jsx"), "u
 
 describe("EventDetailModal: Delete button + confirm modal", () => {
   test("accepts an onDelete prop, defaulting to a no-op so every pre-existing caller stays byte-safe", () => {
-    assert.match(SOURCE, /function EventDetailModal\(\{eventId,onClose,commit,onToast,setActive,setPricingOpen=\(\)=>\{\},onDelete=\(\)=>\{\}\}\)\{/);
+    // 2026-09-11: this signature grew onProposeReschedule (locked-meeting
+    // mutual consent) right after onDelete's default -- matched as a
+    // prefix so that additive prop doesn't require re-encoding the exact
+    // closing "}){" here again.
+    assert.match(SOURCE, /function EventDetailModal\(\{eventId,onClose,commit,onToast,setActive,setPricingOpen=\(\)=>\{\},onDelete=\(\)=>\{\}/);
   });
 
   test("has its own deleteConfirmOpen state, independent of the pre-existing cancelConfirmOpen state", () => {
@@ -40,7 +44,7 @@ describe("EventDetailModal: Delete button + confirm modal", () => {
 
   test("the main modal footer has a Delete button that opens the confirm modal, not an immediate delete", () => {
     const idx = SOURCE.indexOf("function EventDetailModal(");
-    const body = SOURCE.slice(idx, idx + 48000);
+    const body = SOURCE.slice(idx, idx + 52000);
     assert.match(body, /<Btn variant="danger" onClick=\{\(\)=>setDeleteConfirmOpen\(true\)\}>Delete<\/Btn>/);
   });
 
@@ -114,7 +118,7 @@ describe("App(): delete-with-undo wiring for EventDetailModal (mirrors CalendarT
 
   test("deleting shows an undo toast that clears itself after 5 seconds, same timing as the calendar grid's own delete-undo", () => {
     const idx = SOURCE.indexOf("const deleteEventFromDetail=");
-    const body = SOURCE.slice(idx, idx + 1500);
+    const body = SOURCE.slice(idx, idx + 2200);
     assert.match(body, /setEventDeleteUndoSnapshot\(\{event:ev,\.\.\.\(\(cleanup\|\|deleteAllOccurrences\)\?\{prevEvents:events,prevDecks,prevPracticeExams\}:\{\}\)\}\);/);
     assert.match(body, /setEventDeleteUndoToast\(deleteAllOccurrences\?`Deleted all \$\{idsToRemove\.size\} occurrences of "\$\{ev\.title\}"`:`Deleted "\$\{ev\.title\}"`\);/);
     assert.match(body, /setTimeout\(\(\)=>\{setEventDeleteUndoToast\(""\);setEventDeleteUndoSnapshot\(null\);\},5000\);/);

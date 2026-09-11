@@ -63,7 +63,12 @@ describe("Month view's onDrop now handles both MIME-based drag chips (source-lev
 
 describe("Day view (DayPlanner) gains full drag-and-drop from scratch (source-level regression guards)", () => {
   test("accepts the same drag-related props CalendarTab already threads into WeeklyPlanner", () => {
-    assert.match(SOURCE, /function DayPlanner\(\{dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending, openNew, newItemHighlightIds, onEditRoutine, moveEvent, sidebarDragChip, onDropSidebarChip, onDropManualBlockRequest, onDropNewTaskRequest, onDropRoutineOccurrence, onRoutineDragStateChange\}\) \{/);
+    // 2026-09-11: DayPlanner's signature grew quickCreateDraft/
+    // onQuickCreateDrag/onQuickCreateDragEnd (the drag-to-create-a-task
+    // feature) -- matched as a prefix here rather than re-encoding the
+    // full, now-longer parameter list, so a future additive prop doesn't
+    // require touching this same assertion again.
+    assert.match(SOURCE, /function DayPlanner\(\{dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending, openNew, newItemHighlightIds, onEditRoutine, moveEvent, sidebarDragChip, onDropSidebarChip, onDropManualBlockRequest, onDropNewTaskRequest, onDropRoutineOccurrence, onRoutineDragStateChange/);
   });
 
   test("CalendarTab wires moveEvent/sidebarDragChip/both MIME handlers/routine-occurrence dragging into DayPlanner, same shared functions Week/Month already trust", () => {
@@ -100,7 +105,12 @@ describe("Day view (DayPlanner) gains full drag-and-drop from scratch (source-le
   });
 
   test("the timeline container is wired with onDragOver/onDrop/onDragLeave so dropping is possible anywhere on the day, not just on existing blocks", () => {
-    assert.match(SOURCE, /ref=\{timelineRef\} onDragOver=\{handleDayDragOver\} onDrop=\{handleDayDrop\} onDragLeave=\{\(\)=>setDayDragOver\(false\)\}/);
+    // 2026-09-11: this element gained data-gridbg/onMouseDown (drag-to-
+    // create a task) between ref and onDragOver -- checked individually so
+    // that additive change doesn't require re-encoding the exact
+    // attribute order here again.
+    assert.match(SOURCE, /ref=\{timelineRef\}/);
+    assert.match(SOURCE, /onDragOver=\{handleDayDragOver\} onDrop=\{handleDayDrop\} onDragLeave=\{\(\)=>setDayDragOver\(false\)\}/);
   });
 
   test("a cancelled drag (dropped outside a valid target) resets all drag state via onDragEnd, so the preview line never gets stuck", () => {
