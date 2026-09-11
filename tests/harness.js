@@ -188,6 +188,7 @@ function loadStudlinModule(options) {
     "computeRescheduleCandidates","RESCHEDULE_SCAN_DAYS","RESCHEDULE_MAX_CANDIDATES",
     "computeAcceptanceSummary","refreshPendingAcceptance","addTaskWithRebalance",
     "isLockedSharedMeeting","notifyMeetingCancellation","refreshPendingReschedules",
+    "looksLikeDateString",
     // 2026-08-22 intelligence audit fixes (batch 1) -- exported so their
     // regression tests can call them directly rather than reaching them
     // only indirectly through a component closure.
