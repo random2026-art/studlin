@@ -493,9 +493,16 @@ function TourStep({ targetRef, title, body, step, total, onNext, onSkip, isLast 
   return ReactDOM.createPortal((
     <div style={{position:"fixed",inset:0,zIndex:900,animation:"studlinFade 0.18s ease-out"}}>
       {anchored ? (
-        <div style={{position:"fixed",top:rect.top-10,left:rect.left-10,width:rect.width+20,height:rect.height+20,borderRadius:14,border:`3px solid ${T.lime}`,boxShadow:`0 0 0 4000px rgba(0,0,0,0.92), 0 0 0 6px ${T.lime}33`,pointerEvents:"none"}} />
+        // 2026-09-11 user report: this used to black out almost the whole
+        // calendar (0.92 alpha) behind the spotlight -- fine when the tour
+        // ran over an empty calendar (the old ordering, see
+        // classSetupOpen's own comment), but the entire point of running
+        // it AFTER onboarding now is to show off a populated calendar, not
+        // hide it. Lighter surround (0.45) keeps everything else legible
+        // while the lime ring still makes the actual target unambiguous.
+        <div style={{position:"fixed",top:rect.top-10,left:rect.left-10,width:rect.width+20,height:rect.height+20,borderRadius:14,border:`3px solid ${T.lime}`,boxShadow:`0 0 0 4000px rgba(0,0,0,0.45), 0 0 0 6px ${T.lime}33`,pointerEvents:"none"}} />
       ) : (
-        <div style={{position:"absolute",inset:0,background:"rgba(8,12,10,0.75)",backdropFilter:"blur(4px)"}} />
+        <div style={{position:"absolute",inset:0,background:"rgba(8,12,10,0.4)"}} />
       )}
       <div data-tour-callout style={{...calloutStyle, background:T.card, border:`1px solid ${T.border}`, borderRadius:14, padding:"18px 20px", boxShadow:"0 24px 60px -16px rgba(0,0,0,0.55)", zIndex:910, animation:"studlinPop 0.2s cubic-bezier(.2,.85,.3,1)"}}>
         <div style={{display:"flex",gap:5,marginBottom:12}}>
@@ -22573,8 +22580,60 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     setMeetingTimeExpandedManually(false);
   };
 
-  const buildReviewFromExtraction=(result,sourceText)=>{
+  // Shared by buildReviewFromExtraction (a fresh review) and
+  // mergeExtractionIntoReview (2026-09-11: adding a syllabus scan to a
+  // class already mid-review, see its own comment) -- idPrefix keeps a
+  // merged batch's ids from colliding with whatever's already in
+  // review.items (a fresh review's own items always start from an empty
+  // array, so the plain index-based id there was never actually a
+  // collision risk until a second extraction could land in the same array).
+  const mapDeadlinesToReviewItems=(deadlines,idPrefix)=>{
     const today=dayKey();
+    return (deadlines||[]).map((d,i)=>{
+      const kind=d.kind==="exam"?"exam":d.kind==="project"?"project":"assignment";
+      const isPast=!!d.date&&d.date<today;
+      return {
+        id:idPrefix+"-"+i,title:d.title||"Untitled",date:d.date||today,kind,
+        // A mid-semester scan surfaces work that's already done -- default
+        // those unchecked (still visible, freely re-checkable) instead of
+        // presenting a pile of finished work as if it were new.
+        include:!isPast,
+        noDate:false,
+        attackBlock:kind!=="exam",
+        proposeSessions:false,
+        sessionCount:defaultSessionCountFor(d.examWeight),
+        examWeight:d.examWeight,
+        confidence:d.confidence,
+        detail:d.detail||"",
+        detailOpen:false,
+        estimatedHours:d.estimatedHours,
+        difficulty:typeof d.difficulty==="number"?Math.max(0,Math.min(1000,Math.round(d.difficulty))):500,
+        phases:undefined,phasesLoading:false,
+        outline:undefined,outlineLoading:false,
+        materialFiles:[],materialLinks:[],materialOpen:false,linkDraft:"",linkLabelDraft:"",pasteMaterialMode:false,pasteMaterialText:"",
+      };
+    });
+  };
+  // 2026-09-11 user request: reviewing a class that came from a whole-
+  // schedule scan (exam dates only, see classNeedsSyllabus's own comment)
+  // used to dead-end at "add a syllabus for this class anytime from
+  // Courses" -- deferring the actual payoff to after onboarding was over.
+  // This is the merge counterpart to buildReviewFromExtraction below: same
+  // extraction result, but folded INTO the class currently being reviewed
+  // (keeping its real name/color/already-staged items) instead of starting
+  // a brand new one. See the "scanForThisClass" addMode branch and the
+  // "+ Add syllabus for this class" button in the items review step.
+  const mergeExtractionIntoReview=(result,sourceText)=>{
+    setReview(r=>({
+      ...r,
+      sourceText:r.sourceText||sourceText||"",
+      meetingTimes:r.meetingTimes.length>0?r.meetingTimes:(result.meetingTimes||[]).map((mt,i)=>({id:"mt-"+Date.now()+"-"+i,days:Array.isArray(mt.days)?mt.days:[],startTime:mt.startTime||"09:00",duration:mt.duration||50})),
+      items:[...r.items,...mapDeadlinesToReviewItems(result.deadlines,"cd-"+Date.now())],
+    }));
+    setReviewSub("items");
+    setAddMode("review");
+  };
+  const buildReviewFromExtraction=(result,sourceText)=>{
     // Importing a syllabus for a course that already exists (targetCourseId
     // set -- the "Import syllabus" action from an existing class's own
     // menu) must reuse that course's real, already-established name and
@@ -22599,30 +22658,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
       // confidence read on the class name/meeting time).
       scheduleConfidence:result.scheduleConfidence,
       meetingTimes:(result.meetingTimes||[]).map((mt,i)=>({id:"mt-"+Date.now()+"-"+i,days:Array.isArray(mt.days)?mt.days:[],startTime:mt.startTime||"09:00",duration:mt.duration||50})),
-      items:(result.deadlines||[]).map((d,i)=>{
-        const kind=d.kind==="exam"?"exam":d.kind==="project"?"project":"assignment";
-        const isPast=!!d.date&&d.date<today;
-        return {
-          id:"cd-"+i,title:d.title||"Untitled",date:d.date||today,kind,
-          // A mid-semester scan surfaces work that's already done -- default
-          // those unchecked (still visible, freely re-checkable) instead of
-          // presenting a pile of finished work as if it were new.
-          include:!isPast,
-          noDate:false,
-          attackBlock:kind!=="exam",
-          proposeSessions:false,
-          sessionCount:defaultSessionCountFor(d.examWeight),
-          examWeight:d.examWeight,
-          confidence:d.confidence,
-          detail:d.detail||"",
-          detailOpen:false,
-          estimatedHours:d.estimatedHours,
-          difficulty:typeof d.difficulty==="number"?Math.max(0,Math.min(1000,Math.round(d.difficulty))):500,
-          phases:undefined,phasesLoading:false,
-          outline:undefined,outlineLoading:false,
-          materialFiles:[],materialLinks:[],materialOpen:false,linkDraft:"",linkLabelDraft:"",pasteMaterialMode:false,pasteMaterialText:"",
-        };
-      }),
+      items:mapDeadlinesToReviewItems(result.deadlines,"cd"),
     });
     setEditingPendingId(null);
     setReviewSub("items");
@@ -22666,7 +22702,13 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   // single-class scan didn't, so it silently dropped the student onto a
   // blank "Review this class" form with no explanation why.
   const syllabusFoundNothing=(result)=>!result.subject&&(!result.meetingTimes||result.meetingTimes.length===0)&&(!result.deadlines||result.deadlines.length===0);
-  const handleScanFile=async(e)=>{
+  // merge (2026-09-11): true when this scan was launched from "+ Add
+  // syllabus for this class" inside an in-progress review (see
+  // mergeExtractionIntoReview's own comment) rather than the "+ Add a
+  // class" chooser -- folds the result into the class already being
+  // reviewed instead of starting a new one. Everything else about reading
+  // the file/text is identical either way.
+  const handleScanFile=async(e,{merge}={})=>{
     const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";
     const ext=file.name.split(".").pop().toLowerCase();
     if(IMAGE_EXT_MEDIA_TYPES[ext]){if(!canScanScreenshot()&&!canFreeOnboardingScan("syllabus")){setPricingOpen(canScanScreenshotReason()==="free-tier"?"screenshotScan":"aiUsageCap");return;}}
@@ -22681,7 +22723,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
         if(syllabusFoundNothing(result)){setScanError("Couldn't find much in that image -- try a clearer photo, or fill in the class details yourself below.");return;}
         if(!canScanScreenshot())markFreeScanUsed("syllabus");
         recordScreenshotScan();
-        buildReviewFromExtraction(result);
+        if(merge)mergeExtractionIntoReview(result);else buildReviewFromExtraction(result);
         return;
       }
       let text="";
@@ -22705,12 +22747,12 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
       if(syllabusFoundNothing(result)){setScanError("Couldn't find much in that file -- try a clearer copy, or fill in the class details yourself below.");return;}
       if(!canScanSyllabus())markFreeScanUsed("syllabus");
       recordSyllabusScan();
-      buildReviewFromExtraction(result,text);
+      if(merge)mergeExtractionIntoReview(result,text);else buildReviewFromExtraction(result,text);
     }catch(err){setScanError("Couldn't read that file: "+err.message);}
     finally{setScanning(false);}
   };
 
-  const handlePasteScan=async()=>{
+  const handlePasteScan=async({merge}={})=>{
     if(!pasteText.trim())return;
     if(!canScanSyllabus()&&!canFreeOnboardingScan("syllabus")){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}
     setScanning(true);setScanError("");
@@ -22720,7 +22762,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
       if(syllabusFoundNothing(result)){setScanError("Couldn't find much in that text -- try pasting more of it, or fill in the class details yourself below.");return;}
       if(!canScanSyllabus())markFreeScanUsed("syllabus");
       recordSyllabusScan();
-      buildReviewFromExtraction(result,pasteText);
+      if(merge)mergeExtractionIntoReview(result,pasteText);else buildReviewFromExtraction(result,pasteText);
     }catch(err){setScanError("Couldn't read that text: "+err.message);}
     finally{setScanning(false);}
   };
@@ -23436,8 +23478,11 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
             )}
           </>)}
 
-          {step==="classes"&&addMode==="scan"&&(<>
-            <TitleSub title={status==="highschool"?"Scan assignments":"Scan a syllabus"} sub={status==="highschool"?"A unit calendar, worksheet, handout, whatever your teacher gave you -- PDF, Word doc, text, or a photo. Studlin reads it and fills in the review below.":"PDF, Word doc, text, or a photo/screenshot — Studlin reads it and fills in the review below."} />
+          {step==="classes"&&(addMode==="scan"||addMode==="scanForThisClass")&&(()=>{
+            const forThisClass=addMode==="scanForThisClass";
+            return (<>
+            <TitleSub title={forThisClass?"Add syllabus for "+(review.subjectName||"this class"):(status==="highschool"?"Scan assignments":"Scan a syllabus")}
+              sub={forThisClass?"PDF, Word doc, text, or a photo/screenshot — Studlin reads it and adds what it finds to this class's assignments, exams & projects below.":(status==="highschool"?"A unit calendar, worksheet, handout, whatever your teacher gave you -- PDF, Word doc, text, or a photo. Studlin reads it and fills in the review below.":"PDF, Word doc, text, or a photo/screenshot — Studlin reads it and fills in the review below.")} />
             {/* Bug fix, 2026-09-07 user report: this was the one syllabus-
                 scan entry point still showing the old plain "Reading your
                 syllabus…" text while its two sibling entry points
@@ -23454,18 +23499,22 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                 <div>
                   <textarea value={pasteText} onChange={e=>setPasteText(e.target.value)} placeholder="Paste the syllabus text here" rows={8}
                     style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box"}} />
-                  <Btn onClick={handlePasteScan} disabled={!pasteText.trim()} style={{marginTop:10,width:"100%",justifyContent:"center",opacity:pasteText.trim()?1:0.45}}>Scan this text</Btn>
+                  <Btn onClick={()=>handlePasteScan({merge:forThisClass})} disabled={!pasteText.trim()} style={{marginTop:10,width:"100%",justifyContent:"center",opacity:pasteText.trim()?1:0.45}}>Scan this text</Btn>
                 </div>
               ) : <button type="button" onClick={()=>fileInputRef.current&&fileInputRef.current.click()} style={{width:"100%",padding:"32px",borderRadius:12,border:`1.5px dashed ${T.borderHover}`,background:T.card2,color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:13,textAlign:"center"}}>Tap to choose a file</button>
             }
-            <input ref={fileInputRef} type="file" accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,.gif" style={{display:"none"}} onChange={handleScanFile} />
+            <input ref={fileInputRef} type="file" accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,.gif" style={{display:"none"}} onChange={e=>handleScanFile(e,{merge:forThisClass})} />
             {scanError&&<div style={{fontSize:12,color:T.red,marginTop:10}}>{scanError}</div>}
             {!scanning&&(
               <button type="button" onClick={()=>{setPasteMode(m=>!m);setScanError("");}} style={{marginTop:12,background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>
                 {pasteMode?"Upload a file instead":"File didn't work? Paste the text instead"}
               </button>
             )}
-          </>)}
+            {forThisClass&&!scanning&&(
+              <button type="button" onClick={()=>{setScanError("");setPasteMode(false);setPasteText("");setAddMode("review");setReviewSub("items");}} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0,marginTop:16}}>← Cancel</button>
+            )}
+            </>);
+          })()}
 
           {step==="classes"&&addMode==="hsSchedule"&&(<>
             <TitleSub title="Upload your class schedule" sub="A file or photo, or paste the text, of your period-by-period schedule. Studlin turns each period into a class, color-coded by time -- and works out your free periods from your school hours below." />
@@ -23601,8 +23650,22 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
               <div style={{marginBottom:8}}>
                 <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:2}}>Assignments, exams &amp; projects</div>
                 <div style={{fontSize:11.5,color:T.muted,marginBottom:10}}>
-                  {review.items.length===0?"None found — add one if you know of any. You can also add a syllabus for this class anytime from Courses.":"AI dates and detail are guesses — check them. Anything already past its date is unchecked."}
+                  {review.items.length===0?"None found yet — scan this class's syllabus below, or add one if you know of any.":"AI dates and detail are guesses — check them. Anything already past its date is unchecked."}
                 </div>
+                {/* 2026-09-11 user request: this used to just say "you can
+                    add a syllabus for this class anytime from Courses" --
+                    deferring the actual payoff to after onboarding was
+                    already over. Reuses the exact same scan/extraction
+                    pipeline "+Add a class" -> "Scan a syllabus" does (see
+                    mergeExtractionIntoReview), just folded into the class
+                    already being reviewed instead of starting a new one --
+                    so a whole-schedule scan's exam-only class can get its
+                    real assignments/projects added right here, then move
+                    on to the next class, same loop the user asked for. */}
+                <button type="button" onClick={()=>{setScanError("");setPasteMode(false);setPasteText("");setAddMode("scanForThisClass");}}
+                  style={{width:"100%",padding:"10px",borderRadius:8,border:`1px dashed ${T.lime}66`,background:T.lime+"0F",color:T.lime,cursor:"pointer",fontFamily:T.font,fontSize:12,fontWeight:600,marginBottom:10}}>
+                  + Add syllabus for this class
+                </button>
                 <div style={{display:"flex",flexDirection:"column",gap:8}}>
                   {review.items.map((it,i)=>(
                     <div key={it.id} style={{padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,background:it.include?T.card2:T.card,opacity:it.include?1:0.55}}>
@@ -27856,10 +27919,14 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // subjects+color, then RoutineWizardModal for recurring times) with one
   // guided flow that captures both together, per class, plus whatever a
   // syllabus scan can extract. Same trigger condition the two old modals'
-  // conditions reduced to when combined. Fresh accounts skip the immediate
-  // auto-open — calTourStep below opens it explicitly once the new
-  // walkthrough finishes, same deferral the old sequence used.
-  const [classSetupOpen,setClassSetupOpen]=useState(()=>!lsGet("subjects-configured",false)&&!lsGet("hasConfiguredRoutine",false)&&!isFreshAccount);
+  // conditions reduced to when combined.
+  // 2026-09-11 user report: the quick-demo tour used to run FIRST, over a
+  // completely empty calendar, and only opened this wizard once the tour
+  // finished -- backwards. A fresh account now opens straight into real
+  // onboarding; the tour (see CAL_TOUR_STEPS/calTourStep below) only fires
+  // once THIS finishes, over a calendar that actually has real classes/
+  // exams/assignments on it.
+  const [classSetupOpen,setClassSetupOpen]=useState(()=>!lsGet("subjects-configured",false)&&!lsGet("hasConfiguredRoutine",false));
   // Toolbar's "Scan syllabus" -- a second, independent instance of the same
   // wizard used for onboarding, opened straight into its scan step (see
   // quickScan prop) so an already-onboarded student can add one more class's
@@ -27943,9 +28010,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   useEffect(()=>{
     if(onWizardOpenChange)onWizardOpenChange(classSetupOpen||routineCenterOpen);
   },[classSetupOpen,routineCenterOpen]);
-  // First-time guided walkthrough — Add Task -> Studlin Reschedule -> chains
-  // into ClassSetupWizard once it finishes, via that wizard's own
-  // finish/skip handlers below.
+  // First-time guided walkthrough — Add Task -> Studlin Reschedule.
+  // 2026-09-11: now fires AFTER ClassSetupWizard finishes (see
+  // finishClassSetup below), once there's a real, populated calendar to
+  // show it against, instead of before -- see classSetupOpen's own comment
+  // for the full reasoning.
   const addTaskBtnRef=useRef(null);
   const brainDumpLinkRef=useRef(null);
   const rescheduleBtnRef=useRef(null);
@@ -27953,13 +28022,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     {targetRef:addTaskBtnRef,title:"Add anything, one place",body:"A class, an assignment, a reminder. Tap Add Task and Studlin finds the time for it."},
     {targetRef:rescheduleBtnRef,title:"When things don't go as planned",body:"Tell Studlin what happened and it reschedules everything around it. Deadlines stay safe, nothing gets crammed in."},
   ];
-  const [calTourStep,setCalTourStep]=useState(()=>isFreshAccount?0:-1);
+  const [calTourStep,setCalTourStep]=useState(-1);
   const advanceCalTour=()=>{
     const next=calTourStep+1;
     if(next>=CAL_TOUR_STEPS.length){
       setCalTourStep(-1);
       lsSet("seenCalendarTour",true);
-      setClassSetupOpen(true);
       return;
     }
     setCalTourStep(next);
@@ -27967,7 +28035,6 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const skipCalTour=()=>{
     setCalTourStep(-1);
     lsSet("seenCalendarTour",true);
-    setClassSetupOpen(true);
   };
   // "Add task" is a decision point, not a form -- brain dump vs. syllabus
   // scan vs. one task (manual or AI-placed) gets picked here, before any
@@ -28037,6 +28104,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     lsSet("hasConfiguredRoutine",true);
     setClassSetupOpen(false);
     syncClassSetupState();
+    // Quick-demo tour now starts here, not on mount -- see CAL_TOUR_STEPS'
+    // own comment. isFreshAccount was captured once at CalendarTab's first
+    // render, before this function touched subjects-configured/
+    // hasConfiguredRoutine above, so it still reflects "was this genuinely
+    // a fresh account," not the post-wizard state.
+    if(isFreshAccount&&!lsGet("seenCalendarTour",false))setCalTourStep(0);
     if(newIds&&newIds.length>0){
       setNewItemHighlightIds(newIds);
       // Bug fix, 2026-09-04 audit: "Add to Calendar" gave zero success
