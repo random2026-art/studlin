@@ -5410,13 +5410,25 @@ function reoptimizeAttackChain(chainId){
 // reuses this exact formula for ordinary exam study sessions. Zero
 // behavior change to the Attack Block caller -- same finishByD/runwayDays/
 // capacityMins math as before, just named and shared instead of inlined.
+// Bug fix, 2026-09-10 user report ("why does it say this its stupid"): a
+// near-term deadline (due sooner than finishBufferDays away) used to
+// always floor capacityMins straight to 0 -- the buffer alone consuming
+// the ENTIRE runway before the real deadline even entered the picture, so
+// a deadline 3 days out and one 3 HOURS out both produced the identical
+// "0.0h of runway left," regardless of whether anything was actually
+// wrong. Falls back to the real remaining time against the ACTUAL
+// deadline (no buffer subtracted) whenever the buffered date has already
+// passed -- still honest that things are tight (compressed:true), never a
+// manufactured zero that can't tell "a bit rushed" from "genuinely none."
 function computeCapacitySlack(pendingMins,deadline,todayKey,finishBufferDays,sustainableWeeklyMins){
   const today=todayKey||dayKey();
   const finishByD=new Date(deadline+"T12:00:00");finishByD.setDate(finishByD.getDate()-finishBufferDays);
-  const runwayDays=Math.ceil((finishByD-new Date(today+"T12:00:00"))/86400000);
+  let runwayDays=Math.ceil((finishByD-new Date(today+"T12:00:00"))/86400000);
+  const compressed=runwayDays<0;
+  if(compressed)runwayDays=Math.ceil((new Date(deadline+"T12:00:00")-new Date(today+"T12:00:00"))/86400000);
   const capacityMins=Math.max(0,runwayDays)*(sustainableWeeklyMins/7);
   const slackRatio=capacityMins>0?pendingMins/capacityMins:(pendingMins>0?Infinity:0);
-  return {capacityMins:Math.round(capacityMins),runwayDays,slackRatio};
+  return {capacityMins:Math.round(capacityMins),runwayDays,slackRatio,compressed};
 }
 // Needs-attention detection — a standalone signal, deliberately separate
 // from the ask-mode prep digest above (that's about assignments not yet
@@ -5432,9 +5444,13 @@ function detectAttackBlockOverruns(events,todayKey){
   const chains={};
   events.forEach(ev=>{
     if(!ev.isAttackBlock||!ev.attackChainId)return;
-    if(!chains[ev.attackChainId])chains[ev.attackChainId]={title:ev.title,deadline:ev.deadline||null,pendingMins:0};
+    if(!chains[ev.attackChainId])chains[ev.attackChainId]={title:ev.title,deadline:ev.deadline||null,pendingMins:0,dueEventId:ev.dueEventId||null};
     if(ev.deadline)chains[ev.attackChainId].deadline=ev.deadline;
     if(ev.status!=="done")chains[ev.attackChainId].pendingMins+=(ev.duration||0);
+    // A later session in the same chain is just as likely to carry the
+    // real dueEventId as the first one seen -- take whichever one has it
+    // rather than only ever checking the chain's first event.
+    if(ev.dueEventId&&!chains[ev.attackChainId].dueEventId)chains[ev.attackChainId].dueEventId=ev.dueEventId;
   });
   const overruns=[];
   Object.keys(chains).forEach(chainId=>{
@@ -5442,7 +5458,18 @@ function detectAttackBlockOverruns(events,todayKey){
     if(c.pendingMins<=0||!c.deadline)return;
     const {capacityMins,runwayDays}=computeCapacitySlack(c.pendingMins,c.deadline,today,ATTACK_BLOCK_FINISH_BUFFER_DAYS,ATTACK_BLOCK_SUSTAINABLE_WEEKLY_MINS);
     if(c.pendingMins>capacityMins){
-      overruns.push({chainId,title:c.title,deadline:c.deadline,pendingMins:c.pendingMins,capacityMins,runwayDays});
+      // dismissKey (2026-09-10 user report, "i already hit dismiss but it
+      // has it again"): dismissal used to be keyed on chainId alone, which
+      // is a fresh, randomly-generated id every time an Attack Block gets
+      // (re)started -- cancel a chain and start a new one for the SAME
+      // assignment (exactly what happened while testing this feature
+      // today) and its dismissal never carried over, since it's genuinely
+      // a different chainId even though it's the same underlying
+      // assignment. dueEventId (the stable marker this chain is FOR)
+      // survives a cancel-and-restart, so it's the real identity dismissal
+      // should track -- chainId stays the fallback for the rare case a
+      // chain somehow has no dueEventId at all.
+      overruns.push({chainId,dismissKey:c.dueEventId||chainId,title:c.title,deadline:c.deadline,pendingMins:c.pendingMins,capacityMins,runwayDays});
     }
   });
   return overruns;
@@ -5451,13 +5478,15 @@ function detectAttackBlockOverruns(events,todayKey){
 // suggestion nudges — this is a live deadline-risk signal, not a "settings
 // might be slightly off" one, so silencing it for days would work against
 // the whole point of surfacing it. Reappears on its own the next day if
-// the underlying chain is (still) genuinely over capacity; keyed per-chain
-// so dismissing one overrun doesn't hide a different, unrelated one.
+// the underlying chain is (still) genuinely over capacity; keyed per-
+// assignment (see dismissKey's own comment above) so dismissing one
+// overrun doesn't hide a different, unrelated one, and survives that same
+// assignment's Attack Block being cancelled and restarted the same day.
 function getAttackOverrunDismissals(){return lsGet("attackOverrunDismissals",{});}
-function isAttackOverrunDismissedToday(chainId){return getAttackOverrunDismissals()[chainId]===dayKey();}
-function dismissAttackOverrunToday(chainId){
+function isAttackOverrunDismissedToday(dismissKey){return getAttackOverrunDismissals()[dismissKey]===dayKey();}
+function dismissAttackOverrunToday(dismissKey){
   const d=getAttackOverrunDismissals();
-  d[chainId]=dayKey();
+  d[dismissKey]=dayKey();
   lsSet("attackOverrunDismissals",d);
 }
 // Dev-only demo seeder for the (mocked, Coming Soon) Canvas connector —
@@ -35292,7 +35321,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   // Dashboard during a genuinely rough week -- same CATCHUP_RECOVERY_THRESHOLD
   // used there, computed fresh here since this card has no other way to
   // know recovery is pending (App() owns that state, not Dashboard).
-  const attackOverrun=computeCatchUpMissedItems(allEvents,today).length>=CATCHUP_RECOVERY_THRESHOLD?null:(detectAttackBlockOverruns(allEvents,today).filter(o=>!isAttackOverrunDismissedToday(o.chainId))[0]||null);
+  const attackOverrun=computeCatchUpMissedItems(allEvents,today).length>=CATCHUP_RECOVERY_THRESHOLD?null:(detectAttackBlockOverruns(allEvents,today).filter(o=>!isAttackOverrunDismissedToday(o.dismissKey))[0]||null);
   const [overrunModalOpen,setOverrunModalOpen]=useState(false);
   const [overrunPlan,setOverrunPlan]=useState(null);
   const [overrunToast,setOverrunToast]=useState("");
@@ -35305,7 +35334,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   const dismissOverrun=()=>{
     if(!attackOverrun)return;
     logSuggestionDecision("attackOverrun","dismissed",{chainId:attackOverrun.chainId,pendingMins:attackOverrun.pendingMins,capacityMins:attackOverrun.capacityMins});
-    dismissAttackOverrunToday(attackOverrun.chainId);
+    dismissAttackOverrunToday(attackOverrun.dismissKey);
     forcePlan(x=>x+1);
   };
   const confirmOverrunRestructure=()=>{
