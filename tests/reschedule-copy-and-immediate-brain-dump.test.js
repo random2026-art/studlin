@@ -120,8 +120,14 @@ describe("Fix 2b: planBrainDumpTasks' immediate branch actually uses the wider w
     const { planBrainDumpTasks } = loadStudlinModule({ now: "2026-07-20T23:00:00" });
     const items = [{ kind: "study", title: "Study for ENG 10", immediate: true, durationMin: 40 }];
     const { tasks } = planBrainDumpTasks(items, [], [], DEFAULT_PREFS);
-    const studyTask = tasks.find(t => t.kind === "study block");
-    assert.ok(studyTask, "a study block should have been created");
+    // kind:"deadline" since the 2026-09-10 write-side unification (a plain
+    // "study" item now gets the same real assignment shape Add Task's AI
+    // mode already used, not "study block" -- see upcomingAssignments' own
+    // comment for the fuller history). Still a real placed block with a
+    // real date/time/duration either way -- that's what this test actually
+    // checks.
+    const studyTask = tasks.find(t => t.kind === "deadline");
+    assert.ok(studyTask, "a real assignment block should have been created");
     assert.equal(studyTask.date, "2026-07-20", "an explicit 'now' request on an empty calendar must land today, even at 11pm");
   });
 

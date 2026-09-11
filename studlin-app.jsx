@@ -16766,13 +16766,18 @@ function planBrainDumpTasks(items,events,routines,prefs){
         slot=findReliableSlotFor(working,routines,prefs,today,prefs.workStartTime,duration,it.dueDate||null,5);
       }
       if(!slot){downgrade(it);return;}
-      // isAssignment (2026-09-06): this "study" item already has exactly
-      // what an Assignment means elsewhere in the app (a real due date,
-      // Studlin finds the time) -- see the Add Task Type picker's own
-      // isAssignment comment. Stamped here so reopening it to edit shows
-      // "Assignment", matching the Brain Dump review chip's own label
-      // (see its SelectChip -- same underlying "study" kind, relabeled).
-      const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:slot.date,time:slot.time,subject:"",kind:"study block",notes:"",priority:5,difficulty:5,deadline:it.dueDate||null,duration,status:"pending",timeSpent:0,completedAt:null,placementReason:slot.reason||null,isAssignment:true};
+      // Write-side unification, 2026-09-10: this "study" item already has
+      // exactly what an Assignment means elsewhere in the app (a real due
+      // date, Studlin finds the time) -- kind:"deadline" now (not
+      // "study block"+isAssignment, the pre-2026-09-10 shape) so it's the
+      // exact same real assignment shape Add Task's own resolveAssignmentKind
+      // produces, not a second one Prep had to be separately taught to
+      // recognize (see upcomingAssignments' own comment for that history).
+      // isAssignment:true kept alongside kind for backward-reading
+      // consumers rather than removed -- harmless now that kind alone is
+      // sufficient (kind==="deadline" with no UI-level flag already
+      // defaults the Type picker to "Assignment" on reopen).
+      const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:slot.date,time:slot.time,subject:"",kind:"deadline",notes:"",priority:5,difficulty:5,deadline:it.dueDate||null,duration,status:"pending",timeSpent:0,completedAt:null,placementReason:slot.reason||null,isAssignment:true};
       studyTasks.push(task);working=working.concat([task]);
       cursorDate=slot.date;cursorTime=minutesToTime(timeToMinutes(slot.time)+duration);
     }
@@ -27806,6 +27811,17 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const [evSplitEnabled,setEvSplitEnabled]=useState(false);
   const [evSplitCount,setEvSplitCount]=useState(2);
   const [evAttackBlock,setEvAttackBlock]=useState(false);
+  // "Just track the due date, schedule it whenever" (2026-09-10 user
+  // request) -- before this, Add Task always scheduled SOMETHING the
+  // instant you saved an Assignment (an AI-picked slot, or the exact
+  // manual time), even with the Attack Block toggle off. The only way to
+  // add a bare, nothing-scheduled-yet assignment was a syllabus scan
+  // leaving its own "schedule study time" box unchecked. AI mode only
+  // (taskMode==="manual" inherently means "I'm picking an exact time,"
+  // so deferring doesn't fit that mode the way it does "Studlin finds the
+  // time") -- see aiArrange's own early-return for what this actually
+  // commits: a bare kind:"deadline" marker, no AI call, no cost.
+  const [evScheduleLater,setEvScheduleLater]=useState(false);
   const [evAttackProbeMins,setEvAttackProbeMins]=useState(ATTACK_BLOCK_DEFAULT_PROBE_MINS);
   const [aiLoading,setAiLoading]=useState(false);
   const [toast,setToast]=useState(false);
@@ -29031,7 +29047,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // "let AI schedule this". The clicked day is remembered so fixed-time kinds
   // (exam/class/reminder), which always need a real date, can still default
   // to it once the user picks one of those types.
-  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("09:00");setEvSubject("None");setEvCustomColor(T.lime);setEvDate("");setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setEvCommuteBefore("");setEvCommuteAfter("");setAsChecklist(false);setTaskRepeatDays([]);resetTypeExtras();setNewOpen(true);};
+  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("09:00");setEvSubject("None");setEvCustomColor(T.lime);setEvDate("");setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setEvScheduleLater(false);setEvCommuteBefore("");setEvCommuteAfter("");setAsChecklist(false);setTaskRepeatDays([]);resetTypeExtras();setNewOpen(true);};
   // Same form as openNew, just arriving with the scheduling mode already
   // decided by which "Add task" menu option was tapped -- the in-modal
   // manual/AI toggle stays visible so it's correctable, not a dead end.
@@ -29063,7 +29079,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     const params=computeStudyPlanParams(undefined,25,evConfidence,materialCharCount,undefined,daysUntilExam);
     if(params.sessionCount!==evExamPlan.sessionCount)setEvExamPlan(m=>({...m,sessionCount:params.sessionCount}));
   },[newOpen,evKind,evExamPlan.proposeSessions,evExamPlan.materialFiles,evConfidence,evSessionCountTouched]);
-  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvCustomColor(T.lime);setEvDate("");setEvTime("09:00");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setEvCommuteBefore("");setEvCommuteAfter("");setAiLoading(false);setAsChecklist(false);setTaskRepeatDays([]);resetTypeExtras();};
+  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvCustomColor(T.lime);setEvDate("");setEvTime("09:00");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setEvScheduleLater(false);setEvCommuteBefore("");setEvCommuteAfter("");setAiLoading(false);setAsChecklist(false);setTaskRepeatDays([]);resetTypeExtras();};
   const onEvKindChange=(k)=>{
     setEvKind(k);
     const willBeFixed=(k==="exam"||k==="class"||k==="reminder"||k==="busy block");
@@ -29118,7 +29134,35 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // isProjectMarker filter). Attack Block bypasses this entirely (see
   // saveManual/aiArrange) -- startAttackBlockChain hardcodes its own
   // "study block" kind for the actual scheduled probe session.
-  const resolveAssignmentKind=()=>(evKind==="assignment"||evKind==="task")?(taskMode==="ai"?"deadline":"study block"):(evKind==="studySession"?"study block":evKind==="project"?"deadline":evKind);
+  // Write-side unification, 2026-09-10 user request ("think of all the
+  // ways a user could add an assignment, make sure they all connect"):
+  // an Assignment used to resolve to kind:"study block" in manual mode
+  // (taskMode==="manual") but kind:"deadline" in AI mode -- two different
+  // underlying shapes for the exact same Type choice, depending only on
+  // which button was clicked. upcomingAssignments() had to be taught to
+  // recognize both (see its own comment); this closes the gap at the
+  // source instead of just patching the read side forever. Assignment now
+  // always resolves to "deadline" regardless of taskMode -- manual mode
+  // still places exactly the one time/duration the student picked, same
+  // as before, just tagged the same way AI mode's already-proven shape is
+  // (a real kind:"deadline" item that carries its own time+duration
+  // directly, no separate marker needed -- see the Prep assignment page's
+  // own hasOwnScheduledTime handling for that exact shape). Deliberately
+  // does NOT touch "task" (General Task) below -- that Type is not an
+  // Assignment and was never part of this bug.
+  //
+  // One real, known tradeoff: evLinkedExamId (optional "count this
+  // toward an exam" link, a few lines below) only ever applied when
+  // resolveAssignmentKind()==="study block" -- it still works for Study
+  // Session, but a manual-mode Assignment can no longer be exam-linked
+  // this way. A genuine marker+separate-session structure would have
+  // preserved it, but that needs its own link field distinct from
+  // dueEventId (which evLinkedExamId already uses) to avoid colliding
+  // with this exact feature -- a larger, separate change than this
+  // shape fix warrants. Assignments were never really "exam prep" in the
+  // first place (that's what Study Session is for), so this is judged an
+  // acceptable narrowing, not silently dropped.
+  const resolveAssignmentKind=()=>evKind==="assignment"?"deadline":(evKind==="task"?(taskMode==="ai"?"deadline":"study block"):(evKind==="studySession"?"study block":evKind==="project"?"deadline":evKind));
   const buildTask=(date,time,titleSuffix,splitInfo)=>{
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
     // Split session 2+ of a Project never gets its own copy of phases/
@@ -29831,6 +29875,25 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   };
   const aiArrange=async()=>{
     if(!evTitle.trim())return;
+    // "Just track the due date, schedule it whenever" (2026-09-10) --
+    // checked before the AI-cost gate below since this never calls the AI
+    // at all (same "free and unlimited" reasoning Attack Block's own
+    // branch already documents a few lines down). Commits a bare
+    // kind:"deadline" marker -- no session, no probe, nothing scheduled --
+    // exactly the shape buildAssignmentAttackBlockPair's own skipTask
+    // path already produces for "place manually instead," just with no
+    // task at all rather than a deferred one. Reachable in AI mode only:
+    // Manual Placement inherently means "I'm picking an exact time," so
+    // deferring doesn't fit that mode the way it does "Studlin finds the
+    // time."
+    if(evKind==="assignment"&&evScheduleLater){
+      const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
+      const marker={id:String(Date.now()+Math.random()*1000),title:evTitle.trim(),date:evDeadline||"",time:"23:59",subject:subj,courseId:courseIdForLabel(subj),
+        kind:"deadline",notes:evNotes,priority:evPriority,difficulty:evDifficulty,deadline:evDeadline||null,
+        deadlineTime:evDeadline?(evDeadlineTime||null):null,duration:null,status:"pending",timeSpent:0,completedAt:null,isAssignment:true};
+      commitTasks([marker]);
+      return;
+    }
     // Real AI cost (directly, and via proposeProjectPhases/proposeOutline
     // for a project) -- was completely ungated. Same setPricingOpen
     // paywall as Smart Reschedule/Brain Dump elsewhere in this component,
@@ -31449,7 +31512,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                         a variant of it, so it's its own button rather
                         than a mode toggle inside Add Task with AI. */}
                     {evAttackBlock&&<Btn variant="subtle" onClick={placeAssignmentManually} disabled={!evTitle.trim()}>Place manually</Btn>}
-                    <Btn onClick={aiArrange} disabled={aiLoading||!evTitle.trim()} style={{flex:1,justifyContent:"center",opacity:aiLoading?1:(!evTitle.trim()?0.45:1)}}>{aiLoading?"Scheduling...":"Add Task with AI"}</Btn>
+                    <Btn onClick={aiArrange} disabled={aiLoading||!evTitle.trim()} style={{flex:1,justifyContent:"center",opacity:aiLoading?1:(!evTitle.trim()?0.45:1)}}>{aiLoading?"Scheduling...":evScheduleLater?"Save due date":"Add Task with AI"}</Btn>
                   </>
         }>
         <Field label="Title"><Input placeholder="e.g. Study Bio chapter 4-6" value={evTitle} onChange={ev=>setEvTitle(ev.target.value)} autoFocus /></Field>
@@ -31885,7 +31948,21 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           </div>
         )}
 
-        {isTaskKind&&!isChecklistMode&&taskRepeatDays.length===0&&!evAttackBlock&&(
+        {/* "Just track the due date, schedule it whenever" (2026-09-10) --
+            AI mode only, Assignment only. Turning it on hides Duration/
+            Attack Block/Split below (nothing to configure for a session
+            that isn't being scheduled yet) -- see aiArrange's own early
+            return for what this actually commits. */}
+        {evKind==="assignment"&&!isChecklistMode&&taskMode==="ai"&&(
+          <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:14}}>
+            <div onClick={()=>setEvScheduleLater(s=>{if(!s)setEvAttackBlock(false);return !s;})} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+              <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Just track the due date for now</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Skip scheduling time for it today -- add it, or start an Attack Block, anytime from Studlin Prep.</div></div>
+              <div style={{width:36,height:20,borderRadius:10,background:evScheduleLater?T.lime:T.faint,position:"relative",transition:"background 0.2s",cursor:"pointer",flexShrink:0}}><div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:evScheduleLater?18:2,transition:"left 0.2s"}} /></div>
+            </div>
+          </div>
+        )}
+
+        {isTaskKind&&!isChecklistMode&&taskRepeatDays.length===0&&!evAttackBlock&&!evScheduleLater&&(
           <Field label="Duration (minutes)" hint="How long you plan to spend">
             <NumField min={5} max={480} fallback={5} value={evDuration} onChange={v=>{setEvDuration(v);setEvDurationTouched(true);}} />
             {(()=>{const s=suggestDurationFor(evSubject,resolveAssignmentKind());return s&&s!==evDuration&&(
@@ -31908,7 +31985,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             (2026-09-06) for the same reason -- you're already picking the
             exact time and duration directly, there's no "figure out how
             long this really takes" ambiguity to probe. */}
-        {isTaskKind&&!isChecklistMode&&evKind!=="task"&&evKind!=="studySession"&&(evSplitEnabled?(
+        {isTaskKind&&!isChecklistMode&&!evScheduleLater&&evKind!=="task"&&evKind!=="studySession"&&(evSplitEnabled?(
           <div style={{fontSize:11,color:T.faint,marginBottom:14}}>"I don't know how long this takes" isn't available while Split into sessions is on — turn Split off below to use it instead.</div>
         ):(<>
           <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:14}}>
@@ -31952,7 +32029,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           )
         )}
 
-        {isTaskKind&&!isChecklistMode&&(evAttackBlock?(
+        {isTaskKind&&!isChecklistMode&&!evScheduleLater&&(evAttackBlock?(
           <div style={{fontSize:11,color:T.faint,marginBottom:14}}>Split into sessions isn't available while "I don't know how long this takes" is on — turn that off above to use Split instead.</div>
         ):(
           <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:14}}>

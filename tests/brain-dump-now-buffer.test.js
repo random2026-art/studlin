@@ -66,8 +66,11 @@ describe("planBrainDumpTasks: an explicit 'now' item actually lands near the rea
     const { planBrainDumpTasks } = loadStudlinModule({ now: "2026-07-20T09:47:00" });
     const items = [{ kind: "study", title: "Study for ENG 10", immediate: true, durationMin: 40 }];
     const { tasks } = planBrainDumpTasks(items, [], [], DEFAULT_PREFS);
-    const studyTask = tasks.find(t => t.kind === "study block");
-    assert.ok(studyTask, "a study block should have been created");
+    // kind:"deadline" since the 2026-09-10 write-side unification -- see
+    // reschedule-copy-and-immediate-brain-dump.test.js's own comment on the
+    // identical update for the fuller history. Still a real placed block.
+    const studyTask = tasks.find(t => t.kind === "deadline");
+    assert.ok(studyTask, "a real assignment block should have been created");
     assert.equal(studyTask.date, "2026-07-20");
     assert.equal(studyTask.time, "10:00", "must land on the very next quarter-hour, not the one after that");
   });
