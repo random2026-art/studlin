@@ -202,7 +202,7 @@ function loadStudlinModule(options) {
     "canGenFlashcardsReason","canBuildExamPlanReason","canAddSessionFocusReason",
     "canBreakDownProjectReason","canUseSmartRescheduleReason","canUseBrainDumpReason","canUseAiArrangeReason",
     "generateFlashcardsFromText","generateQuizFromText","latestWrongTopicsForExam","sessionPriorityFor",
-    "hourBucket","timeToMinutes","minutesToTime",
+    "hourBucket","timeToMinutes","minutesToTime","snapToQuarterHour","computeQuickCreateRange",
     "getAiMemory","saveAiMemory","mergeAiMemoryFacts","removeAiMemoryFact","AI_MEMORY_FACT_CAP",
     "currentClockLabel","formatAiMemoryForPrompt",
     "buildImportSyllabusItemsProposal","extractSyllabusItemsFromChatText",
