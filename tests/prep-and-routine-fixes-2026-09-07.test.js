@@ -83,9 +83,13 @@ describe("RoutineControlCenterModal: a new Activity/Habit's color avoids every c
 
 describe("ClassSetupWizard: the per-course syllabus scan shows real extraction progress, not the old static text", () => {
   test("the 'scan' addMode's loading state renders ExtractionProgress like its sibling entry points", () => {
-    const idx = SOURCE.indexOf('step==="classes"&&addMode==="scan"');
+    // 2026-09-11: this step's condition grew a sibling addMode
+    // ("scanForThisClass", see the inline-onboarding-syllabus fix) --
+    // anchored on this block's own unique comment instead of the exact
+    // addMode condition text, which now has different parenthesization.
+    const idx = SOURCE.indexOf("Bug fix, 2026-09-07 user report: this was the one syllabus-");
     assert.notEqual(idx, -1);
-    const body = SOURCE.slice(idx, idx + 1800);
+    const body = SOURCE.slice(idx, idx + 1200);
     assert.match(body, /<ExtractionProgress fileName="Your syllabus" stage="analyze" analyzeLabel="Finding assignments and exam dates\.\.\." \/>/);
     assert.equal(body.includes("Reading your syllabus"), false, "the old plain-text loading state must be gone");
   });

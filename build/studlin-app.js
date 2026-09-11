@@ -392,7 +392,16 @@ function TourStep({ targetRef, title, body, step, total, onNext, onSkip, isLast 
     ...isRight ? { right: Math.max(16, vw - rect.right - 4), left: "auto" } : { left: Math.max(16, rect.left), right: "auto" },
     width: 320
   } : { position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)", width: 380 };
-  return ReactDOM.createPortal(/* @__PURE__ */ React.createElement("div", { style: { position: "fixed", inset: 0, zIndex: 900, animation: "studlinFade 0.18s ease-out" } }, anchored ? /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: rect.top - 10, left: rect.left - 10, width: rect.width + 20, height: rect.height + 20, borderRadius: 14, border: `3px solid ${T.lime}`, boxShadow: `0 0 0 4000px rgba(0,0,0,0.92), 0 0 0 6px ${T.lime}33`, pointerEvents: "none" } }) : /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", inset: 0, background: "rgba(8,12,10,0.75)", backdropFilter: "blur(4px)" } }), /* @__PURE__ */ React.createElement("div", { "data-tour-callout": true, style: { ...calloutStyle, background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: "18px 20px", boxShadow: "0 24px 60px -16px rgba(0,0,0,0.55)", zIndex: 910, animation: "studlinPop 0.2s cubic-bezier(.2,.85,.3,1)" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 5, marginBottom: 12 } }, Array.from({ length: total }).map((_, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { height: 3, flex: 1, borderRadius: 99, background: i <= step ? T.lime : T.border } }))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14.5, fontWeight: 700, color: T.white, marginBottom: 6, letterSpacing: "-0.01em" } }, title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, lineHeight: 1.55, marginBottom: 16 } }, body), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } }, /* @__PURE__ */ React.createElement("button", { onClick: onSkip, style: { background: "none", border: "none", color: T.muted, fontSize: 12, cursor: "pointer", fontFamily: T.font, padding: 0 } }, "Skip guide"), /* @__PURE__ */ React.createElement(BtnSm, { onClick: onNext }, isLast ? "Done" : "Next")))), document.body);
+  return ReactDOM.createPortal(/* @__PURE__ */ React.createElement("div", { style: { position: "fixed", inset: 0, zIndex: 900, animation: "studlinFade 0.18s ease-out" } }, anchored ? (
+    // 2026-09-11 user report: this used to black out almost the whole
+    // calendar (0.92 alpha) behind the spotlight -- fine when the tour
+    // ran over an empty calendar (the old ordering, see
+    // classSetupOpen's own comment), but the entire point of running
+    // it AFTER onboarding now is to show off a populated calendar, not
+    // hide it. Lighter surround (0.45) keeps everything else legible
+    // while the lime ring still makes the actual target unambiguous.
+    /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: rect.top - 10, left: rect.left - 10, width: rect.width + 20, height: rect.height + 20, borderRadius: 14, border: `3px solid ${T.lime}`, boxShadow: `0 0 0 4000px rgba(0,0,0,0.45), 0 0 0 6px ${T.lime}33`, pointerEvents: "none" } })
+  ) : /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", inset: 0, background: "rgba(8,12,10,0.4)" } }), /* @__PURE__ */ React.createElement("div", { "data-tour-callout": true, style: { ...calloutStyle, background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: "18px 20px", boxShadow: "0 24px 60px -16px rgba(0,0,0,0.55)", zIndex: 910, animation: "studlinPop 0.2s cubic-bezier(.2,.85,.3,1)" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 5, marginBottom: 12 } }, Array.from({ length: total }).map((_, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { height: 3, flex: 1, borderRadius: 99, background: i <= step ? T.lime : T.border } }))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14.5, fontWeight: 700, color: T.white, marginBottom: 6, letterSpacing: "-0.01em" } }, title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, lineHeight: 1.55, marginBottom: 16 } }, body), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } }, /* @__PURE__ */ React.createElement("button", { onClick: onSkip, style: { background: "none", border: "none", color: T.muted, fontSize: 12, cursor: "pointer", fontFamily: T.font, padding: 0 } }, "Skip guide"), /* @__PURE__ */ React.createElement(BtnSm, { onClick: onNext }, isLast ? "Done" : "Next")))), document.body);
 }
 const PRICING_PLANS = (billing) => [
   {
@@ -13573,8 +13582,55 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     setAddMode("review");
     setMeetingTimeExpandedManually(false);
   };
-  const buildReviewFromExtraction = (result, sourceText) => {
+  const mapDeadlinesToReviewItems = (deadlines, idPrefix) => {
     const today = dayKey();
+    return (deadlines || []).map((d, i) => {
+      const kind = d.kind === "exam" ? "exam" : d.kind === "project" ? "project" : "assignment";
+      const isPast = !!d.date && d.date < today;
+      return {
+        id: idPrefix + "-" + i,
+        title: d.title || "Untitled",
+        date: d.date || today,
+        kind,
+        // A mid-semester scan surfaces work that's already done -- default
+        // those unchecked (still visible, freely re-checkable) instead of
+        // presenting a pile of finished work as if it were new.
+        include: !isPast,
+        noDate: false,
+        attackBlock: kind !== "exam",
+        proposeSessions: false,
+        sessionCount: defaultSessionCountFor(d.examWeight),
+        examWeight: d.examWeight,
+        confidence: d.confidence,
+        detail: d.detail || "",
+        detailOpen: false,
+        estimatedHours: d.estimatedHours,
+        difficulty: typeof d.difficulty === "number" ? Math.max(0, Math.min(1e3, Math.round(d.difficulty))) : 500,
+        phases: void 0,
+        phasesLoading: false,
+        outline: void 0,
+        outlineLoading: false,
+        materialFiles: [],
+        materialLinks: [],
+        materialOpen: false,
+        linkDraft: "",
+        linkLabelDraft: "",
+        pasteMaterialMode: false,
+        pasteMaterialText: ""
+      };
+    });
+  };
+  const mergeExtractionIntoReview = (result, sourceText) => {
+    setReview((r) => ({
+      ...r,
+      sourceText: r.sourceText || sourceText || "",
+      meetingTimes: r.meetingTimes.length > 0 ? r.meetingTimes : (result.meetingTimes || []).map((mt, i) => ({ id: "mt-" + Date.now() + "-" + i, days: Array.isArray(mt.days) ? mt.days : [], startTime: mt.startTime || "09:00", duration: mt.duration || 50 })),
+      items: [...r.items, ...mapDeadlinesToReviewItems(result.deadlines, "cd-" + Date.now())]
+    }));
+    setReviewSub("items");
+    setAddMode("review");
+  };
+  const buildReviewFromExtraction = (result, sourceText) => {
     const existingCourse = targetCourseId ? getSubjects().find((s) => s.id === targetCourseId) : null;
     setReview({
       subjectName: existingCourse ? existingCourse.label : result.subject && result.subject.name || "",
@@ -13587,41 +13643,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
       // confidence read on the class name/meeting time).
       scheduleConfidence: result.scheduleConfidence,
       meetingTimes: (result.meetingTimes || []).map((mt, i) => ({ id: "mt-" + Date.now() + "-" + i, days: Array.isArray(mt.days) ? mt.days : [], startTime: mt.startTime || "09:00", duration: mt.duration || 50 })),
-      items: (result.deadlines || []).map((d, i) => {
-        const kind = d.kind === "exam" ? "exam" : d.kind === "project" ? "project" : "assignment";
-        const isPast = !!d.date && d.date < today;
-        return {
-          id: "cd-" + i,
-          title: d.title || "Untitled",
-          date: d.date || today,
-          kind,
-          // A mid-semester scan surfaces work that's already done -- default
-          // those unchecked (still visible, freely re-checkable) instead of
-          // presenting a pile of finished work as if it were new.
-          include: !isPast,
-          noDate: false,
-          attackBlock: kind !== "exam",
-          proposeSessions: false,
-          sessionCount: defaultSessionCountFor(d.examWeight),
-          examWeight: d.examWeight,
-          confidence: d.confidence,
-          detail: d.detail || "",
-          detailOpen: false,
-          estimatedHours: d.estimatedHours,
-          difficulty: typeof d.difficulty === "number" ? Math.max(0, Math.min(1e3, Math.round(d.difficulty))) : 500,
-          phases: void 0,
-          phasesLoading: false,
-          outline: void 0,
-          outlineLoading: false,
-          materialFiles: [],
-          materialLinks: [],
-          materialOpen: false,
-          linkDraft: "",
-          linkLabelDraft: "",
-          pasteMaterialMode: false,
-          pasteMaterialText: ""
-        };
-      })
+      items: mapDeadlinesToReviewItems(result.deadlines, "cd")
     });
     setEditingPendingId(null);
     setReviewSub("items");
@@ -13638,7 +13660,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     });
   };
   const syllabusFoundNothing = (result) => !result.subject && (!result.meetingTimes || result.meetingTimes.length === 0) && (!result.deadlines || result.deadlines.length === 0);
-  const handleScanFile = async (e) => {
+  const handleScanFile = async (e, { merge } = {}) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
     e.target.value = "";
@@ -13675,7 +13697,8 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
         }
         if (!canScanScreenshot()) markFreeScanUsed("syllabus");
         recordScreenshotScan();
-        buildReviewFromExtraction(result2);
+        if (merge) mergeExtractionIntoReview(result2);
+        else buildReviewFromExtraction(result2);
         return;
       }
       let text = "";
@@ -13715,14 +13738,15 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
       }
       if (!canScanSyllabus()) markFreeScanUsed("syllabus");
       recordSyllabusScan();
-      buildReviewFromExtraction(result, text);
+      if (merge) mergeExtractionIntoReview(result, text);
+      else buildReviewFromExtraction(result, text);
     } catch (err) {
       setScanError("Couldn't read that file: " + err.message);
     } finally {
       setScanning(false);
     }
   };
-  const handlePasteScan = async () => {
+  const handlePasteScan = async ({ merge } = {}) => {
     if (!pasteText.trim()) return;
     if (!canScanSyllabus() && !canFreeOnboardingScan("syllabus")) {
       setPricingOpen(canScanSyllabusReason() === "free-tier" ? "syllabusScan" : "aiUsageCap");
@@ -13742,7 +13766,8 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
       }
       if (!canScanSyllabus()) markFreeScanUsed("syllabus");
       recordSyllabusScan();
-      buildReviewFromExtraction(result, pasteText);
+      if (merge) mergeExtractionIntoReview(result, pasteText);
+      else buildReviewFromExtraction(result, pasteText);
     } catch (err) {
       setScanError("Couldn't read that text: " + err.message);
     } finally {
@@ -14213,19 +14238,34 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
   ), /* @__PURE__ */ React.createElement(Btn, { onClick: handleCollegeSchedulePaste, disabled: !pasteText.trim(), style: { marginTop: 10, width: "100%", justifyContent: "center", opacity: pasteText.trim() ? 1 : 0.45 } }, "Scan this text")) : /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => collegeScheduleFileRef.current && collegeScheduleFileRef.current.click(), style: { width: "100%", padding: "32px", borderRadius: 12, border: `1.5px dashed ${T.borderHover}`, background: T.card2, color: T.muted, cursor: "pointer", fontFamily: T.font, fontSize: 13, textAlign: "center" } }, "Tap to choose a file, or one or more photos"), /* @__PURE__ */ React.createElement("input", { ref: collegeScheduleFileRef, type: "file", accept: ".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,.gif", style: { display: "none" }, onChange: handleCollegeScheduleFile, multiple: true }), scanError && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: 10 } }, scanError), !scanning && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
     setPasteMode((m) => !m);
     setScanError("");
-  }, style: { marginTop: 12, background: "none", border: "none", color: T.muted, fontSize: 12, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, pasteMode ? "Upload a file instead" : "File didn't work? Paste the text instead")), step === "classes" && addMode === "scan" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: status === "highschool" ? "Scan assignments" : "Scan a syllabus", sub: status === "highschool" ? "A unit calendar, worksheet, handout, whatever your teacher gave you -- PDF, Word doc, text, or a photo. Studlin reads it and fills in the review below." : "PDF, Word doc, text, or a photo/screenshot \u2014 Studlin reads it and fills in the review below." }), scanning ? /* @__PURE__ */ React.createElement("div", { style: { padding: "20px 0" } }, /* @__PURE__ */ React.createElement(ExtractionProgress, { fileName: "Your syllabus", stage: "analyze", analyzeLabel: "Finding assignments and exam dates..." })) : pasteMode ? /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(
-    "textarea",
-    {
-      value: pasteText,
-      onChange: (e) => setPasteText(e.target.value),
-      placeholder: "Paste the syllabus text here",
-      rows: 8,
-      style: { width: "100%", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 10, padding: "12px 14px", color: T.text, fontSize: 13, fontFamily: T.font, outline: "none", resize: "vertical", boxSizing: "border-box" }
-    }
-  ), /* @__PURE__ */ React.createElement(Btn, { onClick: handlePasteScan, disabled: !pasteText.trim(), style: { marginTop: 10, width: "100%", justifyContent: "center", opacity: pasteText.trim() ? 1 : 0.45 } }, "Scan this text")) : /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => fileInputRef.current && fileInputRef.current.click(), style: { width: "100%", padding: "32px", borderRadius: 12, border: `1.5px dashed ${T.borderHover}`, background: T.card2, color: T.muted, cursor: "pointer", fontFamily: T.font, fontSize: 13, textAlign: "center" } }, "Tap to choose a file"), /* @__PURE__ */ React.createElement("input", { ref: fileInputRef, type: "file", accept: ".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,.gif", style: { display: "none" }, onChange: handleScanFile }), scanError && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: 10 } }, scanError), !scanning && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
-    setPasteMode((m) => !m);
-    setScanError("");
-  }, style: { marginTop: 12, background: "none", border: "none", color: T.muted, fontSize: 12, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, pasteMode ? "Upload a file instead" : "File didn't work? Paste the text instead")), step === "classes" && addMode === "hsSchedule" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: "Upload your class schedule", sub: "A file or photo, or paste the text, of your period-by-period schedule. Studlin turns each period into a class, color-coded by time -- and works out your free periods from your school hours below." }), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 } }, /* @__PURE__ */ React.createElement(TimeField, { label: "School starts", value: schoolStart, onChange: setSchoolStart }), /* @__PURE__ */ React.createElement(TimeField, { label: "School ends", value: schoolEnd, onChange: setSchoolEnd })), scanning ? /* @__PURE__ */ React.createElement("div", { style: { padding: "20px 0" } }, /* @__PURE__ */ React.createElement(ExtractionProgress, { fileName: "Your schedule", stage: "analyze", analyzeLabel: "Finding your classes and exam dates..." })) : hsPasteMode ? /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(
+  }, style: { marginTop: 12, background: "none", border: "none", color: T.muted, fontSize: 12, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, pasteMode ? "Upload a file instead" : "File didn't work? Paste the text instead")), step === "classes" && (addMode === "scan" || addMode === "scanForThisClass") && (() => {
+    const forThisClass = addMode === "scanForThisClass";
+    return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(
+      TitleSub,
+      {
+        title: forThisClass ? "Add syllabus for " + (review.subjectName || "this class") : status === "highschool" ? "Scan assignments" : "Scan a syllabus",
+        sub: forThisClass ? "PDF, Word doc, text, or a photo/screenshot \u2014 Studlin reads it and adds what it finds to this class's assignments, exams & projects below." : status === "highschool" ? "A unit calendar, worksheet, handout, whatever your teacher gave you -- PDF, Word doc, text, or a photo. Studlin reads it and fills in the review below." : "PDF, Word doc, text, or a photo/screenshot \u2014 Studlin reads it and fills in the review below."
+      }
+    ), scanning ? /* @__PURE__ */ React.createElement("div", { style: { padding: "20px 0" } }, /* @__PURE__ */ React.createElement(ExtractionProgress, { fileName: "Your syllabus", stage: "analyze", analyzeLabel: "Finding assignments and exam dates..." })) : pasteMode ? /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(
+      "textarea",
+      {
+        value: pasteText,
+        onChange: (e) => setPasteText(e.target.value),
+        placeholder: "Paste the syllabus text here",
+        rows: 8,
+        style: { width: "100%", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 10, padding: "12px 14px", color: T.text, fontSize: 13, fontFamily: T.font, outline: "none", resize: "vertical", boxSizing: "border-box" }
+      }
+    ), /* @__PURE__ */ React.createElement(Btn, { onClick: () => handlePasteScan({ merge: forThisClass }), disabled: !pasteText.trim(), style: { marginTop: 10, width: "100%", justifyContent: "center", opacity: pasteText.trim() ? 1 : 0.45 } }, "Scan this text")) : /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => fileInputRef.current && fileInputRef.current.click(), style: { width: "100%", padding: "32px", borderRadius: 12, border: `1.5px dashed ${T.borderHover}`, background: T.card2, color: T.muted, cursor: "pointer", fontFamily: T.font, fontSize: 13, textAlign: "center" } }, "Tap to choose a file"), /* @__PURE__ */ React.createElement("input", { ref: fileInputRef, type: "file", accept: ".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,.gif", style: { display: "none" }, onChange: (e) => handleScanFile(e, { merge: forThisClass }) }), scanError && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: 10 } }, scanError), !scanning && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+      setPasteMode((m) => !m);
+      setScanError("");
+    }, style: { marginTop: 12, background: "none", border: "none", color: T.muted, fontSize: 12, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, pasteMode ? "Upload a file instead" : "File didn't work? Paste the text instead"), forThisClass && !scanning && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+      setScanError("");
+      setPasteMode(false);
+      setPasteText("");
+      setAddMode("review");
+      setReviewSub("items");
+    }, style: { background: "none", border: "none", color: T.muted, fontSize: 12.5, fontFamily: T.font, cursor: "pointer", padding: 0, marginTop: 16 } }, "\u2190 Cancel"));
+  })(), step === "classes" && addMode === "hsSchedule" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: "Upload your class schedule", sub: "A file or photo, or paste the text, of your period-by-period schedule. Studlin turns each period into a class, color-coded by time -- and works out your free periods from your school hours below." }), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 } }, /* @__PURE__ */ React.createElement(TimeField, { label: "School starts", value: schoolStart, onChange: setSchoolStart }), /* @__PURE__ */ React.createElement(TimeField, { label: "School ends", value: schoolEnd, onChange: setSchoolEnd })), scanning ? /* @__PURE__ */ React.createElement("div", { style: { padding: "20px 0" } }, /* @__PURE__ */ React.createElement(ExtractionProgress, { fileName: "Your schedule", stage: "analyze", analyzeLabel: "Finding your classes and exam dates..." })) : hsPasteMode ? /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(
     "textarea",
     {
       value: hsPasteText,
@@ -14275,7 +14315,20 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
         style: { width: "100%", padding: "10px 12px", borderRadius: 6, border: `1px dashed ${T.borderHover}`, background: "transparent", color: T.muted, cursor: "pointer", fontFamily: T.font, fontSize: 12, textAlign: "left" }
       },
       "+ Add a meeting time (optional, or set this later by dragging the class onto your calendar)"
-    ) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "10px 12px", borderRadius: 6, border: `1px solid ${T.border}`, background: T.card2 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.text } }, "Meets: ", formatMeetingTimes(meetingItemsForBuilder)), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setMeetingTimeExpandedManually(true), style: { background: "none", border: "none", color: T.muted, fontSize: 11.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline", flexShrink: 0 } }, "Edit"))), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, marginBottom: 2 } }, "Assignments, exams & projects"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 10 } }, review.items.length === 0 ? "None found \u2014 add one if you know of any. You can also add a syllabus for this class anytime from Courses." : "AI dates and detail are guesses \u2014 check them. Anything already past its date is unchecked."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, review.items.map((it, i) => /* @__PURE__ */ React.createElement("div", { key: it.id, style: { padding: "10px 12px", borderRadius: 10, border: `1px solid ${T.border}`, background: it.include ? T.card2 : T.card, opacity: it.include ? 1 : 0.55 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "flex-start", gap: 8 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: it.include, onChange: () => setItem(i, { include: !it.include }), style: { marginTop: 9, cursor: "pointer" } }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 6 } }, /* @__PURE__ */ React.createElement(Input, { value: it.title, onChange: (e) => setItem(i, { title: e.target.value }), style: { flex: 1 } }), !it.noDate && /* @__PURE__ */ React.createElement(Input, { type: "date", value: it.date, onChange: (e) => setItem(i, { date: e.target.value }), style: { width: 140 } })), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(SelectChip, { size: "sm", options: ITEM_KIND_OPTIONS, value: it.kind, onChange: (v) => setItem(i, { kind: v, attackBlock: v !== "exam", proposeSessions: false, sessionCount: it.sessionCount || defaultSessionCountFor() }) }), it.confidence === "low" && !it.noDate && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: T.amber, fontWeight: 600, background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 6, padding: "3px 8px" } }, "Double-check"), /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: T.muted, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: !!it.noDate, onChange: () => setItem(i, { noDate: !it.noDate }) }), "Don't know the date yet")), it.noDate && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 6 } }, "Stays under this class in Your Classes until you set a date."), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 6 } }, it.detailOpen ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4 } }, /* @__PURE__ */ React.createElement(
+    ) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "10px 12px", borderRadius: 6, border: `1px solid ${T.border}`, background: T.card2 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.text } }, "Meets: ", formatMeetingTimes(meetingItemsForBuilder)), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setMeetingTimeExpandedManually(true), style: { background: "none", border: "none", color: T.muted, fontSize: 11.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline", flexShrink: 0 } }, "Edit"))), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, marginBottom: 2 } }, "Assignments, exams & projects"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 10 } }, review.items.length === 0 ? "None found yet \u2014 scan this class's syllabus below, or add one if you know of any." : "AI dates and detail are guesses \u2014 check them. Anything already past its date is unchecked."), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        type: "button",
+        onClick: () => {
+          setScanError("");
+          setPasteMode(false);
+          setPasteText("");
+          setAddMode("scanForThisClass");
+        },
+        style: { width: "100%", padding: "10px", borderRadius: 8, border: `1px dashed ${T.lime}66`, background: T.lime + "0F", color: T.lime, cursor: "pointer", fontFamily: T.font, fontSize: 12, fontWeight: 600, marginBottom: 10 }
+      },
+      "+ Add syllabus for this class"
+    ), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, review.items.map((it, i) => /* @__PURE__ */ React.createElement("div", { key: it.id, style: { padding: "10px 12px", borderRadius: 10, border: `1px solid ${T.border}`, background: it.include ? T.card2 : T.card, opacity: it.include ? 1 : 0.55 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "flex-start", gap: 8 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: it.include, onChange: () => setItem(i, { include: !it.include }), style: { marginTop: 9, cursor: "pointer" } }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 6 } }, /* @__PURE__ */ React.createElement(Input, { value: it.title, onChange: (e) => setItem(i, { title: e.target.value }), style: { flex: 1 } }), !it.noDate && /* @__PURE__ */ React.createElement(Input, { type: "date", value: it.date, onChange: (e) => setItem(i, { date: e.target.value }), style: { width: 140 } })), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(SelectChip, { size: "sm", options: ITEM_KIND_OPTIONS, value: it.kind, onChange: (v) => setItem(i, { kind: v, attackBlock: v !== "exam", proposeSessions: false, sessionCount: it.sessionCount || defaultSessionCountFor() }) }), it.confidence === "low" && !it.noDate && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: T.amber, fontWeight: 600, background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 6, padding: "3px 8px" } }, "Double-check"), /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: T.muted, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: !!it.noDate, onChange: () => setItem(i, { noDate: !it.noDate }) }), "Don't know the date yet")), it.noDate && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 6 } }, "Stays under this class in Your Classes until you set a date."), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 6 } }, it.detailOpen ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4 } }, /* @__PURE__ */ React.createElement(
       "textarea",
       {
         value: it.detail,
@@ -16416,7 +16469,7 @@ function CalendarTab({ setActive = () => {
   const [courseDeleteSnapshots, setCourseDeleteSnapshots] = useState(null);
   const [courseDeleteToast, setCourseDeleteToast] = useState("");
   const isFreshAccount = !lsGet("subjects-configured", false) && !lsGet("hasConfiguredRoutine", false) && !lsGet("seenCalendarTour", false);
-  const [classSetupOpen, setClassSetupOpen] = useState(() => !lsGet("subjects-configured", false) && !lsGet("hasConfiguredRoutine", false) && !isFreshAccount);
+  const [classSetupOpen, setClassSetupOpen] = useState(() => !lsGet("subjects-configured", false) && !lsGet("hasConfiguredRoutine", false));
   const [quickScanOpen, setQuickScanOpen] = useState(false);
   const [quickScanTargetCourseId, setQuickScanTargetCourseId] = useState(null);
   const [syllabusNudgeDismissed, setSyllabusNudgeDismissed] = useState(false);
@@ -16463,13 +16516,12 @@ function CalendarTab({ setActive = () => {
     { targetRef: addTaskBtnRef, title: "Add anything, one place", body: "A class, an assignment, a reminder. Tap Add Task and Studlin finds the time for it." },
     { targetRef: rescheduleBtnRef, title: "When things don't go as planned", body: "Tell Studlin what happened and it reschedules everything around it. Deadlines stay safe, nothing gets crammed in." }
   ];
-  const [calTourStep, setCalTourStep] = useState(() => isFreshAccount ? 0 : -1);
+  const [calTourStep, setCalTourStep] = useState(-1);
   const advanceCalTour = () => {
     const next = calTourStep + 1;
     if (next >= CAL_TOUR_STEPS.length) {
       setCalTourStep(-1);
       lsSet("seenCalendarTour", true);
-      setClassSetupOpen(true);
       return;
     }
     setCalTourStep(next);
@@ -16477,7 +16529,6 @@ function CalendarTab({ setActive = () => {
   const skipCalTour = () => {
     setCalTourStep(-1);
     lsSet("seenCalendarTour", true);
-    setClassSetupOpen(true);
   };
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
   useEffect(() => {
@@ -16504,6 +16555,7 @@ function CalendarTab({ setActive = () => {
     lsSet("hasConfiguredRoutine", true);
     setClassSetupOpen(false);
     syncClassSetupState();
+    if (isFreshAccount && !lsGet("seenCalendarTour", false)) setCalTourStep(0);
     if (newIds && newIds.length > 0) {
       setNewItemHighlightIds(newIds);
       showToast("Added " + newIds.length + " item" + (newIds.length !== 1 ? "s" : "") + " to your calendar.");
