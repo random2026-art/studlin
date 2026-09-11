@@ -14218,8 +14218,13 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
   // windowInvalid guard is the only real precondition left.
   /* @__PURE__ */ React.createElement(Btn, { onClick: commitAllToCalendar }, pendingClasses.length > 0 ? "Add to Calendar" : "Finish")))));
 }
-function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf, fmtTime: fmtTime2, fmtTimeRange: fmtTimeRange2, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending, openNew, newItemHighlightIds, onEditRoutine }) {
+function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf, fmtTime: fmtTime2, fmtTimeRange: fmtTimeRange2, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending, openNew, newItemHighlightIds, onEditRoutine, moveEvent, sidebarDragChip, onDropSidebarChip, onDropManualBlockRequest, onDropNewTaskRequest, onDropRoutineOccurrence, onRoutineDragStateChange }) {
   const scrollRef = useRef(null);
+  const [dayDragId, setDayDragId] = useState(null);
+  const [dayDragRoutineOccurrence, setDayDragRoutineOccurrence] = useState(null);
+  const [dayDragOver, setDayDragOver] = useState(false);
+  const [dayDropTime, setDayDropTime] = useState(null);
+  const timelineRef = useRef(null);
   const [dayPreviewOpen, setDayPreviewOpen] = useState(false);
   const [whoInAnchor, setWhoInAnchor] = useState(null);
   const stepDay = (n) => {
@@ -14292,6 +14297,61 @@ function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf,
     const h12 = h % 12 || 12;
     return h12 + ap;
   };
+  const timeFromDragY = (e) => {
+    const el = timelineRef.current;
+    if (!el) return "09:00";
+    const rect = el.getBoundingClientRect();
+    const relY = Math.max(0, e.clientY - rect.top);
+    const totalMins = Math.round(relY / pxPerHr * 60) + spanStart;
+    const hrs = Math.min(23, Math.floor(totalMins / 60));
+    const rawMins = totalMins % 60;
+    const snappedMins = Math.min(45, Math.round(rawMins / 15) * 15);
+    return String(hrs).padStart(2, "0") + ":" + String(snappedMins).padStart(2, "0");
+  };
+  const handleDayDragOver = (e) => {
+    e.preventDefault();
+    setDayDragOver(true);
+    setDayDropTime(timeFromDragY(e));
+  };
+  const handleDayDrop = (e) => {
+    e.preventDefault();
+    const time = dayDropTime || "09:00";
+    if (sidebarDragChip && onDropSidebarChip) {
+      onDropSidebarChip(time, { x: e.clientX, y: e.clientY });
+    } else if (dayDragRoutineOccurrence && onDropRoutineOccurrence) {
+      onDropRoutineOccurrence(dayDragRoutineOccurrence.routineId, dayDragRoutineOccurrence.fromDate, selDay, time, { x: e.clientX, y: e.clientY });
+    } else if (dayDragId && moveEvent) {
+      moveEvent(dayDragId, selDay, time);
+    } else if (e.dataTransfer && e.dataTransfer.getData(MANUAL_BLOCK_DRAG_MIME) && onDropManualBlockRequest) {
+      let payload = null;
+      try {
+        payload = JSON.parse(e.dataTransfer.getData(MANUAL_BLOCK_DRAG_MIME));
+      } catch (err) {
+        payload = null;
+      }
+      if (payload) onDropManualBlockRequest(payload, selDay, time);
+    } else if (e.dataTransfer && e.dataTransfer.getData(NEW_TASK_DRAG_MIME) && onDropNewTaskRequest) {
+      let payload = null;
+      try {
+        payload = JSON.parse(e.dataTransfer.getData(NEW_TASK_DRAG_MIME));
+      } catch (err) {
+        payload = null;
+      }
+      if (payload) onDropNewTaskRequest(payload, selDay, time);
+    }
+    setDayDragId(null);
+    setDayDragRoutineOccurrence(null);
+    setDayDragOver(false);
+    setDayDropTime(null);
+    if (onRoutineDragStateChange) onRoutineDragStateChange(false);
+  };
+  const handleDayDragEnd = () => {
+    setDayDragId(null);
+    setDayDragRoutineOccurrence(null);
+    setDayDragOver(false);
+    setDayDropTime(null);
+    if (onRoutineDragStateChange) onRoutineDragStateChange(false);
+  };
   return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", gap: 8 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 15, fontWeight: 700, color: T.white } }, niceDayLabel), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 1 } }, visibleEvs.length, " scheduled item", visibleEvs.length !== 1 ? "s" : "")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center" } }, /* @__PURE__ */ React.createElement("button", { onClick: () => stepDay(-1), title: "Previous day", style: { width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: `1px solid ${T.border}`, borderRadius: 4, color: T.muted, cursor: "pointer", fontSize: 11, fontFamily: T.font } }, "\u2039"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setSelDay(todayK) }, "Today"), /* @__PURE__ */ React.createElement("button", { onClick: () => stepDay(1), title: "Next day", style: { width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: `1px solid ${T.border}`, borderRadius: 4, color: T.muted, cursor: "pointer", fontSize: 11, fontFamily: T.font } }, "\u203A"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => setDayPreviewOpen(true) }, "Day Preview"))), duePills.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 } }, duePills.map((ev) => /* @__PURE__ */ React.createElement("div", { key: ev.id, onClick: () => openEdit(ev), title: "Click to edit", style: { display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 600, color: T.amber, background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 6, padding: "4px 9px", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("span", { style: { display: "flex", color: T.amber } }, DAY_PREVIEW_ICON_BY_KIND[ev.kind] || Icon.dot), ev.title))), /* @__PURE__ */ React.createElement(Card, { style: { padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { height: "calc(100vh - 320px)", minHeight: 360 } }, /* @__PURE__ */ React.createElement("div", { ref: scrollRef, style: { height: "100%", overflowY: "auto", position: "relative" } }, /* @__PURE__ */ React.createElement(
     "div",
     {
@@ -14300,7 +14360,10 @@ function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf,
       style: { position: "sticky", top: 8, left: 0, height: 0, zIndex: 7, display: "flex", marginLeft: 45, cursor: "ns-resize" }
     },
     /* @__PURE__ */ React.createElement("div", { style: { width: 18, height: 18, borderRadius: "50%", background: T.lime, border: `2px solid ${T.card}`, marginLeft: -9, boxShadow: "0 2px 6px rgba(0,0,0,0.35)" } })
-  ), /* @__PURE__ */ React.createElement("div", { style: { position: "relative", height: totalHeightPx, marginLeft: 54 } }, Array.from({ length: Math.max(1, hourEnd - hourStart) }, (_, i) => hourStart + i).map((h) => /* @__PURE__ */ React.createElement("div", { key: h, style: { position: "absolute", top: (h * 60 - spanStart) * (pxPerHr / 60), left: 0, right: 0, borderTop: `1px solid ${T.borderHover}`, boxSizing: "border-box" } }, /* @__PURE__ */ React.createElement("span", { style: { position: "absolute", left: -54, top: -7, width: 46, textAlign: "right", fontSize: 10, color: T.faint, fontFamily: T.mono } }, fmtHourLabel(h * 60)))), isToday && nowMins >= spanStart && nowMins <= spanEnd && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: (nowMins - spanStart) * (pxPerHr / 60), left: 0, right: 0, zIndex: 6, pointerEvents: "none" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", left: -4, top: -4, width: 8, height: 8, borderRadius: "50%", background: "#E5484D" } }), /* @__PURE__ */ React.createElement("div", { style: { borderTop: "2px solid #E5484D" } })), dayLaidOut.map(({ ev, col, totalCols, displayCol, displayTotalCols, start, end, hidden, overflowCount }) => {
+  ), /* @__PURE__ */ React.createElement("div", { ref: timelineRef, onDragOver: handleDayDragOver, onDrop: handleDayDrop, onDragLeave: () => setDayDragOver(false), style: { position: "relative", height: totalHeightPx, marginLeft: 54 } }, Array.from({ length: Math.max(1, hourEnd - hourStart) }, (_, i) => hourStart + i).map((h) => /* @__PURE__ */ React.createElement("div", { key: h, style: { position: "absolute", top: (h * 60 - spanStart) * (pxPerHr / 60), left: 0, right: 0, borderTop: `1px solid ${T.borderHover}`, boxSizing: "border-box" } }, /* @__PURE__ */ React.createElement("span", { style: { position: "absolute", left: -54, top: -7, width: 46, textAlign: "right", fontSize: 10, color: T.faint, fontFamily: T.mono } }, fmtHourLabel(h * 60)))), isToday && nowMins >= spanStart && nowMins <= spanEnd && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: (nowMins - spanStart) * (pxPerHr / 60), left: 0, right: 0, zIndex: 6, pointerEvents: "none" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", left: -4, top: -4, width: 8, height: 8, borderRadius: "50%", background: "#E5484D" } }), /* @__PURE__ */ React.createElement("div", { style: { borderTop: "2px solid #E5484D" } })), dayDragOver && dayDropTime && (() => {
+    const m = timeToMinutes(dayDropTime);
+    return /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: (m - spanStart) * (pxPerHr / 60), left: 0, right: 0, zIndex: 6, pointerEvents: "none" } }, /* @__PURE__ */ React.createElement("div", { style: { borderTop: `2px dashed ${T.lime}` } }), /* @__PURE__ */ React.createElement("span", { style: { position: "absolute", left: 4, top: -16, fontSize: 9.5, fontWeight: 700, color: T.lime, background: T.ink, padding: "1px 5px", borderRadius: 3 } }, fmtTime2(dayDropTime)));
+  })(), dayLaidOut.map(({ ev, col, totalCols, displayCol, displayTotalCols, start, end, hidden, overflowCount }) => {
     if (hidden) return null;
     const topPx = (start - spanStart) * (pxPerHr / 60);
     const dur = ev.duration || 30;
@@ -14325,6 +14388,16 @@ function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf,
     return /* @__PURE__ */ React.createElement(React.Fragment, { key: ev.id }, ev.commuteBefore > 0 && /* @__PURE__ */ React.createElement("div", { title: ev.commuteBefore + " min commute", style: commuteStripStyle(ev.commuteBefore, "before") }, ev.commuteBefore * (pxPerHr / 60) > 13 && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color, fontWeight: 600, whiteSpace: "nowrap" } }, ev.commuteBefore, "m commute")), /* @__PURE__ */ React.createElement(
       "div",
       {
+        draggable: true,
+        onDragStart: () => {
+          if (!ev.isRoutine) {
+            setDayDragId(ev.id);
+          } else {
+            if (onRoutineDragStateChange) onRoutineDragStateChange(true);
+            setDayDragRoutineOccurrence({ routineId: ev.routineId, fromDate: ev.date, duration: dur });
+          }
+        },
+        onDragEnd: handleDayDragEnd,
         onDoubleClick: () => {
           if (ev.isRoutine) {
             if (onEditRoutine) onEditRoutine(ev.routineId, ev.date);
@@ -18247,7 +18320,7 @@ Examples:
   const canDragNewTask = isTaskKind && !isProjectKind && !(evKind === "assignment" && evAttackBlock) || isReminderKind || evKind === "busy block";
   const dragNewTaskPayload = () => {
     const subj = evSubject === "None" ? "" : evSubject === "Other" && evCustom.trim() ? evCustom.trim() : evSubject;
-    const resolvedKind = evKind === "assignment" || evKind === "task" || evKind === "studySession" ? "study block" : evKind;
+    const resolvedKind = evKind === "assignment" ? "deadline" : evKind === "task" || evKind === "studySession" ? "study block" : evKind;
     return {
       title: evTitle.trim() || "Untitled",
       kind: resolvedKind,
@@ -18678,6 +18751,22 @@ Examples:
             } else if (dragId) {
               moveEvent(dragId, c.key);
               setDragId(null);
+            } else if (e.dataTransfer && e.dataTransfer.getData(MANUAL_BLOCK_DRAG_MIME) && commitManualBlockDrop) {
+              let payload = null;
+              try {
+                payload = JSON.parse(e.dataTransfer.getData(MANUAL_BLOCK_DRAG_MIME));
+              } catch (err) {
+                payload = null;
+              }
+              if (payload) commitManualBlockDrop(payload, c.key, "09:00");
+            } else if (e.dataTransfer && e.dataTransfer.getData(NEW_TASK_DRAG_MIME) && commitNewTaskDrop) {
+              let payload = null;
+              try {
+                payload = JSON.parse(e.dataTransfer.getData(NEW_TASK_DRAG_MIME));
+              } catch (err) {
+                payload = null;
+              }
+              if (payload) commitNewTaskDrop(payload, c.key, "09:00");
             }
           },
           title: hasNewItem ? "Has something just added" : isHeavyThisMonth ? dayWorkloadMinutes(evs) + " minutes scheduled -- heavier than your average day this month" : void 0,
@@ -18769,10 +18858,40 @@ Examples:
       gsBusyByDate: gsOpen && gsStep === "place" ? gsBusyByDate : null,
       gsRecommended: gsOpen && gsStep === "place" ? gsRecommended : null
     }
-  ), calView === "daily" && /* @__PURE__ */ React.createElement(DayPlanner, { dayEvents, setEvents: setEvents2, selDay, todayK, colorOf, fmtTime: fmtTime2, fmtTimeRange, openEdit, markDone, uncrossDone, prefs: getSchedulePreferences(), setSelDay, catchUpPending, openNew, newItemHighlightIds: newItemHighlightSet, onEditRoutine: (routineId, date) => {
-    const rule = routines.find((r) => r.id === routineId);
-    if (rule) openRoutineEdit(rule, date);
-  } })), /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, display: "flex", position: "relative", height: "calc(100vh - 150px)" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 0, bottom: 0, left: calRightColCollapsed ? 0 : 14, width: 1, background: T.border, boxShadow: `-1px 0 3px rgba(0,0,0,0.12)` } }), !calRightColCollapsed && /* @__PURE__ */ React.createElement("div", { style: { width: 220, marginLeft: 34, maxHeight: "100%", overflowY: "auto" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontWeight: 700, color: T.white } }, selectedCourse ? selectedCourse.label : "Upcoming"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: toggleCalRightColCollapsed, style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontWeight: 600, fontFamily: T.font, cursor: "pointer", padding: 0 } }, "Close \u203A")), sidebarDueTodayItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 10, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setDueTodayOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.lime, transform: dueTodayOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.lime } }, "Due Today (", sidebarDueTodayItems.length, ")")), dueTodayOpen && sidebarDueTodayItems.map(renderSidebarItem)), sidebarOverdueItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setOverdueSectionOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.red, transform: overdueSectionOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.red } }, "Overdue (", sidebarOverdueItems.length, ")")), overdueSectionOpen && sidebarOverdueItems.map(renderSidebarItem)), sidebarUpcomingItems.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.faint } }, "Nothing upcoming."), sidebarUpcomingGroups.map((group) => /* @__PURE__ */ React.createElement("div", { key: group.label, style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, color: group.label === "Overdue" ? T.red : T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 } }, "Due: ", group.label), group.items.map(renderSidebarItem)))), calRightColCollapsed && /* @__PURE__ */ React.createElement(
+  ), calView === "daily" && /* @__PURE__ */ React.createElement(
+    DayPlanner,
+    {
+      dayEvents,
+      setEvents: setEvents2,
+      selDay,
+      todayK,
+      colorOf,
+      fmtTime: fmtTime2,
+      fmtTimeRange,
+      openEdit,
+      markDone,
+      uncrossDone,
+      prefs: getSchedulePreferences(),
+      setSelDay,
+      catchUpPending,
+      openNew,
+      newItemHighlightIds: newItemHighlightSet,
+      onEditRoutine: (routineId, date) => {
+        const rule = routines.find((r) => r.id === routineId);
+        if (rule) openRoutineEdit(rule, date);
+      },
+      moveEvent,
+      sidebarDragChip,
+      onDropSidebarChip: (time, anchorPoint) => {
+        openNewEventForDrop(sidebarDragChip, selDay, time, anchorPoint);
+        setSidebarDragChip(null);
+      },
+      onDropManualBlockRequest: commitManualBlockDrop,
+      onDropNewTaskRequest: commitNewTaskDrop,
+      onDropRoutineOccurrence,
+      onRoutineDragStateChange: setRoutineDragActive
+    }
+  )), /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, display: "flex", position: "relative", height: "calc(100vh - 150px)" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 0, bottom: 0, left: calRightColCollapsed ? 0 : 14, width: 1, background: T.border, boxShadow: `-1px 0 3px rgba(0,0,0,0.12)` } }), !calRightColCollapsed && /* @__PURE__ */ React.createElement("div", { style: { width: 220, marginLeft: 34, maxHeight: "100%", overflowY: "auto" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontWeight: 700, color: T.white } }, selectedCourse ? selectedCourse.label : "Upcoming"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: toggleCalRightColCollapsed, style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontWeight: 600, fontFamily: T.font, cursor: "pointer", padding: 0 } }, "Close \u203A")), sidebarDueTodayItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 10, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setDueTodayOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.lime, transform: dueTodayOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.lime } }, "Due Today (", sidebarDueTodayItems.length, ")")), dueTodayOpen && sidebarDueTodayItems.map(renderSidebarItem)), sidebarOverdueItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setOverdueSectionOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.red, transform: overdueSectionOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.red } }, "Overdue (", sidebarOverdueItems.length, ")")), overdueSectionOpen && sidebarOverdueItems.map(renderSidebarItem)), sidebarUpcomingItems.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.faint } }, "Nothing upcoming."), sidebarUpcomingGroups.map((group) => /* @__PURE__ */ React.createElement("div", { key: group.label, style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, color: group.label === "Overdue" ? T.red : T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 } }, "Due: ", group.label), group.items.map(renderSidebarItem)))), calRightColCollapsed && /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",

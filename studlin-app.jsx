@@ -23616,8 +23616,24 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
 // illegibility on a packed day and clamp to a narrow window on a light
 // one). The container just scrolls, same as any normal calendar, landing
 // near the current time or the first real event on open.
-function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending, openNew, newItemHighlightIds, onEditRoutine}) {
+function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending, openNew, newItemHighlightIds, onEditRoutine, moveEvent, sidebarDragChip, onDropSidebarChip, onDropManualBlockRequest, onDropNewTaskRequest, onDropRoutineOccurrence, onRoutineDragStateChange}) {
   const scrollRef=useRef(null);
+  // User report, 2026-09-10: dragging an unscheduled item ("Don't know
+  // exactly when? Drag onto the calendar", the sidebar's own unscheduled
+  // chips) onto Day view did nothing at all -- Week view has always
+  // supported this (wkDragId/handleDrop/handleDragOver), Month view got a
+  // narrower version, but Day view never got any of it, including moving
+  // an EXISTING day-view block by dragging it. Mirrors WeeklyPlanner's own
+  // drag state/handlers as closely as a single-day (not 7-column) surface
+  // allows -- moveEvent/commitManualBlockDrop/commitNewTaskDrop are the
+  // exact same shared functions Week/Month already trust, so every actual
+  // placement/collision/deadline-wall rule stays identical across all
+  // three views; this only wires Day view up to call them.
+  const [dayDragId,setDayDragId]=useState(null);
+  const [dayDragRoutineOccurrence,setDayDragRoutineOccurrence]=useState(null); // {routineId,fromDate,duration}|null
+  const [dayDragOver,setDayDragOver]=useState(false);
+  const [dayDropTime,setDayDropTime]=useState(null);
+  const timelineRef=useRef(null);
   const [dayPreviewOpen,setDayPreviewOpen]=useState(false);
   // Minimal "who's in" popover for a pending group-proposal block -- Day
   // view never had a click-for-actions menu the way Week view does (a
@@ -23683,6 +23699,50 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
   const isToday=selDay===todayK;
   const dayLaidOut=layoutDayEvents(visibleEvs);
   const fmtHourLabel=(mins)=>{const h=Math.floor(mins/60)%24;const ap=h>=12?"PM":"AM";const h12=h%12||12;return h12+ap;};
+  // Same Y-position -> time-of-day math as WeeklyPlanner's handleDragOver,
+  // just against this single day's own timeline rect instead of a
+  // per-column one.
+  const timeFromDragY=(e)=>{
+    const el=timelineRef.current;
+    if(!el)return "09:00";
+    const rect=el.getBoundingClientRect();
+    const relY=Math.max(0,e.clientY-rect.top);
+    const totalMins=Math.round(relY/pxPerHr*60)+spanStart;
+    const hrs=Math.min(23,Math.floor(totalMins/60));
+    const rawMins=totalMins%60;
+    const snappedMins=Math.min(45,Math.round(rawMins/15)*15);
+    return String(hrs).padStart(2,'0')+':'+String(snappedMins).padStart(2,'0');
+  };
+  const handleDayDragOver=(e)=>{
+    e.preventDefault();
+    setDayDragOver(true);
+    setDayDropTime(timeFromDragY(e));
+  };
+  const handleDayDrop=(e)=>{
+    e.preventDefault();
+    const time=dayDropTime||"09:00";
+    if(sidebarDragChip&&onDropSidebarChip){
+      onDropSidebarChip(time,{x:e.clientX,y:e.clientY});
+    }else if(dayDragRoutineOccurrence&&onDropRoutineOccurrence){
+      onDropRoutineOccurrence(dayDragRoutineOccurrence.routineId,dayDragRoutineOccurrence.fromDate,selDay,time,{x:e.clientX,y:e.clientY});
+    }else if(dayDragId&&moveEvent){
+      moveEvent(dayDragId,selDay,time);
+    }else if(e.dataTransfer&&e.dataTransfer.getData(MANUAL_BLOCK_DRAG_MIME)&&onDropManualBlockRequest){
+      let payload=null;
+      try{payload=JSON.parse(e.dataTransfer.getData(MANUAL_BLOCK_DRAG_MIME));}catch(err){payload=null;}
+      if(payload)onDropManualBlockRequest(payload,selDay,time);
+    }else if(e.dataTransfer&&e.dataTransfer.getData(NEW_TASK_DRAG_MIME)&&onDropNewTaskRequest){
+      let payload=null;
+      try{payload=JSON.parse(e.dataTransfer.getData(NEW_TASK_DRAG_MIME));}catch(err){payload=null;}
+      if(payload)onDropNewTaskRequest(payload,selDay,time);
+    }
+    setDayDragId(null);setDayDragRoutineOccurrence(null);setDayDragOver(false);setDayDropTime(null);
+    if(onRoutineDragStateChange)onRoutineDragStateChange(false);
+  };
+  // Also fires on a cancelled drag (dropped outside a valid target, Escape)
+  // -- same reasoning as WeeklyPlanner's own handleDragEnd, so a cancelled
+  // drag never leaves the preview line stuck on screen.
+  const handleDayDragEnd=()=>{setDayDragId(null);setDayDragRoutineOccurrence(null);setDayDragOver(false);setDayDropTime(null);if(onRoutineDragStateChange)onRoutineDragStateChange(false);};
   return (
     <>
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,flexWrap:"wrap",gap:8}}>
@@ -23725,7 +23785,7 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
             style={{position:"sticky",top:8,left:0,height:0,zIndex:7,display:"flex",marginLeft:45,cursor:"ns-resize"}}>
             <div style={{width:18,height:18,borderRadius:"50%",background:T.lime,border:`2px solid ${T.card}`,marginLeft:-9,boxShadow:"0 2px 6px rgba(0,0,0,0.35)"}} />
           </div>
-          <div style={{position:"relative",height:totalHeightPx,marginLeft:54}}>
+          <div ref={timelineRef} onDragOver={handleDayDragOver} onDrop={handleDayDrop} onDragLeave={()=>setDayDragOver(false)} style={{position:"relative",height:totalHeightPx,marginLeft:54}}>
             {Array.from({length:Math.max(1,hourEnd-hourStart)},(_,i)=>hourStart+i).map(h=>(
               <div key={h} style={{position:"absolute",top:(h*60-spanStart)*(pxPerHr/60),left:0,right:0,borderTop:`1px solid ${T.borderHover}`,boxSizing:"border-box"}}>
                 <span style={{position:"absolute",left:-54,top:-7,width:46,textAlign:"right",fontSize:10,color:T.faint,fontFamily:T.mono}}>{fmtHourLabel(h*60)}</span>
@@ -23737,6 +23797,17 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
                 <div style={{borderTop:"2px solid #E5484D"}} />
               </div>
             )}
+            {/* Live drop-time preview while dragging over this day -- same
+                purpose as WeeklyPlanner's own wkDropTime line, so dropping
+                an unscheduled item or moving an existing block gives the
+                same "here's exactly where this lands" feedback in Day
+                view it already gives in Week view. */}
+            {dayDragOver&&dayDropTime&&(()=>{const m=timeToMinutes(dayDropTime);return(
+              <div style={{position:"absolute",top:(m-spanStart)*(pxPerHr/60),left:0,right:0,zIndex:6,pointerEvents:"none"}}>
+                <div style={{borderTop:`2px dashed ${T.lime}`}} />
+                <span style={{position:"absolute",left:4,top:-16,fontSize:9.5,fontWeight:700,color:T.lime,background:T.ink,padding:"1px 5px",borderRadius:3}}>{fmtTime(dayDropTime)}</span>
+              </div>
+            );})()}
             {dayLaidOut.map(({ev,col,totalCols,displayCol,displayTotalCols,start,end,hidden,overflowCount})=>{
               // See the matching comment in WeeklyPlanner -- layoutDayEvents
               // caps visible columns and flags overflow items hidden:true
@@ -23816,7 +23887,11 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
                     the tooltip even says "Double-click to edit" and nothing
                     happened. WeeklyPlanner already branches this correctly
                     (see its own onDoubleClick); mirrored here. */}
-                <div onDoubleClick={()=>{if(ev.isRoutine){if(onEditRoutine)onEditRoutine(ev.routineId,ev.date);}else openEdit(ev);}}
+                <div
+                  draggable
+                  onDragStart={()=>{ if(!ev.isRoutine){setDayDragId(ev.id);} else {if(onRoutineDragStateChange)onRoutineDragStateChange(true);setDayDragRoutineOccurrence({routineId:ev.routineId,fromDate:ev.date,duration:dur});} }}
+                  onDragEnd={handleDayDragEnd}
+                  onDoubleClick={()=>{if(ev.isRoutine){if(onEditRoutine)onEditRoutine(ev.routineId,ev.date);}else openEdit(ev);}}
                   onClick={(e)=>{
                     if(ev.isRoutine)return;
                     if(isPendingAcceptance){
@@ -30302,13 +30377,15 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const canDragNewTask=(isTaskKind&&!isProjectKind&&!(evKind==="assignment"&&evAttackBlock))||isReminderKind||evKind==="busy block";
   const dragNewTaskPayload=()=>{
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
-    // Task/Assignment/Study Session all share the same real kind
-    // ("study block") -- isGeneralTask/isAssignment (2026-09-06) is what
-    // actually distinguishes them under the hood, same convention
-    // buildTask's own manual-mode resolution already uses. Resolved here
-    // (not in CalendarTab's drop handler) since evKind/evSubject/etc. are
-    // this modal's own closure state, gone once it closes.
-    const resolvedKind=(evKind==="assignment"||evKind==="task"||evKind==="studySession")?"study block":evKind;
+    // Write-side unification, 2026-09-10: Assignment now always resolves
+    // to "deadline" here too, matching resolveAssignmentKind's own fix (see
+    // its comment for the fuller history) -- this used to be a SEPARATE,
+    // un-synced kind formula that still gave a dragged Assignment the old
+    // "study block"+isAssignment shape even after that fix, exactly the
+    // kind of drift-between-two-copies-of-the-same-rule bug the
+    // unification was meant to close for good. Task/Study Session are
+    // unchanged -- neither was ever part of that bug.
+    const resolvedKind=evKind==="assignment"?"deadline":((evKind==="task"||evKind==="studySession")?"study block":evKind);
     return {title:evTitle.trim()||"Untitled",kind:resolvedKind,subject:subj,deadline:evDeadline||null,notes:evNotes||"",
       ...(evKind==="task"?{isGeneralTask:true}:{}),
       ...(evKind==="assignment"?{isAssignment:true}:{})};
@@ -30945,7 +31022,29 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
               const hasNewItem=evs.some(ev=>newItemHighlightSet.has(ev.id));
               return (
                 <div key={i} onClick={()=>{setSelDay(c.key);}} onDoubleClick={()=>setDayDetailKey(c.key)}
-                  onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(sidebarDragChip){openNewEventForDrop(sidebarDragChip,c.key,"09:00",{x:e.clientX,y:e.clientY});setSidebarDragChip(null);}else if(dragId){moveEvent(dragId,c.key);setDragId(null);}}}
+                  onDragOver={e=>e.preventDefault()} onDrop={e=>{
+                    e.preventDefault();
+                    if(sidebarDragChip){openNewEventForDrop(sidebarDragChip,c.key,"09:00",{x:e.clientX,y:e.clientY});setSidebarDragChip(null);}
+                    else if(dragId){moveEvent(dragId,c.key);setDragId(null);}
+                    // User report, 2026-09-10: dragging an unscheduled item
+                    // ("Don't know exactly when? Drag onto the calendar",
+                    // or EventDetailModal's manual-block chip) onto the
+                    // Month grid did nothing -- this cell's onDrop never
+                    // checked either MIME type at all, only sidebarDragChip/
+                    // dragId. No per-time precision in a month cell, so
+                    // this places at the day's own work-start time, same
+                    // "09:00" default this cell's own sidebarDragChip branch
+                    // right above already uses.
+                    else if(e.dataTransfer&&e.dataTransfer.getData(MANUAL_BLOCK_DRAG_MIME)&&commitManualBlockDrop){
+                      let payload=null;
+                      try{payload=JSON.parse(e.dataTransfer.getData(MANUAL_BLOCK_DRAG_MIME));}catch(err){payload=null;}
+                      if(payload)commitManualBlockDrop(payload,c.key,"09:00");
+                    }else if(e.dataTransfer&&e.dataTransfer.getData(NEW_TASK_DRAG_MIME)&&commitNewTaskDrop){
+                      let payload=null;
+                      try{payload=JSON.parse(e.dataTransfer.getData(NEW_TASK_DRAG_MIME));}catch(err){payload=null;}
+                      if(payload)commitNewTaskDrop(payload,c.key,"09:00");
+                    }
+                  }}
                   title={hasNewItem?"Has something just added":isHeavyThisMonth?dayWorkloadMinutes(evs)+" minutes scheduled -- heavier than your average day this month":undefined}
                   style={{position:"relative",minHeight:64,minWidth:0,borderRadius:9,padding:"6px 7px",cursor:"pointer",background:isSel?T.card2:"transparent",border:"1px solid "+(hasNewItem?T.lime:isSel?T.lime+"55":"transparent"),transition:"all 0.12s",opacity:c.out?0.35:1}}>
                   <div style={{display:"flex",justifyContent:"flex-start"}}>
@@ -31011,7 +31110,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           gsBusyByDate={gsOpen&&gsStep==="place"?gsBusyByDate:null} gsRecommended={gsOpen&&gsStep==="place"?gsRecommended:null} />
       )}
       {calView==="daily"&&(
-        <DayPlanner dayEvents={dayEvents} setEvents={setEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} fmtTimeRange={fmtTimeRange} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} catchUpPending={catchUpPending} openNew={openNew} newItemHighlightIds={newItemHighlightSet} onEditRoutine={(routineId,date)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule,date);}} />
+        <DayPlanner dayEvents={dayEvents} setEvents={setEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} fmtTimeRange={fmtTimeRange} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} catchUpPending={catchUpPending} openNew={openNew} newItemHighlightIds={newItemHighlightSet} onEditRoutine={(routineId,date)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule,date);}}
+          moveEvent={moveEvent} sidebarDragChip={sidebarDragChip} onDropSidebarChip={(time,anchorPoint)=>{openNewEventForDrop(sidebarDragChip,selDay,time,anchorPoint);setSidebarDragChip(null);}}
+          onDropManualBlockRequest={commitManualBlockDrop} onDropNewTaskRequest={commitNewTaskDrop} onDropRoutineOccurrence={onDropRoutineOccurrence} onRoutineDragStateChange={setRoutineDragActive} />
       )}
     </div>
       {/* Right-hand column (Phase 5e) -- upcoming across everything by
