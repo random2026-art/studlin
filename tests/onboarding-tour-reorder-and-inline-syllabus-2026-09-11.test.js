@@ -49,13 +49,13 @@ describe("Tour dimming is lighter -- the calendar underneath should stay visible
   test("TourStep's anchored (spotlight) surround is no longer near-opaque black", () => {
     const idx = SOURCE.indexOf("function TourStep(");
     assert.ok(idx > -1);
-    const body = SOURCE.slice(idx, idx + 3500);
+    const body = SOURCE.slice(idx, idx + 4200);
     assert.equal(body.includes("rgba(0,0,0,0.92)"), false, "the old 0.92 alpha blackout must be gone");
     assert.ok(body.includes("rgba(0,0,0,0.45)"), "must use a lighter surround so the populated calendar stays legible");
   });
   test("TourStep's non-anchored (centered) overlay is lighter and no longer blurs the calendar", () => {
     const idx = SOURCE.indexOf("function TourStep(");
-    const body = SOURCE.slice(idx, idx + 3500);
+    const body = SOURCE.slice(idx, idx + 4200);
     assert.equal(body.includes("rgba(8,12,10,0.75)"), false, "the old 0.75 alpha must be gone");
     assert.equal(body.includes("backdropFilter"), false, "the blur must be gone too -- it made an already-dim calendar unreadable");
     assert.ok(body.includes("rgba(8,12,10,0.4)"));

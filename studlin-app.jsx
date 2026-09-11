@@ -447,15 +447,17 @@ const Modal = ({open, onClose, title, sub, children, footer, width=540}) => {
 // actually clicking the highlighted control) and anchors a callout next to
 // it. With no targetRef it renders the same callout as a blocking centered
 // card instead, for steps that aren't about one specific control.
-function TourStep({ targetRef, title, body, step, total, onNext, onSkip, isLast }) {
+function TourStep({ targetRef, targetSelector, title, body, step, total, onNext, onSkip, isLast }) {
   const [rect, setRect] = useState(null);
   useEffect(() => {
     setRect(null);
-    if (!targetRef) return;
+    if (!targetRef && !targetSelector) return;
     let cancelled = false;
+    const resolveTarget = () => targetRef ? targetRef.current : document.querySelector(targetSelector);
     const measure = () => {
-      if (cancelled || !targetRef.current) return;
-      setRect(targetRef.current.getBoundingClientRect());
+      const el = resolveTarget();
+      if (cancelled || !el) return;
+      setRect(el.getBoundingClientRect());
     };
     // Delay measurement so page entry animations finish before we snapshot
     // the button's position — immediate reads land during the translateY
@@ -470,14 +472,21 @@ function TourStep({ targetRef, title, body, step, total, onNext, onSkip, isLast 
       window.removeEventListener("resize", measure);
       window.removeEventListener("scroll", measure, true);
     };
-  }, [targetRef, step]);
+  }, [targetRef, targetSelector, step]);
 
   const anchored = !!rect;
   const vw = typeof window!=="undefined"?window.innerWidth:1200;
   const vh = typeof window!=="undefined"?window.innerHeight:800;
   const isRight = anchored && rect.left > vw/2;
+  // A target sitting in the bottom half of the viewport (the Studlin AI
+  // bubble, fixed to bottom:20) has no real room below it for the old
+  // always-below placement -- the callout would run off the bottom edge.
+  // Flip above the target instead whenever there isn't roughly a callout's
+  // worth of space (~240px) left beneath it.
+  const isBottom = anchored && rect.bottom > vh - 240;
   const calloutStyle = anchored
-    ? { position:"fixed", top:Math.min(rect.bottom+16, vh-240),
+    ? { position:"fixed",
+        ...(isBottom ? { bottom:Math.max(16, vh-rect.top+16), top:"auto" } : { top:Math.min(rect.bottom+16, vh-240) }),
         ...(isRight
           ? { right:Math.max(16, vw-rect.right-4), left:"auto" }
           : { left:Math.max(16, rect.left), right:"auto" }
@@ -2367,7 +2376,13 @@ function routeStudlinAiQuestion(text,knownSubjects){
     needsWorkload:has("busy","busiest","lightest","heaviest","light day","free day","workload","packed"),
     needsOverdue:has("overdue","missed","behind on","late","catch up","catch-up"),
     needsPace:has("pace","on track","ahead of","behind schedule","progress"),
-    needsAttackRisk:has("attack block","running out","won't finish","wont finish","won't have time"),
+    // 2026-09-11 hardening pass: tested against a battery of realistic
+    // phrasings before promoting this feature more confidently (see the
+    // Studlin AI tour step). "Will I finish my project in time?" and "Am I
+    // going to run out of time for my paper?" -- both completely natural
+    // ways to ask this -- matched nothing here before; only the gerund
+    // "running out" and a narrow set of exact negations were covered.
+    needsAttackRisk:has("attack block","running out","run out","won't finish","wont finish","won't have time","wont have time","won't be done","wont be done","not going to finish","not gonna finish"),
     needsStreak:has("streak","consistent","consistency","activity","engagement"),
     needsPeakHours:has("productive","peak","best time","focus","when am i","when do i"),
     needsStrugglingBucket:has("struggl","worst time","trouble focusing","hard time"),
@@ -3422,6 +3437,36 @@ function dismissPeakHourInsight(bucketId){
   dismissed[bucketId]=Date.now();
   lsSet("peakInsightDismissed",dismissed);
 }
+// 2026-09-11 user request: a one-time Dashboard reveal telling a student
+// Studlin is quietly learning them (Attack Block calibrating real
+// assignment durations, peak-hour detection, the subject reliability
+// matrix) -- all genuinely real, already-shipped features nobody actually
+// gets told exist. Deliberately NOT shown the moment onboarding finishes:
+// the whole point is "Studlin already knows things about you," which
+// isn't true yet on day one with zero completed work behind it -- saying
+// it too early would be the exact kind of hollow, oversold claim this was
+// trying to avoid. Waits a few real days AND requires at least one
+// genuinely completed item, so by the time a student sees this, it's
+// already at least a little bit true.
+const LEARNS_YOU_REVEAL_DELAY_MS=3*24*60*60*1000;
+function shouldShowLearnsYouReveal(){
+  if(lsGet("seenLearnsYouReveal",false))return false;
+  const finishedAt=lsGet("onboardingFinishedAt",null);
+  if(!finishedAt||Date.now()-finishedAt<LEARNS_YOU_REVEAL_DELAY_MS)return false;
+  const hasRealActivity=lsGet("sessions",[]).length>0||lsGet("events",[]).some(e=>e.status==="done");
+  return hasRealActivity;
+}
+function dismissLearnsYouReveal(){lsSet("seenLearnsYouReveal",true);}
+// 2026-09-11 user request: Studlin Prep's Exams tab used to be a plain
+// paragraph ("add one from your calendar...") -- fine for the true-empty
+// state, but once a student actually has an exam, nobody ever tells them
+// the actual payoff of clicking into it (a real study plan with
+// flashcards/practice exams built in, not just a due-date tracker). One-
+// time, dismissed permanently either by an explicit dismiss or by the
+// student actually clicking into an exam (the successful outcome this is
+// trying to produce in the first place).
+function shouldShowPrepGuide(){return !lsGet("seenPrepGuide",false);}
+function dismissPrepGuide(){lsSet("seenPrepGuide",true);}
 // Third proactive signal, 2026-09-04 -- Studlin AI chat feature request:
 // "3 things due Thursday, 2 unscheduled -- want me to fix that?" surfacing
 // unprompted, not just when asked. Deliberately conservative to avoid
@@ -9976,6 +10021,13 @@ async function extractFileText(file,onProgress){
 // instead of inventing a parallel system.
 function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()=>{},onDeclinePrep=()=>{},onTaskCompleted=()=>{}}={}){
   const [tab,setTab]=useState("exams"); // exams | assignments | projects | flashcards | practiceExams
+  // 2026-09-11: first-visit interactive guide (see shouldShowPrepGuide's
+  // own comment) -- points at the first real exam row rather than showing
+  // a paragraph nobody reads. Read once at mount, same pattern every other
+  // one-time reveal in this file already uses.
+  const [prepGuideOpen,setPrepGuideOpen]=useState(()=>shouldShowPrepGuide());
+  const closePrepGuide=()=>{dismissPrepGuide();setPrepGuideOpen(false);};
+  const firstExamRowRef=useRef(null);
   // Single-select, one at a time -- an earlier pass tried a multi-select
   // filter here (pick Exams+Projects together), reverted per direct
   // feedback: only one section visible at once, same as it always was,
@@ -11326,6 +11378,19 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
 
   return(
     <div>
+      {/* 2026-09-11: first-visit interactive guide, reusing TourStep (same
+          spotlight-highlight component the calendar's own quick-demo tour
+          uses) rather than a static paragraph nobody reads. Single step
+          (total=1, isLast so it reads "Done" not "Next") pointed at the
+          first real exam row -- closes itself the moment the student
+          either dismisses it or actually clicks into an exam (see
+          viewPlan's own call to closePrepGuide). */}
+      {prepGuideOpen&&tab==="exams"&&!selectedExam&&visibleExams.length>0&&(
+        <TourStep targetRef={firstExamRowRef} step={0} total={1} isLast={true}
+          title="Click an exam to build a real study plan"
+          body="Studlin turns your material into spaced study sessions, with flashcards and a practice exam built in automatically -- not just a countdown to the date."
+          onNext={closePrepGuide} onSkip={closePrepGuide} />
+      )}
       {/* Page title/subtitle removed -- sidebar nav already says "Studlin
           Prep", the H1 here was just repeating it above the fold for no
           reason. Redesign: same compact segmented control Calendar's own
@@ -11367,6 +11432,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
           </Card>
           :(()=>{
               const viewPlan=(ex)=>{
+                if(prepGuideOpen)closePrepGuide();
                 setSelectedExamId(ex.id);
                 // sourceMaterials/referenceLinks (arrays) are the current
                 // shape -- sourceMaterial/referenceLink (singular strings)
@@ -11402,7 +11468,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                         <div key={h+i} style={{fontSize:9,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>{h}</div>
                       ))}
                     </div>
-                    {visibleExams.map(ex=>{
+                    {visibleExams.map((ex,exIdx)=>{
                       const examSessionsForEx=lsGet("events",[]).filter(e=>e.dueEventId===ex.id);
                       const pendingSessionsForEx=examSessionsForEx.filter(e=>e.status!=="done");
                       const today=dayKey();
@@ -11411,7 +11477,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                       const sessionsLabel=examSessionsForEx.length===0?"no plan yet":pendingSessionsForEx.length+" left";
                       const isFlexible=ex.sessionsMovable!==false;
                       return (
-                        <div key={ex.id} style={{display:"grid",gridTemplateColumns:gridCols,gap:8,padding:"7px 10px",borderBottom:`1px solid ${T.border}`,alignItems:"center"}}>
+                        <div key={ex.id} ref={exIdx===0?firstExamRowRef:null} style={{display:"grid",gridTemplateColumns:gridCols,gap:8,padding:"7px 10px",borderBottom:`1px solid ${T.border}`,alignItems:"center"}}>
                           <div onClick={()=>viewPlan(ex)} style={{fontSize:11.5,fontWeight:600,color:T.white,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={ex.title}>{ex.title}</div>
                           <div style={{fontSize:10.5,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ex.subject||"—"}</div>
                           {/* Was the legacy Quiz/Major binary, a different
@@ -18931,7 +18997,13 @@ function renderStudlinAiMarkdown(text){
 }
 function StudlinAiBubble({onClick,hasProactive}){
   return (
-    <button type="button" onClick={onClick} title="Ask Studlin AI about your schedule"
+    // id (2026-09-11, post-onboarding tour's 3rd step): this button is
+    // rendered once at App() level, a sibling of CalendarTab (where the
+    // tour itself lives) rather than a child of it -- a plain React ref
+    // can't reach across that boundary, so the tour targets it by this
+    // stable id via document.getElementById instead (see TourStep's own
+    // targetSelector support).
+    <button id="studlin-ai-bubble" type="button" onClick={onClick} title="Ask Studlin AI about your schedule"
       style={{position:"fixed",bottom:20,right:20,width:52,height:52,borderRadius:"50%",background:T.lime,color:T.ink,border:"none",cursor:"pointer",display:"grid",placeItems:"center",boxShadow:"0 8px 24px -6px rgba(0,0,0,0.4)",zIndex:STUDLIN_AI_BUBBLE_Z}}>
       {Icon.sparkles}
       {hasProactive&&(
@@ -28265,6 +28337,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const CAL_TOUR_STEPS=[
     {targetRef:addTaskBtnRef,title:"Add anything, one place",body:"A class, an assignment, a reminder. Tap Add Task and Studlin finds the time for it."},
     {targetRef:rescheduleBtnRef,title:"When things don't go as planned",body:"Tell Studlin what happened and it reschedules everything around it. Deadlines stay safe, nothing gets crammed in."},
+    // 2026-09-11 user request: "another pop up for studlin ai ask it
+    // anything about your schedule." Targets the bubble by a stable id
+    // (see StudlinAiBubble's own comment) rather than a ref -- it's
+    // rendered once at App() level, a sibling of this component, not a
+    // child of it.
+    {targetSelector:"#studlin-ai-bubble",title:"Ask Studlin AI anything",body:"\"Am I behind on anything?\" \"When am I most productive?\" It answers from your real schedule, not a guess."},
   ];
   const [calTourStep,setCalTourStep]=useState(-1);
   const advanceCalTour=()=>{
@@ -28354,6 +28432,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // hasConfiguredRoutine above, so it still reflects "was this genuinely
     // a fresh account," not the post-wizard state.
     if(isFreshAccount&&!lsGet("seenCalendarTour",false))setCalTourStep(0);
+    // 2026-09-11: stamps when onboarding first finished, so Dashboard's
+    // "Studlin is learning you" reveal (shouldShowLearnsYouReveal) can wait
+    // a few real days before showing it -- see that function's own comment
+    // for why immediately-after-onboarding would be too soon for that
+    // specific claim to feel true yet. Guarded so a later re-entry (e.g.
+    // "Set up next term") never resets an already-real clock.
+    if(!lsGet("onboardingFinishedAt",null))lsSet("onboardingFinishedAt",Date.now());
     if(newIds&&newIds.length>0){
       setNewItemHighlightIds(newIds);
       // Bug fix, 2026-09-04 audit: "Add to Calendar" gave zero success
@@ -36176,9 +36261,33 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   // directly, same as isIncognitoOn/isOnlineStatusOn already do.
   const [wrappedOpen,setWrappedOpen]=useState(()=>isWrappedWindow&&lsGet("settings",{}).wrapped!==false&&!lsGet("wrapped-dismissed-"+wrappedWeekKey,false));
   const dismissWrapped=()=>{lsSet("wrapped-dismissed-"+wrappedWeekKey,true);setWrappedOpen(false);};
+  // 2026-09-11 user request: a one-time reveal telling the student Studlin
+  // is quietly learning them -- see shouldShowLearnsYouReveal's own
+  // comment for why this waits a few real days instead of firing right
+  // after onboarding. Read once at mount (matches wrappedOpen's own
+  // pattern just above) rather than re-checked every render.
+  const [learnsYouReveal,setLearnsYouReveal]=useState(()=>shouldShowLearnsYouReveal());
+  const closeLearnsYouReveal=()=>{dismissLearnsYouReveal();setLearnsYouReveal(false);};
   return (
     <>
     <div style={{display:"flex",flexDirection:"column",gap:16,paddingBottom:40}}>
+
+      {/* One-time "Studlin is learning you" reveal -- see
+          shouldShowLearnsYouReveal's own comment. Good news, not a
+          warning, so this gets the lime/positive treatment rather than
+          attackOverrun's red one just below. */}
+      {learnsYouReveal&&(
+        <div style={{background:T.card,border:`1px solid ${T.lime}44`,borderRadius:8,padding:"18px 20px",display:"flex",alignItems:"flex-start",gap:16}}>
+          <div style={{flexShrink:0,width:38,height:38,borderRadius:8,background:T.lime+"1A",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🧠</div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Studlin's been paying attention</div>
+            <div style={{fontSize:13,color:T.text,lineHeight:1.5,marginBottom:14}}>
+              Every Attack Block session teaches it how long your assignments really take -- not a generic guess. It's also watching which hours you actually get things done in, so it can nudge your schedule toward when you're genuinely at your best. The more you use it, the more it fits you specifically.
+            </div>
+            <Btn variant="ghost" onClick={closeLearnsYouReveal} style={{padding:"7px 14px",fontSize:12}}>Got it</Btn>
+          </div>
+        </div>
+      )}
 
       {/* Needs-attention — Attack Block project running behind its runway */}
       {attackOverrun&&(
