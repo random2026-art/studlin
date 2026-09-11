@@ -71,11 +71,11 @@ describe("New Task drag-and-drop: component-closure UI (source-level regression 
     assert.match(line, /!\(evKind==="assignment"&&evAttackBlock\)/, "Attack Block already finds the time itself -- a manually dragged time isn't even a guaranteed placement there");
   });
 
-  test("the payload resolves Task/Assignment/Study Session to the real internal kind + isGeneralTask/isAssignment flags, same convention buildTask's own manual-mode resolution uses", () => {
+  test("the payload resolves Assignment to kind:deadline (2026-09-10 write-side unification) and Task/Study Session to study block, plus isGeneralTask/isAssignment flags, same convention resolveAssignmentKind's own fix uses", () => {
     const idx = SOURCE.indexOf("const dragNewTaskPayload=()=>{");
     assert.notEqual(idx, -1);
     const body = SOURCE.slice(idx, idx + 1100);
-    assert.match(body, /resolvedKind=\(evKind==="assignment"\|\|evKind==="task"\|\|evKind==="studySession"\)\?"study block":evKind/);
+    assert.match(body, /resolvedKind=evKind==="assignment"\?"deadline":\(\(evKind==="task"\|\|evKind==="studySession"\)\?"study block":evKind\)/);
     assert.match(body, /isGeneralTask:true/);
     assert.match(body, /isAssignment:true/);
   });
