@@ -2534,12 +2534,18 @@ describe("computeExamReadiness (fuses days-to-exam + linked review-session compl
 
   test("'tight' when nothing is overdue/shaky/critically-behind but real capacity slack is thin", () => {
     const m = loadStudlinModule();
-    // Exam in 2 days, one session done, one 45-min session still pending --
-    // the finish-buffer already eats into what little runway is left, so
-    // realistic capacity for the remaining work is essentially zero.
+    // Bug fix, 2026-09-10 (computeCapacitySlack's own "compressed" fix --
+    // see attack-block-overrun-nudge-fix-2026-09-10.test.js): exam in 2
+    // days at a 30 real min/day sustainable pace is genuinely ~60 real
+    // minutes of capacity, not the old buggy "0 capacity" this fixture
+    // used to rely on (the finish-buffer alone exceeding the runway used
+    // to floor capacity at 0 regardless of how much real time was left).
+    // 55 of those 60 real minutes pending is genuinely thin (slackRatio
+    // ~0.92, above EXAM_READINESS_TIGHT_SLACK_RATIO's 0.85) -- a real
+    // tight scenario under the corrected math, not a manufactured one.
     const events = [
       session({ id: "s1", date: "2026-07-19", status: "done" }),
-      session({ id: "s2", date: "2026-07-21", status: "pending", duration: 45 }),
+      session({ id: "s2", date: "2026-07-21", status: "pending", duration: 55 }),
     ];
     const result = m.computeExamReadiness(exam({ date: "2026-07-22" }), events, TODAY);
     assert.equal(result.state, "tight");
@@ -2581,11 +2587,37 @@ describe("computeCapacitySlack (shared 'is there realistically enough time left'
     assert.ok(slackRatio > 1, "expected slackRatio > 1, got " + slackRatio);
   });
 
-  test("zero capacity with real pending work still left returns Infinity, not a divide-by-zero NaN", () => {
+  test("a deadline due literally today has genuinely zero real capacity left -- returns Infinity, not a divide-by-zero NaN", () => {
     const m = loadStudlinModule();
-    const { slackRatio, capacityMins } = m.computeCapacitySlack(45, "2026-07-21", "2026-07-20", 4, 210);
+    const { slackRatio, capacityMins } = m.computeCapacitySlack(45, "2026-07-20", "2026-07-20", 4, 210);
     assert.equal(capacityMins, 0);
     assert.equal(slackRatio, Infinity);
+  });
+
+  // Bug fix, 2026-09-10 user report ("why does it say this its stupid"): a
+  // deadline due SOON (but not literally today) used to floor capacityMins
+  // to 0 just because the finish-buffer (finishBufferDays) alone exceeded
+  // the real remaining runway -- a deadline tomorrow and a deadline in 10
+  // minutes both used to report the identical "zero capacity," even though
+  // the first one plainly has real time left. compressed:true now falls
+  // back to the REAL remaining time against the actual deadline (no buffer
+  // subtracted) instead of a manufactured zero.
+  test("a near-term deadline (buffer alone exceeds the runway) falls back to the real remaining time, not a false zero", () => {
+    const m = loadStudlinModule();
+    // Due tomorrow, buffer wants it finished 4 days ago -- old behavior
+    // clamped this to capacityMins:0; corrected behavior uses the 1 real
+    // day actually left.
+    const { slackRatio, capacityMins, compressed, runwayDays } = m.computeCapacitySlack(45, "2026-07-21", "2026-07-20", 4, 210);
+    assert.equal(compressed, true);
+    assert.equal(runwayDays, 1);
+    assert.equal(capacityMins, 30); // 1 day * (210/7 mins/day)
+    assert.equal(slackRatio, 1.5); // 45 pending / 30 real capacity -- tight, but not an impossible Infinity
+  });
+
+  test("compressed is false when the buffered runway is already non-negative -- no behavior change to the common case", () => {
+    const m = loadStudlinModule();
+    const { compressed } = m.computeCapacitySlack(30, "2026-09-01", "2026-07-20", 4, 210);
+    assert.equal(compressed, false);
   });
 
   test("zero pending minutes is zero slack regardless of capacity", () => {

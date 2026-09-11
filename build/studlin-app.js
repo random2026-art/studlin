@@ -3182,19 +3182,22 @@ function computeCapacitySlack(pendingMins, deadline, todayKey, finishBufferDays,
   const today = todayKey || dayKey();
   const finishByD = /* @__PURE__ */ new Date(deadline + "T12:00:00");
   finishByD.setDate(finishByD.getDate() - finishBufferDays);
-  const runwayDays = Math.ceil((finishByD - /* @__PURE__ */ new Date(today + "T12:00:00")) / 864e5);
+  let runwayDays = Math.ceil((finishByD - /* @__PURE__ */ new Date(today + "T12:00:00")) / 864e5);
+  const compressed = runwayDays < 0;
+  if (compressed) runwayDays = Math.ceil((/* @__PURE__ */ new Date(deadline + "T12:00:00") - /* @__PURE__ */ new Date(today + "T12:00:00")) / 864e5);
   const capacityMins = Math.max(0, runwayDays) * (sustainableWeeklyMins / 7);
   const slackRatio = capacityMins > 0 ? pendingMins / capacityMins : pendingMins > 0 ? Infinity : 0;
-  return { capacityMins: Math.round(capacityMins), runwayDays, slackRatio };
+  return { capacityMins: Math.round(capacityMins), runwayDays, slackRatio, compressed };
 }
 function detectAttackBlockOverruns(events, todayKey) {
   const today = todayKey || dayKey();
   const chains = {};
   events.forEach((ev) => {
     if (!ev.isAttackBlock || !ev.attackChainId) return;
-    if (!chains[ev.attackChainId]) chains[ev.attackChainId] = { title: ev.title, deadline: ev.deadline || null, pendingMins: 0 };
+    if (!chains[ev.attackChainId]) chains[ev.attackChainId] = { title: ev.title, deadline: ev.deadline || null, pendingMins: 0, dueEventId: ev.dueEventId || null };
     if (ev.deadline) chains[ev.attackChainId].deadline = ev.deadline;
     if (ev.status !== "done") chains[ev.attackChainId].pendingMins += ev.duration || 0;
+    if (ev.dueEventId && !chains[ev.attackChainId].dueEventId) chains[ev.attackChainId].dueEventId = ev.dueEventId;
   });
   const overruns = [];
   Object.keys(chains).forEach((chainId) => {
@@ -3202,7 +3205,7 @@ function detectAttackBlockOverruns(events, todayKey) {
     if (c.pendingMins <= 0 || !c.deadline) return;
     const { capacityMins, runwayDays } = computeCapacitySlack(c.pendingMins, c.deadline, today, ATTACK_BLOCK_FINISH_BUFFER_DAYS, ATTACK_BLOCK_SUSTAINABLE_WEEKLY_MINS);
     if (c.pendingMins > capacityMins) {
-      overruns.push({ chainId, title: c.title, deadline: c.deadline, pendingMins: c.pendingMins, capacityMins, runwayDays });
+      overruns.push({ chainId, dismissKey: c.dueEventId || chainId, title: c.title, deadline: c.deadline, pendingMins: c.pendingMins, capacityMins, runwayDays });
     }
   });
   return overruns;
@@ -3210,12 +3213,12 @@ function detectAttackBlockOverruns(events, todayKey) {
 function getAttackOverrunDismissals() {
   return lsGet("attackOverrunDismissals", {});
 }
-function isAttackOverrunDismissedToday(chainId) {
-  return getAttackOverrunDismissals()[chainId] === dayKey();
+function isAttackOverrunDismissedToday(dismissKey) {
+  return getAttackOverrunDismissals()[dismissKey] === dayKey();
 }
-function dismissAttackOverrunToday(chainId) {
+function dismissAttackOverrunToday(dismissKey) {
   const d = getAttackOverrunDismissals();
-  d[chainId] = dayKey();
+  d[dismissKey] = dayKey();
   lsSet("attackOverrunDismissals", d);
 }
 async function injectMockCanvasData() {
@@ -20910,7 +20913,7 @@ function Dashboard({ setActive, seriousMode = false, rescheduleTask, setReschedu
     setChecklistDraft("");
     forcePlan((x) => x + 1);
   };
-  const attackOverrun = computeCatchUpMissedItems(allEvents, today).length >= CATCHUP_RECOVERY_THRESHOLD ? null : detectAttackBlockOverruns(allEvents, today).filter((o) => !isAttackOverrunDismissedToday(o.chainId))[0] || null;
+  const attackOverrun = computeCatchUpMissedItems(allEvents, today).length >= CATCHUP_RECOVERY_THRESHOLD ? null : detectAttackBlockOverruns(allEvents, today).filter((o) => !isAttackOverrunDismissedToday(o.dismissKey))[0] || null;
   const [overrunModalOpen, setOverrunModalOpen] = useState(false);
   const [overrunPlan, setOverrunPlan] = useState(null);
   const [overrunToast, setOverrunToast] = useState("");
@@ -20923,7 +20926,7 @@ function Dashboard({ setActive, seriousMode = false, rescheduleTask, setReschedu
   const dismissOverrun = () => {
     if (!attackOverrun) return;
     logSuggestionDecision("attackOverrun", "dismissed", { chainId: attackOverrun.chainId, pendingMins: attackOverrun.pendingMins, capacityMins: attackOverrun.capacityMins });
-    dismissAttackOverrunToday(attackOverrun.chainId);
+    dismissAttackOverrunToday(attackOverrun.dismissKey);
     forcePlan((x) => x + 1);
   };
   const confirmOverrunRestructure = () => {
