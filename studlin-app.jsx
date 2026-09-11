@@ -10289,13 +10289,22 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
   const [peFileTexts,setPeFileTexts]=useState([]);
   const [pePasteMode,setPePasteMode]=useState(false);
   const [pePasteText,setPePasteText]=useState("");
-  const [peQuestionCount,setPeQuestionCount]=useState(8);
+  // "auto" (2026-09-11 user report, screenshot of the messy Subject chip
+  // row): this modal was the ONLY practice-exam generation entry point in
+  // the app still using a fixed manual count -- every other one (exam-
+  // linked generation, Build Study Plan, the AI chat flow) already scales
+  // to the material via scaledQuizCount. Defaults to "auto" now, matching
+  // what those five other call sites do unconditionally (they never even
+  // ask); a manual pick stays available for anyone who wants to override it,
+  // same "Auto" concept Flashcards' own sibling "Create a deck" modal
+  // already has for card count.
+  const [peQuestionCount,setPeQuestionCount]=useState("auto");
   const [peGenerating,setPeGenerating]=useState(false);
   const [peGenError,setPeGenError]=useState("");
   const [peLinkExamId,setPeLinkExamId]=useState(null); // set right after creating, to offer linking
   const resetPeForm=()=>{
     setPeName("");setPeSubject("None");setPeCustomSubject("");setPeFileTexts([]);
-    setPePasteMode(false);setPePasteText("");setPeQuestionCount(8);setPeGenError("");
+    setPePasteMode(false);setPePasteText("");setPeQuestionCount("auto");setPeGenError("");
   };
   const peFileRef=useRef(null);
   const handlePeFile=async(e)=>{
@@ -10315,7 +10324,8 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
     if(!peMaterialText.trim()||peGenerating)return;
     setPeGenerating(true);setPeGenError("");
     const subj=peSubject==="None"?"":(peSubject==="Other"&&peCustomSubject.trim()?peCustomSubject.trim():peSubject);
-    const questions=await generateQuizFromText(peMaterialText,subj||"this material",peQuestionCount);
+    const count=peQuestionCount==="auto"?scaledQuizCount(peMaterialText.length):peQuestionCount;
+    const questions=await generateQuizFromText(peMaterialText,subj||"this material",count);
     setPeGenerating(false);
     if(!questions||questions.length===0){setPeGenError("Couldn't generate questions from that material — try adding more, or different, content.");return;}
     const pe=createPracticeExam(peName.trim()||"Practice Exam",subj,null,questions);
@@ -10909,7 +10919,14 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
   // handlePrepFile, so they share this too) while a file is being read --
   // null when idle. See ExtractionProgress/extractFileText's onProgress.
   const [extractProgress,setExtractProgress]=useState(null); // {name,pct,index,total}
-  const [genLoading,setGenLoading]=useState(null); // null | "cards" | "quiz"
+  // 2026-09-11 cleanup: genLoading (null|"cards"|"quiz") used to exist here
+  // but was never actually read/rendered anywhere -- doGenDeckForExam/
+  // doGenPracticeExamForExam below are only ever called from
+  // commitBuildPlan, whose own buildPlanLoading already shows the real
+  // ExtractionProgress feedback ("Building your sessions, flashcards, and
+  // a practice exam…") for this exact operation. Removed rather than wired
+  // up to render something, since there was no actual missing UI here --
+  // just dead state.
   const [genMsg,setGenMsg]=useState("");
   // "From your syllabus" (see the exam-card onClick below, and
   // buildSyllabusEventBatch's own identical literal name) is background
@@ -10987,7 +11004,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
       setUpgradeModal({feature:"AI flashcard generations",detail:canGenFlashcardsReason()==="free-tier"?"AI flashcard generations are a Pro feature. Upgrade to use them.":AI_USAGE_CAP_MESSAGE});
       return;
     }
-    setGenLoading("cards");setGenMsg("");
+    setGenMsg("");
     // Weak-spot-aware regeneration: an exam with a prior practice-exam
     // attempt already has real "what did they get wrong" data (see
     // latestWrongTopicsForExam) -- feed it in as focus so a rebuilt deck
@@ -10996,7 +11013,6 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
     // undefined, same as before this fix.
     const weakTopics=latestWrongTopicsForExam(selectedExam.id);
     const cards=await generateFlashcardsFromText(materialText,selectedExam.subject||"this exam",scaledFlashcardCount(materialText.length),weakTopics.length>0?weakTopics.join(", "):undefined);
-    setGenLoading(null);
     if(cards.length===0){setGenMsg("Couldn't generate cards. Try again.");return;}
     recordFlashcardGen();
     const nd={id:String(Date.now()+Math.random()*1000),name:selectedExam.title,count:cards.length,done:0,color:colorOf(selectedExam.subject),cards,examEventId:selectedExam.id,examEventIds:[selectedExam.id]};
@@ -11014,9 +11030,8 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
       setUpgradeModal({feature:"AI practice exams",detail:canGenQuizReason()==="free-tier"?"AI practice exams are a Pro feature. Upgrade to use them.":AI_USAGE_CAP_MESSAGE});
       return;
     }
-    setGenLoading("quiz");setGenMsg("");
+    setGenMsg("");
     const questions=await generateQuizFromText(materialText,selectedExam.subject||"this exam",scaledQuizCount(materialText.length));
-    setGenLoading(null);
     if(questions.length===0){setGenMsg("Couldn't generate a practice exam. Try again.");return;}
     recordQuizGen();
     const pe=createPracticeExam(selectedExam.title,selectedExam.subject,selectedExam.id,questions);
@@ -12956,12 +12971,15 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
       <Modal open={peCreateOpen} onClose={()=>{setPeCreateOpen(false);resetPeForm();}} title="Add Practice Exam" sub="Upload material or paste text, and Studlin writes the questions." width={520}
         footer={<><Btn variant="subtle" onClick={()=>{setPeCreateOpen(false);resetPeForm();}}>Cancel</Btn><Btn onClick={generateStandalonePE} disabled={!peMaterialText.trim()||peGenerating}>{peGenerating?"Generating…":"Generate"}</Btn></>}>
         <Field label="Name (optional)"><Input placeholder="e.g. Unit 3 Practice Exam" value={peName} onChange={e=>setPeName(e.target.value)} /></Field>
+        {/* 2026-09-11 user report, with a screenshot: a wrapped row of
+            chips (one per class) reads fine with 2-3 classes but turns
+            into a messy multi-line wall once a student has a real course
+            load -- a dropdown scales the same regardless of how many
+            classes exist. Same CustomSelect used throughout the rest of
+            the app for this exact "pick one class" shape. */}
         <Field label="Subject (optional)">
-          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-            {["None",...userSubjects.map(s=>s.label),"Other"].map(s=>(
-              <button key={s} type="button" onClick={()=>setPeSubject(s)} style={{padding:"6px 12px",borderRadius:99,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,background:peSubject===s?T.lime+"14":T.card2,color:peSubject===s?T.lime:T.muted,border:`1px solid ${peSubject===s?T.lime+"44":T.border}`}}>{s}</button>
-            ))}
-          </div>
+          <CustomSelect boxed value={peSubject} onChange={setPeSubject} minWidth={220}
+            options={["None",...userSubjects.map(s=>s.label),"Other"].map(s=>({value:s,label:s}))} />
           {peSubject==="Other"&&<Input placeholder="Subject name" value={peCustomSubject} onChange={e=>setPeCustomSubject(e.target.value)} style={{marginTop:8}} />}
         </Field>
         <Field label="Material" hint="Upload files or paste text — the more real content, the better the questions.">
@@ -12992,10 +13010,16 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
             </div>
           )}
         </Field>
-        <Field label="Number of questions">
+        {/* 2026-09-11 user report: this was the only practice-exam
+            generation entry point in the app still forcing a fixed manual
+            count -- every other one already scales to the material via
+            scaledQuizCount (see this function's own default comment
+            above). "Auto" matches Flashcards' own "Create a deck" modal's
+            identical concept for card count. */}
+        <Field label="Number of questions" hint={peQuestionCount==="auto"?"Studlin decides based on how much material there is.":undefined}>
           <div style={{display:"flex",gap:8}}>
-            {[5,8,10,12].map(n=>(
-              <button key={n} type="button" onClick={()=>setPeQuestionCount(n)} style={{flex:1,padding:"8px 0",borderRadius:8,border:"1px solid "+(peQuestionCount===n?T.lime+"66":T.border),background:peQuestionCount===n?T.lime+"14":T.card2,color:peQuestionCount===n?T.lime:T.text,fontWeight:peQuestionCount===n?700:400,fontSize:13,cursor:"pointer",fontFamily:T.font}}>{n}</button>
+            {[5,8,10,12,"auto"].map(n=>(
+              <button key={n} type="button" onClick={()=>setPeQuestionCount(n)} style={{flex:1,padding:"8px 0",borderRadius:8,border:"1px solid "+(peQuestionCount===n?T.lime+"66":T.border),background:peQuestionCount===n?T.lime+"14":T.card2,color:peQuestionCount===n?T.lime:T.text,fontWeight:peQuestionCount===n?700:400,fontSize:13,cursor:"pointer",fontFamily:T.font}}>{n==="auto"?"Auto":n}</button>
             ))}
           </div>
         </Field>

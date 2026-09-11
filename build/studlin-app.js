@@ -6131,7 +6131,7 @@ function StudlinPrep({ setActive = () => {
   const [peFileTexts, setPeFileTexts] = useState([]);
   const [pePasteMode, setPePasteMode] = useState(false);
   const [pePasteText, setPePasteText] = useState("");
-  const [peQuestionCount, setPeQuestionCount] = useState(8);
+  const [peQuestionCount, setPeQuestionCount] = useState("auto");
   const [peGenerating, setPeGenerating] = useState(false);
   const [peGenError, setPeGenError] = useState("");
   const [peLinkExamId, setPeLinkExamId] = useState(null);
@@ -6142,7 +6142,7 @@ function StudlinPrep({ setActive = () => {
     setPeFileTexts([]);
     setPePasteMode(false);
     setPePasteText("");
-    setPeQuestionCount(8);
+    setPeQuestionCount("auto");
     setPeGenError("");
   };
   const peFileRef = useRef(null);
@@ -6164,7 +6164,8 @@ function StudlinPrep({ setActive = () => {
     setPeGenerating(true);
     setPeGenError("");
     const subj = peSubject === "None" ? "" : peSubject === "Other" && peCustomSubject.trim() ? peCustomSubject.trim() : peSubject;
-    const questions = await generateQuizFromText(peMaterialText, subj || "this material", peQuestionCount);
+    const count = peQuestionCount === "auto" ? scaledQuizCount(peMaterialText.length) : peQuestionCount;
+    const questions = await generateQuizFromText(peMaterialText, subj || "this material", count);
     setPeGenerating(false);
     if (!questions || questions.length === 0) {
       setPeGenError("Couldn't generate questions from that material \u2014 try adding more, or different, content.");
@@ -6464,7 +6465,6 @@ function StudlinPrep({ setActive = () => {
   const [fileTexts, setFileTexts] = useState([]);
   const buildPlanMaterialText = fileTexts.map((f) => f.text).join("\n\n");
   const [extractProgress, setExtractProgress] = useState(null);
-  const [genLoading, setGenLoading] = useState(null);
   const [genMsg, setGenMsg] = useState("");
   const materialText = fileTexts.filter((f) => f.name !== "From your syllabus").map((f) => f.text).join("\n\n");
   const fileInputRef = useRef(null);
@@ -6504,11 +6504,9 @@ function StudlinPrep({ setActive = () => {
       setUpgradeModal({ feature: "AI flashcard generations", detail: canGenFlashcardsReason() === "free-tier" ? "AI flashcard generations are a Pro feature. Upgrade to use them." : AI_USAGE_CAP_MESSAGE });
       return;
     }
-    setGenLoading("cards");
     setGenMsg("");
     const weakTopics = latestWrongTopicsForExam(selectedExam.id);
     const cards = await generateFlashcardsFromText(materialText, selectedExam.subject || "this exam", scaledFlashcardCount(materialText.length), weakTopics.length > 0 ? weakTopics.join(", ") : void 0);
-    setGenLoading(null);
     if (cards.length === 0) {
       setGenMsg("Couldn't generate cards. Try again.");
       return;
@@ -6526,10 +6524,8 @@ function StudlinPrep({ setActive = () => {
       setUpgradeModal({ feature: "AI practice exams", detail: canGenQuizReason() === "free-tier" ? "AI practice exams are a Pro feature. Upgrade to use them." : AI_USAGE_CAP_MESSAGE });
       return;
     }
-    setGenLoading("quiz");
     setGenMsg("");
     const questions = await generateQuizFromText(materialText, selectedExam.subject || "this exam", scaledQuizCount(materialText.length));
-    setGenLoading(null);
     if (questions.length === 0) {
       setGenMsg("Couldn't generate a practice exam. Try again.");
       return;
@@ -7555,7 +7551,16 @@ function StudlinPrep({ setActive = () => {
       } }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: generateStandalonePE, disabled: !peMaterialText.trim() || peGenerating }, peGenerating ? "Generating\u2026" : "Generate"))
     },
     /* @__PURE__ */ React.createElement(Field, { label: "Name (optional)" }, /* @__PURE__ */ React.createElement(Input, { placeholder: "e.g. Unit 3 Practice Exam", value: peName, onChange: (e) => setPeName(e.target.value) })),
-    /* @__PURE__ */ React.createElement(Field, { label: "Subject (optional)" }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } }, ["None", ...userSubjects.map((s) => s.label), "Other"].map((s) => /* @__PURE__ */ React.createElement("button", { key: s, type: "button", onClick: () => setPeSubject(s), style: { padding: "6px 12px", borderRadius: 99, fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: T.font, background: peSubject === s ? T.lime + "14" : T.card2, color: peSubject === s ? T.lime : T.muted, border: `1px solid ${peSubject === s ? T.lime + "44" : T.border}` } }, s))), peSubject === "Other" && /* @__PURE__ */ React.createElement(Input, { placeholder: "Subject name", value: peCustomSubject, onChange: (e) => setPeCustomSubject(e.target.value), style: { marginTop: 8 } })),
+    /* @__PURE__ */ React.createElement(Field, { label: "Subject (optional)" }, /* @__PURE__ */ React.createElement(
+      CustomSelect,
+      {
+        boxed: true,
+        value: peSubject,
+        onChange: setPeSubject,
+        minWidth: 220,
+        options: ["None", ...userSubjects.map((s) => s.label), "Other"].map((s) => ({ value: s, label: s }))
+      }
+    ), peSubject === "Other" && /* @__PURE__ */ React.createElement(Input, { placeholder: "Subject name", value: peCustomSubject, onChange: (e) => setPeCustomSubject(e.target.value), style: { marginTop: 8 } })),
     /* @__PURE__ */ React.createElement(Field, { label: "Material", hint: "Upload files or paste text \u2014 the more real content, the better the questions." }, /* @__PURE__ */ React.createElement("input", { type: "file", ref: peFileRef, onChange: handlePeFile, accept: ".txt,.md,.pdf,.docx,.png,.jpg,.jpeg,.webp,.gif", style: { display: "none" }, multiple: true }), extractProgress ? /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 10 } }, /* @__PURE__ */ React.createElement(ExtractionProgress, { ...extractProgress })) : /* @__PURE__ */ React.createElement("div", { onClick: () => peFileRef.current && peFileRef.current.click(), style: { border: `1px dashed ${T.borderHover}`, borderRadius: 10, padding: 18, textAlign: "center", background: T.card2, cursor: "pointer", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, fontWeight: 500 } }, "Click to upload: PDF, DOCX, or TXT")), peFileTexts.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 } }, peFileTexts.map((f) => /* @__PURE__ */ React.createElement("div", { key: f.name, style: { display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 12, padding: "7px 10px", background: T.card2, borderRadius: 8, gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, f.name), /* @__PURE__ */ React.createElement("button", { onClick: () => removePeFile(f.name), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 14, lineHeight: 1, flexShrink: 0 } }, "\xD7")))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setPePasteMode((m) => !m), style: { width: "100%", textAlign: "center", padding: "9px", borderRadius: 8, border: `1px dashed ${T.borderHover}`, background: "transparent", color: T.muted, cursor: "pointer", fontFamily: T.font, fontSize: 12 } }, pePasteMode ? "Upload a file instead" : "Or paste text instead"), pePasteMode && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10 } }, /* @__PURE__ */ React.createElement(
       "textarea",
       {
@@ -7570,7 +7575,7 @@ function StudlinPrep({ setActive = () => {
       setPePasteText("");
       setPePasteMode(false);
     }, disabled: !pePasteText.trim(), style: { marginTop: 10, width: "100%", justifyContent: "center", opacity: pePasteText.trim() ? 1 : 0.45 } }, "Add pasted text"))),
-    /* @__PURE__ */ React.createElement(Field, { label: "Number of questions" }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, [5, 8, 10, 12].map((n) => /* @__PURE__ */ React.createElement("button", { key: n, type: "button", onClick: () => setPeQuestionCount(n), style: { flex: 1, padding: "8px 0", borderRadius: 8, border: "1px solid " + (peQuestionCount === n ? T.lime + "66" : T.border), background: peQuestionCount === n ? T.lime + "14" : T.card2, color: peQuestionCount === n ? T.lime : T.text, fontWeight: peQuestionCount === n ? 700 : 400, fontSize: 13, cursor: "pointer", fontFamily: T.font } }, n)))),
+    /* @__PURE__ */ React.createElement(Field, { label: "Number of questions", hint: peQuestionCount === "auto" ? "Studlin decides based on how much material there is." : void 0 }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, [5, 8, 10, 12, "auto"].map((n) => /* @__PURE__ */ React.createElement("button", { key: n, type: "button", onClick: () => setPeQuestionCount(n), style: { flex: 1, padding: "8px 0", borderRadius: 8, border: "1px solid " + (peQuestionCount === n ? T.lime + "66" : T.border), background: peQuestionCount === n ? T.lime + "14" : T.card2, color: peQuestionCount === n ? T.lime : T.text, fontWeight: peQuestionCount === n ? 700 : 400, fontSize: 13, cursor: "pointer", fontFamily: T.font } }, n === "auto" ? "Auto" : n)))),
     peGenError && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.red } }, peGenError)
   ), /* @__PURE__ */ React.createElement(Modal, { open: !!peLinkExamId, onClose: () => setPeLinkExamId(null), title: "Link to an exam", sub: "Studlin will propose a practice-exam session counting down to the exam date.", width: 440 }, (() => {
     const pickableExams = upcomingExams();
