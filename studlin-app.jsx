@@ -7568,6 +7568,28 @@ function minutesToTime(mins){
   return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0");
 }
 
+// Press-drag-to-create on empty calendar space (2026-09-11): shared pure
+// math used by both WeeklyPlanner's and DayPlanner's own create-drag
+// handlers, so the snap-to-15min/min-duration/day-bounds rules live in one
+// place instead of two independently-typed copies of the same three lines
+// (exactly the kind of drift that bit dragNewTaskPayload's resolvedKind
+// formula earlier this app's history -- see the calendar drag-drop 2026-09-10
+// fix notes).
+function snapToQuarterHour(mins){
+  return Math.max(0,Math.min(1439,Math.round(mins/15)*15));
+}
+function computeQuickCreateRange(anchorMins,curMins){
+  // Dragging down extends the END past the anchor (anchor stays the
+  // start); dragging back UP PAST the anchor flips it -- the anchor
+  // becomes the end and the cursor becomes the start -- same as Google
+  // Calendar's own press-drag-release. Either direction still guarantees
+  // a real minimum 15-minute block even with zero mouse movement.
+  let lo,hi;
+  if(curMins>=anchorMins){ lo=anchorMins; hi=Math.max(curMins,anchorMins+15); }
+  else{ hi=anchorMins; lo=Math.min(curMins,anchorMins-15); }
+  return {startTime:minutesToTime(lo),endTime:minutesToTime(hi)};
+}
+
 // Normalize a stored priority/difficulty value to 0-1.
 // New tasks (Phase 3+) store 0-1000; legacy tasks store 0-10.
 function normalizeTaskVal(v,defaultVal){
@@ -20492,7 +20514,7 @@ function AcceptanceRoster({memberUids, memberNames, responses}) {
   );
 }
 
-function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropManualBlockRequest, onDropNewTaskRequest, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent, selectedRoutineKey, onSelectRoutineOccurrence, blockRefs, flipOldRectsRef, flipSeq, newItemHighlightIds, gsBusyByDate, gsRecommended}) {
+function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropManualBlockRequest, onDropNewTaskRequest, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent, selectedRoutineKey, onSelectRoutineOccurrence, blockRefs, flipOldRectsRef, flipSeq, newItemHighlightIds, gsBusyByDate, gsRecommended, quickCreateDraft, onQuickCreateDrag, onQuickCreateDragEnd}) {
   // "Watch it happen" FLIP playback (see CalendarTab's captureFlip) --
   // flipSeq changing means flipOldRectsRef.current now holds a snapshot
   // of every block's on-screen position from right before events just
@@ -20646,6 +20668,59 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
     document.addEventListener("mouseup",onUp);
     return ()=>{ document.removeEventListener("mousemove",onMove); document.removeEventListener("mouseup",onUp); };
   },[previewDragging,WK_PX_HR,onPreviewMove,onPreviewResize]);
+  // Press-drag-to-create directly on empty grid space (2026-09-11): start
+  // on mousedown over the grid background (never over a real block, the
+  // preview block, or any of the overlay layers -- see the data-gridbg
+  // guard in startCreateDrag below), extend live as the mouse moves,
+  // finalize on mouseup. Reuses the exact same document-level mousemove/
+  // mouseup idiom as wkZoomDrag/previewDrag just above -- the established
+  // pattern in this file for any press-drag-release interaction.
+  const createDragRef = useRef(null); // {dateKey,anchorMins}|null
+  const [creatingDragging, setCreatingDragging] = useState(false);
+  const minsFromColY=(dk,clientY)=>{
+    const el=wkColRefs.current[dk];
+    if(!el)return 0;
+    const rect=el.getBoundingClientRect();
+    const relY=Math.max(0,clientY-rect.top);
+    return snapToQuarterHour(relY/WK_PX_HR*60);
+  };
+  const startCreateDrag=(e,dk)=>{
+    if(!onQuickCreateDrag||!onQuickCreateDragEnd)return;
+    if(e.button!==0)return;
+    if(!(e.target.dataset&&e.target.dataset.gridbg==="1"))return;
+    e.preventDefault();
+    const startMins=minsFromColY(dk,e.clientY);
+    createDragRef.current={dateKey:dk,anchorMins:startMins};
+    const r=computeQuickCreateRange(startMins,startMins+30);
+    onQuickCreateDrag(dk,r.startTime,r.endTime);
+    setCreatingDragging(true);
+    document.body.style.userSelect="none";
+  };
+  useEffect(()=>{
+    if(!creatingDragging)return;
+    const onMove=(e)=>{
+      const info=createDragRef.current;
+      if(!info||!onQuickCreateDrag)return;
+      const curMins=minsFromColY(info.dateKey,e.clientY);
+      const r=computeQuickCreateRange(info.anchorMins,curMins);
+      onQuickCreateDrag(info.dateKey,r.startTime,r.endTime);
+    };
+    const onUp=(e)=>{
+      setCreatingDragging(false);
+      document.body.style.userSelect="";
+      const info=createDragRef.current;
+      createDragRef.current=null;
+      if(!info||!onQuickCreateDragEnd)return;
+      const curMins=minsFromColY(info.dateKey,e.clientY);
+      const r=computeQuickCreateRange(info.anchorMins,curMins);
+      const col=wkColRefs.current[info.dateKey];
+      const rect=col?col.getBoundingClientRect():null;
+      onQuickCreateDragEnd(info.dateKey,r.startTime,r.endTime,{x:rect?rect.right:e.clientX,y:e.clientY});
+    };
+    document.addEventListener("mousemove",onMove);
+    document.addEventListener("mouseup",onUp);
+    return ()=>{ document.removeEventListener("mousemove",onMove); document.removeEventListener("mouseup",onUp); };
+  },[creatingDragging]);
   const weekScrollRef = useRef(null);
   const [wkDragId, setWkDragId] = useState(null);
   // Resolves the design-tokens.js semantic names against the live theme
@@ -21079,8 +21154,10 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
             return (
               <div key={colIdx} style={{position:"relative",borderLeft:`1px solid ${T.border}`,height:24*WK_PX_HR,boxSizing:"border-box"}}
                 ref={el => { wkColRefs.current[dk] = el; }}
+                data-gridbg="1"
                 onDragOver={e=>handleDragOver(e,dk)}
                 onDrop={e=>handleDrop(e,dk)}
+                onMouseDown={e=>startCreateDrag(e,dk)}
                 onClick={closePopover}>
                 {/* School Hours background mask (High School accounts only,
                     Mon–Fri) — free periods "punch through" it via
@@ -21092,8 +21169,20 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   </div>
                 ))}
                 {Array.from({length:24}, (_, h) => (
-                  <div key={h} style={{position:"absolute",top:h*WK_PX_HR,left:0,right:0,height:WK_PX_HR,borderTop:`1px solid ${T.borderHover}`,boxSizing:"border-box"}} />
+                  <div key={h} data-gridbg="1" style={{position:"absolute",top:h*WK_PX_HR,left:0,right:0,height:WK_PX_HR,borderTop:`1px solid ${T.borderHover}`,boxSizing:"border-box"}} />
                 ))}
+                {/* Drag-to-create ghost block (2026-09-11) -- dashed like
+                    previewEl below, but with no drag handles of its own;
+                    resizing during creation is just moving the mouse
+                    further, handled by startCreateDrag's own mousemove, not
+                    a separate onMouseDown here. */}
+                {quickCreateDraft && quickCreateDraft.dateKey===dk && (()=>{
+                  const qStart=timeToMinutes(quickCreateDraft.startTime);
+                  const qDur=Math.max(15,timeToMinutes(quickCreateDraft.endTime)-qStart);
+                  return (
+                    <div style={{position:"absolute",top:qStart*(WK_PX_HR/60),left:2,right:2,height:Math.max(15,qDur)*(WK_PX_HR/60),borderRadius:5,background:T.lime+"22",border:`1.5px dashed ${T.lime}`,zIndex:7,pointerEvents:"none",boxSizing:"border-box"}} />
+                  );
+                })()}
                 {isPastDeadline && (
                   <div style={{position:"absolute",inset:0,background:"rgba(217,128,107,0.07)",borderLeft:"2px solid rgba(217,128,107,0.35)",zIndex:5,pointerEvents:"none"}}>
                     <div style={{position:"sticky",top:6,textAlign:"center",fontSize:8,fontWeight:800,letterSpacing:"0.08em",color:"rgba(217,128,107,0.65)",padding:3}}>PAST DUE</div>
@@ -23671,7 +23760,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
 // illegibility on a packed day and clamp to a narrow window on a light
 // one). The container just scrolls, same as any normal calendar, landing
 // near the current time or the first real event on open.
-function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending, openNew, newItemHighlightIds, onEditRoutine, moveEvent, sidebarDragChip, onDropSidebarChip, onDropManualBlockRequest, onDropNewTaskRequest, onDropRoutineOccurrence, onRoutineDragStateChange}) {
+function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending, openNew, newItemHighlightIds, onEditRoutine, moveEvent, sidebarDragChip, onDropSidebarChip, onDropManualBlockRequest, onDropNewTaskRequest, onDropRoutineOccurrence, onRoutineDragStateChange, quickCreateDraft, onQuickCreateDrag, onQuickCreateDragEnd}) {
   const scrollRef=useRef(null);
   // User report, 2026-09-10: dragging an unscheduled item ("Don't know
   // exactly when? Drag onto the calendar", the sidebar's own unscheduled
@@ -23798,6 +23887,56 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
   // -- same reasoning as WeeklyPlanner's own handleDragEnd, so a cancelled
   // drag never leaves the preview line stuck on screen.
   const handleDayDragEnd=()=>{setDayDragId(null);setDayDragRoutineOccurrence(null);setDayDragOver(false);setDayDropTime(null);if(onRoutineDragStateChange)onRoutineDragStateChange(false);};
+  // Press-drag-to-create directly on empty grid space (2026-09-11) -- same
+  // shape as WeeklyPlanner's own createDragRef/startCreateDrag, just against
+  // this single day's own timeline rect (timeFromDragY) instead of a
+  // per-column one.
+  const createDragRef=useRef(null); // {anchorMins}|null
+  const [creatingDragging,setCreatingDragging]=useState(false);
+  const minsFromDayY=(clientY)=>{
+    const el=timelineRef.current;
+    if(!el)return 0;
+    const rect=el.getBoundingClientRect();
+    const relY=Math.max(0,clientY-rect.top);
+    return snapToQuarterHour(relY/pxPerHr*60+spanStart);
+  };
+  const startCreateDrag=(e)=>{
+    if(!onQuickCreateDrag||!onQuickCreateDragEnd)return;
+    if(e.button!==0)return;
+    if(!(e.target.dataset&&e.target.dataset.gridbg==="1"))return;
+    e.preventDefault();
+    const startMins=minsFromDayY(e.clientY);
+    createDragRef.current={anchorMins:startMins};
+    const r=computeQuickCreateRange(startMins,startMins+30);
+    onQuickCreateDrag(selDay,r.startTime,r.endTime);
+    setCreatingDragging(true);
+    document.body.style.userSelect="none";
+  };
+  useEffect(()=>{
+    if(!creatingDragging)return;
+    const onMove=(e)=>{
+      const info=createDragRef.current;
+      if(!info||!onQuickCreateDrag)return;
+      const curMins=minsFromDayY(e.clientY);
+      const r=computeQuickCreateRange(info.anchorMins,curMins);
+      onQuickCreateDrag(selDay,r.startTime,r.endTime);
+    };
+    const onUp=(e)=>{
+      setCreatingDragging(false);
+      document.body.style.userSelect="";
+      const info=createDragRef.current;
+      createDragRef.current=null;
+      if(!info||!onQuickCreateDragEnd)return;
+      const curMins=minsFromDayY(e.clientY);
+      const r=computeQuickCreateRange(info.anchorMins,curMins);
+      const el=timelineRef.current;
+      const rect=el?el.getBoundingClientRect():null;
+      onQuickCreateDragEnd(selDay,r.startTime,r.endTime,{x:rect?rect.right:e.clientX,y:e.clientY});
+    };
+    document.addEventListener("mousemove",onMove);
+    document.addEventListener("mouseup",onUp);
+    return ()=>{ document.removeEventListener("mousemove",onMove); document.removeEventListener("mouseup",onUp); };
+  },[creatingDragging]);
   return (
     <>
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,flexWrap:"wrap",gap:8}}>
@@ -23840,12 +23979,21 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
             style={{position:"sticky",top:8,left:0,height:0,zIndex:7,display:"flex",marginLeft:45,cursor:"ns-resize"}}>
             <div style={{width:18,height:18,borderRadius:"50%",background:T.lime,border:`2px solid ${T.card}`,marginLeft:-9,boxShadow:"0 2px 6px rgba(0,0,0,0.35)"}} />
           </div>
-          <div ref={timelineRef} onDragOver={handleDayDragOver} onDrop={handleDayDrop} onDragLeave={()=>setDayDragOver(false)} style={{position:"relative",height:totalHeightPx,marginLeft:54}}>
+          <div ref={timelineRef} data-gridbg="1" onDragOver={handleDayDragOver} onDrop={handleDayDrop} onDragLeave={()=>setDayDragOver(false)} onMouseDown={startCreateDrag} style={{position:"relative",height:totalHeightPx,marginLeft:54}}>
             {Array.from({length:Math.max(1,hourEnd-hourStart)},(_,i)=>hourStart+i).map(h=>(
-              <div key={h} style={{position:"absolute",top:(h*60-spanStart)*(pxPerHr/60),left:0,right:0,borderTop:`1px solid ${T.borderHover}`,boxSizing:"border-box"}}>
-                <span style={{position:"absolute",left:-54,top:-7,width:46,textAlign:"right",fontSize:10,color:T.faint,fontFamily:T.mono}}>{fmtHourLabel(h*60)}</span>
+              <div key={h} data-gridbg="1" style={{position:"absolute",top:(h*60-spanStart)*(pxPerHr/60),left:0,right:0,borderTop:`1px solid ${T.borderHover}`,boxSizing:"border-box"}}>
+                <span style={{position:"absolute",left:-54,top:-7,width:46,textAlign:"right",fontSize:10,color:T.faint,fontFamily:T.mono,pointerEvents:"none"}}>{fmtHourLabel(h*60)}</span>
               </div>
             ))}
+            {/* Drag-to-create ghost block (2026-09-11) -- same dashed
+                treatment as WeeklyPlanner's own. */}
+            {quickCreateDraft && quickCreateDraft.dateKey===selDay && (()=>{
+              const qStart=timeToMinutes(quickCreateDraft.startTime);
+              const qDur=Math.max(15,timeToMinutes(quickCreateDraft.endTime)-qStart);
+              return (
+                <div style={{position:"absolute",top:(qStart-spanStart)*(pxPerHr/60),left:2,right:2,height:qDur*(pxPerHr/60),borderRadius:5,background:T.lime+"22",border:`1.5px dashed ${T.lime}`,zIndex:7,pointerEvents:"none",boxSizing:"border-box"}} />
+              );
+            })()}
             {isToday&&nowMins>=spanStart&&nowMins<=spanEnd&&(
               <div style={{position:"absolute",top:(nowMins-spanStart)*(pxPerHr/60),left:0,right:0,zIndex:6,pointerEvents:"none"}}>
                 <div style={{position:"absolute",left:-4,top:-4,width:8,height:8,borderRadius:"50%",background:"#E5484D"}} />
@@ -27146,6 +27294,47 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
   ), document.body);
 }
 
+// Google-Calendar-style "press an empty slot, drag down to set duration,
+// release" quick-create, 2026-09-11 user request. Deliberately its own
+// small component rather than reusing NewEventModal above -- that one is
+// routine/activity-oriented (repeat days, commute, location, movable/
+// fixed...), none of which applies to a plain one-off task you just want
+// on the calendar with a title. This only ever creates a real task
+// (kind:"study block", isGeneralTask:true) -- "More options" hands off to
+// the full Add Task flow (openNew) for anything needing AI arrange,
+// subject, Attack Block, etc., pre-seeded with the same date/time so nothing
+// typed here is lost.
+function QuickCreateTaskPopover({draft,anchorX,anchorY,onCreate,onMoreOptions,onClose}){
+  const [title,setTitle]=useState("");
+  useEffect(()=>{ if(draft)setTitle(""); },[draft&&draft.dateKey,draft&&draft.startTime,draft&&draft.endTime]);
+  if(!draft)return null;
+  const POPOVER_WIDTH=280;
+  const ESTIMATED_HEIGHT=150;
+  const x=anchorX!=null?anchorX:window.innerWidth-POPOVER_WIDTH-40;
+  const y=anchorY!=null?anchorY:window.innerHeight/2;
+  const fitsRight=x+10+POPOVER_WIDTH<=window.innerWidth-8;
+  const left=fitsRight?Math.max(8,x+10):Math.max(8,x-10-POPOVER_WIDTH);
+  const top=Math.min(Math.max(8,y-24),Math.max(8,window.innerHeight-ESTIMATED_HEIGHT-8));
+  const niceDate=(()=>{const p=draft.dateKey.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"});})();
+  const submit=()=>onCreate(title);
+  return ReactDOM.createPortal((
+    <>
+      <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:998}} />
+      <div onClick={e=>e.stopPropagation()} style={{position:"fixed",top,left,width:POPOVER_WIDTH,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:999,animation:"studlinPop 0.15s cubic-bezier(.2,.85,.3,1)",padding:"10px 12px",display:"flex",flexDirection:"column",gap:8}}>
+        <Input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Add a title" style={{fontSize:13,fontWeight:600,padding:"7px 10px"}} autoFocus
+          onKeyDown={e=>{ if(e.key==="Enter"){e.preventDefault();submit();} else if(e.key==="Escape"){e.preventDefault();onClose();} }} />
+        <div style={{fontSize:11.5,color:T.muted}}>{niceDate} · {fmtTimeRange(draft.startTime,Math.max(15,timeToMinutes(draft.endTime)-timeToMinutes(draft.startTime)))}</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:2}}>
+          <button type="button" onClick={()=>onMoreOptions(draft)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:11,fontFamily:T.font,padding:0,textDecoration:"underline"}}>More options</button>
+          <div style={{display:"flex",gap:6}}>
+            <Btn variant="subtle" onClick={onClose} style={{padding:"6px 13px",fontSize:12}}>Cancel</Btn>
+            <Btn onClick={submit} style={{padding:"6px 13px",fontSize:12}}>Add task</Btn>
+          </div>
+        </div>
+      </div>
+    </>
+  ), document.body);
+}
 // One-shot "here's what was just added/imported, go highlight it" flag
 // protocol -- CalendarTab's own newItemHighlightIds effect writes this
 // (via lsSet("calendarHighlightIds",null)) the instant it reads it, and
@@ -27268,6 +27457,45 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // Whether the preview block is actively being dragged/resized on the
   // calendar right now -- NewEventModal hides itself while this is true.
   const [previewDragActive,setPreviewDragActive]=useState(false);
+  // Google-Calendar-style press-drag-to-create directly on empty Week/Day
+  // grid space, 2026-09-11 user request. quickCreateDraft drives the dashed
+  // ghost block (live during the drag, then held steady once the popover is
+  // open); quickCreatePopover carries the anchor point once the drag has
+  // finished and it's time to actually show QuickCreateTaskPopover. Two
+  // separate pieces of state (not one) because the draft needs to update on
+  // every pixel of mousemove while the popover itself should only appear
+  // once, at mouseup -- collapsing them would either flash the popover mid-
+  // drag or re-render it needlessly on every move.
+  const [quickCreateDraft,setQuickCreateDraft]=useState(null); // {dateKey,startTime,endTime}|null
+  const [quickCreatePopover,setQuickCreatePopover]=useState(null); // {dateKey,startTime,endTime,anchorX,anchorY}|null
+  const handleQuickCreateDrag=(dateKey,startTime,endTime)=>setQuickCreateDraft({dateKey,startTime,endTime});
+  const handleQuickCreateDragEnd=(dateKey,startTime,endTime,anchor)=>{
+    setQuickCreateDraft({dateKey,startTime,endTime});
+    setQuickCreatePopover({dateKey,startTime,endTime,anchorX:anchor&&anchor.x,anchorY:anchor&&anchor.y});
+  };
+  const cancelQuickCreate=()=>{setQuickCreateDraft(null);setQuickCreatePopover(null);};
+  const commitQuickCreateTask=(title)=>{
+    if(!quickCreatePopover)return;
+    const {dateKey,startTime,endTime}=quickCreatePopover;
+    const duration=Math.max(15,timeToMinutes(endTime)-timeToMinutes(startTime));
+    const cleanTitle=(title||"").trim()||"New task";
+    const task={id:"quickcreate-"+Date.now(),title:cleanTitle,date:dateKey,time:startTime,
+      subject:"",kind:"study block",notes:"",priority:5,difficulty:5,deadline:null,
+      duration,status:"pending",timeSpent:0,completedAt:null,isGeneralTask:true,userPinned:true};
+    const next=events.concat([task]);
+    setEvents(next);lsSet("events",next);
+    setPlacementToast((cleanTitle.length>28?cleanTitle.slice(0,28)+"…":cleanTitle)+" added — "+fmtTimeRange(startTime,duration)+".");
+    setTimeout(()=>setPlacementToast(""),3200);
+    cancelQuickCreate();
+  };
+  // "More options" hands off to the real Add Task flow (AI arrange,
+  // subject, Attack Block, etc.) instead of trying to cram all of that into
+  // this small popover -- same date/time it already had, nothing re-typed.
+  const quickCreateMoreOptions=(draft)=>{
+    cancelQuickCreate();
+    setSelDay(draft.dateKey);
+    openNew(draft.dateKey);
+  };
   // ── Schedule with Friends (2026-08-21) ──────────────────────────────────
   // A calendar-native front door onto the exact same propose/accept/decline
   // negotiation ChatDrawer's "sync calendars" flow already uses (see
@@ -31162,13 +31390,17 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           onPreviewDraggingChange={setPreviewDragActive} onSelectEvent={setSelectedCalEventId}
           selectedRoutineKey={selectedRoutineOccurrence?selectedRoutineOccurrence.routineId+"|"+selectedRoutineOccurrence.date:null}
           onSelectRoutineOccurrence={setSelectedRoutineOccurrence} newItemHighlightIds={newItemHighlightSet}
-          gsBusyByDate={gsOpen&&gsStep==="place"?gsBusyByDate:null} gsRecommended={gsOpen&&gsStep==="place"?gsRecommended:null} />
+          gsBusyByDate={gsOpen&&gsStep==="place"?gsBusyByDate:null} gsRecommended={gsOpen&&gsStep==="place"?gsRecommended:null}
+          quickCreateDraft={quickCreateDraft} onQuickCreateDrag={handleQuickCreateDrag} onQuickCreateDragEnd={handleQuickCreateDragEnd} />
       )}
       {calView==="daily"&&(
         <DayPlanner dayEvents={dayEvents} setEvents={setEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} fmtTimeRange={fmtTimeRange} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} catchUpPending={catchUpPending} openNew={openNew} newItemHighlightIds={newItemHighlightSet} onEditRoutine={(routineId,date)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule,date);}}
           moveEvent={moveEvent} sidebarDragChip={sidebarDragChip} onDropSidebarChip={(time,anchorPoint)=>{openNewEventForDrop(sidebarDragChip,selDay,time,anchorPoint);setSidebarDragChip(null);}}
-          onDropManualBlockRequest={commitManualBlockDrop} onDropNewTaskRequest={commitNewTaskDrop} onDropRoutineOccurrence={onDropRoutineOccurrence} onRoutineDragStateChange={setRoutineDragActive} />
+          onDropManualBlockRequest={commitManualBlockDrop} onDropNewTaskRequest={commitNewTaskDrop} onDropRoutineOccurrence={onDropRoutineOccurrence} onRoutineDragStateChange={setRoutineDragActive}
+          quickCreateDraft={quickCreateDraft} onQuickCreateDrag={handleQuickCreateDrag} onQuickCreateDragEnd={handleQuickCreateDragEnd} />
       )}
+      <QuickCreateTaskPopover draft={quickCreatePopover} anchorX={quickCreatePopover&&quickCreatePopover.anchorX} anchorY={quickCreatePopover&&quickCreatePopover.anchorY}
+        onCreate={commitQuickCreateTask} onMoreOptions={quickCreateMoreOptions} onClose={cancelQuickCreate} />
     </div>
       {/* Right-hand column (Phase 5e) -- upcoming across everything by
           default, re-filtered to the selected course's items on a chip
