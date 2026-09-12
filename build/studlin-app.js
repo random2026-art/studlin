@@ -9228,6 +9228,7 @@ function FriendsChat({ onFriendRequestSent, onActiveChatChange, initialTarget, o
         }
       });
       rebuildFriendsState();
+      publishBusyWindows();
     };
     const unsub1 = fsdb().collection("friendships").where("senderId", "==", myUid).where("status", "==", "accepted").onSnapshot((snap) => {
       asSender = snap.docs.map((d) => d.data().receiverId);
