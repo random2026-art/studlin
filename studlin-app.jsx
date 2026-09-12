@@ -15291,6 +15291,23 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
         if(!ids.has(uid)){profileUnsubs[uid]();delete profileUnsubs[uid];delete profileDocs[uid];}
       });
       rebuildFriendsState();
+      // Bug fix, 2026-09-11 user report ("it says my friends didn't turn it
+      // on when they did -- they showed me"): publishBusyWindows' own
+      // sharedWithUids is a snapshot taken at PUBLISH time (see its own
+      // comment), refreshed only when the toggle is flipped or Studlin
+      // Match happens to run. A friendship formed AFTER either side's last
+      // publish never gets added to that snapshot until something
+      // re-triggers a publish -- so a friend who genuinely has sharing on
+      // reads as "hasn't shared" indefinitely, on both the accepter's and
+      // the original sender's side, until one of them happens to retoggle
+      // the setting or run Studlin Match. Republishing here (a harmless
+      // no-op if sharing is off, see publishBusyWindows' own guard)
+      // whenever THIS device's own friend list changes -- which this
+      // listener's very first snapshot always does, on every app load --
+      // keeps this account's own sharedWithUids current the moment it
+      // learns about a friend, closing the gap from this side without
+      // needing the other person to touch anything.
+      publishBusyWindows();
     };
     const unsub1=fsdb().collection('friendships').where('senderId','==',myUid).where('status','==','accepted')
       .onSnapshot(snap=>{asSender=snap.docs.map(d=>d.data().receiverId);syncProfileListeners();},()=>{});
