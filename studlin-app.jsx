@@ -15247,6 +15247,41 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
     // never blocked waiting on every profile listener's first snapshot.
     const syncProfileListeners=()=>{
       const ids=new Set([...asSender,...asReceiver]);
+      // Bug fix, 2026-09-11 user report ("takes a second to load all the
+      // names"): each friend's profile used to only ever arrive via its own
+      // brand-new onSnapshot listener below, started fresh right here. Every
+      // one of those is an independent round trip with its own connection
+      // setup, so the friend list rendered immediately with every uid
+      // falling back to profileToFriend's "Studlin User" placeholder (see
+      // rebuildFriendsState below, called before any listener has delivered
+      // its first snapshot), then names popped in one at a time as each
+      // listener happened to resolve -- worse with more friends, since it's
+      // bounded by the SLOWEST individual listener, not a single round trip.
+      // Batch-priming any newly-appearing uid's profile in one shot (a
+      // single 'in' query, chunked to Firestore's 30-value cap) fixes the
+      // first paint without touching the live-update behavior below at all
+      // -- that's still what keeps a friend's profile changes (e.g.
+      // Incognito) reflected here live, this only ever seeds initial data
+      // faster than that first listener callback would have.
+      const newIds=[...ids].filter(uid=>!profileUnsubs[uid]);
+      if(newIds.length>0){
+        const chunks=[];
+        for(let i=0;i<newIds.length;i+=30)chunks.push(newIds.slice(i,i+30));
+        Promise.all(chunks.map(chunk=>
+          fsdb().collection('profiles').where(firebase.firestore.FieldPath.documentId(),'in',chunk).get().catch(()=>null)
+        )).then(snaps=>{
+          let changed=false;
+          snaps.forEach(snap=>{
+            if(!snap)return;
+            snap.docs.forEach(d=>{
+              // Guard against stomping a value the real listener already
+              // delivered while this batched read was still in flight.
+              if(profileDocs[d.id]===undefined){profileDocs[d.id]=d.data();changed=true;}
+            });
+          });
+          if(changed)rebuildFriendsState();
+        });
+      }
       ids.forEach(uid=>{
         if(profileUnsubs[uid])return;
         profileUnsubs[uid]=fsdb().collection('profiles').doc(uid)
