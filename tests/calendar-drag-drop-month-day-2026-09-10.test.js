@@ -46,7 +46,7 @@ describe("Month view's onDrop now handles both MIME-based drag chips (source-lev
     const marker = 'onDragOver={e=>e.preventDefault()} onDrop={e=>{';
     const idx = SOURCE.indexOf(marker);
     assert.notEqual(idx, -1);
-    const body = SOURCE.slice(idx, idx + 1900);
+    const body = SOURCE.slice(idx, idx + 2700);
     assert.match(body, /e\.dataTransfer&&e\.dataTransfer\.getData\(MANUAL_BLOCK_DRAG_MIME\)&&commitManualBlockDrop/);
     assert.match(body, /commitManualBlockDrop\(payload,c\.key,"09:00"\);/);
     assert.match(body, /e\.dataTransfer&&e\.dataTransfer\.getData\(NEW_TASK_DRAG_MIME\)&&commitNewTaskDrop/);
@@ -55,7 +55,7 @@ describe("Month view's onDrop now handles both MIME-based drag chips (source-lev
 
   test("sidebarDragChip and dragId (existing-event move) still work exactly as before -- this is additive, not a rewrite", () => {
     const idx = SOURCE.indexOf('onDragOver={e=>e.preventDefault()} onDrop={e=>{');
-    const body = SOURCE.slice(idx, idx + 400);
+    const body = SOURCE.slice(idx, idx + 1300);
     assert.match(body, /if\(sidebarDragChip\)\{openNewEventForDrop\(sidebarDragChip,c\.key,"09:00"/);
     assert.match(body, /else if\(dragId\)\{moveEvent\(dragId,c\.key\);setDragId\(null\);\}/);
   });

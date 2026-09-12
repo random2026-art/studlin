@@ -14588,7 +14588,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
   // windowInvalid guard is the only real precondition left.
   /* @__PURE__ */ React.createElement(Btn, { onClick: commitAllToCalendar }, pendingClasses.length > 0 ? "Add to Calendar" : "Finish")))));
 }
-function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf, fmtTime: fmtTime2, fmtTimeRange: fmtTimeRange2, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending, openNew, newItemHighlightIds, onEditRoutine, moveEvent, sidebarDragChip, onDropSidebarChip, onDropManualBlockRequest, onDropNewTaskRequest, onDropRoutineOccurrence, onRoutineDragStateChange, quickCreateDraft, onQuickCreateDrag, onQuickCreateDragEnd }) {
+function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf, fmtTime: fmtTime2, fmtTimeRange: fmtTimeRange2, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending, openNew, newItemHighlightIds, onEditRoutine, moveEvent, sidebarDragChip, onDropSidebarChip, onDropManualBlockRequest, onDropNewTaskRequest, onDropRoutineOccurrence, onRoutineDragStateChange, quickCreateDraft, onQuickCreateDrag, onQuickCreateDragEnd, gsBusyByDate, gsRecommended, gsDraft, onGsPreviewMove, onGsPreviewResize }) {
   const scrollRef = useRef(null);
   const [dayDragId, setDayDragId] = useState(null);
   const [dayDragRoutineOccurrence, setDayDragRoutineOccurrence] = useState(null);
@@ -14771,6 +14771,43 @@ function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf,
       document.removeEventListener("mouseup", onUp);
     };
   }, [creatingDragging]);
+  const gsDraftDragRef = useRef(null);
+  const [gsDraftDragging, setGsDraftDragging] = useState(false);
+  useEffect(() => {
+    if (!gsDraftDragging) return;
+    const onMove = (e) => {
+      const info = gsDraftDragRef.current;
+      if (!info) return;
+      if (info.mode === "resize") {
+        if (!onGsPreviewResize) return;
+        const deltaMins = Math.round((e.clientY - info.startClientY) / (pxPerHr / 60) / 15) * 15;
+        const newDur = Math.max(15, info.origDur + deltaMins);
+        onGsPreviewResize(minutesToTime(Math.min(1439, timeToMinutes(info.origStart) + newDur)));
+      } else {
+        if (!onGsPreviewMove) return;
+        const el = timelineRef.current;
+        const r = el ? el.getBoundingClientRect() : null;
+        let newStartMins = timeToMinutes(info.origStart);
+        if (r) {
+          const relY = Math.max(0, e.clientY - r.top - info.grabOffsetPx);
+          newStartMins = Math.min(1440 - 15, Math.max(0, Math.round(relY / (pxPerHr / 60) / 15) * 15));
+        }
+        onGsPreviewMove(selDay, minutesToTime(newStartMins), minutesToTime(Math.min(1439, newStartMins + info.origDur)));
+      }
+    };
+    const onUp = () => {
+      gsDraftDragRef.current = null;
+      setGsDraftDragging(false);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    return () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+  }, [gsDraftDragging, pxPerHr, onGsPreviewMove, onGsPreviewResize, selDay]);
   return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", gap: 8 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 15, fontWeight: 700, color: T.white } }, niceDayLabel), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 1 } }, visibleEvs.length, " scheduled item", visibleEvs.length !== 1 ? "s" : "")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center" } }, /* @__PURE__ */ React.createElement("button", { onClick: () => stepDay(-1), title: "Previous day", style: { width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: `1px solid ${T.border}`, borderRadius: 4, color: T.muted, cursor: "pointer", fontSize: 11, fontFamily: T.font } }, "\u2039"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setSelDay(todayK) }, "Today"), /* @__PURE__ */ React.createElement("button", { onClick: () => stepDay(1), title: "Next day", style: { width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: `1px solid ${T.border}`, borderRadius: 4, color: T.muted, cursor: "pointer", fontSize: 11, fontFamily: T.font } }, "\u203A"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => setDayPreviewOpen(true) }, "Day Preview"))), duePills.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 } }, duePills.map((ev) => /* @__PURE__ */ React.createElement("div", { key: ev.id, onClick: () => openEdit(ev), title: "Click to edit", style: { display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 600, color: T.amber, background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 6, padding: "4px 9px", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("span", { style: { display: "flex", color: T.amber } }, DAY_PREVIEW_ICON_BY_KIND[ev.kind] || Icon.dot), ev.title))), /* @__PURE__ */ React.createElement(Card, { style: { padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { height: "calc(100vh - 320px)", minHeight: 360 } }, /* @__PURE__ */ React.createElement("div", { ref: scrollRef, style: { height: "100%", overflowY: "auto", position: "relative" } }, /* @__PURE__ */ React.createElement(
     "div",
     {
@@ -14783,7 +14820,37 @@ function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf,
     const qStart = timeToMinutes(quickCreateDraft.startTime);
     const qDur = Math.max(15, timeToMinutes(quickCreateDraft.endTime) - qStart);
     return /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: (qStart - spanStart) * (pxPerHr / 60), left: 2, right: 2, height: qDur * (pxPerHr / 60), borderRadius: 5, background: T.lime + "22", border: `1.5px dashed ${T.lime}`, zIndex: 7, pointerEvents: "none", boxSizing: "border-box" } });
-  })(), isToday && nowMins >= spanStart && nowMins <= spanEnd && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: (nowMins - spanStart) * (pxPerHr / 60), left: 0, right: 0, zIndex: 6, pointerEvents: "none" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", left: -4, top: -4, width: 8, height: 8, borderRadius: "50%", background: "#E5484D" } }), /* @__PURE__ */ React.createElement("div", { style: { borderTop: "2px solid #E5484D" } })), dayDragOver && dayDropTime && (() => {
+  })(), isToday && nowMins >= spanStart && nowMins <= spanEnd && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: (nowMins - spanStart) * (pxPerHr / 60), left: 0, right: 0, zIndex: 6, pointerEvents: "none" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", left: -4, top: -4, width: 8, height: 8, borderRadius: "50%", background: "#E5484D" } }), /* @__PURE__ */ React.createElement("div", { style: { borderTop: "2px solid #E5484D" } })), gsBusyByDate && (gsBusyByDate[selDay] || []).concat(getDayOccupiedIntervals(selDay)).map((iv, ii) => /* @__PURE__ */ React.createElement("div", { key: "gsb" + ii, style: { position: "absolute", top: (iv.s - spanStart) * (pxPerHr / 60), left: 0, right: 0, height: Math.max(4, (iv.e - iv.s) * (pxPerHr / 60)), background: T.muted + "1E", zIndex: 3, pointerEvents: "none" } })), gsRecommended && gsRecommended.date === selDay && (() => {
+    const rStart = timeToMinutes(gsRecommended.time);
+    const rDur = gsRecommended.duration || 60;
+    return /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: (rStart - spanStart) * (pxPerHr / 60), left: 2, right: 2, height: Math.max(22, rDur * (pxPerHr / 60)), borderRadius: 5, background: T.lime + "10", border: `1.5px dashed ${T.lime}`, zIndex: 5, pointerEvents: "none", display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: 2, boxSizing: "border-box" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 8, fontWeight: 700, letterSpacing: "0.05em", color: T.lime, background: T.card, padding: "1px 5px", borderRadius: 3, whiteSpace: "nowrap" } }, "STUDLIN RECOMMENDS"));
+  })(), gsDraft && gsDraft.date === selDay && (() => {
+    const gStart = timeToMinutes(gsDraft.startTime);
+    const gDur = Math.max(15, timeToMinutes(gsDraft.endTime) - gStart);
+    const draggable = !!(onGsPreviewMove || onGsPreviewResize);
+    const startMove = (e) => {
+      if (!onGsPreviewMove) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const el = timelineRef.current;
+      const r = el ? el.getBoundingClientRect() : null;
+      const blockTopClientY = (r ? r.top : e.clientY) + (gStart - spanStart) * (pxPerHr / 60);
+      gsDraftDragRef.current = { mode: "move", origStart: gsDraft.startTime, origDur: gDur, grabOffsetPx: e.clientY - blockTopClientY };
+      setGsDraftDragging(true);
+      document.body.style.cursor = "grabbing";
+      document.body.style.userSelect = "none";
+    };
+    const startResize = (e) => {
+      if (!onGsPreviewResize) return;
+      e.preventDefault();
+      e.stopPropagation();
+      gsDraftDragRef.current = { mode: "resize", origStart: gsDraft.startTime, origDur: gDur, startClientY: e.clientY };
+      setGsDraftDragging(true);
+      document.body.style.cursor = "ns-resize";
+      document.body.style.userSelect = "none";
+    };
+    return /* @__PURE__ */ React.createElement("div", { onMouseDown: startMove, style: { position: "absolute", top: (gStart - spanStart) * (pxPerHr / 60), left: 2, right: 2, height: Math.max(22, gDur * (pxPerHr / 60)), borderRadius: 5, padding: "2px 5px 2px 8px", background: gsDraft.color + "22", border: `1.5px dashed ${gsDraft.color}`, zIndex: 6, pointerEvents: draggable ? "auto" : "none", cursor: draggable ? "grab" : "default", boxSizing: "border-box", overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 9.5, fontWeight: 700, color: gsDraft.color, lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, gsDraft.title || "New event"), onGsPreviewResize && /* @__PURE__ */ React.createElement("div", { onMouseDown: startResize, title: "Drag to change duration", style: { position: "absolute", bottom: 0, left: 0, right: 0, height: 9, cursor: "ns-resize", display: "flex", alignItems: "center", justifyContent: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 26, height: 3, borderRadius: 99, background: gsDraft.color, opacity: 0.65 } })));
+  })(), dayDragOver && dayDropTime && (() => {
     const m = timeToMinutes(dayDropTime);
     return /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: (m - spanStart) * (pxPerHr / 60), left: 0, right: 0, zIndex: 6, pointerEvents: "none" } }, /* @__PURE__ */ React.createElement("div", { style: { borderTop: `2px dashed ${T.lime}` } }), /* @__PURE__ */ React.createElement("span", { style: { position: "absolute", left: 4, top: -16, fontSize: 9.5, fontWeight: 700, color: T.lime, background: T.ink, padding: "1px 5px", borderRadius: 3 } }, fmtTime2(dayDropTime)));
   })(), dayLaidOut.map(({ ev, col, totalCols, displayCol, displayTotalCols, start, end, hidden, overflowCount }) => {
@@ -19284,7 +19351,11 @@ Examples:
           onDragOver: (e) => e.preventDefault(),
           onDrop: (e) => {
             e.preventDefault();
-            if (sidebarDragChip) {
+            if (sidebarDragChip && sidebarDragChip.kind === "groupSession") {
+              setSidebarDragChip(null);
+              setPlacementToast("Switch to Day or Week view to place a time with friends.");
+              setTimeout(() => setPlacementToast(""), 3200);
+            } else if (sidebarDragChip) {
               openNewEventForDrop(sidebarDragChip, c.key, "09:00", { x: e.clientX, y: e.clientY });
               setSidebarDragChip(null);
             } else if (dragId) {
@@ -19434,7 +19505,12 @@ Examples:
       onRoutineDragStateChange: setRoutineDragActive,
       quickCreateDraft,
       onQuickCreateDrag: handleQuickCreateDrag,
-      onQuickCreateDragEnd: handleQuickCreateDragEnd
+      onQuickCreateDragEnd: handleQuickCreateDragEnd,
+      gsBusyByDate: gsOpen && gsStep === "place" ? gsBusyByDate : null,
+      gsRecommended: gsOpen && gsStep === "place" ? gsRecommended : null,
+      gsDraft: gsOpen && gsStep === "place" ? gsDraft : null,
+      onGsPreviewMove: gsOpen && gsStep === "place" ? gsPreviewMove : void 0,
+      onGsPreviewResize: gsOpen && gsStep === "place" ? gsPreviewResize : void 0
     }
   ), /* @__PURE__ */ React.createElement(
     QuickCreateTaskPopover,
