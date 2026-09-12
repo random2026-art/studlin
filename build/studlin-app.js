@@ -9192,6 +9192,26 @@ function FriendsChat({ onFriendRequestSent, onActiveChatChange, initialTarget, o
     };
     const syncProfileListeners = () => {
       const ids = /* @__PURE__ */ new Set([...asSender, ...asReceiver]);
+      const newIds = [...ids].filter((uid) => !profileUnsubs[uid]);
+      if (newIds.length > 0) {
+        const chunks = [];
+        for (let i = 0; i < newIds.length; i += 30) chunks.push(newIds.slice(i, i + 30));
+        Promise.all(chunks.map(
+          (chunk) => fsdb().collection("profiles").where(firebase.firestore.FieldPath.documentId(), "in", chunk).get().catch(() => null)
+        )).then((snaps) => {
+          let changed = false;
+          snaps.forEach((snap) => {
+            if (!snap) return;
+            snap.docs.forEach((d) => {
+              if (profileDocs[d.id] === void 0) {
+                profileDocs[d.id] = d.data();
+                changed = true;
+              }
+            });
+          });
+          if (changed) rebuildFriendsState();
+        });
+      }
       ids.forEach((uid) => {
         if (profileUnsubs[uid]) return;
         profileUnsubs[uid] = fsdb().collection("profiles").doc(uid).onSnapshot((doc) => {
