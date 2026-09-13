@@ -17217,6 +17217,14 @@ function CalendarTab({ setActive = () => {
     backfillClassRoutineSubjects();
     return getWeeklyRoutine();
   });
+  const busyWindowsRepublishTimer = useRef(null);
+  useEffect(() => {
+    if (busyWindowsRepublishTimer.current) clearTimeout(busyWindowsRepublishTimer.current);
+    busyWindowsRepublishTimer.current = setTimeout(() => {
+      publishBusyWindows();
+    }, 1500);
+    return () => clearTimeout(busyWindowsRepublishTimer.current);
+  }, [events, routines]);
   const reconcileRoutineConflicts = (nextRoutines) => {
     const prefs = getSchedulePreferences();
     const now2 = /* @__PURE__ */ new Date();

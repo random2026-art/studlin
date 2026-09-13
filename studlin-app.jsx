@@ -29194,6 +29194,24 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // add/edit/delete re-renders immediately, mirrored to localStorage on every
   // change via saveWeeklyRoutine.
   const [routines,setRoutinesState]=useState(()=>{backfillClassRoutineSubjects();return getWeeklyRoutine();});
+  // 2026-09-13 user report ("i used hold-and-drag to mark myself busy but my
+  // friend still doesn't see it"): publishBusyWindows only ever fires from a
+  // handful of specific trigger points (app boot, a friendship-list change,
+  // "Find Shared Study Window") -- deliberately NOT hooked into every single
+  // event-mutation call site (see publishBusyWindows' own call site comment).
+  // That means a block added any other way (drag-to-create, dropping a task,
+  // moving/deleting something) never reaches the shared busyWindows doc until
+  // one of those other triggers happens to fire again -- which could be the
+  // next time this student happens to reopen the app. Watching `events`/
+  // `routines` themselves closes that gap at the state level instead of
+  // chasing every mutation path individually. Debounced so a burst of edits
+  // (onboarding import, aiArrange) publishes once, not once per change.
+  const busyWindowsRepublishTimer=useRef(null);
+  useEffect(()=>{
+    if(busyWindowsRepublishTimer.current)clearTimeout(busyWindowsRepublishTimer.current);
+    busyWindowsRepublishTimer.current=setTimeout(()=>{publishBusyWindows();},1500);
+    return ()=>clearTimeout(busyWindowsRepublishTimer.current);
+  },[events,routines]);
   // Bounded conflict reconciliation: whenever routines change, relocate any
   // already-scheduled *pending*, non-fixed task in the next 14 days that now
   // overlaps a routine occurrence, using the same conflict/slot logic aiArrange
