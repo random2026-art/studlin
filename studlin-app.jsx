@@ -89,6 +89,26 @@ const blendOverBg=(hex,alpha,bgHex)=>{
   const toHex=n=>n.toString(16).padStart(2,'0');
   return '#'+toHex(mix(r1,r2))+toHex(mix(g1,g2))+toHex(mix(b1,b2));
 };
+// T.muted is plain hex in dark mode ("#849389") but an rgba(...) string in
+// light mode ("rgba(14,31,24,0.55)") -- the "+hexAlphaSuffix" trick used
+// everywhere else for a translucent tint (T.lime+"18" etc., safe since
+// those tokens ARE plain hex in both themes) silently produces invalid CSS
+// when applied to an rgba() string. The browser just drops the whole
+// invalid background value rather than erroring, leaving a fully
+// transparent, invisible box. Real bug, 2026-09-13 user report ("I
+// couldn't see the grayed-out area at all" for a friend's shared busy time
+// on Schedule with Friends) -- confirmed live: T.muted resolved to a
+// computed rgba() color and the overlay's own computed background was
+// rgba(0,0,0,0). Every T.muted+"XX" call site needs this, not just the one
+// that got reported.
+const mutedAlpha=(hexSuffix)=>{
+  const c=T.muted;
+  if(c.startsWith("#"))return c+hexSuffix;
+  const m=c.match(/rgba?\(([^)]+)\)/);
+  if(!m)return c;
+  const [r,g,b]=m[1].split(",").map(s=>s.trim());
+  return `rgba(${r},${g},${b},${parseInt(hexSuffix,16)/255})`;
+};
 // accent palettes — override the lime family per user choice
 const ACCENTS={
   Lime:  {dk:{lime:"#AECE5E",limeDk:"#8BAE3C",limeLt:"#CBDF92"}, lt:{lime:"#6E9C35",limeDk:"#57802A",limeLt:"#DCE9C0"}},
@@ -12290,7 +12310,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
               // section's own Generate button, below, only ever renders
               // once sessions already exist -- see its own comment).
               <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"16px 18px",marginBottom:24,display:"flex",alignItems:"flex-start",gap:14}}>
-                <div style={{flexShrink:0,width:38,height:38,borderRadius:8,background:T.muted+"1A",display:"flex",alignItems:"center",justifyContent:"center",color:T.muted}}>{Icon.brain}</div>
+                <div style={{flexShrink:0,width:38,height:38,borderRadius:8,background:mutedAlpha("1A"),display:"flex",alignItems:"center",justifyContent:"center",color:T.muted}}>{Icon.brain}</div>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>No study plan yet</div>
                   <div style={{fontSize:13,color:T.text,lineHeight:1.5,marginBottom:14}}>Add material and Studlin will build one, or set it up yourself.</div>
@@ -21517,7 +21537,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
               const busyIntervals = (gsBusyByDate[dk] || []).concat(getDayOccupiedIntervals(dk));
               if (busyIntervals.length > 0) {
                 gsBusyEl = busyIntervals.map((iv, ii) => (
-                  <div key={"gsb"+ii} style={{position:"absolute",top:iv.s*(WK_PX_HR/60),left:0,right:0,height:Math.max(4,(iv.e-iv.s)*(WK_PX_HR/60)),background:T.muted+"1E",zIndex:3,pointerEvents:"none"}} />
+                  <div key={"gsb"+ii} style={{position:"absolute",top:iv.s*(WK_PX_HR/60),left:0,right:0,height:Math.max(4,(iv.e-iv.s)*(WK_PX_HR/60)),background:mutedAlpha("1E"),zIndex:3,pointerEvents:"none"}} />
                 ));
               }
             }
@@ -21538,6 +21558,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
               <div key={colIdx} style={{position:"relative",borderLeft:`1px solid ${T.border}`,height:24*WK_PX_HR,boxSizing:"border-box"}}
                 ref={el => { wkColRefs.current[dk] = el; }}
                 data-gridbg="1"
+                data-daykey={dk}
                 onDragOver={e=>handleDragOver(e,dk)}
                 onDrop={e=>handleDrop(e,dk)}
                 onMouseDown={e=>startCreateDrag(e,dk)}
@@ -21547,8 +21568,8 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                     subtractIntervals, so those windows show the normal clear
                     background instead of the tint. */}
                 {schoolWindow && colIdx<5 && subtractIntervals(schoolWindow, colEvs.filter(ev=>ev.kind==="free period").map(ev=>{const p=ev.time.split(":").map(Number);const start=p[0]*60+p[1];return {start,end:start+(ev.duration||30)};})).map((seg,si)=>(
-                  <div key={"sh"+si} style={{position:"absolute",top:seg.start*(WK_PX_HR/60),left:0,right:0,height:(seg.end-seg.start)*(WK_PX_HR/60),background:T.muted+"0C",pointerEvents:"none",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
-                    {(seg.end-seg.start)>=45 && <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.12em",color:T.muted+"88"}}>SCHOOL HOURS</span>}
+                  <div key={"sh"+si} style={{position:"absolute",top:seg.start*(WK_PX_HR/60),left:0,right:0,height:(seg.end-seg.start)*(WK_PX_HR/60),background:mutedAlpha("0C"),pointerEvents:"none",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
+                    {(seg.end-seg.start)>=45 && <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.12em",color:mutedAlpha("88")}}>SCHOOL HOURS</span>}
                   </div>
                 ))}
                 {Array.from({length:24}, (_, h) => (
@@ -24614,7 +24635,7 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
             style={{position:"sticky",top:8,left:0,height:0,zIndex:7,display:"flex",marginLeft:45,cursor:"ns-resize"}}>
             <div style={{width:18,height:18,borderRadius:"50%",background:T.lime,border:`2px solid ${T.card}`,marginLeft:-9,boxShadow:"0 2px 6px rgba(0,0,0,0.35)"}} />
           </div>
-          <div ref={timelineRef} data-gridbg="1" onDragOver={handleDayDragOver} onDrop={handleDayDrop} onDragLeave={()=>setDayDragOver(false)} onMouseDown={startCreateDrag} style={{position:"relative",height:totalHeightPx,marginLeft:54}}>
+          <div ref={timelineRef} data-gridbg="1" data-daykey={selDay} onDragOver={handleDayDragOver} onDrop={handleDayDrop} onDragLeave={()=>setDayDragOver(false)} onMouseDown={startCreateDrag} style={{position:"relative",height:totalHeightPx,marginLeft:54}}>
             {Array.from({length:Math.max(1,hourEnd-hourStart)},(_,i)=>hourStart+i).map(h=>(
               <div key={h} data-gridbg="1" style={{position:"absolute",top:(h*60-spanStart)*(pxPerHr/60),left:0,right:0,borderTop:`1px solid ${T.borderHover}`,boxSizing:"border-box"}}>
                 <span style={{position:"absolute",left:-54,top:-7,width:46,textAlign:"right",fontSize:10,color:T.faint,fontFamily:T.mono,pointerEvents:"none"}}>{fmtHourLabel(h*60)}</span>
@@ -24641,7 +24662,7 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
                 comment above gsDraftDragRef for why Day view never had any
                 of this before. */}
             {gsBusyByDate&&(gsBusyByDate[selDay]||[]).concat(getDayOccupiedIntervals(selDay)).map((iv,ii)=>(
-              <div key={"gsb"+ii} style={{position:"absolute",top:(iv.s-spanStart)*(pxPerHr/60),left:0,right:0,height:Math.max(4,(iv.e-iv.s)*(pxPerHr/60)),background:T.muted+"1E",zIndex:3,pointerEvents:"none"}} />
+              <div key={"gsb"+ii} style={{position:"absolute",top:(iv.s-spanStart)*(pxPerHr/60),left:0,right:0,height:Math.max(4,(iv.e-iv.s)*(pxPerHr/60)),background:mutedAlpha("1E"),zIndex:3,pointerEvents:"none"}} />
             ))}
             {gsRecommended&&gsRecommended.date===selDay&&(()=>{
               const rStart=timeToMinutes(gsRecommended.time);
@@ -29876,6 +29897,60 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const gsPreviewMove=(date,startTime,endTime)=>setGsDraft(d=>d?({...d,date,startTime,endTime}):d);
   const gsPreviewResize=(endTime)=>setGsDraft(d=>d?({...d,endTime}):d);
   const closeGroupSchedule=()=>{setGsOpen(false);setGsStep("pick");setGsDraft(null);setGsChipDragging(false);};
+  // 2026-09-13 user report ("nothing happens" when dragging Meeting/Study
+  // Session onto the calendar): these chips used native HTML5 draggable,
+  // which never reliably fires a dragstart gesture on every trackpad --
+  // unlike a plain mousedown, it depends on the browser/OS recognizing a
+  // genuine drag motion. Replaced with the same document-level
+  // mousedown/mousemove/mouseup idiom WeeklyPlanner/DayPlanner already use
+  // for their own proven-reliable drags (previewDragRef, createDragRef).
+  // Finds the day cell under the cursor via elementFromPoint + a
+  // data-daykey attribute on WeeklyPlanner's day column / DayPlanner's
+  // timeline, rather than reaching into either component's internal refs --
+  // both elements are always exactly 24 hours tall regardless of the
+  // current zoom level, so time-of-day is just relY/height*1440.
+  const gsChipDragRef=useRef(null); // {chip,duration}|null while a chip drag is in progress
+  const gsChipPointToDayTime=(x,y)=>{
+    const el=document.elementFromPoint(x,y);
+    const dayEl=el&&el.closest('[data-daykey]');
+    if(!dayEl||!dayEl.getBoundingClientRect)return null;
+    const rect=dayEl.getBoundingClientRect();
+    if(rect.height<=0)return null;
+    const relY=Math.max(0,y-rect.top);
+    const mins=Math.max(0,Math.min(1439,Math.round((relY/rect.height*1440)/15)*15));
+    return {dateKey:dayEl.dataset.daykey,startTime:minutesToTime(mins)};
+  };
+  const startGsChipDrag=(chip)=>(e)=>{
+    if(e.button!==0)return;
+    e.preventDefault();
+    gsChipDragRef.current={chip,duration:null};
+    setSidebarDragChip(chip);
+    setGsChipDragging(true);
+  };
+  useEffect(()=>{
+    if(!gsChipDragging)return;
+    const onMove=(ev)=>{
+      const info=gsChipDragRef.current;
+      if(!info)return;
+      const hit=gsChipPointToDayTime(ev.clientX,ev.clientY);
+      if(!hit)return;
+      if(info.duration==null){
+        placeGroupScheduleChip(info.chip,hit.dateKey,hit.startTime);
+        info.duration=computeDropDuration(events,routines,getSchedulePreferences(),hit.dateKey,hit.startTime);
+      }else{
+        const startMins=timeToMinutes(hit.startTime);
+        gsPreviewMove(hit.dateKey,hit.startTime,minutesToTime(Math.min(1439,startMins+info.duration)));
+      }
+    };
+    const onUp=()=>{
+      setSidebarDragChip(null);
+      setGsChipDragging(false);
+      gsChipDragRef.current=null;
+    };
+    document.addEventListener("mousemove",onMove);
+    document.addEventListener("mouseup",onUp);
+    return ()=>{document.removeEventListener("mousemove",onMove);document.removeEventListener("mouseup",onUp);};
+  },[gsChipDragging]);
   // Sends the placed block as a proposal -- writes straight to
   // status:"proposed" (skipping the "unscheduled, pick one of 3 options"
   // stage ChatDrawer's own auto-find posts) since the organizer already
@@ -32379,10 +32454,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
               <div style={{fontSize:11.5,fontWeight:700,color:T.text}}>Drag onto an open slot</div>
               <div style={{fontSize:10.5,color:T.muted}}>Grayed-out time is when someone's busy -- you can still place there.</div>
             </div>
-            <div draggable onDragStart={()=>{setSidebarDragChip({title:"Meeting",kind:"groupSession",mode:"busy block",color:T.lime});setGsChipDragging(true);}} onDragEnd={()=>{setSidebarDragChip(null);setGsChipDragging(false);}}
-              style={{padding:"8px 14px",borderRadius:8,background:T.lime+"18",border:`1px solid ${T.lime}55`,color:T.lime,fontSize:12,fontWeight:700,cursor:"grab",whiteSpace:"nowrap"}}>Meeting</div>
-            <div draggable onDragStart={()=>{setSidebarDragChip({title:"Study Session",kind:"groupSession",mode:"study block",color:T.teal});setGsChipDragging(true);}} onDragEnd={()=>{setSidebarDragChip(null);setGsChipDragging(false);}}
-              style={{padding:"8px 14px",borderRadius:8,background:T.teal+"18",border:`1px solid ${T.teal}55`,color:T.teal,fontSize:12,fontWeight:700,cursor:"grab",whiteSpace:"nowrap"}}>Study Session</div>
+            <div onMouseDown={startGsChipDrag({title:"Meeting",kind:"groupSession",mode:"busy block",color:T.lime})}
+              style={{padding:"8px 14px",borderRadius:8,background:T.lime+"18",border:`1px solid ${T.lime}55`,color:T.lime,fontSize:12,fontWeight:700,cursor:"grab",whiteSpace:"nowrap",userSelect:"none"}}>Meeting</div>
+            <div onMouseDown={startGsChipDrag({title:"Study Session",kind:"groupSession",mode:"study block",color:T.teal})}
+              style={{padding:"8px 14px",borderRadius:8,background:T.teal+"18",border:`1px solid ${T.teal}55`,color:T.teal,fontSize:12,fontWeight:700,cursor:"grab",whiteSpace:"nowrap",userSelect:"none"}}>Study Session</div>
             <div style={{display:"flex",gap:8,marginLeft:"auto"}}>
               <Btn variant="subtle" onClick={closeGroupSchedule}>Cancel</Btn>
               {/* Bug fix, 2026-09-09 user report ("i keep hitting done"):

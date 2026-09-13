@@ -33,18 +33,35 @@ describe("Schedule with Friends 'place it' panel lets drops pass through to the 
     assert.match(body, /pointerEvents:gsChipDragging\?"none":"auto"/);
   });
 
-  test("both the Meeting and Study Session chips set gsChipDragging true on dragstart and clear it on dragend", () => {
+  // 2026-09-13 follow-up user report ("nothing happens" when dragging):
+  // native HTML5 draggable never reliably fires a dragstart gesture on
+  // every trackpad -- replaced with a plain mousedown that starts a
+  // document-level mousemove/mouseup drag (same idiom WeeklyPlanner/
+  // DayPlanner already use for their own reliable drags), shared by both
+  // chips through one startGsChipDrag helper instead of a dragstart/dragend
+  // pair duplicated per chip.
+  test("both the Meeting and Study Session chips start a drag via startGsChipDrag on mousedown", () => {
     const meetingIdx = SOURCE.indexOf('title:"Meeting",kind:"groupSession"');
     assert.notEqual(meetingIdx, -1);
     const meetingBody = SOURCE.slice(meetingIdx - 200, meetingIdx + 200);
-    assert.match(meetingBody, /setGsChipDragging\(true\)/);
-    assert.match(meetingBody, /setGsChipDragging\(false\)/);
+    assert.match(meetingBody, /onMouseDown=\{startGsChipDrag\(/);
 
     const studyIdx = SOURCE.indexOf('title:"Study Session",kind:"groupSession"');
     assert.notEqual(studyIdx, -1);
     const studyBody = SOURCE.slice(studyIdx - 200, studyIdx + 200);
-    assert.match(studyBody, /setGsChipDragging\(true\)/);
-    assert.match(studyBody, /setGsChipDragging\(false\)/);
+    assert.match(studyBody, /onMouseDown=\{startGsChipDrag\(/);
+  });
+
+  test("startGsChipDrag sets gsChipDragging true, and the document-level mouseup handler clears it", () => {
+    const startIdx = SOURCE.indexOf("const startGsChipDrag=(chip)=>(e)=>{");
+    assert.notEqual(startIdx, -1);
+    const startBody = SOURCE.slice(startIdx, startIdx + 300);
+    assert.match(startBody, /setGsChipDragging\(true\)/);
+
+    const upIdx = SOURCE.indexOf("const onUp=()=>{", startIdx);
+    assert.notEqual(upIdx, -1);
+    const upBody = SOURCE.slice(upIdx, upIdx + 200);
+    assert.match(upBody, /setGsChipDragging\(false\)/);
   });
 
   test("closing the flow also resets gsChipDragging so a cancelled drag never leaves the panel permanently inert", () => {
