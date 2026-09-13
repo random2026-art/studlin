@@ -83,6 +83,14 @@ const blendOverBg = (hex, alpha, bgHex) => {
   const toHex = (n) => n.toString(16).padStart(2, "0");
   return "#" + toHex(mix(r1, r2)) + toHex(mix(g1, g2)) + toHex(mix(b1, b2));
 };
+const mutedAlpha = (hexSuffix) => {
+  const c = T.muted;
+  if (c.startsWith("#")) return c + hexSuffix;
+  const m = c.match(/rgba?\(([^)]+)\)/);
+  if (!m) return c;
+  const [r, g, b] = m[1].split(",").map((s) => s.trim());
+  return `rgba(${r},${g},${b},${parseInt(hexSuffix, 16) / 255})`;
+};
 const ACCENTS = {
   Lime: { dk: { lime: "#AECE5E", limeDk: "#8BAE3C", limeLt: "#CBDF92" }, lt: { lime: "#6E9C35", limeDk: "#57802A", limeLt: "#DCE9C0" } },
   Forest: { dk: { lime: "#6FC1A0", limeDk: "#4E9C7B", limeLt: "#A9E0CB" }, lt: { lime: "#2E8E6E", limeDk: "#227056", limeLt: "#A9E0CB" } },
@@ -7309,7 +7317,7 @@ function StudlinPrep({ setActive = () => {
       // when there's nothing yet (the Materials & study kit
       // section's own Generate button, below, only ever renders
       // once sessions already exist -- see its own comment).
-      /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: "16px 18px", marginBottom: 24, display: "flex", alignItems: "flex-start", gap: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, width: 38, height: 38, borderRadius: 8, background: T.muted + "1A", display: "flex", alignItems: "center", justifyContent: "center", color: T.muted } }, Icon.brain), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "No study plan yet"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, lineHeight: 1.5, marginBottom: 14 } }, "Add material and Studlin will build one, or set it up yourself."), /* @__PURE__ */ React.createElement(Btn, { onClick: () => openBuildPlan(selectedExam), style: { padding: "7px 14px", fontSize: 12 } }, "Build study plan")))
+      /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: "16px 18px", marginBottom: 24, display: "flex", alignItems: "flex-start", gap: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, width: 38, height: 38, borderRadius: 8, background: mutedAlpha("1A"), display: "flex", alignItems: "center", justifyContent: "center", color: T.muted } }, Icon.brain), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "No study plan yet"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, lineHeight: 1.5, marginBottom: 14 } }, "Add material and Studlin will build one, or set it up yourself."), /* @__PURE__ */ React.createElement(Btn, { onClick: () => openBuildPlan(selectedExam), style: { padding: "7px 14px", fontSize: 12 } }, "Build study plan")))
     ) : /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 24 } }, examSessions.map((s) => {
       const isDone = s.status === "done";
       const isMissed = !isDone && s.date < today;
@@ -13112,7 +13120,7 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
     if (gsBusyByDate) {
       const busyIntervals = (gsBusyByDate[dk] || []).concat(getDayOccupiedIntervals(dk));
       if (busyIntervals.length > 0) {
-        gsBusyEl = busyIntervals.map((iv, ii) => /* @__PURE__ */ React.createElement("div", { key: "gsb" + ii, style: { position: "absolute", top: iv.s * (WK_PX_HR / 60), left: 0, right: 0, height: Math.max(4, (iv.e - iv.s) * (WK_PX_HR / 60)), background: T.muted + "1E", zIndex: 3, pointerEvents: "none" } }));
+        gsBusyEl = busyIntervals.map((iv, ii) => /* @__PURE__ */ React.createElement("div", { key: "gsb" + ii, style: { position: "absolute", top: iv.s * (WK_PX_HR / 60), left: 0, right: 0, height: Math.max(4, (iv.e - iv.s) * (WK_PX_HR / 60)), background: mutedAlpha("1E"), zIndex: 3, pointerEvents: "none" } }));
       }
     }
     let gsRecommendedEl = null;
@@ -13140,7 +13148,7 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
         const p = ev.time.split(":").map(Number);
         const start = p[0] * 60 + p[1];
         return { start, end: start + (ev.duration || 30) };
-      })).map((seg, si) => /* @__PURE__ */ React.createElement("div", { key: "sh" + si, style: { position: "absolute", top: seg.start * (WK_PX_HR / 60), left: 0, right: 0, height: (seg.end - seg.start) * (WK_PX_HR / 60), background: T.muted + "0C", pointerEvents: "none", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" } }, seg.end - seg.start >= 45 && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, fontWeight: 800, letterSpacing: "0.12em", color: T.muted + "88" } }, "SCHOOL HOURS"))),
+      })).map((seg, si) => /* @__PURE__ */ React.createElement("div", { key: "sh" + si, style: { position: "absolute", top: seg.start * (WK_PX_HR / 60), left: 0, right: 0, height: (seg.end - seg.start) * (WK_PX_HR / 60), background: mutedAlpha("0C"), pointerEvents: "none", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" } }, seg.end - seg.start >= 45 && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, fontWeight: 800, letterSpacing: "0.12em", color: mutedAlpha("88") } }, "SCHOOL HOURS"))),
       Array.from({ length: 24 }, (_, h) => /* @__PURE__ */ React.createElement("div", { key: h, "data-gridbg": "1", style: { position: "absolute", top: h * WK_PX_HR, left: 0, right: 0, height: WK_PX_HR, borderTop: `1px solid ${T.borderHover}`, boxSizing: "border-box" } })),
       quickCreateDraft && quickCreateDraft.dateKey === dk && (() => {
         const qStart = timeToMinutes(quickCreateDraft.startTime);
@@ -14842,7 +14850,7 @@ function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf,
     const qStart = timeToMinutes(quickCreateDraft.startTime);
     const qDur = Math.max(15, timeToMinutes(quickCreateDraft.endTime) - qStart);
     return /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: (qStart - spanStart) * (pxPerHr / 60), left: 2, right: 2, height: qDur * (pxPerHr / 60), borderRadius: 5, background: T.lime + "22", border: `1.5px dashed ${T.lime}`, zIndex: 7, pointerEvents: "none", boxSizing: "border-box" } });
-  })(), isToday && nowMins >= spanStart && nowMins <= spanEnd && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: (nowMins - spanStart) * (pxPerHr / 60), left: 0, right: 0, zIndex: 6, pointerEvents: "none" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", left: -4, top: -4, width: 8, height: 8, borderRadius: "50%", background: "#E5484D" } }), /* @__PURE__ */ React.createElement("div", { style: { borderTop: "2px solid #E5484D" } })), gsBusyByDate && (gsBusyByDate[selDay] || []).concat(getDayOccupiedIntervals(selDay)).map((iv, ii) => /* @__PURE__ */ React.createElement("div", { key: "gsb" + ii, style: { position: "absolute", top: (iv.s - spanStart) * (pxPerHr / 60), left: 0, right: 0, height: Math.max(4, (iv.e - iv.s) * (pxPerHr / 60)), background: T.muted + "1E", zIndex: 3, pointerEvents: "none" } })), gsRecommended && gsRecommended.date === selDay && (() => {
+  })(), isToday && nowMins >= spanStart && nowMins <= spanEnd && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: (nowMins - spanStart) * (pxPerHr / 60), left: 0, right: 0, zIndex: 6, pointerEvents: "none" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", left: -4, top: -4, width: 8, height: 8, borderRadius: "50%", background: "#E5484D" } }), /* @__PURE__ */ React.createElement("div", { style: { borderTop: "2px solid #E5484D" } })), gsBusyByDate && (gsBusyByDate[selDay] || []).concat(getDayOccupiedIntervals(selDay)).map((iv, ii) => /* @__PURE__ */ React.createElement("div", { key: "gsb" + ii, style: { position: "absolute", top: (iv.s - spanStart) * (pxPerHr / 60), left: 0, right: 0, height: Math.max(4, (iv.e - iv.s) * (pxPerHr / 60)), background: mutedAlpha("1E"), zIndex: 3, pointerEvents: "none" } })), gsRecommended && gsRecommended.date === selDay && (() => {
     const rStart = timeToMinutes(gsRecommended.time);
     const rDur = gsRecommended.duration || 60;
     return /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: (rStart - spanStart) * (pxPerHr / 60), left: 2, right: 2, height: Math.max(22, rDur * (pxPerHr / 60)), borderRadius: 5, background: T.lime + "10", border: `1.5px dashed ${T.lime}`, zIndex: 5, pointerEvents: "none", display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: 2, boxSizing: "border-box" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 8, fontWeight: 700, letterSpacing: "0.05em", color: T.lime, background: T.card, padding: "1px 5px", borderRadius: 3, whiteSpace: "nowrap" } }, "STUDLIN RECOMMENDS"));

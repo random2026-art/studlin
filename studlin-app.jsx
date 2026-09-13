@@ -89,6 +89,26 @@ const blendOverBg=(hex,alpha,bgHex)=>{
   const toHex=n=>n.toString(16).padStart(2,'0');
   return '#'+toHex(mix(r1,r2))+toHex(mix(g1,g2))+toHex(mix(b1,b2));
 };
+// T.muted is plain hex in dark mode ("#849389") but an rgba(...) string in
+// light mode ("rgba(14,31,24,0.55)") -- the "+hexAlphaSuffix" trick used
+// everywhere else for a translucent tint (T.lime+"18" etc., safe since
+// those tokens ARE plain hex in both themes) silently produces invalid CSS
+// when applied to an rgba() string. The browser just drops the whole
+// invalid background value rather than erroring, leaving a fully
+// transparent, invisible box. Real bug, 2026-09-13 user report ("I
+// couldn't see the grayed-out area at all" for a friend's shared busy time
+// on Schedule with Friends) -- confirmed live: T.muted resolved to a
+// computed rgba() color and the overlay's own computed background was
+// rgba(0,0,0,0). Every T.muted+"XX" call site needs this, not just the one
+// that got reported.
+const mutedAlpha=(hexSuffix)=>{
+  const c=T.muted;
+  if(c.startsWith("#"))return c+hexSuffix;
+  const m=c.match(/rgba?\(([^)]+)\)/);
+  if(!m)return c;
+  const [r,g,b]=m[1].split(",").map(s=>s.trim());
+  return `rgba(${r},${g},${b},${parseInt(hexSuffix,16)/255})`;
+};
 // accent palettes — override the lime family per user choice
 const ACCENTS={
   Lime:  {dk:{lime:"#AECE5E",limeDk:"#8BAE3C",limeLt:"#CBDF92"}, lt:{lime:"#6E9C35",limeDk:"#57802A",limeLt:"#DCE9C0"}},
@@ -12290,7 +12310,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
               // section's own Generate button, below, only ever renders
               // once sessions already exist -- see its own comment).
               <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"16px 18px",marginBottom:24,display:"flex",alignItems:"flex-start",gap:14}}>
-                <div style={{flexShrink:0,width:38,height:38,borderRadius:8,background:T.muted+"1A",display:"flex",alignItems:"center",justifyContent:"center",color:T.muted}}>{Icon.brain}</div>
+                <div style={{flexShrink:0,width:38,height:38,borderRadius:8,background:mutedAlpha("1A"),display:"flex",alignItems:"center",justifyContent:"center",color:T.muted}}>{Icon.brain}</div>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>No study plan yet</div>
                   <div style={{fontSize:13,color:T.text,lineHeight:1.5,marginBottom:14}}>Add material and Studlin will build one, or set it up yourself.</div>
@@ -21517,7 +21537,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
               const busyIntervals = (gsBusyByDate[dk] || []).concat(getDayOccupiedIntervals(dk));
               if (busyIntervals.length > 0) {
                 gsBusyEl = busyIntervals.map((iv, ii) => (
-                  <div key={"gsb"+ii} style={{position:"absolute",top:iv.s*(WK_PX_HR/60),left:0,right:0,height:Math.max(4,(iv.e-iv.s)*(WK_PX_HR/60)),background:T.muted+"1E",zIndex:3,pointerEvents:"none"}} />
+                  <div key={"gsb"+ii} style={{position:"absolute",top:iv.s*(WK_PX_HR/60),left:0,right:0,height:Math.max(4,(iv.e-iv.s)*(WK_PX_HR/60)),background:mutedAlpha("1E"),zIndex:3,pointerEvents:"none"}} />
                 ));
               }
             }
@@ -21548,8 +21568,8 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                     subtractIntervals, so those windows show the normal clear
                     background instead of the tint. */}
                 {schoolWindow && colIdx<5 && subtractIntervals(schoolWindow, colEvs.filter(ev=>ev.kind==="free period").map(ev=>{const p=ev.time.split(":").map(Number);const start=p[0]*60+p[1];return {start,end:start+(ev.duration||30)};})).map((seg,si)=>(
-                  <div key={"sh"+si} style={{position:"absolute",top:seg.start*(WK_PX_HR/60),left:0,right:0,height:(seg.end-seg.start)*(WK_PX_HR/60),background:T.muted+"0C",pointerEvents:"none",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
-                    {(seg.end-seg.start)>=45 && <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.12em",color:T.muted+"88"}}>SCHOOL HOURS</span>}
+                  <div key={"sh"+si} style={{position:"absolute",top:seg.start*(WK_PX_HR/60),left:0,right:0,height:(seg.end-seg.start)*(WK_PX_HR/60),background:mutedAlpha("0C"),pointerEvents:"none",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
+                    {(seg.end-seg.start)>=45 && <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.12em",color:mutedAlpha("88")}}>SCHOOL HOURS</span>}
                   </div>
                 ))}
                 {Array.from({length:24}, (_, h) => (
@@ -24642,7 +24662,7 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
                 comment above gsDraftDragRef for why Day view never had any
                 of this before. */}
             {gsBusyByDate&&(gsBusyByDate[selDay]||[]).concat(getDayOccupiedIntervals(selDay)).map((iv,ii)=>(
-              <div key={"gsb"+ii} style={{position:"absolute",top:(iv.s-spanStart)*(pxPerHr/60),left:0,right:0,height:Math.max(4,(iv.e-iv.s)*(pxPerHr/60)),background:T.muted+"1E",zIndex:3,pointerEvents:"none"}} />
+              <div key={"gsb"+ii} style={{position:"absolute",top:(iv.s-spanStart)*(pxPerHr/60),left:0,right:0,height:Math.max(4,(iv.e-iv.s)*(pxPerHr/60)),background:mutedAlpha("1E"),zIndex:3,pointerEvents:"none"}} />
             ))}
             {gsRecommended&&gsRecommended.date===selDay&&(()=>{
               const rStart=timeToMinutes(gsRecommended.time);
