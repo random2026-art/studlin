@@ -13788,7 +13788,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
   };
   const IMAGE_EXT_MEDIA_TYPES = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif" };
   const FREE_SCAN_FLAG = { schedule: "freeScheduleScanUsed", syllabus: "freeSyllabusScanUsed" };
-  const canFreeOnboardingScan = (kind) => !quickScan && !lsGet(FREE_SCAN_FLAG[kind], false);
+  const canFreeOnboardingScan = (kind) => kind === "syllabus" ? !lsGet(FREE_SCAN_FLAG[kind], false) : !quickScan && !lsGet(FREE_SCAN_FLAG[kind], false);
   const markFreeScanUsed = (kind) => {
     lsSet(FREE_SCAN_FLAG[kind], true);
     const u = firebase.auth().currentUser;
