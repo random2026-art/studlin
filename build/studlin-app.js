@@ -17782,7 +17782,7 @@ function CalendarTab({ setActive = () => {
     });
     authFetch("/api/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "push", roomId: gsRoomId, preview: "Shared free time found" }) }).catch(() => {
     });
-    addTaskWithRebalance({
+    const nextEvents = addTaskWithRebalance({
       id: "gs-" + now2,
       date: option.date,
       time: option.time,
@@ -17806,6 +17806,7 @@ function CalendarTab({ setActive = () => {
         proposalResponses: { [myUid]: "accepted" }
       } : {}
     });
+    setEvents2(nextEvents);
     setGsSending(false);
     closeGroupSchedule();
     setPlacementToast("Sent. It'll land on their calendar once they accept.");
@@ -21951,6 +21952,7 @@ function AuthGate() {
       if (u && (!isPasswordAccount(u) || u.emailVerified)) {
         const profilePromise = fetchUserProfile();
         upsertProfile();
+        profilePromise.then(() => publishBusyWindows());
         DataStore.events.hydrateOnAuth();
         DataStore.decks.hydrateOnAuth();
         DataStore.notes.hydrateOnAuth();
