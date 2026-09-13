@@ -3460,9 +3460,14 @@ async function publishBusyWindows() {
   const myUid = firebase.auth().currentUser?.uid;
   if (!myUid) return { ok: false, reason: "not_signed_in" };
   try {
+    const sourceUpdatedAt = lsGet("scheduleDataUpdatedAt", 0);
+    const existing = await fsdb().collection("busyWindows").doc(myUid).get();
+    if (existing.exists && (existing.data().sourceUpdatedAt || 0) > sourceUpdatedAt) {
+      return { ok: true, skipped: true, reason: "stale_local_data" };
+    }
     const sharedWithUids = await getAcceptedFriendUids(myUid);
     const intervals = computeBusyWindowsPayload(lsGet("events", []), getWeeklyRoutine(), getSchedulePreferences(), dayKey());
-    await fsdb().collection("busyWindows").doc(myUid).set({ ownerUid: myUid, sharedWithUids, intervals, updatedAt: (/* @__PURE__ */ new Date()).toISOString() });
+    await fsdb().collection("busyWindows").doc(myUid).set({ ownerUid: myUid, sharedWithUids, intervals, sourceUpdatedAt, updatedAt: (/* @__PURE__ */ new Date()).toISOString() });
     return { ok: true };
   } catch (e) {
     reportError("publishBusyWindows")(e);
@@ -17227,7 +17232,10 @@ function CalendarTab({ setActive = () => {
     return getWeeklyRoutine();
   });
   const busyWindowsRepublishTimer = useRef(null);
+  const busyWindowsFirstRunRef = useRef(true);
   useEffect(() => {
+    if (busyWindowsFirstRunRef.current) busyWindowsFirstRunRef.current = false;
+    else lsSet("scheduleDataUpdatedAt", Date.now());
     if (busyWindowsRepublishTimer.current) clearTimeout(busyWindowsRepublishTimer.current);
     busyWindowsRepublishTimer.current = setTimeout(() => {
       publishBusyWindows();
