@@ -13130,6 +13130,7 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
           wkColRefs.current[dk] = el;
         },
         "data-gridbg": "1",
+        "data-daykey": dk,
         onDragOver: (e) => handleDragOver(e, dk),
         onDrop: (e) => handleDrop(e, dk),
         onMouseDown: (e) => startCreateDrag(e, dk),
@@ -14837,7 +14838,7 @@ function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf,
       style: { position: "sticky", top: 8, left: 0, height: 0, zIndex: 7, display: "flex", marginLeft: 45, cursor: "ns-resize" }
     },
     /* @__PURE__ */ React.createElement("div", { style: { width: 18, height: 18, borderRadius: "50%", background: T.lime, border: `2px solid ${T.card}`, marginLeft: -9, boxShadow: "0 2px 6px rgba(0,0,0,0.35)" } })
-  ), /* @__PURE__ */ React.createElement("div", { ref: timelineRef, "data-gridbg": "1", onDragOver: handleDayDragOver, onDrop: handleDayDrop, onDragLeave: () => setDayDragOver(false), onMouseDown: startCreateDrag, style: { position: "relative", height: totalHeightPx, marginLeft: 54 } }, Array.from({ length: Math.max(1, hourEnd - hourStart) }, (_, i) => hourStart + i).map((h) => /* @__PURE__ */ React.createElement("div", { key: h, "data-gridbg": "1", style: { position: "absolute", top: (h * 60 - spanStart) * (pxPerHr / 60), left: 0, right: 0, borderTop: `1px solid ${T.borderHover}`, boxSizing: "border-box" } }, /* @__PURE__ */ React.createElement("span", { style: { position: "absolute", left: -54, top: -7, width: 46, textAlign: "right", fontSize: 10, color: T.faint, fontFamily: T.mono, pointerEvents: "none" } }, fmtHourLabel(h * 60)))), quickCreateDraft && quickCreateDraft.dateKey === selDay && (() => {
+  ), /* @__PURE__ */ React.createElement("div", { ref: timelineRef, "data-gridbg": "1", "data-daykey": selDay, onDragOver: handleDayDragOver, onDrop: handleDayDrop, onDragLeave: () => setDayDragOver(false), onMouseDown: startCreateDrag, style: { position: "relative", height: totalHeightPx, marginLeft: 54 } }, Array.from({ length: Math.max(1, hourEnd - hourStart) }, (_, i) => hourStart + i).map((h) => /* @__PURE__ */ React.createElement("div", { key: h, "data-gridbg": "1", style: { position: "absolute", top: (h * 60 - spanStart) * (pxPerHr / 60), left: 0, right: 0, borderTop: `1px solid ${T.borderHover}`, boxSizing: "border-box" } }, /* @__PURE__ */ React.createElement("span", { style: { position: "absolute", left: -54, top: -7, width: 46, textAlign: "right", fontSize: 10, color: T.faint, fontFamily: T.mono, pointerEvents: "none" } }, fmtHourLabel(h * 60)))), quickCreateDraft && quickCreateDraft.dateKey === selDay && (() => {
     const qStart = timeToMinutes(quickCreateDraft.startTime);
     const qDur = Math.max(15, timeToMinutes(quickCreateDraft.endTime) - qStart);
     return /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: (qStart - spanStart) * (pxPerHr / 60), left: 2, right: 2, height: qDur * (pxPerHr / 60), borderRadius: 5, background: T.lime + "22", border: `1.5px dashed ${T.lime}`, zIndex: 7, pointerEvents: "none", boxSizing: "border-box" } });
@@ -17740,6 +17741,51 @@ function CalendarTab({ setActive = () => {
     setGsDraft(null);
     setGsChipDragging(false);
   };
+  const gsChipDragRef = useRef(null);
+  const gsChipPointToDayTime = (x, y) => {
+    const el = document.elementFromPoint(x, y);
+    const dayEl = el && el.closest("[data-daykey]");
+    if (!dayEl || !dayEl.getBoundingClientRect) return null;
+    const rect = dayEl.getBoundingClientRect();
+    if (rect.height <= 0) return null;
+    const relY = Math.max(0, y - rect.top);
+    const mins = Math.max(0, Math.min(1439, Math.round(relY / rect.height * 1440 / 15) * 15));
+    return { dateKey: dayEl.dataset.daykey, startTime: minutesToTime(mins) };
+  };
+  const startGsChipDrag = (chip) => (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    gsChipDragRef.current = { chip, duration: null };
+    setSidebarDragChip(chip);
+    setGsChipDragging(true);
+  };
+  useEffect(() => {
+    if (!gsChipDragging) return;
+    const onMove = (ev) => {
+      const info = gsChipDragRef.current;
+      if (!info) return;
+      const hit = gsChipPointToDayTime(ev.clientX, ev.clientY);
+      if (!hit) return;
+      if (info.duration == null) {
+        placeGroupScheduleChip(info.chip, hit.dateKey, hit.startTime);
+        info.duration = computeDropDuration(events, routines, getSchedulePreferences(), hit.dateKey, hit.startTime);
+      } else {
+        const startMins = timeToMinutes(hit.startTime);
+        gsPreviewMove(hit.dateKey, hit.startTime, minutesToTime(Math.min(1439, startMins + info.duration)));
+      }
+    };
+    const onUp = () => {
+      setSidebarDragChip(null);
+      setGsChipDragging(false);
+      gsChipDragRef.current = null;
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    return () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+  }, [gsChipDragging]);
   const postGroupSchedule = async () => {
     const myUid = firebase.auth().currentUser?.uid;
     if (!myUid || !gsDraft || !gsRoomId || gsSending) return;
@@ -19667,31 +19713,15 @@ Examples:
   })), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 3 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, fontWeight: 700, color: T.text } }, "Drag onto an open slot"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.muted } }, "Grayed-out time is when someone's busy -- you can still place there.")), /* @__PURE__ */ React.createElement(
     "div",
     {
-      draggable: true,
-      onDragStart: () => {
-        setSidebarDragChip({ title: "Meeting", kind: "groupSession", mode: "busy block", color: T.lime });
-        setGsChipDragging(true);
-      },
-      onDragEnd: () => {
-        setSidebarDragChip(null);
-        setGsChipDragging(false);
-      },
-      style: { padding: "8px 14px", borderRadius: 8, background: T.lime + "18", border: `1px solid ${T.lime}55`, color: T.lime, fontSize: 12, fontWeight: 700, cursor: "grab", whiteSpace: "nowrap" }
+      onMouseDown: startGsChipDrag({ title: "Meeting", kind: "groupSession", mode: "busy block", color: T.lime }),
+      style: { padding: "8px 14px", borderRadius: 8, background: T.lime + "18", border: `1px solid ${T.lime}55`, color: T.lime, fontSize: 12, fontWeight: 700, cursor: "grab", whiteSpace: "nowrap", userSelect: "none" }
     },
     "Meeting"
   ), /* @__PURE__ */ React.createElement(
     "div",
     {
-      draggable: true,
-      onDragStart: () => {
-        setSidebarDragChip({ title: "Study Session", kind: "groupSession", mode: "study block", color: T.teal });
-        setGsChipDragging(true);
-      },
-      onDragEnd: () => {
-        setSidebarDragChip(null);
-        setGsChipDragging(false);
-      },
-      style: { padding: "8px 14px", borderRadius: 8, background: T.teal + "18", border: `1px solid ${T.teal}55`, color: T.teal, fontSize: 12, fontWeight: 700, cursor: "grab", whiteSpace: "nowrap" }
+      onMouseDown: startGsChipDrag({ title: "Study Session", kind: "groupSession", mode: "study block", color: T.teal }),
+      style: { padding: "8px 14px", borderRadius: 8, background: T.teal + "18", border: `1px solid ${T.teal}55`, color: T.teal, fontSize: 12, fontWeight: 700, cursor: "grab", whiteSpace: "nowrap", userSelect: "none" }
     },
     "Study Session"
   ), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginLeft: "auto" } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeGroupSchedule }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: postGroupSchedule, disabled: !gsDraft || gsSending, style: !gsDraft || gsSending ? { opacity: 0.45 } : {}, title: !gsDraft ? "Drag a Meeting or Study Session block onto the calendar first" : void 0 }, gsSending ? "Sending\u2026" : "Done")))), /* @__PURE__ */ React.createElement(
