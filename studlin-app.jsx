@@ -21532,12 +21532,25 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
             // never a hard block, so placement anywhere stays allowed on
             // top of it. Same tinted-rectangle technique as the School
             // Hours mask just below.
+            // Bug fix, 2026-09-13 user report ("make it not transparent,
+            // and make sure my own schedule stays on top"): this mask used
+            // to render at ~12% opacity AND at the same zIndex:3 as the
+            // real event-card block below, rendered later in the DOM --
+            // equal z-index ties break on document order, so the
+            // near-invisible mask was actually painting OVER real events,
+            // not under them. Explicit zIndex:2 (below the event card's
+            // zIndex:3) guarantees your own real events always stay on
+            // top regardless of DOM order, which is what makes it safe to
+            // raise the opacity here without ever obscuring a real event.
+            // Deliberately stays one anonymous "someone's busy" mask, not
+            // broken out per friend -- confirmed with the user this should
+            // NOT reveal which specific friend is busy.
             let gsBusyEl = null;
             if (gsBusyByDate) {
               const busyIntervals = (gsBusyByDate[dk] || []).concat(getDayOccupiedIntervals(dk));
               if (busyIntervals.length > 0) {
                 gsBusyEl = busyIntervals.map((iv, ii) => (
-                  <div key={"gsb"+ii} style={{position:"absolute",top:iv.s*(WK_PX_HR/60),left:0,right:0,height:Math.max(4,(iv.e-iv.s)*(WK_PX_HR/60)),background:mutedAlpha("1E"),zIndex:3,pointerEvents:"none"}} />
+                  <div key={"gsb"+ii} style={{position:"absolute",top:iv.s*(WK_PX_HR/60),left:0,right:0,height:Math.max(4,(iv.e-iv.s)*(WK_PX_HR/60)),background:mutedAlpha("CC"),zIndex:2,pointerEvents:"none"}} />
                 ));
               }
             }
@@ -24660,9 +24673,16 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
                 draggable-draft treatment as WeeklyPlanner's own (see that
                 component's matching comment) -- see this component's own
                 comment above gsDraftDragRef for why Day view never had any
-                of this before. */}
+                of this before.
+                Bug fix, 2026-09-13: same contrast/stacking fix as
+                WeeklyPlanner's gsBusyEl -- explicit zIndex:2 keeps this
+                below the real event card's zIndex:3 (equal z-index used to
+                tie-break on DOM order, painting this near-invisible mask
+                OVER real events), which is what makes it safe to raise the
+                opacity without ever hiding a real event. Stays one
+                anonymous "someone's busy" mask, not per-friend. */}
             {gsBusyByDate&&(gsBusyByDate[selDay]||[]).concat(getDayOccupiedIntervals(selDay)).map((iv,ii)=>(
-              <div key={"gsb"+ii} style={{position:"absolute",top:(iv.s-spanStart)*(pxPerHr/60),left:0,right:0,height:Math.max(4,(iv.e-iv.s)*(pxPerHr/60)),background:mutedAlpha("1E"),zIndex:3,pointerEvents:"none"}} />
+              <div key={"gsb"+ii} style={{position:"absolute",top:(iv.s-spanStart)*(pxPerHr/60),left:0,right:0,height:Math.max(4,(iv.e-iv.s)*(pxPerHr/60)),background:mutedAlpha("CC"),zIndex:2,pointerEvents:"none"}} />
             ))}
             {gsRecommended&&gsRecommended.date===selDay&&(()=>{
               const rStart=timeToMinutes(gsRecommended.time);
