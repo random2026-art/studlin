@@ -29904,7 +29904,15 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // Commits onto MY OWN calendar only -- there's no backend that can push
     // an event into someone else's account; everyone else materializes it
     // themselves via Accept (see ChatDrawer's respondToShare).
-    addTaskWithRebalance({
+    // Bug fix, 2026-09-12 audit ("still doesn't work"): addTaskWithRebalance
+    // only lsSet's -- every other commit site in this component (see
+    // commitManualBlockDrop/commitNewTaskDrop etc.) also calls setEvents
+    // with the returned array so the already-mounted grid updates
+    // immediately. This one skipped that, so the organizer's own calendar
+    // silently didn't show the block they just placed and sent until they
+    // left the tab and came back -- indistinguishable from the whole
+    // feature doing nothing.
+    const nextEvents=addTaskWithRebalance({
       id:"gs-"+now,date:option.date,time:option.time,duration:option.duration,
       title:gsDraft.title||(gsDraft.mode==="study block"?"Study session":"Meeting"),
       subject:"",kind:gsDraft.mode,notes:"",
@@ -29916,6 +29924,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         proposalResponses:{[myUid]:"accepted"},
       }:{}),
     });
+    setEvents(nextEvents);
     setGsSending(false);
     closeGroupSchedule();
     setPlacementToast("Sent. It'll land on their calendar once they accept.");
@@ -37096,6 +37105,24 @@ function AuthGate(){
       }
       if(u&&(!isPasswordAccount(u)||u.emailVerified)){
         const profilePromise=fetchUserProfile();upsertProfile();
+        // Bug fix, 2026-09-12 audit ("it says my friend didn't turn on
+        // sharing, but they did"): the 2026-09-11 fix for this exact report
+        // republishes busyWindows/{uid} (refreshing sharedWithUids to the
+        // current friend list) inside FriendsChat's own friendship
+        // listeners -- but FriendsChat only mounts when the student opens
+        // the Friends/Network tab (see active==="friends" below), not "on
+        // every app load" like that fix's own comment claimed. A friendship
+        // formed while neither side happens to visit that tab afterward
+        // (entirely normal -- "Schedule with Friends" is launched from
+        // Calendar, not Friends) never gets that republish, so a friend who
+        // genuinely turned sharing on keeps reading as "hasn't shared"
+        // indefinitely. Chained after profilePromise so it reads the
+        // just-reconciled cross-device shareAvailability value, not
+        // whatever this browser's localStorage happened to have before
+        // fetchUserProfile ran. Harmless no-op if sharing is off (see
+        // publishBusyWindows' own guard) -- this is the genuine "every app
+        // load" trigger the earlier fix meant to add.
+        profilePromise.then(()=>publishBusyWindows());
         DataStore.events.hydrateOnAuth();
         DataStore.decks.hydrateOnAuth();
         DataStore.notes.hydrateOnAuth();
