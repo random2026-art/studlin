@@ -20,6 +20,7 @@ module.exports = withSentry(async (req, res) => {
   if (type === 'push') return sendPush(user, req, res);
   if (type === 'welcome') return sendWelcome(user, req, res);
   if (type === 'shareAvailabilityRequest') return sendShareAvailabilityRequest(user, req, res);
+  if (type === 'calendarViewRequest') return sendCalendarViewRequest(user, req, res);
   return sendNote(user, req, res);
 });
 
@@ -455,6 +456,76 @@ async function sendShareAvailabilityRequest(user, req, res) {
     return res.status(200).json({ ok: true, sent });
   } catch (e) {
     console.error('[notify:shareAvailabilityRequest] Unexpected error:', e.message);
+    return res.status(500).json({ error: 'Server error' });
+  }
+}
+
+// One-time calendar view request, 2026-09-13 -- same shape/reasoning as
+// sendShareAvailabilityRequest just above (friend-only, silent no-op if
+// the recipient hasn't granted push, deep-links into the app), just for
+// "someone asked to see your calendar this once" instead of "someone
+// wants you to turn sharing on." The actual request doc (calendarViewGrants,
+// created client-side before this call) is the source of truth an owner
+// approves/denies from inside the app -- this push is only a same-instant
+// bonus channel, never required for the in-app request list to work.
+async function sendCalendarViewRequest(user, req, res) {
+  if (!db) {
+    return res.status(200).json({ ok: false, reason: 'admin_unconfigured' });
+  }
+
+  const { recipientUid } = req.body || {};
+  if (!recipientUid) return res.status(400).json({ error: 'recipientUid is required' });
+  if (recipientUid === user.uid) return res.status(400).json({ error: 'Cannot request yourself' });
+
+  try {
+    const [asSender, asReceiver] = await Promise.all([
+      db.collection('friendships').where('senderId', '==', user.uid).where('receiverId', '==', recipientUid).where('status', '==', 'accepted').limit(1).get(),
+      db.collection('friendships').where('senderId', '==', recipientUid).where('receiverId', '==', user.uid).where('status', '==', 'accepted').limit(1).get(),
+    ]);
+    if (asSender.empty && asReceiver.empty) return res.status(403).json({ error: 'Not friends with this user' });
+
+    const recipSnap = await db.collection('users').doc(recipientUid).get();
+    if (!recipSnap.exists) return res.status(200).json({ ok: true, sent: 0 });
+    const recip = recipSnap.data();
+    if (!recip.preferences || recip.preferences.pushNotificationsEnabled !== true) return res.status(200).json({ ok: true, sent: 0 });
+    const tokens = recip.fcmTokens || [];
+    if (tokens.length === 0) return res.status(200).json({ ok: true, sent: 0 });
+
+    let senderName = 'A friend';
+    try {
+      const profileSnap = await db.collection('profiles').doc(user.uid).get();
+      if (profileSnap.exists) senderName = profileSnap.data().name || senderName;
+    } catch (e) {}
+
+    const deepLinkUrl = '/app?openCalendarViewRequests=1';
+    let sent = 0;
+    const staleTokens = [];
+    for (const token of tokens) {
+      try {
+        await admin.messaging().send({
+          token,
+          notification: {
+            title: senderName,
+            body: senderName + ' wants to see your calendar just this once — approve or deny in Studlin.',
+          },
+          data: { url: deepLinkUrl },
+        });
+        sent++;
+      } catch (e) {
+        if (e.code === 'messaging/invalid-registration-token' || e.code === 'messaging/registration-token-not-registered') {
+          staleTokens.push(token);
+        }
+      }
+    }
+    if (staleTokens.length > 0) {
+      await db.collection('users').doc(recipientUid).update({
+        fcmTokens: admin.firestore.FieldValue.arrayRemove(...staleTokens),
+      }).catch(() => {});
+    }
+
+    return res.status(200).json({ ok: true, sent });
+  } catch (e) {
+    console.error('[notify:calendarViewRequest] Unexpected error:', e.message);
     return res.status(500).json({ error: 'Server error' });
   }
 }

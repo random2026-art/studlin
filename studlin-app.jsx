@@ -15138,6 +15138,55 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
       .onSnapshot(snap=>setIncomingProjectInvites(snap.docs.map(d=>({id:d.id,...d.data()}))),()=>{});
     return unsub;
   },[myUid]);
+  // One-time calendar view requests waiting on ME to approve/deny -- same
+  // live-listener/accept-decline shape as incomingProjectInvites just
+  // above. See calendarViewGrants' own comment in firestore.rules for why
+  // approval is a time-boxed window, not a literal single-read revoke.
+  const [incomingCalendarViewRequests,setIncomingCalendarViewRequests]=useState([]);
+  useEffect(()=>{
+    if(!myUid)return;
+    const unsub=fsdb().collection('calendarViewGrants')
+      .where('ownerUid','==',myUid)
+      .where('status','==','pending')
+      .onSnapshot(snap=>setIncomingCalendarViewRequests(snap.docs.map(d=>({id:d.id,...d.data()}))),()=>{});
+    return unsub;
+  },[myUid]);
+  const [calendarViewRequestBusyId,setCalendarViewRequestBusyId]=useState(null);
+  const ONE_TIME_CALENDAR_VIEW_WINDOW_MS=20*60*1000;
+  const approveCalendarViewRequest=async(req)=>{
+    setCalendarViewRequestBusyId(req.id);
+    try{
+      await fsdb().collection('calendarViewGrants').doc(req.id).update({status:'approved',expiresAt:new Date(Date.now()+ONE_TIME_CALENDAR_VIEW_WINDOW_MS)});
+    }catch(e){reportError("approveCalendarViewRequest")(e);}
+    setCalendarViewRequestBusyId(null);
+  };
+  const denyCalendarViewRequest=async(req)=>{
+    setCalendarViewRequestBusyId(req.id);
+    try{
+      await fsdb().collection('calendarViewGrants').doc(req.id).update({status:'denied'});
+    }catch(e){reportError("denyCalendarViewRequest")(e);}
+    setCalendarViewRequestBusyId(null);
+  };
+  // "Request calendar access" -- the explicit, opt-in ask a friend sees
+  // wherever they haven't turned on standing sharing (chat's Find Shared
+  // Study Window, Schedule with Friends). Creating the doc at the
+  // deterministic composite id is itself the whole "ask" -- the owner's
+  // live listener above picks it up instantly, no separate notify call
+  // needed for them to see it inside the app, though a push notification
+  // still goes out as the same same-instant bonus channel every other
+  // ask-based flow in this file already uses.
+  const [calendarViewRequestSentTo,setCalendarViewRequestSentTo]=useState(()=>new Set());
+  const requestCalendarViewAccess=async(otherUid)=>{
+    if(!myUid||myUid===otherUid)return;
+    setCalendarViewRequestSentTo(prev=>new Set([...prev,otherUid]));
+    try{
+      await fsdb().collection('calendarViewGrants').doc(myUid+"_"+otherUid).set({requesterUid:myUid,ownerUid:otherUid,status:'pending',createdAt:new Date().toISOString()});
+      authFetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"calendarViewRequest",recipientUid:otherUid})}).catch(()=>{});
+    }catch(e){
+      reportError("requestCalendarViewAccess")(e);
+      setCalendarViewRequestSentTo(prev=>{const n=new Set(prev);n.delete(otherUid);return n;});
+    }
+  };
   const [myRooms,setMyRooms]=useState({}); // chatRooms I'm a member of, keyed by id — DM rooms only exist once opened
   const groupRooms=Object.values(myRooms).filter(r=>r.type==="group");
   const activeGroups=groupRooms.filter(g=>!g.expiresAt||g.expiresAt>Date.now());
@@ -15656,6 +15705,38 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
                 </div>
               </div>
             ))}
+          </Card>
+        </div>
+      )}
+
+      {/* ── ONE-TIME CALENDAR VIEW REQUESTS — same "surfaced first, needs
+          action" treatment as the invites above. Approving sets a short
+          expiresAt window (see approveCalendarViewRequest) rather than
+          turning on standing sharing -- the requester only gets this one
+          look. ── */}
+      {incomingCalendarViewRequests.length>0&&(
+        <div style={{marginBottom:16}}>
+          <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:8,display:"flex",alignItems:"center",gap:8}}>
+            Calendar View Requests
+            <span style={{background:T.amber,color:T.ink,fontSize:9,fontWeight:800,borderRadius:4,padding:"1px 6px"}}>{incomingCalendarViewRequests.length}</span>
+          </div>
+          <Card style={{padding:0,overflow:"hidden"}}>
+            {incomingCalendarViewRequests.map((req,i)=>{
+              const requesterName=(myFriends.find(f=>f.uid===req.requesterUid)||{}).n||"A friend";
+              return (
+                <div key={req.id} style={{display:"flex",alignItems:"center",gap:12,padding:"13px 16px",borderBottom:i<incomingCalendarViewRequests.length-1?`1px solid ${T.border}`:"none"}}>
+                  <Av initials={requesterName.slice(0,2).toUpperCase()} color={T.purple} size={36} picUrl="" />
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:600,color:T.white}}>{requesterName}</div>
+                    <div style={{fontSize:11,color:T.muted}}>Wants to see your calendar this once, to help schedule something</div>
+                  </div>
+                  <div style={{display:"flex",gap:7,flexShrink:0}}>
+                    <button disabled={calendarViewRequestBusyId===req.id} onClick={()=>approveCalendarViewRequest(req)} style={{padding:"6px 14px",borderRadius:7,background:T.lime,color:T.ink,border:"none",fontSize:11.5,fontWeight:700,cursor:calendarViewRequestBusyId===req.id?"default":"pointer",fontFamily:T.font,opacity:calendarViewRequestBusyId===req.id?0.6:1}}>{calendarViewRequestBusyId===req.id?"…":"Approve"}</button>
+                    <button disabled={calendarViewRequestBusyId===req.id} onClick={()=>denyCalendarViewRequest(req)} style={{padding:"6px 13px",borderRadius:7,background:"transparent",color:T.muted,border:`1px solid ${T.border}`,fontSize:11.5,fontWeight:600,cursor:calendarViewRequestBusyId===req.id?"default":"pointer",fontFamily:T.font,opacity:calendarViewRequestBusyId===req.id?0.6:1}}>Deny</button>
+                  </div>
+                </div>
+              );
+            })}
           </Card>
         </div>
       )}
@@ -17946,6 +18027,23 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
   // for every member, not just this user's relationship.
   const [deleteGroupConfirmOpen,setDeleteGroupConfirmOpen]=useState(false);
   const [findWindowOpen,setFindWindowOpen]=useState(false);
+  // 2026-09-13: DMs only -- a group's findSharedStudyWindow spans multiple
+  // people, but a calendarViewGrants request is always 1:1 (deterministic
+  // composite id). Local to this drawer instance rather than lifted to
+  // the parent's broader state, since it's purely "did I already ask in
+  // this open chat" -- no other screen needs to know.
+  const [calendarAccessRequested,setCalendarAccessRequested]=useState(false);
+  const requestOneTimeCalendarAccess=async()=>{
+    if(isGroup||!myUid||!target||!target.user||!target.user.uid)return;
+    setCalendarAccessRequested(true);
+    try{
+      await fsdb().collection('calendarViewGrants').doc(myUid+"_"+target.user.uid).set({requesterUid:myUid,ownerUid:target.user.uid,status:'pending',createdAt:new Date().toISOString()});
+      authFetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"calendarViewRequest",recipientUid:target.user.uid})}).catch(()=>{});
+    }catch(e){
+      reportError("requestOneTimeCalendarAccess")(e);
+      setCalendarAccessRequested(false);
+    }
+  };
   // Set when "Suggest another time" is clicked on a declined proposal —
   // the next submitFindWindow posts referencing this id instead of a
   // brand-new standalone proposal.
@@ -18364,7 +18462,7 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
           )}
           {quickOpen&&(
             <div style={{borderTop:`1px solid ${pp.border}`,padding:"8px",display:"flex",flexDirection:"column",gap:2}}>
-              <button onClick={()=>{setQuickOpen(false);setFindWindowOpen(true);}} style={qaBtn}><span style={{color:T.purple,display:"flex"}}>{Icon.cal}</span><span style={{flex:1}}>Find Shared Study Window</span><span style={{fontSize:10.5,color:pp.faint,fontWeight:400}}>Find free time</span></button>
+              <button onClick={()=>{setQuickOpen(false);setFindWindowOpen(true);setCalendarAccessRequested(false);}} style={qaBtn}><span style={{color:T.purple,display:"flex"}}>{Icon.cal}</span><span style={{flex:1}}>Find Shared Study Window</span><span style={{fontSize:10.5,color:pp.faint,fontWeight:400}}>Find free time</span></button>
               <button onClick={()=>{setDeckPicker(true);setQuickOpen(false);}} style={qaBtn}><span style={{color:T.teal,display:"flex"}}>{Icon.layers}</span><span style={{flex:1}}>Send Flashcard Deck</span><span style={{fontSize:10.5,color:pp.faint,fontWeight:400}}>Share a deck</span></button>
               <button onClick={requestDeck} style={qaBtn}><span style={{color:T.teal,display:"flex"}}>{Icon.layers}</span><span style={{flex:1}}>Request a Deck</span><span style={{fontSize:10.5,color:pp.faint,fontWeight:400}}>Ask {peerFirst||"them"}</span></button>
             </div>
@@ -18461,6 +18559,21 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
             <button key={o.v} onClick={()=>{setFwMode(o.v);setFwManualCheck(null);}} style={{flex:1,padding:"8px 10px",borderRadius:7,fontSize:12.5,cursor:"pointer",border:`1px solid ${fwMode===o.v?T.purple+"66":T.border}`,background:fwMode===o.v?T.purple+"14":"transparent",color:fwMode===o.v?T.purple:T.muted,fontFamily:T.font,fontWeight:fwMode===o.v?700:500}}>{o.label}</button>
           ))}
         </div>
+        {/* 2026-09-13 user request: this used to only ever offer AI-
+            suggested times (or, in manual mode, a check against your OWN
+            calendar only) -- no way to actually see their calendar here.
+            A one-time calendarViewGrants request is the closest DMs get to
+            that without them turning on standing sharing. Only meaningful
+            1:1, so DMs only -- a group spans multiple people. */}
+        {!isGroup&&(
+          <div style={{display:"flex",alignItems:"center",gap:8,fontSize:11,color:T.muted,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 10px",marginBottom:16}}>
+            <span style={{flex:1}}>Haven't shared their calendar with you? Ask for a one-time look.</span>
+            <button type="button" onClick={requestOneTimeCalendarAccess} disabled={calendarAccessRequested}
+              style={{flexShrink:0,fontSize:10.5,fontWeight:700,color:calendarAccessRequested?T.muted:T.purple,background:"none",border:`1px solid ${calendarAccessRequested?T.border:T.purple+"55"}`,borderRadius:6,padding:"5px 9px",cursor:calendarAccessRequested?"default":"pointer",fontFamily:T.font,whiteSpace:"nowrap"}}>
+              {calendarAccessRequested?"Requested ✓":"Request access"}
+            </button>
+          </div>
+        )}
         {fwMode==="auto"?(<>
         <Field label="Preferred Time">
           <div style={{display:"flex",gap:6,marginBottom:fwTimeMode==="custom"?10:0}}>
@@ -32425,6 +32538,24 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
               </div>
             );
           })()}
+          {/* 2026-09-13 user request: an alternative to asking someone to
+              turn on STANDING sharing -- request a one-time, time-boxed
+              look at just this calendar instead (calendarViewGrants). Per-
+              person since a grant is a 1:1 request, unlike the bulk "ask
+              them to turn it on" banner above. */}
+          {gsSelected.filter(uid=>!gsSharedUids.has(uid)).length>0&&(
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {gsSelected.filter(uid=>!gsSharedUids.has(uid)).map(uid=>(
+                <div key={"otreq"+uid} style={{display:"flex",alignItems:"center",gap:8,fontSize:10.5,color:T.muted}}>
+                  <span style={{flex:1}}>Or ask {gsMemberNames[uid]||"this friend"} for a one-time look instead</span>
+                  <button type="button" onClick={()=>requestCalendarViewAccess(uid)} disabled={calendarViewRequestSentTo.has(uid)}
+                    style={{flexShrink:0,fontSize:10,fontWeight:700,color:calendarViewRequestSentTo.has(uid)?T.muted:T.purple,background:"none",border:`1px solid ${calendarViewRequestSentTo.has(uid)?T.border:T.purple+"55"}`,borderRadius:6,padding:"5px 9px",cursor:calendarViewRequestSentTo.has(uid)?"default":"pointer",fontFamily:T.font,whiteSpace:"nowrap"}}>
+                    {calendarViewRequestSentTo.has(uid)?"Requested ✓":"Request one-time access"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           {/* Every window findSharedStudyWindow found (up to 3), not just the
               top pick -- same reference data ChatDrawer's own "Find Shared
               Study Window" flow already lists, adapted to this panel's
