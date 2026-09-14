@@ -47,7 +47,7 @@ describe("publishBusyWindows refuses to overwrite fresher data with a stale devi
 
   test("writes sourceUpdatedAt into the published doc so the NEXT device can compare against it", () => {
     const idx = SOURCE.indexOf("async function publishBusyWindows(){");
-    const body = SOURCE.slice(idx, idx + 1300);
+    const body = SOURCE.slice(idx, idx + 1800);
     assert.match(body, /\.set\(\{ownerUid:myUid,sharedWithUids,intervals,sourceUpdatedAt,updatedAt:new Date\(\)\.toISOString\(\)\}\)/);
   });
 });

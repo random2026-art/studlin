@@ -5828,7 +5828,18 @@ async function publishBusyWindows(){
     if(existing.exists&&(existing.data().sourceUpdatedAt||0)>sourceUpdatedAt){
       return{ok:true,skipped:true,reason:"stale_local_data"};
     }
-    const sharedWithUids=await getAcceptedFriendUids(myUid);
+    const acceptedUids=await getAcceptedFriendUids(myUid);
+    // 2026-09-13: "Share my free/busy time" used to always publish to
+    // EVERY accepted friend. shareAvailabilityMode==="selected" restricts
+    // this to shareAvailabilitySelectedUids -- always intersected with the
+    // real accepted-friends list, never trusting a stale/removed uid still
+    // sitting in that local selection, matching the trust model
+    // firestore.rules' busyWindows read rule already relies on
+    // (sharedWithUids must only ever contain real accepted friends).
+    const settings=lsGet("settings",{});
+    const sharedWithUids=settings.shareAvailabilityMode==="selected"
+      ?acceptedUids.filter(uid=>(settings.shareAvailabilitySelectedUids||[]).includes(uid))
+      :acceptedUids;
     const intervals=computeBusyWindowsPayload(lsGet("events",[]),getWeeklyRoutine(),getSchedulePreferences(),dayKey());
     await fsdb().collection('busyWindows').doc(myUid).set({ownerUid:myUid,sharedWithUids,intervals,sourceUpdatedAt,updatedAt:new Date().toISOString()});
     return{ok:true};
@@ -28335,6 +28346,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // to "shared it and is just completely free" -- see
   // fetchFriendsBusyIntervals's own comment.
   const [gsSharedUids,setGsSharedUids]=useState(new Set());
+  // Guards the picker step's per-row sharing-status tag/Notify button
+  // against flashing "hasn't shared" for EVERYONE for the split second
+  // before openGroupSchedule's upfront fetch resolves (gsSharedUids starts
+  // empty, which would otherwise look identical to "confirmed nobody has
+  // shared").
+  const [gsSharedUidsLoaded,setGsSharedUidsLoaded]=useState(false);
   // Which non-sharing friends have already been asked to turn on sharing
   // THIS session -- purely UI state (swaps the button to "Asked" so a
   // student doesn't fire the same push five times in a row), not a real
@@ -29762,7 +29779,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // ── Schedule with Friends ────────────────────────────────────────────
   const openGroupSchedule=async()=>{
     setGsOpen(true);setGsStep("pick");setGsSelected([]);setGsLoading(true);setGsLoadError(false);setGsConfirmLoadError(false);setGsSearchQuery("");
-    setGsRoomId(null);setGsMemberUids([]);setGsMemberNames({});setGsBusyByDate({});setGsSharedUids(new Set());setShareAskSentUids(new Set());setGsRecommended(null);setGsRecommendedOptions([]);setGsDraft(null);
+    setGsRoomId(null);setGsMemberUids([]);setGsMemberNames({});setGsBusyByDate({});setGsSharedUids(new Set());setGsSharedUidsLoaded(false);setShareAskSentUids(new Set());setGsRecommended(null);setGsRecommendedOptions([]);setGsDraft(null);
     try{
       const myUid=firebase.auth().currentUser?.uid;
       const uids=myUid?await getAcceptedFriendUids(myUid):[];
@@ -29771,6 +29788,21 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         const p=docs[i]&&docs[i].exists?docs[i].data():null;
         return {uid,name:(p&&p.name)||"Studlin User"};
       }));
+      // User report, 2026-09-13 ("let me see who hasn't shared yet, and
+      // notify them, right next to their name"): gsSharedUids used to only
+      // ever get populated for the CONFIRMED gsSelected group, at
+      // confirmGsPeople time (the later "place" step) -- so this picker's
+      // checkbox list had no idea who had/hadn't shared until well after
+      // you'd already committed to a group. Fetching it here, for every
+      // candidate up front, lets each row in the list below show its own
+      // sharing status (and a per-person "Notify" button) before you've
+      // picked anyone. confirmGsPeople's own fetch later still runs and
+      // stays authoritative for the confirmed group's actual busy overlay.
+      if(uids.length>0){
+        fetchFriendsBusyIntervals(uids).then(({sharedUids})=>{setGsSharedUids(sharedUids);setGsSharedUidsLoaded(true);}).catch(()=>setGsSharedUidsLoaded(true));
+      }else{
+        setGsSharedUidsLoaded(true);
+      }
     }catch(e){
       reportError("openGroupSchedule")(e);
       setGsLoadError(true);
@@ -29800,8 +29832,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // does work (fire-and-forget, doesn't gate the toast), but is no longer
   // the only thing standing between clicking this button and the
   // recipient actually seeing something.
-  const askFriendsToShareAvailability=async()=>{
-    const nonSharing=gsSelected.filter(uid=>!gsSharedUids.has(uid)&&!shareAskSentUids.has(uid));
+  // 2026-09-13: now takes an explicit uids list (defaulting to gsSelected,
+  // the "place" step's bulk banner) so the picker step's own per-row
+  // "Notify" button can nudge a single candidate directly, without
+  // requiring them to already be selected.
+  const askFriendsToShareAvailability=async(uids)=>{
+    const candidateUids=uids||gsSelected;
+    const nonSharing=candidateUids.filter(uid=>!gsSharedUids.has(uid)&&!shareAskSentUids.has(uid));
     if(nonSharing.length===0)return;
     setShareAskSentUids(prev=>new Set([...prev,...nonSharing]));
     const myUid=firebase.auth().currentUser?.uid;
@@ -32431,7 +32468,23 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             {gsCandidates.filter(c=>c.name.toLowerCase().includes(gsSearchQuery.trim().toLowerCase())).map(c=>(
               <label key={c.uid} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:8,border:`1px solid ${T.border}`,cursor:"pointer",background:gsSelected.includes(c.uid)?T.card2:"transparent"}}>
                 <input type="checkbox" checked={gsSelected.includes(c.uid)} onChange={()=>toggleGsSelected(c.uid)} style={{cursor:"pointer"}} />
-                <div style={{fontSize:13,fontWeight:600,color:T.text}}>{c.name}</div>
+                <div style={{fontSize:13,fontWeight:600,color:T.text,flex:1}}>{c.name}</div>
+                {/* 2026-09-13: surfaces "hasn't shared yet" + a per-person
+                    Notify button right here, in the picker itself, instead
+                    of only in a combined banner after the group's already
+                    confirmed (see the "place" step's own banner below,
+                    which stays as a summary for the confirmed group).
+                    Hidden until gsSharedUidsLoaded so this never flashes
+                    "hasn't shared" for everyone during the initial fetch. */}
+                {gsSharedUidsLoaded&&!gsSharedUids.has(c.uid)&&(
+                  <div onClick={e=>e.preventDefault()} style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+                    <span style={{fontSize:10,color:T.amber,fontWeight:600,whiteSpace:"nowrap"}}>Hasn't shared</span>
+                    <button type="button" onClick={()=>askFriendsToShareAvailability([c.uid])} disabled={shareAskSentUids.has(c.uid)}
+                      style={{flexShrink:0,fontSize:10,fontWeight:700,color:shareAskSentUids.has(c.uid)?T.muted:T.amber,background:"none",border:`1px solid ${shareAskSentUids.has(c.uid)?T.border:T.amber+"55"}`,borderRadius:6,padding:"4px 8px",cursor:shareAskSentUids.has(c.uid)?"default":"pointer",fontFamily:T.font,whiteSpace:"nowrap"}}>
+                      {shareAskSentUids.has(c.uid)?"Asked ✓":"Notify"}
+                    </button>
+                  </div>
+                )}
               </label>
             ))}
             {gsSearchQuery.trim()&&gsCandidates.filter(c=>c.name.toLowerCase().includes(gsSearchQuery.trim().toLowerCase())).length===0&&(
@@ -34008,6 +34061,49 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   };
   const [canvasSeeding,setCanvasSeeding]=useState(false);
   const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,classReminders:false,analytics:false,onlineStatus:true,incognito:false,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false},...lsGet("settings",{})}));
+  // 2026-09-13: "Share my free/busy time" used to be all-or-nothing (on =
+  // every current accepted friend). shareAvailabilityMode lets a student
+  // restrict it to specific people instead -- see the picker modal below
+  // and publishBusyWindows' own sharedWithUids computation, which now
+  // intersects the accepted-friends list with this selection whenever
+  // mode is "selected" rather than always publishing to everyone.
+  const [shareModePickerOpen,setShareModePickerOpen]=useState(false);
+  const [shareCandidates,setShareCandidates]=useState([]);
+  const [shareCandidatesLoading,setShareCandidatesLoading]=useState(false);
+  const [shareSearchQuery,setShareSearchQuery]=useState("");
+  const openShareModePicker=async()=>{
+    setShareModePickerOpen(true);setShareCandidatesLoading(true);setShareSearchQuery("");
+    try{
+      const myUid=firebase.auth().currentUser?.uid;
+      const uids=myUid?await getAcceptedFriendUids(myUid):[];
+      const docs=await Promise.all(uids.map(uid=>fsdb().collection('profiles').doc(uid).get().catch(()=>null)));
+      setShareCandidates(uids.map((uid,i)=>{
+        const p=docs[i]&&docs[i].exists?docs[i].data():null;
+        return {uid,name:(p&&p.name)||"Studlin User"};
+      }));
+    }catch(e){reportError("openShareModePicker")(e);}
+    setShareCandidatesLoading(false);
+  };
+  const toggleShareSelectedUid=(uid)=>{
+    const cur=lsGet("settings",{}).shareAvailabilitySelectedUids||[];
+    const next=cur.includes(uid)?cur.filter(u=>u!==uid):[...cur,uid];
+    lsSet("settings",{...lsGet("settings",{}),shareAvailabilitySelectedUids:next});
+    setToggles(t=>({...t,shareAvailabilitySelectedUids:next}));
+    if(toggles.shareAvailability&&toggles.shareAvailabilityMode==="selected"){
+      publishBusyWindows().then(result=>{
+        if(result&&result.ok===false)showToast("Couldn't update sharing -- "+(result.reason||"try again")+".","error");
+      });
+    }
+  };
+  const setShareAvailabilityMode=(mode)=>{
+    lsSet("settings",{...lsGet("settings",{}),shareAvailabilityMode:mode});
+    setToggles(t=>({...t,shareAvailabilityMode:mode}));
+    if(toggles.shareAvailability){
+      publishBusyWindows().then(result=>{
+        if(result&&result.ok===false)showToast("Couldn't update sharing -- "+(result.reason||"try again")+".","error");
+      });
+    }
+  };
   const tog=k=>setToggles(t=>{
     const n={...t,[k]:!t[k]};
     lsSet("settings",n);
@@ -35312,7 +35408,61 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                   <div style={{width:14,height:14,borderRadius:"50%",background:toggles.shareAvailability?T.bg:"#fff",position:"absolute",top:2,left:toggles.shareAvailability?21:2,transition:"left 0.2s"}} />
                 </div>
               } />
+              {/* 2026-09-13 user request: sharing used to be all-or-nothing
+                  (on = every current friend). "Choose people" restricts it
+                  to a specific list instead -- see shareAvailabilityMode/
+                  shareAvailabilitySelectedUids and publishBusyWindows' own
+                  intersection with the real accepted-friends list. */}
+              {toggles.shareAvailability&&(
+                <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+                  <div style={{display:"flex",gap:8,marginBottom:(toggles.shareAvailabilityMode==="selected")?8:0}}>
+                    {[{key:"everyone",label:"Everyone"},{key:"selected",label:"Choose people"}].map(opt=>(
+                      <button key={opt.key} type="button" onClick={()=>setShareAvailabilityMode(opt.key)}
+                        style={{flex:1,fontSize:12,fontWeight:600,padding:"7px 10px",borderRadius:7,cursor:"pointer",fontFamily:T.font,
+                          background:(toggles.shareAvailabilityMode||"everyone")===opt.key?T.lime:T.card2,
+                          color:(toggles.shareAvailabilityMode||"everyone")===opt.key?T.ink:T.text,
+                          border:`1px solid ${(toggles.shareAvailabilityMode||"everyone")===opt.key?T.lime:T.border}`}}>
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                  {toggles.shareAvailabilityMode==="selected"&&(
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+                      <div style={{fontSize:11.5,color:T.muted}}>
+                        {(toggles.shareAvailabilitySelectedUids||[]).length===0
+                          ?"Nobody picked yet -- sharing is on, but no one can see it."
+                          :(toggles.shareAvailabilitySelectedUids||[]).length+" friend"+((toggles.shareAvailabilitySelectedUids||[]).length===1?"":"s")+" can see your free/busy time."}
+                      </div>
+                      <button type="button" onClick={openShareModePicker} style={{flexShrink:0,fontSize:11.5,fontWeight:700,color:T.lime,background:"none",border:`1px solid ${T.lime}55`,borderRadius:7,padding:"6px 10px",cursor:"pointer",fontFamily:T.font}}>
+                        Manage
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </Card>
+            <Modal open={shareModePickerOpen} onClose={()=>setShareModePickerOpen(false)} title="Choose who can see your free/busy time" sub="Only these friends' 'Find Shared Study Window' searches and Schedule with Friends overlays will see when you're busy." width={420}>
+              {shareCandidatesLoading?(
+                <div style={{fontSize:12.5,color:T.muted}}>Loading your friends…</div>
+              ):shareCandidates.length===0?(
+                <div style={{fontSize:12.5,color:T.muted}}>No friends yet -- add some in Studlin Network first.</div>
+              ):(<>
+                {shareCandidates.length>5&&(
+                  <Input value={shareSearchQuery} onChange={e=>setShareSearchQuery(e.target.value)} placeholder="Search friends" style={{marginBottom:10,width:"100%"}} />
+                )}
+                <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:360,overflowY:"auto"}}>
+                  {shareCandidates.filter(c=>c.name.toLowerCase().includes(shareSearchQuery.trim().toLowerCase())).map(c=>{
+                    const checked=(toggles.shareAvailabilitySelectedUids||[]).includes(c.uid);
+                    return (
+                      <label key={c.uid} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:8,border:`1px solid ${T.border}`,cursor:"pointer",background:checked?T.card2:"transparent"}}>
+                        <input type="checkbox" checked={checked} onChange={()=>toggleShareSelectedUid(c.uid)} style={{cursor:"pointer"}} />
+                        <div style={{fontSize:13,fontWeight:600,color:T.text}}>{c.name}</div>
+                      </label>
+                    );
+                  })}
+                </div>
+              </>)}
+            </Modal>
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Data &amp; AI</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>You own your notes, essays, and recordings.</div>
