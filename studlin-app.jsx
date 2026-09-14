@@ -39425,16 +39425,6 @@ function App() {
             ))}
           </div>
         </div>
-        <PlanCards billing={pricingBilling} onSelect={(key)=>{
-          setPricingOpen(false);
-          if(key!=="free")window.location.href="checkout.html?plan="+key+"&billing="+pricingBilling;
-        }} />
-        <div style={{marginTop:20,padding:"16px 18px",background:T.card2,borderRadius:12,border:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
-          <div style={{fontSize:13,color:T.text,fontWeight:500}}>
-            Grammarly + Quizlet + ChatGPT + Notion = <span style={{color:T.red,fontWeight:700}}>$55/mo</span>.&nbsp;&nbsp;Pro is <span style={{color:T.lime,fontWeight:700}}>$6.99</span>.
-          </div>
-          <div style={{fontSize:12,color:T.muted}}>All plans include a 14-day money-back guarantee. No credit card needed for Free.</div>
-        </div>
         {/* 2026-09-09 user request: the referral trial (Pro-Limited) already
             existed but was only ever promoted in Studlin Network -- the
             actual moment someone hits a paywall never mentioned it at all.
@@ -39445,9 +39435,16 @@ function App() {
             branches on whether referralTrialExpiresAt has ever been set --
             same field survives a trial's own expiry, so it doubles as an
             honest "have they done this before" signal. No day-count stated
-            here either, matching the Network banner's own fix. */}
+            here either, matching the Network banner's own fix.
+            2026-09-14 user report ("I have to scroll down to find it"):
+            moved from below the plan cards and the competitor-price
+            comparison (the very bottom of a long modal) to right here,
+            above the fold, and given a heavier border/background so it
+            reads as a real second option rather than fine print -- while
+            staying visually secondary to the two plan cards' own "Upgrade
+            to Pro" CTA just below, which stays the primary action. */}
         {getPlan()!=="Pro"&&getPlan()!=="Pro-Limited"&&(
-          <div style={{marginTop:12,padding:"14px 18px",background:T.lime+"0C",borderRadius:12,border:`1px solid ${T.lime}22`,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
+          <div style={{marginBottom:18,padding:"14px 18px",background:T.lime+"14",borderRadius:12,border:`1.5px solid ${T.lime}44`,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
             <div style={{fontSize:12.5,color:T.text,lineHeight:1.5}}>
               {lsGet("referralTrialExpiresAt",null)
                 ?<>Used your free trial already? <strong style={{color:T.lime}}>Invite another friend</strong> and you'll both get {planDisplayName("Pro-Limited")} again, free.</>
@@ -39456,6 +39453,16 @@ function App() {
             <button type="button" onClick={()=>{lsSet("pendingOpenInvite",true);setPricingOpen(false);setActive("friends");}} style={{flexShrink:0,padding:"8px 16px",borderRadius:8,background:T.lime,color:T.ink,border:"none",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:T.font,whiteSpace:"nowrap"}}>Invite a friend</button>
           </div>
         )}
+        <PlanCards billing={pricingBilling} onSelect={(key)=>{
+          setPricingOpen(false);
+          if(key!=="free")window.location.href="checkout.html?plan="+key+"&billing="+pricingBilling;
+        }} />
+        <div style={{marginTop:20,padding:"16px 18px",background:T.card2,borderRadius:12,border:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
+          <div style={{fontSize:13,color:T.text,fontWeight:500}}>
+            Grammarly + Quizlet + ChatGPT + Notion = <span style={{color:T.red,fontWeight:700}}>$55/mo</span>.&nbsp;&nbsp;Pro is <span style={{color:T.lime,fontWeight:700}}>$6.99</span>.
+          </div>
+          <div style={{fontSize:12,color:T.muted}}>All plans include a 14-day money-back guarantee. No credit card needed for Free.</div>
+        </div>
       </Modal>
       <Modal open={creditsOpen} onClose={()=>setCreditsOpen(false)} title="AI Credits" sub="Upgrade to Pro for full AI access, or check your balance below." width={620}
         footer={<Btn variant="subtle" onClick={()=>setCreditsOpen(false)}>Close</Btn>}>
