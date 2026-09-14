@@ -182,3 +182,101 @@ test('regression: default-deny catch-all still blocks arbitrary undeclared colle
   const dbA = testEnv.authenticatedContext(USER_A).firestore();
   await assertFails(dbA.collection('some-future-collection').doc('x').set({ a: 1 }));
 });
+
+// One-time calendar view request/approval, 2026-09-13: user-a requests a
+// one-time look at user-b's calendar; user-b approves for a short window
+// instead of turning on standing sharing. See calendarViewGrants' own
+// comment in firestore.rules for why this is a time-boxed approval, not a
+// literal single-read revoke.
+test('calendarViewGrants: requester can create a pending request at the correct composite id', async () => {
+  const dbA = testEnv.authenticatedContext(USER_A).firestore();
+  await assertSucceeds(
+    dbA.collection('calendarViewGrants').doc(`${USER_A}_${USER_B}`)
+      .set({ requesterUid: USER_A, ownerUid: USER_B, status: 'pending', createdAt: new Date() })
+  );
+});
+
+test('calendarViewGrants: create is rejected at the wrong composite id (spoofing the pair)', async () => {
+  const dbA = testEnv.authenticatedContext(USER_A).firestore();
+  await assertFails(
+    dbA.collection('calendarViewGrants').doc('not-the-right-id')
+      .set({ requesterUid: USER_A, ownerUid: USER_B, status: 'pending', createdAt: new Date() })
+  );
+});
+
+test('calendarViewGrants: cannot create a request claiming to be someone else', async () => {
+  const dbA = testEnv.authenticatedContext(USER_A).firestore();
+  await assertFails(
+    dbA.collection('calendarViewGrants').doc(`${USER_B}_${USER_A}`)
+      .set({ requesterUid: USER_B, ownerUid: USER_A, status: 'pending', createdAt: new Date() })
+  );
+});
+
+test('calendarViewGrants: only the two parties involved can read the request', async () => {
+  await testEnv.withSecurityRulesDisabled((ctx) =>
+    ctx.firestore().collection('calendarViewGrants').doc(`${USER_A}_${USER_B}`)
+      .set({ requesterUid: USER_A, ownerUid: USER_B, status: 'pending', createdAt: new Date() })
+  );
+  const dbC = testEnv.authenticatedContext('user-c').firestore();
+  await assertFails(dbC.collection('calendarViewGrants').doc(`${USER_A}_${USER_B}`).get());
+  const dbB = testEnv.authenticatedContext(USER_B).firestore();
+  await assertSucceeds(dbB.collection('calendarViewGrants').doc(`${USER_A}_${USER_B}`).get());
+});
+
+test('calendarViewGrants: only the owner can approve or deny, and approval must set a real expiresAt', async () => {
+  await testEnv.withSecurityRulesDisabled((ctx) =>
+    ctx.firestore().collection('calendarViewGrants').doc(`${USER_A}_${USER_B}`)
+      .set({ requesterUid: USER_A, ownerUid: USER_B, status: 'pending', createdAt: new Date() })
+  );
+  const dbA = testEnv.authenticatedContext(USER_A).firestore();
+  await assertFails(dbA.collection('calendarViewGrants').doc(`${USER_A}_${USER_B}`)
+    .update({ status: 'approved', expiresAt: new Date(Date.now() + 20 * 60000) }));
+  const dbB = testEnv.authenticatedContext(USER_B).firestore();
+  await assertFails(dbB.collection('calendarViewGrants').doc(`${USER_A}_${USER_B}`)
+    .update({ status: 'approved', expiresAt: 'not-a-real-timestamp' }));
+  await assertSucceeds(dbB.collection('calendarViewGrants').doc(`${USER_A}_${USER_B}`)
+    .update({ status: 'approved', expiresAt: new Date(Date.now() + 20 * 60000) }));
+});
+
+test('calendarViewGrants: requester can re-open a denied request back to pending', async () => {
+  await testEnv.withSecurityRulesDisabled((ctx) =>
+    ctx.firestore().collection('calendarViewGrants').doc(`${USER_A}_${USER_B}`)
+      .set({ requesterUid: USER_A, ownerUid: USER_B, status: 'denied', createdAt: new Date() })
+  );
+  const dbA = testEnv.authenticatedContext(USER_A).firestore();
+  await assertSucceeds(dbA.collection('calendarViewGrants').doc(`${USER_A}_${USER_B}`)
+    .update({ status: 'pending', createdAt: new Date() }));
+});
+
+test('busyWindows: an approved, unexpired grant lets the requester read it; sharedWithUids alone still does not cover them', async () => {
+  await testEnv.withSecurityRulesDisabled((ctx) => Promise.all([
+    ctx.firestore().collection('busyWindows').doc(USER_B)
+      .set({ ownerUid: USER_B, sharedWithUids: [], intervals: [] }),
+    ctx.firestore().collection('calendarViewGrants').doc(`${USER_A}_${USER_B}`)
+      .set({ requesterUid: USER_A, ownerUid: USER_B, status: 'approved', expiresAt: new Date(Date.now() + 20 * 60000) }),
+  ]));
+  const dbA = testEnv.authenticatedContext(USER_A).firestore();
+  await assertSucceeds(dbA.collection('busyWindows').doc(USER_B).get());
+});
+
+test('busyWindows: an expired grant no longer lets the requester read it', async () => {
+  await testEnv.withSecurityRulesDisabled((ctx) => Promise.all([
+    ctx.firestore().collection('busyWindows').doc(USER_B)
+      .set({ ownerUid: USER_B, sharedWithUids: [], intervals: [] }),
+    ctx.firestore().collection('calendarViewGrants').doc(`${USER_A}_${USER_B}`)
+      .set({ requesterUid: USER_A, ownerUid: USER_B, status: 'approved', expiresAt: new Date(Date.now() - 1000) }),
+  ]));
+  const dbA = testEnv.authenticatedContext(USER_A).firestore();
+  await assertFails(dbA.collection('busyWindows').doc(USER_B).get());
+});
+
+test('busyWindows: a merely-pending (not yet approved) grant does not let the requester read it', async () => {
+  await testEnv.withSecurityRulesDisabled((ctx) => Promise.all([
+    ctx.firestore().collection('busyWindows').doc(USER_B)
+      .set({ ownerUid: USER_B, sharedWithUids: [], intervals: [] }),
+    ctx.firestore().collection('calendarViewGrants').doc(`${USER_A}_${USER_B}`)
+      .set({ requesterUid: USER_A, ownerUid: USER_B, status: 'pending', createdAt: new Date() }),
+  ]));
+  const dbA = testEnv.authenticatedContext(USER_A).firestore();
+  await assertFails(dbA.collection('busyWindows').doc(USER_B).get());
+});

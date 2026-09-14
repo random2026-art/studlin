@@ -254,12 +254,71 @@ service cloud.firestore {
     // chatRooms/studySessions already accept for their own membership
     // arrays, not a new gap introduced here.
     match /busyWindows/{uid} {
+      // 2026-09-13: a third way in, alongside "I turned on sharing and put
+      // you on my list" (sharedWithUids) -- a one-time, time-boxed grant
+      // the owner approved via calendarViewGrants (see that collection's
+      // own comment for why this can't be a literal single-read revoke).
+      // request.time < expiresAt is what makes it expire on its own; the
+      // owner can also just never approve, or revoke by deleting the
+      // grant doc, which drops this clause immediately.
       allow read: if request.auth != null
-        && (request.auth.uid == uid || request.auth.uid in resource.data.sharedWithUids);
+        && (request.auth.uid == uid
+            || request.auth.uid in resource.data.sharedWithUids
+            || (exists(/databases/$(database)/documents/calendarViewGrants/$(request.auth.uid + '_' + uid))
+                && get(/databases/$(database)/documents/calendarViewGrants/$(request.auth.uid + '_' + uid)).data.status == 'approved'
+                && request.time < get(/databases/$(database)/documents/calendarViewGrants/$(request.auth.uid + '_' + uid)).data.expiresAt));
       allow write: if request.auth != null
         && request.auth.uid == uid
         && request.resource.data.ownerUid == uid;
       allow delete: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // One-time calendar view request/approval, 2026-09-13 user request:
+    // "maybe there's option for one time allow only so that person won't
+    // be able to overlay your calendar unless you agree one time." Doc id
+    // is the deterministic composite "{requesterUid}_{ownerUid}" (same
+    // existence-as-source-of-truth idea usernames/{uname} already uses)
+    // so busyWindows' read rule above can look it up directly with get(),
+    // without a query. Firestore rules can't detect "they looked at it
+    // once" and auto-revoke at that instant (rules aren't event-driven) --
+    // this is a REALISTIC one-time: the owner approves a single request,
+    // which grants a short, explicit expiresAt window (set client-side by
+    // the owner's own approve action) rather than a standing grant. The
+    // owner can also revoke early by deleting this doc.
+    match /calendarViewGrants/{grantId} {
+      allow read: if request.auth != null
+        && (request.auth.uid == resource.data.requesterUid || request.auth.uid == resource.data.ownerUid);
+      // A fresh ask: the requester creates it themselves, pending, and
+      // only at the id this pair is required to use -- an owner never has
+      // to trust the requester's own claim of who they are inside the
+      // document, the id itself is the check.
+      allow create: if request.auth != null
+        && request.auth.uid == request.resource.data.requesterUid
+        && request.resource.data.requesterUid != request.resource.data.ownerUid
+        && request.resource.data.status == 'pending'
+        && grantId == request.resource.data.requesterUid + '_' + request.resource.data.ownerUid;
+      // Owner approves (must set a real expiresAt Timestamp -- an
+      // approval with no expiry would defeat the whole "one-time" point)
+      // or denies. Neither party may ever change who requested/who owns.
+      allow update: if request.auth != null
+        && request.auth.uid == resource.data.ownerUid
+        && resource.data.status == 'pending'
+        && request.resource.data.requesterUid == resource.data.requesterUid
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && ((request.resource.data.status == 'approved' && request.resource.data.expiresAt is timestamp)
+            || request.resource.data.status == 'denied')
+      // ...or the REQUESTER re-opens it back to pending once a previous
+      // round is over (denied, or approved but past its own expiresAt) --
+      // otherwise a grant doc, once spent, would permanently block that
+      // same pair from ever asking again (create only ever applies to a
+      // doc that doesn't exist yet).
+      || (request.auth.uid == resource.data.requesterUid
+          && (resource.data.status == 'denied' || (resource.data.status == 'approved' && request.time > resource.data.expiresAt))
+          && request.resource.data.status == 'pending'
+          && request.resource.data.requesterUid == resource.data.requesterUid
+          && request.resource.data.ownerUid == resource.data.ownerUid);
+      allow delete: if request.auth != null
+        && (request.auth.uid == resource.data.requesterUid || request.auth.uid == resource.data.ownerUid);
     }
 
     // Username reservations — a doc ID existing at all means that handle is
