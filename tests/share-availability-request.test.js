@@ -29,7 +29,15 @@ const NOTIFY_SOURCE = fs.readFileSync(path.join(__dirname, "..", "api", "notify.
 
 describe("Client: \"Ask them to turn it on\" button (source-level regression guards)", () => {
   test("askFriendsToShareAvailability posts to /api/notify with type shareAvailabilityRequest for each non-sharing, not-yet-asked friend", () => {
-    assert.match(APP_SOURCE, /const nonSharing=gsSelected\.filter\(uid=>!gsSharedUids\.has\(uid\)&&!shareAskSentUids\.has\(uid\)\);/);
+    // 2026-09-13: generalized to take an explicit uids list (defaulting to
+    // gsSelected) so a single non-selected candidate can also be notified
+    // directly from the picker step -- see
+    // share-availability-friend-picker-2026-09-13.test.js. Behavior for
+    // the original no-args call (this test's own concern) is unchanged:
+    // candidateUids falls back to gsSelected exactly as nonSharing used to
+    // be computed directly from it.
+    assert.match(APP_SOURCE, /const candidateUids=uids\|\|gsSelected;/);
+    assert.match(APP_SOURCE, /const nonSharing=candidateUids\.filter\(uid=>!gsSharedUids\.has\(uid\)&&!shareAskSentUids\.has\(uid\)\);/);
     assert.match(APP_SOURCE, /body:JSON\.stringify\(\{type:"shareAvailabilityRequest",recipientUid:uid\}\)/);
   });
 

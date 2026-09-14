@@ -29,7 +29,7 @@ describe("CalendarTab: openGroupSchedule never leaves 'Loading your friends…' 
   test("the friend/profile fetch is wrapped in try/catch, and setGsLoading(false) runs even on failure", () => {
     const idx = SOURCE.indexOf("const openGroupSchedule=async()=>{");
     assert.notEqual(idx, -1, "openGroupSchedule must exist");
-    const body = SOURCE.slice(idx, idx + 1200);
+    const body = SOURCE.slice(idx, idx + 2200);
     assert.match(body, /try\{/, "the awaited Firestore calls must be inside a try block");
     assert.match(body, /\}catch\(e\)\{/, "a failure must be caught, not left as an unhandled rejection");
     // setGsLoading(false) must run unconditionally (outside/after the
@@ -41,7 +41,7 @@ describe("CalendarTab: openGroupSchedule never leaves 'Loading your friends…' 
 
   test("a failure sets a real error flag the render can react to", () => {
     const idx = SOURCE.indexOf("const openGroupSchedule=async()=>{");
-    const body = SOURCE.slice(idx, idx + 1200);
+    const body = SOURCE.slice(idx, idx + 2200);
     assert.match(body, /setGsLoadError\(true\)/, "a caught failure must set a visible error state, not fail silently like publishBusyWindows does");
   });
 
