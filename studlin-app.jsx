@@ -5806,14 +5806,31 @@ async function getAcceptedFriendUids(myUid){
 // with zero trace anywhere a student (or a debugging session) could see.
 // Now returns an honest result instead of swallowing to undefined, so the
 // caller (the Settings toggle) can actually show what happened.
+// Bug fix, 2026-09-13 user report ("sometimes works sometimes doesn't"):
+// events/routines are local-only per device (no server sync of the source
+// data itself), and this doc is a single last-write-wins record per uid.
+// A device that hasn't been opened in a while can still fire a publish (on
+// load, via the friend-list listener, etc.) with stale local data and
+// silently clobber a fresher publish from a device that HAS been kept
+// current -- which copy of the truth was live depended on which device
+// last happened to publish, not which one actually had the newest data.
+// scheduleDataUpdatedAt (stamped in the [events,routines] debounce effect
+// below whenever that data actually changes, never on mere mount/app-load)
+// lets this compare "is what I'm about to publish newer than what's
+// already there" before overwriting.
 async function publishBusyWindows(){
   if(!lsGet("settings",{}).shareAvailability)return{ok:true,skipped:true};
   const myUid=firebase.auth().currentUser?.uid;
   if(!myUid)return{ok:false,reason:"not_signed_in"};
   try{
+    const sourceUpdatedAt=lsGet("scheduleDataUpdatedAt",0);
+    const existing=await fsdb().collection('busyWindows').doc(myUid).get();
+    if(existing.exists&&(existing.data().sourceUpdatedAt||0)>sourceUpdatedAt){
+      return{ok:true,skipped:true,reason:"stale_local_data"};
+    }
     const sharedWithUids=await getAcceptedFriendUids(myUid);
     const intervals=computeBusyWindowsPayload(lsGet("events",[]),getWeeklyRoutine(),getSchedulePreferences(),dayKey());
-    await fsdb().collection('busyWindows').doc(myUid).set({ownerUid:myUid,sharedWithUids,intervals,updatedAt:new Date().toISOString()});
+    await fsdb().collection('busyWindows').doc(myUid).set({ownerUid:myUid,sharedWithUids,intervals,sourceUpdatedAt,updatedAt:new Date().toISOString()});
     return{ok:true};
   }catch(e){
     reportError("publishBusyWindows")(e);
@@ -29238,7 +29255,18 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // chasing every mutation path individually. Debounced so a burst of edits
   // (onboarding import, aiArrange) publishes once, not once per change.
   const busyWindowsRepublishTimer=useRef(null);
+  // Bug fix, 2026-09-13: only stamp scheduleDataUpdatedAt on a REAL change
+  // to events/routines (a genuine edit within this session), never on the
+  // initial mount value -- otherwise a device that hasn't been opened in
+  // weeks would get a brand-new "now" timestamp the instant it merely
+  // loads its old cached data, making publishBusyWindows' new staleness
+  // guard (above) think stale data is fresh. Skipping the very first
+  // effect run per session is what keeps this stamp meaning "last
+  // actually edited," not "last opened."
+  const busyWindowsFirstRunRef=useRef(true);
   useEffect(()=>{
+    if(busyWindowsFirstRunRef.current)busyWindowsFirstRunRef.current=false;
+    else lsSet("scheduleDataUpdatedAt",Date.now());
     if(busyWindowsRepublishTimer.current)clearTimeout(busyWindowsRepublishTimer.current);
     busyWindowsRepublishTimer.current=setTimeout(()=>{publishBusyWindows();},1500);
     return ()=>clearTimeout(busyWindowsRepublishTimer.current);
