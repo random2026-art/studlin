@@ -565,10 +565,12 @@ function TourStep({ targetRef, targetSelector, title, body, step, total, onNext,
 // perk was inaccurate.
 // Correction, 2026-09-04 audit: "zero free taste" above was never quite
 // true and isn't now either -- canFreeOnboardingScan gives every Free
-// account one lifetime free syllabus scan and one free schedule scan, a
-// deliberate onboarding "aha moment." Not reflected in the Free tier's
-// feature bullets below; low-priority since it undersells rather than
-// oversells Free, flagged here so it doesn't mislead a future edit.
+// account one lifetime free whole-schedule scan (onboarding only, a
+// deliberate "aha moment") and, separately, one lifetime free single-class
+// syllabus scan (2026-09-13: usable any time, not just during onboarding).
+// Not reflected in the Free tier's feature bullets below; low-priority
+// since it undersells rather than oversells Free, flagged here so it
+// doesn't mislead a future edit.
 const PRICING_PLANS=(billing)=>([
   {
     key:"free",name:"Free",price:"$0",per:"forever",tag:null,
@@ -22961,19 +22963,27 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   };
 
   const IMAGE_EXT_MEDIA_TYPES={png:"image/png",jpg:"image/jpeg",jpeg:"image/jpeg",webp:"image/webp",gif:"image/gif"};
-  // Onboarding gets exactly one free schedule scan and one free syllabus
-  // scan even on the Free plan -- canScanScreenshot/canScanSyllabus below
-  // are otherwise Pro-only (the 2026-08-18 pricing pass moved every AI-cost
-  // feature to zero free access). Never applies to the quickScan reuse of
-  // this same wizard ("add another class" / "Set up next term" later --
-  // see the quickScan prop), only the true first-run instance. The
-  // Firestore write-allowlist (firestore.rules, same mechanism the
+  // Every Free account gets exactly one free schedule scan (the bulk
+  // whole-schedule import) and, separately, one free syllabus scan (a
+  // single class) -- canScanScreenshot/canScanSyllabus below are otherwise
+  // Pro-only (the 2026-08-18 pricing pass moved every AI-cost feature to
+  // zero free access). The schedule-scan freebie stays onboarding-only
+  // (!quickScan) -- it's the one-shot "aha moment" for the whole wizard.
+  // The syllabus-scan freebie, 2026-09-13 change, is deliberately NOT
+  // onboarding-only: it's spendable the first time a student scans a
+  // single class's syllabus, whether that's during onboarding or the
+  // first time they add a class afterward -- whichever comes first. Still
+  // strictly one-time (never per-class) since it's gated on the same
+  // durable freeSyllabusScanUsed flag either way.
+  // The Firestore write-allowlist (firestore.rules, same mechanism the
   // "onboarded" flag already uses) is what actually enforces "only once"
   // durably across devices; markFreeScanUsed just persists it the moment
   // the freebie is actually spent, mirroring locally too so a second scan
   // in the same session can't slip through before the write lands.
   const FREE_SCAN_FLAG={schedule:"freeScheduleScanUsed",syllabus:"freeSyllabusScanUsed"};
-  const canFreeOnboardingScan=(kind)=>!quickScan&&!lsGet(FREE_SCAN_FLAG[kind],false);
+  const canFreeOnboardingScan=(kind)=>kind==="syllabus"
+    ?!lsGet(FREE_SCAN_FLAG[kind],false)
+    :(!quickScan&&!lsGet(FREE_SCAN_FLAG[kind],false));
   const markFreeScanUsed=(kind)=>{
     lsSet(FREE_SCAN_FLAG[kind],true);
     const u=firebase.auth().currentUser;
