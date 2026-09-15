@@ -4776,23 +4776,60 @@ function dismissPaceNudge(evId){
 // as much to AI-generated phases/checklists/focus lines as to hand-
 // written UI copy.
 const stripEmDash=(s)=>s.replace(/\s*—\s*/g,": ").replace(/\s*;\s*/g,", ");
-async function proposeProjectPhases(title,detail,subject){
+// instructions (optional): the student's own free-text note on how they
+// want this project approached ("mornings only", "I want a research phase
+// split into two"). Same shape/discipline as proposeSessionFocuses'
+// instructions handling -- when present, the response also carries
+// durableFacts/timeOfDay so a standing preference typed here can be
+// remembered for future exams/projects too, not just this one.
+async function proposeProjectPhases(title,detail,subject,instructions){
+  const hasInstructions=instructions&&instructions.trim();
   try{
-    const prompt="A student has a large, multi-week project: \""+title+"\""+(subject?" for "+subject:"")+". "+
+    const studentInstruction=hasInstructions?" The student also told Studlin this about how they want to approach it: \""+instructions.trim().slice(0,500)+"\". Follow it where reasonable.":"";
+    const prompt="A student has a large, multi-week project: \""+title+"\""+(subject?" for "+subject:"")+"."+studentInstruction+" "+
       (detail?"Here's what's known about it: "+detail+". ":"No further detail is available beyond the title. ")+
       "Break this into an ordered list of realistic phases (e.g. research, outline, draft, revise -- but named specifically for THIS project, not a generic template). Keep each phase name short, 1-4 words. "+
       "Only propose phases if the detail above actually gives you something concrete to ground them in. If all you have is a bare title with no real information about what the project involves, don't guess: respond with {\"phases\":[]} instead of inventing a generic breakdown. "+
-      "3-5 phases is typical, never more than 6. Never use an em dash; use \"and\", a colon, or two shorter phase names instead. Respond with ONLY valid JSON, no markdown fences, no commentary: "+
-      "{\"phases\":[\"Research and sources\",\"Outline\",\"Draft\",\"Revise and cite\"]}";
+      "3-5 phases is typical, never more than 6. Never use an em dash; use \"and\", a colon, or two shorter phase names instead. "+
+      (hasInstructions?"Separately, look at what the student told Studlin above and decide: (1) is any of it a durable, standing preference about how they like to study/work in general -- not specific to just this project -- worth remembering for future plans too? List 0-2 such facts, short sentences, third person. (2) did they express a preference for morning, afternoon, or evening work sessions? If so which one, else null. ":"")+
+      "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
+      "{\"phases\":[\"Research and sources\",\"Outline\",\"Draft\",\"Revise and cite\"]"+(hasInstructions?",\"durableFacts\":[],\"timeOfDay\":null":"")+"}";
     const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
     const data=await res.json();
     const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
     const parsed=JSON.parse(raw);
-    if(parsed&&Array.isArray(parsed.phases)&&parsed.phases.length>0){
-      const names=parsed.phases.filter(p=>typeof p==="string"&&p.trim()).slice(0,6).map(p=>stripEmDash(p.trim()));
-      return names.length>0?names:null;
-    }
-    return null;
+    if(!parsed)return null;
+    const names=Array.isArray(parsed.phases)?parsed.phases.filter(p=>typeof p==="string"&&p.trim()).slice(0,6).map(p=>stripEmDash(p.trim())):[];
+    const durableFacts=Array.isArray(parsed.durableFacts)?parsed.durableFacts.filter(f=>typeof f==="string"&&f.trim()).slice(0,2).map(f=>stripEmDash(f.trim())):[];
+    const timeOfDay=["morning","afternoon","evening"].includes(parsed.timeOfDay)?parsed.timeOfDay:null;
+    if(names.length===0&&durableFacts.length===0&&!timeOfDay)return null;
+    return {phases:names.length>0?names:null,durableFacts,timeOfDay};
+  }catch(e){return null;}
+}
+// The project-side twin of refineSessionFocuses -- takes the phase list
+// Studlin already proposed plus the student's critique of it, and revises
+// the phase names only (order/count can still change here, unlike the
+// exam side, since phases aren't tied to computed spaced-repetition math
+// the way session count/duration are).
+async function refineProjectPhases(title,currentPhases,critique,subject){
+  if(!critique||!critique.trim())return null;
+  try{
+    const prompt="A student's project \""+title+"\""+(subject?" for "+subject:"")+" currently has these phases, in order:\n\n"+
+      currentPhases.map((p,i)=>(i+1)+". "+p).join("\n")+"\n\n"+
+      "The student said this about what they want changed: \""+critique.trim().slice(0,500)+"\". "+
+      "Revise the phase list to address that -- you may add, remove, reorder, or rename phases as needed. Keep each name short, 1-4 words, 3-6 phases total. Never use an em dash. "+
+      "Also decide: (1) is any of what the student just said a durable, standing preference about how they like to study/work in general (not specific to just this project)? List 0-2 short third-person facts, else an empty list. (2) did they express a morning/afternoon/evening preference? If so which, else null. "+
+      "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
+      "{\"phases\":[\"...\"],\"durableFacts\":[],\"timeOfDay\":null}";
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard",format:"json"})});
+    const data=await res.json();
+    const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
+    const parsed=JSON.parse(raw);
+    if(!parsed||!Array.isArray(parsed.phases)||parsed.phases.length===0)return null;
+    const names=parsed.phases.filter(p=>typeof p==="string"&&p.trim()).slice(0,6).map(p=>stripEmDash(p.trim()));
+    const durableFacts=Array.isArray(parsed.durableFacts)?parsed.durableFacts.filter(f=>typeof f==="string"&&f.trim()).slice(0,2).map(f=>stripEmDash(f.trim())):[];
+    const timeOfDay=["morning","afternoon","evening"].includes(parsed.timeOfDay)?parsed.timeOfDay:null;
+    return {phases:names.length>0?names:null,durableFacts,timeOfDay};
   }catch(e){return null;}
 }
 // Finer-grained than proposeProjectPhases -- a phase is "Draft," an outline
@@ -4858,30 +4895,74 @@ function normalizeOutlineDraft(outline){
 // labels. Every existing caller omits it -- unused means byte-identical
 // prompt/behavior to before this param existed, same shape
 // generateQuizFromText's own `focus` param already established.
-async function proposeSessionFocuses(examTitle,materialText,sessionCount,subject,weakTopicsFocus){
-  if(!materialText||!materialText.trim())return null;
+// instructions (optional): the student's own free-text note on this plan
+// ("mornings only", "I already know the intro chapters"). When present,
+// this is the ONLY thing that can make the call fire with no material at
+// all -- see the guard below -- and the response schema grows two extra,
+// optional fields (durableFacts/timeOfDay) so callers that want
+// personalization can extract it from this one call instead of a second
+// one. Existing callers (attachSessionFocusesToSyllabusExams) simply pass
+// nothing for instructions and read only .focuses off the result --
+// behavior for them is unchanged.
+async function proposeSessionFocuses(examTitle,materialText,sessionCount,subject,weakTopicsFocus,instructions){
+  const hasInstructions=instructions&&instructions.trim();
+  if((!materialText||!materialText.trim())&&!hasInstructions)return null;
   if(!canAddSessionFocus())return null;
   try{
     const weakTopicsInstruction=weakTopicsFocus?" The student's first pass showed these topics need extra attention: "+weakTopicsFocus+". Weight the session labels toward those, without ignoring the rest of the material entirely.":"";
-    const prompt="A student has "+sessionCount+" spaced study session(s) counting down to their exam: \""+examTitle+"\""+(subject?" ("+subject+")":"")+"."+weakTopicsInstruction+" "+
-      "Here's their study material:\n\n"+materialText.slice(0,6000)+"\n\n"+
+    const studentInstruction=hasInstructions?" The student also told Studlin this about how they want the plan: \""+instructions.trim().slice(0,500)+"\". Follow it where reasonable.":"";
+    const prompt="A student has "+sessionCount+" spaced study session(s) counting down to their exam: \""+examTitle+"\""+(subject?" ("+subject+")":"")+"."+weakTopicsInstruction+studentInstruction+" "+
+      (materialText&&materialText.trim()?"Here's their study material:\n\n"+materialText.slice(0,6000)+"\n\n":"")+
       "Write exactly "+sessionCount+" short study-focus labels, one per session, in the order the sessions happen (earliest first, working toward full review by the last one). "+
       "Keep each one under 8 words -- a quick label a student can read in passing, like \"Ch 4-6: cell structure\" or \"Unit 3 practice problems\", not a full descriptive sentence. "+
-      "Ground every label in real topics, chapters, or sections that actually appear in the material above. "+
+      (materialText&&materialText.trim()?"Ground every label in real topics, chapters, or sections that actually appear in the material above. ":"")+
       "Never use an em dash or semicolon to connect ideas. Use a colon, \"and\", or just cut one instead. "+
-      "If the material doesn't give you enough to write "+sessionCount+" genuinely distinct, specific labels, don't pad with generic filler like \"General review\" -- respond with {\"focuses\":[]} instead. "+
+      "If there isn't enough to write "+sessionCount+" genuinely distinct, specific labels, don't pad with generic filler like \"General review\" -- respond with an empty focuses list instead. "+
+      (hasInstructions?"Separately, look at what the student told Studlin above (not the study material) and decide: (1) is any of it a durable, standing preference about how they like to study in general -- not a one-off fact about just this exam -- worth remembering for future plans too (e.g. \"prefers morning study sessions\", \"likes short 20-minute sessions\")? List 0-2 such facts, short sentences, third person. Do NOT include anything tied only to this specific exam (e.g. \"already knows chapter 1\") -- that belongs in the focus labels above, not here. (2) did they express a preference for morning, afternoon, or evening study sessions? If so which one, else null. ":"")+
       "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
-      "{\"focuses\":[\"Ch 4-6: cell structure\",\"Ch 7-8: energy and metabolism\"]}";
+      "{\"focuses\":[\"Ch 4-6: cell structure\",\"Ch 7-8: energy and metabolism\"]"+(hasInstructions?",\"durableFacts\":[],\"timeOfDay\":null":"")+"}";
     const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard",format:"json"})});
     recordSessionFocus();
     const data=await res.json();
     const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
     const parsed=JSON.parse(raw);
-    if(parsed&&Array.isArray(parsed.focuses)&&parsed.focuses.length>0){
-      const lines=parsed.focuses.filter(f=>typeof f==="string"&&f.trim()).slice(0,sessionCount).map(f=>stripEmDash(f.trim()));
-      return lines.length>0?lines:null;
-    }
-    return null;
+    if(!parsed)return null;
+    const lines=Array.isArray(parsed.focuses)?parsed.focuses.filter(f=>typeof f==="string"&&f.trim()).slice(0,sessionCount).map(f=>stripEmDash(f.trim())):[];
+    const durableFacts=Array.isArray(parsed.durableFacts)?parsed.durableFacts.filter(f=>typeof f==="string"&&f.trim()).slice(0,2).map(f=>stripEmDash(f.trim())):[];
+    const timeOfDay=["morning","afternoon","evening"].includes(parsed.timeOfDay)?parsed.timeOfDay:null;
+    if(lines.length===0&&durableFacts.length===0&&!timeOfDay)return null;
+    return {focuses:lines.length>0?lines:null,durableFacts,timeOfDay};
+  }catch(e){return null;}
+}
+// The post-generation "ask AI to adjust" step -- takes the plan Studlin
+// already produced plus the student's critique of it, and revises the
+// focus labels only. Count/duration are real computed math (see
+// computeStudyPlanParams) and stay off-limits here on purpose -- a
+// student who wants a different count already has the session stepper,
+// this box is for "that's not what I meant" on the labels themselves.
+// Same gate/charge/shape as proposeSessionFocuses (reuses the same Pro
+// limit -- a refine call costs about the same as a fresh one).
+async function refineSessionFocuses(examTitle,currentFocuses,critique,sessionCount,subject){
+  if(!critique||!critique.trim())return null;
+  if(!canAddSessionFocus())return null;
+  try{
+    const prompt="A student's study plan for their exam \""+examTitle+"\""+(subject?" ("+subject+")":"")+" currently has these "+sessionCount+" session focus labels, earliest first:\n\n"+
+      currentFocuses.map((f,i)=>(i+1)+". "+(f||"(no label yet)")).join("\n")+"\n\n"+
+      "The student said this about what they want changed: \""+critique.trim().slice(0,500)+"\". "+
+      "Revise the focus labels to address that. Keep exactly "+sessionCount+" labels, same order, same rules as before: under 8 words each, specific, no em dash or semicolon. "+
+      "Also decide: (1) is any of what the student just said a durable, standing preference about how they like to study in general (not specific to just this exam)? List 0-2 short third-person facts, else an empty list. (2) did they express a morning/afternoon/evening preference? If so which, else null. "+
+      "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
+      "{\"focuses\":[\"...\"],\"durableFacts\":[],\"timeOfDay\":null}";
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard",format:"json"})});
+    recordSessionFocus();
+    const data=await res.json();
+    const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
+    const parsed=JSON.parse(raw);
+    if(!parsed||!Array.isArray(parsed.focuses)||parsed.focuses.length===0)return null;
+    const lines=parsed.focuses.filter(f=>typeof f==="string"&&f.trim()).slice(0,sessionCount).map(f=>stripEmDash(f.trim()));
+    const durableFacts=Array.isArray(parsed.durableFacts)?parsed.durableFacts.filter(f=>typeof f==="string"&&f.trim()).slice(0,2).map(f=>stripEmDash(f.trim())):[];
+    const timeOfDay=["morning","afternoon","evening"].includes(parsed.timeOfDay)?parsed.timeOfDay:null;
+    return {focuses:lines.length>0?lines:null,durableFacts,timeOfDay};
   }catch(e){return null;}
 }
 // Best-effort, fire-and-forget follow-up to commitSyllabusEvents -- never
@@ -4916,7 +4997,8 @@ async function attachSessionFocusesToSyllabusExams(noteId,tag,items){
     const markerId="syl-"+noteId+"-"+i;
     const sessions=lsGet("events",[]).filter(e=>e.dueEventId===markerId&&e.isExamPrepSession).sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
     if(sessions.length===0)continue;
-    const focuses=await proposeSessionFocuses(it.title,materialText,sessions.length,tag);
+    const result=await proposeSessionFocuses(it.title,materialText,sessions.length,tag);
+    const focuses=result&&result.focuses;
     if(!focuses)continue;
     const idOrder=sessions.map(s=>s.id);
     lsSet("events",lsGet("events",[]).map(e=>{
@@ -9355,7 +9437,11 @@ function saveProfile(p){lsSet("profile",p);}
 // a personal fact like "hates morning workouts" must never be readable
 // by anyone but the owner.
 const AI_MEMORY_FACT_CAP=20;
-function getAiMemory(){return lsGet("aiMemory",{facts:[],updatedAt:null});}
+// timeOfDay is a separate structured preference alongside the free-text
+// facts list (morning/afternoon/evening/null) -- unlike a fact string, it
+// gets read directly by the scheduler (see resolveTimeOfDayAnchor), so it
+// needs its own field rather than living inside a fact sentence.
+function getAiMemory(){return lsGet("aiMemory",{facts:[],updatedAt:null,timeOfDay:null});}
 function saveAiMemory(mem){lsSet("aiMemory",mem);}
 // Fire-and-forget push to Firestore, mirroring upsertProfile's own shape
 // exactly (same set(...,{merge:true}) pattern, same silent-catch -- a
@@ -9365,7 +9451,7 @@ function saveAiMemory(mem){lsSet("aiMemory",mem);}
 async function pushAiMemory(mem){
   const u=firebase.auth().currentUser;
   if(!u)return;
-  try{await fsdb().collection('aiMemory').doc(u.uid).set({facts:mem.facts||[],updatedAt:new Date().toISOString()},{merge:true});}catch(e){}
+  try{await fsdb().collection('aiMemory').doc(u.uid).set({facts:mem.facts||[],timeOfDay:mem.timeOfDay||null,updatedAt:new Date().toISOString()},{merge:true});}catch(e){}
 }
 // One-time pull on auth -- NEW relative to every other single-owner-doc
 // pattern in this file (upsertProfile is push-only; getProfile/saveProfile
@@ -9381,7 +9467,7 @@ async function hydrateAiMemoryOnAuth(){
     const doc=await fsdb().collection('aiMemory').doc(u.uid).get();
     if(doc.exists){
       const data=doc.data();
-      saveAiMemory({facts:Array.isArray(data.facts)?data.facts:[],updatedAt:data.updatedAt||null});
+      saveAiMemory({facts:Array.isArray(data.facts)?data.facts:[],timeOfDay:data.timeOfDay||null,updatedAt:data.updatedAt||null});
     }
   }catch(e){}
 }
@@ -9409,7 +9495,33 @@ function mergeAiMemoryFacts(existingMem,newFactTexts){
 }
 function removeAiMemoryFact(mem,index){
   const facts=(mem.facts||[]).filter((_,i)=>i!==index);
-  return {facts,updatedAt:new Date().toISOString()};
+  return {facts,timeOfDay:mem.timeOfDay||null,updatedAt:new Date().toISOString()};
+}
+// Overwrite-if-present, same "remote/latest wins outright" discipline
+// hydrateAiMemoryOnAuth already uses for this whole doc -- one student,
+// infrequent writes, no per-field conflict merge needed. A null
+// newTimeOfDay (nothing detected this time) leaves the existing
+// preference alone rather than clearing it.
+function mergeAiMemoryTimeOfDay(existingMem,newTimeOfDay){
+  if(!newTimeOfDay)return existingMem||{facts:[],timeOfDay:null,updatedAt:null};
+  return {facts:(existingMem&&existingMem.facts)||[],timeOfDay:newTimeOfDay,updatedAt:new Date().toISOString()};
+}
+const TIME_OF_DAY_ANCHORS={morning:"08:00",afternoon:"14:00",evening:"18:00"};
+// Maps a stored time-of-day preference to a real clock time the scheduler
+// can use, clamped into the student's own work hours so a "morning"
+// preference never lands before they're actually awake/available.
+// Returns prefs.workStartTime unchanged for a null/unrecognized
+// preference -- the same no-op-by-default convention buildExamSessionEvents'
+// own durationOverride already established.
+function resolveTimeOfDayAnchor(pref,prefs){
+  const anchor=TIME_OF_DAY_ANCHORS[pref];
+  if(!anchor)return prefs.workStartTime;
+  const anchorMins=timeToMinutes(anchor);
+  const startMins=timeToMinutes(prefs.workStartTime);
+  const endMins=timeToMinutes(prefs.workEndTime);
+  const clamped=Math.min(Math.max(anchorMins,startMins),endMins);
+  const h=Math.floor(clamped/60),m=clamped%60;
+  return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0");
 }
 function seedEventsIfStale(){
   return;
@@ -10180,6 +10292,15 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
   const [buildPlanWeaveCards,setBuildPlanWeaveCards]=useState(true);
   const [buildPlanWeavePE,setBuildPlanWeavePE]=useState(true);
   const [buildPlanHoursTarget,setBuildPlanHoursTarget]=useState("");
+  // Free-text personalization note (2026-09-15 feature) -- read by
+  // generatePreview and folded into proposeSessionFocuses' own prompt.
+  // Anything durable in it (see proposeSessionFocuses' durableFacts/
+  // timeOfDay) gets merged into aiMemory right after generation, so it
+  // carries into every future plan too, not just this one.
+  const [buildPlanInstructions,setBuildPlanInstructions]=useState("");
+  const [buildPlanCritique,setBuildPlanCritique]=useState("");
+  const [buildPlanRefining,setBuildPlanRefining]=useState(false);
+  const [buildPlanMemoryToast,setBuildPlanMemoryToast]=useState("");
   const [buildPlanFocuses,setBuildPlanFocuses]=useState([]);
   // Per-session {date,duration} edits made in the preview step -- null
   // entries mean "still using the auto-computed value." commitBuildPlan
@@ -10589,6 +10710,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
     setBuildPlanGeneric(false);
     setBuildPlanPreview(null);
     setBuildPlanGenFlashcards(false);setBuildPlanGenPE(false);setBuildPlanWeaveCards(true);setBuildPlanWeavePE(true);setBuildPlanHoursTarget("");setBuildPlanFocuses([]);
+    setBuildPlanInstructions("");setBuildPlanCritique("");setBuildPlanRefining(false);setBuildPlanMemoryToast("");
     setBuildPlanMaterialOpen(!hasMaterial);
     // Pre-fill confidence from the exam's own history -- real correction:
     // this used to reset to a blank slate every time, so "Redo study
@@ -10606,6 +10728,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
   const closeBuildPlan=()=>{
     setBuildPlanExamId(null);setBuildPlanStep("choice");setBuildPlanGeneric(false);setBuildPlanPreview(null);
     setBuildPlanGenFlashcards(false);setBuildPlanGenPE(false);setBuildPlanWeaveCards(true);setBuildPlanWeavePE(true);setBuildPlanHoursTarget("");setBuildPlanFocuses([]);
+    setBuildPlanInstructions("");setBuildPlanCritique("");setBuildPlanRefining(false);setBuildPlanMemoryToast("");
     setManualSessionRows([]);
   };
   // Persists whatever material the student added in the modal's own
@@ -10719,8 +10842,23 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
     // than this floor, so it costs nothing extra -- Promise.all just waits
     // on whichever finishes last.
     const minDelay=new Promise(r=>setTimeout(r,900));
-    const focusesPromise=(hasMaterial&&dates.length>0)?proposeSessionFocuses(buildPlanExam.title,buildPlanMaterialText,dates.length,buildPlanExam.subject):Promise.resolve(null);
-    const [focuses]=await Promise.all([focusesPromise,minDelay]);
+    const hasInstructions=buildPlanInstructions.trim().length>0;
+    const focusesPromise=((hasMaterial||hasInstructions)&&dates.length>0)?proposeSessionFocuses(buildPlanExam.title,buildPlanMaterialText,dates.length,buildPlanExam.subject,undefined,buildPlanInstructions):Promise.resolve(null);
+    const [focusResult]=await Promise.all([focusesPromise,minDelay]);
+    const focuses=focusResult&&focusResult.focuses;
+    // Anything durable the student's note revealed (a standing preference,
+    // not something specific to just this exam) gets remembered right
+    // away -- same silent-on-nothing-found, toast-on-something-found
+    // discipline the Studlin AI chat drawer's own memory extraction
+    // already follows (see hydrateAiMemoryOnAuth's neighbors above).
+    if(focusResult&&(focusResult.durableFacts.length>0||focusResult.timeOfDay)){
+      const withFacts=mergeAiMemoryFacts(getAiMemory(),focusResult.durableFacts);
+      const withTimeOfDay=mergeAiMemoryTimeOfDay(withFacts,focusResult.timeOfDay);
+      saveAiMemory(withTimeOfDay);
+      pushAiMemory(withTimeOfDay);
+      setBuildPlanMemoryToast("Studlin AI remembered something new");
+      setTimeout(()=>setBuildPlanMemoryToast(""),3500);
+    }
     setBuildPlanPreview({sessionCount:dates.length,sessionDuration,difficultyValue:params.difficultyValue,dates,
       reasoningInputs:{confidenceLevel:buildPlanConfidence,confidenceKnown:buildPlanConfidenceKnown,importanceLevel:buildPlanExam.importanceLevel,materialCharCount:buildPlanMaterialText.length,
         hadHistoricalDuration:historicalDuration!=null,
@@ -10740,6 +10878,31 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
     // manually-set row -- see hasTaperedLastSession above.
     setBuildPlanOverrides(dates.map((d,i)=>hasTaperedLastSession&&i===dates.length-1?{date:d,duration:taperedLastDuration}:null));
     setBuildPlanStep("preview");
+  };
+  // "Not quite right?" critique box on the preview screen -- revises
+  // focus labels only (see refineSessionFocuses), never the computed
+  // session count/duration. Also picks up any newly-revealed durable
+  // preference the same way generatePreview's own AI call does.
+  const applyBuildPlanCritique=async()=>{
+    if(!buildPlanExam||!buildPlanPreview||!buildPlanCritique.trim())return;
+    if(!canAddSessionFocus()){
+      setUpgradeModal({feature:"AI study plans",detail:canAddSessionFocusReason()==="free-tier"?"AI study plans are a Pro feature. Upgrade to use them.":AI_USAGE_CAP_MESSAGE});
+      return;
+    }
+    setBuildPlanRefining(true);
+    const result=await refineSessionFocuses(buildPlanExam.title,buildPlanFocuses,buildPlanCritique,buildPlanPreview.sessionCount,buildPlanExam.subject);
+    setBuildPlanRefining(false);
+    if(!result)return;
+    if(result.focuses)setBuildPlanFocuses(result.focuses);
+    if(result.durableFacts.length>0||result.timeOfDay){
+      const withFacts=mergeAiMemoryFacts(getAiMemory(),result.durableFacts);
+      const withTimeOfDay=mergeAiMemoryTimeOfDay(withFacts,result.timeOfDay);
+      saveAiMemory(withTimeOfDay);
+      pushAiMemory(withTimeOfDay);
+      setBuildPlanMemoryToast("Studlin AI remembered something new");
+      setTimeout(()=>setBuildPlanMemoryToast(""),3500);
+    }
+    setBuildPlanCritique("");
   };
   const adjustBuildPlanCount=(count)=>{
     if(!buildPlanExam)return;
@@ -10813,7 +10976,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
       genPE=await doGenPracticeExamForExam();
     }
     const events=removeGenericExamPrepSessions(lsGet("events",[]),buildPlanExam.id);
-    const sessions=buildExamSessionEvents(buildPlanExam.title,buildPlanExam.date,buildPlanExam.subject,buildPlanPreview.sessionCount,"prep-"+buildPlanExam.id+"-"+Date.now(),events,routines,prefs,{dueEventId:buildPlanExam.id},buildPlanPreview.difficultyValue,buildPlanPreview.sessionDuration,buildPlanExam.examWeight,buildPlanExam.confidenceLog,buildPlanExam.importanceLevel,buildPlanExam.gradeWeightPercent);
+    const sessions=buildExamSessionEvents(buildPlanExam.title,buildPlanExam.date,buildPlanExam.subject,buildPlanPreview.sessionCount,"prep-"+buildPlanExam.id+"-"+Date.now(),events,routines,prefs,{dueEventId:buildPlanExam.id},buildPlanPreview.difficultyValue,buildPlanPreview.sessionDuration,buildPlanExam.examWeight,buildPlanExam.confidenceLog,buildPlanExam.importanceLevel,buildPlanExam.gradeWeightPercent,resolveTimeOfDayAnchor(getAiMemory().timeOfDay,prefs));
     // buildExamSessionEvents can still place fewer sessions than requested
     // (findReliableSlotFor comes back empty for a given date -- a packed
     // calendar with no legal slot before the exam) even after the preview
@@ -12121,7 +12284,8 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
           if(genericPending.length===0)return;
           if(!canAddSessionFocus()){setUpgradeModal({feature:"AI study focus",detail:canAddSessionFocusReason()==="free-tier"?"AI study focus is a Pro feature. Upgrade to use it.":AI_USAGE_CAP_MESSAGE});return;}
           setSessionScheduleLoading(true);
-          const focuses=await proposeSessionFocuses(selectedExam.title,materialText,genericPending.length,selectedExam.subject);
+          const focusResult=await proposeSessionFocuses(selectedExam.title,materialText,genericPending.length,selectedExam.subject);
+          const focuses=focusResult&&focusResult.focuses;
           setSessionScheduleLoading(false);
           if(!focuses)return;
           const idOrder=genericPending.map(s=>s.id);
@@ -12893,6 +13057,16 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                 <span style={{fontSize:12,color:T.muted}}>Hours to study for this (optional):</span>
                 <Input type="number" min={0} step={0.5} value={buildPlanHoursTarget} onChange={e=>setBuildPlanHoursTarget(e.target.value)} placeholder="0" style={{width:60}} />
               </div>
+              <div>
+                <span style={{fontSize:12,color:T.muted,display:"block",marginBottom:6}}>Anything you want Studlin to know (optional)</span>
+                <Textarea value={buildPlanInstructions} onChange={e=>setBuildPlanInstructions(e.target.value)}
+                  placeholder="e.g. mornings only, I already know the intro chapters, shorter sessions"
+                  style={{minHeight:56,fontSize:12.5}} />
+                {/* Standing preferences typed here (durable across exams,
+                    e.g. "mornings only") get remembered in Settings' AI
+                    Memory list, editable/removable there like any other
+                    fact -- this note itself is never stored verbatim. */}
+              </div>
             </div>
           </div>
           );
@@ -13076,6 +13250,23 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
               <span style={{fontSize:12,color:T.muted}}>Sessions:</span>
               <NumField min={1} max={6} fallback={4} value={buildPlanPreview.sessionCount} onChange={adjustBuildPlanCount} style={{width:52}} />
             </div>
+            {!buildPlanGeneric&&(
+              <div style={{marginTop:14}}>
+                <span style={{fontSize:12,color:T.muted,display:"block",marginBottom:6}}>Not quite right? Tell Studlin what to change</span>
+                <div style={{display:"flex",gap:8}}>
+                  <Input value={buildPlanCritique} onChange={e=>setBuildPlanCritique(e.target.value)}
+                    placeholder="e.g. more focused on the harder chapters"
+                    disabled={buildPlanRefining} style={{flex:1,fontSize:12.5}}
+                    onKeyDown={e=>{if(e.key==="Enter"&&buildPlanCritique.trim()&&!buildPlanRefining)applyBuildPlanCritique();}} />
+                  <Btn variant="subtle" disabled={!buildPlanCritique.trim()||buildPlanRefining} onClick={applyBuildPlanCritique}>
+                    {buildPlanRefining?"Updating…":"Update plan"}
+                  </Btn>
+                </div>
+              </div>
+            )}
+            {buildPlanMemoryToast&&(
+              <div style={{marginTop:10,fontSize:11.5,color:T.lime,display:"flex",alignItems:"center",gap:6}}>{buildPlanMemoryToast}</div>
+            )}
             </>)}
           </div>
         )}
@@ -16808,7 +16999,12 @@ function restampSessionPriorities(examId){
 // here the way Attack Blocks get one — that curve already refuses to
 // propose anything for the too-far-out portion of the timeline on its own.
 // Caller merges the returned events into its own working array/lsSet.
-function buildExamSessionEvents(examTitle,examDate,subject,count,idPrefix,working,routines,prefs,extraFields,difficulty,durationOverride,examWeight,confidenceLog,importanceLevel,gradeWeightPercent){
+// desiredTimeOverride is the same optional-trailing-param convention as
+// durationOverride just below -- every existing caller omits it and keeps
+// today's exact prefs.workStartTime behavior. Only the Build Plan wizard
+// passes one, resolved from a saved time-of-day preference via
+// resolveTimeOfDayAnchor.
+function buildExamSessionEvents(examTitle,examDate,subject,count,idPrefix,working,routines,prefs,extraFields,difficulty,durationOverride,examWeight,confidenceLog,importanceLevel,gradeWeightPercent,desiredTimeOverride){
   const dates=computeReviewDates(examDate,dayKey(),count);
   // durationOverride lets the study-plan calibration (Prep redesign Part C)
   // scale minutes per session by confidence level -- every existing caller
@@ -16839,7 +17035,7 @@ function buildExamSessionEvents(examTitle,examDate,subject,count,idPrefix,workin
   let localWorking=working;
   const built=[];
   dates.forEach((date,si)=>{
-    const slot=findReliableSlotFor(localWorking,routines,prefs,date,prefs.workStartTime,duration,examDate,difficulty??500);
+    const slot=findReliableSlotFor(localWorking,routines,prefs,date,desiredTimeOverride||prefs.workStartTime,duration,examDate,difficulty??500);
     if(!slot)return;
     const ev={
       id:idPrefix+"-"+si,
@@ -22594,21 +22790,52 @@ function PhasesOutlineEditor({item,onChange,subject,onGateBlocked=()=>{},onNeeds
   // own onNeedsDetail for what that looks like) rather than this component
   // reaching for a DOM element it doesn't own.
   const hasEnoughDetail=hasEnoughDetailForBreakdown(item.detail);
+  const [critique,setCritique]=useState("");
+  const [refining,setRefining]=useState(false);
+  const [memoryToast,setMemoryToast]=useState("");
+  const rememberPreferences=(durableFacts,timeOfDay)=>{
+    if((durableFacts||[]).length===0&&!timeOfDay)return;
+    const withFacts=mergeAiMemoryFacts(getAiMemory(),durableFacts||[]);
+    const withTimeOfDay=mergeAiMemoryTimeOfDay(withFacts,timeOfDay);
+    saveAiMemory(withTimeOfDay);
+    pushAiMemory(withTimeOfDay);
+    setMemoryToast("Studlin AI remembered something new");
+    setTimeout(()=>setMemoryToast(""),3500);
+  };
   const suggestPhases=async()=>{
     if(!hasEnoughDetail){onNeedsDetail();return;}
     if(!canBreakDownProject()){onGateBlocked(canBreakDownProjectReason());return;}
     onChange({phasesLoading:true});
-    const names=await proposeProjectPhases(item.title,item.detail||"",subject);
+    const result=await proposeProjectPhases(item.title,item.detail||"",subject,item.instructions||"");
     recordProjectBreakdown();
-    onChange({phasesLoading:false,phases:names||[]});
+    onChange({phasesLoading:false,phases:(result&&result.phases)||[]});
+    if(result)rememberPreferences(result.durableFacts,result.timeOfDay);
+  };
+  // "Not quite right?" critique, same pattern as the exam Build Plan
+  // wizard's own -- unlike the exam side, phase order/count CAN change
+  // here (phases aren't tied to computed spaced-repetition math).
+  const applyCritique=async()=>{
+    if(!critique.trim())return;
+    if(!canBreakDownProject()){onGateBlocked(canBreakDownProjectReason());return;}
+    setRefining(true);
+    const result=await refineProjectPhases(item.title,item.phases,critique,subject);
+    recordProjectBreakdown();
+    setRefining(false);
+    if(!result)return;
+    if(result.phases)onChange({phases:result.phases});
+    rememberPreferences(result.durableFacts,result.timeOfDay);
+    setCritique("");
   };
   return (<>
     <div style={{marginTop:8}}>
-      {item.phases===undefined?(
+      {item.phases===undefined?(<>
+        <Textarea value={item.instructions||""} onChange={e=>onChange({instructions:e.target.value})}
+          placeholder="Anything you want Studlin to know for the breakdown (optional) -- e.g. mornings only, split research into two phases"
+          style={{minHeight:48,fontSize:12,marginBottom:8}} />
         <button type="button" disabled={!!item.phasesLoading} onClick={suggestPhases} style={{background:"none",border:`1px dashed ${T.borderHover}`,borderRadius:6,color:T.muted,fontSize:11,fontFamily:T.font,cursor:item.phasesLoading?"default":"pointer",padding:"5px 10px",opacity:item.phasesLoading?0.6:1}}>
           {item.phasesLoading?"Thinking through phases…":"This looks big. Break it into phases?"}
         </button>
-      ):item.phases.length===0?(
+      </>):item.phases.length===0?(
         <div style={{fontSize:11,color:T.muted}}>Not enough detail here to break into phases. Add detail above, or leave it as one Attack Block.</div>
       ):(
         <div style={{display:"flex",flexDirection:"column",gap:6}}>
@@ -22621,6 +22848,17 @@ function PhasesOutlineEditor({item,onChange,subject,onGateBlocked=()=>{},onNeeds
             </div>
           ))}
           <button type="button" onClick={()=>onChange({phases:[...item.phases,""]})} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>+ Add phase</button>
+          <div style={{marginTop:6,display:"flex",gap:6}}>
+            <Input value={critique} onChange={e=>setCritique(e.target.value)} disabled={refining}
+              placeholder="Not quite right? Tell Studlin what to change"
+              style={{flex:1,fontSize:11.5,padding:"5px 8px"}}
+              onKeyDown={e=>{if(e.key==="Enter"&&critique.trim()&&!refining)applyCritique();}} />
+            <button type="button" disabled={!critique.trim()||refining} onClick={applyCritique}
+              style={{background:"none",border:`1px solid ${T.borderHover}`,borderRadius:6,color:T.muted,fontSize:11,fontFamily:T.font,cursor:refining?"default":"pointer",padding:"5px 10px",opacity:!critique.trim()||refining?0.6:1,flexShrink:0}}>
+              {refining?"Updating…":"Update"}
+            </button>
+          </div>
+          {memoryToast&&<div style={{fontSize:10.5,color:T.lime}}>{memoryToast}</div>}
         </div>
       )}
     </div>
@@ -26477,7 +26715,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
       const phases=isPhaseCandidate?(projectPlan.phases||[]).map(p=>p.trim()).filter(Boolean):[];
       const outline=isPhaseCandidate?normalizeOutlineDraft(projectPlan.outline):[];
       const desiredDate=date&&date>=dayKey()?date:dayKey();
-      attackPair=buildAssignmentAttackBlockPair(ev.id,{title:title.trim(),subject,courseId:courseIdForLabel(subject),notes,deadline:deadline||null,priority,difficulty,probeMins:attackProbeMins,outline},phases,allEvents,routines,prefs,desiredDate,prefs.workStartTime,false,forcedAttackSlot);
+      attackPair=buildAssignmentAttackBlockPair(ev.id,{title:title.trim(),subject,courseId:courseIdForLabel(subject),notes,deadline:deadline||null,priority,difficulty,probeMins:attackProbeMins,outline},phases,allEvents,routines,prefs,desiredDate,resolveTimeOfDayAnchor(getAiMemory().timeOfDay,prefs),false,forcedAttackSlot);
       // Bug fix, 2026-09-08 user report ("when i turn it on it doesnt do
       // anything"): buildAssignmentAttackBlockPair returns null when no
       // legal slot exists before the deadline (e.g. a deadline that's
@@ -35197,10 +35435,17 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   const [courseDeleteSnapshots,setCourseDeleteSnapshots]=useState(null);
   const [courseDeleteToast,setCourseDeleteToast]=useState("");
   const [aiMemoryFacts,setAiMemoryFacts]=useState(()=>getAiMemory().facts||[]);
+  // Time-of-day is picked up the same way facts are (Build Plan wizard /
+  // Project phase breakdown's own "anything you want Studlin to know"
+  // fields), but it's a structured preference the scheduler reads
+  // directly (see resolveTimeOfDayAnchor), so it gets its own small row
+  // here rather than living inside a fact sentence.
+  const [aiTimeOfDay,setAiTimeOfDay]=useState(()=>getAiMemory().timeOfDay||null);
   const [confirmRemoveFactIdx,setConfirmRemoveFactIdx]=useState(null);
   const [confirmClearMemory,setConfirmClearMemory]=useState(false);
   const removeAiFact=(idx)=>{const next=removeAiMemoryFact(getAiMemory(),idx);saveAiMemory(next);pushAiMemory(next);setAiMemoryFacts(next.facts);setConfirmRemoveFactIdx(null);};
-  const clearAiMemory=()=>{const next={facts:[],updatedAt:new Date().toISOString()};saveAiMemory(next);pushAiMemory(next);setAiMemoryFacts([]);setConfirmClearMemory(false);};
+  const removeAiTimeOfDay=()=>{const next={...getAiMemory(),timeOfDay:null,updatedAt:new Date().toISOString()};saveAiMemory(next);pushAiMemory(next);setAiTimeOfDay(null);};
+  const clearAiMemory=()=>{const next={facts:[],timeOfDay:null,updatedAt:new Date().toISOString()};saveAiMemory(next);pushAiMemory(next);setAiMemoryFacts([]);setAiTimeOfDay(null);setConfirmClearMemory(false);};
   const countLinkedForSubject=(sub)=>{
     const matches=(item)=>item.courseId===sub.id||item.subject===sub.label;
     return getWeeklyRoutine().filter(matches).length+lsGet("events",[]).filter(matches).length;
@@ -35608,7 +35853,13 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>What Studlin AI remembers</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Standing preferences it's picked up from your chats — not one-off requests, just things worth not re-explaining every time.</div>
-              {aiMemoryFacts.length===0?(
+              {aiTimeOfDay&&(
+                <div style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,marginBottom:8}}>
+                  <span style={{fontSize:12.5,color:T.text,flex:1}}>Prefers {aiTimeOfDay} study sessions</span>
+                  <button onClick={removeAiTimeOfDay} style={{background:"none",border:`1px solid ${T.border}`,color:T.muted,cursor:"pointer",borderRadius:6,padding:"4px 10px",fontSize:12,fontFamily:T.font,flexShrink:0}}>Remove</button>
+                </div>
+              )}
+              {aiMemoryFacts.length===0&&!aiTimeOfDay?(
                 <div style={{fontSize:12.5,color:T.muted,padding:"16px 0",textAlign:"center",borderTop:`1px solid ${T.border}`}}>Nothing remembered yet. It'll pick things up naturally as you chat.</div>
               ):(
                 aiMemoryFacts.map((f,i)=>(
@@ -35624,7 +35875,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                   </div>
                 ))
               )}
-              {aiMemoryFacts.length>0&&(
+              {(aiMemoryFacts.length>0||aiTimeOfDay)&&(
                 <div style={{marginTop:6}}>
                   {confirmClearMemory?(
                     <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>

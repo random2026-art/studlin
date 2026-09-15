@@ -2796,18 +2796,38 @@ function dismissPaceNudge(evId) {
   lsSet("paceNudgeDismissed", m);
 }
 const stripEmDash = (s) => s.replace(/\s*—\s*/g, ": ").replace(/\s*;\s*/g, ", ");
-async function proposeProjectPhases(title, detail, subject) {
+async function proposeProjectPhases(title, detail, subject, instructions) {
+  const hasInstructions = instructions && instructions.trim();
   try {
-    const prompt = 'A student has a large, multi-week project: "' + title + '"' + (subject ? " for " + subject : "") + ". " + (detail ? "Here's what's known about it: " + detail + ". " : "No further detail is available beyond the title. ") + `Break this into an ordered list of realistic phases (e.g. research, outline, draft, revise -- but named specifically for THIS project, not a generic template). Keep each phase name short, 1-4 words. Only propose phases if the detail above actually gives you something concrete to ground them in. If all you have is a bare title with no real information about what the project involves, don't guess: respond with {"phases":[]} instead of inventing a generic breakdown. 3-5 phases is typical, never more than 6. Never use an em dash; use "and", a colon, or two shorter phase names instead. Respond with ONLY valid JSON, no markdown fences, no commentary: {"phases":["Research and sources","Outline","Draft","Revise and cite"]}`;
+    const studentInstruction = hasInstructions ? ' The student also told Studlin this about how they want to approach it: "' + instructions.trim().slice(0, 500) + '". Follow it where reasonable.' : "";
+    const prompt = 'A student has a large, multi-week project: "' + title + '"' + (subject ? " for " + subject : "") + "." + studentInstruction + " " + (detail ? "Here's what's known about it: " + detail + ". " : "No further detail is available beyond the title. ") + `Break this into an ordered list of realistic phases (e.g. research, outline, draft, revise -- but named specifically for THIS project, not a generic template). Keep each phase name short, 1-4 words. Only propose phases if the detail above actually gives you something concrete to ground them in. If all you have is a bare title with no real information about what the project involves, don't guess: respond with {"phases":[]} instead of inventing a generic breakdown. 3-5 phases is typical, never more than 6. Never use an em dash; use "and", a colon, or two shorter phase names instead. ` + (hasInstructions ? "Separately, look at what the student told Studlin above and decide: (1) is any of it a durable, standing preference about how they like to study/work in general -- not specific to just this project -- worth remembering for future plans too? List 0-2 such facts, short sentences, third person. (2) did they express a preference for morning, afternoon, or evening work sessions? If so which one, else null. " : "") + 'Respond with ONLY valid JSON, no markdown fences, no commentary: {"phases":["Research and sources","Outline","Draft","Revise and cite"]' + (hasInstructions ? ',"durableFacts":[],"timeOfDay":null' : "") + "}";
     const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt }], model: "standard" }) });
     const data = await res.json();
     const raw = (data.reply || "").replace(/```json?\n?/gi, "").replace(/```/g, "").trim();
     const parsed = JSON.parse(raw);
-    if (parsed && Array.isArray(parsed.phases) && parsed.phases.length > 0) {
-      const names = parsed.phases.filter((p) => typeof p === "string" && p.trim()).slice(0, 6).map((p) => stripEmDash(p.trim()));
-      return names.length > 0 ? names : null;
-    }
+    if (!parsed) return null;
+    const names = Array.isArray(parsed.phases) ? parsed.phases.filter((p) => typeof p === "string" && p.trim()).slice(0, 6).map((p) => stripEmDash(p.trim())) : [];
+    const durableFacts = Array.isArray(parsed.durableFacts) ? parsed.durableFacts.filter((f) => typeof f === "string" && f.trim()).slice(0, 2).map((f) => stripEmDash(f.trim())) : [];
+    const timeOfDay = ["morning", "afternoon", "evening"].includes(parsed.timeOfDay) ? parsed.timeOfDay : null;
+    if (names.length === 0 && durableFacts.length === 0 && !timeOfDay) return null;
+    return { phases: names.length > 0 ? names : null, durableFacts, timeOfDay };
+  } catch (e) {
     return null;
+  }
+}
+async function refineProjectPhases(title, currentPhases, critique, subject) {
+  if (!critique || !critique.trim()) return null;
+  try {
+    const prompt = `A student's project "` + title + '"' + (subject ? " for " + subject : "") + " currently has these phases, in order:\n\n" + currentPhases.map((p, i) => i + 1 + ". " + p).join("\n") + '\n\nThe student said this about what they want changed: "' + critique.trim().slice(0, 500) + '". Revise the phase list to address that -- you may add, remove, reorder, or rename phases as needed. Keep each name short, 1-4 words, 3-6 phases total. Never use an em dash. Also decide: (1) is any of what the student just said a durable, standing preference about how they like to study/work in general (not specific to just this project)? List 0-2 short third-person facts, else an empty list. (2) did they express a morning/afternoon/evening preference? If so which, else null. Respond with ONLY valid JSON, no markdown fences, no commentary: {"phases":["..."],"durableFacts":[],"timeOfDay":null}';
+    const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt }], model: "standard", format: "json" }) });
+    const data = await res.json();
+    const raw = (data.reply || "").replace(/```json?\n?/gi, "").replace(/```/g, "").trim();
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.phases) || parsed.phases.length === 0) return null;
+    const names = parsed.phases.filter((p) => typeof p === "string" && p.trim()).slice(0, 6).map((p) => stripEmDash(p.trim()));
+    const durableFacts = Array.isArray(parsed.durableFacts) ? parsed.durableFacts.filter((f) => typeof f === "string" && f.trim()).slice(0, 2).map((f) => stripEmDash(f.trim())) : [];
+    const timeOfDay = ["morning", "afternoon", "evening"].includes(parsed.timeOfDay) ? parsed.timeOfDay : null;
+    return { phases: names.length > 0 ? names : null, durableFacts, timeOfDay };
   } catch (e) {
     return null;
   }
@@ -2835,22 +2855,44 @@ function normalizeOutlineDraft(outline) {
     return text ? { text, done: false, ...dueDate ? { dueDate } : {} } : null;
   }).filter(Boolean);
 }
-async function proposeSessionFocuses(examTitle, materialText, sessionCount, subject, weakTopicsFocus) {
-  if (!materialText || !materialText.trim()) return null;
+async function proposeSessionFocuses(examTitle, materialText, sessionCount, subject, weakTopicsFocus, instructions) {
+  const hasInstructions = instructions && instructions.trim();
+  if ((!materialText || !materialText.trim()) && !hasInstructions) return null;
   if (!canAddSessionFocus()) return null;
   try {
     const weakTopicsInstruction = weakTopicsFocus ? " The student's first pass showed these topics need extra attention: " + weakTopicsFocus + ". Weight the session labels toward those, without ignoring the rest of the material entirely." : "";
-    const prompt = "A student has " + sessionCount + ' spaced study session(s) counting down to their exam: "' + examTitle + '"' + (subject ? " (" + subject + ")" : "") + "." + weakTopicsInstruction + " Here's their study material:\n\n" + materialText.slice(0, 6e3) + "\n\nWrite exactly " + sessionCount + ` short study-focus labels, one per session, in the order the sessions happen (earliest first, working toward full review by the last one). Keep each one under 8 words -- a quick label a student can read in passing, like "Ch 4-6: cell structure" or "Unit 3 practice problems", not a full descriptive sentence. Ground every label in real topics, chapters, or sections that actually appear in the material above. Never use an em dash or semicolon to connect ideas. Use a colon, "and", or just cut one instead. If the material doesn't give you enough to write ` + sessionCount + ` genuinely distinct, specific labels, don't pad with generic filler like "General review" -- respond with {"focuses":[]} instead. Respond with ONLY valid JSON, no markdown fences, no commentary: {"focuses":["Ch 4-6: cell structure","Ch 7-8: energy and metabolism"]}`;
+    const studentInstruction = hasInstructions ? ' The student also told Studlin this about how they want the plan: "' + instructions.trim().slice(0, 500) + '". Follow it where reasonable.' : "";
+    const prompt = "A student has " + sessionCount + ' spaced study session(s) counting down to their exam: "' + examTitle + '"' + (subject ? " (" + subject + ")" : "") + "." + weakTopicsInstruction + studentInstruction + " " + (materialText && materialText.trim() ? "Here's their study material:\n\n" + materialText.slice(0, 6e3) + "\n\n" : "") + "Write exactly " + sessionCount + ' short study-focus labels, one per session, in the order the sessions happen (earliest first, working toward full review by the last one). Keep each one under 8 words -- a quick label a student can read in passing, like "Ch 4-6: cell structure" or "Unit 3 practice problems", not a full descriptive sentence. ' + (materialText && materialText.trim() ? "Ground every label in real topics, chapters, or sections that actually appear in the material above. " : "") + `Never use an em dash or semicolon to connect ideas. Use a colon, "and", or just cut one instead. If there isn't enough to write ` + sessionCount + ` genuinely distinct, specific labels, don't pad with generic filler like "General review" -- respond with an empty focuses list instead. ` + (hasInstructions ? 'Separately, look at what the student told Studlin above (not the study material) and decide: (1) is any of it a durable, standing preference about how they like to study in general -- not a one-off fact about just this exam -- worth remembering for future plans too (e.g. "prefers morning study sessions", "likes short 20-minute sessions")? List 0-2 such facts, short sentences, third person. Do NOT include anything tied only to this specific exam (e.g. "already knows chapter 1") -- that belongs in the focus labels above, not here. (2) did they express a preference for morning, afternoon, or evening study sessions? If so which one, else null. ' : "") + 'Respond with ONLY valid JSON, no markdown fences, no commentary: {"focuses":["Ch 4-6: cell structure","Ch 7-8: energy and metabolism"]' + (hasInstructions ? ',"durableFacts":[],"timeOfDay":null' : "") + "}";
     const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt }], model: "standard", format: "json" }) });
     recordSessionFocus();
     const data = await res.json();
     const raw = (data.reply || "").replace(/```json?\n?/gi, "").replace(/```/g, "").trim();
     const parsed = JSON.parse(raw);
-    if (parsed && Array.isArray(parsed.focuses) && parsed.focuses.length > 0) {
-      const lines = parsed.focuses.filter((f) => typeof f === "string" && f.trim()).slice(0, sessionCount).map((f) => stripEmDash(f.trim()));
-      return lines.length > 0 ? lines : null;
-    }
+    if (!parsed) return null;
+    const lines = Array.isArray(parsed.focuses) ? parsed.focuses.filter((f) => typeof f === "string" && f.trim()).slice(0, sessionCount).map((f) => stripEmDash(f.trim())) : [];
+    const durableFacts = Array.isArray(parsed.durableFacts) ? parsed.durableFacts.filter((f) => typeof f === "string" && f.trim()).slice(0, 2).map((f) => stripEmDash(f.trim())) : [];
+    const timeOfDay = ["morning", "afternoon", "evening"].includes(parsed.timeOfDay) ? parsed.timeOfDay : null;
+    if (lines.length === 0 && durableFacts.length === 0 && !timeOfDay) return null;
+    return { focuses: lines.length > 0 ? lines : null, durableFacts, timeOfDay };
+  } catch (e) {
     return null;
+  }
+}
+async function refineSessionFocuses(examTitle, currentFocuses, critique, sessionCount, subject) {
+  if (!critique || !critique.trim()) return null;
+  if (!canAddSessionFocus()) return null;
+  try {
+    const prompt = `A student's study plan for their exam "` + examTitle + '"' + (subject ? " (" + subject + ")" : "") + " currently has these " + sessionCount + " session focus labels, earliest first:\n\n" + currentFocuses.map((f, i) => i + 1 + ". " + (f || "(no label yet)")).join("\n") + '\n\nThe student said this about what they want changed: "' + critique.trim().slice(0, 500) + '". Revise the focus labels to address that. Keep exactly ' + sessionCount + ' labels, same order, same rules as before: under 8 words each, specific, no em dash or semicolon. Also decide: (1) is any of what the student just said a durable, standing preference about how they like to study in general (not specific to just this exam)? List 0-2 short third-person facts, else an empty list. (2) did they express a morning/afternoon/evening preference? If so which, else null. Respond with ONLY valid JSON, no markdown fences, no commentary: {"focuses":["..."],"durableFacts":[],"timeOfDay":null}';
+    const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt }], model: "standard", format: "json" }) });
+    recordSessionFocus();
+    const data = await res.json();
+    const raw = (data.reply || "").replace(/```json?\n?/gi, "").replace(/```/g, "").trim();
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.focuses) || parsed.focuses.length === 0) return null;
+    const lines = parsed.focuses.filter((f) => typeof f === "string" && f.trim()).slice(0, sessionCount).map((f) => stripEmDash(f.trim()));
+    const durableFacts = Array.isArray(parsed.durableFacts) ? parsed.durableFacts.filter((f) => typeof f === "string" && f.trim()).slice(0, 2).map((f) => stripEmDash(f.trim())) : [];
+    const timeOfDay = ["morning", "afternoon", "evening"].includes(parsed.timeOfDay) ? parsed.timeOfDay : null;
+    return { focuses: lines.length > 0 ? lines : null, durableFacts, timeOfDay };
   } catch (e) {
     return null;
   }
@@ -2866,7 +2908,8 @@ async function attachSessionFocusesToSyllabusExams(noteId, tag, items) {
     const markerId = "syl-" + noteId + "-" + i;
     const sessions = lsGet("events", []).filter((e) => e.dueEventId === markerId && e.isExamPrepSession).sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
     if (sessions.length === 0) continue;
-    const focuses = await proposeSessionFocuses(it.title, materialText, sessions.length, tag);
+    const result = await proposeSessionFocuses(it.title, materialText, sessions.length, tag);
+    const focuses = result && result.focuses;
     if (!focuses) continue;
     const idOrder = sessions.map((s) => s.id);
     lsSet("events", lsGet("events", []).map((e) => {
@@ -5615,7 +5658,7 @@ function saveProfile(p) {
 }
 const AI_MEMORY_FACT_CAP = 20;
 function getAiMemory() {
-  return lsGet("aiMemory", { facts: [], updatedAt: null });
+  return lsGet("aiMemory", { facts: [], updatedAt: null, timeOfDay: null });
 }
 function saveAiMemory(mem) {
   lsSet("aiMemory", mem);
@@ -5624,7 +5667,7 @@ async function pushAiMemory(mem) {
   const u = firebase.auth().currentUser;
   if (!u) return;
   try {
-    await fsdb().collection("aiMemory").doc(u.uid).set({ facts: mem.facts || [], updatedAt: (/* @__PURE__ */ new Date()).toISOString() }, { merge: true });
+    await fsdb().collection("aiMemory").doc(u.uid).set({ facts: mem.facts || [], timeOfDay: mem.timeOfDay || null, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }, { merge: true });
   } catch (e) {
   }
 }
@@ -5635,7 +5678,7 @@ async function hydrateAiMemoryOnAuth() {
     const doc = await fsdb().collection("aiMemory").doc(u.uid).get();
     if (doc.exists) {
       const data = doc.data();
-      saveAiMemory({ facts: Array.isArray(data.facts) ? data.facts : [], updatedAt: data.updatedAt || null });
+      saveAiMemory({ facts: Array.isArray(data.facts) ? data.facts : [], timeOfDay: data.timeOfDay || null, updatedAt: data.updatedAt || null });
     }
   } catch (e) {
   }
@@ -5659,7 +5702,22 @@ function mergeAiMemoryFacts(existingMem, newFactTexts) {
 }
 function removeAiMemoryFact(mem, index) {
   const facts = (mem.facts || []).filter((_, i) => i !== index);
-  return { facts, updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+  return { facts, timeOfDay: mem.timeOfDay || null, updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+}
+function mergeAiMemoryTimeOfDay(existingMem, newTimeOfDay) {
+  if (!newTimeOfDay) return existingMem || { facts: [], timeOfDay: null, updatedAt: null };
+  return { facts: existingMem && existingMem.facts || [], timeOfDay: newTimeOfDay, updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+}
+const TIME_OF_DAY_ANCHORS = { morning: "08:00", afternoon: "14:00", evening: "18:00" };
+function resolveTimeOfDayAnchor(pref, prefs) {
+  const anchor = TIME_OF_DAY_ANCHORS[pref];
+  if (!anchor) return prefs.workStartTime;
+  const anchorMins = timeToMinutes(anchor);
+  const startMins = timeToMinutes(prefs.workStartTime);
+  const endMins = timeToMinutes(prefs.workEndTime);
+  const clamped = Math.min(Math.max(anchorMins, startMins), endMins);
+  const h = Math.floor(clamped / 60), m = clamped % 60;
+  return String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0");
 }
 function seedEventsIfStale() {
   return;
@@ -6073,6 +6131,10 @@ function StudlinPrep({ setActive = () => {
   const [buildPlanWeaveCards, setBuildPlanWeaveCards] = useState(true);
   const [buildPlanWeavePE, setBuildPlanWeavePE] = useState(true);
   const [buildPlanHoursTarget, setBuildPlanHoursTarget] = useState("");
+  const [buildPlanInstructions, setBuildPlanInstructions] = useState("");
+  const [buildPlanCritique, setBuildPlanCritique] = useState("");
+  const [buildPlanRefining, setBuildPlanRefining] = useState(false);
+  const [buildPlanMemoryToast, setBuildPlanMemoryToast] = useState("");
   const [buildPlanFocuses, setBuildPlanFocuses] = useState([]);
   const [buildPlanOverrides, setBuildPlanOverrides] = useState([]);
   const [buildPlanConfidence, setBuildPlanConfidence] = useState("okay");
@@ -6304,6 +6366,10 @@ function StudlinPrep({ setActive = () => {
     setBuildPlanWeavePE(true);
     setBuildPlanHoursTarget("");
     setBuildPlanFocuses([]);
+    setBuildPlanInstructions("");
+    setBuildPlanCritique("");
+    setBuildPlanRefining(false);
+    setBuildPlanMemoryToast("");
     setBuildPlanMaterialOpen(!hasMaterial);
     const log = exam.confidenceLog || [];
     setBuildPlanConfidence(log.length > 0 ? confidenceZoneOf(log[log.length - 1]) : "okay");
@@ -6322,6 +6388,10 @@ function StudlinPrep({ setActive = () => {
     setBuildPlanWeavePE(true);
     setBuildPlanHoursTarget("");
     setBuildPlanFocuses([]);
+    setBuildPlanInstructions("");
+    setBuildPlanCritique("");
+    setBuildPlanRefining(false);
+    setBuildPlanMemoryToast("");
     setManualSessionRows([]);
   };
   const persistBuildPlanMaterial = () => {
@@ -6352,8 +6422,18 @@ function StudlinPrep({ setActive = () => {
     const hasTaperedLastSession = dates.length >= 3;
     const taperedLastDuration = hasTaperedLastSession ? Math.max(15, Math.round(sessionDuration * 0.6 / 5) * 5) : null;
     const minDelay = new Promise((r) => setTimeout(r, 900));
-    const focusesPromise = hasMaterial && dates.length > 0 ? proposeSessionFocuses(buildPlanExam.title, buildPlanMaterialText, dates.length, buildPlanExam.subject) : Promise.resolve(null);
-    const [focuses] = await Promise.all([focusesPromise, minDelay]);
+    const hasInstructions = buildPlanInstructions.trim().length > 0;
+    const focusesPromise = (hasMaterial || hasInstructions) && dates.length > 0 ? proposeSessionFocuses(buildPlanExam.title, buildPlanMaterialText, dates.length, buildPlanExam.subject, void 0, buildPlanInstructions) : Promise.resolve(null);
+    const [focusResult] = await Promise.all([focusesPromise, minDelay]);
+    const focuses = focusResult && focusResult.focuses;
+    if (focusResult && (focusResult.durableFacts.length > 0 || focusResult.timeOfDay)) {
+      const withFacts = mergeAiMemoryFacts(getAiMemory(), focusResult.durableFacts);
+      const withTimeOfDay = mergeAiMemoryTimeOfDay(withFacts, focusResult.timeOfDay);
+      saveAiMemory(withTimeOfDay);
+      pushAiMemory(withTimeOfDay);
+      setBuildPlanMemoryToast("Studlin AI remembered something new");
+      setTimeout(() => setBuildPlanMemoryToast(""), 3500);
+    }
     setBuildPlanPreview({
       sessionCount: dates.length,
       sessionDuration,
@@ -6377,6 +6457,27 @@ function StudlinPrep({ setActive = () => {
     setBuildPlanFocuses(focuses || dates.map(() => ""));
     setBuildPlanOverrides(dates.map((d, i) => hasTaperedLastSession && i === dates.length - 1 ? { date: d, duration: taperedLastDuration } : null));
     setBuildPlanStep("preview");
+  };
+  const applyBuildPlanCritique = async () => {
+    if (!buildPlanExam || !buildPlanPreview || !buildPlanCritique.trim()) return;
+    if (!canAddSessionFocus()) {
+      setUpgradeModal({ feature: "AI study plans", detail: canAddSessionFocusReason() === "free-tier" ? "AI study plans are a Pro feature. Upgrade to use them." : AI_USAGE_CAP_MESSAGE });
+      return;
+    }
+    setBuildPlanRefining(true);
+    const result = await refineSessionFocuses(buildPlanExam.title, buildPlanFocuses, buildPlanCritique, buildPlanPreview.sessionCount, buildPlanExam.subject);
+    setBuildPlanRefining(false);
+    if (!result) return;
+    if (result.focuses) setBuildPlanFocuses(result.focuses);
+    if (result.durableFacts.length > 0 || result.timeOfDay) {
+      const withFacts = mergeAiMemoryFacts(getAiMemory(), result.durableFacts);
+      const withTimeOfDay = mergeAiMemoryTimeOfDay(withFacts, result.timeOfDay);
+      saveAiMemory(withTimeOfDay);
+      pushAiMemory(withTimeOfDay);
+      setBuildPlanMemoryToast("Studlin AI remembered something new");
+      setTimeout(() => setBuildPlanMemoryToast(""), 3500);
+    }
+    setBuildPlanCritique("");
   };
   const adjustBuildPlanCount = (count) => {
     if (!buildPlanExam) return;
@@ -6422,7 +6523,7 @@ function StudlinPrep({ setActive = () => {
       genPE = await doGenPracticeExamForExam();
     }
     const events = removeGenericExamPrepSessions(lsGet("events", []), buildPlanExam.id);
-    const sessions = buildExamSessionEvents(buildPlanExam.title, buildPlanExam.date, buildPlanExam.subject, buildPlanPreview.sessionCount, "prep-" + buildPlanExam.id + "-" + Date.now(), events, routines, prefs, { dueEventId: buildPlanExam.id }, buildPlanPreview.difficultyValue, buildPlanPreview.sessionDuration, buildPlanExam.examWeight, buildPlanExam.confidenceLog, buildPlanExam.importanceLevel, buildPlanExam.gradeWeightPercent);
+    const sessions = buildExamSessionEvents(buildPlanExam.title, buildPlanExam.date, buildPlanExam.subject, buildPlanPreview.sessionCount, "prep-" + buildPlanExam.id + "-" + Date.now(), events, routines, prefs, { dueEventId: buildPlanExam.id }, buildPlanPreview.difficultyValue, buildPlanPreview.sessionDuration, buildPlanExam.examWeight, buildPlanExam.confidenceLog, buildPlanExam.importanceLevel, buildPlanExam.gradeWeightPercent, resolveTimeOfDayAnchor(getAiMemory().timeOfDay, prefs));
     const requestedCount = buildPlanPreview.sessionCount;
     let working = events.concat(sessions);
     const placedSessions = sessions.map((s, i) => {
@@ -7234,7 +7335,8 @@ function StudlinPrep({ setActive = () => {
         return;
       }
       setSessionScheduleLoading(true);
-      const focuses = await proposeSessionFocuses(selectedExam.title, materialText, genericPending.length, selectedExam.subject);
+      const focusResult = await proposeSessionFocuses(selectedExam.title, materialText, genericPending.length, selectedExam.subject);
+      const focuses = focusResult && focusResult.focuses;
       setSessionScheduleLoading(false);
       if (!focuses) return;
       const idOrder = genericPending.map((s) => s.id);
@@ -7534,7 +7636,15 @@ function StudlinPrep({ setActive = () => {
           placeholder: "0",
           style: { width: 56, fontSize: 11.5, padding: "5px 8px" }
         }
-      ))), /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanGenFlashcards, onChange: (e) => setBuildPlanGenFlashcards(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, "Also generate flashcards")), buildPlanGenFlashcards && /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginLeft: 24 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanWeaveCards, onChange: (e) => setBuildPlanWeaveCards(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Review them as part of each session")), /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanGenPE, onChange: (e) => setBuildPlanGenPE(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, "Also generate a practice exam")), buildPlanGenPE && /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginLeft: 24 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanWeavePE, onChange: (e) => setBuildPlanWeavePE(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Use my last session to take it")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Hours to study for this (optional):"), /* @__PURE__ */ React.createElement(Input, { type: "number", min: 0, step: 0.5, value: buildPlanHoursTarget, onChange: (e) => setBuildPlanHoursTarget(e.target.value), placeholder: "0", style: { width: 60 } }))));
+      ))), /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanGenFlashcards, onChange: (e) => setBuildPlanGenFlashcards(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, "Also generate flashcards")), buildPlanGenFlashcards && /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginLeft: 24 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanWeaveCards, onChange: (e) => setBuildPlanWeaveCards(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Review them as part of each session")), /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanGenPE, onChange: (e) => setBuildPlanGenPE(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, "Also generate a practice exam")), buildPlanGenPE && /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginLeft: 24 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanWeavePE, onChange: (e) => setBuildPlanWeavePE(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Use my last session to take it")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Hours to study for this (optional):"), /* @__PURE__ */ React.createElement(Input, { type: "number", min: 0, step: 0.5, value: buildPlanHoursTarget, onChange: (e) => setBuildPlanHoursTarget(e.target.value), placeholder: "0", style: { width: 60 } })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted, display: "block", marginBottom: 6 } }, "Anything you want Studlin to know (optional)"), /* @__PURE__ */ React.createElement(
+        Textarea,
+        {
+          value: buildPlanInstructions,
+          onChange: (e) => setBuildPlanInstructions(e.target.value),
+          placeholder: "e.g. mornings only, I already know the intro chapters, shorter sessions",
+          style: { minHeight: 56, fontSize: 12.5 }
+        }
+      ))));
     })(),
     buildPlanExam && buildPlanStep === "generating" && // The real "thinking" pause -- see generatePreview's minDelay/
     // Promise.all. Nothing about the plan (session count, duration,
@@ -7593,7 +7703,19 @@ function StudlinPrep({ setActive = () => {
           style: { width: "100%", fontSize: 12 }
         }
       ));
-    })), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Sessions:"), /* @__PURE__ */ React.createElement(NumField, { min: 1, max: 6, fallback: 4, value: buildPlanPreview.sessionCount, onChange: adjustBuildPlanCount, style: { width: 52 } }))))
+    })), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Sessions:"), /* @__PURE__ */ React.createElement(NumField, { min: 1, max: 6, fallback: 4, value: buildPlanPreview.sessionCount, onChange: adjustBuildPlanCount, style: { width: 52 } })), !buildPlanGeneric && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 14 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted, display: "block", marginBottom: 6 } }, "Not quite right? Tell Studlin what to change"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(
+      Input,
+      {
+        value: buildPlanCritique,
+        onChange: (e) => setBuildPlanCritique(e.target.value),
+        placeholder: "e.g. more focused on the harder chapters",
+        disabled: buildPlanRefining,
+        style: { flex: 1, fontSize: 12.5 },
+        onKeyDown: (e) => {
+          if (e.key === "Enter" && buildPlanCritique.trim() && !buildPlanRefining) applyBuildPlanCritique();
+        }
+      }
+    ), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", disabled: !buildPlanCritique.trim() || buildPlanRefining, onClick: applyBuildPlanCritique }, buildPlanRefining ? "Updating\u2026" : "Update plan"))), buildPlanMemoryToast && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10, fontSize: 11.5, color: T.lime, display: "flex", alignItems: "center", gap: 6 } }, buildPlanMemoryToast)))
   ), /* @__PURE__ */ React.createElement(
     Modal,
     {
@@ -10122,7 +10244,7 @@ function restampSessionPriorities(examId) {
   });
   lsSet("events", next);
 }
-function buildExamSessionEvents(examTitle, examDate, subject, count, idPrefix, working, routines, prefs, extraFields, difficulty, durationOverride, examWeight, confidenceLog, importanceLevel, gradeWeightPercent) {
+function buildExamSessionEvents(examTitle, examDate, subject, count, idPrefix, working, routines, prefs, extraFields, difficulty, durationOverride, examWeight, confidenceLog, importanceLevel, gradeWeightPercent, desiredTimeOverride) {
   const dates = computeReviewDates(examDate, dayKey(), count);
   const duration = durationOverride || suggestDurationFor(subject, "study block") || 25;
   const nearbyExamCount = working.filter((e) => e.kind === "exam" && e.status !== "done" && e.date && !(e.date === examDate && e.title === examTitle) && Math.abs(Math.round((/* @__PURE__ */ new Date(e.date + "T12:00:00") - /* @__PURE__ */ new Date(examDate + "T12:00:00")) / 864e5)) <= EXAM_CLUSTER_WINDOW_DAYS).length;
@@ -10130,7 +10252,7 @@ function buildExamSessionEvents(examTitle, examDate, subject, count, idPrefix, w
   let localWorking = working;
   const built = [];
   dates.forEach((date, si) => {
-    const slot = findReliableSlotFor(localWorking, routines, prefs, date, prefs.workStartTime, duration, examDate, difficulty ?? 500);
+    const slot = findReliableSlotFor(localWorking, routines, prefs, date, desiredTimeOverride || prefs.workStartTime, duration, examDate, difficulty ?? 500);
     if (!slot) return;
     const ev = {
       id: idPrefix + "-" + si,
@@ -13609,6 +13731,18 @@ function PhasesOutlineEditor({ item, onChange, subject, onGateBlocked = () => {
 }, onNeedsDetail = () => {
 } }) {
   const hasEnoughDetail = hasEnoughDetailForBreakdown(item.detail);
+  const [critique, setCritique] = useState("");
+  const [refining, setRefining] = useState(false);
+  const [memoryToast, setMemoryToast] = useState("");
+  const rememberPreferences = (durableFacts, timeOfDay) => {
+    if ((durableFacts || []).length === 0 && !timeOfDay) return;
+    const withFacts = mergeAiMemoryFacts(getAiMemory(), durableFacts || []);
+    const withTimeOfDay = mergeAiMemoryTimeOfDay(withFacts, timeOfDay);
+    saveAiMemory(withTimeOfDay);
+    pushAiMemory(withTimeOfDay);
+    setMemoryToast("Studlin AI remembered something new");
+    setTimeout(() => setMemoryToast(""), 3500);
+  };
   const suggestPhases = async () => {
     if (!hasEnoughDetail) {
       onNeedsDetail();
@@ -13619,11 +13753,56 @@ function PhasesOutlineEditor({ item, onChange, subject, onGateBlocked = () => {
       return;
     }
     onChange({ phasesLoading: true });
-    const names = await proposeProjectPhases(item.title, item.detail || "", subject);
+    const result = await proposeProjectPhases(item.title, item.detail || "", subject, item.instructions || "");
     recordProjectBreakdown();
-    onChange({ phasesLoading: false, phases: names || [] });
+    onChange({ phasesLoading: false, phases: result && result.phases || [] });
+    if (result) rememberPreferences(result.durableFacts, result.timeOfDay);
   };
-  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { marginTop: 8 } }, item.phases === void 0 ? /* @__PURE__ */ React.createElement("button", { type: "button", disabled: !!item.phasesLoading, onClick: suggestPhases, style: { background: "none", border: `1px dashed ${T.borderHover}`, borderRadius: 6, color: T.muted, fontSize: 11, fontFamily: T.font, cursor: item.phasesLoading ? "default" : "pointer", padding: "5px 10px", opacity: item.phasesLoading ? 0.6 : 1 } }, item.phasesLoading ? "Thinking through phases\u2026" : "This looks big. Break it into phases?") : item.phases.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted } }, "Not enough detail here to break into phases. Add detail above, or leave it as one Attack Block.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Phases: only the first gets scheduled now"), item.phases.map((ph, pi) => /* @__PURE__ */ React.createElement("div", { key: pi, style: { display: "flex", alignItems: "center", gap: 6 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10, color: T.faint, width: 14, flexShrink: 0, fontFamily: T.mono } }, pi + 1), /* @__PURE__ */ React.createElement(Input, { value: ph, onChange: (e) => onChange({ phases: item.phases.map((p, ppi) => ppi === pi ? e.target.value : p) }), style: { flex: 1, fontSize: 12, padding: "5px 8px" } }), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => onChange({ phases: item.phases.filter((_, ppi) => ppi !== pi) }), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 15, lineHeight: 1, padding: 2, flexShrink: 0 } }, "\xD7"))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => onChange({ phases: [...item.phases, ""] }), style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline", textAlign: "left" } }, "+ Add phase"))));
+  const applyCritique = async () => {
+    if (!critique.trim()) return;
+    if (!canBreakDownProject()) {
+      onGateBlocked(canBreakDownProjectReason());
+      return;
+    }
+    setRefining(true);
+    const result = await refineProjectPhases(item.title, item.phases, critique, subject);
+    recordProjectBreakdown();
+    setRefining(false);
+    if (!result) return;
+    if (result.phases) onChange({ phases: result.phases });
+    rememberPreferences(result.durableFacts, result.timeOfDay);
+    setCritique("");
+  };
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { marginTop: 8 } }, item.phases === void 0 ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(
+    Textarea,
+    {
+      value: item.instructions || "",
+      onChange: (e) => onChange({ instructions: e.target.value }),
+      placeholder: "Anything you want Studlin to know for the breakdown (optional) -- e.g. mornings only, split research into two phases",
+      style: { minHeight: 48, fontSize: 12, marginBottom: 8 }
+    }
+  ), /* @__PURE__ */ React.createElement("button", { type: "button", disabled: !!item.phasesLoading, onClick: suggestPhases, style: { background: "none", border: `1px dashed ${T.borderHover}`, borderRadius: 6, color: T.muted, fontSize: 11, fontFamily: T.font, cursor: item.phasesLoading ? "default" : "pointer", padding: "5px 10px", opacity: item.phasesLoading ? 0.6 : 1 } }, item.phasesLoading ? "Thinking through phases\u2026" : "This looks big. Break it into phases?")) : item.phases.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted } }, "Not enough detail here to break into phases. Add detail above, or leave it as one Attack Block.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Phases: only the first gets scheduled now"), item.phases.map((ph, pi) => /* @__PURE__ */ React.createElement("div", { key: pi, style: { display: "flex", alignItems: "center", gap: 6 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10, color: T.faint, width: 14, flexShrink: 0, fontFamily: T.mono } }, pi + 1), /* @__PURE__ */ React.createElement(Input, { value: ph, onChange: (e) => onChange({ phases: item.phases.map((p, ppi) => ppi === pi ? e.target.value : p) }), style: { flex: 1, fontSize: 12, padding: "5px 8px" } }), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => onChange({ phases: item.phases.filter((_, ppi) => ppi !== pi) }), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 15, lineHeight: 1, padding: 2, flexShrink: 0 } }, "\xD7"))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => onChange({ phases: [...item.phases, ""] }), style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline", textAlign: "left" } }, "+ Add phase"), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 6, display: "flex", gap: 6 } }, /* @__PURE__ */ React.createElement(
+    Input,
+    {
+      value: critique,
+      onChange: (e) => setCritique(e.target.value),
+      disabled: refining,
+      placeholder: "Not quite right? Tell Studlin what to change",
+      style: { flex: 1, fontSize: 11.5, padding: "5px 8px" },
+      onKeyDown: (e) => {
+        if (e.key === "Enter" && critique.trim() && !refining) applyCritique();
+      }
+    }
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      disabled: !critique.trim() || refining,
+      onClick: applyCritique,
+      style: { background: "none", border: `1px solid ${T.borderHover}`, borderRadius: 6, color: T.muted, fontSize: 11, fontFamily: T.font, cursor: refining ? "default" : "pointer", padding: "5px 10px", opacity: !critique.trim() || refining ? 0.6 : 1, flexShrink: 0 }
+    },
+    refining ? "Updating\u2026" : "Update"
+  )), memoryToast && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.lime } }, memoryToast))));
 }
 const WIZARD_STEP_ORDER = ["status", "classes", "term", "awake", "personalize", "activities", "calendarSync", "finalReview"];
 const WIZARD_STEPPER = [
@@ -15811,7 +15990,7 @@ function EventDetailModal({ eventId, onClose: onClose2, commit, onToast, setActi
       const phases = isPhaseCandidate ? (projectPlan.phases || []).map((p) => p.trim()).filter(Boolean) : [];
       const outline = isPhaseCandidate ? normalizeOutlineDraft(projectPlan.outline) : [];
       const desiredDate = date && date >= dayKey() ? date : dayKey();
-      attackPair = buildAssignmentAttackBlockPair(ev.id, { title: title.trim(), subject, courseId: courseIdForLabel(subject), notes, deadline: deadline || null, priority, difficulty, probeMins: attackProbeMins, outline }, phases, allEvents, routines, prefs, desiredDate, prefs.workStartTime, false, forcedAttackSlot);
+      attackPair = buildAssignmentAttackBlockPair(ev.id, { title: title.trim(), subject, courseId: courseIdForLabel(subject), notes, deadline: deadline || null, priority, difficulty, probeMins: attackProbeMins, outline }, phases, allEvents, routines, prefs, desiredDate, resolveTimeOfDayAnchor(getAiMemory().timeOfDay, prefs), false, forcedAttackSlot);
       if (!attackPair) {
         setDetailErr("Couldn't find room for a probe session before the deadline -- try a later deadline or turn Attack Block off.");
         return;
@@ -21273,6 +21452,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
   const [courseDeleteSnapshots, setCourseDeleteSnapshots] = useState(null);
   const [courseDeleteToast, setCourseDeleteToast] = useState("");
   const [aiMemoryFacts, setAiMemoryFacts] = useState(() => getAiMemory().facts || []);
+  const [aiTimeOfDay, setAiTimeOfDay] = useState(() => getAiMemory().timeOfDay || null);
   const [confirmRemoveFactIdx, setConfirmRemoveFactIdx] = useState(null);
   const [confirmClearMemory, setConfirmClearMemory] = useState(false);
   const removeAiFact = (idx) => {
@@ -21282,11 +21462,18 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     setAiMemoryFacts(next.facts);
     setConfirmRemoveFactIdx(null);
   };
+  const removeAiTimeOfDay = () => {
+    const next = { ...getAiMemory(), timeOfDay: null, updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+    saveAiMemory(next);
+    pushAiMemory(next);
+    setAiTimeOfDay(null);
+  };
   const clearAiMemory = () => {
-    const next = { facts: [], updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+    const next = { facts: [], timeOfDay: null, updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
     saveAiMemory(next);
     pushAiMemory(next);
     setAiMemoryFacts([]);
+    setAiTimeOfDay(null);
     setConfirmClearMemory(false);
   };
   const countLinkedForSubject = (sub) => {
@@ -21410,7 +21597,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
   ))), toggles.shareAvailabilityMode === "selected" && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted } }, (toggles.shareAvailabilitySelectedUids || []).length === 0 ? "Nobody picked yet -- sharing is on, but no one can see it." : (toggles.shareAvailabilitySelectedUids || []).length + " friend" + ((toggles.shareAvailabilitySelectedUids || []).length === 1 ? "" : "s") + " can see your free/busy time."), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: openShareModePicker, style: { flexShrink: 0, fontSize: 11.5, fontWeight: 700, color: T.lime, background: "none", border: `1px solid ${T.lime}55`, borderRadius: 7, padding: "6px 10px", cursor: "pointer", fontFamily: T.font } }, "Manage")))), /* @__PURE__ */ React.createElement(Modal, { open: shareModePickerOpen, onClose: () => setShareModePickerOpen(false), title: "Choose who can see your free/busy time", sub: "Only these friends' 'Find Shared Study Window' searches and Schedule with Friends overlays will see when you're busy.", width: 420 }, shareCandidatesLoading ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "Loading your friends\u2026") : shareCandidates.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "No friends yet -- add some in Studlin Network first.") : /* @__PURE__ */ React.createElement(React.Fragment, null, shareCandidates.length > 5 && /* @__PURE__ */ React.createElement(Input, { value: shareSearchQuery, onChange: (e) => setShareSearchQuery(e.target.value), placeholder: "Search friends", style: { marginBottom: 10, width: "100%" } }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, maxHeight: 360, overflowY: "auto" } }, shareCandidates.filter((c) => c.name.toLowerCase().includes(shareSearchQuery.trim().toLowerCase())).map((c) => {
     const checked = (toggles.shareAvailabilitySelectedUids || []).includes(c.uid);
     return /* @__PURE__ */ React.createElement("label", { key: c.uid, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 8, border: `1px solid ${T.border}`, cursor: "pointer", background: checked ? T.card2 : "transparent" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked, onChange: () => toggleShareSelectedUid(c.uid), style: { cursor: "pointer" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text } }, c.name));
-  })))), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "Data & AI"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "You own your notes, essays, and recordings."), /* @__PURE__ */ React.createElement(Row, { label: "Use my work to train Studlin AI", sub: "Off by default. We will never share your raw content.", k: "collect" }), /* @__PURE__ */ React.createElement(Row, { label: "Anonymous usage analytics", sub: "Helps us fix bugs and prioritise features.", k: "analytics" }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: exportAllData }, React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 6 } }, Icon.copy, "Export all data")), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: downloadChatHistory, disabled: chatHistoryLoading }, chatHistoryLoading ? "Preparing\u2026" : "Download chat history"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle" }, "Privacy policy"))), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "What Studlin AI remembers"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "Standing preferences it's picked up from your chats \u2014 not one-off requests, just things worth not re-explaining every time."), aiMemoryFacts.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, padding: "16px 0", textAlign: "center", borderTop: `1px solid ${T.border}` } }, "Nothing remembered yet. It'll pick things up naturally as you chat.") : aiMemoryFacts.map((f, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, marginBottom: 8 } }, confirmRemoveFactIdx === i ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, "Forget this?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => removeAiFact(i) }, "Forget"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmRemoveFactIdx(null) }, "Cancel")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, f.text), /* @__PURE__ */ React.createElement("button", { onClick: () => setConfirmRemoveFactIdx(i), style: { background: "none", border: `1px solid ${T.border}`, color: T.muted, cursor: "pointer", borderRadius: 6, padding: "4px 10px", fontSize: 12, fontFamily: T.font, flexShrink: 0 } }, "Remove")))), aiMemoryFacts.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 6 } }, confirmClearMemory ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Forget everything Studlin AI remembers about you?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: clearAiMemory }, "Yes, clear all"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmClearMemory(false) }, "Cancel")) : /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmClearMemory(true) }, "Clear all"))), /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 10 } }, "Account security"), /* @__PURE__ */ React.createElement(Row, { label: "Two-factor authentication", sub: "Add a one-time code on every sign in.", k: "twofa", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: true, style: { opacity: 0.4, cursor: "not-allowed" } }, "Coming Soon") }), /* @__PURE__ */ React.createElement(Row, { label: "Active sessions", sub: "See and sign out other signed-in devices.", k: "sessions", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: true, style: { opacity: 0.4, cursor: "not-allowed" } }, "Coming Soon") }), /* @__PURE__ */ React.createElement(Row, { label: "Change password", sub: passwordResetSent ? "Reset link sent to " + profile.email + "." : "We'll email you a secure link to set a new one.", k: "pw", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: passwordResetLoading, onClick: sendPasswordReset }, passwordResetLoading ? "Sending\u2026" : passwordResetSent ? "Resend" : "Email reset link") }))), active === "Subjects & Labels" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Manage Subjects & Labels"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Color-code your classes. These labels appear on your calendar and tasks globally.")), /* @__PURE__ */ React.createElement(Btn, { onClick: () => {
+  })))), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "Data & AI"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "You own your notes, essays, and recordings."), /* @__PURE__ */ React.createElement(Row, { label: "Use my work to train Studlin AI", sub: "Off by default. We will never share your raw content.", k: "collect" }), /* @__PURE__ */ React.createElement(Row, { label: "Anonymous usage analytics", sub: "Helps us fix bugs and prioritise features.", k: "analytics" }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: exportAllData }, React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 6 } }, Icon.copy, "Export all data")), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: downloadChatHistory, disabled: chatHistoryLoading }, chatHistoryLoading ? "Preparing\u2026" : "Download chat history"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle" }, "Privacy policy"))), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "What Studlin AI remembers"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "Standing preferences it's picked up from your chats \u2014 not one-off requests, just things worth not re-explaining every time."), aiTimeOfDay && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, marginBottom: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, "Prefers ", aiTimeOfDay, " study sessions"), /* @__PURE__ */ React.createElement("button", { onClick: removeAiTimeOfDay, style: { background: "none", border: `1px solid ${T.border}`, color: T.muted, cursor: "pointer", borderRadius: 6, padding: "4px 10px", fontSize: 12, fontFamily: T.font, flexShrink: 0 } }, "Remove")), aiMemoryFacts.length === 0 && !aiTimeOfDay ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, padding: "16px 0", textAlign: "center", borderTop: `1px solid ${T.border}` } }, "Nothing remembered yet. It'll pick things up naturally as you chat.") : aiMemoryFacts.map((f, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, marginBottom: 8 } }, confirmRemoveFactIdx === i ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, "Forget this?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => removeAiFact(i) }, "Forget"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmRemoveFactIdx(null) }, "Cancel")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, f.text), /* @__PURE__ */ React.createElement("button", { onClick: () => setConfirmRemoveFactIdx(i), style: { background: "none", border: `1px solid ${T.border}`, color: T.muted, cursor: "pointer", borderRadius: 6, padding: "4px 10px", fontSize: 12, fontFamily: T.font, flexShrink: 0 } }, "Remove")))), (aiMemoryFacts.length > 0 || aiTimeOfDay) && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 6 } }, confirmClearMemory ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Forget everything Studlin AI remembers about you?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: clearAiMemory }, "Yes, clear all"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmClearMemory(false) }, "Cancel")) : /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmClearMemory(true) }, "Clear all"))), /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 10 } }, "Account security"), /* @__PURE__ */ React.createElement(Row, { label: "Two-factor authentication", sub: "Add a one-time code on every sign in.", k: "twofa", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: true, style: { opacity: 0.4, cursor: "not-allowed" } }, "Coming Soon") }), /* @__PURE__ */ React.createElement(Row, { label: "Active sessions", sub: "See and sign out other signed-in devices.", k: "sessions", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: true, style: { opacity: 0.4, cursor: "not-allowed" } }, "Coming Soon") }), /* @__PURE__ */ React.createElement(Row, { label: "Change password", sub: passwordResetSent ? "Reset link sent to " + profile.email + "." : "We'll email you a secure link to set a new one.", k: "pw", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: passwordResetLoading, onClick: sendPasswordReset }, passwordResetLoading ? "Sending\u2026" : passwordResetSent ? "Resend" : "Email reset link") }))), active === "Subjects & Labels" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Manage Subjects & Labels"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Color-code your classes. These labels appear on your calendar and tasks globally.")), /* @__PURE__ */ React.createElement(Btn, { onClick: () => {
     const term = getSchoolTerm();
     setMgmtSubjs((s) => [...s, { id: String(Date.now()), label: "", color: nextAvailableSubjectColor(s.map((x) => x.color)), termEnd: term ? term.end : null }]);
   } }, "+ Add")), mgmtSubjs.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, padding: "20px 0", textAlign: "center", borderTop: `1px solid ${T.border}` } }, 'No subjects yet. Click "+ Add" to create your first label.'), mgmtSubjs.map((sub, i) => /* @__PURE__ */ React.createElement("div", { key: sub.id || i, style: { ...subjectRowStyle(sub.color), marginBottom: 10 } }, confirmRemoveSubjId === sub.id ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flex: 1 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, 'Delete "', sub.label, '" and its ', countLinkedForSubject(sub), " linked item", countLinkedForSubject(sub) !== 1 ? "s" : "", " (class times, assignments, exams)?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => confirmRemoveSubject(sub) }, "Delete"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmRemoveSubjId(null) }, "Cancel")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(ColorSelect, { value: sub.color, onChange: (c) => setMgmtSubjs((s) => s.map((x, j) => j === i ? { ...x, color: c } : x)) }), /* @__PURE__ */ React.createElement("input", { value: sub.label, onChange: (e) => setMgmtSubjs((s) => s.map((x, j) => j === i ? { ...x, label: e.target.value } : x)), placeholder: "Subject name...", style: { flex: 1, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 7, padding: "7px 10px", color: T.text, fontSize: 13, fontFamily: T.font, outline: "none" } }), /* @__PURE__ */ React.createElement("button", { onClick: () => removeSubjectRow(sub), style: { background: "none", border: `1px solid ${T.border}`, color: T.muted, cursor: "pointer", borderRadius: 6, padding: "4px 10px", fontSize: 12, fontFamily: T.font } }, "Remove")))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 16, alignItems: "center", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Btn, { onClick: saveMgmtSubjs }, "Save changes"), mgmtSubjs.length > 0 && (confirmClearSubjs ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Delete all ", mgmtSubjs.length, " subject", mgmtSubjs.length !== 1 ? "s" : "", " and everything linked to them?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: clearAllSubjects }, "Yes, delete all"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmClearSubjs(false) }, "Cancel")) : /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmClearSubjs(true) }, "Clear all")), mgmtSaved && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.lime, fontWeight: 600 } }, "\u2713 Saved")), courseDeleteToast && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginTop: 10, padding: "9px 12px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.text, flex: 1 } }, courseDeleteToast), /* @__PURE__ */ React.createElement("button", { onClick: undoCourseDeletes, style: { background: "none", border: "none", color: T.lime, cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: T.font, textDecoration: "underline" } }, "Undo")))), active === "Calendar Preferences" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Study Schedule"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 16 } }, "Work hours, weekend schedule, difficulty, and peak focus hours."), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setScheduleSettingsOpen(true) }, "Customize Schedule")), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Weekly Routine"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 16 } }, "Your classes, sports, and shifts: the times the AI treats as absolute and never schedules over."), /* @__PURE__ */ React.createElement(Btn, { onClick: onOpenRoutineCenter }, "Manage Routine")), /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Auto-schedule prep time"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 16 } }, "How Studlin handles study sessions for assignments and exams pulled from a syllabus scan, once they're actually coming up."), /* @__PURE__ */ React.createElement(SelectChip, { options: [{ value: "ask", label: "Always ask" }, { value: "auto", label: "Auto-add" }, { value: "off", label: "Off" }], value: prepScheduleMode, onChange: (v) => {
