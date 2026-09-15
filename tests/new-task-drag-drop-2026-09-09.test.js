@@ -84,7 +84,14 @@ describe("New Task drag-and-drop: component-closure UI (source-level regression 
     const idx = SOURCE.indexOf("e.dataTransfer.setData(NEW_TASK_DRAG_MIME");
     assert.notEqual(idx, -1);
     const body = SOURCE.slice(idx, idx + 300);
-    assert.match(body, /setActive\("calendar"\); onClose\(\);/);
+    // 2026-09-15 fix: this used to assert onClose() -- an identifier that
+    // doesn't exist anywhere in CalendarTab's scope (the modal's real close
+    // function is resetForm, per its own <Modal onClose={resetForm}> wrapper).
+    // The old assertion just encoded the bug: starting the drag threw a
+    // ReferenceError, the modal never closed, and it sat on top of the
+    // calendar blocking the drop target -- exactly the live "drag doesn't
+    // work" report this fixes.
+    assert.match(body, /setActive\("calendar"\); resetForm\(\);/);
   });
 
   test("WeeklyPlanner's drop handler reads the new MIME independently of MANUAL_BLOCK_DRAG_MIME's dueEventId-required contract", () => {

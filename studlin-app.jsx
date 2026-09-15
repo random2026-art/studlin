@@ -29084,6 +29084,27 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     if(registerSetEvents)registerSetEvents(setEvents);
     return ()=>{if(registerSetEvents)registerSetEvents(null);};
   },[]);
+  // Cross-tab safety net, 2026-09-15 user report ("I deleted it and it came
+  // back"): a second tab/window's delete calls lsSet("events",...) which
+  // updates localStorage directly, but never touches THIS tab's own
+  // in-memory `events` state above -- there's no live listener between
+  // tabs otherwise. Left stale, this tab's own next unrelated write (e.g.
+  // marking some OTHER task done) would derive `next` from its outdated
+  // copy of `events` and re-save it, silently resurrecting whatever the
+  // other tab just deleted. The native `storage` event is exactly the
+  // browser's own signal for "localStorage changed in another tab" -- it
+  // never fires for a write this same tab makes, so no self-triggering.
+  useEffect(()=>{
+    const onStorage=(e)=>{
+      if(e.key!=="studlin-events")return;
+      try{
+        const next=e.newValue?JSON.parse(e.newValue):[];
+        if(Array.isArray(next))setEvents(next);
+      }catch(err){}
+    };
+    window.addEventListener("storage",onStorage);
+    return ()=>window.removeEventListener("storage",onStorage);
+  },[]);
   // Refresh once on mount for every still-pending group-proposal block (see
   // refreshPendingAcceptance's own comment for why this is fetch-on-mount,
   // not a live listener) -- reads straight from localStorage rather than
@@ -33432,7 +33453,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           <div draggable onDragStart={(e)=>{
               e.dataTransfer.setData(NEW_TASK_DRAG_MIME,JSON.stringify(dragNewTaskPayload()));
               e.dataTransfer.effectAllowed="copy";
-              setTimeout(()=>{ setActive("calendar"); onClose(); }, 0);
+              setTimeout(()=>{ setActive("calendar"); resetForm(); }, 0);
             }}
             title="Drag onto the calendar to place it exactly where you want"
             style={{display:"flex",alignItems:"center",gap:8,fontSize:11.5,fontWeight:600,color:T.text,padding:"8px 10px",borderRadius:6,border:`1px dashed ${T.lime}77`,cursor:"grab",background:T.lime+"0c",marginBottom:12}}>
@@ -33633,7 +33654,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           <div draggable onDragStart={(e)=>{
               e.dataTransfer.setData(NEW_TASK_DRAG_MIME,JSON.stringify(dragNewTaskPayload()));
               e.dataTransfer.effectAllowed="copy";
-              setTimeout(()=>{ setActive("calendar"); onClose(); }, 0);
+              setTimeout(()=>{ setActive("calendar"); resetForm(); }, 0);
             }}
             title="Drag onto the calendar to place it exactly where you want"
             style={{display:"flex",alignItems:"center",gap:8,fontSize:11.5,fontWeight:600,color:T.text,padding:"8px 10px",borderRadius:6,border:`1px dashed ${T.lime}77`,cursor:"grab",background:T.lime+"0c",marginBottom:12}}>
