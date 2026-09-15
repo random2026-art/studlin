@@ -159,7 +159,11 @@ describe("Source-level regression guards: Studlin Prep's interactive first-visit
   test("guide is gated on the Exams tab having at least one real exam, not shown over the empty state", () => {
     const idx = SOURCE.indexOf("function StudlinPrep(");
     assert.ok(idx > -1);
-    const body = SOURCE.slice(idx, idx + 92000);
+    // Window kept generous on purpose (not just enough to cover today's
+    // offset) -- this is a big component that keeps growing, and a tight
+    // window just means the next unrelated addition earlier in the
+    // function trips this same false failure again.
+    const body = SOURCE.slice(idx, idx + 120000);
     const guideIdx = body.indexOf('prepGuideOpen&&tab==="exams"');
     assert.ok(guideIdx > -1, "the guide render should exist somewhere in StudlinPrep");
     const guideBody = body.slice(guideIdx, guideIdx + 500);
