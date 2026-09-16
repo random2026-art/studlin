@@ -16966,26 +16966,47 @@ function CalendarTab({ setActive = () => {
   };
   const draftChipDragRef = useRef(null);
   const draftChipGhostRef = useRef(null);
+  const draftChipHoverRef = useRef(null);
   const [draftChipDragging, setDraftChipDragging] = useState(false);
   const startDraftChipDrag = (draft) => (e) => {
     if (e.button !== 0) return;
     e.preventDefault();
     draftChipDragRef.current = { draft };
     setDraftChipDragging(true);
+    document.body.style.cursor = "grabbing";
   };
   useEffect(() => {
     if (!draftChipDragging) return;
+    const clearHover = () => {
+      if (draftChipHoverRef.current) {
+        draftChipHoverRef.current.style.outline = "";
+        draftChipHoverRef.current.style.background = "";
+        draftChipHoverRef.current = null;
+      }
+    };
     const onMove = (ev) => {
       const ghost = draftChipGhostRef.current;
       if (ghost) {
         ghost.style.left = ev.clientX + 14 + "px";
         ghost.style.top = ev.clientY + 14 + "px";
       }
+      const dayEl = document.elementFromPoint(ev.clientX, ev.clientY)?.closest("[data-daykey]");
+      if (dayEl !== draftChipHoverRef.current) {
+        clearHover();
+        if (dayEl) {
+          dayEl.style.outline = `2px dashed ${T.lime}`;
+          dayEl.style.outlineOffset = "-2px";
+          dayEl.style.background = T.lime + "14";
+          draftChipHoverRef.current = dayEl;
+        }
+      }
     };
     const onUp = (ev) => {
       const info = draftChipDragRef.current;
       setDraftChipDragging(false);
       draftChipDragRef.current = null;
+      document.body.style.cursor = "";
+      clearHover();
       if (!info) return;
       const hit = gsChipPointToDayTime(ev.clientX, ev.clientY);
       if (!hit) return;
@@ -16997,6 +17018,8 @@ function CalendarTab({ setActive = () => {
     return () => {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
+      clearHover();
+      document.body.style.cursor = "";
     };
   }, [draftChipDragging]);
   const [highlightedSessionId, setHighlightedSessionId] = useState(null);
@@ -19764,7 +19787,7 @@ Examples:
         key: draft.id,
         onMouseDown: startDraftChipDrag(draft),
         title: "Drag onto the calendar to place it",
-        style: { ...subjectRowStyle(tagColor), cursor: "grab", border: `1px dashed ${tagColor}66`, flexDirection: "column", alignItems: "flex-start", gap: 1, position: "relative" }
+        style: { ...subjectRowStyle(tagColor), cursor: "grab", border: `1px dashed ${tagColor}66`, flexDirection: "column", alignItems: "flex-start", gap: 1, position: "relative", opacity: draftChipDragging && draftChipDragRef.current && draftChipDragRef.current.draft.id === draft.id ? 0.35 : 1 }
       },
       /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, fontWeight: 600, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" } }, draft.title),
       /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.faint } }, draft.subject || "\u2014", " \xB7 drag to place"),

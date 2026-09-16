@@ -28739,23 +28739,41 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // state, so this doesn't re-render on every pixel of mouse movement.
   const draftChipDragRef=useRef(null); // {draft}|null while a draft-chip drag is in progress
   const draftChipGhostRef=useRef(null);
+  const draftChipHoverRef=useRef(null); // the calendar day cell currently highlighted under the cursor
   const [draftChipDragging,setDraftChipDragging]=useState(false);
   const startDraftChipDrag=(draft)=>(e)=>{
     if(e.button!==0)return;
     e.preventDefault();
     draftChipDragRef.current={draft};
     setDraftChipDragging(true);
+    document.body.style.cursor="grabbing";
   };
   useEffect(()=>{
     if(!draftChipDragging)return;
+    // 2026-09-16 user report: "when i drag it you cant see it move" -- the
+    // ghost label alone was too subtle to notice. Added a real-time
+    // highlight on the calendar day cell under the cursor (same
+    // data-daykey hit-testing gsChipPointToDayTime already does), same
+    // direct-DOM-write-on-mousemove convention as the ghost position above
+    // so this still doesn't re-render on every pixel of movement.
+    const clearHover=()=>{
+      if(draftChipHoverRef.current){draftChipHoverRef.current.style.outline="";draftChipHoverRef.current.style.background="";draftChipHoverRef.current=null;}
+    };
     const onMove=(ev)=>{
       const ghost=draftChipGhostRef.current;
       if(ghost){ghost.style.left=(ev.clientX+14)+"px";ghost.style.top=(ev.clientY+14)+"px";}
+      const dayEl=document.elementFromPoint(ev.clientX,ev.clientY)?.closest("[data-daykey]");
+      if(dayEl!==draftChipHoverRef.current){
+        clearHover();
+        if(dayEl){dayEl.style.outline=`2px dashed ${T.lime}`;dayEl.style.outlineOffset="-2px";dayEl.style.background=T.lime+"14";draftChipHoverRef.current=dayEl;}
+      }
     };
     const onUp=(ev)=>{
       const info=draftChipDragRef.current;
       setDraftChipDragging(false);
       draftChipDragRef.current=null;
+      document.body.style.cursor="";
+      clearHover();
       if(!info)return;
       const hit=gsChipPointToDayTime(ev.clientX,ev.clientY);
       if(!hit)return;
@@ -28764,7 +28782,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     };
     document.addEventListener("mousemove",onMove);
     document.addEventListener("mouseup",onUp);
-    return ()=>{document.removeEventListener("mousemove",onMove);document.removeEventListener("mouseup",onUp);};
+    return ()=>{document.removeEventListener("mousemove",onMove);document.removeEventListener("mouseup",onUp);clearHover();document.body.style.cursor="";};
   },[draftChipDragging]);
   // Right-column session rows (Phase 4) -- clicking an already-scheduled
   // session jumps the grid to it and briefly outlines the block instead of
@@ -32694,7 +32712,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                   return (
                     <div key={draft.id} onMouseDown={startDraftChipDrag(draft)}
                       title="Drag onto the calendar to place it"
-                      style={{...subjectRowStyle(tagColor),cursor:"grab",border:`1px dashed ${tagColor}66`,flexDirection:"column",alignItems:"flex-start",gap:1,position:"relative"}}>
+                      style={{...subjectRowStyle(tagColor),cursor:"grab",border:`1px dashed ${tagColor}66`,flexDirection:"column",alignItems:"flex-start",gap:1,position:"relative",opacity:(draftChipDragging&&draftChipDragRef.current&&draftChipDragRef.current.draft.id===draft.id)?0.35:1}}>
                       <span style={{fontSize:12,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"100%"}}>{draft.title}</span>
                       <span style={{fontSize:9,color:T.faint}}>{draft.subject||"—"} · drag to place</span>
                       <button type="button" onClick={(e)=>{e.stopPropagation();removeUnplacedTaskDraft(draft.id);}} title="Remove" style={{position:"absolute",top:4,right:4,background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:12,lineHeight:1,padding:2}}>×</button>
