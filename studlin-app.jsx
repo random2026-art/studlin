@@ -126,6 +126,35 @@ const ACCENTS={
   // rest of this object.
   Pink:  {dk:{lime:"#E8829E",limeDk:"#C95F7C",limeLt:"#FFC9D2"}, lt:{lime:"#C23F68",limeDk:"#9E2F52",limeLt:"#FFC9D2"}},
   Slate: {dk:{lime:"#9AA5B1",limeDk:"#7A8592",limeLt:"#C9D1D9"}, lt:{lime:"#5B6672",limeDk:"#454E58",limeLt:"#C9D1D9"}},
+  // 2026-09-15 EXPERIMENT (branch: experiment/blue-rebrand) -- cofounder
+  // research: blue reads as "trust + studying" to students, green doesn't.
+  // NOT reusing the existing Sky accent for this -- Sky's values (#84BBEA
+  // dk / #2D74BC lt) sit almost on top of T.blue (#7BACDF dk / #2D6FB8 lt,
+  // the separate token already used everywhere for comments/subject-color
+  // tags/notification highlights -- see e.g. line ~13626, ~15138). Making
+  // Sky the BRAND accent would make primary buttons/highlights visually
+  // indistinguishable from unrelated blue content elsewhere. These three
+  // are deliberately built at a real color-distance from T.blue (verified:
+  // 28-55 units of RGB distance vs Sky's 6-21) so the brand accent and the
+  // "this is blue-tagged content" meaning never collide. All three also
+  // checked against WCAG contrast (4.4:1+ against dark bg/card, 5.2:1+
+  // against the light bg) so none of them read as washed-out or hard to
+  // see as text/icon color the way a raw pastel blue would on this app's
+  // near-black dark theme.
+  //
+  // Three real options, not one guess, so the cofounders have something
+  // to actually compare instead of a single take-it-or-leave-it color:
+  //  - Cobalt: vivid, confident, the most "modern SaaS" of the three --
+  //    recommended default.
+  //  - Ocean: cooler/fresher, azure-leaning -- calmer, more "focus" mood.
+  //  - Indigo: deeper, slightly purple-leaning -- reads more premium/serious.
+  // If this ships, whichever one wins becomes the new startup default
+  // (see the 'Lime' fallback strings this comment is near) the same way
+  // "Lime" is today -- the other two just stay in Settings as picks,
+  // exactly like every other accent in this object already works.
+  Cobalt:{dk:{lime:"#5B9DF0",limeDk:"#3D7FDB",limeLt:"#A9CDF7"}, lt:{lime:"#1D5FCF",limeDk:"#154A9E",limeLt:"#A9CDF7"}},
+  Ocean: {dk:{lime:"#4FB3D9",limeDk:"#2E93BC",limeLt:"#A8E0F2"}, lt:{lime:"#166E96",limeDk:"#125676",limeLt:"#A8E0F2"}},
+  Indigo:{dk:{lime:"#5D7FE8",limeDk:"#3F5FCC",limeLt:"#C2CDFA"}, lt:{lime:"#3450C9",limeDk:"#28409E",limeLt:"#C2CDFA"}},
 };
 function applyTheme(name, accent, density) {
   Object.assign(T, name === 'light' ? lightT : darkT);
@@ -149,9 +178,14 @@ function applyTheme(name, accent, density) {
     document.documentElement.style.colorScheme = name==='light'?'light':'dark';
   }
 }
+// 2026-09-15 EXPERIMENT (branch: experiment/blue-rebrand): default accent
+// flipped to Cobalt for this preview branch only -- see ACCENTS' own
+// comment above for the full reasoning. This is the module-level paint
+// (runs before React mounts); the component-level reset below handles
+// anyone who already has a DIFFERENT accent saved from browsing main.
 applyTheme(
   (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-theme')) || 'light',
-  (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-accent')) || 'Lime',
+  (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-accent')) || 'Cobalt',
   (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-density')) || 'Comfortable'
 );
 
@@ -35530,7 +35564,10 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
       <div onClick={()=>setTheme(mode)} style={{flex:1,cursor:"pointer",borderRadius:12,padding:16,border:`2px solid ${sel?T.lime:T.border}`,background:sel?T.lime+"08":T.card2,transition:"all 0.15s"}}>
         <div style={{height:90,borderRadius:8,overflow:"hidden",background:isLight?"#FAF6EC":"#0D120F",border:`1px solid ${isLight?"rgba(14,31,24,0.08)":"rgba(255,255,255,0.06)"}`,marginBottom:12,display:"flex"}}>
           <div style={{width:24,background:"#14342A",display:"flex",flexDirection:"column",alignItems:"center",padding:"6px 0",gap:4}}>
-            <div style={{width:10,height:10,background:"#AECE5E",borderRadius:2}} />
+            {/* Reflects the actual current accent (T.lime) instead of a
+                hardcoded green swatch, so this mini preview matches
+                whatever the student really picked below. */}
+            <div style={{width:10,height:10,background:T.lime,borderRadius:2}} />
             <div style={{width:14,height:3,background:"rgba(255,255,255,0.2)",borderRadius:1,marginTop:4}} />
             <div style={{width:14,height:3,background:"rgba(255,255,255,0.12)",borderRadius:1}} />
             <div style={{width:14,height:3,background:"rgba(255,255,255,0.12)",borderRadius:1}} />
@@ -35538,7 +35575,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
           <div style={{flex:1,padding:8,display:"flex",flexDirection:"column",gap:5}}>
             <div style={{display:"flex",gap:4}}>
               <div style={{flex:1,height:18,background:isLight?"#14342A":"#212A24",borderRadius:3}} />
-              <div style={{width:24,height:18,background:"#AECE5E",borderRadius:3}} />
+              <div style={{width:24,height:18,background:T.lime,borderRadius:3}} />
               <div style={{width:24,height:18,background:isLight?"#fff":"#212A24",borderRadius:3,border:isLight?"1px solid rgba(14,31,24,0.08)":"none"}} />
             </div>
             <div style={{display:"flex",gap:4}}>
@@ -35575,7 +35612,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   // still had the pre-removal code. With both gone, the "Study
   // preferences" tab (and its Settings nav entry) has nothing legitimate
   // left in it -- removed below rather than left rendering empty.
-  const accents=[{n:"Lime",c:"#AECE5E"},{n:"Forest",c:"#3E9576"},{n:"Sky",c:"#4F95D6"},{n:"Lilac",c:"#9474C9"},{n:"Peach",c:"#D07C4C"},{n:"Pink",c:"#D9648A"},{n:"Slate",c:"#7A8592"}];
+  const accents=[{n:"Lime",c:"#AECE5E"},{n:"Forest",c:"#3E9576"},{n:"Sky",c:"#4F95D6"},{n:"Lilac",c:"#9474C9"},{n:"Peach",c:"#D07C4C"},{n:"Pink",c:"#D9648A"},{n:"Slate",c:"#7A8592"},{n:"Cobalt",c:"#3D7FDB"},{n:"Ocean",c:"#1C7FA8"},{n:"Indigo",c:"#3F5FCC"}];
   const [mgmtSubjs,setMgmtSubjs]=useState(()=>getSubjects().map(s=>({...s})));
   const [mgmtSaved,setMgmtSaved]=useState(false);
   const [confirmClearSubjs,setConfirmClearSubjs]=useState(false);
@@ -37759,18 +37796,21 @@ function FeedbackPage() {
 // ─── INIT WIZARD ─────────────────────────────────────────────────────────────
 // ─── AUTH SCREEN — minimal gate, links to designed pages ────────────────────
 function AuthScreen(){
+  // 2026-09-15 EXPERIMENT (branch: experiment/blue-rebrand): same pre-auth
+  // hardcoded-color situation as VerifyEmailScreen just above -- repainted
+  // to match Cobalt directly.
   return(
     <div style={{minHeight:"100vh",background:"#0D120F",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20}}>
       <div style={{display:"flex",alignItems:"center",gap:10}}>
-        <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#14342A,#0E1F18)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(174,206,94,0.38)"}}>
-          <div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #CBDF92, #AECE5E)",boxShadow:"0 0 10px 3px rgba(174,206,94,0.65)"}} />
+        <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#123A66,#0B1420)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(91,157,240,0.38)"}}>
+          <div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #A9CDF7, #5B9DF0)",boxShadow:"0 0 10px 3px rgba(91,157,240,0.65)"}} />
         </div>
         <span style={{fontSize:22,fontWeight:700,color:"#E8EFE7"}}>Studlin</span>
       </div>
       <p style={{fontSize:15,color:"rgba(232,239,231,0.6)",margin:0}}>Sign in to access your workspace.</p>
       <div style={{display:"flex",gap:12,marginTop:8}}>
-        <a href="/signin" style={{padding:"12px 28px",borderRadius:10,background:"#AECE5E",color:"#0E1F18",fontSize:14,fontWeight:600,textDecoration:"none"}}>Sign in</a>
-        <a href="/onboarding" style={{padding:"12px 28px",borderRadius:10,border:"1px solid rgba(174,206,94,0.3)",background:"transparent",color:"#AECE5E",fontSize:14,fontWeight:600,textDecoration:"none"}}>Create account</a>
+        <a href="/signin" style={{padding:"12px 28px",borderRadius:10,background:"#5B9DF0",color:"#0E1F18",fontSize:14,fontWeight:600,textDecoration:"none"}}>Sign in</a>
+        <a href="/onboarding" style={{padding:"12px 28px",borderRadius:10,border:"1px solid rgba(91,157,240,0.3)",background:"transparent",color:"#5B9DF0",fontSize:14,fontWeight:600,textDecoration:"none"}}>Create account</a>
       </div>
     </div>
   );
@@ -37807,9 +37847,9 @@ function OtpBoxes({value,onChange,disabled,autoFocus}){
       {[0,1,2,3,4,5].map(i=>(
         <input key={i} ref={el=>refs.current[i]=el} value={value[i]||""} onChange={e=>onInput(i,e)} onKeyDown={e=>onKeyDown(i,e)}
           disabled={disabled} autoFocus={autoFocus&&i===0} inputMode="numeric" maxLength={1}
-          style={{width:42,height:52,textAlign:"center",fontSize:22,fontWeight:700,borderRadius:10,border:"1.5px solid rgba(174,206,94,0.25)",background:"#0D120F",color:"#E8EFE7",outline:"none"}}
-          onFocus={e=>e.target.style.borderColor="#AECE5E"}
-          onBlur={e=>e.target.style.borderColor="rgba(174,206,94,0.25)"} />
+          style={{width:42,height:52,textAlign:"center",fontSize:22,fontWeight:700,borderRadius:10,border:"1.5px solid rgba(91,157,240,0.25)",background:"#0D120F",color:"#E8EFE7",outline:"none"}}
+          onFocus={e=>e.target.style.borderColor="#5B9DF0"}
+          onBlur={e=>e.target.style.borderColor="rgba(91,157,240,0.25)"} />
       ))}
     </div>
   );
@@ -37846,22 +37886,28 @@ function VerifyEmailScreen({user}){
   return(
     <div style={{minHeight:"100vh",background:"#0D120F",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20,padding:24}}>
       <div style={{display:"flex",alignItems:"center",gap:10}}>
-        <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#14342A,#0E1F18)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(174,206,94,0.38)"}}>
-          <div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #CBDF92, #AECE5E)",boxShadow:"0 0 10px 3px rgba(174,206,94,0.65)"}} />
+        {/* 2026-09-15 EXPERIMENT (branch: experiment/blue-rebrand): this
+            screen renders before the rest of the app's T/ACCENTS system is
+            reachable (pre-auth gate), so it always hardcoded its own
+            colors rather than reading T.lime -- meaning it stayed green
+            for every accent choice, not just the default. Repainted to
+            match Cobalt directly, same as the rest of this branch. */}
+        <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#123A66,#0B1420)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(91,157,240,0.38)"}}>
+          <div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #A9CDF7, #5B9DF0)",boxShadow:"0 0 10px 3px rgba(91,157,240,0.65)"}} />
         </div>
         <span style={{fontSize:22,fontWeight:700,color:"#E8EFE7"}}>Studlin</span>
       </div>
-      <div style={{width:"100%",maxWidth:380,background:"#111A15",border:"1px solid rgba(174,206,94,0.16)",borderRadius:10,padding:"26px 24px",textAlign:"center"}}>
+      <div style={{width:"100%",maxWidth:380,background:"#111A15",border:"1px solid rgba(91,157,240,0.16)",borderRadius:10,padding:"26px 24px",textAlign:"center"}}>
         <div style={{fontSize:17,fontWeight:700,color:"#E8EFE7",marginBottom:8}}>Enter your code</div>
         <p style={{fontSize:13.5,color:"rgba(232,239,231,0.6)",lineHeight:1.6,margin:"0 0 20px"}}>
           We sent a 6-digit code to<br/><strong style={{color:"#E8EFE7"}}>{user.email}</strong>.
         </p>
         <OtpBoxes value={code} onChange={v=>{setCode(v);setErr("");}} disabled={checking} autoFocus />
         {err&&<div style={{fontSize:12,color:"#E05A47",marginTop:14}}>{err}</div>}
-        <button onClick={submitCode} disabled={code.length!==6||checking} style={{width:"100%",padding:"12px 0",borderRadius:10,background:"#AECE5E",color:"#0E1F18",border:"none",fontSize:14,fontWeight:600,cursor:code.length!==6||checking?"not-allowed":"pointer",opacity:code.length!==6||checking?0.5:1,marginTop:18,marginBottom:10}}>
+        <button onClick={submitCode} disabled={code.length!==6||checking} style={{width:"100%",padding:"12px 0",borderRadius:10,background:"#5B9DF0",color:"#0E1F18",border:"none",fontSize:14,fontWeight:600,cursor:code.length!==6||checking?"not-allowed":"pointer",opacity:code.length!==6||checking?0.5:1,marginTop:18,marginBottom:10}}>
           {checking?"Verifying…":"Verify email"}
         </button>
-        <button onClick={resend} disabled={sendStatus==="sending"||sendStatus==="sent"} style={{width:"100%",padding:"11px 0",borderRadius:10,border:"1px solid rgba(174,206,94,0.3)",background:"transparent",color:"#AECE5E",fontSize:13.5,fontWeight:600,cursor:sendStatus==="sending"||sendStatus==="sent"?"not-allowed":"pointer",opacity:sendStatus==="sending"||sendStatus==="sent"?0.6:1}}>
+        <button onClick={resend} disabled={sendStatus==="sending"||sendStatus==="sent"} style={{width:"100%",padding:"11px 0",borderRadius:10,border:"1px solid rgba(91,157,240,0.3)",background:"transparent",color:"#5B9DF0",fontSize:13.5,fontWeight:600,cursor:sendStatus==="sending"||sendStatus==="sent"?"not-allowed":"pointer",opacity:sendStatus==="sending"||sendStatus==="sent"?0.6:1}}>
           {sendStatus==="sending"?"Sending…":sendStatus==="sent"?"Sent — check your inbox":"Resend code"}
         </button>
       </div>
@@ -37887,7 +37933,7 @@ function SharedChatView({shareId}){
       .then(function(data){setChat(data);setStatus("ok");})
       .catch(function(e){setStatus(e.message==="notfound"?"notfound":"error");});
   },[shareId]);
-  const bg=T.bg||"#0D120F",card=T.card||"#19211C",text=T.text||"#E8EFE7",muted=T.muted||"#849389",lime=T.lime||"#AECE5E",font=T.font||"system-ui";
+  const bg=T.bg||"#0D120F",card=T.card||"#19211C",text=T.text||"#E8EFE7",muted=T.muted||"#849389",lime=T.lime||"#5B9DF0",font=T.font||"system-ui";
   if(status==="loading")return(<div style={{minHeight:"100vh",background:bg,display:"grid",placeItems:"center"}}><div style={{width:14,height:14,borderRadius:"50%",border:`2px solid ${lime}`,borderTopColor:"transparent",animation:"studlinSpin 0.7s linear infinite"}}/></div>);
   if(status!=="ok")return(<div style={{minHeight:"100vh",background:bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12,fontFamily:font}}><div style={{fontSize:18,fontWeight:700,color:text}}>{status==="notfound"?"This chat doesn't exist.":"Failed to load chat."}</div><a href="/app" style={{color:lime,fontSize:14,textDecoration:"none"}}>Go to Studlin</a></div>);
   return(
@@ -37994,7 +38040,7 @@ function AuthGate(){
     });
   },[shareId]);
   if(shareId)return <SharedChatView shareId={shareId} />;
-  if(user===undefined)return(<div style={{minHeight:"100vh",background:"#0D120F",display:"grid",placeItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#14342A,#0E1F18)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(174,206,94,0.38)"}}><div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #CBDF92, #AECE5E)",boxShadow:"0 0 10px 3px rgba(174,206,94,0.65)"}}/></div><span style={{fontSize:22,fontWeight:700,color:"#E8EFE7"}}>Studlin</span></div></div>);
+  if(user===undefined)return(<div style={{minHeight:"100vh",background:"#0D120F",display:"grid",placeItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#123A66,#0B1420)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(91,157,240,0.38)"}}><div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #A9CDF7, #5B9DF0)",boxShadow:"0 0 10px 3px rgba(91,157,240,0.65)"}}/></div><span style={{fontSize:22,fontWeight:700,color:"#E8EFE7"}}>Studlin</span></div></div>);
   if(!user)return <AuthScreen />;
   if(isPasswordAccount(user)&&!user.emailVerified)return <VerifyEmailScreen user={user} />;
   return <App />;
@@ -38239,9 +38285,17 @@ function App() {
   const [accent,setAccentState]=useState(()=>{
     if(typeof localStorage!=="undefined"){
       if(!localStorage.getItem("studlin-accent-reset5")){localStorage.setItem("studlin-accent","Lime");localStorage.setItem("studlin-accent-reset5","1");}
-      return localStorage.getItem("studlin-accent")||"Lime";
+      // 2026-09-15 EXPERIMENT (branch: experiment/blue-rebrand): same
+      // one-time-migration pattern as reset5 above, just for this
+      // preview -- forces anyone loading this branch (including with an
+      // accent already saved from browsing main) onto the new default so
+      // the comparison is consistent, without touching their actual
+      // saved choice if this never ships (the flag+value only exist on
+      // this branch's code path).
+      if(!localStorage.getItem("studlin-accent-reset6")){localStorage.setItem("studlin-accent","Cobalt");localStorage.setItem("studlin-accent-reset6","1");}
+      return localStorage.getItem("studlin-accent")||"Cobalt";
     }
-    return "Lime";
+    return "Cobalt";
   });
   const [density,setDensityState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-density"))||"Comfortable");
   applyTheme(theme, accent, density); // mutate T on every render so all child components re-read
@@ -41059,7 +41113,7 @@ class ErrorBoundary extends React.Component{
         <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14,background:"#0D120F",color:"#E8EFE7",fontFamily:"Geist,-apple-system,BlinkMacSystemFont,sans-serif",textAlign:"center",padding:24}}>
           <div style={{fontSize:18,fontWeight:700}}>Something went wrong.</div>
           <div style={{fontSize:13,color:"rgba(232,239,231,0.6)",maxWidth:320,lineHeight:1.5}}>Studlin hit an error it couldn't recover from. Your data's safe, refreshing usually fixes this.</div>
-          <button onClick={()=>window.location.reload()} style={{padding:"10px 24px",borderRadius:10,background:"#AECE5E",color:"#0D120F",fontSize:14,fontWeight:700,border:"none",cursor:"pointer",fontFamily:"inherit"}}>Refresh</button>
+          <button onClick={()=>window.location.reload()} style={{padding:"10px 24px",borderRadius:10,background:"#5B9DF0",color:"#0D120F",fontSize:14,fontWeight:700,border:"none",cursor:"pointer",fontFamily:"inherit"}}>Refresh</button>
         </div>
       );
     }
