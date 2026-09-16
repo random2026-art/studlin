@@ -40,7 +40,11 @@ describe("classifyStudlinAiMessage's prompt now supports multi_action (source-le
   // regex escaping (which is what tripped up an earlier draft of this
   // exact file -- a bare `"kind"` doesn't match `\"kind\"`).
   test("the JSON envelope's kind enum includes multi_action, and gained an actions array field", () => {
-    assert.ok(APP_SOURCE.includes(String.raw`\"kind\":\"question\"|\"coaching\"|\"action\"|\"multi_action\"|\"unsupported\"`));
+    // 2026-09-15: availability_match was added between multi_action and
+    // unsupported (see tests/studlin-ai-availability-match.test.js) --
+    // updated to match, multi_action's own presence is still what this
+    // test is really pinning.
+    assert.ok(APP_SOURCE.includes(String.raw`\"kind\":\"question\"|\"coaching\"|\"action\"|\"multi_action\"|\"availability_match\"|\"unsupported\"`));
     assert.ok(APP_SOURCE.includes(String.raw`\"actions\":<for kind \"multi_action\" ONLY, an array of exactly 2 objects`));
   });
 

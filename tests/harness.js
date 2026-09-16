@@ -94,6 +94,7 @@ function loadStudlinModule(options) {
     "computeMonthHeavyDays","MONTH_HEAVY_RELATIVE_RATIO","MONTH_HEAVY_MIN_ABSOLUTE_MINS",
     "MAX_VISIBLE_DAY_COLUMNS",
     "getDayOccupiedIntervals","checkManualStudyTime","dayHasRoomFor","undoTier0Move","computeDropDuration",
+    "findFreeSlotInWindow","resolveAvailabilityMatch",
     "checkTimeOffImpact","simulateTimeOffBlock",
     "T","applyTheme","ACCENTS",
     "getWorkWindowMinsFor","detectPeakHourInsight","dismissPeakHourInsight",
