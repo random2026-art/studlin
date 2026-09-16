@@ -33400,6 +33400,18 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       {placementToast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {placementToast}</div>
       )}
+      {/* Live-crash hotfix, 2026-09-16: this floating drag-ghost was
+          accidentally placed in App()'s own render instead of here in
+          CalendarTab, where draftChipDragging/draftChipDragRef actually
+          live -- a ReferenceError on every single page load, since App()
+          always evaluates its JSX regardless of any user action. Moved to
+          where it belongs, CalendarTab's own render, right alongside its
+          sibling fixed-position toasts. */}
+      {draftChipDragging&&draftChipDragRef.current&&(
+        <div ref={draftChipGhostRef} style={{position:"fixed",left:0,top:0,zIndex:1000,pointerEvents:"none",background:T.card,border:`1px solid ${T.lime}`,borderRadius:6,padding:"6px 10px",fontSize:11.5,fontWeight:600,color:T.text,boxShadow:"0 8px 20px rgba(0,0,0,0.3)"}}>
+          {draftChipDragRef.current.draft.title}
+        </div>
+      )}
       {deadlineToast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.red,color:"#fff",fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)"}}>{deadlineToast}</div>
       )}
@@ -40607,17 +40619,6 @@ function App() {
           all potentially firing on the same app-open. Below the 2-item
           trigger there's nothing here at all -- Tier 0 still relocates a
           single missed block silently, same as always, no interruption. */}
-      {/* Floating label that follows the cursor while a "To place" chip
-          (see unplacedTaskDrafts above) is being dragged -- real visual
-          feedback for a mousedown-based drag, which has none of native
-          HTML5 drag-and-drop's own built-in drag cursor/ghost. Position is
-          written directly to the DOM node by the drag effect's mousemove
-          handler, not React state, so this never re-renders mid-drag. */}
-      {draftChipDragging&&draftChipDragRef.current&&(
-        <div ref={draftChipGhostRef} style={{position:"fixed",left:0,top:0,zIndex:1000,pointerEvents:"none",background:T.card,border:`1px solid ${T.lime}`,borderRadius:6,padding:"6px 10px",fontSize:11.5,fontWeight:600,color:T.text,boxShadow:"0 8px 20px rgba(0,0,0,0.3)"}}>
-          {draftChipDragRef.current.draft.title}
-        </div>
-      )}
       {catchUpBanner&&(()=>{
         const tokens=StudlinTokens(T);
         return (
