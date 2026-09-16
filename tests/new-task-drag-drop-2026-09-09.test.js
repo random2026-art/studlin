@@ -127,11 +127,36 @@ describe("New Task drag-and-drop: component-closure UI (source-level regression 
   test("the new drag-chip tray uses the mousedown idiom, not native draggable, matching the proven-reliable Schedule-with-Friends fix", () => {
     const idx = SOURCE.indexOf("const startDraftChipDrag=(draft)=>(e)=>{");
     assert.notEqual(idx, -1);
-    const body = SOURCE.slice(idx, idx + 900);
+    const body = SOURCE.slice(idx, idx + 2000);
     assert.match(body, /if\(e\.button!==0\)return;/);
     assert.match(body, /gsChipPointToDayTime\(ev\.clientX,ev\.clientY\)/, "reuses the same generic day/time hit-testing the GS chip fix already proved reliable");
     assert.match(body, /commitNewTaskDrop\(info\.draft,hit\.dateKey,hit\.startTime\)/);
     assert.match(body, /removeUnplacedTaskDraft\(info\.draft\.id\)/, "a placed chip must leave the tray, not linger as if it were still unplaced");
+  });
+
+  // 2026-09-16 user report: "when i drag it you cant see it move and drag
+  // if that makes sense" -- the floating ghost label alone was too subtle
+  // to register as movement. Added a real-time highlight on the calendar
+  // day cell under the cursor (same data-daykey hit-testing
+  // gsChipPointToDayTime already does) plus a grabbing cursor and a dimmed
+  // source chip, all via direct DOM writes on mousemove/mousedown/mouseup
+  // (not React state), matching this same block's existing convention.
+  test("dragging a tray chip highlights the calendar day cell under the cursor in real time, and cleans the highlight up on drop/unmount", () => {
+    const idx = SOURCE.indexOf("const startDraftChipDrag=(draft)=>(e)=>{");
+    assert.notEqual(idx, -1);
+    const body = SOURCE.slice(idx, idx + 2000);
+    assert.match(body, /document\.body\.style\.cursor="grabbing";/, "cursor should visibly change to grabbing the moment the drag starts");
+    assert.match(body, /document\.elementFromPoint\(ev\.clientX,ev\.clientY\)\?\.closest\("\[data-daykey\]"\)/, "hit-tests the day cell under the cursor on every move, same element gsChipPointToDayTime targets");
+    assert.match(body, /dayEl\.style\.outline=`2px dashed \$\{T\.lime\}`/, "the hovered day cell gets a visible outline while dragging");
+    assert.match(body, /clearHover\(\);/, "the previous highlight must be cleared before applying a new one, and on drop/unmount");
+    assert.match(body, /document\.body\.style\.cursor="";/, "cursor resets back to normal once the drag ends");
+  });
+
+  test("the tray chip currently being dragged dims to 0.35 opacity so the pickup is visually obvious at the source, not just at the cursor", () => {
+    const idx = SOURCE.indexOf('<div key={draft.id} onMouseDown={startDraftChipDrag(draft)}');
+    assert.notEqual(idx, -1);
+    const body = SOURCE.slice(idx, idx + 500);
+    assert.match(body, /opacity:\(draftChipDragging&&draftChipDragRef\.current&&draftChipDragRef\.current\.draft\.id===draft\.id\)\?0\.35:1/);
   });
 
   test("unplacedTaskDrafts persists to localStorage under its own key, same convention every other piece of durable state in this file uses", () => {
