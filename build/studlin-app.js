@@ -463,7 +463,7 @@ function PlanCards({ billing, onSelect }) {
     transition: "opacity .15s"
   } }, plan.cta))));
 }
-const Field = ({ label, children, hint }) => /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, marginBottom: 6 } }, label), children, hint && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 4 } }, hint));
+const Field = ({ label, children, hint, required, error }) => /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, marginBottom: 6 } }, label, required && /* @__PURE__ */ React.createElement("span", { style: { color: T.red, marginLeft: 3 } }, "*")), children, error ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.red, marginTop: 4 } }, error) : hint && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 4 } }, hint));
 const Input = (props) => /* @__PURE__ */ React.createElement("input", { ...props, style: { width: "100%", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", color: T.text, fontSize: 13.5, fontFamily: T.font, outline: "none", boxSizing: "border-box", ...props.style || {} } });
 const Textarea = (props) => /* @__PURE__ */ React.createElement("textarea", { ...props, style: { width: "100%", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", color: T.text, fontSize: 13.5, fontFamily: T.font, outline: "none", resize: "vertical", minHeight: 90, boxSizing: "border-box", ...props.style || {} } });
 const CalendarIcon = /* @__PURE__ */ React.createElement("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("rect", { x: "3", y: "4", width: "18", height: "18", rx: "2" }), /* @__PURE__ */ React.createElement("line", { x1: "16", y1: "2", x2: "16", y2: "6" }), /* @__PURE__ */ React.createElement("line", { x1: "8", y1: "2", x2: "8", y2: "6" }), /* @__PURE__ */ React.createElement("line", { x1: "3", y1: "10", x2: "21", y2: "10" }));
@@ -16951,6 +16951,53 @@ function CalendarTab({ setActive = () => {
   const [expandedSidebarItemId, setExpandedSidebarItemId] = useState(null);
   const [pastCoursesOpen, setPastCoursesOpen] = useState(false);
   const [sidebarDragChip, setSidebarDragChip] = useState(null);
+  const [unplacedTaskDrafts, setUnplacedTaskDrafts] = useState(() => lsGet("unplacedTaskDrafts", []));
+  const addUnplacedTaskDraft = (payload) => {
+    const draft = { ...payload, id: "draft-" + Date.now() };
+    const next = [...unplacedTaskDrafts, draft];
+    setUnplacedTaskDrafts(next);
+    lsSet("unplacedTaskDrafts", next);
+  };
+  const removeUnplacedTaskDraft = (id) => {
+    const next = unplacedTaskDrafts.filter((d) => d.id !== id);
+    setUnplacedTaskDrafts(next);
+    lsSet("unplacedTaskDrafts", next);
+  };
+  const draftChipDragRef2 = useRef(null);
+  const draftChipGhostRef2 = useRef(null);
+  const [draftChipDragging2, setDraftChipDragging] = useState(false);
+  const startDraftChipDrag = (draft) => (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    draftChipDragRef2.current = { draft };
+    setDraftChipDragging(true);
+  };
+  useEffect(() => {
+    if (!draftChipDragging2) return;
+    const onMove = (ev) => {
+      const ghost = draftChipGhostRef2.current;
+      if (ghost) {
+        ghost.style.left = ev.clientX + 14 + "px";
+        ghost.style.top = ev.clientY + 14 + "px";
+      }
+    };
+    const onUp = (ev) => {
+      const info = draftChipDragRef2.current;
+      setDraftChipDragging(false);
+      draftChipDragRef2.current = null;
+      if (!info) return;
+      const hit = gsChipPointToDayTime(ev.clientX, ev.clientY);
+      if (!hit) return;
+      commitNewTaskDrop(info.draft, hit.dateKey, hit.startTime);
+      removeUnplacedTaskDraft(info.draft.id);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    return () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+  }, [draftChipDragging2]);
   const [highlightedSessionId, setHighlightedSessionId] = useState(null);
   const blockRefs = useRef(/* @__PURE__ */ new Map());
   const flipOldRectsRef = useRef(/* @__PURE__ */ new Map());
@@ -17219,6 +17266,7 @@ function CalendarTab({ setActive = () => {
   const [selDay, setSelDay] = useState(dayKey());
   const [newOpen, setNewOpen] = useState(false);
   const [evTitle, setEvTitle] = useState("");
+  const [evTitleError, setEvTitleError] = useState("");
   const [evDate, setEvDate] = useState("");
   const [evTime, setEvTime] = useState("09:00");
   const [evPrefillDate, setEvPrefillDate] = useState(dayKey());
@@ -18449,6 +18497,7 @@ function CalendarTab({ setActive = () => {
   const resetForm = () => {
     setNewOpen(false);
     setEvTitle("");
+    setEvTitleError("");
     setEvNotes("");
     setEvCustom("");
     setEvCustomColor(T.lime);
@@ -19371,7 +19420,7 @@ Examples:
     const subj = evSubject === "None" ? "" : evSubject === "Other" && evCustom.trim() ? evCustom.trim() : evSubject;
     const resolvedKind = evKind === "assignment" ? "deadline" : evKind === "task" || evKind === "studySession" ? "study block" : evKind;
     return {
-      title: evTitle.trim() || "Untitled",
+      title: evTitle.trim(),
       kind: resolvedKind,
       subject: subj,
       deadline: evDeadline || null,
@@ -19379,6 +19428,15 @@ Examples:
       ...evKind === "task" ? { isGeneralTask: true } : {},
       ...evKind === "assignment" ? { isAssignment: true } : {}
     };
+  };
+  const addDraftToDragTray = () => {
+    if (!evTitle.trim()) {
+      setEvTitleError("Add a title first.");
+      return;
+    }
+    addUnplacedTaskDraft(dragNewTaskPayload());
+    setActive("calendar");
+    resetForm();
   };
   const isChecklistMode = (evKind === "assignment" || evKind === "task") && asChecklist;
   const isRepeatingTask = evKind === "task" && taskRepeatDays.length > 0;
@@ -19697,7 +19755,24 @@ Examples:
         /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.faint } }, s.subject || "\u2014", " \xB7 not scheduled")
       );
     })));
-  })()), /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 0, bottom: 0, right: calSidebarCollapsed ? 0 : 14, width: 1, background: T.border, boxShadow: `1px 0 3px rgba(0,0,0,0.12)` } }), /* @__PURE__ */ React.createElement(
+  })(), unplacedTaskDrafts.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 18 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 } }, "To place"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, unplacedTaskDrafts.map((draft) => {
+    const tagColor = colorOf(draft.subject) || T.lime;
+    return /* @__PURE__ */ React.createElement(
+      "div",
+      {
+        key: draft.id,
+        onMouseDown: startDraftChipDrag(draft),
+        title: "Drag onto the calendar to place it",
+        style: { ...subjectRowStyle(tagColor), cursor: "grab", border: `1px dashed ${tagColor}66`, flexDirection: "column", alignItems: "flex-start", gap: 1, position: "relative" }
+      },
+      /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, fontWeight: 600, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" } }, draft.title),
+      /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.faint } }, draft.subject || "\u2014", " \xB7 drag to place"),
+      /* @__PURE__ */ React.createElement("button", { type: "button", onClick: (e) => {
+        e.stopPropagation();
+        removeUnplacedTaskDraft(draft.id);
+      }, title: "Remove", style: { position: "absolute", top: 4, right: 4, background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 12, lineHeight: 1, padding: 2 } }, "\xD7")
+    );
+  })))), /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 0, bottom: 0, right: calSidebarCollapsed ? 0 : 14, width: 1, background: T.border, boxShadow: `1px 0 3px rgba(0,0,0,0.12)` } }), /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -20241,7 +20316,10 @@ Examples:
       width: 580,
       footer: isRepeatingTask ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: resetForm }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: saveRepeatingTask, disabled: !evTitle.trim(), style: { flex: 1, justifyContent: "center", opacity: evTitle.trim() ? 1 : 0.45 } }, "Save repeating task")) : isChecklistMode ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: resetForm }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: saveChecklistItem, disabled: !evTitle.trim(), style: { flex: 1, justifyContent: "center", opacity: evTitle.trim() ? 1 : 0.45 } }, "Add to Checklist")) : isReminderKind || isFixedKind ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: resetForm }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: saveManual, disabled: !(evTitle.trim() && evDate.trim() && evTime.trim()), style: { opacity: evTitle.trim() && evDate.trim() && evTime.trim() ? 1 : 0.45 } }, isReminderKind ? "Save reminder" : "Save")) : taskMode === "manual" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: resetForm }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: saveManual, disabled: !evTitle.trim() || !evDate.trim() || !evTime.trim(), style: { flex: 1, justifyContent: "center", opacity: evTitle.trim() && evDate.trim() && evTime.trim() ? 1 : 0.45 } }, "Save to Calendar")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: resetForm }, "Cancel"), evAttackBlock && /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: placeAssignmentManually, disabled: !evTitle.trim() }, "Place manually"), /* @__PURE__ */ React.createElement(Btn, { onClick: aiArrange, disabled: aiLoading || !evTitle.trim(), style: { flex: 1, justifyContent: "center", opacity: aiLoading ? 1 : !evTitle.trim() ? 0.45 : 1 } }, aiLoading ? "Scheduling..." : evScheduleLater ? "Save due date" : "Add Task with AI"))
     },
-    /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement(Input, { placeholder: "e.g. Study Bio chapter 4-6", value: evTitle, onChange: (ev) => setEvTitle(ev.target.value), autoFocus: true })),
+    /* @__PURE__ */ React.createElement(Field, { label: "Title", required: true, error: evTitleError }, /* @__PURE__ */ React.createElement(Input, { placeholder: "e.g. Study Bio chapter 4-6", value: evTitle, onChange: (ev) => {
+      setEvTitle(ev.target.value);
+      if (evTitleError) setEvTitleError("");
+    }, autoFocus: true, style: evTitleError ? { borderColor: T.red } : void 0 })),
     isTaskKind && evKind !== "studySession" && taskRepeatDays.length === 0 && /* @__PURE__ */ React.createElement(Field, { label: "Scheduling" }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 2, background: T.card2, padding: 2, borderRadius: 4, width: "fit-content", flexWrap: "wrap" } }, [{ id: "none", label: "No schedule yet" }, { id: "manual", label: "I'll pick the time" }, { id: "ai", label: "Studlin finds the time" }].map((v) => {
       const active = v.id === "none" ? isChecklistMode : !isChecklistMode && taskMode === v.id;
       return /* @__PURE__ */ React.createElement(
@@ -20291,21 +20369,14 @@ Examples:
     !isTaskKind && /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } }, /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement(Input, { type: "date", value: evDate, onChange: (ev) => setEvDate(ev.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: isReminderKind ? "Reminder time" : "Start time" }, /* @__PURE__ */ React.createElement(BoxedTimeInput, { value: evTime, onChange: setEvTime }))),
     !isTaskKind && canDragNewTask && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, margin: "10px 0" } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: 1, background: T.border } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9.5, color: T.faint, fontWeight: 700, letterSpacing: "0.06em" } }, "OR"), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: 1, background: T.border } })),
     !isTaskKind && canDragNewTask && /* @__PURE__ */ React.createElement(
-      "div",
+      "button",
       {
-        draggable: true,
-        onDragStart: (e) => {
-          e.dataTransfer.setData(NEW_TASK_DRAG_MIME, JSON.stringify(dragNewTaskPayload()));
-          e.dataTransfer.effectAllowed = "copy";
-          setTimeout(() => {
-            setActive("calendar");
-            resetForm();
-          }, 0);
-        },
-        title: "Drag onto the calendar to place it exactly where you want",
-        style: { display: "flex", alignItems: "center", gap: 8, fontSize: 11.5, fontWeight: 600, color: T.text, padding: "8px 10px", borderRadius: 6, border: `1px dashed ${T.lime}77`, cursor: "grab", background: T.lime + "0c", marginBottom: 12 }
+        type: "button",
+        onClick: addDraftToDragTray,
+        title: "Adds this to the calendar sidebar as a chip you can drag onto the calendar whenever you're ready",
+        style: { display: "flex", alignItems: "center", gap: 8, fontSize: 11.5, fontWeight: 600, color: T.text, padding: "8px 10px", borderRadius: 6, border: `1px dashed ${T.lime}77`, cursor: "pointer", background: T.lime + "0c", marginBottom: 12, width: "100%", fontFamily: T.font }
       },
-      /* @__PURE__ */ React.createElement("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 } }, "Don't know exactly when? Drag onto the calendar")
+      /* @__PURE__ */ React.createElement("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, textAlign: "left" } }, "Don't know exactly when? Drag onto the calendar")
     ),
     isFixedKind && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "End time", hint: "How long this occupies on your calendar" }, /* @__PURE__ */ React.createElement(BoxedTimeInput, { value: minutesToTime(timeToMinutes(evTime) + evDuration), onChange: (v) => setEvDuration(Math.max(5, timeToMinutes(v) - timeToMinutes(evTime))) })), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, fontSize: 11, color: T.muted, flexWrap: "wrap", marginBottom: 12 } }, /* @__PURE__ */ React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 5 } }, "Commute before:", /* @__PURE__ */ React.createElement(
       "input",
@@ -20408,21 +20479,14 @@ Examples:
     isTaskKind && !isChecklistMode && taskRepeatDays.length === 0 && taskMode === "manual" && /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } }, /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement(Input, { type: "date", value: evDate, onChange: (ev) => setEvDate(ev.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Start Time" }, /* @__PURE__ */ React.createElement(BoxedTimeInput, { value: evTime, onChange: setEvTime }))),
     isTaskKind && !isChecklistMode && taskRepeatDays.length === 0 && taskMode === "manual" && canDragNewTask && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, margin: "10px 0" } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: 1, background: T.border } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9.5, color: T.faint, fontWeight: 700, letterSpacing: "0.06em" } }, "OR"), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: 1, background: T.border } })),
     isTaskKind && !isChecklistMode && taskRepeatDays.length === 0 && taskMode === "manual" && canDragNewTask && /* @__PURE__ */ React.createElement(
-      "div",
+      "button",
       {
-        draggable: true,
-        onDragStart: (e) => {
-          e.dataTransfer.setData(NEW_TASK_DRAG_MIME, JSON.stringify(dragNewTaskPayload()));
-          e.dataTransfer.effectAllowed = "copy";
-          setTimeout(() => {
-            setActive("calendar");
-            resetForm();
-          }, 0);
-        },
-        title: "Drag onto the calendar to place it exactly where you want",
-        style: { display: "flex", alignItems: "center", gap: 8, fontSize: 11.5, fontWeight: 600, color: T.text, padding: "8px 10px", borderRadius: 6, border: `1px dashed ${T.lime}77`, cursor: "grab", background: T.lime + "0c", marginBottom: 12 }
+        type: "button",
+        onClick: addDraftToDragTray,
+        title: "Adds this to the calendar sidebar as a chip you can drag onto the calendar whenever you're ready",
+        style: { display: "flex", alignItems: "center", gap: 8, fontSize: 11.5, fontWeight: 600, color: T.text, padding: "8px 10px", borderRadius: 6, border: `1px dashed ${T.lime}77`, cursor: "pointer", background: T.lime + "0c", marginBottom: 12, width: "100%", fontFamily: T.font }
       },
-      /* @__PURE__ */ React.createElement("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 } }, "Don't know exactly when? Drag onto the calendar")
+      /* @__PURE__ */ React.createElement("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, textAlign: "left" } }, "Don't know exactly when? Drag onto the calendar")
     ),
     evKind === "assignment" && !isChecklistMode && taskMode === "manual" && taskRepeatDays.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: evDeadline ? "1fr 1fr" : "1fr", gap: 12 } }, /* @__PURE__ */ React.createElement(Field, { label: "Due date (optional)" }, /* @__PURE__ */ React.createElement(Input, { type: "date", value: evDeadline, onChange: (ev) => setEvDeadline(ev.target.value) })), evDeadline && /* @__PURE__ */ React.createElement(Field, { label: "Due time" }, /* @__PURE__ */ React.createElement(BoxedTimeInput, { value: evDeadlineTime, onChange: setEvDeadlineTime }))),
     isTaskKind && !isChecklistMode && taskRepeatDays.length === 0 && taskMode === "ai" && /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } }, /* @__PURE__ */ React.createElement(Field, { label: "Due Date & Time", hint: "When this must be done by" }, /* @__PURE__ */ React.createElement(Input, { type: "date", value: evDeadline, onChange: (ev) => setEvDeadline(ev.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Due time" }, /* @__PURE__ */ React.createElement(BoxedTimeInput, { value: evDeadlineTime, onChange: setEvDeadlineTime }))),
@@ -23708,11 +23772,16 @@ function App() {
       logCatchUpEvent("missed_blocks_detected", { count: missedItems.length });
       logCatchUpEvent("user_returned_after_missing_blocks", { count: missedItems.length });
     }
-    if (recoveryPending) {
+    if (recoveryPending && lsGet("catchUpBannerDismissedDate", null) !== today) {
       setCatchUpBanner({ count: missedItems.length, staleDays: catchUpStalenessDays(missedItems, today) });
       logCatchUpEvent("recovery_banner_shown", { count: missedItems.length });
     }
   }, []);
+  const dismissCatchUpBanner = () => {
+    lsSet("catchUpBannerDismissedDate", dayKey());
+    logCatchUpEvent("recovery_banner_dismissed", { count: catchUpBanner && catchUpBanner.count });
+    setCatchUpBanner(null);
+  };
   const navSections = [
     { label: "Home", items: [
       { id: "dashboard", label: "Dashboard" },
@@ -23983,9 +24052,9 @@ function App() {
         }
       }
     }
-  ), recoveredSession && !timerTask && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 76, right: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 320 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, "Looks like you were ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, recoveredSession.elapsedMins, "min"), ' into "', recoveredSession.task.title, '" \u2014 what happened?'), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: recoverMarkDone }, "Mark as done"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: recoverResume }, "Resume"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: recoverDiscard }, "Discard"))), catchUpBanner && (() => {
+  ), recoveredSession && !timerTask && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 76, right: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 320 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, "Looks like you were ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, recoveredSession.elapsedMins, "min"), ' into "', recoveredSession.task.title, '" \u2014 what happened?'), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: recoverMarkDone }, "Mark as done"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: recoverResume }, "Resume"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: recoverDiscard }, "Discard"))), draftChipDragging && draftChipDragRef.current && /* @__PURE__ */ React.createElement("div", { ref: draftChipGhostRef, style: { position: "fixed", left: 0, top: 0, zIndex: 1e3, pointerEvents: "none", background: T.card, border: `1px solid ${T.lime}`, borderRadius: 6, padding: "6px 10px", fontSize: 11.5, fontWeight: 600, color: T.text, boxShadow: "0 8px 20px rgba(0,0,0,0.3)" } }, draftChipDragRef.current.draft.title), catchUpBanner && (() => {
     const tokens = StudlinTokens(T);
-    return /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 76, left: "50%", transform: "translateX(-50%)", zIndex: 999, width: "min(480px, calc(100vw - 40px))", padding: "16px 20px", borderRadius: tokens.radius.card, background: tokens.color.accentSubtle, border: `1px solid ${tokens.color.accent}55`, boxShadow: "0 8px 24px rgba(0,0,0,0.25)", animation: "studlinPop 0.2s ease", display: "flex", alignItems: "center", gap: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: tokens.type.size.itemTitle, color: tokens.color.textPrimary } }, catchUpBanner.count, " thing", catchUpBanner.count !== 1 ? "s" : "", " from ", catchUpStalenessLabel(catchUpBanner.staleDays || 1), " didn't get done."), /* @__PURE__ */ React.createElement(Btn, { onClick: openCatchUpPreview, style: { flexShrink: 0 } }, "Rebuild my week"));
+    return /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 76, left: "50%", transform: "translateX(-50%)", zIndex: 999, width: "min(480px, calc(100vw - 40px))", padding: "16px 20px", borderRadius: tokens.radius.card, background: tokens.color.accentSubtle, border: `1px solid ${tokens.color.accent}55`, boxShadow: "0 8px 24px rgba(0,0,0,0.25)", animation: "studlinPop 0.2s ease", display: "flex", alignItems: "center", gap: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: tokens.type.size.itemTitle, color: tokens.color.textPrimary } }, catchUpBanner.count, " thing", catchUpBanner.count !== 1 ? "s" : "", " from ", catchUpStalenessLabel(catchUpBanner.staleDays || 1), " didn't get done."), /* @__PURE__ */ React.createElement(Btn, { onClick: openCatchUpPreview, style: { flexShrink: 0 } }, "Rebuild my week"), /* @__PURE__ */ React.createElement("button", { onClick: dismissCatchUpBanner, title: "Dismiss for today", "aria-label": "Dismiss", style: { flexShrink: 0, width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", borderRadius: 6, color: tokens.color.textPrimary, opacity: 0.55, cursor: "pointer" } }, Icon.xmark));
   })(), /* @__PURE__ */ React.createElement(
     Modal,
     {

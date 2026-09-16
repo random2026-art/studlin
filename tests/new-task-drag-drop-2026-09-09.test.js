@@ -80,21 +80,66 @@ describe("New Task drag-and-drop: component-closure UI (source-level regression 
     assert.match(body, /isAssignment:true/);
   });
 
-  test("dragging closes the modal and switches to Calendar, same as EventDetailModal's own manual-block drag chip", () => {
-    const idx = SOURCE.indexOf("e.dataTransfer.setData(NEW_TASK_DRAG_MIME");
-    assert.notEqual(idx, -1);
-    const body = SOURCE.slice(idx, idx + 300);
-    // 2026-09-15 fix: this used to assert onClose() -- an identifier that
-    // doesn't exist anywhere in CalendarTab's scope (the modal's real close
-    // function is resetForm, per its own <Modal onClose={resetForm}> wrapper).
-    // The old assertion just encoded the bug: starting the drag threw a
-    // ReferenceError, the modal never closed, and it sat on top of the
-    // calendar blocking the drop target -- exactly the live "drag doesn't
-    // work" report this fixes.
-    assert.match(body, /setActive\("calendar"\); resetForm\(\);/);
+  // 2026-09-16 user report: "the drag option does not work" -- the pill
+  // was a native draggable element requiring one continuous gesture
+  // starting INSIDE the modal (pick it up, the modal closes mid-drag,
+  // carry it onto the calendar without releasing). Native HTML5
+  // drag-and-drop is a confirmed reliability gap on real trackpads (see
+  // architecture-native-dnd-trackpad-unreliable), and unmounting the drag
+  // source mid-gesture (the modal closing) is its own separate way for a
+  // native drag to silently die. Replaced with a two-step flow: a plain
+  // click button that requires a title and adds a persistent chip to a
+  // "To place" sidebar tray, which the student then drags onto the
+  // calendar at their own pace using the same mousedown/mousemove/mouseup
+  // idiom already proven reliable for the Schedule with Friends chip
+  // (startGsChipDrag/gsChipPointToDayTime, reused directly here).
+  test("both drag pills are now plain click buttons calling addDraftToDragTray, not native draggable elements", () => {
+    assert.doesNotMatch(SOURCE, /draggable onDragStart=\{\(e\)=>\{\s*e\.dataTransfer\.setData\(NEW_TASK_DRAG_MIME/, "the old native-draggable pill should no longer exist");
+    const matches = SOURCE.match(/<button type="button" onClick=\{addDraftToDragTray\}/g) || [];
+    assert.equal(matches.length, 2, "both the task-kind and non-task-kind branches should use the new button");
   });
 
-  test("WeeklyPlanner's drop handler reads the new MIME independently of MANUAL_BLOCK_DRAG_MIME's dueEventId-required contract", () => {
+  test("addDraftToDragTray blocks with a real inline error on an empty title instead of silently defaulting to \"Untitled\"", () => {
+    const idx = SOURCE.indexOf("const addDraftToDragTray=()=>{");
+    assert.notEqual(idx, -1);
+    const body = SOURCE.slice(idx, idx + 400);
+    assert.match(body, /if\(!evTitle\.trim\(\)\)\{setEvTitleError\("Add a title first\."\);return;\}/);
+    assert.match(body, /addUnplacedTaskDraft\(dragNewTaskPayload\(\)\)/);
+  });
+
+  test("dragNewTaskPayload no longer silently falls back to \"Untitled\" -- addDraftToDragTray's guard above is what prevents an empty title from reaching it now", () => {
+    const idx = SOURCE.indexOf("const dragNewTaskPayload=()=>{");
+    assert.notEqual(idx, -1);
+    const body = SOURCE.slice(idx, idx + 1100);
+    assert.doesNotMatch(body, /"Untitled"/);
+    assert.match(body, /title:evTitle\.trim\(\),/);
+  });
+
+  test("Field's required/error props render the standard red-asterisk-plus-inline-error convention, and the Title field in New Task uses both", () => {
+    const fieldIdx = SOURCE.indexOf("const Field = ({label, children, hint, required, error})");
+    assert.notEqual(fieldIdx, -1);
+    const fieldBody = SOURCE.slice(fieldIdx, fieldIdx + 500);
+    assert.match(fieldBody, /required&&<span style=\{\{color:T\.red,marginLeft:3\}\}>\*<\/span>/);
+    assert.match(fieldBody, /error\?<div style=\{\{fontSize:11,color:T\.red,marginTop:4\}\}>\{error\}<\/div>/);
+    assert.match(SOURCE, /<Field label="Title" required error=\{evTitleError\}>/);
+  });
+
+  test("the new drag-chip tray uses the mousedown idiom, not native draggable, matching the proven-reliable Schedule-with-Friends fix", () => {
+    const idx = SOURCE.indexOf("const startDraftChipDrag=(draft)=>(e)=>{");
+    assert.notEqual(idx, -1);
+    const body = SOURCE.slice(idx, idx + 900);
+    assert.match(body, /if\(e\.button!==0\)return;/);
+    assert.match(body, /gsChipPointToDayTime\(ev\.clientX,ev\.clientY\)/, "reuses the same generic day/time hit-testing the GS chip fix already proved reliable");
+    assert.match(body, /commitNewTaskDrop\(info\.draft,hit\.dateKey,hit\.startTime\)/);
+    assert.match(body, /removeUnplacedTaskDraft\(info\.draft\.id\)/, "a placed chip must leave the tray, not linger as if it were still unplaced");
+  });
+
+  test("unplacedTaskDrafts persists to localStorage under its own key, same convention every other piece of durable state in this file uses", () => {
+    assert.match(SOURCE, /useState\(\(\)=>lsGet\("unplacedTaskDrafts",\[\]\)\)/);
+    assert.match(SOURCE, /lsSet\("unplacedTaskDrafts",next\)/);
+  });
+
+  test("WeeklyPlanner's drop handler for NEW_TASK_DRAG_MIME still exists (generic drop-side infrastructure, unreachable via the new tray flow but left in place, not removed)", () => {
     const idx = SOURCE.indexOf("e.dataTransfer.getData(NEW_TASK_DRAG_MIME) && onDropNewTaskRequest");
     assert.notEqual(idx, -1);
   });

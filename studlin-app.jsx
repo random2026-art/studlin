@@ -631,11 +631,20 @@ function PlanCards({ billing, onSelect }) {
   );
 }
 
-const Field = ({label, children, hint}) => (
+// required/error, 2026-09-16 user request: no visual cue anywhere ever
+// marked a field as required, and Title specifically could be left blank
+// and silently fall back to "Untitled" (see dragNewTaskPayload's old
+// fallback). `required` renders the classic red-asterisk convention every
+// other app already uses; `error` swaps the hint line for inline red text
+// -- same "never a browser alert" guardrail every other validation in
+// this file already follows. Both optional and default-false/absent, so
+// every existing Field call site (the vast majority) renders identically
+// to before.
+const Field = ({label, children, hint, required, error}) => (
   <div style={{marginBottom:14}}>
-    <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:6}}>{label}</div>
+    <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:6}}>{label}{required&&<span style={{color:T.red,marginLeft:3}}>*</span>}</div>
     {children}
-    {hint && <div style={{fontSize:11,color:T.muted,marginTop:4}}>{hint}</div>}
+    {error?<div style={{fontSize:11,color:T.red,marginTop:4}}>{error}</div>:(hint && <div style={{fontSize:11,color:T.muted,marginTop:4}}>{hint}</div>)}
   </div>
 );
 const Input = (props) => (
@@ -28685,6 +28694,66 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // just enough to prefill NewEventModal, nothing commits until the
   // student hits Create in that modal.
   const [sidebarDragChip,setSidebarDragChip]=useState(null); // {title,color,movable}|null
+  // User request, 2026-09-16: New Task's old "Drag" pill was a native
+  // draggable element that had to be picked up and carried onto the
+  // calendar in one continuous gesture starting INSIDE the modal (see
+  // NEW_TASK_DRAG_MIME's onDragStart callers below) -- both unreliable on
+  // real trackpads (native HTML5 drag-and-drop; see
+  // architecture-native-dnd-trackpad-unreliable) and the wrong shape of
+  // interaction for what was actually asked for: "adds it as a block
+  // underneath activities I can take and drag anywhere," i.e. a
+  // persistent chip you place on your own time, not a one-shot drag tied
+  // to the modal still being open. unplacedTaskDrafts persists to
+  // localStorage (same as everything else in this file) so a draft
+  // survives a reload instead of being lost the moment the tab closes.
+  const [unplacedTaskDrafts,setUnplacedTaskDrafts]=useState(()=>lsGet("unplacedTaskDrafts",[]));
+  const addUnplacedTaskDraft=(payload)=>{
+    const draft={...payload,id:"draft-"+Date.now()};
+    const next=[...unplacedTaskDrafts,draft];
+    setUnplacedTaskDrafts(next);
+    lsSet("unplacedTaskDrafts",next);
+  };
+  const removeUnplacedTaskDraft=(id)=>{
+    const next=unplacedTaskDrafts.filter(d=>d.id!==id);
+    setUnplacedTaskDrafts(next);
+    lsSet("unplacedTaskDrafts",next);
+  };
+  // mousedown/mousemove/mouseup idiom, not native draggable -- same fix
+  // already proven reliable on real trackpads for the Schedule with
+  // Friends chip (see startGsChipDrag/gsChipPointToDayTime below, reused
+  // directly here since the day/time hit-testing is identical). A small
+  // floating label follows the cursor so there's real visual feedback
+  // while carrying it -- direct DOM style writes on mousemove, not React
+  // state, so this doesn't re-render on every pixel of mouse movement.
+  const draftChipDragRef=useRef(null); // {draft}|null while a draft-chip drag is in progress
+  const draftChipGhostRef=useRef(null);
+  const [draftChipDragging,setDraftChipDragging]=useState(false);
+  const startDraftChipDrag=(draft)=>(e)=>{
+    if(e.button!==0)return;
+    e.preventDefault();
+    draftChipDragRef.current={draft};
+    setDraftChipDragging(true);
+  };
+  useEffect(()=>{
+    if(!draftChipDragging)return;
+    const onMove=(ev)=>{
+      const ghost=draftChipGhostRef.current;
+      if(ghost){ghost.style.left=(ev.clientX+14)+"px";ghost.style.top=(ev.clientY+14)+"px";}
+    };
+    const onUp=(ev)=>{
+      const info=draftChipDragRef.current;
+      setDraftChipDragging(false);
+      draftChipDragRef.current=null;
+      if(!info)return;
+      const hit=gsChipPointToDayTime(ev.clientX,ev.clientY);
+      if(!hit)return;
+      commitNewTaskDrop(info.draft,hit.dateKey,hit.startTime);
+      removeUnplacedTaskDraft(info.draft.id);
+    };
+    document.addEventListener("mousemove",onMove);
+    document.addEventListener("mouseup",onUp);
+    return ()=>{document.removeEventListener("mousemove",onMove);document.removeEventListener("mouseup",onUp);};
+  },[draftChipDragging]);
   // Right-column session rows (Phase 4) -- clicking an already-scheduled
   // session jumps the grid to it and briefly outlines the block instead of
   // just sitting there as inert text (see renderSidebarItem's exam branch
@@ -29267,6 +29336,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const [selDay,setSelDay]=useState(dayKey());
   const [newOpen,setNewOpen]=useState(false);
   const [evTitle,setEvTitle]=useState("");
+  // User report, 2026-09-16: dragging with no title silently created an
+  // "Untitled" task (see dragNewTaskPayload's old `||"Untitled"` fallback)
+  // instead of telling the student anything was wrong. Same inline-error
+  // convention this file already uses elsewhere (e.g. evDetailErr) --
+  // cleared the moment they start fixing it, never a browser alert.
+  const [evTitleError,setEvTitleError]=useState("");
   const [evDate,setEvDate]=useState("");
   // Defaults to "09:00", not "" -- TimeInput always visually shows 9:00 AM
   // regardless of the underlying value (see TimeInput's own h=9,m=0 default
@@ -30892,7 +30967,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     const params=computeStudyPlanParams(undefined,25,evConfidence,materialCharCount,undefined,daysUntilExam);
     if(params.sessionCount!==evExamPlan.sessionCount)setEvExamPlan(m=>({...m,sessionCount:params.sessionCount}));
   },[newOpen,evKind,evExamPlan.proposeSessions,evExamPlan.materialFiles,evConfidence,evSessionCountTouched]);
-  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvCustomColor(T.lime);setEvDate("");setEvTime("09:00");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setEvScheduleLater(false);setEvCommuteBefore("");setEvCommuteAfter("");setAiLoading(false);setAsChecklist(false);setTaskRepeatDays([]);resetTypeExtras();};
+  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvTitleError("");setEvNotes("");setEvCustom("");setEvCustomColor(T.lime);setEvDate("");setEvTime("09:00");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setEvScheduleLater(false);setEvCommuteBefore("");setEvCommuteAfter("");setAiLoading(false);setAsChecklist(false);setTaskRepeatDays([]);resetTypeExtras();};
   const onEvKindChange=(k)=>{
     setEvKind(k);
     const willBeFixed=(k==="exam"||k==="class"||k==="reminder"||k==="busy block");
@@ -32115,9 +32190,20 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // unification was meant to close for good. Task/Study Session are
     // unchanged -- neither was ever part of that bug.
     const resolvedKind=evKind==="assignment"?"deadline":((evKind==="task"||evKind==="studySession")?"study block":evKind);
-    return {title:evTitle.trim()||"Untitled",kind:resolvedKind,subject:subj,deadline:evDeadline||null,notes:evNotes||"",
+    return {title:evTitle.trim(),kind:resolvedKind,subject:subj,deadline:evDeadline||null,notes:evNotes||"",
       ...(evKind==="task"?{isGeneralTask:true}:{}),
       ...(evKind==="assignment"?{isAssignment:true}:{})};
+  };
+  // Shared by both "Drag onto the calendar" buttons below (task-kind and
+  // non-task-kind render different fields above it, but the action itself
+  // is identical). Blocks with a real inline error instead of silently
+  // defaulting to "Untitled" the way dragNewTaskPayload used to -- see
+  // Field's own `required`/`error` props just above the Title field.
+  const addDraftToDragTray=()=>{
+    if(!evTitle.trim()){setEvTitleError("Add a title first.");return;}
+    addUnplacedTaskDraft(dragNewTaskPayload());
+    setActive("calendar");
+    resetForm();
   };
   // Restored 2026-09-01 (was assignment-only, forced permanently
   // unreachable since 2026-07-30 -- see the "No specific time" comment
@@ -32582,6 +32668,30 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
               </div>
             );
           })()}
+          {/* "To place" tray, 2026-09-16 user request: New Task's "Drag"
+              action now adds here instead of starting a live drag itself
+              (see unplacedTaskDrafts' own comment above for why) --
+              hidden entirely when empty, same convention every other
+              sidebar section on this page already uses. */}
+          {unplacedTaskDrafts.length>0&&(
+            <div style={{marginTop:18}}>
+              <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>To place</div>
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                {unplacedTaskDrafts.map(draft=>{
+                  const tagColor=colorOf(draft.subject)||T.lime;
+                  return (
+                    <div key={draft.id} onMouseDown={startDraftChipDrag(draft)}
+                      title="Drag onto the calendar to place it"
+                      style={{...subjectRowStyle(tagColor),cursor:"grab",border:`1px dashed ${tagColor}66`,flexDirection:"column",alignItems:"flex-start",gap:1,position:"relative"}}>
+                      <span style={{fontSize:12,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"100%"}}>{draft.title}</span>
+                      <span style={{fontSize:9,color:T.faint}}>{draft.subject||"—"} · drag to place</span>
+                      <button type="button" onClick={(e)=>{e.stopPropagation();removeUnplacedTaskDraft(draft.id);}} title="Remove" style={{position:"absolute",top:4,right:4,background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:12,lineHeight:1,padding:2}}>×</button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
         )}
         {/* Full-height divider with a subtle shadow (173547) -- previously
@@ -33401,7 +33511,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                     <Btn onClick={aiArrange} disabled={aiLoading||!evTitle.trim()} style={{flex:1,justifyContent:"center",opacity:aiLoading?1:(!evTitle.trim()?0.45:1)}}>{aiLoading?"Scheduling...":evScheduleLater?"Save due date":"Add Task with AI"}</Btn>
                   </>
         }>
-        <Field label="Title"><Input placeholder="e.g. Study Bio chapter 4-6" value={evTitle} onChange={ev=>setEvTitle(ev.target.value)} autoFocus /></Field>
+        <Field label="Title" required error={evTitleError}><Input placeholder="e.g. Study Bio chapter 4-6" value={evTitle} onChange={ev=>{setEvTitle(ev.target.value);if(evTitleError)setEvTitleError("");}} autoFocus style={evTitleError?{borderColor:T.red}:undefined} /></Field>
 
         {/* Manual vs AI-schedule used to only be picked once, from the "+"
             menu, before this form even opened -- nothing inside the modal
@@ -33585,15 +33695,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           </div>
         )}
         {!isTaskKind&&canDragNewTask&&(
-          <div draggable onDragStart={(e)=>{
-              e.dataTransfer.setData(NEW_TASK_DRAG_MIME,JSON.stringify(dragNewTaskPayload()));
-              e.dataTransfer.effectAllowed="copy";
-              setTimeout(()=>{ setActive("calendar"); resetForm(); }, 0);
-            }}
-            title="Drag onto the calendar to place it exactly where you want"
-            style={{display:"flex",alignItems:"center",gap:8,fontSize:11.5,fontWeight:600,color:T.text,padding:"8px 10px",borderRadius:6,border:`1px dashed ${T.lime}77`,cursor:"grab",background:T.lime+"0c",marginBottom:12}}>
-            <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>Don't know exactly when? Drag onto the calendar</span>
-          </div>
+          <button type="button" onClick={addDraftToDragTray}
+            title="Adds this to the calendar sidebar as a chip you can drag onto the calendar whenever you're ready"
+            style={{display:"flex",alignItems:"center",gap:8,fontSize:11.5,fontWeight:600,color:T.text,padding:"8px 10px",borderRadius:6,border:`1px dashed ${T.lime}77`,cursor:"pointer",background:T.lime+"0c",marginBottom:12,width:"100%",fontFamily:T.font}}>
+            <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,textAlign:"left"}}>Don't know exactly when? Drag onto the calendar</span>
+          </button>
         )}
 
         {isFixedKind&&(
@@ -33786,15 +33892,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           </div>
         )}
         {isTaskKind&&!isChecklistMode&&taskRepeatDays.length===0&&taskMode==="manual"&&canDragNewTask&&(
-          <div draggable onDragStart={(e)=>{
-              e.dataTransfer.setData(NEW_TASK_DRAG_MIME,JSON.stringify(dragNewTaskPayload()));
-              e.dataTransfer.effectAllowed="copy";
-              setTimeout(()=>{ setActive("calendar"); resetForm(); }, 0);
-            }}
-            title="Drag onto the calendar to place it exactly where you want"
-            style={{display:"flex",alignItems:"center",gap:8,fontSize:11.5,fontWeight:600,color:T.text,padding:"8px 10px",borderRadius:6,border:`1px dashed ${T.lime}77`,cursor:"grab",background:T.lime+"0c",marginBottom:12}}>
-            <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>Don't know exactly when? Drag onto the calendar</span>
-          </div>
+          <button type="button" onClick={addDraftToDragTray}
+            title="Adds this to the calendar sidebar as a chip you can drag onto the calendar whenever you're ready"
+            style={{display:"flex",alignItems:"center",gap:8,fontSize:11.5,fontWeight:600,color:T.text,padding:"8px 10px",borderRadius:6,border:`1px dashed ${T.lime}77`,cursor:"pointer",background:T.lime+"0c",marginBottom:12,width:"100%",fontFamily:T.font}}>
+            <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,textAlign:"left"}}>Don't know exactly when? Drag onto the calendar</span>
+          </button>
         )}
 
         {/* Assignment-only, manual mode (2026-09-06 fix): the scheduled
@@ -39917,11 +40019,26 @@ function App() {
     // set the way the old tier0Batch banner needed. Every one of
     // missedItems is still exactly as missed as it was; the banner names
     // the count, "Rebuild my week" computes the actual plan on tap.
-    if(recoveryPending){
+    // User report, 2026-09-15: "there is no way to dismiss this reconstruct
+    // my week thingy" -- true, the banner previously only ever cleared by
+    // completing the full Rebuild-my-week flow (see confirmCatchUpRebuild's
+    // setCatchUpBanner(null)). lsGet("catchUpBannerDismissedDate") gates it
+    // for the rest of today once the student explicitly closes it -- same
+    // "once a day" cadence dismissUnscheduledDueSoon/detectUnscheduledDueSoon
+    // already use, just a plain date-equality check instead of a millisecond
+    // cooldown since this is inherently a once-per-day mount effect anyway.
+    // The missed items themselves are untouched either way -- dismissing
+    // only silences today's nudge about them, it never marks anything done.
+    if(recoveryPending&&lsGet("catchUpBannerDismissedDate",null)!==today){
       setCatchUpBanner({count:missedItems.length,staleDays:catchUpStalenessDays(missedItems,today)});
       logCatchUpEvent("recovery_banner_shown",{count:missedItems.length});
     }
   },[]);
+  const dismissCatchUpBanner=()=>{
+    lsSet("catchUpBannerDismissedDate",dayKey());
+    logCatchUpEvent("recovery_banner_dismissed",{count:catchUpBanner&&catchUpBanner.count});
+    setCatchUpBanner(null);
+  };
   const navSections=[
     {label:"Home",items:[
       {id:"dashboard",label:"Dashboard"},
@@ -40490,6 +40607,17 @@ function App() {
           all potentially firing on the same app-open. Below the 2-item
           trigger there's nothing here at all -- Tier 0 still relocates a
           single missed block silently, same as always, no interruption. */}
+      {/* Floating label that follows the cursor while a "To place" chip
+          (see unplacedTaskDrafts above) is being dragged -- real visual
+          feedback for a mousedown-based drag, which has none of native
+          HTML5 drag-and-drop's own built-in drag cursor/ghost. Position is
+          written directly to the DOM node by the drag effect's mousemove
+          handler, not React state, so this never re-renders mid-drag. */}
+      {draftChipDragging&&draftChipDragRef.current&&(
+        <div ref={draftChipGhostRef} style={{position:"fixed",left:0,top:0,zIndex:1000,pointerEvents:"none",background:T.card,border:`1px solid ${T.lime}`,borderRadius:6,padding:"6px 10px",fontSize:11.5,fontWeight:600,color:T.text,boxShadow:"0 8px 20px rgba(0,0,0,0.3)"}}>
+          {draftChipDragRef.current.draft.title}
+        </div>
+      )}
       {catchUpBanner&&(()=>{
         const tokens=StudlinTokens(T);
         return (
@@ -40498,6 +40626,7 @@ function App() {
               {catchUpBanner.count} thing{catchUpBanner.count!==1?"s":""} from {catchUpStalenessLabel(catchUpBanner.staleDays||1)} didn't get done.
             </div>
             <Btn onClick={openCatchUpPreview} style={{flexShrink:0}}>Rebuild my week</Btn>
+            <button onClick={dismissCatchUpBanner} title="Dismiss for today" aria-label="Dismiss" style={{flexShrink:0,width:26,height:26,display:"flex",alignItems:"center",justifyContent:"center",background:"none",border:"none",borderRadius:6,color:tokens.color.textPrimary,opacity:0.55,cursor:"pointer"}}>{Icon.xmark}</button>
           </div>
         );
       })()}
