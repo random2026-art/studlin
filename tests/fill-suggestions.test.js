@@ -140,3 +140,54 @@ describe("computeFillSuggestions never suggests filling a genuinely absurd hour"
     assert.equal(m.computeFillSuggestions("2026-07-29", "23:00", 30).length, 0);
   });
 });
+
+// User request, 2026-09-15: repeatedly dismissing the fill prompt should
+// eventually stop it from asking, rather than reappearing on every single
+// delete forever. Count-based (not a flat cooldown on any single dismissal,
+// unlike detectUnscheduledDueSoon's own signal) -- only three CONSECUTIVE
+// "Leave it" dismissals count as a real "stop asking" signal, and accepting
+// a suggestion at any point resets the streak back to 0.
+describe("fill prompt dismiss-streak suppression", () => {
+  test("not suppressed at all before any dismissal", () => {
+    const m = loadStudlinModule({ now: "2026-07-28T12:00:00" });
+    assert.equal(m.isFillPromptSuppressed(), false);
+  });
+
+  test("one or two dismissals alone don't suppress it yet", () => {
+    const m = loadStudlinModule({ now: "2026-07-28T12:00:00" });
+    m.recordFillPromptDismiss();
+    assert.equal(m.isFillPromptSuppressed(), false);
+    m.recordFillPromptDismiss();
+    assert.equal(m.isFillPromptSuppressed(), false);
+  });
+
+  test("three consecutive dismissals trigger real suppression", () => {
+    const m = loadStudlinModule({ now: "2026-07-28T12:00:00" });
+    m.recordFillPromptDismiss();
+    m.recordFillPromptDismiss();
+    m.recordFillPromptDismiss();
+    assert.equal(m.isFillPromptSuppressed(), true);
+  });
+
+  test("accepting a suggestion resets the streak, so a lone earlier dismissal doesn't carry over", () => {
+    const m = loadStudlinModule({ now: "2026-07-28T12:00:00" });
+    m.recordFillPromptDismiss();
+    m.recordFillPromptDismiss();
+    m.recordFillPromptAccept();
+    m.recordFillPromptDismiss();
+    m.recordFillPromptDismiss();
+    // Only 2 in the streak since the accept reset it -- still short of the
+    // 3-in-a-row threshold.
+    assert.equal(m.isFillPromptSuppressed(), false);
+  });
+
+  test("accepting a suggestion after suppression already kicked in lifts it immediately", () => {
+    const m = loadStudlinModule({ now: "2026-07-28T12:00:00" });
+    m.recordFillPromptDismiss();
+    m.recordFillPromptDismiss();
+    m.recordFillPromptDismiss();
+    assert.equal(m.isFillPromptSuppressed(), true);
+    m.recordFillPromptAccept();
+    assert.equal(m.isFillPromptSuppressed(), false);
+  });
+});

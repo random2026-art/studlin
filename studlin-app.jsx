@@ -8285,6 +8285,38 @@ function computeFillSuggestions(freedDate,freedTime,freedDuration){
     .slice(0,3)
     .map(ev=>({id:ev.id,title:ev.title,duration:ev.duration}));
 }
+// User request, 2026-09-15: dismissing the "Freed up X at Y — fill it with
+// something?" prompt repeatedly should eventually stop it from asking,
+// rather than reappearing on every single delete forever. Same shape as
+// dismissUnscheduledDueSoon/dismissPeakHourInsight above (persist a
+// dismiss signal, gate future prompts on it) but count-based rather than a
+// flat cooldown-on-any-dismissal -- a student who says "leave it" ONCE
+// might still want the next genuinely different freed slot offered; it's
+// only a real "stop asking me this" signal once it happens several times
+// in a row. FILL_PROMPT_DISMISS_THRESHOLD consecutive "Leave it" taps
+// trigger a real cooldown (same 14-day window peak-hour/struggling-bucket
+// already use for a stable behavioral signal, not the 2-day one
+// unscheduledDueSoon uses for its faster-changing signal) -- accepting a
+// suggestion at any point (acceptFillSuggestion or "Add something") resets
+// the streak straight to 0, since that's the student actively showing they
+// still want to be asked.
+const FILL_PROMPT_DISMISS_THRESHOLD=3;
+const FILL_PROMPT_SUPPRESS_COOLDOWN_MS=14*86400000;
+function getFillPromptDismissState(){
+  return lsGet("fillPromptDismissState",{streak:0,suppressedUntil:0});
+}
+function isFillPromptSuppressed(){
+  return Date.now()<getFillPromptDismissState().suppressedUntil;
+}
+function recordFillPromptDismiss(){
+  const state=getFillPromptDismissState();
+  const streak=state.streak+1;
+  const suppressedUntil=streak>=FILL_PROMPT_DISMISS_THRESHOLD?Date.now()+FILL_PROMPT_SUPPRESS_COOLDOWN_MS:state.suppressedUntil;
+  lsSet("fillPromptDismissState",{streak,suppressedUntil});
+}
+function recordFillPromptAccept(){
+  lsSet("fillPromptDismissState",{streak:0,suppressedUntil:0});
+}
 // Exam-stakes-aware ranking for computePausePlan's shift/clear_day/
 // clear_week reslotting below -- an exam-prep session looks up its real
 // exam and scores off computeSessionPriority's full urgency/impact/
@@ -29529,7 +29561,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     setDeleteUndoSnapshot({event:ev,...(examCleanup||{})});
     setDeleteUndoToast(`Deleted "${ev.title}"`);
     setTimeout(()=>{setDeleteUndoToast("");setDeleteUndoSnapshot(null);},5000);
-    if((ev.duration||0)>=15){
+    if((ev.duration||0)>=15&&!isFillPromptSuppressed()){
       const suggestions=computeFillSuggestions(ev.date,ev.time,ev.duration);
       if(suggestions.length>0)setFillPrompt({date:ev.date,time:ev.time,duration:ev.duration,suggestions});
     }
@@ -29588,9 +29620,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // the next day.
     const next=lsGet("events",[]).map(e=>e.id===candidateId?{...e,date:fillPrompt.date,time:fillPrompt.time,userPinned:true}:e);
     setEvents(next);lsSet("events",next);
+    recordFillPromptAccept();
     setFillPrompt(null);
   };
-  const dismissFillPrompt=()=>setFillPrompt(null);
+  const dismissFillPrompt=()=>{recordFillPromptDismiss();setFillPrompt(null);};
   // "Balance my week" — manually triggered only (see computeWeekBalancePlan),
   // same preview-then-commit discipline as Studlin Reschedule just below:
   // nothing is written until the student confirms.
@@ -30836,7 +30869,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // "Add something" on the fill-prompt banner (see deleteEventWithUndo) —
   // same manual form, just pre-filled with the exact freed slot instead
   // of a blank time, so the student doesn't have to re-enter it.
-  const openNewAtSlot=(dateK,time,duration)=>{openNewManual(dateK);setEvTime(time);setEvDuration(duration||60);setEvDurationTouched(true);setFillPrompt(null);};
+  const openNewAtSlot=(dateK,time,duration)=>{recordFillPromptAccept();openNewManual(dateK);setEvTime(time);setEvDuration(duration||60);setEvDurationTouched(true);setFillPrompt(null);};
   // Pre-fills Duration from history the moment a real subject is picked,
   // instead of leaving the suggestion as a dismissible badge the student
   // has to notice and click (suggestDurationFor itself is unchanged —

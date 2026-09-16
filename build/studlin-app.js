@@ -4958,6 +4958,23 @@ function computeFillSuggestions(freedDate, freedTime, freedDuration) {
     return da < db ? -1 : da > db ? 1 : 0;
   }).slice(0, 3).map((ev) => ({ id: ev.id, title: ev.title, duration: ev.duration }));
 }
+const FILL_PROMPT_DISMISS_THRESHOLD = 3;
+const FILL_PROMPT_SUPPRESS_COOLDOWN_MS = 14 * 864e5;
+function getFillPromptDismissState() {
+  return lsGet("fillPromptDismissState", { streak: 0, suppressedUntil: 0 });
+}
+function isFillPromptSuppressed() {
+  return Date.now() < getFillPromptDismissState().suppressedUntil;
+}
+function recordFillPromptDismiss() {
+  const state = getFillPromptDismissState();
+  const streak = state.streak + 1;
+  const suppressedUntil = streak >= FILL_PROMPT_DISMISS_THRESHOLD ? Date.now() + FILL_PROMPT_SUPPRESS_COOLDOWN_MS : state.suppressedUntil;
+  lsSet("fillPromptDismissState", { streak, suppressedUntil });
+}
+function recordFillPromptAccept() {
+  lsSet("fillPromptDismissState", { streak: 0, suppressedUntil: 0 });
+}
 function sessionPriorityFor(ev, pool) {
   const exam = ev.dueEventId ? pool.find((e) => e.id === ev.dueEventId && e.kind === "exam") : null;
   return computeSessionPriority(exam || ev, dayKey());
@@ -17385,7 +17402,7 @@ function CalendarTab({ setActive = () => {
       setDeleteUndoToast("");
       setDeleteUndoSnapshot(null);
     }, 5e3);
-    if ((ev.duration || 0) >= 15) {
+    if ((ev.duration || 0) >= 15 && !isFillPromptSuppressed()) {
       const suggestions = computeFillSuggestions(ev.date, ev.time, ev.duration);
       if (suggestions.length > 0) setFillPrompt({ date: ev.date, time: ev.time, duration: ev.duration, suggestions });
     }
@@ -17430,9 +17447,13 @@ function CalendarTab({ setActive = () => {
     const next = lsGet("events", []).map((e) => e.id === candidateId ? { ...e, date: fillPrompt.date, time: fillPrompt.time, userPinned: true } : e);
     setEvents2(next);
     lsSet("events", next);
+    recordFillPromptAccept();
     setFillPrompt(null);
   };
-  const dismissFillPrompt = () => setFillPrompt(null);
+  const dismissFillPrompt = () => {
+    recordFillPromptDismiss();
+    setFillPrompt(null);
+  };
   const [weekBalanceOpen, setWeekBalanceOpen] = useState(false);
   const [weekBalancePlan, setWeekBalancePlan] = useState(null);
   const [weekBalanceToast, setWeekBalanceToast] = useState("");
@@ -18406,6 +18427,7 @@ function CalendarTab({ setActive = () => {
     setTaskMode("ai");
   };
   const openNewAtSlot = (dateK, time, duration) => {
+    recordFillPromptAccept();
     openNewManual(dateK);
     setEvTime(time);
     setEvDuration(duration || 60);
