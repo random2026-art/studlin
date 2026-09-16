@@ -37293,6 +37293,32 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
     lsSet("events",[...all,item]);
     setChecklistDraft("");forcePlan(x=>x+1);
   };
+  const [checklistConvertToast,setChecklistConvertToast]=useState("");
+  // User request, 2026-09-16: a checklist item sometimes turns out to need
+  // real focused time ("send AP scores" -> "actually sit down and do this
+  // Thursday"), not just a checkbox. Converting drops it into the exact
+  // same "To place" drag tray CalendarTab's own New Task flow already
+  // built (unplacedTaskDrafts, localStorage-shared the same way `events`
+  // already is across every tab) -- Dashboard has no component-level
+  // access to CalendarTab's tray state, so this writes the same shape
+  // addUnplacedTaskDraft would (see its own comment: {...payload,id:
+  // "draft-"+Date.now()}) directly to that same key. kind:"study block"+
+  // isGeneralTask:true matches what dragNewTaskPayload produces for a
+  // plain Task -- a checklist item has no real deadline semantics (see
+  // addChecklistItem: deadline is always null), so "spend focused time on
+  // this" is the right shape, not "deadline". The old checklist entry is
+  // removed rather than kept alongside the new draft -- it's being turned
+  // into the draft, not duplicated.
+  const convertChecklistItemToBlock=(item)=>{
+    const draft={title:item.title,kind:"study block",subject:"",deadline:null,notes:item.notes||"",isGeneralTask:true,id:"draft-"+Date.now()};
+    const drafts=lsGet("unplacedTaskDrafts",[]);
+    lsSet("unplacedTaskDrafts",[...drafts,draft]);
+    const all=lsGet("events",[]);
+    lsSet("events",all.filter(ev=>ev.id!==item.id));
+    forcePlan(x=>x+1);
+    setChecklistConvertToast(`Added "${item.title}" to Calendar's "To place" tray — drag it onto a day there.`);
+    setTimeout(()=>setChecklistConvertToast(""),3800);
+  };
   // Needs-attention card — an Attack Block project whose self-reported
   // pace has fallen behind what can still fit before its deadline. Own
   // local modal/state rather than reusing CalendarTab's "Balance my week"
@@ -37485,6 +37511,9 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
       {overrunToast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:7,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {overrunToast}</div>
       )}
+      {checklistConvertToast&&(
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:7,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8,maxWidth:420,textAlign:"center"}}>{Icon.check} {checklistConvertToast}</div>
+      )}
 
       {/* ROW 2: Today's plan + Checklist (Ask Studlin/aichat card removed
           along with the standalone Studlin AI tab -- see Phase 2 of the
@@ -37614,6 +37643,9 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
               <div key={item.id} onClick={()=>toggleChecklistItem(item.id)} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"9px 12px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer",opacity:item.status==="done"?0.55:1}}>
                 <div style={{width:18,height:18,borderRadius:"50%",border:`1.5px solid ${item.status==="done"?T.lime:T.faint}`,background:item.status==="done"?T.lime:"transparent",flex:"none",marginTop:1,display:"grid",placeItems:"center",color:T.ink,fontSize:11}}>{item.status==="done"&&Icon.check}</div>
                 <div style={{flex:1,minWidth:0,fontSize:12.5,color:T.text,fontWeight:500,lineHeight:1.4,overflowWrap:"break-word",textDecoration:item.status==="done"?"line-through":"none"}}>{item.title}</div>
+                {item.status!=="done"&&(
+                  <button onClick={(e)=>{e.stopPropagation();convertChecklistItemToBlock(item);}} title="Turn into a calendar block you can drag onto a day" style={{flexShrink:0,padding:"3px 7px",borderRadius:6,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>To calendar</button>
+                )}
               </div>
             ))}</div>}
         </div>

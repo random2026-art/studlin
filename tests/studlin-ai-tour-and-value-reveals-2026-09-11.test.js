@@ -148,7 +148,7 @@ describe("Source-level regression guards: Dashboard's one-time 'Studlin is learn
   test("Dashboard renders the reveal card gated on shouldShowLearnsYouReveal, with a real dismiss action", () => {
     const idx = SOURCE.indexOf("function Dashboard(");
     assert.ok(idx > -1);
-    const body = SOURCE.slice(idx, idx + 16000);
+    const body = SOURCE.slice(idx, idx + 18000);
     assert.ok(body.includes("useState(()=>shouldShowLearnsYouReveal())"));
     assert.ok(body.includes("Studlin's been paying attention"));
     assert.ok(body.includes("closeLearnsYouReveal"));
