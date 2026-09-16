@@ -2,19 +2,30 @@ const { useState, useEffect, useLayoutEffect, useRef, useMemo } = React;
 
 // ─── DESIGN TOKENS · dark + light themes ──────────────────────────────────────
 const darkT = {
-  bg:     "#0D120F",
-  surface:"#141A16",
-  card:   "#19211C",
-  card2:  "#212A24",
+  // 2026-09-16 EXPERIMENT (branch: experiment/blue-rebrand) -- user report:
+  // "still hints of the dark green" after the first rebrand pass. That pass
+  // only swapped the lime/accent tokens via applyTheme() -- these NEUTRAL
+  // tokens (bg/surface/card/card2/text/muted/faint/forest/ink) were always
+  // separate, hardcoded-green constants that applyTheme() never touches, so
+  // literally every background, card, and body-text color in the app was
+  // still green no matter which blue accent was picked. Repainted this
+  // whole neutral ramp to a matching blue-slate family, using the same
+  // rgba(8,12,40,...) navy this branch had already established elsewhere
+  // (Studlin AI credits card, light-mode range-slider/focus CSS) as the
+  // "ink" replacement for the old rgba(14,31,24,...) green.
+  bg:     "#0A0E1C",
+  surface:"#10152A",
+  card:   "#161C34",
+  card2:  "#1E263F",
   border: "rgba(255,255,255,0.07)",
   borderHover: "rgba(255,255,255,0.14)",
   lime:   "#AECE5E",
   limeDk: "#8BAE3C",
   limeLt: "#CBDF92",
-  glow:   "rgba(174,206,94,0.22)",
-  text:   "#E8EFE7",
-  muted:  "#849389",
-  faint:  "#3F5147",
+  glow:   "rgba(91,157,240,0.22)",
+  text:   "#E7EBF5",
+  muted:  "#8791A6",
+  faint:  "#333C54",
   white:  "#ffffff",
   red:    "#D9806B",
   blue:   "#7BACDF",
@@ -27,8 +38,8 @@ const darkT = {
   lilac:  "#E2D0FF",
   sky:    "#BFE3FF",
   rose:   "#FFC9D2",
-  forest: "#14342A",
-  ink:    "#0E1F18",
+  forest: "#123A66",
+  ink:    "#080C28",
   cream:  "#F6F1E6",
   font:   `"Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`,
   hand:   `"Bricolage Grotesque", "Geist", sans-serif`,
@@ -38,19 +49,19 @@ const darkT = {
 };
 const lightT = {
   bg:     "#FAF6EC",
-  surface:"#14342A",
+  surface:"#123A66",
   card:   "#ffffff",
   card2:  "#F0EBE0",
-  border: "rgba(14,31,24,0.18)",
-  borderHover: "rgba(14,31,24,0.32)",
+  border: "rgba(8,12,40,0.18)",
+  borderHover: "rgba(8,12,40,0.32)",
   lime:   "#9EC83D",
   limeDk: "#7FA82A",
   limeLt: "#CBDF92",
-  glow:   "rgba(158,200,61,0.20)",
-  text:   "#0E1F18",
-  muted:  "rgba(14,31,24,0.55)",
-  faint:  "rgba(14,31,24,0.30)",
-  white:  "#14342A",
+  glow:   "rgba(29,95,207,0.20)",
+  text:   "#080C28",
+  muted:  "rgba(8,12,40,0.55)",
+  faint:  "rgba(8,12,40,0.30)",
+  white:  "#123A66",
   red:    "#A8412C",
   blue:   "#2D6FB8",
   amber:  "#A6700C",
@@ -62,8 +73,8 @@ const lightT = {
   lilac:  "#E2D0FF",
   sky:    "#BFE3FF",
   rose:   "#FFC9D2",
-  forest: "#14342A",
-  ink:    "#0E1F18",
+  forest: "#123A66",
+  ink:    "#080C28",
   cream:  "#F6F1E6",
   font:   `"Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`,
   hand:   `"Bricolage Grotesque", "Geist", sans-serif`,
@@ -89,8 +100,8 @@ const blendOverBg=(hex,alpha,bgHex)=>{
   const toHex=n=>n.toString(16).padStart(2,'0');
   return '#'+toHex(mix(r1,r2))+toHex(mix(g1,g2))+toHex(mix(b1,b2));
 };
-// T.muted is plain hex in dark mode ("#849389") but an rgba(...) string in
-// light mode ("rgba(14,31,24,0.55)") -- the "+hexAlphaSuffix" trick used
+// T.muted is plain hex in dark mode ("#8791A6") but an rgba(...) string in
+// light mode ("rgba(8,12,40,0.55)") -- the "+hexAlphaSuffix" trick used
 // everywhere else for a translucent tint (T.lime+"18" etc., safe since
 // those tokens ARE plain hex in both themes) silently produces invalid CSS
 // when applied to an rgba() string. The browser just drops the whole
@@ -35562,8 +35573,8 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     const isLight=mode==="light";
     return (
       <div onClick={()=>setTheme(mode)} style={{flex:1,cursor:"pointer",borderRadius:12,padding:16,border:`2px solid ${sel?T.lime:T.border}`,background:sel?T.lime+"08":T.card2,transition:"all 0.15s"}}>
-        <div style={{height:90,borderRadius:8,overflow:"hidden",background:isLight?"#FAF6EC":"#0D120F",border:`1px solid ${isLight?"rgba(14,31,24,0.08)":"rgba(255,255,255,0.06)"}`,marginBottom:12,display:"flex"}}>
-          <div style={{width:24,background:"#14342A",display:"flex",flexDirection:"column",alignItems:"center",padding:"6px 0",gap:4}}>
+        <div style={{height:90,borderRadius:8,overflow:"hidden",background:isLight?"#FAF6EC":"#0A0E1C",border:`1px solid ${isLight?"rgba(8,12,40,0.08)":"rgba(255,255,255,0.06)"}`,marginBottom:12,display:"flex"}}>
+          <div style={{width:24,background:"#123A66",display:"flex",flexDirection:"column",alignItems:"center",padding:"6px 0",gap:4}}>
             {/* Reflects the actual current accent (T.lime) instead of a
                 hardcoded green swatch, so this mini preview matches
                 whatever the student really picked below. */}
@@ -35574,13 +35585,13 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
           </div>
           <div style={{flex:1,padding:8,display:"flex",flexDirection:"column",gap:5}}>
             <div style={{display:"flex",gap:4}}>
-              <div style={{flex:1,height:18,background:isLight?"#14342A":"#212A24",borderRadius:3}} />
+              <div style={{flex:1,height:18,background:isLight?"#123A66":"#1E263F",borderRadius:3}} />
               <div style={{width:24,height:18,background:T.lime,borderRadius:3}} />
-              <div style={{width:24,height:18,background:isLight?"#fff":"#212A24",borderRadius:3,border:isLight?"1px solid rgba(14,31,24,0.08)":"none"}} />
+              <div style={{width:24,height:18,background:isLight?"#fff":"#1E263F",borderRadius:3,border:isLight?"1px solid rgba(8,12,40,0.08)":"none"}} />
             </div>
             <div style={{display:"flex",gap:4}}>
-              <div style={{flex:1,height:14,background:isLight?"#fff":"#212A24",borderRadius:3,border:isLight?"1px solid rgba(14,31,24,0.08)":"none"}} />
-              <div style={{flex:1,height:14,background:isLight?"#fff":"#212A24",borderRadius:3,border:isLight?"1px solid rgba(14,31,24,0.08)":"none"}} />
+              <div style={{flex:1,height:14,background:isLight?"#fff":"#1E263F",borderRadius:3,border:isLight?"1px solid rgba(8,12,40,0.08)":"none"}} />
+              <div style={{flex:1,height:14,background:isLight?"#fff":"#1E263F",borderRadius:3,border:isLight?"1px solid rgba(8,12,40,0.08)":"none"}} />
             </div>
           </div>
         </div>
@@ -37566,8 +37577,8 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                     else if(it.kind==="note"){lsSet("openNoteId",it.id);setActive("notes");}
                   }} style={{background:bgColors[i%4],borderRadius:8,padding:14,cursor:"pointer"}}>
                     <div style={{fontSize:9.5,fontWeight:700,letterSpacing:"0.06em",color:"rgba(8,12,40,0.65)",marginBottom:8}}>{it.subj}</div>
-                    <div style={{fontSize:13,fontWeight:700,color:"#0D120F",marginBottom:10,lineHeight:1.3}}>{it.title}</div>
-                    <div style={{height:4,background:"rgba(8,12,40,0.15)",borderRadius:99,marginBottom:8,overflow:"hidden"}}><div style={{height:"100%",width:it.pct+"%",background:"#0D120F",borderRadius:99}}/></div>
+                    <div style={{fontSize:13,fontWeight:700,color:"#080C28",marginBottom:10,lineHeight:1.3}}>{it.title}</div>
+                    <div style={{height:4,background:"rgba(8,12,40,0.15)",borderRadius:99,marginBottom:8,overflow:"hidden"}}><div style={{height:"100%",width:it.pct+"%",background:"#080C28",borderRadius:99}}/></div>
                     <div style={{fontSize:10.5,color:"rgba(8,12,40,0.6)",display:"flex",justifyContent:"space-between"}}><span>{it.a}</span><span>{it.b}</span></div>
                   </div>
                 );
@@ -37800,16 +37811,16 @@ function AuthScreen(){
   // hardcoded-color situation as VerifyEmailScreen just above -- repainted
   // to match Cobalt directly.
   return(
-    <div style={{minHeight:"100vh",background:"#0D120F",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20}}>
+    <div style={{minHeight:"100vh",background:"#0A0E1C",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20}}>
       <div style={{display:"flex",alignItems:"center",gap:10}}>
         <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#123A66,#0B1420)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(91,157,240,0.38)"}}>
           <div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #A9CDF7, #5B9DF0)",boxShadow:"0 0 10px 3px rgba(91,157,240,0.65)"}} />
         </div>
-        <span style={{fontSize:22,fontWeight:700,color:"#E8EFE7"}}>Studlin</span>
+        <span style={{fontSize:22,fontWeight:700,color:"#E7EBF5"}}>Studlin</span>
       </div>
-      <p style={{fontSize:15,color:"rgba(232,239,231,0.6)",margin:0}}>Sign in to access your workspace.</p>
+      <p style={{fontSize:15,color:"rgba(231,235,245,0.6)",margin:0}}>Sign in to access your workspace.</p>
       <div style={{display:"flex",gap:12,marginTop:8}}>
-        <a href="/signin" style={{padding:"12px 28px",borderRadius:10,background:"#5B9DF0",color:"#0E1F18",fontSize:14,fontWeight:600,textDecoration:"none"}}>Sign in</a>
+        <a href="/signin" style={{padding:"12px 28px",borderRadius:10,background:"#5B9DF0",color:"#080C28",fontSize:14,fontWeight:600,textDecoration:"none"}}>Sign in</a>
         <a href="/onboarding" style={{padding:"12px 28px",borderRadius:10,border:"1px solid rgba(91,157,240,0.3)",background:"transparent",color:"#5B9DF0",fontSize:14,fontWeight:600,textDecoration:"none"}}>Create account</a>
       </div>
     </div>
@@ -37847,7 +37858,7 @@ function OtpBoxes({value,onChange,disabled,autoFocus}){
       {[0,1,2,3,4,5].map(i=>(
         <input key={i} ref={el=>refs.current[i]=el} value={value[i]||""} onChange={e=>onInput(i,e)} onKeyDown={e=>onKeyDown(i,e)}
           disabled={disabled} autoFocus={autoFocus&&i===0} inputMode="numeric" maxLength={1}
-          style={{width:42,height:52,textAlign:"center",fontSize:22,fontWeight:700,borderRadius:10,border:"1.5px solid rgba(91,157,240,0.25)",background:"#0D120F",color:"#E8EFE7",outline:"none"}}
+          style={{width:42,height:52,textAlign:"center",fontSize:22,fontWeight:700,borderRadius:10,border:"1.5px solid rgba(91,157,240,0.25)",background:"#0A0E1C",color:"#E7EBF5",outline:"none"}}
           onFocus={e=>e.target.style.borderColor="#5B9DF0"}
           onBlur={e=>e.target.style.borderColor="rgba(91,157,240,0.25)"} />
       ))}
@@ -37884,7 +37895,7 @@ function VerifyEmailScreen({user}){
     setChecking(false);
   };
   return(
-    <div style={{minHeight:"100vh",background:"#0D120F",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20,padding:24}}>
+    <div style={{minHeight:"100vh",background:"#0A0E1C",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20,padding:24}}>
       <div style={{display:"flex",alignItems:"center",gap:10}}>
         {/* 2026-09-15 EXPERIMENT (branch: experiment/blue-rebrand): this
             screen renders before the rest of the app's T/ACCENTS system is
@@ -37895,23 +37906,23 @@ function VerifyEmailScreen({user}){
         <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#123A66,#0B1420)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(91,157,240,0.38)"}}>
           <div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #A9CDF7, #5B9DF0)",boxShadow:"0 0 10px 3px rgba(91,157,240,0.65)"}} />
         </div>
-        <span style={{fontSize:22,fontWeight:700,color:"#E8EFE7"}}>Studlin</span>
+        <span style={{fontSize:22,fontWeight:700,color:"#E7EBF5"}}>Studlin</span>
       </div>
-      <div style={{width:"100%",maxWidth:380,background:"#111A15",border:"1px solid rgba(91,157,240,0.16)",borderRadius:10,padding:"26px 24px",textAlign:"center"}}>
-        <div style={{fontSize:17,fontWeight:700,color:"#E8EFE7",marginBottom:8}}>Enter your code</div>
-        <p style={{fontSize:13.5,color:"rgba(232,239,231,0.6)",lineHeight:1.6,margin:"0 0 20px"}}>
-          We sent a 6-digit code to<br/><strong style={{color:"#E8EFE7"}}>{user.email}</strong>.
+      <div style={{width:"100%",maxWidth:380,background:"#10152A",border:"1px solid rgba(91,157,240,0.16)",borderRadius:10,padding:"26px 24px",textAlign:"center"}}>
+        <div style={{fontSize:17,fontWeight:700,color:"#E7EBF5",marginBottom:8}}>Enter your code</div>
+        <p style={{fontSize:13.5,color:"rgba(231,235,245,0.6)",lineHeight:1.6,margin:"0 0 20px"}}>
+          We sent a 6-digit code to<br/><strong style={{color:"#E7EBF5"}}>{user.email}</strong>.
         </p>
         <OtpBoxes value={code} onChange={v=>{setCode(v);setErr("");}} disabled={checking} autoFocus />
         {err&&<div style={{fontSize:12,color:"#E05A47",marginTop:14}}>{err}</div>}
-        <button onClick={submitCode} disabled={code.length!==6||checking} style={{width:"100%",padding:"12px 0",borderRadius:10,background:"#5B9DF0",color:"#0E1F18",border:"none",fontSize:14,fontWeight:600,cursor:code.length!==6||checking?"not-allowed":"pointer",opacity:code.length!==6||checking?0.5:1,marginTop:18,marginBottom:10}}>
+        <button onClick={submitCode} disabled={code.length!==6||checking} style={{width:"100%",padding:"12px 0",borderRadius:10,background:"#5B9DF0",color:"#080C28",border:"none",fontSize:14,fontWeight:600,cursor:code.length!==6||checking?"not-allowed":"pointer",opacity:code.length!==6||checking?0.5:1,marginTop:18,marginBottom:10}}>
           {checking?"Verifying…":"Verify email"}
         </button>
         <button onClick={resend} disabled={sendStatus==="sending"||sendStatus==="sent"} style={{width:"100%",padding:"11px 0",borderRadius:10,border:"1px solid rgba(91,157,240,0.3)",background:"transparent",color:"#5B9DF0",fontSize:13.5,fontWeight:600,cursor:sendStatus==="sending"||sendStatus==="sent"?"not-allowed":"pointer",opacity:sendStatus==="sending"||sendStatus==="sent"?0.6:1}}>
           {sendStatus==="sending"?"Sending…":sendStatus==="sent"?"Sent — check your inbox":"Resend code"}
         </button>
       </div>
-      <button onClick={()=>firebase.auth().signOut()} style={{background:"none",border:"none",color:"rgba(232,239,231,0.4)",fontSize:12.5,cursor:"pointer",textDecoration:"underline"}}>Sign out</button>
+      <button onClick={()=>firebase.auth().signOut()} style={{background:"none",border:"none",color:"rgba(231,235,245,0.4)",fontSize:12.5,cursor:"pointer",textDecoration:"underline"}}>Sign out</button>
     </div>
   );
 }
@@ -37933,24 +37944,24 @@ function SharedChatView({shareId}){
       .then(function(data){setChat(data);setStatus("ok");})
       .catch(function(e){setStatus(e.message==="notfound"?"notfound":"error");});
   },[shareId]);
-  const bg=T.bg||"#0D120F",card=T.card||"#19211C",text=T.text||"#E8EFE7",muted=T.muted||"#849389",lime=T.lime||"#5B9DF0",font=T.font||"system-ui";
+  const bg=T.bg||"#0A0E1C",card=T.card||"#161C34",text=T.text||"#E7EBF5",muted=T.muted||"#8791A6",lime=T.lime||"#5B9DF0",font=T.font||"system-ui";
   if(status==="loading")return(<div style={{minHeight:"100vh",background:bg,display:"grid",placeItems:"center"}}><div style={{width:14,height:14,borderRadius:"50%",border:`2px solid ${lime}`,borderTopColor:"transparent",animation:"studlinSpin 0.7s linear infinite"}}/></div>);
   if(status!=="ok")return(<div style={{minHeight:"100vh",background:bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12,fontFamily:font}}><div style={{fontSize:18,fontWeight:700,color:text}}>{status==="notfound"?"This chat doesn't exist.":"Failed to load chat."}</div><a href="/app" style={{color:lime,fontSize:14,textDecoration:"none"}}>Go to Studlin</a></div>);
   return(
     <div style={{minHeight:"100vh",background:bg,fontFamily:font,color:text}}>
       <div style={{borderBottom:`1px solid rgba(255,255,255,0.07)`,padding:"14px 24px",display:"flex",alignItems:"center",justifyContent:"space-between",background:bg,position:"sticky",top:0,zIndex:10}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <div style={{width:28,height:28,background:lime,borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,color:"#0E1F18",fontSize:14}}>S</div>
+          <div style={{width:28,height:28,background:lime,borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,color:"#080C28",fontSize:14}}>S</div>
           <span style={{fontSize:15,fontWeight:700,color:text,letterSpacing:"-0.02em"}}>Studlin</span>
         </div>
-        <a href="/app" style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 16px",borderRadius:99,background:lime,color:"#0E1F18",fontSize:13,fontWeight:700,textDecoration:"none"}}>Try Studlin</a>
+        <a href="/app" style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 16px",borderRadius:99,background:lime,color:"#080C28",fontSize:13,fontWeight:700,textDecoration:"none"}}>Try Studlin</a>
       </div>
       <div style={{maxWidth:720,margin:"0 auto",padding:"32px 24px 80px"}}>
         <div style={{fontSize:13,color:muted,marginBottom:28,fontWeight:500}}>Shared conversation</div>
         {(chat.msgs||[]).map((m,i)=>(
           <div key={i} style={{display:"flex",gap:12,alignItems:"flex-start",marginBottom:24,flexDirection:m.r==="user"?"row-reverse":"row"}}>
             {m.r==="ai"
-              ?<div style={{width:28,height:28,borderRadius:7,background:lime,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,color:"#0E1F18",fontSize:13,flexShrink:0,marginTop:2}}>S</div>
+              ?<div style={{width:28,height:28,borderRadius:7,background:lime,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,color:"#080C28",fontSize:13,flexShrink:0,marginTop:2}}>S</div>
               :<div style={{width:28,height:28,borderRadius:"50%",background:lime+"22",border:`1px solid ${lime}44`,display:"flex",alignItems:"center",justifyContent:"center",color:lime,flexShrink:0,marginTop:2}}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
             }
             <div style={{maxWidth:"80%",fontSize:14,lineHeight:1.75,color:text,background:m.r==="user"?card:"transparent",padding:m.r==="user"?"12px 16px":0,borderRadius:m.r==="user"?12:0,whiteSpace:m.r==="user"?"pre-wrap":undefined}}>{m.r==="ai"?renderStudlinAiMarkdown(m.t):m.t}</div>
@@ -37959,7 +37970,7 @@ function SharedChatView({shareId}){
         <div style={{marginTop:40,padding:"26px 22px",borderRadius:8,background:card,border:`1px solid rgba(255,255,255,0.07)`,textAlign:"center"}}>
           <div style={{fontSize:17,fontWeight:700,color:text,marginBottom:8}}>Study smarter with Studlin AI</div>
           <div style={{fontSize:13,color:muted,marginBottom:20,lineHeight:1.6}}>Your AI study assistant, flashcards, notes, and calendar. All in one place.</div>
-          <a href="/app" style={{display:"inline-flex",padding:"11px 28px",borderRadius:99,background:lime,color:"#0E1F18",fontSize:14,fontWeight:700,textDecoration:"none"}}>Get started free</a>
+          <a href="/app" style={{display:"inline-flex",padding:"11px 28px",borderRadius:99,background:lime,color:"#080C28",fontSize:14,fontWeight:700,textDecoration:"none"}}>Get started free</a>
         </div>
       </div>
     </div>
@@ -38040,7 +38051,7 @@ function AuthGate(){
     });
   },[shareId]);
   if(shareId)return <SharedChatView shareId={shareId} />;
-  if(user===undefined)return(<div style={{minHeight:"100vh",background:"#0D120F",display:"grid",placeItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#123A66,#0B1420)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(91,157,240,0.38)"}}><div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #A9CDF7, #5B9DF0)",boxShadow:"0 0 10px 3px rgba(91,157,240,0.65)"}}/></div><span style={{fontSize:22,fontWeight:700,color:"#E8EFE7"}}>Studlin</span></div></div>);
+  if(user===undefined)return(<div style={{minHeight:"100vh",background:"#0A0E1C",display:"grid",placeItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#123A66,#0B1420)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(91,157,240,0.38)"}}><div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #A9CDF7, #5B9DF0)",boxShadow:"0 0 10px 3px rgba(91,157,240,0.65)"}}/></div><span style={{fontSize:22,fontWeight:700,color:"#E7EBF5"}}>Studlin</span></div></div>);
   if(!user)return <AuthScreen />;
   if(isPasswordAccount(user)&&!user.emailVerified)return <VerifyEmailScreen user={user} />;
   return <App />;
@@ -40029,7 +40040,7 @@ function App() {
           pinned open/closed only by the toggle button below (Phase 5:
           hover-to-expand removed -- icon-only regardless of pointer
           position; a real second panel now lives in Calendar instead). */}
-      <div style={{width:navExpanded?230:48,flexShrink:0,background:isLight?T.surface:"linear-gradient(180deg, #18241D 0%, #0D120F00 60%)",backgroundColor:isLight?T.surface:T.surface,display:"flex",flexDirection:"column",padding:navExpanded?"20px 12px":"16px 6px",borderRight:`1px solid ${isLight?"transparent":T.border}`,overflowY:"auto",overflowX:"hidden",transition:"width 0.22s cubic-bezier(.2,.8,.2,1), padding 0.22s cubic-bezier(.2,.8,.2,1)"}}>
+      <div style={{width:navExpanded?230:48,flexShrink:0,background:isLight?T.surface:"linear-gradient(180deg, #182236 0%, #0A0E1C00 60%)",backgroundColor:isLight?T.surface:T.surface,display:"flex",flexDirection:"column",padding:navExpanded?"20px 12px":"16px 6px",borderRight:`1px solid ${isLight?"transparent":T.border}`,overflowY:"auto",overflowX:"hidden",transition:"width 0.22s cubic-bezier(.2,.8,.2,1), padding 0.22s cubic-bezier(.2,.8,.2,1)"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,padding:"0 6px",marginBottom:20,justifyContent:navExpanded?"space-between":"center"}}>
           {navExpanded&&(
             <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
@@ -40945,11 +40956,11 @@ function App() {
         body[data-theme="light"] input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):focus,
         body[data-theme="light"] textarea:focus,
         body[data-theme="light"] select:focus {
-          border-color: rgba(14,31,24,0.45) !important;
-          box-shadow: 0 0 0 3px rgba(158,200,61,0.18);
+          border-color: rgba(8,12,40,0.45) !important;
+          box-shadow: 0 0 0 3px rgba(29,95,207,0.18);
         }
         body[data-theme="light"] [data-card]:hover {
-          box-shadow: 0 8px 24px -10px rgba(14,31,24,0.14);
+          box-shadow: 0 8px 24px -10px rgba(8,12,40,0.14);
         }
       `}</style>
       {notifPermModal && <NotifPermModal onAllow={handleNotifAllow} onDeny={handleNotifDeny} />}
@@ -41110,10 +41121,10 @@ class ErrorBoundary extends React.Component{
   render(){
     if(this.state.hasError){
       return (
-        <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14,background:"#0D120F",color:"#E8EFE7",fontFamily:"Geist,-apple-system,BlinkMacSystemFont,sans-serif",textAlign:"center",padding:24}}>
+        <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14,background:"#0A0E1C",color:"#E7EBF5",fontFamily:"Geist,-apple-system,BlinkMacSystemFont,sans-serif",textAlign:"center",padding:24}}>
           <div style={{fontSize:18,fontWeight:700}}>Something went wrong.</div>
-          <div style={{fontSize:13,color:"rgba(232,239,231,0.6)",maxWidth:320,lineHeight:1.5}}>Studlin hit an error it couldn't recover from. Your data's safe, refreshing usually fixes this.</div>
-          <button onClick={()=>window.location.reload()} style={{padding:"10px 24px",borderRadius:10,background:"#5B9DF0",color:"#0D120F",fontSize:14,fontWeight:700,border:"none",cursor:"pointer",fontFamily:"inherit"}}>Refresh</button>
+          <div style={{fontSize:13,color:"rgba(231,235,245,0.6)",maxWidth:320,lineHeight:1.5}}>Studlin hit an error it couldn't recover from. Your data's safe, refreshing usually fixes this.</div>
+          <button onClick={()=>window.location.reload()} style={{padding:"10px 24px",borderRadius:10,background:"#5B9DF0",color:"#080C28",fontSize:14,fontWeight:700,border:"none",cursor:"pointer",fontFamily:"inherit"}}>Refresh</button>
         </div>
       );
     }
