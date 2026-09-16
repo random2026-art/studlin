@@ -12,12 +12,15 @@
 // from unrelated blue content. Verified below that all three new accents
 // sit at a real color distance from T.blue.
 //
-// Also verifies the branch-only default-accent flip (Cobalt becomes the
-// startup default here, via both the module-level applyTheme() call and
-// the component-level accent-state initializer's one-time "reset6"
-// migration) without disturbing the existing "reset5" migration or the
-// unrecognized-accent-falls-back-to-Lime safety net from
-// pink-slate-accents.test.js.
+// Also verifies the branch-only default-accent flip without disturbing the
+// existing "reset5" migration or the unrecognized-accent-falls-back-to-Lime
+// safety net from pink-slate-accents.test.js. The default flipped twice on
+// this branch: Cobalt first (module-level applyTheme() call + one-time
+// "reset6" migration), then Indigo (2026-09-16, after "the blue doesn't
+// look good" feedback on Cobalt's sky-blue -- see ACCENTS.Indigo's own
+// comment for the user-supplied reference palette) via a second one-time
+// "reset7" migration layered on top, so anyone already forced onto Cobalt
+// by reset6 also picks up the new default.
 const { test, describe } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("fs");
@@ -42,7 +45,7 @@ describe("ACCENTS: Cobalt/Ocean/Indigo follow the exact same dk/lt-pair shape ev
     const body = SOURCE.slice(idx, SOURCE.indexOf("};", idx));
     assert.match(body, /Cobalt:\{dk:\{lime:"#5B9DF0",limeDk:"#3D7FDB",limeLt:"#A9CDF7"\}, lt:\{lime:"#1D5FCF",limeDk:"#154A9E",limeLt:"#A9CDF7"\}\},/);
     assert.match(body, /Ocean: \{dk:\{lime:"#4FB3D9",limeDk:"#2E93BC",limeLt:"#A8E0F2"\}, lt:\{lime:"#166E96",limeDk:"#125676",limeLt:"#A8E0F2"\}\},/);
-    assert.match(body, /Indigo:\{dk:\{lime:"#5D7FE8",limeDk:"#3F5FCC",limeLt:"#C2CDFA"\}, lt:\{lime:"#3450C9",limeDk:"#28409E",limeLt:"#C2CDFA"\}\},/);
+    assert.match(body, /Indigo:\{dk:\{lime:"#5C6BC0",limeDk:"#3F51B5",limeLt:"#BBC5FB"\}, lt:\{lime:"#35459E",limeDk:"#283477",limeLt:"#BBC5FB"\}\},/);
   });
 
   test("all three sit at a real color distance from the separate T.blue token, unlike the existing Sky accent", () => {
@@ -54,10 +57,10 @@ describe("ACCENTS: Cobalt/Ocean/Indigo follow the exact same dk/lt-pair shape ev
     // blue. Pinning it here as the baseline the new accents must clear.
     assert.ok(hexDist(skyDark, tBlueDark) < 25);
     assert.ok(hexDist(skyLight, tBlueLight) < 10);
-    ["#5B9DF0", "#4FB3D9", "#5D7FE8"].forEach((dk) => {
+    ["#5B9DF0", "#4FB3D9", "#5C6BC0"].forEach((dk) => {
       assert.ok(hexDist(dk, tBlueDark) > 25, `${dk} should be clearly distinct from T.blue dark`);
     });
-    ["#1D5FCF", "#166E96", "#3450C9"].forEach((lt) => {
+    ["#1D5FCF", "#166E96", "#35459E"].forEach((lt) => {
       assert.ok(hexDist(lt, tBlueLight) > 25, `${lt} should be clearly distinct from T.blue light`);
     });
   });
@@ -71,7 +74,7 @@ describe("applyTheme actually picks up all three new accents (same code path eve
     m.applyTheme("dark", "Ocean", "Comfortable");
     assert.equal(m.T.lime, "#4FB3D9");
     m.applyTheme("dark", "Indigo", "Comfortable");
-    assert.equal(m.T.lime, "#5D7FE8");
+    assert.equal(m.T.lime, "#5C6BC0");
   });
 
   test("light mode picks up each accent's own light-mode color, not the dark-mode one", () => {
@@ -89,7 +92,7 @@ describe("applyTheme actually picks up all three new accents (same code path eve
 
 describe("Settings' Appearance picker offers all three new blues alongside every existing accent", () => {
   test("the accents array used to render the picker includes Cobalt, Ocean, and Indigo", () => {
-    assert.match(SOURCE, /\{n:"Cobalt",c:"#3D7FDB"\},\{n:"Ocean",c:"#1C7FA8"\},\{n:"Indigo",c:"#3F5FCC"\}\];/);
+    assert.match(SOURCE, /\{n:"Cobalt",c:"#3D7FDB"\},\{n:"Ocean",c:"#1C7FA8"\},\{n:"Indigo",c:"#3F51B5"\}\];/);
   });
 
   test("every accent that existed before this branch is still present -- this only adds, never replaces or reorders a returning user's existing options", () => {
@@ -99,16 +102,20 @@ describe("Settings' Appearance picker offers all three new blues alongside every
   });
 });
 
-describe("branch-only default flip to Cobalt (studlin-app.jsx, not a change to the underlying accent system itself)", () => {
-  test("the module-level initial applyTheme() call defaults to Cobalt when nothing is saved yet", () => {
-    assert.match(SOURCE, /localStorage\.getItem\('studlin-accent'\)\) \|\| 'Cobalt',/);
+describe("branch-only default flip to Indigo (studlin-app.jsx, not a change to the underlying accent system itself)", () => {
+  test("the module-level initial applyTheme() call defaults to Indigo when nothing is saved yet", () => {
+    assert.match(SOURCE, /localStorage\.getItem\('studlin-accent'\)\) \|\| 'Indigo',/);
   });
 
-  test("a one-time reset6 migration forces existing saved accents to Cobalt too, mirroring the existing reset5 pattern exactly", () => {
+  test("the original reset6 migration (forcing Cobalt) is untouched -- history isn't rewritten, a new migration is layered on top instead", () => {
     assert.match(SOURCE, /if\(!localStorage\.getItem\("studlin-accent-reset6"\)\)\{localStorage\.setItem\("studlin-accent","Cobalt"\);localStorage\.setItem\("studlin-accent-reset6","1"\);\}/);
   });
 
-  test("the pre-existing reset5 migration (which forces Lime) is untouched -- this branch adds a second migration, it doesn't rewrite history", () => {
+  test("a one-time reset7 migration forces existing saved accents to Indigo, mirroring the reset5/reset6 pattern exactly -- so anyone already forced onto Cobalt by reset6 still picks up the new default", () => {
+    assert.match(SOURCE, /if\(!localStorage\.getItem\("studlin-accent-reset7"\)\)\{localStorage\.setItem\("studlin-accent","Indigo"\);localStorage\.setItem\("studlin-accent-reset7","1"\);\}/);
+  });
+
+  test("the pre-existing reset5 migration (which forces Lime) is untouched -- each new default is its own additional migration, not a rewrite of history", () => {
     assert.match(SOURCE, /if\(!localStorage\.getItem\("studlin-accent-reset5"\)\)\{localStorage\.setItem\("studlin-accent","Lime"\);localStorage\.setItem\("studlin-accent-reset5","1"\);\}/);
   });
 });
