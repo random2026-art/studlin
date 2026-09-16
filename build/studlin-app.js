@@ -16168,6 +16168,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
       lsSet("calendarHighlightIds", { ids: newIds, setAt: Date.now() });
       if (setActive) setActive("calendar");
     }
+    if (onToast) onToast("Saved.");
     onClose();
   };
   const proceedSave = () => {

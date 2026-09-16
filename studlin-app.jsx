@@ -26985,13 +26985,25 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
     // so it can't reach into CalendarTab's own local highlight state --
     // see CalendarTab's own newItemHighlightIds comment). Only fires when
     // this save genuinely just created something new to look at -- a plain
-    // title/date edit with neither toggle on stays exactly as quiet as
-    // before.
+    // title/date edit with neither toggle on gets its own toast just below
+    // instead.
     if(attackPair||newExamSessions.length>0){
       const newIds=[...(attackPair?[attackPair.marker.id,attackPair.task.id]:[]),...newExamSessions.map(s=>s.id)];
       lsSet("calendarHighlightIds",{ids:newIds,setAt:Date.now()});
       if(setActive)setActive("calendar");
     }
+    // User report, 2026-09-16 ("when i hit edit... it doesnt save the
+    // title"): Save genuinely worked every time this was checked -- commit()
+    // wrote the real change and onClose() closed the modal right after --
+    // but with nothing else on screen to mark that, the modal just silently
+    // vanishing reads exactly like "nothing happened, so it must have
+    // failed." CLAUDE.md's own guardrail already requires this: successful
+    // saves get a toast, never silence. Same onToast/dashToast pattern
+    // every other save in this app already uses (see e.g. the async
+    // flashcard-ready toast just above) -- fires here instead of there
+    // specifically because it needs to run for every save kind, not just
+    // exam-material generation.
+    if(onToast)onToast("Saved.");
     onClose();
   };
   // Split out of save() so the two type-switch confirms below (and the
