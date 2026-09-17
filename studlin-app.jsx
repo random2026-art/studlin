@@ -22,7 +22,7 @@ const darkT = {
   lime:   "#AECE5E",
   limeDk: "#8BAE3C",
   limeLt: "#CBDF92",
-  glow:   "rgba(160,183,227,0.22)",
+  glow:   "rgba(95,137,221,0.22)",
   text:   "#E7EBF5",
   muted:  "#8791A6",
   faint:  "#333C54",
@@ -182,19 +182,27 @@ const ACCENTS={
   // same HSL lightness (the WCAG luminance formula weights green ~10x
   // heavier than blue -- 0.7152 vs 0.0722), so naively matching lime's
   // saturation+lightness (which is what "Denim" and the original "Indigo"
-  // both did) will always look duller than lime actually looks. Fixed by
-  // matching CONTRAST instead of raw lightness: same hue family and the
-  // *exact same saturation* as darkT.lime (#AECE5E, 53% -- this isn't a
-  // paler/weaker blue, it's iso-saturated), lightness raised until it
-  // clears the identical contrast-against-ink ratio lime has (9.5:1 vs
-  // lime's 9.6:1). Renamed Denim -> Cornflower since the character
-  // genuinely changed again. This is the pick promoted to default (see
-  // the 'Lime' fallback strings this comment is near, same mechanism
-  // "Lime" itself uses today) -- Cobalt/Ocean stay in Settings as the
-  // other two picks, unchanged.
+  // both did) will always look duller than lime actually looks. First fix
+  // matched CONTRAST instead of raw lightness: same saturation as
+  // darkT.lime (53%), lightness raised until it cleared lime's own
+  // contrast-against-ink ratio (9.5:1 vs lime's 9.6:1).
+  // (4) That contrast-matched version (dk.lime #5F89DD) turned out too
+  // pale once actually seen live: T.lime isn't just used as text/borders,
+  // it's the SOLID FILL for study blocks (design-tokens.js's
+  // accent===theme.lime, black ink text) and the default/no-subject
+  // calendar event tint -- a big pale-lavender block reads weak/washed
+  // regardless of its contrast number. User feedback: "make the blue
+  // darker for certain things... have text be in black... ensure good
+  // contrast." dk.lime pulled back down to a properly saturated, richer
+  // blue (still 65% saturation, well clear of pastel) -- ink-on-accent
+  // contrast is now 5.6:1 (still clears the 4.5:1 AA minimum, "certain
+  // things" being dark-mode solid fills specifically; light mode's
+  // lt.lime was already a rich medium blue, never pale, so it's
+  // unchanged). Cobalt/Ocean stay in Settings as the other two picks,
+  // unchanged.
   Cobalt:{dk:{lime:"#5B9DF0",limeDk:"#3D7FDB",limeLt:"#A9CDF7"}, lt:{lime:"#1D5FCF",limeDk:"#154A9E",limeLt:"#A9CDF7"}},
   Ocean: {dk:{lime:"#4FB3D9",limeDk:"#2E93BC",limeLt:"#A8E0F2"}, lt:{lime:"#166E96",limeDk:"#125676",limeLt:"#A8E0F2"}},
-  Cornflower:{dk:{lime:"#A0B7E3",limeDk:"#7D8FB1",limeLt:"#D0DBF1"}, lt:{lime:"#4B78D2",limeDk:"#385A9E",limeLt:"#D0DBF1"}},
+  Cornflower:{dk:{lime:"#5F89DD",limeDk:"#4767A6",limeLt:"#B7CAF0"}, lt:{lime:"#4B78D2",limeDk:"#385A9E",limeLt:"#B7CAF0"}},
 };
 function applyTheme(name, accent, density) {
   Object.assign(T, name === 'light' ? lightT : darkT);
@@ -35653,7 +35661,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   // still had the pre-removal code. With both gone, the "Study
   // preferences" tab (and its Settings nav entry) has nothing legitimate
   // left in it -- removed below rather than left rendering empty.
-  const accents=[{n:"Lime",c:"#AECE5E"},{n:"Forest",c:"#3E9576"},{n:"Sky",c:"#4F95D6"},{n:"Lilac",c:"#9474C9"},{n:"Peach",c:"#D07C4C"},{n:"Pink",c:"#D9648A"},{n:"Slate",c:"#7A8592"},{n:"Cobalt",c:"#3D7FDB"},{n:"Ocean",c:"#1C7FA8"},{n:"Cornflower",c:"#7D8FB1"}];
+  const accents=[{n:"Lime",c:"#AECE5E"},{n:"Forest",c:"#3E9576"},{n:"Sky",c:"#4F95D6"},{n:"Lilac",c:"#9474C9"},{n:"Peach",c:"#D07C4C"},{n:"Pink",c:"#D9648A"},{n:"Slate",c:"#7A8592"},{n:"Cobalt",c:"#3D7FDB"},{n:"Ocean",c:"#1C7FA8"},{n:"Cornflower",c:"#4767A6"}];
   const [mgmtSubjs,setMgmtSubjs]=useState(()=>getSubjects().map(s=>({...s})));
   const [mgmtSaved,setMgmtSaved]=useState(false);
   const [confirmClearSubjs,setConfirmClearSubjs]=useState(false);
@@ -37843,15 +37851,15 @@ function AuthScreen(){
   return(
     <div style={{minHeight:"100vh",background:"#0A0E1C",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20}}>
       <div style={{display:"flex",alignItems:"center",gap:10}}>
-        <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#123A66,#0B1420)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(160,183,227,0.38)"}}>
-          <div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #D0DBF1, #A0B7E3)",boxShadow:"0 0 10px 3px rgba(160,183,227,0.65)"}} />
+        <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#123A66,#0B1420)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(95,137,221,0.38)"}}>
+          <div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #B7CAF0, #5F89DD)",boxShadow:"0 0 10px 3px rgba(95,137,221,0.65)"}} />
         </div>
         <span style={{fontSize:22,fontWeight:700,color:"#E7EBF5"}}>Studlin</span>
       </div>
       <p style={{fontSize:15,color:"rgba(231,235,245,0.6)",margin:0}}>Sign in to access your workspace.</p>
       <div style={{display:"flex",gap:12,marginTop:8}}>
-        <a href="/signin" style={{padding:"12px 28px",borderRadius:10,background:"#A0B7E3",color:"#080C28",fontSize:14,fontWeight:600,textDecoration:"none"}}>Sign in</a>
-        <a href="/onboarding" style={{padding:"12px 28px",borderRadius:10,border:"1px solid rgba(160,183,227,0.3)",background:"transparent",color:"#A0B7E3",fontSize:14,fontWeight:600,textDecoration:"none"}}>Create account</a>
+        <a href="/signin" style={{padding:"12px 28px",borderRadius:10,background:"#5F89DD",color:"#080C28",fontSize:14,fontWeight:600,textDecoration:"none"}}>Sign in</a>
+        <a href="/onboarding" style={{padding:"12px 28px",borderRadius:10,border:"1px solid rgba(95,137,221,0.3)",background:"transparent",color:"#5F89DD",fontSize:14,fontWeight:600,textDecoration:"none"}}>Create account</a>
       </div>
     </div>
   );
@@ -37888,9 +37896,9 @@ function OtpBoxes({value,onChange,disabled,autoFocus}){
       {[0,1,2,3,4,5].map(i=>(
         <input key={i} ref={el=>refs.current[i]=el} value={value[i]||""} onChange={e=>onInput(i,e)} onKeyDown={e=>onKeyDown(i,e)}
           disabled={disabled} autoFocus={autoFocus&&i===0} inputMode="numeric" maxLength={1}
-          style={{width:42,height:52,textAlign:"center",fontSize:22,fontWeight:700,borderRadius:10,border:"1.5px solid rgba(160,183,227,0.25)",background:"#0A0E1C",color:"#E7EBF5",outline:"none"}}
-          onFocus={e=>e.target.style.borderColor="#A0B7E3"}
-          onBlur={e=>e.target.style.borderColor="rgba(160,183,227,0.25)"} />
+          style={{width:42,height:52,textAlign:"center",fontSize:22,fontWeight:700,borderRadius:10,border:"1.5px solid rgba(95,137,221,0.25)",background:"#0A0E1C",color:"#E7EBF5",outline:"none"}}
+          onFocus={e=>e.target.style.borderColor="#5F89DD"}
+          onBlur={e=>e.target.style.borderColor="rgba(95,137,221,0.25)"} />
       ))}
     </div>
   );
@@ -37933,22 +37941,22 @@ function VerifyEmailScreen({user}){
             colors rather than reading T.lime -- meaning it stayed green
             for every accent choice, not just the default. Repainted to
             match Cobalt directly, same as the rest of this branch. */}
-        <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#123A66,#0B1420)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(160,183,227,0.38)"}}>
-          <div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #D0DBF1, #A0B7E3)",boxShadow:"0 0 10px 3px rgba(160,183,227,0.65)"}} />
+        <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#123A66,#0B1420)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(95,137,221,0.38)"}}>
+          <div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #B7CAF0, #5F89DD)",boxShadow:"0 0 10px 3px rgba(95,137,221,0.65)"}} />
         </div>
         <span style={{fontSize:22,fontWeight:700,color:"#E7EBF5"}}>Studlin</span>
       </div>
-      <div style={{width:"100%",maxWidth:380,background:"#10152A",border:"1px solid rgba(160,183,227,0.16)",borderRadius:10,padding:"26px 24px",textAlign:"center"}}>
+      <div style={{width:"100%",maxWidth:380,background:"#10152A",border:"1px solid rgba(95,137,221,0.16)",borderRadius:10,padding:"26px 24px",textAlign:"center"}}>
         <div style={{fontSize:17,fontWeight:700,color:"#E7EBF5",marginBottom:8}}>Enter your code</div>
         <p style={{fontSize:13.5,color:"rgba(231,235,245,0.6)",lineHeight:1.6,margin:"0 0 20px"}}>
           We sent a 6-digit code to<br/><strong style={{color:"#E7EBF5"}}>{user.email}</strong>.
         </p>
         <OtpBoxes value={code} onChange={v=>{setCode(v);setErr("");}} disabled={checking} autoFocus />
         {err&&<div style={{fontSize:12,color:"#E05A47",marginTop:14}}>{err}</div>}
-        <button onClick={submitCode} disabled={code.length!==6||checking} style={{width:"100%",padding:"12px 0",borderRadius:10,background:"#A0B7E3",color:"#080C28",border:"none",fontSize:14,fontWeight:600,cursor:code.length!==6||checking?"not-allowed":"pointer",opacity:code.length!==6||checking?0.5:1,marginTop:18,marginBottom:10}}>
+        <button onClick={submitCode} disabled={code.length!==6||checking} style={{width:"100%",padding:"12px 0",borderRadius:10,background:"#5F89DD",color:"#080C28",border:"none",fontSize:14,fontWeight:600,cursor:code.length!==6||checking?"not-allowed":"pointer",opacity:code.length!==6||checking?0.5:1,marginTop:18,marginBottom:10}}>
           {checking?"Verifying…":"Verify email"}
         </button>
-        <button onClick={resend} disabled={sendStatus==="sending"||sendStatus==="sent"} style={{width:"100%",padding:"11px 0",borderRadius:10,border:"1px solid rgba(160,183,227,0.3)",background:"transparent",color:"#A0B7E3",fontSize:13.5,fontWeight:600,cursor:sendStatus==="sending"||sendStatus==="sent"?"not-allowed":"pointer",opacity:sendStatus==="sending"||sendStatus==="sent"?0.6:1}}>
+        <button onClick={resend} disabled={sendStatus==="sending"||sendStatus==="sent"} style={{width:"100%",padding:"11px 0",borderRadius:10,border:"1px solid rgba(95,137,221,0.3)",background:"transparent",color:"#5F89DD",fontSize:13.5,fontWeight:600,cursor:sendStatus==="sending"||sendStatus==="sent"?"not-allowed":"pointer",opacity:sendStatus==="sending"||sendStatus==="sent"?0.6:1}}>
           {sendStatus==="sending"?"Sending…":sendStatus==="sent"?"Sent — check your inbox":"Resend code"}
         </button>
       </div>
@@ -37974,7 +37982,7 @@ function SharedChatView({shareId}){
       .then(function(data){setChat(data);setStatus("ok");})
       .catch(function(e){setStatus(e.message==="notfound"?"notfound":"error");});
   },[shareId]);
-  const bg=T.bg||"#0A0E1C",card=T.card||"#161C34",text=T.text||"#E7EBF5",muted=T.muted||"#8791A6",lime=T.lime||"#A0B7E3",font=T.font||"system-ui";
+  const bg=T.bg||"#0A0E1C",card=T.card||"#161C34",text=T.text||"#E7EBF5",muted=T.muted||"#8791A6",lime=T.lime||"#5F89DD",font=T.font||"system-ui";
   if(status==="loading")return(<div style={{minHeight:"100vh",background:bg,display:"grid",placeItems:"center"}}><div style={{width:14,height:14,borderRadius:"50%",border:`2px solid ${lime}`,borderTopColor:"transparent",animation:"studlinSpin 0.7s linear infinite"}}/></div>);
   if(status!=="ok")return(<div style={{minHeight:"100vh",background:bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12,fontFamily:font}}><div style={{fontSize:18,fontWeight:700,color:text}}>{status==="notfound"?"This chat doesn't exist.":"Failed to load chat."}</div><a href="/app" style={{color:lime,fontSize:14,textDecoration:"none"}}>Go to Studlin</a></div>);
   return(
@@ -38081,7 +38089,7 @@ function AuthGate(){
     });
   },[shareId]);
   if(shareId)return <SharedChatView shareId={shareId} />;
-  if(user===undefined)return(<div style={{minHeight:"100vh",background:"#0A0E1C",display:"grid",placeItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#123A66,#0B1420)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(160,183,227,0.38)"}}><div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #D0DBF1, #A0B7E3)",boxShadow:"0 0 10px 3px rgba(160,183,227,0.65)"}}/></div><span style={{fontSize:22,fontWeight:700,color:"#E7EBF5"}}>Studlin</span></div></div>);
+  if(user===undefined)return(<div style={{minHeight:"100vh",background:"#0A0E1C",display:"grid",placeItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#123A66,#0B1420)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(95,137,221,0.38)"}}><div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #B7CAF0, #5F89DD)",boxShadow:"0 0 10px 3px rgba(95,137,221,0.65)"}}/></div><span style={{fontSize:22,fontWeight:700,color:"#E7EBF5"}}>Studlin</span></div></div>);
   if(!user)return <AuthScreen />;
   if(isPasswordAccount(user)&&!user.emailVerified)return <VerifyEmailScreen user={user} />;
   return <App />;
@@ -41170,7 +41178,7 @@ class ErrorBoundary extends React.Component{
         <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14,background:"#0A0E1C",color:"#E7EBF5",fontFamily:"Geist,-apple-system,BlinkMacSystemFont,sans-serif",textAlign:"center",padding:24}}>
           <div style={{fontSize:18,fontWeight:700}}>Something went wrong.</div>
           <div style={{fontSize:13,color:"rgba(231,235,245,0.6)",maxWidth:320,lineHeight:1.5}}>Studlin hit an error it couldn't recover from. Your data's safe, refreshing usually fixes this.</div>
-          <button onClick={()=>window.location.reload()} style={{padding:"10px 24px",borderRadius:10,background:"#A0B7E3",color:"#080C28",fontSize:14,fontWeight:700,border:"none",cursor:"pointer",fontFamily:"inherit"}}>Refresh</button>
+          <button onClick={()=>window.location.reload()} style={{padding:"10px 24px",borderRadius:10,background:"#5F89DD",color:"#080C28",fontSize:14,fontWeight:700,border:"none",cursor:"pointer",fontFamily:"inherit"}}>Refresh</button>
         </div>
       );
     }

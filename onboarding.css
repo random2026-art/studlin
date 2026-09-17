@@ -17,7 +17,7 @@
      studlin-app.jsx's ACCENTS.Indigo comment for the exact values. */
   --lime: #4B78D2;
   --lime-dk: #385A9E;
-  --lime-soft: #D0DBF1;
+  --lime-soft: #B7CAF0;
   --line: rgba(8,12,40,0.10);
   --line-strong: rgba(8,12,40,0.18);
   --line-dark: rgba(246,241,230,0.12);
@@ -850,7 +850,7 @@ a { color: inherit; text-decoration: none; }
 .demo.on .dm-window { opacity: 1; transform: none; }
 .dm-greet { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
 .dm-hi { font-size: 13px; font-weight: 700; color: #080C28; }
-.dm-pill { font-family: 'JetBrains Mono', monospace; font-size: 9px; background: #080C28; color: #A0B7E3; padding: 3px 8px; border-radius: 99px; font-weight: 700; }
+.dm-pill { font-family: 'JetBrains Mono', monospace; font-size: 9px; background: #080C28; color: #5F89DD; padding: 3px 8px; border-radius: 99px; font-weight: 700; }
 .dm-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
 .dm-tile { background: #fff; border: 1px solid rgba(8,12,40,0.08); border-radius: 10px; padding: 10px; height: 84px; opacity: 0; transform: scale(.8) translateY(8px); transition: opacity .45s ease, transform .45s cubic-bezier(.2,.9,.3,1.3); }
 .dm-tile.t1 { transition-delay: .35s; } .dm-tile.t2 { transition-delay: .55s; } .dm-tile.t3 { transition-delay: .75s; }
@@ -872,11 +872,11 @@ a { color: inherit; text-decoration: none; }
 .dm-focus { position: relative; width: 160px; height: 160px; display: flex; align-items: center; justify-content: center; }
 .dm-timer { width: 160px; height: 160px; transform: rotate(-90deg); }
 .dm-timer .track { fill: none; stroke: rgba(246,241,230,0.12); stroke-width: 7; }
-.dm-timer .prog { fill: none; stroke: #A0B7E3; stroke-width: 7; stroke-linecap: round; stroke-dasharray: 327; stroke-dashoffset: 327; transition: stroke-dashoffset 3.2s cubic-bezier(.3,.1,.3,1) .3s; }
+.dm-timer .prog { fill: none; stroke: #5F89DD; stroke-width: 7; stroke-linecap: round; stroke-dasharray: 327; stroke-dashoffset: 327; transition: stroke-dashoffset 3.2s cubic-bezier(.3,.1,.3,1) .3s; }
 .demo.on .dm-timer .prog { stroke-dashoffset: 82; }
 .dm-mid { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; }
 .dm-time { font-family: 'JetBrains Mono', monospace; font-size: 28px; font-weight: 700; color: #F6F1E6; }
-.dm-lab { font-family: 'JetBrains Mono', monospace; font-size: 9px; letter-spacing: .22em; color: #A0B7E3; font-weight: 700; opacity: 0; transition: opacity .5s ease 1s; }
+.dm-lab { font-family: 'JetBrains Mono', monospace; font-size: 9px; letter-spacing: .22em; color: #5F89DD; font-weight: 700; opacity: 0; transition: opacity .5s ease 1s; }
 .demo.on .dm-lab { opacity: 1; }
 
 /* flashcards demo */
@@ -895,7 +895,7 @@ a { color: inherit; text-decoration: none; }
 /* tutor demo */
 .dm-chat { width: 78%; display: flex; flex-direction: column; gap: 10px; }
 .dm-bub { max-width: 85%; padding: 11px 14px; border-radius: 14px; font-size: 12.5px; line-height: 1.5; opacity: 0; transform: translateY(10px) scale(.9); transition: opacity .4s ease, transform .4s cubic-bezier(.2,.9,.3,1.2); }
-.dm-bub.me { align-self: flex-end; background: #A0B7E3; color: #080C28; font-weight: 600; border-bottom-right-radius: 4px; transition-delay: .2s; }
+.dm-bub.me { align-self: flex-end; background: #5F89DD; color: #080C28; font-weight: 600; border-bottom-right-radius: 4px; transition-delay: .2s; }
 .dm-bub.ai { align-self: flex-start; background: rgba(246,241,230,0.10); color: #F6F1E6; border-bottom-left-radius: 4px; transition-delay: 1s; position: relative; }
 .demo.on .dm-bub { opacity: 1; transform: none; }
 .dm-dots { display: inline-flex; gap: 4px; opacity: 1; transition: opacity .25s ease 1.9s; }
@@ -906,11 +906,11 @@ a { color: inherit; text-decoration: none; }
 
 /* streak demo */
 .dm-streak { display: flex; flex-direction: column; align-items: center; gap: 16px; }
-.dm-flame { color: #A0B7E3; opacity: 0; transform: scale(0) rotate(-14deg); transition: opacity .5s ease 1.8s, transform .7s cubic-bezier(.2,.9,.3,1.4) 1.8s; filter: drop-shadow(0 0 18px rgba(160,183,227,0.45)); }
+.dm-flame { color: #5F89DD; opacity: 0; transform: scale(0) rotate(-14deg); transition: opacity .5s ease 1.8s, transform .7s cubic-bezier(.2,.9,.3,1.4) 1.8s; filter: drop-shadow(0 0 18px rgba(95,137,221,0.45)); }
 .demo.on .dm-flame { opacity: 1; transform: none; }
 .dm-days { display: flex; gap: 8px; }
 .dm-day { width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 700; color: rgba(246,241,230,0.4); background: rgba(246,241,230,0.08); transform: scale(.85); transition: all .35s cubic-bezier(.2,.9,.3,1.3); }
-.demo.on .dm-day { background: #A0B7E3; color: #080C28; transform: scale(1); }
+.demo.on .dm-day { background: #5F89DD; color: #080C28; transform: scale(1); }
 .dm-dlab { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: .18em; text-transform: uppercase; color: rgba(246,241,230,0.55); opacity: 0; transition: opacity .5s ease 2.1s; }
 .demo.on .dm-dlab { opacity: 1; }
 
