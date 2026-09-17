@@ -1,7 +1,7 @@
 // experiment/blue-rebrand (2026-09-15): cofounder research says blue reads
 // as "trust + studying" to students, green doesn't. This branch adds three
-// new blue accent options (Cobalt/Ocean/Denim) to the existing ACCENTS
-// system rather than inventing a new theming mechanism -- same
+// new blue accent options (Cobalt/Ocean/Cornflower) to the existing
+// ACCENTS system rather than inventing a new theming mechanism -- same
 // dk/lt-pair shape every existing accent already uses (see
 // tests/pink-slate-accents.test.js for the precedent this mirrors).
 //
@@ -14,15 +14,15 @@
 //
 // Also verifies the branch-only default-accent flip without disturbing the
 // existing "reset5" migration or the unrecognized-accent-falls-back-to-Lime
-// safety net from pink-slate-accents.test.js. The default flipped three
-// times on this branch, each round driven by direct user feedback:
+// safety net from pink-slate-accents.test.js. The default flipped FOUR
+// times on this branch, each round driven by direct user feedback -- see
+// ACCENTS.Cornflower's own comment in studlin-app.jsx for the full story:
 //   1. Cobalt (module-level applyTheme() call + one-time "reset6" migration)
-//   2. Indigo (2026-09-16, "the blue doesn't look good" on Cobalt's
-//      sky-blue -- user supplied a reference palette) via "reset7"
-//   3. Denim (2026-09-16, "the blue screams at me, i want something
-//      lighter and better contrast" on Indigo -- see ACCENTS.Denim's own
-//      comment: dark ink text on Indigo only cleared 2.3-4.0:1 contrast,
-//      below the 4.5:1 AA minimum) via "reset8"
+//   2. Indigo (2026-09-16, "the blue doesn't look good") via "reset7"
+//   3. Denim (2026-09-16, "the blue screams at me") via "reset8"
+//   4. Cornflower (2026-09-16, "its not like the green... make it blue"
+//      -- the real fix: brightness-MATCHED to lime, not just hue-rotated)
+//      via "reset9"
 // Each new default is its own additional one-time migration layered on
 // top of the last, so anyone already forced onto an earlier default still
 // picks up the current one.
@@ -43,14 +43,24 @@ function hexDist(a, b) {
   }
   return Math.sqrt(s);
 }
+function luminance(hex) {
+  hex = hex.replace("#", "");
+  const [r, g, b] = [0, 2, 4].map(i => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const f = c => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+  return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+}
+function contrastRatio(a, b) {
+  const [l1, l2] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (l1 + 0.05) / (l2 + 0.05);
+}
 
-describe("ACCENTS: Cobalt/Ocean/Denim follow the exact same dk/lt-pair shape every other accent already uses", () => {
+describe("ACCENTS: Cobalt/Ocean/Cornflower follow the exact same dk/lt-pair shape every other accent already uses", () => {
   test("all three are real entries in the shared ACCENTS palette map", () => {
     const idx = SOURCE.indexOf("const ACCENTS={");
     const body = SOURCE.slice(idx, SOURCE.indexOf("};", idx));
     assert.match(body, /Cobalt:\{dk:\{lime:"#5B9DF0",limeDk:"#3D7FDB",limeLt:"#A9CDF7"\}, lt:\{lime:"#1D5FCF",limeDk:"#154A9E",limeLt:"#A9CDF7"\}\},/);
     assert.match(body, /Ocean: \{dk:\{lime:"#4FB3D9",limeDk:"#2E93BC",limeLt:"#A8E0F2"\}, lt:\{lime:"#166E96",limeDk:"#125676",limeLt:"#A8E0F2"\}\},/);
-    assert.match(body, /Denim: \{dk:\{lime:"#93A5C7",limeDk:"#7086AD",limeLt:"#D9E1EE"\}, lt:\{lime:"#6883AC",limeDk:"#4E6281",limeLt:"#D9E1EE"\}\},/);
+    assert.match(body, /Cornflower:\{dk:\{lime:"#A0B7E3",limeDk:"#7D8FB1",limeLt:"#D0DBF1"\}, lt:\{lime:"#4B78D2",limeDk:"#385A9E",limeLt:"#D0DBF1"\}\},/);
   });
 
   test("all three sit at a real color distance from the separate T.blue token, unlike the existing Sky accent", () => {
@@ -62,43 +72,55 @@ describe("ACCENTS: Cobalt/Ocean/Denim follow the exact same dk/lt-pair shape eve
     // blue. Pinning it here as the baseline the new accents must clear.
     assert.ok(hexDist(skyDark, tBlueDark) < 25);
     assert.ok(hexDist(skyLight, tBlueLight) < 10);
-    ["#5B9DF0", "#4FB3D9", "#93A5C7"].forEach((dk) => {
+    ["#5B9DF0", "#4FB3D9", "#A0B7E3"].forEach((dk) => {
       assert.ok(hexDist(dk, tBlueDark) > 25, `${dk} should be clearly distinct from T.blue dark`);
     });
-    ["#1D5FCF", "#166E96", "#6883AC"].forEach((lt) => {
+    ["#1D5FCF", "#166E96", "#4B78D2"].forEach((lt) => {
       assert.ok(hexDist(lt, tBlueLight) > 25, `${lt} should be clearly distinct from T.blue light`);
     });
   });
 
-  test("Denim's ink-on-accent contrast clears WCAG AA (4.5:1) in both modes -- the specific defect that sank Indigo", () => {
-    // Every T.lime button in the app puts dark T.ink (#080C28) text
-    // directly on the accent color. Indigo's own values (#5C6BC0 dk /
-    // #35459E lt) only cleared 3.95:1 / 2.28:1 against that ink -- Denim
-    // was chosen specifically to fix this, not just to look different.
-    function luminance(hex) {
+  test("Cornflower's saturation matches darkT.lime's original green exactly -- it's brightness-matched, not a weaker/paler blue", () => {
+    function hexToHsl(hex) {
       hex = hex.replace("#", "");
-      const [r, g, b] = [0, 2, 4].map(i => parseInt(hex.slice(i, i + 2), 16) / 255);
-      const f = c => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
-      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+      const r = parseInt(hex.slice(0, 2), 16) / 255, g = parseInt(hex.slice(2, 4), 16) / 255, b = parseInt(hex.slice(4, 6), 16) / 255;
+      const max = Math.max(r, g, b), min = Math.min(r, g, b);
+      let s, l = (max + min) / 2;
+      if (max === min) { s = 0; } else {
+        const d = max - min;
+        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      }
+      return { s: s * 100, l: l * 100 };
     }
-    function contrastRatio(a, b) {
-      const [l1, l2] = [luminance(a), luminance(b)].sort((x, y) => y - x);
-      return (l1 + 0.05) / (l2 + 0.05);
-    }
-    assert.ok(contrastRatio("#93A5C7", "#080C28") >= 4.5, "dk.lime vs ink should clear AA");
-    assert.ok(contrastRatio("#6883AC", "#080C28") >= 4.5, "lt.lime vs ink should clear AA");
+    const lime = hexToHsl("AECE5E");
+    const cornflower = hexToHsl("A0B7E3");
+    assert.ok(Math.abs(lime.s - cornflower.s) < 2, `saturation should match lime's ${lime.s.toFixed(1)}%, got ${cornflower.s.toFixed(1)}%`);
+    assert.ok(cornflower.l > lime.l, "lightness must be raised above lime's own -- blue needs more lightness than green to read equally bright (WCAG weights green ~10x heavier than blue)");
+  });
+
+  test("Cornflower's ink-on-accent contrast nearly matches the original lime's own contrast against the same dark text, in both modes", () => {
+    // Every T.lime button in the app puts dark T.ink (#080C28) text
+    // directly on the accent color. The original lime (#AECE5E dk /
+    // #9EC83D lt) against its own original ink (#0E1F18) cleared 9.6:1 /
+    // 8.8:1 -- Cornflower was chosen specifically to land close to those
+    // same numbers against the app's current ink, not just to look
+    // different from Denim (7.7:1 dk / 5.0:1 lt, notably duller).
+    const dkContrast = contrastRatio("#A0B7E3", "#080C28");
+    const ltContrast = contrastRatio("#4B78D2", "#080C28");
+    assert.ok(dkContrast >= 9, `dk.lime contrast should be close to lime's own 9.6:1, got ${dkContrast.toFixed(2)}`);
+    assert.ok(ltContrast >= 4.5, `lt.lime contrast should clear AA, got ${ltContrast.toFixed(2)}`);
   });
 });
 
 describe("applyTheme actually picks up all three new accents (same code path every existing accent already goes through)", () => {
-  test("choosing Cobalt/Ocean/Denim sets T.lime to each one's dark-mode color", () => {
+  test("choosing Cobalt/Ocean/Cornflower sets T.lime to each one's dark-mode color", () => {
     const m = loadStudlinModule();
     m.applyTheme("dark", "Cobalt", "Comfortable");
     assert.equal(m.T.lime, "#5B9DF0");
     m.applyTheme("dark", "Ocean", "Comfortable");
     assert.equal(m.T.lime, "#4FB3D9");
-    m.applyTheme("dark", "Denim", "Comfortable");
-    assert.equal(m.T.lime, "#93A5C7");
+    m.applyTheme("dark", "Cornflower", "Comfortable");
+    assert.equal(m.T.lime, "#A0B7E3");
   });
 
   test("light mode picks up each accent's own light-mode color, not the dark-mode one", () => {
@@ -115,8 +137,8 @@ describe("applyTheme actually picks up all three new accents (same code path eve
 });
 
 describe("Settings' Appearance picker offers all three new blues alongside every existing accent", () => {
-  test("the accents array used to render the picker includes Cobalt, Ocean, and Denim", () => {
-    assert.match(SOURCE, /\{n:"Cobalt",c:"#3D7FDB"\},\{n:"Ocean",c:"#1C7FA8"\},\{n:"Denim",c:"#7086AD"\}\];/);
+  test("the accents array used to render the picker includes Cobalt, Ocean, and Cornflower", () => {
+    assert.match(SOURCE, /\{n:"Cobalt",c:"#3D7FDB"\},\{n:"Ocean",c:"#1C7FA8"\},\{n:"Cornflower",c:"#7D8FB1"\}\];/);
   });
 
   test("every accent that existed before this branch is still present -- this only adds, never replaces or reorders a returning user's existing options", () => {
@@ -126,21 +148,19 @@ describe("Settings' Appearance picker offers all three new blues alongside every
   });
 });
 
-describe("branch-only default flip to Denim (studlin-app.jsx, not a change to the underlying accent system itself)", () => {
-  test("the module-level initial applyTheme() call defaults to Denim when nothing is saved yet", () => {
-    assert.match(SOURCE, /localStorage\.getItem\('studlin-accent'\)\) \|\| 'Denim',/);
+describe("branch-only default flip to Cornflower (studlin-app.jsx, not a change to the underlying accent system itself)", () => {
+  test("the module-level initial applyTheme() call defaults to Cornflower when nothing is saved yet", () => {
+    assert.match(SOURCE, /localStorage\.getItem\('studlin-accent'\)\) \|\| 'Cornflower',/);
   });
 
-  test("the reset6 migration (forcing Cobalt) is untouched", () => {
+  test("the reset6/reset7/reset8 migrations (forcing Cobalt, then Indigo, then Denim) are all untouched -- history isn't rewritten, each new default is its own additional migration", () => {
     assert.match(SOURCE, /if\(!localStorage\.getItem\("studlin-accent-reset6"\)\)\{localStorage\.setItem\("studlin-accent","Cobalt"\);localStorage\.setItem\("studlin-accent-reset6","1"\);\}/);
-  });
-
-  test("the reset7 migration (forcing Indigo) is untouched", () => {
     assert.match(SOURCE, /if\(!localStorage\.getItem\("studlin-accent-reset7"\)\)\{localStorage\.setItem\("studlin-accent","Indigo"\);localStorage\.setItem\("studlin-accent-reset7","1"\);\}/);
+    assert.match(SOURCE, /if\(!localStorage\.getItem\("studlin-accent-reset8"\)\)\{localStorage\.setItem\("studlin-accent","Denim"\);localStorage\.setItem\("studlin-accent-reset8","1"\);\}/);
   });
 
-  test("a one-time reset8 migration forces existing saved accents to Denim, mirroring the reset5/6/7 pattern exactly -- so anyone already forced onto Indigo by reset7 still picks up the final default", () => {
-    assert.match(SOURCE, /if\(!localStorage\.getItem\("studlin-accent-reset8"\)\)\{localStorage\.setItem\("studlin-accent","Denim"\);localStorage\.setItem\("studlin-accent-reset8","1"\);\}/);
+  test("a one-time reset9 migration forces existing saved accents to Cornflower, mirroring the reset5/6/7/8 pattern exactly -- so anyone already forced onto Denim by reset8 still picks up the final default", () => {
+    assert.match(SOURCE, /if\(!localStorage\.getItem\("studlin-accent-reset9"\)\)\{localStorage\.setItem\("studlin-accent","Cornflower"\);localStorage\.setItem\("studlin-accent-reset9","1"\);\}/);
   });
 
   test("the pre-existing reset5 migration (which forces Lime) is untouched -- each new default is its own additional migration, not a rewrite of history", () => {

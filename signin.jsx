@@ -68,7 +68,7 @@ function LeftRail() {
   return (
     <aside className="rail">
       <div className="brand">
-        <div style={{width:34,height:34,borderRadius:8,background:"#6883AC",display:"grid",placeItems:"center",fontSize:17,fontWeight:800,color:"#080C28"}}>S</div>
+        <div style={{width:34,height:34,borderRadius:8,background:"#4B78D2",display:"grid",placeItems:"center",fontSize:17,fontWeight:800,color:"#080C28"}}>S</div>
         <span className="name">studlin</span>
       </div>
       <div className="rail-icon">{Ic.login}</div>

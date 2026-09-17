@@ -20,7 +20,7 @@ const darkT = {
   lime: "#AECE5E",
   limeDk: "#8BAE3C",
   limeLt: "#CBDF92",
-  glow: "rgba(147,165,199,0.22)",
+  glow: "rgba(160,183,227,0.22)",
   text: "#E7EBF5",
   muted: "#8791A6",
   faint: "#333C54",
@@ -60,7 +60,7 @@ const lightT = {
   lime: "#9EC83D",
   limeDk: "#7FA82A",
   limeLt: "#CBDF92",
-  glow: "rgba(104,131,172,0.20)",
+  glow: "rgba(75,120,210,0.20)",
   text: "#080C28",
   muted: "rgba(8,12,40,0.55)",
   faint: "rgba(8,12,40,0.30)",
@@ -143,29 +143,39 @@ const ACCENTS = {
   // to actually compare instead of a single take-it-or-leave-it color:
   //  - Cobalt: vivid, confident, the most "modern SaaS" of the three.
   //  - Ocean: cooler/fresher, azure-leaning -- calmer, more "focus" mood.
-  //  - Denim: muted/desaturated, steel-toned -- the calmest, quietest of
-  //    the three (was called "Indigo" through two earlier revisions; see
-  //    below for why the name changed along with the values).
-  // Went through two rounds of direct user feedback after the first pass:
+  //  - Cornflower: brightness-matched to the original lime (see below) --
+  //    the "make it blue but keep it feeling like the green" pick. Went
+  //    through two prior names/revisions (Indigo, then Denim) before this.
+  // Three rounds of direct user feedback after the first pass, each one a
+  // real defect, not just taste:
   // (1) "the blue doesn't look good" -- Cobalt's sky-blue read as too
   // light/washed-out. Repainted the old "Indigo" entry to a user-supplied
-  // reference swatch instead (a muted indigo ramp: #6883AC / "Deep Sea"
-  // #7086AD / #93A5C7 / #D9E1EE) and made it the default.
+  // reference swatch (a muted indigo ramp) and made it the default.
   // (2) "the blue screams at me, i want something lighter and better
-  // contrast" -- that indigo was too saturated/dark: dark "ink" text
-  // (the color every T.lime button already uses) only cleared 2.3-4.0:1
-  // contrast against it, well below the 4.5:1 AA minimum. Renamed to
-  // Denim and repainted lighter/more desaturated so ink text reads
-  // cleanly again without touching any of the ~150 callsites that use
-  // it, and nudged lt.lime from a first-draft #51698F to #6883AC
-  // specifically to clear 4.5:1 against ink (was 3.44:1) while staying in
-  // the same muted "steel" family. This is the pick promoted to default
-  // (see the 'Lime' fallback strings this comment is near, same
-  // mechanism "Lime" itself uses today) -- Cobalt/Ocean stay in Settings
-  // as the other two picks, unchanged.
+  // contrast" -- that indigo was too saturated/dark: dark "ink" text (the
+  // color every T.lime button already uses) only cleared 2.3-4.0:1
+  // contrast against it, below the 4.5:1 AA minimum. Renamed to Denim,
+  // repainted lighter/more desaturated -- fixed the contrast (dk 7.7:1,
+  // lt 4.97:1) but overcorrected on vividness.
+  // (3) "its not like the green honestly the green might be better...
+  // like how we have studlin right now with green but make it blue" --
+  // the real insight here: blue and green are NOT equally bright at the
+  // same HSL lightness (the WCAG luminance formula weights green ~10x
+  // heavier than blue -- 0.7152 vs 0.0722), so naively matching lime's
+  // saturation+lightness (which is what "Denim" and the original "Indigo"
+  // both did) will always look duller than lime actually looks. Fixed by
+  // matching CONTRAST instead of raw lightness: same hue family and the
+  // *exact same saturation* as darkT.lime (#AECE5E, 53% -- this isn't a
+  // paler/weaker blue, it's iso-saturated), lightness raised until it
+  // clears the identical contrast-against-ink ratio lime has (9.5:1 vs
+  // lime's 9.6:1). Renamed Denim -> Cornflower since the character
+  // genuinely changed again. This is the pick promoted to default (see
+  // the 'Lime' fallback strings this comment is near, same mechanism
+  // "Lime" itself uses today) -- Cobalt/Ocean stay in Settings as the
+  // other two picks, unchanged.
   Cobalt: { dk: { lime: "#5B9DF0", limeDk: "#3D7FDB", limeLt: "#A9CDF7" }, lt: { lime: "#1D5FCF", limeDk: "#154A9E", limeLt: "#A9CDF7" } },
   Ocean: { dk: { lime: "#4FB3D9", limeDk: "#2E93BC", limeLt: "#A8E0F2" }, lt: { lime: "#166E96", limeDk: "#125676", limeLt: "#A8E0F2" } },
-  Denim: { dk: { lime: "#93A5C7", limeDk: "#7086AD", limeLt: "#D9E1EE" }, lt: { lime: "#6883AC", limeDk: "#4E6281", limeLt: "#D9E1EE" } }
+  Cornflower: { dk: { lime: "#A0B7E3", limeDk: "#7D8FB1", limeLt: "#D0DBF1" }, lt: { lime: "#4B78D2", limeDk: "#385A9E", limeLt: "#D0DBF1" } }
 };
 function applyTheme(name, accent, density) {
   Object.assign(T, name === "light" ? lightT : darkT);
@@ -186,7 +196,7 @@ function applyTheme(name, accent, density) {
 }
 applyTheme(
   typeof localStorage !== "undefined" && localStorage.getItem("studlin-theme") || "light",
-  typeof localStorage !== "undefined" && localStorage.getItem("studlin-accent") || "Denim",
+  typeof localStorage !== "undefined" && localStorage.getItem("studlin-accent") || "Cornflower",
   typeof localStorage !== "undefined" && localStorage.getItem("studlin-density") || "Comfortable"
 );
 const ic = (path, size = 16, vb = "0 0 24 24") => /* @__PURE__ */ React.createElement("svg", { width: size, height: size, viewBox: vb, fill: "none", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round", strokeLinejoin: "round", style: { flexShrink: 0, display: "block" } }, path);
@@ -21584,7 +21594,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     return /* @__PURE__ */ React.createElement("div", { onClick: () => setTheme(mode), style: { flex: 1, cursor: "pointer", borderRadius: 12, padding: 16, border: `2px solid ${sel ? T.lime : T.border}`, background: sel ? T.lime + "08" : T.card2, transition: "all 0.15s" } }, /* @__PURE__ */ React.createElement("div", { style: { height: 90, borderRadius: 8, overflow: "hidden", background: isLight ? "#F4F5F9" : "#0A0E1C", border: `1px solid ${isLight ? "rgba(8,12,40,0.08)" : "rgba(255,255,255,0.06)"}`, marginBottom: 12, display: "flex" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 24, background: "#123A66", display: "flex", flexDirection: "column", alignItems: "center", padding: "6px 0", gap: 4 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 10, height: 10, background: T.lime, borderRadius: 2 } }), /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 3, background: "rgba(255,255,255,0.2)", borderRadius: 1, marginTop: 4 } }), /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 3, background: "rgba(255,255,255,0.12)", borderRadius: 1 } }), /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 3, background: "rgba(255,255,255,0.12)", borderRadius: 1 } })), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, padding: 8, display: "flex", flexDirection: "column", gap: 5 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 4 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: 18, background: isLight ? "#123A66" : "#1E263F", borderRadius: 3 } }), /* @__PURE__ */ React.createElement("div", { style: { width: 24, height: 18, background: T.lime, borderRadius: 3 } }), /* @__PURE__ */ React.createElement("div", { style: { width: 24, height: 18, background: isLight ? "#fff" : "#1E263F", borderRadius: 3, border: isLight ? "1px solid rgba(8,12,40,0.08)" : "none" } })), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 4 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: 14, background: isLight ? "#fff" : "#1E263F", borderRadius: 3, border: isLight ? "1px solid rgba(8,12,40,0.08)" : "none" } }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: 14, background: isLight ? "#fff" : "#1E263F", borderRadius: 3, border: isLight ? "1px solid rgba(8,12,40,0.08)" : "none" } })))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: T.white, letterSpacing: "-0.01em" } }, label), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, sub)), /* @__PURE__ */ React.createElement("div", { style: { width: 20, height: 20, borderRadius: "50%", border: `2px solid ${sel ? T.lime : T.border}`, background: sel ? T.lime : "transparent", display: "flex", alignItems: "center", justifyContent: "center" } }, sel && /* @__PURE__ */ React.createElement("svg", { width: "10", height: "10", viewBox: "0 0 24 24", fill: "none", stroke: T.bg, strokeWidth: "4", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("polyline", { points: "20 6 9 17 4 12" })))));
   };
   const Chip = ({ active: active2, onClick, children }) => /* @__PURE__ */ React.createElement("button", { type: "button", onClick, style: { padding: "7px 14px", borderRadius: 7, fontSize: 12, cursor: "pointer", border: `1px solid ${active2 ? T.lime + "66" : T.border}`, background: active2 ? T.lime + "14" : "transparent", color: active2 ? T.lime : T.muted, fontFamily: T.font, fontWeight: active2 ? 600 : 400, transition: "all 0.15s" } }, children);
-  const accents = [{ n: "Lime", c: "#AECE5E" }, { n: "Forest", c: "#3E9576" }, { n: "Sky", c: "#4F95D6" }, { n: "Lilac", c: "#9474C9" }, { n: "Peach", c: "#D07C4C" }, { n: "Pink", c: "#D9648A" }, { n: "Slate", c: "#7A8592" }, { n: "Cobalt", c: "#3D7FDB" }, { n: "Ocean", c: "#1C7FA8" }, { n: "Denim", c: "#7086AD" }];
+  const accents = [{ n: "Lime", c: "#AECE5E" }, { n: "Forest", c: "#3E9576" }, { n: "Sky", c: "#4F95D6" }, { n: "Lilac", c: "#9474C9" }, { n: "Peach", c: "#D07C4C" }, { n: "Pink", c: "#D9648A" }, { n: "Slate", c: "#7A8592" }, { n: "Cobalt", c: "#3D7FDB" }, { n: "Ocean", c: "#1C7FA8" }, { n: "Cornflower", c: "#7D8FB1" }];
   const [mgmtSubjs, setMgmtSubjs] = useState(() => getSubjects().map((s) => ({ ...s })));
   const [mgmtSaved, setMgmtSaved] = useState(false);
   const [confirmClearSubjs, setConfirmClearSubjs] = useState(false);
@@ -22351,7 +22361,7 @@ function FeedbackPage() {
   ), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.faint } }, msg.length, " chars"), /* @__PURE__ */ React.createElement("button", { onClick: submit, disabled: !category || !msg.trim() || sending, style: { padding: "10px 24px", background: category && msg.trim() ? T.lime : T.card2, color: category && msg.trim() ? T.ink : T.faint, border: "none", borderRadius: 99, fontSize: 13, fontWeight: 700, cursor: category && msg.trim() ? "pointer" : "default", fontFamily: T.font, transition: "all 0.2s" } }, sending ? "Sending..." : "Send feedback"))), /* @__PURE__ */ React.createElement("div", { style: { padding: "14px 18px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, display: "flex", gap: 12, alignItems: "flex-start" } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.lime, flexShrink: 0, marginTop: 2 } }, Icon.heart), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, lineHeight: 1.6 } }, "Studlin is built by students, for students. Your feedback directly influences what we build next. We read every message.")));
 }
 function AuthScreen() {
-  return /* @__PURE__ */ React.createElement("div", { style: { minHeight: "100vh", background: "#0A0E1C", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#123A66,#0B1420)", display: "grid", placeItems: "center", boxShadow: "0 0 16px 4px rgba(147,165,199,0.38)" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 11, height: 11, borderRadius: "50%", background: "radial-gradient(circle at 35% 35%, #D9E1EE, #93A5C7)", boxShadow: "0 0 10px 3px rgba(147,165,199,0.65)" } })), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 22, fontWeight: 700, color: "#E7EBF5" } }, "Studlin")), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 15, color: "rgba(231,235,245,0.6)", margin: 0 } }, "Sign in to access your workspace."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 12, marginTop: 8 } }, /* @__PURE__ */ React.createElement("a", { href: "/signin", style: { padding: "12px 28px", borderRadius: 10, background: "#93A5C7", color: "#080C28", fontSize: 14, fontWeight: 600, textDecoration: "none" } }, "Sign in"), /* @__PURE__ */ React.createElement("a", { href: "/onboarding", style: { padding: "12px 28px", borderRadius: 10, border: "1px solid rgba(147,165,199,0.3)", background: "transparent", color: "#93A5C7", fontSize: 14, fontWeight: 600, textDecoration: "none" } }, "Create account")));
+  return /* @__PURE__ */ React.createElement("div", { style: { minHeight: "100vh", background: "#0A0E1C", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#123A66,#0B1420)", display: "grid", placeItems: "center", boxShadow: "0 0 16px 4px rgba(160,183,227,0.38)" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 11, height: 11, borderRadius: "50%", background: "radial-gradient(circle at 35% 35%, #D0DBF1, #A0B7E3)", boxShadow: "0 0 10px 3px rgba(160,183,227,0.65)" } })), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 22, fontWeight: 700, color: "#E7EBF5" } }, "Studlin")), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 15, color: "rgba(231,235,245,0.6)", margin: 0 } }, "Sign in to access your workspace."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 12, marginTop: 8 } }, /* @__PURE__ */ React.createElement("a", { href: "/signin", style: { padding: "12px 28px", borderRadius: 10, background: "#A0B7E3", color: "#080C28", fontSize: 14, fontWeight: 600, textDecoration: "none" } }, "Sign in"), /* @__PURE__ */ React.createElement("a", { href: "/onboarding", style: { padding: "12px 28px", borderRadius: 10, border: "1px solid rgba(160,183,227,0.3)", background: "transparent", color: "#A0B7E3", fontSize: 14, fontWeight: 600, textDecoration: "none" } }, "Create account")));
 }
 function OtpBoxes({ value, onChange, disabled, autoFocus }) {
   const refs = useRef([]);
@@ -22391,9 +22401,9 @@ function OtpBoxes({ value, onChange, disabled, autoFocus }) {
       autoFocus: autoFocus && i === 0,
       inputMode: "numeric",
       maxLength: 1,
-      style: { width: 42, height: 52, textAlign: "center", fontSize: 22, fontWeight: 700, borderRadius: 10, border: "1.5px solid rgba(147,165,199,0.25)", background: "#0A0E1C", color: "#E7EBF5", outline: "none" },
-      onFocus: (e) => e.target.style.borderColor = "#93A5C7",
-      onBlur: (e) => e.target.style.borderColor = "rgba(147,165,199,0.25)"
+      style: { width: 42, height: 52, textAlign: "center", fontSize: 22, fontWeight: 700, borderRadius: 10, border: "1.5px solid rgba(160,183,227,0.25)", background: "#0A0E1C", color: "#E7EBF5", outline: "none" },
+      onFocus: (e) => e.target.style.borderColor = "#A0B7E3",
+      onBlur: (e) => e.target.style.borderColor = "rgba(160,183,227,0.25)"
     }
   )));
 }
@@ -22437,10 +22447,10 @@ function VerifyEmailScreen({ user }) {
     }
     setChecking(false);
   };
-  return /* @__PURE__ */ React.createElement("div", { style: { minHeight: "100vh", background: "#0A0E1C", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20, padding: 24 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#123A66,#0B1420)", display: "grid", placeItems: "center", boxShadow: "0 0 16px 4px rgba(147,165,199,0.38)" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 11, height: 11, borderRadius: "50%", background: "radial-gradient(circle at 35% 35%, #D9E1EE, #93A5C7)", boxShadow: "0 0 10px 3px rgba(147,165,199,0.65)" } })), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 22, fontWeight: 700, color: "#E7EBF5" } }, "Studlin")), /* @__PURE__ */ React.createElement("div", { style: { width: "100%", maxWidth: 380, background: "#10152A", border: "1px solid rgba(147,165,199,0.16)", borderRadius: 10, padding: "26px 24px", textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 17, fontWeight: 700, color: "#E7EBF5", marginBottom: 8 } }, "Enter your code"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 13.5, color: "rgba(231,235,245,0.6)", lineHeight: 1.6, margin: "0 0 20px" } }, "We sent a 6-digit code to", /* @__PURE__ */ React.createElement("br", null), /* @__PURE__ */ React.createElement("strong", { style: { color: "#E7EBF5" } }, user.email), "."), /* @__PURE__ */ React.createElement(OtpBoxes, { value: code, onChange: (v) => {
+  return /* @__PURE__ */ React.createElement("div", { style: { minHeight: "100vh", background: "#0A0E1C", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20, padding: 24 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#123A66,#0B1420)", display: "grid", placeItems: "center", boxShadow: "0 0 16px 4px rgba(160,183,227,0.38)" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 11, height: 11, borderRadius: "50%", background: "radial-gradient(circle at 35% 35%, #D0DBF1, #A0B7E3)", boxShadow: "0 0 10px 3px rgba(160,183,227,0.65)" } })), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 22, fontWeight: 700, color: "#E7EBF5" } }, "Studlin")), /* @__PURE__ */ React.createElement("div", { style: { width: "100%", maxWidth: 380, background: "#10152A", border: "1px solid rgba(160,183,227,0.16)", borderRadius: 10, padding: "26px 24px", textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 17, fontWeight: 700, color: "#E7EBF5", marginBottom: 8 } }, "Enter your code"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 13.5, color: "rgba(231,235,245,0.6)", lineHeight: 1.6, margin: "0 0 20px" } }, "We sent a 6-digit code to", /* @__PURE__ */ React.createElement("br", null), /* @__PURE__ */ React.createElement("strong", { style: { color: "#E7EBF5" } }, user.email), "."), /* @__PURE__ */ React.createElement(OtpBoxes, { value: code, onChange: (v) => {
     setCode(v);
     setErr("");
-  }, disabled: checking, autoFocus: true }), err && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: "#E05A47", marginTop: 14 } }, err), /* @__PURE__ */ React.createElement("button", { onClick: submitCode, disabled: code.length !== 6 || checking, style: { width: "100%", padding: "12px 0", borderRadius: 10, background: "#93A5C7", color: "#080C28", border: "none", fontSize: 14, fontWeight: 600, cursor: code.length !== 6 || checking ? "not-allowed" : "pointer", opacity: code.length !== 6 || checking ? 0.5 : 1, marginTop: 18, marginBottom: 10 } }, checking ? "Verifying\u2026" : "Verify email"), /* @__PURE__ */ React.createElement("button", { onClick: resend, disabled: sendStatus === "sending" || sendStatus === "sent", style: { width: "100%", padding: "11px 0", borderRadius: 10, border: "1px solid rgba(147,165,199,0.3)", background: "transparent", color: "#93A5C7", fontSize: 13.5, fontWeight: 600, cursor: sendStatus === "sending" || sendStatus === "sent" ? "not-allowed" : "pointer", opacity: sendStatus === "sending" || sendStatus === "sent" ? 0.6 : 1 } }, sendStatus === "sending" ? "Sending\u2026" : sendStatus === "sent" ? "Sent \u2014 check your inbox" : "Resend code")), /* @__PURE__ */ React.createElement("button", { onClick: () => firebase.auth().signOut(), style: { background: "none", border: "none", color: "rgba(231,235,245,0.4)", fontSize: 12.5, cursor: "pointer", textDecoration: "underline" } }, "Sign out"));
+  }, disabled: checking, autoFocus: true }), err && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: "#E05A47", marginTop: 14 } }, err), /* @__PURE__ */ React.createElement("button", { onClick: submitCode, disabled: code.length !== 6 || checking, style: { width: "100%", padding: "12px 0", borderRadius: 10, background: "#A0B7E3", color: "#080C28", border: "none", fontSize: 14, fontWeight: 600, cursor: code.length !== 6 || checking ? "not-allowed" : "pointer", opacity: code.length !== 6 || checking ? 0.5 : 1, marginTop: 18, marginBottom: 10 } }, checking ? "Verifying\u2026" : "Verify email"), /* @__PURE__ */ React.createElement("button", { onClick: resend, disabled: sendStatus === "sending" || sendStatus === "sent", style: { width: "100%", padding: "11px 0", borderRadius: 10, border: "1px solid rgba(160,183,227,0.3)", background: "transparent", color: "#A0B7E3", fontSize: 13.5, fontWeight: 600, cursor: sendStatus === "sending" || sendStatus === "sent" ? "not-allowed" : "pointer", opacity: sendStatus === "sending" || sendStatus === "sent" ? 0.6 : 1 } }, sendStatus === "sending" ? "Sending\u2026" : sendStatus === "sent" ? "Sent \u2014 check your inbox" : "Resend code")), /* @__PURE__ */ React.createElement("button", { onClick: () => firebase.auth().signOut(), style: { background: "none", border: "none", color: "rgba(231,235,245,0.4)", fontSize: 12.5, cursor: "pointer", textDecoration: "underline" } }, "Sign out"));
 }
 function SharedChatView({ shareId }) {
   const [chat, setChat] = useState(null);
@@ -22467,7 +22477,7 @@ function SharedChatView({ shareId }) {
       setStatus(e.message === "notfound" ? "notfound" : "error");
     });
   }, [shareId]);
-  const bg = T.bg || "#0A0E1C", card = T.card || "#161C34", text = T.text || "#E7EBF5", muted = T.muted || "#8791A6", lime = T.lime || "#93A5C7", font = T.font || "system-ui";
+  const bg = T.bg || "#0A0E1C", card = T.card || "#161C34", text = T.text || "#E7EBF5", muted = T.muted || "#8791A6", lime = T.lime || "#A0B7E3", font = T.font || "system-ui";
   if (status === "loading") return /* @__PURE__ */ React.createElement("div", { style: { minHeight: "100vh", background: bg, display: "grid", placeItems: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 14, borderRadius: "50%", border: `2px solid ${lime}`, borderTopColor: "transparent", animation: "studlinSpin 0.7s linear infinite" } }));
   if (status !== "ok") return /* @__PURE__ */ React.createElement("div", { style: { minHeight: "100vh", background: bg, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, fontFamily: font } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 18, fontWeight: 700, color: text } }, status === "notfound" ? "This chat doesn't exist." : "Failed to load chat."), /* @__PURE__ */ React.createElement("a", { href: "/app", style: { color: lime, fontSize: 14, textDecoration: "none" } }, "Go to Studlin"));
   return /* @__PURE__ */ React.createElement("div", { style: { minHeight: "100vh", background: bg, fontFamily: font, color: text } }, /* @__PURE__ */ React.createElement("div", { style: { borderBottom: `1px solid rgba(255,255,255,0.07)`, padding: "14px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", background: bg, position: "sticky", top: 0, zIndex: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 28, height: 28, background: lime, borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, color: "#080C28", fontSize: 14 } }, "S"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 15, fontWeight: 700, color: text, letterSpacing: "-0.02em" } }, "Studlin")), /* @__PURE__ */ React.createElement("a", { href: "/app", style: { display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 16px", borderRadius: 99, background: lime, color: "#080C28", fontSize: 13, fontWeight: 700, textDecoration: "none" } }, "Try Studlin")), /* @__PURE__ */ React.createElement("div", { style: { maxWidth: 720, margin: "0 auto", padding: "32px 24px 80px" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: muted, marginBottom: 28, fontWeight: 500 } }, "Shared conversation"), (chat.msgs || []).map((m, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", gap: 12, alignItems: "flex-start", marginBottom: 24, flexDirection: m.r === "user" ? "row-reverse" : "row" } }, m.r === "ai" ? /* @__PURE__ */ React.createElement("div", { style: { width: 28, height: 28, borderRadius: 7, background: lime, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, color: "#080C28", fontSize: 13, flexShrink: 0, marginTop: 2 } }, "S") : /* @__PURE__ */ React.createElement("div", { style: { width: 28, height: 28, borderRadius: "50%", background: lime + "22", border: `1px solid ${lime}44`, display: "flex", alignItems: "center", justifyContent: "center", color: lime, flexShrink: 0, marginTop: 2 } }, /* @__PURE__ */ React.createElement("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2" }, /* @__PURE__ */ React.createElement("path", { d: "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" }), /* @__PURE__ */ React.createElement("circle", { cx: "12", cy: "7", r: "4" }))), /* @__PURE__ */ React.createElement("div", { style: { maxWidth: "80%", fontSize: 14, lineHeight: 1.75, color: text, background: m.r === "user" ? card : "transparent", padding: m.r === "user" ? "12px 16px" : 0, borderRadius: m.r === "user" ? 12 : 0, whiteSpace: m.r === "user" ? "pre-wrap" : void 0 } }, m.r === "ai" ? renderStudlinAiMarkdown(m.t) : m.t))), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 40, padding: "26px 22px", borderRadius: 8, background: card, border: `1px solid rgba(255,255,255,0.07)`, textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 17, fontWeight: 700, color: text, marginBottom: 8 } }, "Study smarter with Studlin AI"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: muted, marginBottom: 20, lineHeight: 1.6 } }, "Your AI study assistant, flashcards, notes, and calendar. All in one place."), /* @__PURE__ */ React.createElement("a", { href: "/app", style: { display: "inline-flex", padding: "11px 28px", borderRadius: 99, background: lime, color: "#080C28", fontSize: 14, fontWeight: 700, textDecoration: "none" } }, "Get started free"))));
@@ -22536,7 +22546,7 @@ function AuthGate() {
     });
   }, [shareId]);
   if (shareId) return /* @__PURE__ */ React.createElement(SharedChatView, { shareId });
-  if (user === void 0) return /* @__PURE__ */ React.createElement("div", { style: { minHeight: "100vh", background: "#0A0E1C", display: "grid", placeItems: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#123A66,#0B1420)", display: "grid", placeItems: "center", boxShadow: "0 0 16px 4px rgba(147,165,199,0.38)" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 11, height: 11, borderRadius: "50%", background: "radial-gradient(circle at 35% 35%, #D9E1EE, #93A5C7)", boxShadow: "0 0 10px 3px rgba(147,165,199,0.65)" } })), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 22, fontWeight: 700, color: "#E7EBF5" } }, "Studlin")));
+  if (user === void 0) return /* @__PURE__ */ React.createElement("div", { style: { minHeight: "100vh", background: "#0A0E1C", display: "grid", placeItems: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#123A66,#0B1420)", display: "grid", placeItems: "center", boxShadow: "0 0 16px 4px rgba(160,183,227,0.38)" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 11, height: 11, borderRadius: "50%", background: "radial-gradient(circle at 35% 35%, #D0DBF1, #A0B7E3)", boxShadow: "0 0 10px 3px rgba(160,183,227,0.65)" } })), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 22, fontWeight: 700, color: "#E7EBF5" } }, "Studlin")));
   if (!user) return /* @__PURE__ */ React.createElement(AuthScreen, null);
   if (isPasswordAccount(user) && !user.emailVerified) return /* @__PURE__ */ React.createElement(VerifyEmailScreen, { user });
   return /* @__PURE__ */ React.createElement(App, null);
@@ -22689,9 +22699,13 @@ function App() {
         localStorage.setItem("studlin-accent", "Denim");
         localStorage.setItem("studlin-accent-reset8", "1");
       }
-      return localStorage.getItem("studlin-accent") || "Denim";
+      if (!localStorage.getItem("studlin-accent-reset9")) {
+        localStorage.setItem("studlin-accent", "Cornflower");
+        localStorage.setItem("studlin-accent-reset9", "1");
+      }
+      return localStorage.getItem("studlin-accent") || "Cornflower";
     }
-    return "Denim";
+    return "Cornflower";
   });
   const [density, setDensityState] = useState(() => typeof localStorage !== "undefined" && localStorage.getItem("studlin-density") || "Comfortable");
   applyTheme(theme, accent, density);
@@ -24209,7 +24223,7 @@ function App() {
         body[data-theme="light"] textarea:focus,
         body[data-theme="light"] select:focus {
           border-color: rgba(8,12,40,0.45) !important;
-          box-shadow: 0 0 0 3px rgba(104,131,172,0.18);
+          box-shadow: 0 0 0 3px rgba(75,120,210,0.18);
         }
         body[data-theme="light"] [data-card]:hover {
           box-shadow: 0 8px 24px -10px rgba(8,12,40,0.14);
@@ -24271,7 +24285,7 @@ class ErrorBoundary extends React.Component {
   }
   render() {
     if (this.state.hasError) {
-      return /* @__PURE__ */ React.createElement("div", { style: { minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, background: "#0A0E1C", color: "#E7EBF5", fontFamily: "Geist,-apple-system,BlinkMacSystemFont,sans-serif", textAlign: "center", padding: 24 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 18, fontWeight: 700 } }, "Something went wrong."), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: "rgba(231,235,245,0.6)", maxWidth: 320, lineHeight: 1.5 } }, "Studlin hit an error it couldn't recover from. Your data's safe, refreshing usually fixes this."), /* @__PURE__ */ React.createElement("button", { onClick: () => window.location.reload(), style: { padding: "10px 24px", borderRadius: 10, background: "#93A5C7", color: "#080C28", fontSize: 14, fontWeight: 700, border: "none", cursor: "pointer", fontFamily: "inherit" } }, "Refresh"));
+      return /* @__PURE__ */ React.createElement("div", { style: { minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, background: "#0A0E1C", color: "#E7EBF5", fontFamily: "Geist,-apple-system,BlinkMacSystemFont,sans-serif", textAlign: "center", padding: 24 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 18, fontWeight: 700 } }, "Something went wrong."), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: "rgba(231,235,245,0.6)", maxWidth: 320, lineHeight: 1.5 } }, "Studlin hit an error it couldn't recover from. Your data's safe, refreshing usually fixes this."), /* @__PURE__ */ React.createElement("button", { onClick: () => window.location.reload(), style: { padding: "10px 24px", borderRadius: 10, background: "#A0B7E3", color: "#080C28", fontSize: 14, fontWeight: 700, border: "none", cursor: "pointer", fontFamily: "inherit" } }, "Refresh"));
     }
     return this.props.children;
   }

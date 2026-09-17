@@ -22,7 +22,7 @@ const darkT = {
   lime:   "#AECE5E",
   limeDk: "#8BAE3C",
   limeLt: "#CBDF92",
-  glow:   "rgba(147,165,199,0.22)",
+  glow:   "rgba(160,183,227,0.22)",
   text:   "#E7EBF5",
   muted:  "#8791A6",
   faint:  "#333C54",
@@ -62,7 +62,7 @@ const lightT = {
   lime:   "#9EC83D",
   limeDk: "#7FA82A",
   limeLt: "#CBDF92",
-  glow:   "rgba(104,131,172,0.20)",
+  glow:   "rgba(75,120,210,0.20)",
   text:   "#080C28",
   muted:  "rgba(8,12,40,0.55)",
   faint:  "rgba(8,12,40,0.30)",
@@ -162,29 +162,39 @@ const ACCENTS={
   // to actually compare instead of a single take-it-or-leave-it color:
   //  - Cobalt: vivid, confident, the most "modern SaaS" of the three.
   //  - Ocean: cooler/fresher, azure-leaning -- calmer, more "focus" mood.
-  //  - Denim: muted/desaturated, steel-toned -- the calmest, quietest of
-  //    the three (was called "Indigo" through two earlier revisions; see
-  //    below for why the name changed along with the values).
-  // Went through two rounds of direct user feedback after the first pass:
+  //  - Cornflower: brightness-matched to the original lime (see below) --
+  //    the "make it blue but keep it feeling like the green" pick. Went
+  //    through two prior names/revisions (Indigo, then Denim) before this.
+  // Three rounds of direct user feedback after the first pass, each one a
+  // real defect, not just taste:
   // (1) "the blue doesn't look good" -- Cobalt's sky-blue read as too
   // light/washed-out. Repainted the old "Indigo" entry to a user-supplied
-  // reference swatch instead (a muted indigo ramp: #6883AC / "Deep Sea"
-  // #7086AD / #93A5C7 / #D9E1EE) and made it the default.
+  // reference swatch (a muted indigo ramp) and made it the default.
   // (2) "the blue screams at me, i want something lighter and better
-  // contrast" -- that indigo was too saturated/dark: dark "ink" text
-  // (the color every T.lime button already uses) only cleared 2.3-4.0:1
-  // contrast against it, well below the 4.5:1 AA minimum. Renamed to
-  // Denim and repainted lighter/more desaturated so ink text reads
-  // cleanly again without touching any of the ~150 callsites that use
-  // it, and nudged lt.lime from a first-draft #51698F to #6883AC
-  // specifically to clear 4.5:1 against ink (was 3.44:1) while staying in
-  // the same muted "steel" family. This is the pick promoted to default
-  // (see the 'Lime' fallback strings this comment is near, same
-  // mechanism "Lime" itself uses today) -- Cobalt/Ocean stay in Settings
-  // as the other two picks, unchanged.
+  // contrast" -- that indigo was too saturated/dark: dark "ink" text (the
+  // color every T.lime button already uses) only cleared 2.3-4.0:1
+  // contrast against it, below the 4.5:1 AA minimum. Renamed to Denim,
+  // repainted lighter/more desaturated -- fixed the contrast (dk 7.7:1,
+  // lt 4.97:1) but overcorrected on vividness.
+  // (3) "its not like the green honestly the green might be better...
+  // like how we have studlin right now with green but make it blue" --
+  // the real insight here: blue and green are NOT equally bright at the
+  // same HSL lightness (the WCAG luminance formula weights green ~10x
+  // heavier than blue -- 0.7152 vs 0.0722), so naively matching lime's
+  // saturation+lightness (which is what "Denim" and the original "Indigo"
+  // both did) will always look duller than lime actually looks. Fixed by
+  // matching CONTRAST instead of raw lightness: same hue family and the
+  // *exact same saturation* as darkT.lime (#AECE5E, 53% -- this isn't a
+  // paler/weaker blue, it's iso-saturated), lightness raised until it
+  // clears the identical contrast-against-ink ratio lime has (9.5:1 vs
+  // lime's 9.6:1). Renamed Denim -> Cornflower since the character
+  // genuinely changed again. This is the pick promoted to default (see
+  // the 'Lime' fallback strings this comment is near, same mechanism
+  // "Lime" itself uses today) -- Cobalt/Ocean stay in Settings as the
+  // other two picks, unchanged.
   Cobalt:{dk:{lime:"#5B9DF0",limeDk:"#3D7FDB",limeLt:"#A9CDF7"}, lt:{lime:"#1D5FCF",limeDk:"#154A9E",limeLt:"#A9CDF7"}},
   Ocean: {dk:{lime:"#4FB3D9",limeDk:"#2E93BC",limeLt:"#A8E0F2"}, lt:{lime:"#166E96",limeDk:"#125676",limeLt:"#A8E0F2"}},
-  Denim: {dk:{lime:"#93A5C7",limeDk:"#7086AD",limeLt:"#D9E1EE"}, lt:{lime:"#6883AC",limeDk:"#4E6281",limeLt:"#D9E1EE"}},
+  Cornflower:{dk:{lime:"#A0B7E3",limeDk:"#7D8FB1",limeLt:"#D0DBF1"}, lt:{lime:"#4B78D2",limeDk:"#385A9E",limeLt:"#D0DBF1"}},
 };
 function applyTheme(name, accent, density) {
   Object.assign(T, name === 'light' ? lightT : darkT);
@@ -209,14 +219,14 @@ function applyTheme(name, accent, density) {
   }
 }
 // 2026-09-16 EXPERIMENT (branch: experiment/blue-rebrand): default accent
-// flipped to Denim for this preview branch (was Cobalt, then Indigo --
-// see ACCENTS' own comment above for the full history) -- this is the
-// module-level paint (runs before React mounts); the component-level
-// reset below handles anyone who already has a DIFFERENT accent saved
-// from browsing main.
+// flipped to Cornflower for this preview branch (was Cobalt, then Indigo,
+// then Denim -- see ACCENTS' own comment above for the full history) --
+// this is the module-level paint (runs before React mounts); the
+// component-level reset below handles anyone who already has a DIFFERENT
+// accent saved from browsing main.
 applyTheme(
   (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-theme')) || 'light',
-  (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-accent')) || 'Denim',
+  (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-accent')) || 'Cornflower',
   (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-density')) || 'Comfortable'
 );
 
@@ -35643,7 +35653,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   // still had the pre-removal code. With both gone, the "Study
   // preferences" tab (and its Settings nav entry) has nothing legitimate
   // left in it -- removed below rather than left rendering empty.
-  const accents=[{n:"Lime",c:"#AECE5E"},{n:"Forest",c:"#3E9576"},{n:"Sky",c:"#4F95D6"},{n:"Lilac",c:"#9474C9"},{n:"Peach",c:"#D07C4C"},{n:"Pink",c:"#D9648A"},{n:"Slate",c:"#7A8592"},{n:"Cobalt",c:"#3D7FDB"},{n:"Ocean",c:"#1C7FA8"},{n:"Denim",c:"#7086AD"}];
+  const accents=[{n:"Lime",c:"#AECE5E"},{n:"Forest",c:"#3E9576"},{n:"Sky",c:"#4F95D6"},{n:"Lilac",c:"#9474C9"},{n:"Peach",c:"#D07C4C"},{n:"Pink",c:"#D9648A"},{n:"Slate",c:"#7A8592"},{n:"Cobalt",c:"#3D7FDB"},{n:"Ocean",c:"#1C7FA8"},{n:"Cornflower",c:"#7D8FB1"}];
   const [mgmtSubjs,setMgmtSubjs]=useState(()=>getSubjects().map(s=>({...s})));
   const [mgmtSaved,setMgmtSaved]=useState(false);
   const [confirmClearSubjs,setConfirmClearSubjs]=useState(false);
@@ -37833,15 +37843,15 @@ function AuthScreen(){
   return(
     <div style={{minHeight:"100vh",background:"#0A0E1C",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20}}>
       <div style={{display:"flex",alignItems:"center",gap:10}}>
-        <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#123A66,#0B1420)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(147,165,199,0.38)"}}>
-          <div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #D9E1EE, #93A5C7)",boxShadow:"0 0 10px 3px rgba(147,165,199,0.65)"}} />
+        <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#123A66,#0B1420)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(160,183,227,0.38)"}}>
+          <div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #D0DBF1, #A0B7E3)",boxShadow:"0 0 10px 3px rgba(160,183,227,0.65)"}} />
         </div>
         <span style={{fontSize:22,fontWeight:700,color:"#E7EBF5"}}>Studlin</span>
       </div>
       <p style={{fontSize:15,color:"rgba(231,235,245,0.6)",margin:0}}>Sign in to access your workspace.</p>
       <div style={{display:"flex",gap:12,marginTop:8}}>
-        <a href="/signin" style={{padding:"12px 28px",borderRadius:10,background:"#93A5C7",color:"#080C28",fontSize:14,fontWeight:600,textDecoration:"none"}}>Sign in</a>
-        <a href="/onboarding" style={{padding:"12px 28px",borderRadius:10,border:"1px solid rgba(147,165,199,0.3)",background:"transparent",color:"#93A5C7",fontSize:14,fontWeight:600,textDecoration:"none"}}>Create account</a>
+        <a href="/signin" style={{padding:"12px 28px",borderRadius:10,background:"#A0B7E3",color:"#080C28",fontSize:14,fontWeight:600,textDecoration:"none"}}>Sign in</a>
+        <a href="/onboarding" style={{padding:"12px 28px",borderRadius:10,border:"1px solid rgba(160,183,227,0.3)",background:"transparent",color:"#A0B7E3",fontSize:14,fontWeight:600,textDecoration:"none"}}>Create account</a>
       </div>
     </div>
   );
@@ -37878,9 +37888,9 @@ function OtpBoxes({value,onChange,disabled,autoFocus}){
       {[0,1,2,3,4,5].map(i=>(
         <input key={i} ref={el=>refs.current[i]=el} value={value[i]||""} onChange={e=>onInput(i,e)} onKeyDown={e=>onKeyDown(i,e)}
           disabled={disabled} autoFocus={autoFocus&&i===0} inputMode="numeric" maxLength={1}
-          style={{width:42,height:52,textAlign:"center",fontSize:22,fontWeight:700,borderRadius:10,border:"1.5px solid rgba(147,165,199,0.25)",background:"#0A0E1C",color:"#E7EBF5",outline:"none"}}
-          onFocus={e=>e.target.style.borderColor="#93A5C7"}
-          onBlur={e=>e.target.style.borderColor="rgba(147,165,199,0.25)"} />
+          style={{width:42,height:52,textAlign:"center",fontSize:22,fontWeight:700,borderRadius:10,border:"1.5px solid rgba(160,183,227,0.25)",background:"#0A0E1C",color:"#E7EBF5",outline:"none"}}
+          onFocus={e=>e.target.style.borderColor="#A0B7E3"}
+          onBlur={e=>e.target.style.borderColor="rgba(160,183,227,0.25)"} />
       ))}
     </div>
   );
@@ -37923,22 +37933,22 @@ function VerifyEmailScreen({user}){
             colors rather than reading T.lime -- meaning it stayed green
             for every accent choice, not just the default. Repainted to
             match Cobalt directly, same as the rest of this branch. */}
-        <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#123A66,#0B1420)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(147,165,199,0.38)"}}>
-          <div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #D9E1EE, #93A5C7)",boxShadow:"0 0 10px 3px rgba(147,165,199,0.65)"}} />
+        <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#123A66,#0B1420)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(160,183,227,0.38)"}}>
+          <div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #D0DBF1, #A0B7E3)",boxShadow:"0 0 10px 3px rgba(160,183,227,0.65)"}} />
         </div>
         <span style={{fontSize:22,fontWeight:700,color:"#E7EBF5"}}>Studlin</span>
       </div>
-      <div style={{width:"100%",maxWidth:380,background:"#10152A",border:"1px solid rgba(147,165,199,0.16)",borderRadius:10,padding:"26px 24px",textAlign:"center"}}>
+      <div style={{width:"100%",maxWidth:380,background:"#10152A",border:"1px solid rgba(160,183,227,0.16)",borderRadius:10,padding:"26px 24px",textAlign:"center"}}>
         <div style={{fontSize:17,fontWeight:700,color:"#E7EBF5",marginBottom:8}}>Enter your code</div>
         <p style={{fontSize:13.5,color:"rgba(231,235,245,0.6)",lineHeight:1.6,margin:"0 0 20px"}}>
           We sent a 6-digit code to<br/><strong style={{color:"#E7EBF5"}}>{user.email}</strong>.
         </p>
         <OtpBoxes value={code} onChange={v=>{setCode(v);setErr("");}} disabled={checking} autoFocus />
         {err&&<div style={{fontSize:12,color:"#E05A47",marginTop:14}}>{err}</div>}
-        <button onClick={submitCode} disabled={code.length!==6||checking} style={{width:"100%",padding:"12px 0",borderRadius:10,background:"#93A5C7",color:"#080C28",border:"none",fontSize:14,fontWeight:600,cursor:code.length!==6||checking?"not-allowed":"pointer",opacity:code.length!==6||checking?0.5:1,marginTop:18,marginBottom:10}}>
+        <button onClick={submitCode} disabled={code.length!==6||checking} style={{width:"100%",padding:"12px 0",borderRadius:10,background:"#A0B7E3",color:"#080C28",border:"none",fontSize:14,fontWeight:600,cursor:code.length!==6||checking?"not-allowed":"pointer",opacity:code.length!==6||checking?0.5:1,marginTop:18,marginBottom:10}}>
           {checking?"Verifying…":"Verify email"}
         </button>
-        <button onClick={resend} disabled={sendStatus==="sending"||sendStatus==="sent"} style={{width:"100%",padding:"11px 0",borderRadius:10,border:"1px solid rgba(147,165,199,0.3)",background:"transparent",color:"#93A5C7",fontSize:13.5,fontWeight:600,cursor:sendStatus==="sending"||sendStatus==="sent"?"not-allowed":"pointer",opacity:sendStatus==="sending"||sendStatus==="sent"?0.6:1}}>
+        <button onClick={resend} disabled={sendStatus==="sending"||sendStatus==="sent"} style={{width:"100%",padding:"11px 0",borderRadius:10,border:"1px solid rgba(160,183,227,0.3)",background:"transparent",color:"#A0B7E3",fontSize:13.5,fontWeight:600,cursor:sendStatus==="sending"||sendStatus==="sent"?"not-allowed":"pointer",opacity:sendStatus==="sending"||sendStatus==="sent"?0.6:1}}>
           {sendStatus==="sending"?"Sending…":sendStatus==="sent"?"Sent — check your inbox":"Resend code"}
         </button>
       </div>
@@ -37964,7 +37974,7 @@ function SharedChatView({shareId}){
       .then(function(data){setChat(data);setStatus("ok");})
       .catch(function(e){setStatus(e.message==="notfound"?"notfound":"error");});
   },[shareId]);
-  const bg=T.bg||"#0A0E1C",card=T.card||"#161C34",text=T.text||"#E7EBF5",muted=T.muted||"#8791A6",lime=T.lime||"#93A5C7",font=T.font||"system-ui";
+  const bg=T.bg||"#0A0E1C",card=T.card||"#161C34",text=T.text||"#E7EBF5",muted=T.muted||"#8791A6",lime=T.lime||"#A0B7E3",font=T.font||"system-ui";
   if(status==="loading")return(<div style={{minHeight:"100vh",background:bg,display:"grid",placeItems:"center"}}><div style={{width:14,height:14,borderRadius:"50%",border:`2px solid ${lime}`,borderTopColor:"transparent",animation:"studlinSpin 0.7s linear infinite"}}/></div>);
   if(status!=="ok")return(<div style={{minHeight:"100vh",background:bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12,fontFamily:font}}><div style={{fontSize:18,fontWeight:700,color:text}}>{status==="notfound"?"This chat doesn't exist.":"Failed to load chat."}</div><a href="/app" style={{color:lime,fontSize:14,textDecoration:"none"}}>Go to Studlin</a></div>);
   return(
@@ -38071,7 +38081,7 @@ function AuthGate(){
     });
   },[shareId]);
   if(shareId)return <SharedChatView shareId={shareId} />;
-  if(user===undefined)return(<div style={{minHeight:"100vh",background:"#0A0E1C",display:"grid",placeItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#123A66,#0B1420)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(147,165,199,0.38)"}}><div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #D9E1EE, #93A5C7)",boxShadow:"0 0 10px 3px rgba(147,165,199,0.65)"}}/></div><span style={{fontSize:22,fontWeight:700,color:"#E7EBF5"}}>Studlin</span></div></div>);
+  if(user===undefined)return(<div style={{minHeight:"100vh",background:"#0A0E1C",display:"grid",placeItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#123A66,#0B1420)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(160,183,227,0.38)"}}><div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #D0DBF1, #A0B7E3)",boxShadow:"0 0 10px 3px rgba(160,183,227,0.65)"}}/></div><span style={{fontSize:22,fontWeight:700,color:"#E7EBF5"}}>Studlin</span></div></div>);
   if(!user)return <AuthScreen />;
   if(isPasswordAccount(user)&&!user.emailVerified)return <VerifyEmailScreen user={user} />;
   return <App />;
@@ -38334,9 +38344,15 @@ function App() {
       // a third one-time reset so anyone already forced onto Indigo by
       // reset7 also lands on the actual final pick.
       if(!localStorage.getItem("studlin-accent-reset8")){localStorage.setItem("studlin-accent","Denim");localStorage.setItem("studlin-accent-reset8","1");}
-      return localStorage.getItem("studlin-accent")||"Denim";
+      // 2026-09-16: default flipped a fourth time, Denim -> Cornflower
+      // (too muted/duller than the green it's replacing -- see ACCENTS'
+      // own comment) -- same pattern again, a fourth one-time reset so
+      // anyone already forced onto Denim by reset8 also lands on the
+      // actual final pick.
+      if(!localStorage.getItem("studlin-accent-reset9")){localStorage.setItem("studlin-accent","Cornflower");localStorage.setItem("studlin-accent-reset9","1");}
+      return localStorage.getItem("studlin-accent")||"Cornflower";
     }
-    return "Denim";
+    return "Cornflower";
   });
   const [density,setDensityState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-density"))||"Comfortable");
   applyTheme(theme, accent, density); // mutate T on every render so all child components re-read
@@ -40987,7 +41003,7 @@ function App() {
         body[data-theme="light"] textarea:focus,
         body[data-theme="light"] select:focus {
           border-color: rgba(8,12,40,0.45) !important;
-          box-shadow: 0 0 0 3px rgba(104,131,172,0.18);
+          box-shadow: 0 0 0 3px rgba(75,120,210,0.18);
         }
         body[data-theme="light"] [data-card]:hover {
           box-shadow: 0 8px 24px -10px rgba(8,12,40,0.14);
@@ -41154,7 +41170,7 @@ class ErrorBoundary extends React.Component{
         <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14,background:"#0A0E1C",color:"#E7EBF5",fontFamily:"Geist,-apple-system,BlinkMacSystemFont,sans-serif",textAlign:"center",padding:24}}>
           <div style={{fontSize:18,fontWeight:700}}>Something went wrong.</div>
           <div style={{fontSize:13,color:"rgba(231,235,245,0.6)",maxWidth:320,lineHeight:1.5}}>Studlin hit an error it couldn't recover from. Your data's safe, refreshing usually fixes this.</div>
-          <button onClick={()=>window.location.reload()} style={{padding:"10px 24px",borderRadius:10,background:"#93A5C7",color:"#080C28",fontSize:14,fontWeight:700,border:"none",cursor:"pointer",fontFamily:"inherit"}}>Refresh</button>
+          <button onClick={()=>window.location.reload()} style={{padding:"10px 24px",borderRadius:10,background:"#A0B7E3",color:"#080C28",fontSize:14,fontWeight:700,border:"none",cursor:"pointer",fontFamily:"inherit"}}>Refresh</button>
         </div>
       );
     }

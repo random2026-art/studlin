@@ -32,7 +32,7 @@ describe("pre-auth / crash-fallback screens no longer hardcode the old green", (
       const idx = SOURCE.indexOf(marker);
       assert.notEqual(idx, -1, `couldn't find ${marker}`);
       const block = SOURCE.slice(idx, idx + 2600);
-      assert.match(block, /#93A5C7/, `${marker}'s block should reference the new blue`);
+      assert.match(block, /#A0B7E3/, `${marker}'s block should reference the new blue`);
       assert.doesNotMatch(block, /#AECE5E|#CBDF92|#14342A,#0E1F18|rgba\(174,206,94/, `${marker}'s block should have no leftover green literals`);
     });
   });
@@ -41,11 +41,11 @@ describe("pre-auth / crash-fallback screens no longer hardcode the old green", (
     const idx = SOURCE.indexOf("class ErrorBoundary extends React.Component");
     assert.notEqual(idx, -1);
     const block = SOURCE.slice(idx, idx + 2200);
-    assert.match(block, /background:"#93A5C7"/);
+    assert.match(block, /background:"#A0B7E3"/);
   });
 
   test("SharedChatView's defensive T.lime fallback no longer falls back to green", () => {
-    assert.match(SOURCE, /lime=T\.lime\|\|"#93A5C7"/);
+    assert.match(SOURCE, /lime=T\.lime\|\|"#A0B7E3"/);
   });
 
   test("Settings' theme-preview swatches reflect the real current accent (T.lime) instead of a hardcoded green dot", () => {
