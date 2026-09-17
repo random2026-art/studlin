@@ -148,7 +148,7 @@ function LeftRail({ step, state }) {
     return (
       <aside className="rail">
         <div className="brand">
-          <div style={{width:34,height:34,borderRadius:8,background:"#1D5FCF",display:"grid",placeItems:"center",fontSize:17,fontWeight:800,color:"#080C28"}}>S</div>
+          <div style={{width:34,height:34,borderRadius:8,background:"#6883AC",display:"grid",placeItems:"center",fontSize:17,fontWeight:800,color:"#080C28"}}>S</div>
           <span className="name">studlin</span>
         </div>
         <div className="rail-icon">{Ic.userPlus}</div>
@@ -166,7 +166,7 @@ function LeftRail({ step, state }) {
   return (
     <aside className="rail">
       <div className="brand">
-        <div style={{width:34,height:34,borderRadius:8,background:"#1D5FCF",display:"grid",placeItems:"center",fontSize:17,fontWeight:800,color:"#080C28"}}>S</div>
+        <div style={{width:34,height:34,borderRadius:8,background:"#6883AC",display:"grid",placeItems:"center",fontSize:17,fontWeight:800,color:"#080C28"}}>S</div>
         <span className="name">studlin</span>
       </div>
       <div className="rail-icon">{Ic.userPlus}</div>
@@ -360,7 +360,7 @@ function OtpBoxes({ value, onChange, disabled, autoFocus }) {
         <input key={i} ref={el=>refs.current[i]=el} value={value[i]||""} onChange={e=>onInput(i,e)} onKeyDown={e=>onKeyDown(i,e)}
           disabled={disabled} autoFocus={autoFocus && i===0} inputMode="numeric" maxLength={1}
           style={{width:42,height:52,textAlign:"center",fontSize:22,fontWeight:700,borderRadius:10,border:"1.5px solid var(--line-strong)",background:"white",color:"#080C28",outline:"none"}}
-          onFocus={e=>e.target.style.borderColor="#1D5FCF"}
+          onFocus={e=>e.target.style.borderColor="#6883AC"}
           onBlur={e=>e.target.style.borderColor="var(--line-strong)"} />
       ))}
     </div>
