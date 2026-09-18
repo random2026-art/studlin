@@ -2118,14 +2118,18 @@ function findTier0Slot(task, events, routines, prefs, todayKey) {
   candidates.sort((a, b) => b.score - a.score);
   return { events: candidates[0].events, placement: candidates[0].placement, reason: candidates[0].reason };
 }
-function findReliableSlotFor(events, routines, prefs, desiredDate, desiredTime, duration, deadlineKey, difficulty) {
-  const baseline = findOpenSlotFor(events, routines, prefs, desiredDate, desiredTime, duration, deadlineKey);
+function findReliableSlotFor(events, routines, prefs, desiredDate, desiredTime, duration, deadlineKey, difficulty, catchupBufferMins = CATCHUP_BUFFER_MINS, nowBufferMins = 15) {
+  const baseline = findOpenSlotFor(events, routines, prefs, desiredDate, desiredTime, duration, deadlineKey, catchupBufferMins, nowBufferMins);
+  if (deadlineKey && baseline.date > deadlineKey) {
+    const legal = findLegalSlotOrNull(events, routines, prefs, desiredDate, desiredTime, duration, deadlineKey, catchupBufferMins, nowBufferMins);
+    return legal ? { date: legal.date, time: legal.time, reason: null } : null;
+  }
   const tier = difficultyTierOf({ difficulty });
   const { start: winStart, end: winEnd } = getWorkWindowMinsFor(prefs, baseline.date);
   let floorMins = winStart;
   if (baseline.date === dayKey()) {
     const now = /* @__PURE__ */ new Date();
-    floorMins = Math.max(floorMins, Math.ceil((now.getHours() * 60 + now.getMinutes() + 15) / 15) * 15);
+    floorMins = Math.max(floorMins, Math.ceil((now.getHours() * 60 + now.getMinutes() + nowBufferMins) / 15) * 15);
   }
   const desiredMins = timeToMinutes(baseline.time);
   const occupied = computeOccupiedIntervals(events, routines, prefs, baseline.date);
@@ -2147,7 +2151,7 @@ function findReliableSlotFor(events, routines, prefs, desiredDate, desiredTime, 
     candidates.push({ date: baseline.date, time: t, score, bucket, isDeclaredPeak, reliability });
   });
   if (candidates.length === 0) {
-    const legal = findLegalSlotOrNull(events, routines, prefs, desiredDate, desiredTime, duration, deadlineKey);
+    const legal = findLegalSlotOrNull(events, routines, prefs, desiredDate, desiredTime, duration, deadlineKey, catchupBufferMins, nowBufferMins);
     return legal ? { date: legal.date, time: legal.time, reason: null } : null;
   }
   candidates.sort((a, b) => b.score - a.score);
@@ -2581,7 +2585,7 @@ function scheduleAssignmentExtension(task, deadlineKey, totalMins) {
   const newEvents = [];
   for (let i = 0; i < chunks.length; i++) {
     const mins = chunks[i];
-    const slot = findLegalSlotOrNull(events.concat(newEvents), routines, prefs, cursorDate, cursorTime, mins, deadlineKey);
+    const slot = findReliableSlotFor(events.concat(newEvents), routines, prefs, cursorDate, cursorTime, mins, deadlineKey, task.difficulty);
     if (!slot) break;
     newEvents.push({
       id: String(Date.now() + i) + "-" + i,
@@ -2620,7 +2624,7 @@ function scheduleStudyBlockExtension(task, totalMins) {
     const newEvents = [];
     for (let i = 0; i < chunks.length; i++) {
       const mins = chunks[i];
-      const slot = findLegalSlotOrNull(events.concat(newEvents), routines, prefs, cursorDate, cursorTime, mins, deadlineKey);
+      const slot = findReliableSlotFor(events.concat(newEvents), routines, prefs, cursorDate, cursorTime, mins, deadlineKey, task.difficulty);
       const violatesSiblingTime = enforceSiblingTime && slot && sibling && slot.date === sibling.date && timeToMinutes(slot.time) >= timeToMinutes(sibling.time);
       if (!slot || violatesSiblingTime) return null;
       newEvents.push({
@@ -5119,7 +5123,7 @@ function buildMoveFlexTaskProposal(parsed, events, routines, prefs, forcedId) {
   }
   const destDate = parsed.destDate || dayKey(new Date((/* @__PURE__ */ new Date(targetDate + "T12:00:00")).getTime() + 864e5));
   const others = events.filter((e) => e.id !== matched.id);
-  const slot = findLegalSlotOrNull(others, routines, prefs, destDate, matched.time || prefs.workStartTime, matched.duration || 30, matched.deadline || null);
+  const slot = findReliableSlotFor(others, routines, prefs, destDate, matched.time || prefs.workStartTime, matched.duration || 30, matched.deadline || null, matched.difficulty);
   if (!slot) return { label: 'No open, on-time slot for "' + matched.title + '" on or before its deadline', moved: [], couldntMove: [{ id: matched.id, title: matched.title, deadline: matched.deadline || null }] };
   return { label: "Move " + matched.title, moved: [{ id: matched.id, title: matched.title, oldDate: matched.date, oldTime: matched.time, newDate: slot.date, newTime: slot.time, duration: matched.duration || 30 }], couldntMove: [] };
 }
@@ -6115,6 +6119,7 @@ function StudlinPrep({ setActive = () => {
   const [assignManualTime, setAssignManualTime] = useState("16:00");
   const [assignManualDuration, setAssignManualDuration] = useState(30);
   const [assignConfirmDeleteBlockId, setAssignConfirmDeleteBlockId] = useState(null);
+  const [confirmDeleteSessionId, setConfirmDeleteSessionId] = useState(null);
   const [assignCompleteSessionPrompt, setAssignCompleteSessionPrompt] = useState(false);
   const [assignCancelSessionsConfirm, setAssignCancelSessionsConfirm] = useState(false);
   const [assignPaceProposal, setAssignPaceProposal] = useState(null);
@@ -7207,7 +7212,7 @@ function StudlinPrep({ setActive = () => {
       refresh();
     };
     const proposeAssignPaceBlock = () => {
-      const slot = findLegalSlotOrNull(allEvents, getWeeklyRoutine(), getSchedulePreferences(), today, getSchedulePreferences().workStartTime, 30, selectedAssignment.deadline || selectedAssignment.date);
+      const slot = findReliableSlotFor(allEvents, getWeeklyRoutine(), getSchedulePreferences(), today, getSchedulePreferences().workStartTime, 30, selectedAssignment.deadline || selectedAssignment.date, selectedAssignment.difficulty);
       setAssignPaceProposal(slot ? { date: slot.date, time: slot.time, duration: 30 } : { date: null });
     };
     const confirmAssignPaceProposal = () => {
@@ -7474,10 +7479,11 @@ function StudlinPrep({ setActive = () => {
         "x \xB7 Lock in a time?"
       ), (isNext || isExpanded) && !isDone && (isEditing ? (() => {
         const conflict = findOverlapConflict(s.date, s.time, minutesToTime(timeToMinutes(s.time) + (s.duration || 25)), lsGet("events", []).filter((e) => e.id !== s.id), getWeeklyRoutine());
-        return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(Input, { value: s.title, onChange: (e) => patchSession(s.id, { title: e.target.value }), placeholder: "Session name", style: { fontSize: 12.5 } }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Input, { type: "date", value: s.date, onChange: (e) => patchSession(s.id, { date: e.target.value }), style: { width: 130 } }), /* @__PURE__ */ React.createElement(TimeInput, { value: s.time, onChange: (v) => patchSession(s.id, { time: v }) }), /* @__PURE__ */ React.createElement(NumField, { min: 5, max: 240, fallback: 25, value: s.duration || 25, onChange: (v) => patchSession(s.id, { duration: v }), style: { width: 56 } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: T.muted } }, "min"), /* @__PURE__ */ React.createElement("button", { onClick: () => {
+        return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(Input, { value: s.title, onChange: (e) => patchSession(s.id, { title: e.target.value }), placeholder: "Session name", style: { fontSize: 12.5 } }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Input, { type: "date", value: s.date, onChange: (e) => patchSession(s.id, { date: e.target.value }), style: { width: 130 } }), /* @__PURE__ */ React.createElement(TimeInput, { value: s.time, onChange: (v) => patchSession(s.id, { time: v }) }), /* @__PURE__ */ React.createElement(NumField, { min: 5, max: 240, fallback: 25, value: s.duration || 25, onChange: (v) => patchSession(s.id, { duration: v }), style: { width: 56 } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: T.muted } }, "min"), confirmDeleteSessionId === s.id ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { onClick: () => {
           deleteSession(s.id);
+          setConfirmDeleteSessionId(null);
           closeSession();
-        }, style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 11, fontFamily: T.font, textDecoration: "underline" } }, "Delete"), /* @__PURE__ */ React.createElement("button", { onClick: closeSession, style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 11, fontFamily: T.font, textDecoration: "underline" } }, "Done")), conflict && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.amber, background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 7, padding: "6px 9px", lineHeight: 1.4 } }, "This overlaps with ", /* @__PURE__ */ React.createElement("strong", null, conflict.title), " at ", (() => {
+        }, style: { background: "none", border: "none", color: T.red, cursor: "pointer", fontSize: 11, fontWeight: 700, fontFamily: T.font, textDecoration: "underline" } }, "Confirm"), /* @__PURE__ */ React.createElement("button", { onClick: () => setConfirmDeleteSessionId(null), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 11, fontFamily: T.font, textDecoration: "underline" } }, "Cancel")) : /* @__PURE__ */ React.createElement("button", { onClick: () => setConfirmDeleteSessionId(s.id), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 11, fontFamily: T.font, textDecoration: "underline" } }, "Delete"), /* @__PURE__ */ React.createElement("button", { onClick: closeSession, style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 11, fontFamily: T.font, textDecoration: "underline" } }, "Done")), conflict && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.amber, background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 7, padding: "6px 9px", lineHeight: 1.4 } }, "This overlaps with ", /* @__PURE__ */ React.createElement("strong", null, conflict.title), " at ", (() => {
           let h = Math.floor(conflict.start / 60), m = conflict.start % 60;
           const ap = h >= 12 ? "PM" : "AM";
           h = h % 12 || 12;
@@ -10345,7 +10351,7 @@ function claimOrCreatePhaseSessionForChecklistItem(markerId, phaseIdx, itemText,
     return { events: next, scheduledEventId: unclaimed.id };
   }
   const today = todayKey || dayKey();
-  const slot = findLegalSlotOrNull(events, routines, prefs, today, prefs.workStartTime, 30, deadline || null);
+  const slot = findReliableSlotFor(events, routines, prefs, today, prefs.workStartTime, 30, deadline || null, difficulty);
   if (!slot) return null;
   const sess = {
     id: "phase-item-" + markerId + "-" + phaseIdx + "-" + Date.now(),
@@ -10491,7 +10497,7 @@ function planBrainDumpTasks(items, events, routines, prefs) {
       const duration = Math.max(5, it.durationMin || 30);
       const desiredDate = it.chained && cursorDate ? cursorDate : it.dueDate || today;
       const desiredTime = it.chained && cursorTime ? cursorTime : prefs.workStartTime;
-      const slot = findLegalSlotOrNull(working, routines, prefs, desiredDate, desiredTime, duration, it.dueDate || null);
+      const slot = findReliableSlotFor(working, routines, prefs, desiredDate, desiredTime, duration, it.dueDate || null, 5);
       if (!slot) {
         downgrade(it);
         return;
@@ -14053,7 +14059,17 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
         // those unchecked (still visible, freely re-checkable) instead of
         // presenting a pile of finished work as if it were new.
         include: !isPast,
-        noDate: false,
+        // Bug fix, 2026-09-17 internal audit: this used to be hardcoded
+        // false regardless of whether the AI actually found a date. The
+        // extraction prompt is deliberately told "never omit date even if
+        // uncertain" (mark confidence low instead) -- so a genuinely
+        // missing date from the model is a real compliance gap, not the
+        // expected case, and silently falling back to today's date with
+        // no visual signal let a guessed date look like a known one. Now
+        // reflects reality: no date from the model -> the existing
+        // "no date" checkbox/UI (already built, was just never
+        // auto-triggered) shows immediately instead of a fake today-date.
+        noDate: !d.date,
         attackBlock: kind !== "exam",
         proposeSessions: false,
         sessionCount: defaultSessionCountFor(d.examWeight),
@@ -15485,12 +15501,12 @@ function RoutineControlCenterModal({ open, onClose, routines, fmtTime: fmtTime2,
       ...!isHabit && !isFree && (+commuteBefore > 0 || +commuteAfter > 0) ? { commuteBefore: Math.max(0, +commuteBefore || 0), commuteAfter: Math.max(0, +commuteAfter || 0) } : {}
     });
     setAddedSummary(
-      isHabit ? savedTitle + " added \u2014 Studlin will fit it in daily on " + formatDays(days) + ", no fixed time." : days.length > 0 ? savedTitle + " added to your calendar, " + formatDays(days) + " " + fmtTime2(startTime) + "\u2013" + fmtTime2(minutesToTime(timeToMinutes(startTime) + duration)) + "." : savedTitle + " added, but not on the calendar yet \u2014 drag it onto a day to set when."
+      isHabit ? savedTitle + " added \u2014 Studlin will fit it in daily on " + formatDays2(days) + ", no fixed time." : days.length > 0 ? savedTitle + " added to your calendar, " + formatDays2(days) + " " + fmtTime2(startTime) + "\u2013" + fmtTime2(minutesToTime(timeToMinutes(startTime) + duration)) + "." : savedTitle + " added, but not on the calendar yet \u2014 drag it onto a day to set when."
     );
     resetForm();
     setAddingRoutine(false);
   };
-  const formatDays = (ds) => {
+  const formatDays2 = (ds) => {
     const sorted = [...ds || []].sort((a, b) => a - b);
     if (sorted.length === 7) return "Every day";
     if (sorted.length === 5 && sorted.every((v, i) => v === i)) return "Mon\u2013Fri";
@@ -15525,7 +15541,7 @@ function RoutineControlCenterModal({ open, onClose, routines, fmtTime: fmtTime2,
   ), " min")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10, justifyContent: "flex-end" } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => {
     resetForm();
     setAddingRoutine(false);
-  } }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: submitAdd, disabled: !isFree && !title.trim() || isHabit && days.length === 0, style: { opacity: !isFree && !title.trim() || isHabit && days.length === 0 ? 0.45 : 1 } }, "Add"))), routines.length === 0 && !addingRoutine && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, padding: "10px 0 16px", textAlign: "center" } }, "No recurring blocks yet."), routines.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 } }, routines.map((r) => /* @__PURE__ */ React.createElement("div", { key: r.id, style: { display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.card2 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 10, height: 10, borderRadius: "50%", background: r.kind === "class" ? colorOf(r.courseId || r.subject) : r.color || T.muted, flexShrink: 0 } }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white } }, r.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, formatDays(r.days), " \xB7 ", r.kind === "habit" ? "Anytime (" + (r.duration || 30) + " min)" : !r.startTime ? "Not scheduled yet \u2014 drag it onto your calendar" : fmtTime2(r.startTime) + " \u2013 " + fmtTime2(minutesToTime(timeToMinutes(r.startTime) + (r.duration || 30))))), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => onEditRoutine(r) }, "Edit"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "danger", onClick: () => onDeleteRoutine(r.id) }, "Delete")))), routines.length > 0 && onEditOnCalendar && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onEditOnCalendar, style: { background: "none", border: "none", color: T.lime, fontSize: 12.5, fontFamily: T.font, cursor: "pointer", padding: "0 0 16px", textDecoration: "underline" } }, "Edit directly on the calendar instead"), /* @__PURE__ */ React.createElement("div", { style: { border: `1px solid ${T.border}`, borderRadius: 10, padding: 14, marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: T.white, marginBottom: 2 } }, "Term dates"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 10 } }, "Outside these dates, summer, before the term starts, Studlin stops expecting your classes. Everything else on your routine still applies."), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } }, /* @__PURE__ */ React.createElement(DateField, { label: "School starts", value: termStart, onChange: setTermStart }), /* @__PURE__ */ React.createElement(DateField, { label: "School ends", value: termEnd, onChange: setTermEnd }))), /* @__PURE__ */ React.createElement("div", { style: { border: `1px solid ${T.border}`, borderRadius: 10, padding: 14, marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: T.white, marginBottom: 2 } }, "Holidays"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 10 } }, "Spring break, a long weekend. Studlin won't plan study sessions during these."), holidays.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 } }, holidays.map((h) => {
+  } }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: submitAdd, disabled: !isFree && !title.trim() || isHabit && days.length === 0, style: { opacity: !isFree && !title.trim() || isHabit && days.length === 0 ? 0.45 : 1 } }, "Add"))), routines.length === 0 && !addingRoutine && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, padding: "10px 0 16px", textAlign: "center" } }, "No recurring blocks yet."), routines.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 } }, routines.map((r) => /* @__PURE__ */ React.createElement("div", { key: r.id, style: { display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.card2 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 10, height: 10, borderRadius: "50%", background: r.kind === "class" ? colorOf(r.courseId || r.subject) : r.color || T.muted, flexShrink: 0 } }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white } }, r.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, formatDays2(r.days), " \xB7 ", r.kind === "habit" ? "Anytime (" + (r.duration || 30) + " min)" : !r.startTime ? "Not scheduled yet \u2014 drag it onto your calendar" : fmtTime2(r.startTime) + " \u2013 " + fmtTime2(minutesToTime(timeToMinutes(r.startTime) + (r.duration || 30))))), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => onEditRoutine(r) }, "Edit"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "danger", onClick: () => onDeleteRoutine(r.id) }, "Delete")))), routines.length > 0 && onEditOnCalendar && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onEditOnCalendar, style: { background: "none", border: "none", color: T.lime, fontSize: 12.5, fontFamily: T.font, cursor: "pointer", padding: "0 0 16px", textDecoration: "underline" } }, "Edit directly on the calendar instead"), /* @__PURE__ */ React.createElement("div", { style: { border: `1px solid ${T.border}`, borderRadius: 10, padding: 14, marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: T.white, marginBottom: 2 } }, "Term dates"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 10 } }, "Outside these dates, summer, before the term starts, Studlin stops expecting your classes. Everything else on your routine still applies."), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } }, /* @__PURE__ */ React.createElement(DateField, { label: "School starts", value: termStart, onChange: setTermStart }), /* @__PURE__ */ React.createElement(DateField, { label: "School ends", value: termEnd, onChange: setTermEnd }))), /* @__PURE__ */ React.createElement("div", { style: { border: `1px solid ${T.border}`, borderRadius: 10, padding: 14, marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: T.white, marginBottom: 2 } }, "Holidays"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 10 } }, "Spring break, a long weekend. Studlin won't plan study sessions during these."), holidays.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 } }, holidays.map((h) => {
     const isConfirming = confirmDeleteHolidayId === h.id;
     return isConfirming ? /* @__PURE__ */ React.createElement("div", { key: h.id, style: { padding: "8px 10px", borderRadius: 8, border: `1px solid ${T.red}55`, background: T.red + "12" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.text, marginBottom: 8 } }, 'Remove "', h.label || "Break", '"?'), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
       removeHoliday(h.id);
@@ -15918,7 +15934,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
   const markLinkedBlockDone = (id) => commit(lsGet("events", []).map((e) => e.id === id ? { ...e, status: "done", completedAt: Date.now() } : e));
   const pace = computeAssignmentPace(ev, allEvents, dayKey());
   const proposePaceBlock = () => {
-    const slot = findLegalSlotOrNull(allEvents, getWeeklyRoutine(), getSchedulePreferences(), dayKey(), getSchedulePreferences().workStartTime, 30, ev.deadline || ev.date);
+    const slot = findReliableSlotFor(allEvents, getWeeklyRoutine(), getSchedulePreferences(), dayKey(), getSchedulePreferences().workStartTime, 30, ev.deadline || ev.date, ev.difficulty);
     setPaceProposal(slot ? { date: slot.date, time: slot.time, duration: 30 } : { date: null });
   };
   const confirmPaceProposal = () => {
@@ -17528,7 +17544,17 @@ function CalendarTab({ setActive = () => {
   };
   const [weekBalanceOpen, setWeekBalanceOpen] = useState(false);
   const [weekBalancePlan, setWeekBalancePlan] = useState(null);
-  const [weekBalanceToast, setWeekBalanceToast] = useState("");
+  const [bulkReflowUndoSnapshot, setBulkReflowUndoSnapshot] = useState(null);
+  const [bulkReflowUndoToast, setBulkReflowUndoToast] = useState("");
+  const undoBulkReflow = () => {
+    if (!bulkReflowUndoSnapshot) return;
+    const { prevEvents, prevRoutineSkips } = bulkReflowUndoSnapshot;
+    setEvents2(prevEvents);
+    lsSet("events", prevEvents);
+    if (prevRoutineSkips) lsSet("routineSkips", prevRoutineSkips);
+    setBulkReflowUndoSnapshot(null);
+    setBulkReflowUndoToast("");
+  };
   const openWeekBalance = () => {
     const all = lsGet("events", []);
     const plan = computeWeekBalancePlan(all, routines, getSchedulePreferences(), dayKey());
@@ -17622,8 +17648,12 @@ function CalendarTab({ setActive = () => {
     lsSet("events", next);
     setWeekBalanceOpen(false);
     setWeekBalancePlan(null);
-    setWeekBalanceToast(weekBalancePlan.moves.length + " task" + (weekBalancePlan.moves.length !== 1 ? "s" : "") + " rebalanced across your week");
-    setTimeout(() => setWeekBalanceToast(""), 3200);
+    setBulkReflowUndoSnapshot({ prevEvents: all, prevRoutineSkips: null });
+    setBulkReflowUndoToast(weekBalancePlan.moves.length + " task" + (weekBalancePlan.moves.length !== 1 ? "s" : "") + " rebalanced across your week");
+    setTimeout(() => {
+      setBulkReflowUndoToast("");
+      setBulkReflowUndoSnapshot(null);
+    }, 5e3);
   };
   const [pauseOpen, setPauseOpen] = useState(false);
   const [pauseText, setPauseText] = useState("");
@@ -17846,6 +17876,7 @@ function CalendarTab({ setActive = () => {
     return { start: timeToMinutes(r.startTime), end: timeToMinutes(r.startTime) + (r.duration || 0) };
   })();
   const deleteRoutineItem = (routineId) => persistRoutines(routines.filter((r) => r.id !== routineId));
+  const [pendingDeleteRoutineId, setPendingDeleteRoutineId] = useState(null);
   const deleteRoutineGroup = (ids) => persistRoutines(routines.filter((r) => !ids.includes(r.id)));
   const skipOneOccurrence = (ev) => {
     if (!canUseSmartReschedule()) {
@@ -19404,6 +19435,7 @@ Examples:
       return;
     }
     const all = lsGet("events", []);
+    const originalRoutineSkips = getRoutineSkips();
     const routineMoves = pausePreview.moved.filter((m) => m.isRoutine);
     const oneOffMoves = new Map(pausePreview.moved.filter((m) => !m.isRoutine).map((m) => [m.id, m]));
     let next = all.map((ev) => {
@@ -19431,8 +19463,13 @@ Examples:
     setPausePreview(null);
     setPauseOpen(false);
     setPauseText("");
-    setToast(true);
-    setTimeout(() => setToast(false), 2200);
+    const routineSkipsChanged = routineMoves.length > 0 || !!pausePreview.skipRoutine;
+    setBulkReflowUndoSnapshot({ prevEvents: all, prevRoutineSkips: routineSkipsChanged ? originalRoutineSkips : null });
+    setBulkReflowUndoToast(pausePreview.label || "Schedule updated");
+    setTimeout(() => {
+      setBulkReflowUndoToast("");
+      setBulkReflowUndoSnapshot(null);
+    }, 5e3);
   };
   const isFixedKind = evKind === "exam" || evKind === "class" || evKind === "busy block";
   const isReminderKind = evKind === "reminder";
@@ -19978,7 +20015,7 @@ Examples:
         const rule = routines.find((r) => r.id === routineId);
         if (rule) openRoutineEdit(rule, date);
       },
-      onDeleteRoutine: deleteRoutineItem,
+      onDeleteRoutine: setPendingDeleteRoutineId,
       schoolWindow,
       selDay,
       setSelDay,
@@ -20824,7 +20861,7 @@ Examples:
       } }, "Close")
     },
     weekBalancePlan && weekBalancePlan.moves.length > 0 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 5, marginBottom: 16 } }, weekBalancePlan.perDay.filter((d) => d.minutesBefore !== d.minutesAfter).map((d) => /* @__PURE__ */ React.createElement("div", { key: d.date, style: { display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, padding: "6px 10px", background: T.card2, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.text } }, d.date), /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, fontFamily: T.mono } }, d.minutesBefore, "m \u2192 ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, d.minutesAfter, "m"))))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 7, maxHeight: 220, overflowY: "auto" } }, weekBalancePlan.moves.map((m) => /* @__PURE__ */ React.createElement("div", { key: m.id, style: { display: "flex", flexDirection: "column", gap: 4, padding: "9px 12px", background: T.card2, borderRadius: 8, border: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: 13, color: T.text, fontWeight: 500 } }, m.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, flexShrink: 0 } }, m.fromDate, " ", fmtTime2(m.fromTime), " \u2192 ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, m.toDate, " ", fmtTime2(m.toTime)))), m.reason && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.faint } }, m.reason)))))
-  ), weekBalanceToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.lime, color: T.ink, fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 8 } }, Icon.check, " ", weekBalanceToast), weekBalanceNudge && !classSetupOpen && !routineCenterOpen && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10, lineHeight: 1.5 } }, "Your week's a bit lopsided. Some days are carrying a lot more than others. Want Studlin to spread it out?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: acceptWeekBalanceNudge, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Review"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: declineWeekBalanceNudge, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Not now"))), /* @__PURE__ */ React.createElement(
+  ), bulkReflowUndoToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.card, border: `1px solid ${T.border}`, color: T.white, fontSize: 12.5, fontWeight: 600, padding: "10px 16px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("span", null, bulkReflowUndoToast), /* @__PURE__ */ React.createElement("button", { onClick: undoBulkReflow, style: { background: "none", border: "none", color: T.lime, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: T.font, textDecoration: "underline", padding: 0 } }, "Undo")), weekBalanceNudge && !classSetupOpen && !routineCenterOpen && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10, lineHeight: 1.5 } }, "Your week's a bit lopsided. Some days are carrying a lot more than others. Want Studlin to spread it out?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: acceptWeekBalanceNudge, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Review"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: declineWeekBalanceNudge, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Not now"))), /* @__PURE__ */ React.createElement(
     RoutineControlCenterModal,
     {
       open: routineCenterOpen,
@@ -20832,7 +20869,7 @@ Examples:
       routines,
       fmtTime: fmtTime2,
       onEditRoutine: openRoutineEdit,
-      onDeleteRoutine: deleteRoutineItem,
+      onDeleteRoutine: setPendingDeleteRoutineId,
       onAddRoutine: (rule) => {
         const newId = String(Date.now() + Math.random() * 1e3);
         persistRoutines([...routines, { id: newId, groupId: newId, ...rule, subject: "" }]);
@@ -20849,6 +20886,22 @@ Examples:
         }
       }
     }
+  ), /* @__PURE__ */ React.createElement(
+    Modal,
+    {
+      open: !!pendingDeleteRoutineId,
+      onClose: () => setPendingDeleteRoutineId(null),
+      title: "Delete this routine?",
+      width: 400,
+      footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setPendingDeleteRoutineId(null) }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => {
+        deleteRoutineItem(pendingDeleteRoutineId);
+        setPendingDeleteRoutineId(null);
+      } }, "Delete"))
+    },
+    (() => {
+      const r = routines.find((x) => x.id === pendingDeleteRoutineId);
+      return r ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text } }, "This removes ", /* @__PURE__ */ React.createElement("strong", null, r.title), " (", formatDays(r.days), ") from your weekly schedule \u2014 every future occurrence, not just this week's. This can't be undone.") : null;
+    })()
   ));
 }
 function SettingsTab({ theme = "dark", setTheme = () => {
@@ -21631,6 +21684,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
   const [aiTimeOfDay, setAiTimeOfDay] = useState(() => getAiMemory().timeOfDay || null);
   const [confirmRemoveFactIdx, setConfirmRemoveFactIdx] = useState(null);
   const [confirmClearMemory, setConfirmClearMemory] = useState(false);
+  const [confirmRemoveTimeOfDay, setConfirmRemoveTimeOfDay] = useState(false);
   const removeAiFact = (idx) => {
     const next = removeAiMemoryFact(getAiMemory(), idx);
     saveAiMemory(next);
@@ -21773,7 +21827,10 @@ function SettingsTab({ theme = "dark", setTheme = () => {
   ))), toggles.shareAvailabilityMode === "selected" && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted } }, (toggles.shareAvailabilitySelectedUids || []).length === 0 ? "Nobody picked yet -- sharing is on, but no one can see it." : (toggles.shareAvailabilitySelectedUids || []).length + " friend" + ((toggles.shareAvailabilitySelectedUids || []).length === 1 ? "" : "s") + " can see your free/busy time."), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: openShareModePicker, style: { flexShrink: 0, fontSize: 11.5, fontWeight: 700, color: T.lime, background: "none", border: `1px solid ${T.lime}55`, borderRadius: 7, padding: "6px 10px", cursor: "pointer", fontFamily: T.font } }, "Manage")))), /* @__PURE__ */ React.createElement(Modal, { open: shareModePickerOpen, onClose: () => setShareModePickerOpen(false), title: "Choose who can see your free/busy time", sub: "Only these friends' 'Find Shared Study Window' searches and Schedule with Friends overlays will see when you're busy.", width: 420 }, shareCandidatesLoading ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "Loading your friends\u2026") : shareCandidates.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "No friends yet -- add some in Studlin Network first.") : /* @__PURE__ */ React.createElement(React.Fragment, null, shareCandidates.length > 5 && /* @__PURE__ */ React.createElement(Input, { value: shareSearchQuery, onChange: (e) => setShareSearchQuery(e.target.value), placeholder: "Search friends", style: { marginBottom: 10, width: "100%" } }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, maxHeight: 360, overflowY: "auto" } }, shareCandidates.filter((c) => c.name.toLowerCase().includes(shareSearchQuery.trim().toLowerCase())).map((c) => {
     const checked = (toggles.shareAvailabilitySelectedUids || []).includes(c.uid);
     return /* @__PURE__ */ React.createElement("label", { key: c.uid, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 8, border: `1px solid ${T.border}`, cursor: "pointer", background: checked ? T.card2 : "transparent" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked, onChange: () => toggleShareSelectedUid(c.uid), style: { cursor: "pointer" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text } }, c.name));
-  })))), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "Data & AI"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "You own your notes, essays, and recordings."), /* @__PURE__ */ React.createElement(Row, { label: "Use my work to train Studlin AI", sub: "Off by default. We will never share your raw content.", k: "collect" }), /* @__PURE__ */ React.createElement(Row, { label: "Anonymous usage analytics", sub: "Helps us fix bugs and prioritise features.", k: "analytics" }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: exportAllData }, React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 6 } }, Icon.copy, "Export all data")), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: downloadChatHistory, disabled: chatHistoryLoading }, chatHistoryLoading ? "Preparing\u2026" : "Download chat history"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle" }, "Privacy policy"))), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "What Studlin AI remembers"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "Standing preferences it's picked up from your chats \u2014 not one-off requests, just things worth not re-explaining every time."), aiTimeOfDay && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, marginBottom: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, "Prefers ", aiTimeOfDay, " study sessions"), /* @__PURE__ */ React.createElement("button", { onClick: removeAiTimeOfDay, style: { background: "none", border: `1px solid ${T.border}`, color: T.muted, cursor: "pointer", borderRadius: 6, padding: "4px 10px", fontSize: 12, fontFamily: T.font, flexShrink: 0 } }, "Remove")), aiMemoryFacts.length === 0 && !aiTimeOfDay ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, padding: "16px 0", textAlign: "center", borderTop: `1px solid ${T.border}` } }, "Nothing remembered yet. It'll pick things up naturally as you chat.") : aiMemoryFacts.map((f, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, marginBottom: 8 } }, confirmRemoveFactIdx === i ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, "Forget this?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => removeAiFact(i) }, "Forget"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmRemoveFactIdx(null) }, "Cancel")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, f.text), /* @__PURE__ */ React.createElement("button", { onClick: () => setConfirmRemoveFactIdx(i), style: { background: "none", border: `1px solid ${T.border}`, color: T.muted, cursor: "pointer", borderRadius: 6, padding: "4px 10px", fontSize: 12, fontFamily: T.font, flexShrink: 0 } }, "Remove")))), (aiMemoryFacts.length > 0 || aiTimeOfDay) && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 6 } }, confirmClearMemory ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Forget everything Studlin AI remembers about you?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: clearAiMemory }, "Yes, clear all"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmClearMemory(false) }, "Cancel")) : /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmClearMemory(true) }, "Clear all"))), /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 10 } }, "Account security"), /* @__PURE__ */ React.createElement(Row, { label: "Two-factor authentication", sub: "Add a one-time code on every sign in.", k: "twofa", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: true, style: { opacity: 0.4, cursor: "not-allowed" } }, "Coming Soon") }), /* @__PURE__ */ React.createElement(Row, { label: "Active sessions", sub: "See and sign out other signed-in devices.", k: "sessions", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: true, style: { opacity: 0.4, cursor: "not-allowed" } }, "Coming Soon") }), /* @__PURE__ */ React.createElement(Row, { label: "Change password", sub: passwordResetSent ? "Reset link sent to " + profile.email + "." : "We'll email you a secure link to set a new one.", k: "pw", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: passwordResetLoading, onClick: sendPasswordReset }, passwordResetLoading ? "Sending\u2026" : passwordResetSent ? "Resend" : "Email reset link") }))), active === "Subjects & Labels" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Manage Subjects & Labels"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Color-code your classes. These labels appear on your calendar and tasks globally.")), /* @__PURE__ */ React.createElement(Btn, { onClick: () => {
+  })))), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "Data & AI"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "You own your notes, essays, and recordings."), /* @__PURE__ */ React.createElement(Row, { label: "Use my work to train Studlin AI", sub: "Off by default. We will never share your raw content.", k: "collect" }), /* @__PURE__ */ React.createElement(Row, { label: "Anonymous usage analytics", sub: "Helps us fix bugs and prioritise features.", k: "analytics" }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: exportAllData }, React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 6 } }, Icon.copy, "Export all data")), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: downloadChatHistory, disabled: chatHistoryLoading }, chatHistoryLoading ? "Preparing\u2026" : "Download chat history"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle" }, "Privacy policy"))), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "What Studlin AI remembers"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "Standing preferences it's picked up from your chats \u2014 not one-off requests, just things worth not re-explaining every time."), aiTimeOfDay && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, marginBottom: 8 } }, confirmRemoveTimeOfDay ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, "Forget this?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => {
+    removeAiTimeOfDay();
+    setConfirmRemoveTimeOfDay(false);
+  } }, "Forget"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmRemoveTimeOfDay(false) }, "Cancel")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, "Prefers ", aiTimeOfDay, " study sessions"), /* @__PURE__ */ React.createElement("button", { onClick: () => setConfirmRemoveTimeOfDay(true), style: { background: "none", border: `1px solid ${T.border}`, color: T.muted, cursor: "pointer", borderRadius: 6, padding: "4px 10px", fontSize: 12, fontFamily: T.font, flexShrink: 0 } }, "Remove"))), aiMemoryFacts.length === 0 && !aiTimeOfDay ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, padding: "16px 0", textAlign: "center", borderTop: `1px solid ${T.border}` } }, "Nothing remembered yet. It'll pick things up naturally as you chat.") : aiMemoryFacts.map((f, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, marginBottom: 8 } }, confirmRemoveFactIdx === i ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, "Forget this?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => removeAiFact(i) }, "Forget"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmRemoveFactIdx(null) }, "Cancel")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, f.text), /* @__PURE__ */ React.createElement("button", { onClick: () => setConfirmRemoveFactIdx(i), style: { background: "none", border: `1px solid ${T.border}`, color: T.muted, cursor: "pointer", borderRadius: 6, padding: "4px 10px", fontSize: 12, fontFamily: T.font, flexShrink: 0 } }, "Remove")))), (aiMemoryFacts.length > 0 || aiTimeOfDay) && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 6 } }, confirmClearMemory ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Forget everything Studlin AI remembers about you?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: clearAiMemory }, "Yes, clear all"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmClearMemory(false) }, "Cancel")) : /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmClearMemory(true) }, "Clear all"))), /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 10 } }, "Account security"), /* @__PURE__ */ React.createElement(Row, { label: "Two-factor authentication", sub: "Add a one-time code on every sign in.", k: "twofa", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: true, style: { opacity: 0.4, cursor: "not-allowed" } }, "Coming Soon") }), /* @__PURE__ */ React.createElement(Row, { label: "Active sessions", sub: "See and sign out other signed-in devices.", k: "sessions", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: true, style: { opacity: 0.4, cursor: "not-allowed" } }, "Coming Soon") }), /* @__PURE__ */ React.createElement(Row, { label: "Change password", sub: passwordResetSent ? "Reset link sent to " + profile.email + "." : "We'll email you a secure link to set a new one.", k: "pw", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: passwordResetLoading, onClick: sendPasswordReset }, passwordResetLoading ? "Sending\u2026" : passwordResetSent ? "Resend" : "Email reset link") }))), active === "Subjects & Labels" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Manage Subjects & Labels"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Color-code your classes. These labels appear on your calendar and tasks globally.")), /* @__PURE__ */ React.createElement(Btn, { onClick: () => {
     const term = getSchoolTerm();
     setMgmtSubjs((s) => [...s, { id: String(Date.now()), label: "", color: nextAvailableSubjectColor(s.map((x) => x.color)), termEnd: term ? term.end : null }]);
   } }, "+ Add")), mgmtSubjs.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, padding: "20px 0", textAlign: "center", borderTop: `1px solid ${T.border}` } }, 'No subjects yet. Click "+ Add" to create your first label.'), mgmtSubjs.map((sub, i) => /* @__PURE__ */ React.createElement("div", { key: sub.id || i, style: { ...subjectRowStyle(sub.color), marginBottom: 10 } }, confirmRemoveSubjId === sub.id ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flex: 1 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, 'Delete "', sub.label, '" and its ', countLinkedForSubject(sub), " linked item", countLinkedForSubject(sub) !== 1 ? "s" : "", " (class times, assignments, exams)?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => confirmRemoveSubject(sub) }, "Delete"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmRemoveSubjId(null) }, "Cancel")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(ColorSelect, { value: sub.color, onChange: (c) => setMgmtSubjs((s) => s.map((x, j) => j === i ? { ...x, color: c } : x)) }), /* @__PURE__ */ React.createElement("input", { value: sub.label, onChange: (e) => setMgmtSubjs((s) => s.map((x, j) => j === i ? { ...x, label: e.target.value } : x)), placeholder: "Subject name...", style: { flex: 1, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 7, padding: "7px 10px", color: T.text, fontSize: 13, fontFamily: T.font, outline: "none" } }), /* @__PURE__ */ React.createElement("button", { onClick: () => removeSubjectRow(sub), style: { background: "none", border: `1px solid ${T.border}`, color: T.muted, cursor: "pointer", borderRadius: 6, padding: "4px 10px", fontSize: 12, fontFamily: T.font } }, "Remove")))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 16, alignItems: "center", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Btn, { onClick: saveMgmtSubjs }, "Save changes"), mgmtSubjs.length > 0 && (confirmClearSubjs ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Delete all ", mgmtSubjs.length, " subject", mgmtSubjs.length !== 1 ? "s" : "", " and everything linked to them?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: clearAllSubjects }, "Yes, delete all"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmClearSubjs(false) }, "Cancel")) : /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmClearSubjs(true) }, "Clear all")), mgmtSaved && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.lime, fontWeight: 600 } }, "\u2713 Saved")), courseDeleteToast && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginTop: 10, padding: "9px 12px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.text, flex: 1 } }, courseDeleteToast), /* @__PURE__ */ React.createElement("button", { onClick: undoCourseDeletes, style: { background: "none", border: "none", color: T.lime, cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: T.font, textDecoration: "underline" } }, "Undo")))), active === "Calendar Preferences" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Study Schedule"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 16 } }, "Work hours, weekend schedule, difficulty, and peak focus hours."), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setScheduleSettingsOpen(true) }, "Customize Schedule")), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Weekly Routine"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 16 } }, "Your classes, sports, and shifts: the times the AI treats as absolute and never schedules over."), /* @__PURE__ */ React.createElement(Btn, { onClick: onOpenRoutineCenter }, "Manage Routine")), /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Auto-schedule prep time"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 16 } }, "How Studlin handles study sessions for assignments and exams pulled from a syllabus scan, once they're actually coming up."), /* @__PURE__ */ React.createElement(SelectChip, { options: [{ value: "ask", label: "Always ask" }, { value: "auto", label: "Auto-add" }, { value: "off", label: "Off" }], value: prepScheduleMode, onChange: (v) => {
