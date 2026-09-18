@@ -7253,6 +7253,41 @@ function computeWeekAheadSummary(events,weekStartKey){
   const isChillWeek=dueItems.length===0&&days.every(d=>d.tier==="light");
   return {days,dueItems,busiestDay,unpreparedExams,isChillWeek};
 }
+// Turns weekAheadSummary's flat dueItems list into short, specific,
+// assistant-style lines -- "your chem exam is in 3 days, you haven't
+// started yet" instead of a bare title+weekday row with no read on where
+// the student actually stands. Additive to computeWeekAheadSummary (not a
+// change to its own shape, which existing tests/callers already rely on)
+// so this is opt-in for whatever UI wants the narrated version.
+// urgent is true only for an exam that's both soon (<=3 days) AND has
+// zero real prep (no sessions, no material) -- the one case worth a
+// pointed nudge rather than a plain status line; everything else,
+// including "nothing started yet" further out, stays calm.
+function narrateWeekAhead(events,dueItems,todayKey){
+  const all=events||[];
+  const todayDate=new Date((todayKey||dayKey())+"T12:00:00");
+  return (dueItems||[]).map(item=>{
+    const itemDate=new Date(item.date+"T12:00:00");
+    const daysUntil=Math.round((itemDate-todayDate)/86400000);
+    const when=daysUntil<=0?"today":daysUntil===1?"tomorrow":"in "+daysUntil+" days";
+    const name=item.kind==="exam"&&item.subject
+      ?item.subject+" "+(item.examWeight==="quiz"?"quiz":"exam")
+      :item.title;
+    const sessions=all.filter(s=>s.dueEventId===item.id);
+    const done=sessions.filter(s=>s.status==="done").length;
+    const scheduled=sessions.filter(s=>s.status==="pending").length;
+    const hasMaterial=(item.sourceMaterials&&item.sourceMaterials.length>0)||(item.referenceLinks&&item.referenceLinks.length>0);
+    const noPrepAtAll=done===0&&scheduled===0&&!hasMaterial;
+    const urgent=item.kind==="exam"&&daysUntil<=3&&daysUntil>=0&&noPrepAtAll;
+    let status;
+    if(done>0)status="you're already "+done+" session"+(done!==1?"s":"")+" deep on it";
+    else if(scheduled>0)status=scheduled+" session"+(scheduled!==1?"s":"")+" already on your calendar for it";
+    else if(hasMaterial)status="material's ready, no sessions scheduled yet";
+    else if(urgent)status="you haven't started -- worth getting going on this one";
+    else status="nothing started yet, but you've got time";
+    return {id:item.id,title:item.title,kind:item.kind,date:item.date,daysUntil,urgent,text:name+" is "+when+" -- "+status+"."};
+  });
+}
 // The Month grid's own capacity bar (see its render site) used to fire
 // off the same fixed DAY_WORKLOAD_HEAVY_MINS threshold above -- but a
 // normal full course load crosses 4 hours scheduled on almost every
@@ -37587,6 +37622,9 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   // starts exactly 7 days after weekDays7's own Monday.
   const nextWeekStartKey=(()=>{const d=new Date(weekDays7[0]);d.setDate(d.getDate()+7);return dayKey(d);})();
   const weekAheadSummary=computeWeekAheadSummary(allEvents,nextWeekStartKey);
+  // Assistant-style read on weekAheadSummary.dueItems -- see
+  // narrateWeekAhead's own comment.
+  const weekAheadNarration=narrateWeekAhead(allEvents,weekAheadSummary.dueItems,dayKey());
   // Shared by the Wrapped stat below and the top-subject computation right
   // after it. Replaces the old "Words written" stat, which only counted
   // words from the essay-writing tool specifically -- anyone who'd never
@@ -37992,17 +38030,20 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
               one starting tomorrow/today. isChillWeek gets the same soft,
               encouraging treatment the backward-looking empty-state above
               already established, rather than an empty section that just
-              vanishes and reads as broken. unpreparedExams is a real,
-              specific heads-up (a plan-less exam this week), not a vague
-              nag -- named exactly what's missing. */}
+              vanishes and reads as broken. weekAheadNarration replaces the
+              old flat title+weekday list (plus a separate, redundant
+              "unprepared exam" warning block below it) with one assistant-
+              style line per item -- naming what's coming, how soon, and
+              exactly where prep already stands ("you're already 2 sessions
+              deep" / "nothing started yet"), so it reads like a real
+              heads-up instead of a bare due-date table. */}
           <div style={{borderTop:"1px solid rgba(246,241,230,0.12)",paddingTop:16,marginTop:-8,marginBottom:20}}>
             <div style={{fontSize:11,fontFamily:T.mono,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)",marginBottom:10}}>Your Week Ahead</div>
             {weekAheadSummary.isChillWeek?(
               <div style={{background:"rgba(246,241,230,0.05)",borderRadius:10,padding:"14px",fontSize:12.5,color:"rgba(246,241,230,0.8)",lineHeight:1.5}}>Nothing major on the calendar next week -- a good one to get ahead, or just breathe.</div>
             ):(<>
               <div style={{fontSize:12.5,color:T.cream,lineHeight:1.5,marginBottom:12}}>
-                {weekAheadSummary.dueItems.length>0?weekAheadSummary.dueItems.length+" thing"+(weekAheadSummary.dueItems.length!==1?"s":"")+" due next week":"Nothing due next week"}
-                {weekAheadSummary.busiestDay.minutes>0?" -- "+new Date(weekAheadSummary.busiestDay.date+"T12:00:00").toLocaleDateString("en-US",{weekday:"long"})+" is your busiest day ("+fmtH(weekAheadSummary.busiestDay.minutes)+" scheduled).":"."}
+                {weekAheadSummary.busiestDay.minutes>0?new Date(weekAheadSummary.busiestDay.date+"T12:00:00").toLocaleDateString("en-US",{weekday:"long"})+" is your busiest day -- "+fmtH(weekAheadSummary.busiestDay.minutes)+" already scheduled.":"Nothing due next week."}
               </div>
               <div style={{display:"flex",alignItems:"flex-end",gap:6,height:44,marginBottom:14}}>
                 {weekAheadSummary.days.map((d,i)=>{
@@ -38023,21 +38064,19 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                   );
                 })}
               </div>
-              {weekAheadSummary.dueItems.length>0&&(
-                <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:weekAheadSummary.unpreparedExams.length>0?12:0}}>
-                  {weekAheadSummary.dueItems.slice(0,4).map(item=>(
-                    <div key={item.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"rgba(246,241,230,0.05)",borderRadius:8,padding:"7px 10px",fontSize:12}}>
-                      <span style={{color:T.cream,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{item.kind==="exam"?"EXAM · ":""}{item.title}</span>
-                      <span style={{color:"rgba(246,241,230,0.5)",fontFamily:T.mono,fontSize:10.5,flexShrink:0,marginLeft:8}}>{new Date(item.date+"T12:00:00").toLocaleDateString("en-US",{weekday:"short"})}</span>
+              {weekAheadNarration.length>0&&(
+                <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                  {weekAheadNarration.slice(0,4).map(n=>(
+                    <div key={n.id} style={{display:"flex",gap:8,alignItems:"flex-start",background:n.urgent?"rgba(216,155,60,0.14)":"rgba(246,241,230,0.05)",border:n.urgent?`1px solid ${T.amber}44`:"1px solid transparent",borderRadius:8,padding:"8px 10px",fontSize:12,lineHeight:1.45}}>
+                      <span style={{color:n.urgent?T.amber:"rgba(246,241,230,0.4)",fontFamily:T.mono,fontSize:10,fontWeight:700,flexShrink:0,marginTop:2,minWidth:20}}>{n.daysUntil<=0?"NOW":n.daysUntil+"D"}</span>
+                      <span style={{color:n.urgent?T.cream:"rgba(246,241,230,0.85)"}}>{n.text}</span>
                     </div>
                   ))}
+                  {weekAheadNarration.length>4&&(
+                    <div style={{fontSize:11,color:"rgba(246,241,230,0.4)",textAlign:"center",marginTop:2}}>+{weekAheadNarration.length-4} more next week</div>
+                  )}
                 </div>
               )}
-              {weekAheadSummary.unpreparedExams.map(e=>(
-                <div key={e.id} style={{fontSize:12,color:T.amber,background:"rgba(216,155,60,0.12)",border:`1px solid ${T.amber}44`,borderRadius:8,padding:"8px 10px",marginTop:6,lineHeight:1.4}}>
-                  {e.title} is {new Date(e.date+"T12:00:00").toLocaleDateString("en-US",{weekday:"long"})} and you haven't started studying yet.
-                </div>
-              ))}
             </>)}
           </div>
           <button onClick={dismissWrapped} style={{width:"100%",padding:"11px 0",borderRadius:6,background:T.lime,color:T.ink,border:"none",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Done</button>

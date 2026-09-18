@@ -151,7 +151,7 @@ function loadStudlinModule(options) {
     "scaledFlashcardCount","scaledQuizCount",
     "suggestDurationFor","difficultyTierOf","TIER0_MIN_BUCKET_SAMPLE","IMPORTANCE_TO_DURATION_MULTIPLIER",
     "gradeWeightNudgeFor","isConfidenceStreak","scoreTierFromPercent","SCORE_TIER_LABEL","subjectOutcomeNudge","completionCredit",
-    "examClusterNudgeFor","EXAM_CLUSTER_WINDOW_DAYS","parseStudlinAiMarkdown","presenceInfo","computeWeekAheadSummary","fmtTimeRange",
+    "examClusterNudgeFor","EXAM_CLUSTER_WINDOW_DAYS","parseStudlinAiMarkdown","presenceInfo","computeWeekAheadSummary","narrateWeekAhead","fmtTimeRange",
     "getSubjects","saveSubjects","courseIdForLabel","backfillCourseIds",
     "nextAvailableSubjectColor","SUBJECT_COLORS",
     "deleteCourseWithCascade","undoCourseDelete",

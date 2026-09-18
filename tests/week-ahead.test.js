@@ -126,3 +126,97 @@ describe("computeWeekAheadSummary", () => {
     assert.equal(summary.unpreparedExams.length, 0);
   });
 });
+
+// Assistant-style read on computeWeekAheadSummary's own dueItems -- one
+// specific line per item ("your chem exam is in 3 days, you haven't
+// started") instead of a bare title+weekday row.
+describe("narrateWeekAhead", () => {
+  test("today/tomorrow/N-days phrasing is exact, not off-by-one", () => {
+    const m = loadStudlinModule();
+    const items = [
+      exam({ id: "e0", date: MONDAY }),
+      exam({ id: "e1", date: "2026-09-08" }),
+      exam({ id: "e3", date: "2026-09-10" }),
+    ];
+    const lines = m.narrateWeekAhead([], items, MONDAY);
+    assert.match(lines[0].text, /is today/);
+    assert.match(lines[1].text, /is tomorrow/);
+    assert.match(lines[2].text, /is in 3 days/);
+  });
+
+  test("an exam with a subject is named '<subject> exam' (or 'quiz' for examWeight:quiz), not its raw title", () => {
+    const m = loadStudlinModule();
+    const items = [
+      exam({ id: "e1", title: "Unit 4 Test", date: MONDAY, subject: "Chem" }),
+      exam({ id: "e2", title: "Pop quiz", date: MONDAY, subject: "Bio", examWeight: "quiz" }),
+    ];
+    const lines = m.narrateWeekAhead([], items, MONDAY);
+    assert.match(lines[0].text, /^Chem exam is today/);
+    assert.match(lines[1].text, /^Bio quiz is today/);
+  });
+
+  test("a deadline (no examWeight/subject framing) keeps its own title", () => {
+    const m = loadStudlinModule();
+    const items = [{ id: "hw1", kind: "deadline", title: "Problem Set 3", date: MONDAY }];
+    const lines = m.narrateWeekAhead([], items, MONDAY);
+    assert.match(lines[0].text, /^Problem Set 3 is today/);
+  });
+
+  test("completed sessions are reported first, over just-scheduled ones", () => {
+    const m = loadStudlinModule();
+    const item = exam({ id: "e1", date: MONDAY });
+    const events = [
+      studyBlock({ id: "s1", dueEventId: "e1", status: "done" }),
+      studyBlock({ id: "s2", dueEventId: "e1", status: "done" }),
+      studyBlock({ id: "s3", dueEventId: "e1", status: "pending" }),
+    ];
+    const lines = m.narrateWeekAhead(events, [item], MONDAY);
+    assert.match(lines[0].text, /already 2 sessions deep/);
+  });
+
+  test("sessions scheduled but none completed yet reports the scheduled count", () => {
+    const m = loadStudlinModule();
+    const item = exam({ id: "e1", date: MONDAY });
+    const events = [studyBlock({ id: "s1", dueEventId: "e1", status: "pending" })];
+    const lines = m.narrateWeekAhead(events, [item], MONDAY);
+    assert.match(lines[0].text, /1 session already on your calendar/);
+  });
+
+  test("material attached but no sessions at all is reported distinctly from 'nothing started'", () => {
+    const m = loadStudlinModule();
+    const item = exam({ id: "e1", date: MONDAY, sourceMaterials: [{ name: "notes", text: "ch4" }] });
+    const lines = m.narrateWeekAhead([], [item], MONDAY);
+    assert.match(lines[0].text, /material's ready, no sessions scheduled yet/);
+  });
+
+  test("urgent is true only for an exam within 3 days with zero prep of any kind", () => {
+    const m = loadStudlinModule();
+    const soonNoPrep = exam({ id: "e1", date: "2026-09-08" }); // 1 day out
+    const [near] = m.narrateWeekAhead([], [soonNoPrep], MONDAY);
+    assert.equal(near.urgent, true);
+    assert.match(near.text, /you haven't started -- worth getting going/);
+  });
+
+  test("urgent is false when the same near-term exam already has a real session scheduled", () => {
+    const m = loadStudlinModule();
+    const item = exam({ id: "e1", date: "2026-09-08" });
+    const events = [studyBlock({ id: "s1", dueEventId: "e1", status: "pending" })];
+    const [near] = m.narrateWeekAhead(events, [item], MONDAY);
+    assert.equal(near.urgent, false);
+  });
+
+  test("urgent is false for a far-out exam with zero prep -- stays calm, not alarmist", () => {
+    const m = loadStudlinModule();
+    const item = exam({ id: "e1", date: "2026-09-13" }); // 6 days out
+    const [far] = m.narrateWeekAhead([], [item], MONDAY);
+    assert.equal(far.urgent, false);
+    assert.match(far.text, /nothing started yet, but you've got time/);
+  });
+
+  test("urgent is never true for a plain deadline, even soon with zero prep", () => {
+    const m = loadStudlinModule();
+    const item = { id: "hw1", kind: "deadline", title: "Problem Set", date: "2026-09-08" };
+    const [near] = m.narrateWeekAhead([], [item], MONDAY);
+    assert.equal(near.urgent, false);
+  });
+});
