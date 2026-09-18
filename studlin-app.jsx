@@ -38817,13 +38817,19 @@ function App() {
     const task=events.find(e=>e.id===taskId);
     if(!task)return;
     if(shouldOfferProjectCheckIn(task,events))setProjectCheckInTaskId(taskId);
-    // P2 in the audit: this already deliberately fires beyond just
-    // exam-prep sessions (see the comment on the Lock-In completion path
-    // below) -- routineId is the one case that genuinely doesn't belong:
-    // a materialized daily habit (materializeHabitsForDate) also carries
-    // kind:"study block", but "how'd it go, how confident do you feel"
-    // has no real meaning for a recurring habit with no material at all.
-    else if(task.kind==="study block"&&!task.routineId){
+    // Bug fix, 2026-09-18 user report: "why is this question on every
+    // task, shouldn't it be for exams or assignments not for tasks" --
+    // this used to fire for ANY completed kind:"study block" item other
+    // than a routine habit, but a plain generic Task (isGeneralTask:true,
+    // created with no linked exam/assignment at all) also resolves to
+    // kind:"study block" -- "how'd it go, how confident do you feel"
+    // has no real meaning for "buy textbook" or "email professor." Now
+    // requires task.dueEventId (the same field the Modal's own title
+    // already branches on -- "How do you feel about the exam so far?"
+    // vs. plain "How did that session go?" -- this just uses that same
+    // signal to gate whether the modal shows at all, not just how it's
+    // worded), which only a real exam/assignment-linked session ever has.
+    else if(task.kind==="study block"&&!task.routineId&&task.dueEventId){
       const examEvent=task.dueEventId?events.find(e=>e.id===task.dueEventId):null;
       if(task.isDiagnosticFirstPass){
         // Clear the marker the instant it's seen, unconditionally --
@@ -40728,18 +40734,17 @@ function App() {
           }
         }
         lsSet("events",next);
-        // Any flexible study block finished through the Lock-In Timer gets
-        // one extra one-tap prompt once the XP screen above is dismissed —
-        // not just exam-prep sessions anymore (an Attack Block probe still
-        // has its own separate check-in and isn't kind:"study block" so
-        // this doesn't double up with it). The deliberate, already-modal
-        // Timer flow is where this fits without adding friction; a plain
-        // checkbox-click completion (markDone) deliberately does NOT get
-        // this prompt — see submitExamCheckIn below. P2 in the audit:
-        // !routineId excludes a materialized daily habit -- same
-        // kind:"study block", but no real "confidence in material" concept
-        // applies to a recurring habit, matching handleTaskCompleted's own
-        // identical exclusion above.
+        // A flexible study block finished through the Lock-In Timer gets
+        // one extra one-tap prompt once the XP screen above is dismissed
+        // (an Attack Block probe still has its own separate check-in and
+        // isn't kind:"study block" so this doesn't double up with it). The
+        // deliberate, already-modal Timer flow is where this fits without
+        // adding friction; a plain checkbox-click completion (markDone)
+        // deliberately does NOT get this prompt — see submitExamCheckIn
+        // below. P2 in the audit: !routineId excludes a materialized daily
+        // habit -- same kind:"study block", but no real "confidence in
+        // material" concept applies to a recurring habit, matching
+        // handleTaskCompleted's own identical exclusion above.
         // Bug fix (found in an audit pass, 2026-09-03): !studySessionId
         // excludes a co-op Lock-In joined via joinLockIn/joinLiveInvite --
         // same kind:"study block" shape, but "How do you feel about the
@@ -40747,7 +40752,16 @@ function App() {
         // exam behind it at all. submitExamCheckIn already no-ops
         // harmlessly with no matching examEvent, so nothing was actually
         // broken by this besides the confusing prompt itself.
-        if(timerTask.kind==="study block"&&!timerTask.routineId&&!timerTask.studySessionId){
+        // Bug fix, 2026-09-18 user report: "why is this question on every
+        // task" -- this used to deliberately fire beyond just exam-prep
+        // sessions (see the now-removed comment this replaced), but a
+        // plain generic Task also carries kind:"study block" with no real
+        // exam/assignment behind it, same nonsensical-prompt problem the
+        // co-op-session fix right above already solved for a different
+        // case. Now requires dueEventId too (mirrors handleTaskCompleted's
+        // identical fix above), which only a real exam/assignment-linked
+        // session ever has.
+        if(timerTask.kind==="study block"&&!timerTask.routineId&&!timerTask.studySessionId&&timerTask.dueEventId){
           // Bug fix, 2026-09-04 audit: this Lock-In completion path never
           // checked isDiagnosticFirstPass, so finishing session 1 through
           // the timer -- the app's primary, flagship completion method --

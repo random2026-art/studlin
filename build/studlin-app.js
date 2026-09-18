@@ -22927,7 +22927,7 @@ function App() {
     const task = events.find((e) => e.id === taskId);
     if (!task) return;
     if (shouldOfferProjectCheckIn(task, events)) setProjectCheckInTaskId(taskId);
-    else if (task.kind === "study block" && !task.routineId) {
+    else if (task.kind === "study block" && !task.routineId && task.dueEventId) {
       const examEvent = task.dueEventId ? events.find((e) => e.id === task.dueEventId) : null;
       if (task.isDiagnosticFirstPass) {
         lsSet("events", lsGet("events", []).map((e) => e.id === task.id ? { ...e, isDiagnosticFirstPass: false } : e));
@@ -24128,7 +24128,7 @@ function App() {
           }
         }
         lsSet("events", next);
-        if (timerTask.kind === "study block" && !timerTask.routineId && !timerTask.studySessionId) {
+        if (timerTask.kind === "study block" && !timerTask.routineId && !timerTask.studySessionId && timerTask.dueEventId) {
           if (timerTask.isDiagnosticFirstPass) {
             next = next.map((e) => e.id === timerTask.id ? { ...e, isDiagnosticFirstPass: false } : e);
             lsSet("events", next);
