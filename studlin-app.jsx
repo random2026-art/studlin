@@ -3715,14 +3715,43 @@ function findTier0Slot(task,events,routines,prefs,todayKey){
 // nowFloorMins) and bounded to the day's real work window, so a bucket
 // anchor sitting in the past or outside work hours never becomes a fake
 // candidate just because nothing conflicts with it that early/late.
-function findReliableSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey,difficulty){
-  const baseline=findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey);
+// catchupBufferMins/nowBufferMins added 2026-09-17 (internal audit
+// finding: ~7 "place this for me" call sites were peak-hour-blind because
+// they called findLegalSlotOrNull directly instead of this wrapper, and
+// two of them -- planBrainDumpTasks/submitBrainDump's immediate-placement
+// paths -- pass non-default buffer values (IMMEDIATE_CATCHUP_MINS/
+// IMMEDIATE_NOW_BUFFER_MINS) that this function used to silently drop by
+// always using the defaults internally. Threaded through to both the
+// findOpenSlotFor baseline call and the findLegalSlotOrNull fallback
+// below, plus used in place of the old hardcoded +15 now-buffer, so this
+// is now a true drop-in for every existing findLegalSlotOrNull call site,
+// not just the ones happy with default buffers.
+function findReliableSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey,difficulty,catchupBufferMins=CATCHUP_BUFFER_MINS,nowBufferMins=15){
+  const baseline=findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey,catchupBufferMins,nowBufferMins);
+  // Bug fix, 2026-09-17: findOpenSlotFor's own deadline handling only caps
+  // its forward search -- it doesn't retroactively reject a slot when the
+  // CALLER's desiredDate is already past deadlineKey (a real case:
+  // buildMoveFlexTaskProposal can be asked to move a task to a date past
+  // its own deadline). baseline can still land on/after that
+  // already-too-late desiredDate via findOpenSlotFor's own unchecked
+  // last-resort fallback -- the candidates.length===0 path below already
+  // re-validates this correctly through findLegalSlotOrNull, but the
+  // success path never did, letting an illegal slot through. Caught by
+  // studlin-ai-actions.test.js's "never returns a slot past the task's
+  // own deadline" regression test. Bailing out to the same
+  // findLegalSlotOrNull-backed null-safe path used below (rather than
+  // duplicating the check) keeps one source of truth for "is this date
+  // actually legal against the deadline."
+  if(deadlineKey&&baseline.date>deadlineKey){
+    const legal=findLegalSlotOrNull(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey,catchupBufferMins,nowBufferMins);
+    return legal?{date:legal.date,time:legal.time,reason:null}:null;
+  }
   const tier=difficultyTierOf({difficulty});
   const{start:winStart,end:winEnd}=getWorkWindowMinsFor(prefs,baseline.date);
   let floorMins=winStart;
   if(baseline.date===dayKey()){
     const now=new Date();
-    floorMins=Math.max(floorMins,Math.ceil((now.getHours()*60+now.getMinutes()+15)/15)*15);
+    floorMins=Math.max(floorMins,Math.ceil((now.getHours()*60+now.getMinutes()+nowBufferMins)/15)*15);
   }
   const desiredMins=timeToMinutes(baseline.time);
   const occupied=computeOccupiedIntervals(events,routines,prefs,baseline.date);
@@ -3751,7 +3780,7 @@ function findReliableSlotFor(events,routines,prefs,desiredDate,desiredTime,durat
     // result blindly). Re-validate through findLegalSlotOrNull instead;
     // null means there's genuinely nowhere legal to put this, which every
     // caller now has to handle rather than silently overlapping something.
-    const legal=findLegalSlotOrNull(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey);
+    const legal=findLegalSlotOrNull(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey,catchupBufferMins,nowBufferMins);
     return legal?{date:legal.date,time:legal.time,reason:null}:null;
   }
   candidates.sort((a,b)=>b.score-a.score);
@@ -4408,7 +4437,7 @@ function scheduleAssignmentExtension(task,deadlineKey,totalMins){
   const newEvents=[];
   for(let i=0;i<chunks.length;i++){
     const mins=chunks[i];
-    const slot=findLegalSlotOrNull(events.concat(newEvents),routines,prefs,cursorDate,cursorTime,mins,deadlineKey);
+    const slot=findReliableSlotFor(events.concat(newEvents),routines,prefs,cursorDate,cursorTime,mins,deadlineKey,task.difficulty);
     // No legal slot left before the deadline -- stop here and keep whatever
     // chunks already placed rather than fabricating a double-booked one.
     if(!slot)break;
@@ -4453,7 +4482,7 @@ function scheduleStudyBlockExtension(task,totalMins){
     const newEvents=[];
     for(let i=0;i<chunks.length;i++){
       const mins=chunks[i];
-      const slot=findLegalSlotOrNull(events.concat(newEvents),routines,prefs,cursorDate,cursorTime,mins,deadlineKey);
+      const slot=findReliableSlotFor(events.concat(newEvents),routines,prefs,cursorDate,cursorTime,mins,deadlineKey,task.difficulty);
       // findLegalSlotOrNull's deadline check is date-only -- a sibling
       // session later THE SAME DAY wouldn't be caught by that alone, so
       // this enforces same-day ordering too, not just same-day-or-earlier.
@@ -8525,7 +8554,7 @@ function buildMoveFlexTaskProposal(parsed,events,routines,prefs,forcedId){
   }
   const destDate=parsed.destDate||dayKey(new Date(new Date(targetDate+"T12:00:00").getTime()+86400000));
   const others=events.filter(e=>e.id!==matched.id);
-  const slot=findLegalSlotOrNull(others,routines,prefs,destDate,matched.time||prefs.workStartTime,matched.duration||30,matched.deadline||null);
+  const slot=findReliableSlotFor(others,routines,prefs,destDate,matched.time||prefs.workStartTime,matched.duration||30,matched.deadline||null,matched.difficulty);
   if(!slot)return{label:"No open, on-time slot for \""+matched.title+"\" on or before its deadline",moved:[],couldntMove:[{id:matched.id,title:matched.title,deadline:matched.deadline||null}]};
   return{label:"Move "+matched.title,moved:[{id:matched.id,title:matched.title,oldDate:matched.date,oldTime:matched.time,newDate:slot.date,newTime:slot.time,duration:matched.duration||30}],couldntMove:[]};
 }
@@ -10273,6 +10302,12 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
   const [assignManualTime,setAssignManualTime]=useState("16:00");
   const [assignManualDuration,setAssignManualDuration]=useState(30);
   const [assignConfirmDeleteBlockId,setAssignConfirmDeleteBlockId]=useState(null);
+  // Internal audit finding, 2026-09-17: deleteSession (an exam's own
+  // scheduled study session) fired on a single click with no confirm at
+  // all -- same inline "Delete -> Confirm/Cancel" convention as
+  // assignConfirmDeleteBlockId right above, just for this sibling delete
+  // path.
+  const [confirmDeleteSessionId,setConfirmDeleteSessionId]=useState(null);
   const [assignCompleteSessionPrompt,setAssignCompleteSessionPrompt]=useState(false);
   const [assignCancelSessionsConfirm,setAssignCancelSessionsConfirm]=useState(false);
   const [assignPaceProposal,setAssignPaceProposal]=useState(null);
@@ -11990,7 +12025,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
           refresh();
         };
         const proposeAssignPaceBlock=()=>{
-          const slot=findLegalSlotOrNull(allEvents,getWeeklyRoutine(),getSchedulePreferences(),today,getSchedulePreferences().workStartTime,30,selectedAssignment.deadline||selectedAssignment.date);
+          const slot=findReliableSlotFor(allEvents,getWeeklyRoutine(),getSchedulePreferences(),today,getSchedulePreferences().workStartTime,30,selectedAssignment.deadline||selectedAssignment.date,selectedAssignment.difficulty);
           setAssignPaceProposal(slot?{date:slot.date,time:slot.time,duration:30}:{date:null});
         };
         const confirmAssignPaceProposal=()=>{
@@ -12604,7 +12639,14 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                               <TimeInput value={s.time} onChange={v=>patchSession(s.id,{time:v})} />
                               <NumField min={5} max={240} fallback={25} value={s.duration||25} onChange={v=>patchSession(s.id,{duration:v})} style={{width:56}} />
                               <span style={{fontSize:10.5,color:T.muted}}>min</span>
-                              <button onClick={()=>{deleteSession(s.id);closeSession();}} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline"}}>Delete</button>
+                              {confirmDeleteSessionId===s.id?(
+                                <>
+                                  <button onClick={()=>{deleteSession(s.id);setConfirmDeleteSessionId(null);closeSession();}} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:11,fontWeight:700,fontFamily:T.font,textDecoration:"underline"}}>Confirm</button>
+                                  <button onClick={()=>setConfirmDeleteSessionId(null)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline"}}>Cancel</button>
+                                </>
+                              ):(
+                                <button onClick={()=>setConfirmDeleteSessionId(s.id)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline"}}>Delete</button>
+                              )}
                               <button onClick={closeSession} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline"}}>Done</button>
                             </div>
                             {conflict&&(
@@ -17152,10 +17194,12 @@ function buildPhaseSessionPlan(markerId,phaseIdx,phaseName,projectTitle,totalEst
 // Only creates a brand-new small block when no unclaimed session exists to
 // claim (e.g. today's single-probe default already claimed by an earlier
 // item, or a phase nobody ever built a plan for) -- same 30-minute default
-// duration manual blocks already use, placed via the same
-// findLegalSlotOrNull every other "just fit this somewhere" path in this
-// file already calls. Returns null only when even that fallback can't find
-// a legal slot at all.
+// duration manual blocks already use, placed via findReliableSlotFor (was
+// a raw findLegalSlotOrNull call -- 2026-09-17 internal audit found this
+// site peak-hour-blind; findReliableSlotFor falls back to
+// findLegalSlotOrNull internally so the same null-on-no-legal-slot
+// contract still holds). Returns null only when even that fallback can't
+// find a legal slot at all.
 function claimOrCreatePhaseSessionForChecklistItem(markerId,phaseIdx,itemText,deadline,subject,priority,difficulty,events,routines,prefs,todayKey){
   const unclaimed=events.find(e=>e.dueEventId===markerId&&e.projectPhaseIndex===phaseIdx&&e.status==="pending"&&!e.checklistItemText);
   if(unclaimed){
@@ -17163,7 +17207,7 @@ function claimOrCreatePhaseSessionForChecklistItem(markerId,phaseIdx,itemText,de
     return {events:next,scheduledEventId:unclaimed.id};
   }
   const today=todayKey||dayKey();
-  const slot=findLegalSlotOrNull(events,routines,prefs,today,prefs.workStartTime,30,deadline||null);
+  const slot=findReliableSlotFor(events,routines,prefs,today,prefs.workStartTime,30,deadline||null,difficulty);
   if(!slot)return null;
   const sess={
     id:"phase-item-"+markerId+"-"+phaseIdx+"-"+Date.now(),
@@ -17434,7 +17478,7 @@ function planBrainDumpTasks(items,events,routines,prefs){
       const duration=Math.max(5,it.durationMin||30);
       const desiredDate=(it.chained&&cursorDate)?cursorDate:(it.dueDate||today);
       const desiredTime=(it.chained&&cursorTime)?cursorTime:prefs.workStartTime;
-      const slot=findLegalSlotOrNull(working,routines,prefs,desiredDate,desiredTime,duration,it.dueDate||null);
+      const slot=findReliableSlotFor(working,routines,prefs,desiredDate,desiredTime,duration,it.dueDate||null,5);
       if(!slot){downgrade(it);return;}
       const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:slot.date,time:slot.time,subject:"",kind:"busy block",notes:"",priority:5,difficulty:5,deadline:null,duration,status:"pending",timeSpent:0,completedAt:null};
       eventTasks.push(task);working=working.concat([task]);
@@ -23401,7 +23445,17 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
         // those unchecked (still visible, freely re-checkable) instead of
         // presenting a pile of finished work as if it were new.
         include:!isPast,
-        noDate:false,
+        // Bug fix, 2026-09-17 internal audit: this used to be hardcoded
+        // false regardless of whether the AI actually found a date. The
+        // extraction prompt is deliberately told "never omit date even if
+        // uncertain" (mark confidence low instead) -- so a genuinely
+        // missing date from the model is a real compliance gap, not the
+        // expected case, and silently falling back to today's date with
+        // no visual signal let a guessed date look like a known one. Now
+        // reflects reality: no date from the model -> the existing
+        // "no date" checkbox/UI (already built, was just never
+        // auto-triggered) shows immediately instead of a fake today-date.
+        noDate:!d.date,
         attackBlock:kind!=="exam",
         proposeSessions:false,
         sessionCount:defaultSessionCountFor(d.examWeight),
@@ -26671,7 +26725,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   const markLinkedBlockDone=(id)=>commit(lsGet("events",[]).map(e=>e.id===id?{...e,status:"done",completedAt:Date.now()}:e));
   const pace=computeAssignmentPace(ev,allEvents,dayKey());
   const proposePaceBlock=()=>{
-    const slot=findLegalSlotOrNull(allEvents,getWeeklyRoutine(),getSchedulePreferences(),dayKey(),getSchedulePreferences().workStartTime,30,ev.deadline||ev.date);
+    const slot=findReliableSlotFor(allEvents,getWeeklyRoutine(),getSchedulePreferences(),dayKey(),getSchedulePreferences().workStartTime,30,ev.deadline||ev.date,ev.difficulty);
     setPaceProposal(slot?{date:slot.date,time:slot.time,duration:30}:{date:null});
   };
   const confirmPaceProposal=()=>{
@@ -29734,7 +29788,25 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // nothing is written until the student confirms.
   const [weekBalanceOpen,setWeekBalanceOpen]=useState(false);
   const [weekBalancePlan,setWeekBalancePlan]=useState(null);
-  const [weekBalanceToast,setWeekBalanceToast]=useState("");
+  // Internal audit finding, 2026-09-17: "Balance my week" and "Studlin
+  // Reschedule" (confirmPausePlan, below) both have a preview-then-commit
+  // step, but neither had any way back out AFTER confirming -- unlike a
+  // single event delete/move, which both get deleteEventWithUndo/undoMove.
+  // The blast radius here is much bigger (shift can touch every event for
+  // up to 14 days in one action), so the safety net was inverted relative
+  // to the actual risk. Shared between both since they're mutually
+  // exclusive in time and restore the exact same shape (prevEvents,
+  // optionally prevRoutineSkips) -- same snapshot+toast+5s-window
+  // convention deleteEventWithUndo/undoDelete already established.
+  const [bulkReflowUndoSnapshot,setBulkReflowUndoSnapshot]=useState(null); // {prevEvents, prevRoutineSkips|null}
+  const [bulkReflowUndoToast,setBulkReflowUndoToast]=useState("");
+  const undoBulkReflow=()=>{
+    if(!bulkReflowUndoSnapshot)return;
+    const{prevEvents,prevRoutineSkips}=bulkReflowUndoSnapshot;
+    setEvents(prevEvents);lsSet("events",prevEvents);
+    if(prevRoutineSkips)lsSet("routineSkips",prevRoutineSkips);
+    setBulkReflowUndoSnapshot(null);setBulkReflowUndoToast("");
+  };
   const openWeekBalance=()=>{
     const all=lsGet("events",[]);
     const plan=computeWeekBalancePlan(all,routines,getSchedulePreferences(),dayKey());
@@ -29854,8 +29926,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     captureFlip();
     setEvents(next);lsSet("events",next);
     setWeekBalanceOpen(false);setWeekBalancePlan(null);
-    setWeekBalanceToast(weekBalancePlan.moves.length+" task"+(weekBalancePlan.moves.length!==1?"s":"")+" rebalanced across your week");
-    setTimeout(()=>setWeekBalanceToast(""),3200);
+    setBulkReflowUndoSnapshot({prevEvents:all,prevRoutineSkips:null});
+    setBulkReflowUndoToast(weekBalancePlan.moves.length+" task"+(weekBalancePlan.moves.length!==1?"s":"")+" rebalanced across your week");
+    setTimeout(()=>{setBulkReflowUndoToast("");setBulkReflowUndoSnapshot(null);},5000);
   };
   // Tier 3 — Global Emergency "Studlin Reschedule". pausePreview holds the
   // computed (not-yet-committed) plan: {label, moved:[...], couldntMove:[...]}.
@@ -30205,6 +30278,23 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // this rule created for them.
   const schoolWindow=(()=>{const r=routines.find(x=>x.id==="hs-school");if(!r)return null;return {start:timeToMinutes(r.startTime),end:timeToMinutes(r.startTime)+(r.duration||0)};})();
   const deleteRoutineItem=(routineId)=>persistRoutines(routines.filter(r=>r.id!==routineId));
+  // Internal audit finding, 2026-09-17: deleteRoutineItem was wired
+  // directly as onDeleteRoutine (no wrapper) at both of its real call
+  // sites -- WeeklyPlanner's own calendar-grid hover-delete icon on a
+  // routine block, and RoutineControlCenterModal's plain "Delete" button
+  // -- so either one permanently removed an entire recurring weekly
+  // commitment (every future occurrence of a class/routine) in a single
+  // click, no confirm, no undo. Direct violation of CLAUDE.md's own rule
+  // ("Anything that deletes user data... requires a confirm modal
+  // first"), and the SAME underlying function already has a real confirm
+  // gate elsewhere in this file (the sidebar Activities list, via
+  // confirmDeleteActivityId) -- this just closes the gap at the two
+  // spots that bypassed it. A standalone Modal (not an inline two-step
+  // button) since the two trigger points are in very different UI
+  // contexts -- WeeklyPlanner has no existing confirm-state plumbing, so
+  // this avoids threading new state through a component that otherwise
+  // doesn't need it.
+  const [pendingDeleteRoutineId,setPendingDeleteRoutineId]=useState(null);
   // Removes every placement sharing a groupId in one persist cycle, not one
   // deleteRoutineItem call per placement -- avoids re-running
   // ensureSubjectsForClassRoutines/reconcileRoutineConflicts N times for
@@ -32144,6 +32234,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     if(!pausePreview)return;
     if(!canUseSmartReschedule()){setPauseOpen(false);setPricingOpen(canUseSmartRescheduleReason()==="free-tier"?"smartReschedule":"aiUsageCap");return;}
     const all=lsGet("events",[]);
+    // Captured before ANY mutation below (both the routineMoves branch and
+    // the skipRoutine branch can each touch routineSkips) so undo always
+    // has the true pre-commit state to restore to, regardless of which
+    // branches actually ran this time.
+    const originalRoutineSkips=getRoutineSkips();
     // A moved/retimed entry whose id points at a virtual routine occurrence
     // (isRoutine:true — never in `events` to begin with, see
     // expandRoutineOccurrences) can't be rewritten in place: it's skipped on
@@ -32184,7 +32279,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       lsSet("routineSkips",{...skips,[date]:[...new Set([...(skips[date]||[]),...routineIds])]});
     }
     setPausePreview(null);setPauseOpen(false);setPauseText("");
-    setToast(true);setTimeout(()=>setToast(false),2200);
+    const routineSkipsChanged=routineMoves.length>0||!!pausePreview.skipRoutine;
+    setBulkReflowUndoSnapshot({prevEvents:all,prevRoutineSkips:routineSkipsChanged?originalRoutineSkips:null});
+    setBulkReflowUndoToast((pausePreview.label||"Schedule updated"));
+    setTimeout(()=>{setBulkReflowUndoToast("");setBulkReflowUndoSnapshot(null);},5000);
   };
   // Fixed real-world blocks (exam/class/activity) only take Day/Start
   // Time/Duration and are never AI-scheduled. Reminders are simple
@@ -32977,7 +33075,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       {calView==="weekly"&&(
         <WeeklyPlanner events={events} setEvents={setEvents} moveEvent={moveEvent} weekOffset={weekOffset} setWeekOffset={setWeekOffset} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} fmtTimeRange={fmtTimeRange} openNew={openNew} openEdit={openEdit}
           routines={routines} editRoutineMode={editRoutineMode} hoveredRoutineId={hoveredRoutineId} setHoveredRoutineId={setHoveredRoutineId}
-          onEditRoutine={(routineId,date)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule,date);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
+          onEditRoutine={(routineId,date)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule,date);}} onDeleteRoutine={setPendingDeleteRoutineId} schoolWindow={schoolWindow}
           selDay={selDay} setSelDay={setSelDay} onDeleteEvent={deleteEventWithUndo} catchUpPending={catchUpPending}
           sidebarDragChip={sidebarDragChip} onDropSidebarChip={(dk,time,anchorPoint)=>{openNewEventForDrop(sidebarDragChip,dk,time,anchorPoint);setSidebarDragChip(null);}}
           onDropManualBlockRequest={commitManualBlockDrop} onDropNewTaskRequest={commitNewTaskDrop}
@@ -34657,8 +34755,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           </div>
         </>)}
       </Modal>
-      {weekBalanceToast&&(
-        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {weekBalanceToast}</div>
+      {bulkReflowUndoToast&&(
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.card,border:`1px solid ${T.border}`,color:T.white,fontSize:12.5,fontWeight:600,padding:"10px 16px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:12}}>
+          <span>{bulkReflowUndoToast}</span>
+          <button onClick={undoBulkReflow} style={{background:"none",border:"none",color:T.lime,fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:T.font,textDecoration:"underline",padding:0}}>Undo</button>
+        </div>
       )}
       {/* Suppressed while a setup wizard is open -- this used to be able
           to stack on top of Class Setup / Routine Wizard mid-flow (found
@@ -34677,7 +34778,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         </div>
       )}
       <RoutineControlCenterModal open={routineCenterOpen} onClose={()=>setRoutineCenterOpen(false)} routines={routines} fmtTime={fmtTime}
-        onEditRoutine={openRoutineEdit} onDeleteRoutine={deleteRoutineItem}
+        onEditRoutine={openRoutineEdit} onDeleteRoutine={setPendingDeleteRoutineId}
         onAddRoutine={(rule)=>{const newId=String(Date.now()+Math.random()*1000);persistRoutines([...routines,{id:newId,groupId:newId,...rule,subject:""}]);}}
         onEditOnCalendar={()=>{setRoutineCenterOpen(false);setEditRoutineMode(true);}}
         onHolidayImpact={(plan)=>{
@@ -34690,6 +34791,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             setPauseOpen(true);
           }
         }} />
+      <Modal open={!!pendingDeleteRoutineId} onClose={()=>setPendingDeleteRoutineId(null)} title="Delete this routine?" width={400}
+        footer={<><Btn variant="subtle" onClick={()=>setPendingDeleteRoutineId(null)}>Cancel</Btn><Btn variant="danger" onClick={()=>{deleteRoutineItem(pendingDeleteRoutineId);setPendingDeleteRoutineId(null);}}>Delete</Btn></>}>
+        {(()=>{const r=routines.find(x=>x.id===pendingDeleteRoutineId);return r?(
+          <div style={{fontSize:13,color:T.text}}>This removes <strong>{r.title}</strong> ({formatDays(r.days)}) from your weekly schedule — every future occurrence, not just this week's. This can't be undone.</div>
+        ):null;})()}
+      </Modal>
     </>
   );
 }
@@ -35743,6 +35850,11 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   const [aiTimeOfDay,setAiTimeOfDay]=useState(()=>getAiMemory().timeOfDay||null);
   const [confirmRemoveFactIdx,setConfirmRemoveFactIdx]=useState(null);
   const [confirmClearMemory,setConfirmClearMemory]=useState(false);
+  // Internal audit finding, 2026-09-17: removeAiTimeOfDay (below) fired
+  // on a single click with no confirm, unlike its two siblings right
+  // above (confirmRemoveFactIdx/confirmClearMemory) -- same convention,
+  // just extended to this one too.
+  const [confirmRemoveTimeOfDay,setConfirmRemoveTimeOfDay]=useState(false);
   const removeAiFact=(idx)=>{const next=removeAiMemoryFact(getAiMemory(),idx);saveAiMemory(next);pushAiMemory(next);setAiMemoryFacts(next.facts);setConfirmRemoveFactIdx(null);};
   const removeAiTimeOfDay=()=>{const next={...getAiMemory(),timeOfDay:null,updatedAt:new Date().toISOString()};saveAiMemory(next);pushAiMemory(next);setAiTimeOfDay(null);};
   const clearAiMemory=()=>{const next={facts:[],timeOfDay:null,updatedAt:new Date().toISOString()};saveAiMemory(next);pushAiMemory(next);setAiMemoryFacts([]);setAiTimeOfDay(null);setConfirmClearMemory(false);};
@@ -36155,8 +36267,14 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Standing preferences it's picked up from your chats — not one-off requests, just things worth not re-explaining every time.</div>
               {aiTimeOfDay&&(
                 <div style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,marginBottom:8}}>
-                  <span style={{fontSize:12.5,color:T.text,flex:1}}>Prefers {aiTimeOfDay} study sessions</span>
-                  <button onClick={removeAiTimeOfDay} style={{background:"none",border:`1px solid ${T.border}`,color:T.muted,cursor:"pointer",borderRadius:6,padding:"4px 10px",fontSize:12,fontFamily:T.font,flexShrink:0}}>Remove</button>
+                  {confirmRemoveTimeOfDay?(<>
+                    <span style={{fontSize:12.5,color:T.text,flex:1}}>Forget this?</span>
+                    <Btn variant="danger" onClick={()=>{removeAiTimeOfDay();setConfirmRemoveTimeOfDay(false);}}>Forget</Btn>
+                    <Btn variant="subtle" onClick={()=>setConfirmRemoveTimeOfDay(false)}>Cancel</Btn>
+                  </>):(<>
+                    <span style={{fontSize:12.5,color:T.text,flex:1}}>Prefers {aiTimeOfDay} study sessions</span>
+                    <button onClick={()=>setConfirmRemoveTimeOfDay(true)} style={{background:"none",border:`1px solid ${T.border}`,color:T.muted,cursor:"pointer",borderRadius:6,padding:"4px 10px",fontSize:12,fontFamily:T.font,flexShrink:0}}>Remove</button>
+                  </>)}
                 </div>
               )}
               {aiMemoryFacts.length===0&&!aiTimeOfDay?(
