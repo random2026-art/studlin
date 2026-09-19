@@ -5318,11 +5318,11 @@ async function extractCollegeScheduleImage(images){
 // handling for before) and the robustness rule only need writing once.
 const HS_SCHEDULE_JSON_CONTRACT=
   "For each period return: \"subjectName\" (the class name as shown, e.g. \"English IV\", \"AP Biology\"), "+
-  "\"startTime\" and \"endTime\" (24-hour \"HH:MM\"), "+
+  "\"startTime\" and \"endTime\" (24-hour \"HH:MM\"), ONLY when a real clock time is actually shown or stated for THIS specific period -- never guess one just because most other periods have a similar length or the school day usually starts around a certain time; omit both entirely when this period's own time genuinely isn't stated (common when a bell schedule lists period numbers/names with no times at all, or gives times for some periods but not others), "+
   "\"days\" (which weekdays this period happens, 0=Monday..6=Sunday -- if the schedule doesn't say otherwise, assume every school day it's shown applies to, most commonly Monday-Friday so [0,1,2,3,4]), "+
-  "\"confidence\" (\"low\" when ANYTHING about this row was genuinely uncertain -- the class name or a time was blurry, cut off, handwritten, or otherwise hard to read and you had to guess at it, OR the schedule uses a rotating block system -- \"A Day\"/\"B Day\", or a numbered cycle like \"Day 1\"-\"Day 6\" -- instead of fixed weekdays, since which actual weekdays a rotating day falls on isn't something a single week's schedule can state with certainty; still give your best guess for whatever was uncertain, just flag the row low-confidence rather than presenting a guess as fact; \"high\" otherwise). "+
+  "\"clarify\" (a short, specific question a student could actually answer, ONLY when something essential about THIS period couldn't be determined -- e.g. \"How long is Period 3? The schedule doesn't show a time for it.\", \"Is this an A/B rotating schedule? I could only tell which periods happen, not which weekdays they land on.\", \"Couldn't read the time for this period clearly -- is it 9:15 or 9:45?\" -- null otherwise; most periods should NOT have this). Never use a vague generic flag here -- name the actual thing you couldn't tell. "+
   "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
-  "{\"periods\":[{\"subjectName\":\"English IV\",\"startTime\":\"08:00\",\"endTime\":\"08:45\",\"days\":[0,1,2,3,4],\"confidence\":\"high\"}]}. "+
+  "{\"periods\":[{\"subjectName\":\"English IV\",\"startTime\":\"08:00\",\"endTime\":\"08:45\",\"days\":[0,1,2,3,4],\"clarify\":null},{\"subjectName\":\"Study Hall\",\"days\":[0,1,2,3,4],\"clarify\":\"How long is this period? The schedule doesn't show a time for it.\"}]}. "+
   SCHEDULE_EXTRACTION_ROBUSTNESS_RULE;
 async function extractHsScheduleFromImage(images){
   try{
@@ -5833,7 +5833,16 @@ function deriveFreePeriodsFromPeriods(periods,schoolStart,schoolEnd){
   (periods||[]).forEach(p=>(p.days||[]).forEach(d=>days.add(d)));
   const gapsByKey=new Map(); // "start-end" -> {start,end,days:Set}
   Array.from(days).sort((a,b)=>a-b).forEach(day=>{
-    const occupied=(periods||[]).filter(p=>(p.days||[]).includes(day))
+    const dayPeriods=(periods||[]).filter(p=>(p.days||[]).includes(day));
+    // Gap-audit fix: a day with any period whose real time is still
+    // unconfirmed (see buildHsReviewFromPeriods) can't produce a
+    // trustworthy free-period gap -- the gap math would be built around a
+    // guessed neighbor and could mark real class time as free. Skip that
+    // day entirely rather than derive a wrong answer; it computes
+    // correctly once the student answers the period's clarify question
+    // (see updateHsPeriod, which recomputes this on every edit).
+    if(dayPeriods.some(p=>p.timeUnconfirmed))return;
+    const occupied=dayPeriods
       .map(p=>({start:timeToMinutes(p.startTime),end:timeToMinutes(p.endTime)}))
       .sort((a,b)=>a.start-b.start);
     subtractIntervals(schoolWindow,occupied).forEach(gap=>{
@@ -23291,6 +23300,15 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   // stale pasted text across them.
   const [hsPasteMode,setHsPasteMode]=useState(false);
   const [hsPasteText,setHsPasteText]=useState("");
+  // Gap-audit fix: photo pick used to fire the scan immediately, in the
+  // same handler -- there was no way to pick one photo, see it, then add a
+  // second before committing to a scan (a real problem for a multi-page
+  // schedule, or a first photo that turned out blurry). Staged here
+  // instead; a document (PDF/docx/txt) still processes immediately on
+  // pick, same as before -- one document already is the whole schedule,
+  // there's no "add another" case worth staging for that path.
+  const [hsStagedImages,setHsStagedImages]=useState([]);
+  const [collegeStagedImages,setCollegeStagedImages]=useState([]);
   const [schoolStart,setSchoolStart]=useState("08:00");
   const [schoolEnd,setSchoolEnd]=useState("15:00");
   const [justAdded,setJustAdded]=useState("");
@@ -23860,29 +23878,39 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   // MAX_IMAGES_PER_MESSAGE so this fails fast client-side with a friendly
   // message instead of waiting on the server's 400.
   const MAX_SCHEDULE_IMAGES=6;
+  // Gap-audit fix: revokes every staged photo's object URL and clears the
+  // list -- shared by a successful scan, the remove-one button, and
+  // Cancel, so a blob URL never outlives the file it points to.
+  const clearStagedImages=(setStaged)=>setStaged(prev=>{prev.forEach(x=>URL.revokeObjectURL(x.url));return [];});
+  const stageScheduleImages=(files,setStaged)=>{
+    setStaged(prev=>{
+      const added=files.map(f=>({file:f,url:URL.createObjectURL(f)}));
+      const combined=[...prev,...added];
+      if(combined.length>MAX_SCHEDULE_IMAGES){
+        combined.slice(MAX_SCHEDULE_IMAGES).forEach(x=>URL.revokeObjectURL(x.url));
+        setScanError("Max "+MAX_SCHEDULE_IMAGES+" photos at once -- remove one, or scan what you have.");
+        return combined.slice(0,MAX_SCHEDULE_IMAGES);
+      }
+      setScanError("");
+      return combined;
+    });
+  };
+  // File pick: a document (PDF/docx/txt) still processes immediately, same
+  // as before -- one document already is the whole schedule, no "add
+  // another" case worth staging. One or more images now STAGE instead of
+  // firing the scan immediately (gap-audit fix -- there used to be no way
+  // to pick one photo, see it, then add a second before committing to a
+  // scan). The actual extraction (unchanged from before) now lives in
+  // runCollegeImageScan, triggered by the staged row's own "Scan" button.
   const handleCollegeScheduleFile=async(e)=>{
     const files=e.target.files?Array.from(e.target.files):[];if(files.length===0)return;e.target.value="";
     const exts=files.map(f=>f.name.split(".").pop().toLowerCase());
     const allImages=exts.every(ext=>IMAGE_EXT_MEDIA_TYPES[ext]);
     if(files.length>1&&!allImages){setScanError("Select multiple photos/screenshots together, or a single PDF/Word/text file -- not a mix.");return;}
-    if(files.length>MAX_SCHEDULE_IMAGES){setScanError("Too many screenshots at once (max "+MAX_SCHEDULE_IMAGES+"). Try fewer, or scan the rest separately.");return;}
-    if(allImages){if(!canScanScreenshot()&&!canFreeOnboardingScan("schedule")){setPricingOpen(canScanScreenshotReason()==="free-tier"?"screenshotScan":"aiUsageCap");return;}}
-    else{if(!canScanSyllabus()&&!canFreeOnboardingScan("schedule")){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}}
+    if(allImages){stageScheduleImages(files,setCollegeStagedImages);return;}
+    if(!canScanSyllabus()&&!canFreeOnboardingScan("schedule")){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}
     setScanning(true);setScanError("");
     try{
-      if(allImages){
-        const images=await Promise.all(files.map(async(file,i)=>{
-          const dataUrl=await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.readAsDataURL(file);});
-          return{mediaType:IMAGE_EXT_MEDIA_TYPES[exts[i]],data:(dataUrl.split(",")[1])||""};
-        }));
-        const result=await extractCollegeScheduleImage(images);
-        if(result.error){setScanError(result.error);return;}
-        if(!canScanScreenshot())markFreeScanUsed("schedule");
-        recordScreenshotScan();
-        applyExtractedTermDates(result);
-        startClassQueue(result.classes);
-        return;
-      }
       const file=files[0],ext=exts[0];
       let text="";
       if(ext==="pdf"){
@@ -23909,6 +23937,31 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     }catch(err){setScanError("Couldn't read that file: "+err.message);}
     finally{setScanning(false);}
   };
+  // The image-extraction body that used to run inline inside
+  // handleCollegeScheduleFile -- unchanged logic, just now triggered by the
+  // staged row's "Scan" button instead of firing the instant a photo was
+  // picked.
+  const runCollegeImageScan=async()=>{
+    const files=collegeStagedImages;
+    if(files.length===0)return;
+    if(!canScanScreenshot()&&!canFreeOnboardingScan("schedule")){setPricingOpen(canScanScreenshotReason()==="free-tier"?"screenshotScan":"aiUsageCap");return;}
+    setScanning(true);setScanError("");
+    try{
+      const exts=files.map(x=>x.file.name.split(".").pop().toLowerCase());
+      const images=await Promise.all(files.map(async(x,i)=>{
+        const dataUrl=await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.readAsDataURL(x.file);});
+        return{mediaType:IMAGE_EXT_MEDIA_TYPES[exts[i]],data:(dataUrl.split(",")[1])||""};
+      }));
+      const result=await extractCollegeScheduleImage(images);
+      if(result.error){setScanError(result.error);return;}
+      if(!canScanScreenshot())markFreeScanUsed("schedule");
+      recordScreenshotScan();
+      applyExtractedTermDates(result);
+      startClassQueue(result.classes);
+      clearStagedImages(setCollegeStagedImages);
+    }catch(err){setScanError("Couldn't read those images: "+err.message);}
+    finally{setScanning(false);}
+  };
   const handleCollegeSchedulePaste=async()=>{
     if(!pasteText.trim())return;
     if(!canScanSyllabus()&&!canFreeOnboardingScan("schedule")){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}
@@ -23930,17 +23983,31 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   // additive, an empty result here (no school hours set, or no gaps found)
   // just means the "Free time" section on the review screen stays empty.
   const buildHsReviewFromPeriods=(periods)=>{
-    const normalized=periods.map(p=>({
-      subjectName:p.subjectName||"",
-      startTime:p.startTime||"08:00",endTime:p.endTime||"08:45",
-      days:Array.isArray(p.days)&&p.days.length>0?p.days:[0,1,2,3,4],
-      confidence:p.confidence||"high",
-    }));
+    // Gap-audit fix: startTime/endTime used to silently default to
+    // "08:00"/"08:45" the moment the AI omitted them (or, before the
+    // HS_SCHEDULE_JSON_CONTRACT fix, when it never had permission to omit
+    // them at all) -- a fabricated placeholder shown with zero visual
+    // difference from a real extracted time. Still defaults for TimeInput's
+    // sake (it needs a real controlled value to edit from), but
+    // timeUnconfirmed now tracks the difference honestly, same convention
+    // the exam-time fix already established elsewhere in this file
+    // (looksLikeTimeString/timeUnconfirmed) -- not a new one.
+    const normalized=periods.map(p=>{
+      const hasTime=looksLikeTimeString(p.startTime)&&looksLikeTimeString(p.endTime);
+      return {
+        subjectName:p.subjectName||"",
+        startTime:hasTime?p.startTime:"08:00",
+        endTime:hasTime?p.endTime:"08:45",
+        days:Array.isArray(p.days)&&p.days.length>0?p.days:[0,1,2,3,4],
+        clarify:p.clarify||null,
+        timeUnconfirmed:!hasTime,
+      };
+    });
     const hsUsedColors=getSubjects().map(s=>s.color);
     setHsReview(normalized.map((p,i)=>{
       const color=nextAvailableSubjectColor(hsUsedColors);
       hsUsedColors.push(color);
-      return {id:"hs-"+i,subjectName:p.subjectName||("Period "+(i+1)),color,startTime:p.startTime,endTime:p.endTime,days:p.days,confidence:p.confidence,isFree:false};
+      return {id:"hs-"+i,subjectName:p.subjectName||("Period "+(i+1)),color,startTime:p.startTime,endTime:p.endTime,days:p.days,clarify:p.clarify,timeUnconfirmed:p.timeUnconfirmed,isFree:false};
     }));
     setHsFreeReview(deriveFreePeriodsFromPeriods(normalized,schoolStart,schoolEnd));
     setEditingHsTimeId(null);
@@ -23953,29 +24020,19 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   // wizard, which both already accept PDF/.docx/.txt too via
   // handleScanFile's identical extension-branching pattern -- reused here
   // rather than reinvented.
+  // File pick: a document still processes immediately; one or more images
+  // now STAGE instead (gap-audit fix, same reasoning as
+  // handleCollegeScheduleFile's own comment above). Extraction moved to
+  // runHsImageScan, unchanged otherwise.
   const handleHsScheduleFile=async(e)=>{
     const files=e.target.files?Array.from(e.target.files):[];if(files.length===0)return;e.target.value="";
     const exts=files.map(f=>f.name.split(".").pop().toLowerCase());
     const allImages=exts.every(ext=>IMAGE_EXT_MEDIA_TYPES[ext]);
     if(files.length>1&&!allImages){setScanError("Select multiple photos/screenshots together, or a single PDF/Word/text file -- not a mix.");return;}
-    if(files.length>MAX_SCHEDULE_IMAGES){setScanError("Too many screenshots at once (max "+MAX_SCHEDULE_IMAGES+"). Try fewer, or scan the rest separately.");return;}
-    if(allImages){if(!canScanScreenshot()&&!canFreeOnboardingScan("schedule")){setPricingOpen(canScanScreenshotReason()==="free-tier"?"screenshotScan":"aiUsageCap");return;}}
-    else{if(!canScanSyllabus()&&!canFreeOnboardingScan("schedule")){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}}
+    if(allImages){stageScheduleImages(files,setHsStagedImages);return;}
+    if(!canScanSyllabus()&&!canFreeOnboardingScan("schedule")){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}
     setScanning(true);setScanError("");
     try{
-      if(allImages){
-        const images=await Promise.all(files.map(async(file,i)=>{
-          const dataUrl=await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.readAsDataURL(file);});
-          return{mediaType:IMAGE_EXT_MEDIA_TYPES[exts[i]],data:(dataUrl.split(",")[1])||""};
-        }));
-        const result=await extractHsScheduleFromImage(images);
-        if(result.error){setScanError(result.error);return;}
-        if(result.periods.length===0){setScanError("Couldn't make out any periods in "+(images.length>1?"those images":"that image")+". Try a clearer photo, or add classes manually.");return;}
-        if(!canScanScreenshot())markFreeScanUsed("schedule");
-        recordScreenshotScan();
-        buildHsReviewFromPeriods(result.periods);
-        return;
-      }
       const file=files[0],ext=exts[0];
       let text="";
       if(ext==="pdf"){
@@ -24004,6 +24061,27 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
       recordSyllabusScan();
       buildHsReviewFromPeriods(result.periods);
     }catch(err){setScanError("Couldn't read that file: "+err.message);}
+    finally{setScanning(false);}
+  };
+  const runHsImageScan=async()=>{
+    const files=hsStagedImages;
+    if(files.length===0)return;
+    if(!canScanScreenshot()&&!canFreeOnboardingScan("schedule")){setPricingOpen(canScanScreenshotReason()==="free-tier"?"screenshotScan":"aiUsageCap");return;}
+    setScanning(true);setScanError("");
+    try{
+      const exts=files.map(x=>x.file.name.split(".").pop().toLowerCase());
+      const images=await Promise.all(files.map(async(x,i)=>{
+        const dataUrl=await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.readAsDataURL(x.file);});
+        return{mediaType:IMAGE_EXT_MEDIA_TYPES[exts[i]],data:(dataUrl.split(",")[1])||""};
+      }));
+      const result=await extractHsScheduleFromImage(images);
+      if(result.error){setScanError(result.error);return;}
+      if(result.periods.length===0){setScanError("Couldn't make out any periods in "+(images.length>1?"those images":"that image")+". Try a clearer photo, or add classes manually.");return;}
+      if(!canScanScreenshot())markFreeScanUsed("schedule");
+      recordScreenshotScan();
+      buildHsReviewFromPeriods(result.periods);
+      clearStagedImages(setHsStagedImages);
+    }catch(err){setScanError("Couldn't read those images: "+err.message);}
     finally{setScanning(false);}
   };
 
@@ -24549,6 +24627,24 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                     style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box"}} />
                   <Btn onClick={handleCollegeSchedulePaste} disabled={!pasteText.trim()} style={{marginTop:10,width:"100%",justifyContent:"center",opacity:pasteText.trim()?1:0.45}}>Scan this text</Btn>
                 </div>
+              ) : collegeStagedImages.length>0 ? (
+                // Gap-audit fix: staged photos, not an instant scan -- the
+                // student can add more (up to MAX_SCHEDULE_IMAGES) or remove
+                // one before committing to the actual scan.
+                <div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:10}}>
+                    {collegeStagedImages.map((img,fi)=>(
+                      <div key={fi} style={{position:"relative",width:64,height:64,borderRadius:8,overflow:"hidden",border:`1px solid ${T.border}`,flexShrink:0}}>
+                        <img src={img.url} alt="" style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}} />
+                        <button type="button" onClick={()=>setCollegeStagedImages(s=>{const item=s[fi];if(item)URL.revokeObjectURL(item.url);return s.filter((_,i)=>i!==fi);})} title="Remove" style={{position:"absolute",top:2,right:2,width:18,height:18,borderRadius:"50%",background:"rgba(0,0,0,0.65)",color:"#fff",border:"none",cursor:"pointer",fontSize:12,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center",padding:0}}>×</button>
+                      </div>
+                    ))}
+                    {collegeStagedImages.length<MAX_SCHEDULE_IMAGES&&(
+                      <button type="button" onClick={()=>collegeScheduleFileRef.current&&collegeScheduleFileRef.current.click()} title="Add another photo" style={{width:64,height:64,borderRadius:8,border:`1.5px dashed ${T.borderHover}`,background:T.card2,color:T.muted,cursor:"pointer",fontSize:22,fontFamily:T.font,flexShrink:0}}>+</button>
+                    )}
+                  </div>
+                  <Btn onClick={runCollegeImageScan} style={{width:"100%",justifyContent:"center"}}>Scan {collegeStagedImages.length} photo{collegeStagedImages.length!==1?"s":""}</Btn>
+                </div>
               ) : <button type="button" onClick={()=>collegeScheduleFileRef.current&&collegeScheduleFileRef.current.click()} style={{width:"100%",padding:"32px",borderRadius:12,border:`1.5px dashed ${T.borderHover}`,background:T.card2,color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:13,textAlign:"center"}}>Tap to choose a file, or one or more photos</button>
             }
             <input ref={collegeScheduleFileRef} type="file" accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,.gif" style={{display:"none"}} onChange={handleCollegeScheduleFile} multiple />
@@ -24612,6 +24708,24 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                     style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box"}} />
                   <Btn onClick={handleHsPasteScan} disabled={!hsPasteText.trim()} style={{marginTop:10,width:"100%",justifyContent:"center",opacity:hsPasteText.trim()?1:0.45}}>Scan this text</Btn>
                 </div>
+              ) : hsStagedImages.length>0 ? (
+                // Gap-audit fix: staged photos, not an instant scan -- see
+                // the identical pattern's own comment on the college step
+                // just above.
+                <div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:10}}>
+                    {hsStagedImages.map((img,fi)=>(
+                      <div key={fi} style={{position:"relative",width:64,height:64,borderRadius:8,overflow:"hidden",border:`1px solid ${T.border}`,flexShrink:0}}>
+                        <img src={img.url} alt="" style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}} />
+                        <button type="button" onClick={()=>setHsStagedImages(s=>{const item=s[fi];if(item)URL.revokeObjectURL(item.url);return s.filter((_,i)=>i!==fi);})} title="Remove" style={{position:"absolute",top:2,right:2,width:18,height:18,borderRadius:"50%",background:"rgba(0,0,0,0.65)",color:"#fff",border:"none",cursor:"pointer",fontSize:12,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center",padding:0}}>×</button>
+                      </div>
+                    ))}
+                    {hsStagedImages.length<MAX_SCHEDULE_IMAGES&&(
+                      <button type="button" onClick={()=>hsFileInputRef.current&&hsFileInputRef.current.click()} title="Add another photo" style={{width:64,height:64,borderRadius:8,border:`1.5px dashed ${T.borderHover}`,background:T.card2,color:T.muted,cursor:"pointer",fontSize:22,fontFamily:T.font,flexShrink:0}}>+</button>
+                    )}
+                  </div>
+                  <Btn onClick={runHsImageScan} style={{width:"100%",justifyContent:"center"}}>Scan {hsStagedImages.length} photo{hsStagedImages.length!==1?"s":""}</Btn>
+                </div>
               ) : <button type="button" onClick={()=>hsFileInputRef.current&&hsFileInputRef.current.click()} style={{width:"100%",padding:"32px",borderRadius:12,border:`1.5px dashed ${T.borderHover}`,background:T.card2,color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:13,textAlign:"center"}}>Tap to choose a file, or one or more photos</button>
             }
             <input ref={hsFileInputRef} type="file" accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,.gif" style={{display:"none"}} onChange={handleHsScheduleFile} multiple />
@@ -24627,18 +24741,54 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
             <TitleSub title="Review your schedule" sub="Check the class names and colors, then add them all at once." />
             <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
               {hsReview.map((p,i)=>{
-                const isEditingTime=editingHsTimeId===p.id;
-                const toggleDay=(d)=>setHsReview(r=>r.map((x,xi)=>xi===i?{...x,days:x.days.includes(d)?x.days.filter(y=>y!==d):[...x.days,d]}:x));
+                // Gap-audit fix: a flagged row (timeUnconfirmed, or manually
+                // double-clicked) auto-opens the editor instead of hiding it
+                // behind double-click -- multiple simultaneously-uncertain
+                // periods all stay visible at once without fighting over one
+                // shared "currently editing" id.
+                const isEditingTime=editingHsTimeId===p.id||p.timeUnconfirmed;
+                // Every field edit routes through here (not ad-hoc
+                // setHsReview(r=>r.map(...)) calls) so hsFreeReview -- computed
+                // only once before, in buildHsReviewFromPeriods -- actually
+                // recomputes as the student fixes things.
+                const updateHsPeriod=(patch)=>setHsReview(r=>{
+                  const next=r.map((x,xi)=>xi===i?{...x,...patch}:x);
+                  setHsFreeReview(deriveFreePeriodsFromPeriods(next,schoolStart,schoolEnd));
+                  return next;
+                });
+                // Explicit close, not a side-effect of typing -- clearing
+                // timeUnconfirmed the moment a single field changes would
+                // collapse the editor while the student is still mid-edit on
+                // the OTHER field (both TimeInputs are visible at once).
+                // Harmless no-op on an already-confirmed row (timeUnconfirmed
+                // is already false there).
+                const confirmHsPeriodTime=()=>{
+                  setEditingHsTimeId(null);
+                  setHsReview(r=>{
+                    const next=r.map((x,xi)=>xi===i?{...x,timeUnconfirmed:false}:x);
+                    setHsFreeReview(deriveFreePeriodsFromPeriods(next,schoolStart,schoolEnd));
+                    return next;
+                  });
+                };
+                const toggleDay=(d)=>updateHsPeriod({days:p.days.includes(d)?p.days.filter(y=>y!==d):[...p.days,d]});
                 return (
                   <div key={p.id} style={{padding:"9px 10px",borderRadius:10,border:`1px solid ${T.border}`}}>
-                    <div style={{display:"flex",alignItems:"center",gap:10}}>
+                    <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
                       <ColorSelect value={p.color} onChange={c=>setHsReview(r=>r.map((x,xi)=>xi===i?{...x,color:c}:x))} />
                       <Input value={p.subjectName} onChange={e=>setHsReview(r=>r.map((x,xi)=>xi===i?{...x,subjectName:e.target.value}:x))} style={{flex:1}} disabled={p.isFree} />
                       {!isEditingTime&&(
                         <div onDoubleClick={()=>setEditingHsTimeId(p.id)} title="Double-click to edit" style={{fontSize:11,color:T.muted,whiteSpace:"nowrap",cursor:"pointer"}}>{p.days.map(d=>ROUTINE_DOW[d]).join("")} · {fmtClock12(p.startTime)}–{fmtClock12(p.endTime)}</div>
                       )}
-                      {p.confidence==="low"&&(
-                        <span title="Studlin wasn't fully sure about this row -- the class name or a time may have been hard to read, or this looks like a rotating block schedule (A/B days, a numbered cycle) where it had to guess which weekdays apply. Double-check it." style={{fontSize:10,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 7px",whiteSpace:"nowrap",flexShrink:0}}>Double-check</span>
+                      {p.timeUnconfirmed&&(
+                        <span style={{fontSize:11,fontWeight:600,color:T.amber,whiteSpace:"nowrap"}}>Time TBD</span>
+                      )}
+                      {/* Real, specific question from the AI (gap-audit fix)
+                          -- same badge shape Brain Dump's own per-item
+                          clarify field already uses, replacing the old
+                          one-size-fits-all "Double-check" tooltip that never
+                          said what was actually uncertain. */}
+                      {p.clarify&&(
+                        <span style={{fontSize:10.5,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 8px"}}>{p.clarify}</span>
                       )}
                     </div>
                     <div style={{display:"flex",gap:6,marginTop:8}}>
@@ -24647,14 +24797,17 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                     </div>
                     {isEditingTime&&(
                       <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+                        {p.timeUnconfirmed&&(
+                          <div style={{fontSize:11,color:T.amber,marginBottom:8}}>Set the real time for this period.</div>
+                        )}
                         <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
                           {ROUTINE_DOW.map((d,di)=><button key={di} type="button" onClick={()=>toggleDay(di)} style={wizardChipStyle(p.days.includes(di))}>{d}</button>)}
                         </div>
                         <div style={{display:"flex",gap:8,alignItems:"center",justifyContent:"flex-end"}}>
-                          <TimeInput value={p.startTime} onChange={t=>setHsReview(r=>r.map((x,xi)=>xi===i?{...x,startTime:t}:x))} />
+                          <TimeInput value={p.startTime} onChange={t=>updateHsPeriod({startTime:t})} />
                           <span style={{color:T.muted,fontSize:12}}>–</span>
-                          <TimeInput value={p.endTime} onChange={t=>setHsReview(r=>r.map((x,xi)=>xi===i?{...x,endTime:t}:x))} />
-                          <Btn variant="subtle" onClick={()=>setEditingHsTimeId(null)}>Done</Btn>
+                          <TimeInput value={p.endTime} onChange={t=>updateHsPeriod({endTime:t})} />
+                          <Btn variant="subtle" onClick={confirmHsPeriodTime}>Done</Btn>
                         </div>
                       </div>
                     )}
