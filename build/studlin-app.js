@@ -1894,8 +1894,9 @@ function logCompletionOutcome(outcome, timeStr, tier, taskId, subject) {
   if (tier) entry.tier = tier;
   if (taskId) entry.taskId = taskId;
   if (subject) entry.subject = subject;
-  log.push(entry);
-  lsSet("completionLog", log);
+  const trimmed = trimCompletionLog([...log, entry]);
+  lsSet("completionLog", trimmed);
+  pushCompletionLogSync(trimmed);
 }
 function applyCheckInRating(taskId, rating) {
   if (!taskId) return;
@@ -3879,13 +3880,25 @@ const DataStore = {
   // comment) -- historical entries logged before that change have no id
   // and are simply excluded from sync by isSyncable below, staying
   // local-only rather than being backfilled.
-  timerLogs: createCollectionSync({ localKey: "sessions", firestoreCollection: "timerLogs", queueKey: "timerLogsSyncQueue", updatedAtKey: "timerLogsUpdatedAt", errorPrefix: "timerLogs", isSyncable: (id) => typeof id === "string" && id.length > 0 })
+  timerLogs: createCollectionSync({ localKey: "sessions", firestoreCollection: "timerLogs", queueKey: "timerLogsSyncQueue", updatedAtKey: "timerLogsUpdatedAt", errorPrefix: "timerLogs", isSyncable: (id) => typeof id === "string" && id.length > 0 }),
+  // Gap-audit fix (see firestore.rules' own comment on these two
+  // subcollections): weeklyRoutine/user-subjects ids are plain
+  // "rt-<ts>-<rand>"/"subj-<ts>-<rand>" strings, no gcal--style wholesale
+  // regeneration to exclude -- same plain non-empty-string isSyncable
+  // check decks/notes/practiceExams already use.
+  routines: createCollectionSync({ localKey: "weeklyRoutine", firestoreCollection: "routines", queueKey: "routinesSyncQueue", updatedAtKey: "routinesUpdatedAt", errorPrefix: "routines", isSyncable: (id) => typeof id === "string" && id.length > 0 }),
+  subjects: createCollectionSync({ localKey: "user-subjects", firestoreCollection: "subjects", queueKey: "subjectsSyncQueue", updatedAtKey: "subjectsUpdatedAt", errorPrefix: "subjects", isSyncable: (id) => typeof id === "string" && id.length > 0 })
 };
 syncWriteHooks.events = (items) => DataStore.events.onLocalWrite(items);
 syncWriteHooks.decks = (items) => DataStore.decks.onLocalWrite(items);
 syncWriteHooks.notes = (items) => DataStore.notes.onLocalWrite(items);
 syncWriteHooks.practiceExams = (items) => DataStore.practiceExams.onLocalWrite(items);
 syncWriteHooks.sessions = (items) => DataStore.timerLogs.onLocalWrite(items);
+syncWriteHooks["weeklyRoutine"] = (items) => DataStore.routines.onLocalWrite(items);
+syncWriteHooks["user-subjects"] = (items) => DataStore.subjects.onLocalWrite(items);
+syncWriteHooks["schedulePrefs"] = () => pushSettingsSync();
+syncWriteHooks["subjects-configured"] = () => pushSettingsSync();
+syncWriteHooks["hasConfiguredRoutine"] = () => pushSettingsSync();
 const dayKey = (d) => {
   const x = d || /* @__PURE__ */ new Date();
   return x.getFullYear() + "-" + String(x.getMonth() + 1).padStart(2, "0") + "-" + String(x.getDate()).padStart(2, "0");
@@ -4734,6 +4747,34 @@ function computeBreathingRoom(mins) {
 function setSchedulePreferences(prefs) {
   lsSet("schedulePrefs", prefs);
 }
+function pushSettingsSync() {
+  const u = firebase.auth().currentUser;
+  if (!u) return;
+  try {
+    fsdb().collection("settingsSync").doc(u.uid).set({
+      schedulePrefs: lsGet("schedulePrefs", {}),
+      subjectsConfigured: lsGet("subjects-configured", false),
+      hasConfiguredRoutine: lsGet("hasConfiguredRoutine", false),
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    }, { merge: true }).catch(() => {
+    });
+  } catch (e) {
+  }
+}
+async function hydrateSettingsSyncOnAuth() {
+  const u = firebase.auth().currentUser;
+  if (!u) return;
+  try {
+    const doc = await fsdb().collection("settingsSync").doc(u.uid).get();
+    if (doc.exists) {
+      const data = doc.data();
+      if (data.schedulePrefs && typeof data.schedulePrefs === "object") lsSet("schedulePrefs", data.schedulePrefs);
+      if (data.subjectsConfigured) lsSet("subjects-configured", true);
+      if (data.hasConfiguredRoutine) lsSet("hasConfiguredRoutine", true);
+    }
+  } catch (e) {
+  }
+}
 function applyStudyStylePrefs(prefs, answers) {
   return { ...prefs, studyStylePrefs: {
     sessionOrder: answers && answers.sessionOrder || null,
@@ -5151,7 +5192,13 @@ function buildMoveFlexTaskProposal(parsed, events, routines, prefs, forcedId) {
   const others = events.filter((e) => e.id !== matched.id);
   const slot = findReliableSlotFor(others, routines, prefs, destDate, matched.time || prefs.workStartTime, matched.duration || 30, matched.deadline || null, matched.difficulty);
   if (!slot) return { label: 'No open, on-time slot for "' + matched.title + '" on or before its deadline', moved: [], couldntMove: [{ id: matched.id, title: matched.title, deadline: matched.deadline || null }] };
-  return { label: "Move " + matched.title, moved: [{ id: matched.id, title: matched.title, oldDate: matched.date, oldTime: matched.time, newDate: slot.date, newTime: slot.time, duration: matched.duration || 30 }], couldntMove: [] };
+  const dayWindow = getWorkWindowMinsFor(prefs, destDate);
+  const windowMins = Math.max(0, dayWindow.end - dayWindow.start);
+  const occupiedMinsOf = (evs) => computeOccupiedIntervals(evs, routines, prefs, destDate).reduce((sum, iv) => sum + Math.max(0, iv.end - iv.start), 0);
+  const placedEvents = others.concat([{ ...matched, date: slot.date, time: slot.time }]);
+  const bufferBeforeMins = Math.max(0, windowMins - occupiedMinsOf(events));
+  const bufferAfterMins = Math.max(0, windowMins - occupiedMinsOf(placedEvents));
+  return { label: "Move " + matched.title, moved: [{ id: matched.id, title: matched.title, oldDate: matched.date, oldTime: matched.time, newDate: slot.date, newTime: slot.time, duration: matched.duration || 30 }], couldntMove: [], bufferBeforeMins, bufferAfterMins };
 }
 function describeCreateProposal(task) {
   if (!task) return "Add task";
@@ -5159,7 +5206,7 @@ function describeCreateProposal(task) {
   const when = task.time ? dateLabel + " at " + fmtClock12(task.time) + (task.duration ? " (" + task.duration + " min)" : "") : dateLabel ? "due " + dateLabel : "no date yet";
   return 'Add "' + task.title + '" -- ' + when + "?";
 }
-function pastTenseProposalLabel(label, moved, reason) {
+function pastTenseProposalLabel(label, moved, reason, tradeoff) {
   if (!label) return label;
   let s = label.replace(/\?$/, "");
   let isMove = false;
@@ -5176,8 +5223,15 @@ function pastTenseProposalLabel(label, moved, reason) {
     const d = /* @__PURE__ */ new Date(moved[0].newDate + "T12:00:00");
     const dateLabel = d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
     s += " to " + dateLabel + (moved[0].newTime ? " at " + fmtClock12(moved[0].newTime) : "") + (reason ? ", " + reason : "") + ".";
+    if (tradeoff) s += " " + tradeoff.charAt(0).toUpperCase() + tradeoff.slice(1) + ".";
   }
   return s;
+}
+function formatBufferTradeoff(bufferBeforeMins, bufferAfterMins) {
+  if (bufferAfterMins == null || bufferBeforeMins == null) return "";
+  if (bufferAfterMins <= 0) return "fills the rest of that day's open hours";
+  const down = bufferBeforeMins > bufferAfterMins ? " (down from " + fmtMinsDur(bufferBeforeMins) + ")" : "";
+  return "leaves " + fmtMinsDur(bufferAfterMins) + " of open time that day" + down;
 }
 function describeExamSessionPlan(tasks, digest) {
   const sessions = (tasks || []).filter((t) => t.isExamPrepSession);
@@ -5324,7 +5378,7 @@ function buildStudlinAiActionProposal(parsed, events, routines, prefs, forcedId,
     if (r2.noMatch) return { ok: false, noMatch: true, label: r2.label };
     if (r2.disambiguate) return { ok: false, disambiguate: r2.disambiguate, label: r2.label };
     if (r2.moved.length === 0) return { ok: false, label: r2.label };
-    return { ok: true, kind: "move_flex_task", moved: r2.moved, label: r2.label };
+    return { ok: true, kind: "move_flex_task", moved: r2.moved, label: r2.label, bufferBeforeMins: r2.bufferBeforeMins, bufferAfterMins: r2.bufferAfterMins };
   }
   const r = buildMoveFixedProposal(parsed, forcedId);
   if (r.noMatch) return { ok: false, noMatch: true, label: r.label };
@@ -5754,6 +5808,30 @@ function removeAiMemoryFact(mem, index) {
 function mergeAiMemoryTimeOfDay(existingMem, newTimeOfDay) {
   if (!newTimeOfDay) return existingMem || { facts: [], timeOfDay: null, updatedAt: null };
   return { facts: existingMem && existingMem.facts || [], timeOfDay: newTimeOfDay, updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+}
+const COMPLETION_LOG_CAP = 500;
+function trimCompletionLog(log) {
+  return log.length > COMPLETION_LOG_CAP ? log.slice(log.length - COMPLETION_LOG_CAP) : log;
+}
+async function pushCompletionLogSync(log) {
+  const u = firebase.auth().currentUser;
+  if (!u) return;
+  try {
+    await fsdb().collection("completionLogSync").doc(u.uid).set({ log: log || [], updatedAt: (/* @__PURE__ */ new Date()).toISOString() }, { merge: true });
+  } catch (e) {
+  }
+}
+async function hydrateCompletionLogSyncOnAuth() {
+  const u = firebase.auth().currentUser;
+  if (!u) return;
+  try {
+    const doc = await fsdb().collection("completionLogSync").doc(u.uid).get();
+    if (doc.exists) {
+      const data = doc.data();
+      if (Array.isArray(data.log)) lsSet("completionLog", trimCompletionLog(data.log));
+    }
+  } catch (e) {
+  }
 }
 const TIME_OF_DAY_ANCHORS = { morning: "08:00", afternoon: "14:00", evening: "18:00" };
 function resolveTimeOfDayAnchor(pref, prefs) {
@@ -12103,7 +12181,7 @@ CONVERSATION:
             }
             next2 = commitStudlinAiFlexMove(item.moved);
             recordSmartReschedule();
-            doneParts.push(pastTenseProposalLabel(item.label, item.moved));
+            doneParts.push(pastTenseProposalLabel(item.label, item.moved, "", formatBufferTradeoff(item.bufferBeforeMins, item.bufferAfterMins)));
           } else if (item.kind === "delete_task") {
             if (!canUseSmartReschedule()) {
               setPricingOpen(canUseSmartRescheduleReason() === "free-tier" ? "smartReschedule" : "aiUsageCap");
@@ -12249,9 +12327,10 @@ CONVERSATION:
       const dayEvents = next.filter((e) => e.date === primary.newDate && e.id !== primary.id && e.time).concat(getRoutineOccurrencesForDate(primary.newDate));
       moveReason = inferChatMoveReason(dayEvents, primary.newTime, primary.newDuration || primary.duration, primary.id, displaced ? displaced.title : null);
     }
+    const moveTradeoff = proposal.kind === "move_flex_task" ? formatBufferTradeoff(proposal.bufferBeforeMins, proposal.bufferAfterMins) : "";
     setMessages((m) => {
       const withResolved = m.map((mm, i) => i === idx ? { ...mm, proposal: { ...mm.proposal, resolved: "confirmed" } } : mm);
-      return [...withResolved, { role: "ai", text: "Done. " + pastTenseProposalLabel(proposal.label, proposal.moved, moveReason) }];
+      return [...withResolved, { role: "ai", text: "Done. " + pastTenseProposalLabel(proposal.label, proposal.moved, moveReason, moveTradeoff) }];
     });
     setPendingIndex(null);
   };
@@ -22676,8 +22755,13 @@ function AuthGate() {
         DataStore.notes.hydrateOnAuth();
         DataStore.practiceExams.hydrateOnAuth();
         DataStore.timerLogs.hydrateOnAuth();
+        DataStore.routines.hydrateOnAuth();
+        DataStore.subjects.hydrateOnAuth();
         hydrateAiMemoryOnAuth();
+        hydrateCompletionLogSyncOnAuth();
+        const settingsHydratePromise = hydrateSettingsSyncOnAuth();
         if (!lsGet("onboarded", false)) await profilePromise;
+        if (!lsGet("subjects-configured", false) && !lsGet("hasConfiguredRoutine", false)) await settingsHydratePromise;
         const ref = sessionStorage.getItem("studlin-ref");
         if (ref && ref !== u.uid) {
           try {

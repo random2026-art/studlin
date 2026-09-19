@@ -69,6 +69,22 @@ service cloud.firestore {
         allow create, update: if isOwnerContent() && hasUpdatedAt();
         allow delete: if false;
       }
+      // Gap-audit fix: weeklyRoutine (recurring classes/activities) and
+      // user-subjects (courses) were local-only before this -- a student on
+      // a new device saw a completely empty calendar (no recurring classes
+      // at all) and every course dropdown empty, and got funneled back into
+      // the full class-setup wizard. Same shape/rules as the 5 collections
+      // above, reusing the exact same DataStore sync machinery.
+      match /routines/{itemId} {
+        allow read: if isOwnerContent();
+        allow create, update: if isOwnerContent() && hasUpdatedAt();
+        allow delete: if false;
+      }
+      match /subjects/{itemId} {
+        allow read: if isOwnerContent();
+        allow create, update: if isOwnerContent() && hasUpdatedAt();
+        allow delete: if false;
+      }
 
       // Per-user sync/migration metadata (DataStore._sync). Never read or
       // written by anyone but the owner -- no directory-style sharing need
@@ -94,6 +110,22 @@ service cloud.firestore {
     // personal facts like these must never be readable by anyone but the
     // owner, unlike a name/school/username.
     match /aiMemory/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Cross-device sync for peak-hour reliability data (gap-audit fix --
+    // this was local-only before, resetting on a new device/reinstall
+    // unlike duration learning). Same shape/reasoning as aiMemory just
+    // above: one small per-user doc, owner-only, no field restrictions
+    // needed since it's pure telemetry, not money/plan/credits.
+    match /completionLogSync/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Cross-device sync for schedulePrefs + the onboarding "configured"
+    // flags (gap-audit fix) -- same shape/reasoning as aiMemory and
+    // completionLogSync above: one small per-user doc, owner-only.
+    match /settingsSync/{userId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 

@@ -175,6 +175,58 @@ describe("buildMoveFlexTaskProposal / move_flex_task safety", () => {
     assert.equal(proposal.ok, false);
     assert.equal(proposal.noMatch, true);
   });
+
+  // Gap-audit fix: the chat-driven move used to return no read at all on how
+  // the move affects that day -- the button-driven RescheduleModal already
+  // computes and shows a real "leaves Xm open (down from Ym)" trade-off
+  // (computeRescheduleCandidates); this proposal now carries the same real
+  // numbers, computed from the same two primitives (getWorkWindowMinsFor,
+  // computeOccupiedIntervals).
+  test("a successful move carries real bufferBeforeMins/bufferAfterMins, not undefined", () => {
+    const m = loadStudlinModule({ now: "2026-09-14T08:00:00" });
+    const prefs = m.getSchedulePreferences();
+    m.lsSet("events", [flexTask]);
+    const parsed = { intent: "move_flex_task", target: "chem homework", targetDate: "2026-09-14", destDate: "2026-09-15" };
+    const proposal = m.buildStudlinAiActionProposal(parsed, [flexTask], [], prefs, null);
+    assert.equal(proposal.ok, true);
+    assert.equal(typeof proposal.bufferBeforeMins, "number");
+    assert.equal(typeof proposal.bufferAfterMins, "number");
+    assert.ok(proposal.bufferBeforeMins >= 0);
+    assert.ok(proposal.bufferAfterMins >= 0);
+  });
+});
+
+describe("formatBufferTradeoff", () => {
+  test("a day left with open time reads 'leaves Xm of open time that day'", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.formatBufferTradeoff(120, 90), "leaves 1h 30m of open time that day (down from 2h)");
+  });
+  test("no real shrink (after >= before) omits the 'down from' clause", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.formatBufferTradeoff(60, 60), "leaves 1h of open time that day");
+  });
+  test("a day with zero open time left reads 'fills the rest of that day's open hours'", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.formatBufferTradeoff(60, 0), "fills the rest of that day's open hours");
+  });
+  test("null/undefined inputs (a move engine that never computed this) return an empty string, never a broken sentence", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.formatBufferTradeoff(null, null), "");
+    assert.equal(m.formatBufferTradeoff(undefined, undefined), "");
+  });
+});
+
+describe("pastTenseProposalLabel: trade-off clause", () => {
+  test("a move with a tradeoff string appends it as its own capitalized sentence", () => {
+    const m = loadStudlinModule();
+    const s = m.pastTenseProposalLabel("Move Chem Homework", [{ newDate: "2026-09-15", newTime: "17:00" }], "", "leaves 45m of open time that day (down from 1h 30m)");
+    assert.equal(s, "Moved Chem Homework to Tue, Sep 15 at 5:00PM. Leaves 45m of open time that day (down from 1h 30m).");
+  });
+  test("no tradeoff (move_fixed's engine doesn't compute one) leaves the sentence exactly as before this fix", () => {
+    const m = loadStudlinModule();
+    const s = m.pastTenseProposalLabel("Move Chem Homework", [{ newDate: "2026-09-15", newTime: "17:00" }], "");
+    assert.equal(s, "Moved Chem Homework to Tue, Sep 15 at 5:00PM.");
+  });
 });
 
 describe("buildDeleteProposal / delete_task safety", () => {

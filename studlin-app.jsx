@@ -3292,8 +3292,14 @@ function logCompletionOutcome(outcome,timeStr,tier,taskId,subject){
   if(tier)entry.tier=tier;
   if(taskId)entry.taskId=taskId;
   if(subject)entry.subject=subject;
-  log.push(entry);
-  lsSet("completionLog",log);
+  // Gap-audit fix: this used to grow unbounded and never leave the device
+  // (lsSet only) -- trimCompletionLog/pushCompletionLogSync (see their own
+  // comment) cap it and mirror it to completionLogSync/{uid} so peak-hour
+  // learning survives a device switch the same way duration learning
+  // already does.
+  const trimmed=trimCompletionLog([...log,entry]);
+  lsSet("completionLog",trimmed);
+  pushCompletionLogSync(trimmed);
 }
 // Called once a student answers the post-session "How'd that go?" check-in
 // (see submitExamCheckIn) — finds the specific completionLog row this
@@ -6532,12 +6538,30 @@ const DataStore={
   // and are simply excluded from sync by isSyncable below, staying
   // local-only rather than being backfilled.
   timerLogs:createCollectionSync({localKey:"sessions",firestoreCollection:"timerLogs",queueKey:"timerLogsSyncQueue",updatedAtKey:"timerLogsUpdatedAt",errorPrefix:"timerLogs",isSyncable:(id)=>typeof id==="string"&&id.length>0}),
+  // Gap-audit fix (see firestore.rules' own comment on these two
+  // subcollections): weeklyRoutine/user-subjects ids are plain
+  // "rt-<ts>-<rand>"/"subj-<ts>-<rand>" strings, no gcal--style wholesale
+  // regeneration to exclude -- same plain non-empty-string isSyncable
+  // check decks/notes/practiceExams already use.
+  routines:createCollectionSync({localKey:"weeklyRoutine",firestoreCollection:"routines",queueKey:"routinesSyncQueue",updatedAtKey:"routinesUpdatedAt",errorPrefix:"routines",isSyncable:(id)=>typeof id==="string"&&id.length>0}),
+  subjects:createCollectionSync({localKey:"user-subjects",firestoreCollection:"subjects",queueKey:"subjectsSyncQueue",updatedAtKey:"subjectsUpdatedAt",errorPrefix:"subjects",isSyncable:(id)=>typeof id==="string"&&id.length>0}),
 };
 syncWriteHooks.events=(items)=>DataStore.events.onLocalWrite(items);
 syncWriteHooks.decks=(items)=>DataStore.decks.onLocalWrite(items);
 syncWriteHooks.notes=(items)=>DataStore.notes.onLocalWrite(items);
 syncWriteHooks.practiceExams=(items)=>DataStore.practiceExams.onLocalWrite(items);
 syncWriteHooks.sessions=(items)=>DataStore.timerLogs.onLocalWrite(items);
+// lsSet's key is the literal string "weeklyRoutine"/"user-subjects" (see
+// getWeeklyRoutine/getSubjects) -- bracket notation needed for the hyphenated
+// one, used for both here for consistency.
+syncWriteHooks["weeklyRoutine"]=(items)=>DataStore.routines.onLocalWrite(items);
+syncWriteHooks["user-subjects"]=(items)=>DataStore.subjects.onLocalWrite(items);
+// schedulePrefs is a flat object, not an id'd array -- doesn't fit
+// createCollectionSync's onLocalWrite(items) shape, so these three route
+// to the lighter single-doc push instead (see pushSettingsSync's comment).
+syncWriteHooks["schedulePrefs"]=()=>pushSettingsSync();
+syncWriteHooks["subjects-configured"]=()=>pushSettingsSync();
+syncWriteHooks["hasConfiguredRoutine"]=()=>pushSettingsSync();
 const dayKey=(d)=>{const x=d||new Date();return x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");};
 // Dashboard's plain Checklist card (2026-08-19): checking an item used to
 // remove it from view instantly -- no visible confirmation it registered.
@@ -7829,6 +7853,54 @@ function computeBreathingRoom(mins){
 function setSchedulePreferences(prefs){
   lsSet("schedulePrefs",prefs);
 }
+// Cross-device sync for schedulePrefs + the onboarding "configured" flags
+// -- gap-audit fix. schedulePrefs was local-only: a fresh device silently
+// reverts to generic defaults (10am-6pm, no weekend hours, no declared
+// peak-hour bucket) and can schedule sessions at times that quietly
+// contradict a routine the student already tuned on another device --
+// the kind of bug that only surfaces weeks later. subjects-configured/
+// hasConfiguredRoutine being local-only is what let a fresh device
+// re-trigger the full class-setup wizard for a student who'd already
+// finished it (see classSetupOpen's own init check). One small settings
+// doc, same aiMemory-style single-owner pattern -- pushed fire-and-forget
+// on every write via syncWriteHooks (schedulePrefs/subjects-configured/
+// hasConfiguredRoutine all route through here, see DataStore block),
+// pulled once on auth. Remote wins outright on hydrate, same policy as
+// every other single-doc sync in this file -- infrequent writes, no
+// per-field conflict merge needed.
+function pushSettingsSync(){
+  const u=firebase.auth().currentUser;
+  if(!u)return;
+  try{
+    fsdb().collection('settingsSync').doc(u.uid).set({
+      schedulePrefs:lsGet("schedulePrefs",{}),
+      subjectsConfigured:lsGet("subjects-configured",false),
+      hasConfiguredRoutine:lsGet("hasConfiguredRoutine",false),
+      updatedAt:new Date().toISOString(),
+    },{merge:true}).catch(()=>{});
+  }catch(e){}
+}
+// Returns its promise (unlike every other hydrate*OnAuth here) so the
+// sign-in sequence can explicitly await it -- ONLY when the "configured"
+// flags aren't already known locally -- before classSetupOpen's own
+// useState initializer runs, same established precedent as the
+// "onboarded" flag's own profilePromise await right below it. Without
+// this, a fresh device would still show the wizard for a split second
+// (or, on a slow connection, long enough to matter) even though the real
+// answer was already sitting in Firestore.
+async function hydrateSettingsSyncOnAuth(){
+  const u=firebase.auth().currentUser;
+  if(!u)return;
+  try{
+    const doc=await fsdb().collection('settingsSync').doc(u.uid).get();
+    if(doc.exists){
+      const data=doc.data();
+      if(data.schedulePrefs&&typeof data.schedulePrefs==="object")lsSet("schedulePrefs",data.schedulePrefs);
+      if(data.subjectsConfigured)lsSet("subjects-configured",true);
+      if(data.hasConfiguredRoutine)lsSet("hasConfiguredRoutine",true);
+    }
+  }catch(e){}
+}
 // The one write step for the Calendar wizard's optional "personalize" step
 // (5 single-select preference chips -- session order, interleaving
 // tolerance, planning horizon, start timing, collision tie-break). Each
@@ -8599,7 +8671,19 @@ function buildMoveFlexTaskProposal(parsed,events,routines,prefs,forcedId){
   const others=events.filter(e=>e.id!==matched.id);
   const slot=findReliableSlotFor(others,routines,prefs,destDate,matched.time||prefs.workStartTime,matched.duration||30,matched.deadline||null,matched.difficulty);
   if(!slot)return{label:"No open, on-time slot for \""+matched.title+"\" on or before its deadline",moved:[],couldntMove:[{id:matched.id,title:matched.title,deadline:matched.deadline||null}]};
-  return{label:"Move "+matched.title,moved:[{id:matched.id,title:matched.title,oldDate:matched.date,oldTime:matched.time,newDate:slot.date,newTime:slot.time,duration:matched.duration||30}],couldntMove:[]};
+  // Bug fix, gap audit: this used to return with no read on how the move
+  // actually affects that day -- the button-driven RescheduleModal shows a
+  // real "leaves Xm open (down from Ym)" trade-off (computeRescheduleCandidates,
+  // same two primitives below), but the chat flow never computed or showed
+  // one at all. Same math, same primitives the scheduler itself already
+  // trusts, just for this one destDate instead of a multi-day scan.
+  const dayWindow=getWorkWindowMinsFor(prefs,destDate);
+  const windowMins=Math.max(0,dayWindow.end-dayWindow.start);
+  const occupiedMinsOf=(evs)=>computeOccupiedIntervals(evs,routines,prefs,destDate).reduce((sum,iv)=>sum+Math.max(0,iv.end-iv.start),0);
+  const placedEvents=others.concat([{...matched,date:slot.date,time:slot.time}]);
+  const bufferBeforeMins=Math.max(0,windowMins-occupiedMinsOf(events));
+  const bufferAfterMins=Math.max(0,windowMins-occupiedMinsOf(placedEvents));
+  return{label:"Move "+matched.title,moved:[{id:matched.id,title:matched.title,oldDate:matched.date,oldTime:matched.time,newDate:slot.date,newTime:slot.time,duration:matched.duration||30}],couldntMove:[],bufferBeforeMins,bufferAfterMins};
 }
 // Small pure formatter for the proposal card's label text -- mirrors
 // computePausePlan's own plain-English `label` field so create and move
@@ -8621,7 +8705,7 @@ function describeCreateProposal(task){
 // message, so the chat literally said e.g. "Done. Delete "Chem Notes"
 // from 2026-09-08?" even though the action had already finished. Strips
 // the trailing "?" and turns the leading imperative into a completed one.
-function pastTenseProposalLabel(label,moved,reason){
+function pastTenseProposalLabel(label,moved,reason,tradeoff){
   if(!label)return label;
   let s=label.replace(/\?$/,"");
   let isMove=false;
@@ -8647,8 +8731,29 @@ function pastTenseProposalLabel(label,moved,reason){
     const d=new Date(moved[0].newDate+"T12:00:00");
     const dateLabel=d.toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"});
     s+=" to "+dateLabel+(moved[0].newTime?" at "+fmtClock12(moved[0].newTime):"")+(reason?", "+reason:"")+".";
+    // `tradeoff` (optional, gap-audit fix): a pre-formatted sentence from
+    // formatBufferTradeoff, appended as its own sentence rather than folded
+    // into the clause above -- this is the same real, computed number the
+    // button-driven RescheduleModal already shows, the chat confirmation
+    // just never surfaced it before.
+    if(tradeoff)s+=" "+tradeoff.charAt(0).toUpperCase()+tradeoff.slice(1)+".";
   }
   return s;
+}
+// Plain-text mirror of RescheduleModal's own buffer-tradeoff phrasing (see
+// its JSX at ~26435-26437: "Leaves Xm of open time that day (down from
+// Ym)"/"Fills the rest of that day's open hours"). Kept as a separate plain
+// string version rather than extracting a shared component -- chat messages
+// are plain text, the modal's version is JSX with its own bold/color
+// styling -- so a wording change to one should be mirrored to the other by
+// hand. bufferBeforeMins/bufferAfterMins come from the same
+// getWorkWindowMinsFor/computeOccupiedIntervals primitives either caller
+// already trusts.
+function formatBufferTradeoff(bufferBeforeMins,bufferAfterMins){
+  if(bufferAfterMins==null||bufferBeforeMins==null)return"";
+  if(bufferAfterMins<=0)return"fills the rest of that day's open hours";
+  const down=bufferBeforeMins>bufferAfterMins?" (down from "+fmtMinsDur(bufferBeforeMins)+")":"";
+  return"leaves "+fmtMinsDur(bufferAfterMins)+" of open time that day"+down;
 }
 // Turns a batch of built tasks (from planBrainDumpTasks, exam branch)
 // into a plain-English summary of the real spaced study-session plan --
@@ -8953,7 +9058,7 @@ function buildStudlinAiActionProposal(parsed,events,routines,prefs,forcedId,rawT
     if(r.noMatch)return{ok:false,noMatch:true,label:r.label};
     if(r.disambiguate)return{ok:false,disambiguate:r.disambiguate,label:r.label};
     if(r.moved.length===0)return{ok:false,label:r.label};
-    return{ok:true,kind:"move_flex_task",moved:r.moved,label:r.label};
+    return{ok:true,kind:"move_flex_task",moved:r.moved,label:r.label,bufferBeforeMins:r.bufferBeforeMins,bufferAfterMins:r.bufferAfterMins};
   }
   const r=buildMoveFixedProposal(parsed,forcedId);
   if(r.noMatch)return{ok:false,noMatch:true,label:r.label};
@@ -9618,6 +9723,53 @@ function removeAiMemoryFact(mem,index){
 function mergeAiMemoryTimeOfDay(existingMem,newTimeOfDay){
   if(!newTimeOfDay)return existingMem||{facts:[],timeOfDay:null,updatedAt:null};
   return {facts:(existingMem&&existingMem.facts)||[],timeOfDay:newTimeOfDay,updatedAt:new Date().toISOString()};
+}
+// Cross-device sync for peak-hour reliability data (completionLog) -- gap
+// audit fix: completionLog was local-only (lsGet/lsSet, never touching
+// Firestore), unlike duration learning (suggestDurationFor, derived from
+// the already-synced `events` array). Same "gets smarter" pitch, two very
+// different real guarantees -- a student who switched devices lost every
+// bucket-reliability sample they'd ever logged.
+//
+// Same single-owner-doc pattern as aiMemory just above (own collection,
+// completionLogSync/{uid}, not folded into aiMemory itself -- keeps this
+// change from touching anything about the already-working aiMemory doc)
+// for the same reason aiMemory's own comment already gives: completionLog
+// rows are immutable, append-only, with no natural per-item id and no real
+// per-row conflict to resolve -- the wrong shape for the 5-collection
+// DataStore factory (built around per-item diffing/soft-delete/conflict
+// resolution).
+//
+// COMPLETION_LOG_CAP: completionLog had no size cap at all before this fix
+// (confirmed -- grows unbounded in localStorage). 500 is generous headroom
+// above every real consumer's own sample-size gate
+// (TIER0_MIN_BUCKET_SAMPLE=8, checked per bucket x tier x subject
+// combination) while staying safely under Firestore's 1MiB/doc limit.
+// Applied to the LOCAL array too, not just the synced copy, so this closes
+// the unbounded-growth issue everywhere, not just for sync's sake.
+const COMPLETION_LOG_CAP=500;
+function trimCompletionLog(log){
+  return log.length>COMPLETION_LOG_CAP?log.slice(log.length-COMPLETION_LOG_CAP):log;
+}
+// Fire-and-forget push, same shape as pushAiMemory.
+async function pushCompletionLogSync(log){
+  const u=firebase.auth().currentUser;
+  if(!u)return;
+  try{await fsdb().collection('completionLogSync').doc(u.uid).set({log:log||[],updatedAt:new Date().toISOString()},{merge:true});}catch(e){}
+}
+// One-time pull on auth, same shape as hydrateAiMemoryOnAuth. Remote wins
+// outright (no per-row merge) -- this is advisory telemetry (bucket
+// reliability, not authoritative state), so simplest-correct is enough.
+async function hydrateCompletionLogSyncOnAuth(){
+  const u=firebase.auth().currentUser;
+  if(!u)return;
+  try{
+    const doc=await fsdb().collection('completionLogSync').doc(u.uid).get();
+    if(doc.exists){
+      const data=doc.data();
+      if(Array.isArray(data.log))lsSet("completionLog",trimCompletionLog(data.log));
+    }
+  }catch(e){}
 }
 const TIME_OF_DAY_ANCHORS={morning:"08:00",afternoon:"14:00",evening:"18:00"};
 // Maps a stored time-of-day preference to a real clock time the scheduler
@@ -20139,7 +20291,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
             if(!canUseSmartReschedule()){setPricingOpen(canUseSmartRescheduleReason()==="free-tier"?"smartReschedule":"aiUsageCap");return;}
             next=commitStudlinAiFlexMove(item.moved);
             recordSmartReschedule();
-            doneParts.push(pastTenseProposalLabel(item.label,item.moved));
+            doneParts.push(pastTenseProposalLabel(item.label,item.moved,"",formatBufferTradeoff(item.bufferBeforeMins,item.bufferAfterMins)));
           }else if(item.kind==="delete_task"){
             if(!canUseSmartReschedule()){setPricingOpen(canUseSmartRescheduleReason()==="free-tier"?"smartReschedule":"aiUsageCap");return;}
             onDeleteEvent(item.event);
@@ -20291,9 +20443,15 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
         .concat(getRoutineOccurrencesForDate(primary.newDate));
       moveReason=inferChatMoveReason(dayEvents,primary.newTime,primary.newDuration||primary.duration,primary.id,displaced?displaced.title:null);
     }
+    // Gap-audit fix: move_flex_task is the only kind that carries a real
+    // computed buffer trade-off (see buildMoveFlexTaskProposal) -- move_fixed
+    // goes through a different engine (computePausePlan) that doesn't
+    // compute this number, so it's deliberately left blank there rather
+    // than guessed.
+    const moveTradeoff=proposal.kind==="move_flex_task"?formatBufferTradeoff(proposal.bufferBeforeMins,proposal.bufferAfterMins):"";
     setMessages(m=>{
       const withResolved=m.map((mm,i)=>i===idx?{...mm,proposal:{...mm.proposal,resolved:"confirmed"}}:mm);
-      return [...withResolved,{role:"ai",text:"Done. "+pastTenseProposalLabel(proposal.label,proposal.moved,moveReason)}];
+      return [...withResolved,{role:"ai",text:"Done. "+pastTenseProposalLabel(proposal.label,proposal.moved,moveReason,moveTradeoff)}];
     });
     setPendingIndex(null);
   };
@@ -38386,7 +38544,11 @@ function AuthGate(){
         DataStore.notes.hydrateOnAuth();
         DataStore.practiceExams.hydrateOnAuth();
         DataStore.timerLogs.hydrateOnAuth();
+        DataStore.routines.hydrateOnAuth();
+        DataStore.subjects.hydrateOnAuth();
         hydrateAiMemoryOnAuth();
+        hydrateCompletionLogSyncOnAuth();
+        const settingsHydratePromise=hydrateSettingsSyncOnAuth();
         // "onboarded" otherwise lives only in this browser's localStorage —
         // if it's not already set here, wait for the profile fetch (which
         // reconciles it against the account's own record) before mounting
@@ -38394,6 +38556,17 @@ function AuthGate(){
         // doesn't flash the onboarding wizard for an account that already
         // finished it.
         if(!lsGet("onboarded",false))await profilePromise;
+        // Gap-audit fix: without this, a fresh device shows the full
+        // class-setup wizard for a split second (or longer, on a slow
+        // connection) even for a student who already finished it on
+        // another device -- classSetupOpen's own useState initializer
+        // reads these two flags synchronously on mount, before the
+        // fire-and-forget hydrateSettingsSyncOnAuth() call above would
+        // otherwise have a chance to resolve. Only awaited when the
+        // flags aren't already known locally, same "skip the round-trip
+        // when we already have the answer" shape the onboarded-flag
+        // await right above already uses.
+        if(!lsGet("subjects-configured",false)&&!lsGet("hasConfiguredRoutine",false))await settingsHydratePromise;
         const ref=sessionStorage.getItem("studlin-ref");
         if(ref&&ref!==u.uid){
           try{
