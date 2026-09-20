@@ -161,10 +161,16 @@ describe("suggestDurationFor (historical duration learning)", () => {
     assert.equal(m.suggestDurationFor("Chemistry", "study block"), null);
   });
 
-  test("a couple of completed sessions is not enough sample size to trust -- one gamed 'Begin then Complete' entry can't single-handedly set the duration", () => {
+  test("a couple of completed sessions is not enough sample size to fully trust -- but isn't thrown away either, just blended toward the generic default so one gamed 'Begin then Complete' entry can't single-handedly set the duration", () => {
     const m = loadStudlinModule();
     m.lsSet("events", [doneSession({ id: "s1", timeSpent: 1 }), doneSession({ id: "s2", timeSpent: 1 })]);
-    assert.equal(m.suggestDurationFor("Chemistry", "study block"), null, "under the TIER0_MIN_BUCKET_SAMPLE floor -- caller's own baseDuration||25 default should apply instead");
+    // Below TIER0_MIN_BUCKET_SAMPLE (8), real-but-thin data is graduated
+    // toward DURATION_GENERIC_DEFAULT (25) instead of discarded outright
+    // (see CLAUDE.md's Certainty & Prediction Rules) -- 2/8 real weight
+    // pulls the estimate only modestly off 25, nowhere near the gamed
+    // 1-minute entries themselves. Same protection the old null return
+    // gave against gaming, just not all-or-nothing about it.
+    assert.equal(m.suggestDurationFor("Chemistry", "study block"), 20);
   });
 
   test("falls back to the coarse subject+kind median once there are enough samples (>= TIER0_MIN_BUCKET_SAMPLE)", () => {
@@ -181,7 +187,11 @@ describe("suggestDurationFor (historical duration learning)", () => {
     const events = Array.from({ length: 8 }, (_, i) => doneSession({ id: "c-" + i, timeSpent: 45 }));
     m.lsSet("events", events);
     assert.equal(m.suggestDurationFor("Chemistry", "study block"), 45, "default threshold trusts 8 samples");
-    assert.equal(m.suggestDurationFor("Chemistry", "study block", undefined, 16), null, "a stricter caller-supplied minSamples must not trust the same 8 samples");
+    // A stricter minSamples=16 means the same 8 samples are only halfway
+    // to full trust (8/16), so the estimate blends toward the generic
+    // default instead of being fully trusted OR thrown away -- 45 and 25
+    // blended 50/50 lands at 35, not the raw 45.
+    assert.equal(m.suggestDurationFor("Chemistry", "study block", undefined, 16), 35, "a stricter caller-supplied minSamples should only partially trust the same 8 samples");
   });
 
   test("the historical-duration floor never drops below 15 minutes even if real completions ran shorter", () => {
@@ -292,6 +302,34 @@ describe("suggestDurationFor (historical duration learning)", () => {
         { taskId: "low0", outcome: "done", rating: "shaky" },
       ]);
       assert.equal(m.suggestDurationFor("Chemistry", "study block"), 50);
+    });
+  });
+
+  describe("below-threshold blending (graduated confidence instead of a null-vs-full-trust cliff)", () => {
+    test("reaches exactly the raw median right at minN -- no discontinuity at the old cliff's boundary", () => {
+      const m = loadStudlinModule();
+      const events = Array.from({ length: 8 }, (_, i) => doneSession({ id: "e-" + i, timeSpent: 50 }));
+      m.lsSet("events", events);
+      assert.equal(m.suggestDurationFor("Chemistry", "study block"), 50, "at minN, full trust -- same as before");
+    });
+
+    test("more real samples (still below minN) trust the data more, moving further from the generic default", () => {
+      const two = [doneSession({ id: "a", timeSpent: 60 }), doneSession({ id: "b", timeSpent: 60 })];
+      const six = Array.from({ length: 6 }, (_, i) => doneSession({ id: "s" + i, timeSpent: 60 }));
+      const mTwo = loadStudlinModule();
+      mTwo.lsSet("events", two);
+      const mSix = loadStudlinModule();
+      mSix.lsSet("events", six);
+      const withTwo = mTwo.suggestDurationFor("Chemistry", "study block");
+      const withSix = mSix.suggestDurationFor("Chemistry", "study block");
+      assert.ok(withSix > withTwo, `6 real samples (${withSix}) should sit closer to the true 60min than 2 samples (${withTwo})`);
+      assert.ok(withTwo > 25, "even 2 real samples should move the estimate off the flat generic default");
+    });
+
+    test("zero real samples still returns null -- there's nothing to blend, caller's own ||25 applies", () => {
+      const m = loadStudlinModule();
+      m.lsSet("events", []);
+      assert.equal(m.suggestDurationFor("Chemistry", "study block"), null);
     });
   });
 });

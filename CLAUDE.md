@@ -385,6 +385,23 @@ Data safety:
 
 ---
 
+# Certainty & Prediction Rules
+
+Direct user request (2026-09-20): Studlin should never present a guess as a fact.
+
+Any number, insight, or nudge shown to a student ("you're more reliable at X," "this usually takes Y minutes") must be backed by enough real data to trust, or say so plainly instead of guessing. Silence is recoverable. A confident wrong answer is not — it's how students stop trusting the product.
+
+This already governs every prediction in the scheduling/reliability code (`studlin-app.jsx`, see the CERTAINTY POLICY comment near `TIER0_MIN_BUCKET_SAMPLE`) and the AI chat layer (it only ever receives pre-gated facts, never raw numbers to interpret itself — see `formatStudlinAiDigestForPrompt`). New prediction features must follow the same two rules instead of picking a threshold by feel:
+
+* **Comparing or ranking a RATE** (done/missed, completion %): use `wilsonLowerBound` — the Wilson score interval, same method real "best comment" ranking systems use so a thin sample isn't trusted as much as a well-sampled one. No arbitrary minimum-sample cliff.
+* **Claiming ONE rate is confidently higher than another** (e.g. "you focus better in the evening"): use `confidentlyHigher` — a confidence interval on the difference between the two groups. Comparing two single-sample intervals for overlap looks like the obvious approach but is a documented over-correction that rejects real gaps too often — don't reinvent it.
+* **Continuous values** (minutes, not done/missed): a real minimum-sample gate before trusting a learned number over a generic default, same pattern `suggestDurationFor` already uses. Wilson doesn't apply to this shape of data.
+* A recommendation to *try* something untested (not a factual claim) can treat "no data yet" as neutral, not as evidence against it — don't force a claim-strength gate onto an explore/suggest feature.
+
+When genuinely unsure whether an insight is backed by enough evidence, don't ship it as confident copy. Ask, or say "not enough data yet" — both are better than a wrong plan the student can't trust next time.
+
+---
+
 # Color Direction
 
 Previous branding used dark themes.
