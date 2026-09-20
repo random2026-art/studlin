@@ -1916,6 +1916,22 @@ function applyCheckInRating(taskId, rating) {
     }
   }
 }
+const CONFIDENCE_Z_95 = 1.96;
+function wilsonLowerBound(successes, n) {
+  if (!n) return 0;
+  const p = successes / n, z = CONFIDENCE_Z_95;
+  const denom = 1 + z * z / n;
+  const center = p + z * z / (2 * n);
+  const margin = z * Math.sqrt((p * (1 - p) + z * z / (4 * n)) / n);
+  return Math.max(0, (center - margin) / denom);
+}
+function confidentlyHigher(successesA, nA, successesB, nB) {
+  if (!nA || !nB) return false;
+  const pA = successesA / nA, pB = successesB / nB;
+  const se = Math.sqrt(pA * (1 - pA) / nA + pB * (1 - pB) / nB);
+  const diffLowerBound = pA - pB - CONFIDENCE_Z_95 * se;
+  return diffLowerBound > 0;
+}
 const TIER0_MIN_BUCKET_SAMPLE = 8;
 const SHAKY_COMPLETION_CREDIT = 0.5;
 const RATING_COMPLETION_CREDIT = { 1: 0.25, 2: SHAKY_COMPLETION_CREDIT, 3: 1, 4: 1, 5: 1 };
@@ -1933,6 +1949,14 @@ function getBucketReliability(bucket, tier) {
   }
   if (all.length < TIER0_MIN_BUCKET_SAMPLE) return null;
   return all.reduce((s, e) => s + completionCredit(e), 0) / all.length;
+}
+function bucketCompletionStats(bucket) {
+  if (!bucket) return null;
+  const all = lsGet("completionLog", []).filter((e) => e.bucket === bucket);
+  if (all.length < TIER0_MIN_BUCKET_SAMPLE) return null;
+  const n = all.length;
+  const successes = all.reduce((s, e) => s + completionCredit(e), 0);
+  return { rate: successes / n, successes, n };
 }
 const MATRIX_MIN_SAMPLE = 4;
 function computeSubjectHourReliabilityMatrix(subjects) {
@@ -1987,7 +2011,6 @@ function dismissStrugglingBucket(bucketId) {
   dismissed[bucketId] = Date.now();
   lsSet("strugglingBucketDismissed", dismissed);
 }
-const PEAK_INSIGHT_MARGIN = 0.15;
 const PEAK_INSIGHT_COOLDOWN_MS = 14 * 864e5;
 function detectPeakHourInsight(prefs) {
   const declared = prefs.peakHourBuckets || [];
@@ -1995,12 +2018,12 @@ function detectPeakHourInsight(prefs) {
   const now = Date.now();
   const winStart = timeToMinutes(prefs.workStartTime);
   const winEnd = timeToMinutes(prefs.workEndTime);
-  const sampled = TIER0_HOUR_BUCKETS.filter((b) => b.startMin < winEnd && b.endMin > winStart).map((b) => ({ id: b.id, rate: getBucketReliability(b.id) })).filter((c) => c.rate !== null);
+  const sampled = TIER0_HOUR_BUCKETS.filter((b) => b.startMin < winEnd && b.endMin > winStart).map((b) => ({ id: b.id, stats: bucketCompletionStats(b.id) })).filter((c) => c.stats !== null);
   if (sampled.length < 2) return null;
-  const weakest = sampled.reduce((min, d) => d.rate < min.rate ? d : min, sampled[0]);
-  const candidates = sampled.filter((c) => c.id !== weakest.id && !declared.includes(c.id)).filter((c) => !(dismissed[c.id] && now - dismissed[c.id] < PEAK_INSIGHT_COOLDOWN_MS)).filter((c) => c.rate - weakest.rate >= PEAK_INSIGHT_MARGIN).sort((a, c) => c.rate - a.rate);
+  const weakest = sampled.reduce((min, d) => d.stats.rate < min.stats.rate ? d : min, sampled[0]);
+  const candidates = sampled.filter((c) => c.id !== weakest.id && !declared.includes(c.id)).filter((c) => !(dismissed[c.id] && now - dismissed[c.id] < PEAK_INSIGHT_COOLDOWN_MS)).filter((c) => confidentlyHigher(c.stats.successes, c.stats.n, weakest.stats.successes, weakest.stats.n)).sort((a, c) => c.stats.rate - a.stats.rate);
   if (candidates.length === 0) return null;
-  return { currentBucket: weakest.id, currentPct: weakest.rate, suggestedBucket: candidates[0].id, suggestedPct: candidates[0].rate };
+  return { currentBucket: weakest.id, currentPct: weakest.stats.rate, suggestedBucket: candidates[0].id, suggestedPct: candidates[0].stats.rate };
 }
 function dismissPeakHourInsight(bucketId) {
   const dismissed = lsGet("peakInsightDismissed", {});

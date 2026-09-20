@@ -3359,6 +3359,64 @@ function applyCheckInRating(taskId,rating){
 // includes both tiered and legacy untiered rows) exactly as before — old
 // entries with no `tier` key never match `e.tier===tier`, so they can only
 // ever contribute to the fallback, never get miscounted into a tier.
+//
+// ── CERTAINTY POLICY ─────────────────────────────────────────────────────
+// Direct user request (2026-09-20): Studlin should never present a guess
+// as a fact. This file already followed that instinct everywhere real
+// prediction happens (every function below returns null/"not enough
+// data" under a minimum sample size, and the AI chat layer only ever
+// receives these pre-gated facts, never raw numbers to interpret itself
+// -- see formatStudlinAiDigestForPrompt's "ONLY source of truth" rule).
+// What it didn't have was one shared, principled way to decide "is this
+// confident enough" -- every feature above hand-picked its own minimum
+// sample count and margin by feel (8 samples here, 4 there, a 0.15 gap
+// there), each a reasonable guess but not derived from anything. Two real
+// tools replace guessing by feel, for the two shapes this data actually
+// comes in:
+//   1. A single observed RATE (e.g. "how reliable is this bucket"): use
+//      wilsonLowerBound below -- the same method Reddit/HN-style "best
+//      comment" ranking uses (Evan Miller, "How Not To Sort By Average
+//      Rating," 2009) specifically so a thin sample's rate is trusted
+//      less than a well-sampled one, without an arbitrary cliff.
+//   2. Whether ONE rate is confidently HIGHER than ANOTHER (e.g. "is
+//      evening really better than morning, not just noise"): use
+//      confidentlyHigher below. Comparing two single-sample Wilson
+//      intervals for overlap looks like the obvious extension of #1, but
+//      it's a well-documented statistical over-correction — it rejects
+//      real, meaningful gaps far more often than it should (verified
+//      directly against this file's own test data: a 50-point gap at 8
+//      samples each still has overlapping individual Wilson intervals).
+//      The textbook-correct tool for "is the GAP between two groups
+//      real" is a confidence interval on the DIFFERENCE itself.
+// Neither tool applies to continuous data (minutes, not done/missed) --
+// suggestDurationFor's existing minimum-sample-then-weighted-median
+// pattern is the right approach there and is unchanged.
+// Also deliberately NOT applied everywhere a rate is compared:
+// detectStrugglingBucket's candidate ranking (below) treats an
+// unsampled alternative as neutral (0.5), not "confidently bad" --
+// that's a recommend/explore context ("try this instead"), not a factual
+// claim, and confidentlyHigher's job is specifically to gate claims.
+// Using it there would bias against ever suggesting a genuinely
+// untested time slot, which is the wrong instinct for that feature.
+const CONFIDENCE_Z_95=1.96;
+function wilsonLowerBound(successes,n){
+  if(!n)return 0;
+  const p=successes/n,z=CONFIDENCE_Z_95;
+  const denom=1+z*z/n;
+  const center=p+z*z/(2*n);
+  const margin=z*Math.sqrt((p*(1-p)+z*z/(4*n))/n);
+  return Math.max(0,(center-margin)/denom);
+}
+// successes may be fractional (credit-weighted, see completionCredit) --
+// an accepted generalization of the binomial formula, not textbook-exact,
+// but degrades the same way the existing weighted-average already does.
+function confidentlyHigher(successesA,nA,successesB,nB){
+  if(!nA||!nB)return false;
+  const pA=successesA/nA,pB=successesB/nB;
+  const se=Math.sqrt(pA*(1-pA)/nA+pB*(1-pB)/nB);
+  const diffLowerBound=(pA-pB)-CONFIDENCE_Z_95*se;
+  return diffLowerBound>0;
+}
 const TIER0_MIN_BUCKET_SAMPLE=8;
 const SHAKY_COMPLETION_CREDIT=0.5;
 // 2026-08-19: e.rating can now be a 1-5 post-session check-in value (see
@@ -3383,6 +3441,18 @@ function getBucketReliability(bucket,tier){
   }
   if(all.length<TIER0_MIN_BUCKET_SAMPLE)return null;
   return all.reduce((s,e)=>s+completionCredit(e),0)/all.length;
+}
+// Same untiered aggregate as getBucketReliability, but also exposes the
+// raw successes/n a real confidence comparison needs (confidentlyHigher
+// above) -- getBucketReliability itself is left untouched since other
+// callers depend on its exact existing (rate-or-null) contract.
+function bucketCompletionStats(bucket){
+  if(!bucket)return null;
+  const all=lsGet("completionLog",[]).filter(e=>e.bucket===bucket);
+  if(all.length<TIER0_MIN_BUCKET_SAMPLE)return null;
+  const n=all.length;
+  const successes=all.reduce((s,e)=>s+completionCredit(e),0);
+  return {rate:successes/n,successes,n};
 }
 // Minimum samples per subject×bucket cell before showing a real reliability
 // number instead of "not enough data yet" -- deliberately lower than
@@ -3449,6 +3519,11 @@ function detectStrugglingBucket(prefs){
   // (same reachability constraint the peak-hour fix respects — no point
   // suggesting a bucket that can't be placed in either), highest known
   // reliability first, neutral 0.5 for buckets with no data yet.
+  // Deliberately NOT run through confidentlyHigher (see CERTAINTY POLICY
+  // above) -- this is picking the best reachable alternative to try, not
+  // asserting a fact about it, so treating an unsampled bucket as neutral
+  // (worth trying) rather than confidently-worse is the right instinct
+  // here, unlike detectPeakHourInsight's actual claim below.
   const candidates=TIER0_HOUR_BUCKETS.filter(b=>b.id!==struggling.id&&b.startMin<winEnd&&b.endMin>winStart);
   if(candidates.length===0)return null;
   candidates.sort((a,c)=>{
@@ -3472,7 +3547,9 @@ function dismissStrugglingBucket(bucketId){
 // "Studlin learned your best hours" becomes something that can actually
 // happen from the first few weeks of real use, not something the student
 // has to seed by guessing first.
-const PEAK_INSIGHT_MARGIN=0.15; // meaningfully better, not just noise
+// Real confidence comparison (see CERTAINTY POLICY, confidentlyHigher)
+// instead of a flat "gap >= 0.15" guess -- adapts to sample size instead
+// of demanding the same fixed gap whether a bucket has 8 samples or 80.
 const PEAK_INSIGHT_COOLDOWN_MS=14*86400000;
 function detectPeakHourInsight(prefs){
   const declared=prefs.peakHourBuckets||[]; // may still be empty forever now -- only ever populated by accepting a suggestion below
@@ -3482,17 +3559,17 @@ function detectPeakHourInsight(prefs){
   const winEnd=timeToMinutes(prefs.workEndTime);
   const sampled=TIER0_HOUR_BUCKETS
     .filter(b=>b.startMin<winEnd&&b.endMin>winStart)
-    .map(b=>({id:b.id,rate:getBucketReliability(b.id)}))
-    .filter(c=>c.rate!==null);
+    .map(b=>({id:b.id,stats:bucketCompletionStats(b.id)}))
+    .filter(c=>c.stats!==null);
   if(sampled.length<2)return null; // need at least two real data points to have a gap at all
-  const weakest=sampled.reduce((min,d)=>d.rate<min.rate?d:min,sampled[0]);
+  const weakest=sampled.reduce((min,d)=>d.stats.rate<min.stats.rate?d:min,sampled[0]);
   const candidates=sampled
     .filter(c=>c.id!==weakest.id&&!declared.includes(c.id))
     .filter(c=>!(dismissed[c.id]&&now-dismissed[c.id]<PEAK_INSIGHT_COOLDOWN_MS))
-    .filter(c=>c.rate-weakest.rate>=PEAK_INSIGHT_MARGIN)
-    .sort((a,c)=>c.rate-a.rate);
+    .filter(c=>confidentlyHigher(c.stats.successes,c.stats.n,weakest.stats.successes,weakest.stats.n))
+    .sort((a,c)=>c.stats.rate-a.stats.rate);
   if(candidates.length===0)return null;
-  return {currentBucket:weakest.id,currentPct:weakest.rate,suggestedBucket:candidates[0].id,suggestedPct:candidates[0].rate};
+  return {currentBucket:weakest.id,currentPct:weakest.stats.rate,suggestedBucket:candidates[0].id,suggestedPct:candidates[0].stats.rate};
 }
 function dismissPeakHourInsight(bucketId){
   const dismissed=lsGet("peakInsightDismissed",{});
