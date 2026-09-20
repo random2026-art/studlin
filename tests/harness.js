@@ -103,7 +103,7 @@ function loadStudlinModule(options) {
     "detectStrugglingBucket","dismissStrugglingBucket","TIER0_HOUR_BUCKETS","PEAK_BUCKET_LABELS",
     "detectUnscheduledDueSoon","dismissUnscheduledDueSoon",
     "getFillPromptDismissState","isFillPromptSuppressed","recordFillPromptDismiss","recordFillPromptAccept",
-    "logCompletionOutcome","getBucketReliability","setSchedulePreferences","applyStudyStylePrefs","applySessionOrderPreference",
+    "logCompletionOutcome","getBucketReliability","bucketCompletionStats","wilsonLowerBound","confidentlyHigher","setSchedulePreferences","applyStudyStylePrefs","applySessionOrderPreference",
     "trimCompletionLog","COMPLETION_LOG_CAP","DataStore",
     "computeSubjectHourReliabilityMatrix","MATRIX_MIN_SAMPLE","computeReadinessTrajectory","computeAttentionBalance",
     "applyCheckInRating","computeExamReadiness","canGenQuiz","recordQuizGen",

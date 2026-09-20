@@ -2379,6 +2379,52 @@ describe("detectPeakHourInsight (all-time gap between two real, well-sampled buc
   });
 });
 
+describe("wilsonLowerBound + confidentlyHigher (real confidence math replacing the old flat-margin guess)", () => {
+  test("wilsonLowerBound is conservative with little data even at a 100% observed rate", () => {
+    const m = loadStudlinModule();
+    // 3/3 done -- perfect on paper, but barely any evidence.
+    const lb = m.wilsonLowerBound(3, 3);
+    assert.ok(lb > 0 && lb < 0.6, `expected a conservative lower bound, got ${lb}`);
+  });
+
+  test("wilsonLowerBound converges toward the raw rate as samples grow", () => {
+    const m = loadStudlinModule();
+    const thin = m.wilsonLowerBound(9, 10); // 90%, n=10
+    const thick = m.wilsonLowerBound(900, 1000); // same 90%, n=1000
+    assert.ok(thick > thin, "more evidence at the same rate should raise the confident floor");
+    assert.ok(thick > 0.85, "large-sample lower bound should sit close to the true 90% rate");
+  });
+
+  test("confidentlyHigher requires a real, evidence-backed gap -- a 50pt gap at n=8 each is confident", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.confidentlyHigher(7, 8, 3, 8), true); // 87.5% vs 37.5%
+  });
+
+  test("confidentlyHigher rejects a small gap even though the raw rates differ -- matches detectPeakHourInsight's own 12.5pt-gap case", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.confidentlyHigher(7, 8, 6, 8), false); // 87.5% vs 75%
+  });
+
+  test("confidentlyHigher correctly says yes for the 50pt gap even though the two buckets' own individual Wilson lower bounds still overlap -- documents why single-interval overlap (a common but over-conservative shortcut) isn't the tool used here", () => {
+    const m = loadStudlinModule();
+    // afternoon 7/8 (87.5%) vs morning 3/8 (37.5%): morning's own lower
+    // bound is still well below afternoon's own lower bound, i.e. eyeballing
+    // "do these two single-sample intervals overlap" would be ambiguous at
+    // best -- the real answer comes from testing the DIFFERENCE, not the
+    // two intervals separately.
+    const morningLower = m.wilsonLowerBound(3, 8);
+    const afternoonLower = m.wilsonLowerBound(7, 8);
+    assert.ok(morningLower < afternoonLower, "sanity check: afternoon's own floor is higher than morning's");
+    assert.equal(m.confidentlyHigher(7, 8, 3, 8), true, "the difference-of-proportions test still correctly confirms this real gap");
+  });
+
+  test("confidentlyHigher is false with zero samples on either side", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.confidentlyHigher(5, 0, 3, 8), false);
+    assert.equal(m.confidentlyHigher(5, 8, 0, 0), false);
+  });
+});
+
 describe("getBucketReliability + applyCheckInRating (session-quality signal, regression: a 'shaky' self-rated completion used to count identically to a great one)", () => {
   test("a rated 'shaky' completion counts as partial credit, not full credit like an unrated or 'solid' one", () => {
     const m = loadStudlinModule();
