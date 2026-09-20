@@ -28,11 +28,13 @@ Open issues tracked in one place instead of memory. Remove an item once it's fix
 
 ## 3. "Study with spaced repetition" overclaims the feature
 
-**Status:** Fixed and merged to main (app copy). `index.html`'s comparison table still overclaims — separate, unscheduled fix.
+**Status:** Fully fixed on `feat/fsrs-and-duration-confidence` (pushed, not yet merged). `index.html`'s comparison table copy was checked and no longer contains the overclaimed line at all (removed independently, in a later landing-page edit, before this fix landed) — nothing left to update there.
 
-**Where:** `studlin-app.jsx`'s `Flashcards` page header (was "Study with spaced repetition", now "Study now, or schedule reviews before an exam"). `index.html`'s comparison table still has the same overclaim ("Active recall and spaced repetition built into every deck") — not touched, out of scope for that branch.
+**Where:** `studlin-app.jsx`'s `Flashcards` (rating buttons + the new FSRS block right before `computeReviewOffsets`).
 
-**Why it's false:** card ratings (Missed/Hard/Good/Mastered) are cosmetic — nothing reads them back to schedule anything. The only real scheduling is session-level: if a deck is linked to an exam, `computeReviewDates`/`computeReviewOffsets` propose calendar review sessions before the exam date. True spaced repetition would track each card's own difficulty/recall history and compute a per-card next-review interval (SM-2/Anki-style) — no such per-card tracking exists anywhere in this codebase.
+**Original problem:** card ratings (Missed/Hard/Good/Mastered) were cosmetic — nothing read them back to schedule anything. The only real scheduling was session-level: if a deck was linked to an exam, `computeReviewDates`/`computeReviewOffsets` proposed calendar review sessions before the exam date. True spaced repetition needed each card's own difficulty/recall history driving its own next-review interval.
+
+**Fix:** real per-card FSRS (Free Spaced Repetition Scheduler) — each card now gets its own stability/difficulty estimate and due date from a power-law forgetting-curve model, computed via `fsrsReviewCard` on every rating and persisted back onto the card. Formulas/default parameters transcribed from and verified against the actual open-source reference implementation. Session-level exam-linked review scheduling (`computeReviewDates`) is untouched and coexists with this — that's still "when to study this deck," FSRS is "which cards need it most." Full test coverage in `tests/fsrs-spaced-repetition.test.js`.
 
 ## 4. App-open can fire three stacked popups after missed blocks
 
