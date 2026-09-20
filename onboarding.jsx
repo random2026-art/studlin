@@ -1,5 +1,24 @@
 const { useState, useEffect, useRef } = React;
 
+// ─── BRAND MARK ────────────────────────────────────────────────────────────────
+// Same block-grid "S" monogram as studlin-app.jsx's own StudlinLogoMark --
+// duplicated rather than shared since this is a separate standalone bundle,
+// same convention every other cross-bundle duplication in this app already
+// uses. Keep in sync by hand if the mark ever changes; see favicon.svg/
+// logo-symbol.svg for the canonical source.
+function StudlinLogoMark({size=28}){
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" style={{flexShrink:0,display:"block"}}>
+      <rect width="32" height="32" rx="7" fill="#123A66"/>
+      <path d="M6,2 L22,2 L22,10 L6,10 A4,4 0 0 1 6,2 Z" fill="#FFFFFF"/>
+      <rect x="24" y="2" width="6" height="8" rx="2.2" fill="#FF7A59"/>
+      <rect x="2" y="12" width="6" height="8" rx="2.2" fill="#93C5FD"/>
+      <path d="M10,12 L26,12 A4,4 0 0 1 26,20 L10,20 Z" fill="#FFFFFF"/>
+      <path d="M6,22 L22,22 L22,30 L6,30 A4,4 0 0 1 6,22 Z" fill="#FFFFFF"/>
+      <rect x="24" y="22" width="6" height="8" rx="2.2" fill="#2563EB"/>
+    </svg>
+  );
+}
 // ─── ICONS ──────────────────────────────────────────────────────────────────
 const Ic = {
   google: <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84c-.21 1.13-.84 2.08-1.79 2.72v2.26h2.9c1.7-1.56 2.69-3.87 2.69-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.95-2.18l-2.9-2.26c-.8.54-1.83.86-3.05.86-2.35 0-4.34-1.59-5.05-3.72H.96v2.33A8.997 8.997 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.95 10.7c-.18-.54-.28-1.12-.28-1.7s.1-1.16.28-1.7V4.97H.96A8.996 8.996 0 0 0 0 9c0 1.45.35 2.82.96 4.03L3.95 10.7z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.51.45 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0 5.48 0 2.44 2.02.96 4.97L3.95 7.3C4.66 5.17 6.65 3.58 9 3.58z"/></svg>,
@@ -148,7 +167,7 @@ function LeftRail({ step, state }) {
     return (
       <aside className="rail">
         <div className="brand">
-          <div style={{width:34,height:34,borderRadius:8,background:"#9EC83D",display:"grid",placeItems:"center",fontSize:17,fontWeight:800,color:"#14342A"}}>S</div>
+          <StudlinLogoMark size={34} />
           <span className="name">studlin</span>
         </div>
         <div className="rail-icon">{Ic.userPlus}</div>
@@ -166,7 +185,7 @@ function LeftRail({ step, state }) {
   return (
     <aside className="rail">
       <div className="brand">
-        <div style={{width:34,height:34,borderRadius:8,background:"#9EC83D",display:"grid",placeItems:"center",fontSize:17,fontWeight:800,color:"#14342A"}}>S</div>
+        <StudlinLogoMark size={34} />
         <span className="name">studlin</span>
       </div>
       <div className="rail-icon">{Ic.userPlus}</div>

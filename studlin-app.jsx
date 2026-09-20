@@ -155,6 +155,27 @@ applyTheme(
   (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-density')) || 'Comfortable'
 );
 
+// ─── BRAND MARK ────────────────────────────────────────────────────────────────
+// Real logomark (block-grid "S" monogram, semicircle end-caps), replacing the
+// old plain lime-square-plus-letter placeholder every "S studlin" spot used
+// to render inline. New palette: Navy #123A66 (foundation), Coral Orange
+// #FF7A59 (energy), Sky Blue #93C5FD (clarity), Cobalt Blue #2563EB
+// (confidence) -- see favicon.svg/logo-symbol.svg for the standalone assets
+// this mirrors exactly. Defined once here since 3 separate spots in this
+// file used to each hand-roll the same placeholder div independently.
+function StudlinLogoMark({size=28}){
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" style={{flexShrink:0,display:"block"}}>
+      <rect width="32" height="32" rx="7" fill="#123A66"/>
+      <path d="M6,2 L22,2 L22,10 L6,10 A4,4 0 0 1 6,2 Z" fill="#FFFFFF"/>
+      <rect x="24" y="2" width="6" height="8" rx="2.2" fill="#FF7A59"/>
+      <rect x="2" y="12" width="6" height="8" rx="2.2" fill="#93C5FD"/>
+      <path d="M10,12 L26,12 A4,4 0 0 1 26,20 L10,20 Z" fill="#FFFFFF"/>
+      <path d="M6,22 L22,22 L22,30 L6,30 A4,4 0 0 1 6,22 Z" fill="#FFFFFF"/>
+      <rect x="24" y="22" width="6" height="8" rx="2.2" fill="#2563EB"/>
+    </svg>
+  );
+}
 // ─── ICON LIBRARY (SVG, no emoji) ─────────────────────────────────────────────
 const ic = (path,size=16,vb="0 0 24 24") => (
   <svg width={size} height={size} viewBox={vb} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0,display:"block"}}>{path}</svg>
@@ -38624,7 +38645,7 @@ function SharedChatView({shareId}){
     <div style={{minHeight:"100vh",background:bg,fontFamily:font,color:text}}>
       <div style={{borderBottom:`1px solid rgba(255,255,255,0.07)`,padding:"14px 24px",display:"flex",alignItems:"center",justifyContent:"space-between",background:bg,position:"sticky",top:0,zIndex:10}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <div style={{width:28,height:28,background:lime,borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,color:"#0E1F18",fontSize:14}}>S</div>
+          <StudlinLogoMark size={28} />
           <span style={{fontSize:15,fontWeight:700,color:text,letterSpacing:"-0.02em"}}>Studlin</span>
         </div>
         <a href="/app" style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 16px",borderRadius:99,background:lime,color:"#0E1F18",fontSize:13,fontWeight:700,textDecoration:"none"}}>Try Studlin</a>
@@ -38634,7 +38655,7 @@ function SharedChatView({shareId}){
         {(chat.msgs||[]).map((m,i)=>(
           <div key={i} style={{display:"flex",gap:12,alignItems:"flex-start",marginBottom:24,flexDirection:m.r==="user"?"row-reverse":"row"}}>
             {m.r==="ai"
-              ?<div style={{width:28,height:28,borderRadius:7,background:lime,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,color:"#0E1F18",fontSize:13,flexShrink:0,marginTop:2}}>S</div>
+              ?<div style={{flexShrink:0,marginTop:2}}><StudlinLogoMark size={28} /></div>
               :<div style={{width:28,height:28,borderRadius:"50%",background:lime+"22",border:`1px solid ${lime}44`,display:"flex",alignItems:"center",justifyContent:"center",color:lime,flexShrink:0,marginTop:2}}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
             }
             <div style={{maxWidth:"80%",fontSize:14,lineHeight:1.75,color:text,background:m.r==="user"?card:"transparent",padding:m.r==="user"?"12px 16px":0,borderRadius:m.r==="user"?12:0,whiteSpace:m.r==="user"?"pre-wrap":undefined}}>{m.r==="ai"?renderStudlinAiMarkdown(m.t):m.t}</div>
@@ -40745,9 +40766,7 @@ function App() {
         <div style={{display:"flex",alignItems:"center",gap:10,padding:"0 6px",marginBottom:20,justifyContent:navExpanded?"space-between":"center"}}>
           {navExpanded&&(
             <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
-              <div style={{width:28,height:28,background:T.lime,borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                <span style={{fontSize:15,fontWeight:800,color:T.ink,fontFamily:T.font}}>S</span>
-              </div>
+              <StudlinLogoMark size={28} />
               <span style={{fontSize:16,fontWeight:700,color:sidebarText,letterSpacing:"-0.02em",fontFamily:T.font,whiteSpace:"nowrap"}}>Studlin</span>
             </div>
           )}
