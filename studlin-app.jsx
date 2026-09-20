@@ -126,10 +126,14 @@ const ACCENTS={
   // rest of this object.
   Pink:  {dk:{lime:"#E8829E",limeDk:"#C95F7C",limeLt:"#FFC9D2"}, lt:{lime:"#C23F68",limeDk:"#9E2F52",limeLt:"#FFC9D2"}},
   Slate: {dk:{lime:"#9AA5B1",limeDk:"#7A8592",limeLt:"#C9D1D9"}, lt:{lime:"#5B6672",limeDk:"#454E58",limeLt:"#C9D1D9"}},
+  // New default (see the reset6 migration below) — the "Confidence" blue
+  // from the logo's Navy/Coral/Sky/Cobalt palette, so the app's own accent
+  // matches the brand mark instead of an unrelated 6th color.
+  Cobalt:{dk:{lime:"#6E93F0",limeDk:"#4A72D6",limeLt:"#C9D9FB"}, lt:{lime:"#2563EB",limeDk:"#1D4ECB",limeLt:"#C9D9FB"}},
 };
 function applyTheme(name, accent, density) {
   Object.assign(T, name === 'light' ? lightT : darkT);
-  const acc=ACCENTS[accent]||ACCENTS.Lime;
+  const acc=ACCENTS[accent]||ACCENTS.Cobalt;
   const a=name==='light'?acc.lt:acc.dk;
   T.lime=a.lime; T.limeDk=a.limeDk; T.limeLt=a.limeLt;
   T.glow=hexA(a.lime, name==='light'?0.18:0.22);
@@ -151,10 +155,31 @@ function applyTheme(name, accent, density) {
 }
 applyTheme(
   (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-theme')) || 'light',
-  (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-accent')) || 'Lime',
+  (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-accent')) || 'Cobalt',
   (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-density')) || 'Comfortable'
 );
 
+// ─── BRAND MARK ────────────────────────────────────────────────────────────────
+// Real logomark (block-grid "S" monogram, semicircle end-caps), replacing the
+// old plain lime-square-plus-letter placeholder every "S studlin" spot used
+// to render inline. New palette: Navy #123A66 (foundation), Coral Orange
+// #FF7A59 (energy), Sky Blue #93C5FD (clarity), Cobalt Blue #2563EB
+// (confidence) -- see favicon.svg/logo-symbol.svg for the standalone assets
+// this mirrors exactly. Defined once here since 3 separate spots in this
+// file used to each hand-roll the same placeholder div independently.
+function StudlinLogoMark({size=28}){
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" style={{flexShrink:0,display:"block"}}>
+      <rect width="32" height="32" rx="7" fill="#123A66"/>
+      <path d="M6,2 L22,2 L22,10 L6,10 A4,4 0 0 1 6,2 Z" fill="#FFFFFF"/>
+      <rect x="24" y="2" width="6" height="8" rx="2.2" fill="#FF7A59"/>
+      <rect x="2" y="12" width="6" height="8" rx="2.2" fill="#93C5FD"/>
+      <path d="M10,12 L26,12 A4,4 0 0 1 26,20 L10,20 Z" fill="#FFFFFF"/>
+      <path d="M6,22 L22,22 L22,30 L6,30 A4,4 0 0 1 6,22 Z" fill="#FFFFFF"/>
+      <rect x="24" y="22" width="6" height="8" rx="2.2" fill="#2563EB"/>
+    </svg>
+  );
+}
 // ─── ICON LIBRARY (SVG, no emoji) ─────────────────────────────────────────────
 const ic = (path,size=16,vb="0 0 24 24") => (
   <svg width={size} height={size} viewBox={vb} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0,display:"block"}}>{path}</svg>
@@ -35240,7 +35265,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
 // Appearance/Notifications/etc, and shadowing that with a same-named prop
 // would be a silent, easy-to-miss bug (or a hard compile error, since both
 // are declared with const in the same scope).
-function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}, onOpenRoutineCenter=()=>{}, setScheduleSettingsOpen=()=>{}, setPricingOpen=()=>{}, setActivePage=()=>{}, pendingOpenSetting=null, onSettingOpened=()=>{}}) {
+function SettingsTab({theme="dark", setTheme=()=>{}, accent="Cobalt", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}, onOpenRoutineCenter=()=>{}, setScheduleSettingsOpen=()=>{}, setPricingOpen=()=>{}, setActivePage=()=>{}, pendingOpenSetting=null, onSettingOpened=()=>{}}) {
   const [active,setActive]=useState(pendingOpenSetting==="shareAvailability"?"Privacy":"General");
   // Deep-link landing from a push notification (see App's own
   // pendingOpenSetting/askFriendsToShareAvailability) -- jumps to the
@@ -36258,7 +36283,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   // still had the pre-removal code. With both gone, the "Study
   // preferences" tab (and its Settings nav entry) has nothing legitimate
   // left in it -- removed below rather than left rendering empty.
-  const accents=[{n:"Lime",c:"#AECE5E"},{n:"Forest",c:"#3E9576"},{n:"Sky",c:"#4F95D6"},{n:"Lilac",c:"#9474C9"},{n:"Peach",c:"#D07C4C"},{n:"Pink",c:"#D9648A"},{n:"Slate",c:"#7A8592"}];
+  const accents=[{n:"Cobalt",c:"#2563EB"},{n:"Lime",c:"#AECE5E"},{n:"Forest",c:"#3E9576"},{n:"Sky",c:"#4F95D6"},{n:"Lilac",c:"#9474C9"},{n:"Peach",c:"#D07C4C"},{n:"Pink",c:"#D9648A"},{n:"Slate",c:"#7A8592"}];
   const [mgmtSubjs,setMgmtSubjs]=useState(()=>getSubjects().map(s=>({...s})));
   const [mgmtSaved,setMgmtSaved]=useState(false);
   const [confirmClearSubjs,setConfirmClearSubjs]=useState(false);
@@ -38624,7 +38649,7 @@ function SharedChatView({shareId}){
     <div style={{minHeight:"100vh",background:bg,fontFamily:font,color:text}}>
       <div style={{borderBottom:`1px solid rgba(255,255,255,0.07)`,padding:"14px 24px",display:"flex",alignItems:"center",justifyContent:"space-between",background:bg,position:"sticky",top:0,zIndex:10}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <div style={{width:28,height:28,background:lime,borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,color:"#0E1F18",fontSize:14}}>S</div>
+          <StudlinLogoMark size={28} />
           <span style={{fontSize:15,fontWeight:700,color:text,letterSpacing:"-0.02em"}}>Studlin</span>
         </div>
         <a href="/app" style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 16px",borderRadius:99,background:lime,color:"#0E1F18",fontSize:13,fontWeight:700,textDecoration:"none"}}>Try Studlin</a>
@@ -38634,7 +38659,7 @@ function SharedChatView({shareId}){
         {(chat.msgs||[]).map((m,i)=>(
           <div key={i} style={{display:"flex",gap:12,alignItems:"flex-start",marginBottom:24,flexDirection:m.r==="user"?"row-reverse":"row"}}>
             {m.r==="ai"
-              ?<div style={{width:28,height:28,borderRadius:7,background:lime,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,color:"#0E1F18",fontSize:13,flexShrink:0,marginTop:2}}>S</div>
+              ?<div style={{flexShrink:0,marginTop:2}}><StudlinLogoMark size={28} /></div>
               :<div style={{width:28,height:28,borderRadius:"50%",background:lime+"22",border:`1px solid ${lime}44`,display:"flex",alignItems:"center",justifyContent:"center",color:lime,flexShrink:0,marginTop:2}}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
             }
             <div style={{maxWidth:"80%",fontSize:14,lineHeight:1.75,color:text,background:m.r==="user"?card:"transparent",padding:m.r==="user"?"12px 16px":0,borderRadius:m.r==="user"?12:0,whiteSpace:m.r==="user"?"pre-wrap":undefined}}>{m.r==="ai"?renderStudlinAiMarkdown(m.t):m.t}</div>
@@ -38984,9 +39009,18 @@ function App() {
   const [accent,setAccentState]=useState(()=>{
     if(typeof localStorage!=="undefined"){
       if(!localStorage.getItem("studlin-accent-reset5")){localStorage.setItem("studlin-accent","Lime");localStorage.setItem("studlin-accent-reset5","1");}
-      return localStorage.getItem("studlin-accent")||"Lime";
+      // New brand default is Cobalt (matches the logo's blue palette), not
+      // green. One-time migration, same shape as reset5 above -- but this
+      // one only moves someone off Lime if they never actually chose it
+      // (still on the old default), never overriding a deliberate pick of
+      // Lime or any other accent in Settings.
+      if(!localStorage.getItem("studlin-accent-reset6")){
+        if(localStorage.getItem("studlin-accent")==="Lime")localStorage.setItem("studlin-accent","Cobalt");
+        localStorage.setItem("studlin-accent-reset6","1");
+      }
+      return localStorage.getItem("studlin-accent")||"Cobalt";
     }
-    return "Lime";
+    return "Cobalt";
   });
   const [density,setDensityState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-density"))||"Comfortable");
   applyTheme(theme, accent, density); // mutate T on every render so all child components re-read
@@ -40745,9 +40779,7 @@ function App() {
         <div style={{display:"flex",alignItems:"center",gap:10,padding:"0 6px",marginBottom:20,justifyContent:navExpanded?"space-between":"center"}}>
           {navExpanded&&(
             <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
-              <div style={{width:28,height:28,background:T.lime,borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                <span style={{fontSize:15,fontWeight:800,color:T.ink,fontFamily:T.font}}>S</span>
-              </div>
+              <StudlinLogoMark size={28} />
               <span style={{fontSize:16,fontWeight:700,color:sidebarText,letterSpacing:"-0.02em",fontFamily:T.font,whiteSpace:"nowrap"}}>Studlin</span>
             </div>
           )}
