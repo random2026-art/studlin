@@ -7139,6 +7139,11 @@ function studyPlanReasoning(confidenceLevel,importanceLevel,materialCharCount,ha
 // study/task block is honestly worth scheduling at under 15 minutes, so
 // this also guards the untiered path against a handful of short entries
 // dragging the median below what's plausible.
+// Same generic number every caller already falls back to on a null return
+// (suggestDurationFor(...)||25, everywhere this file uses it) -- named here
+// too so the below-threshold blend shrinks toward the exact same anchor
+// instead of a second, possibly-drifting constant.
+const DURATION_GENERIC_DEFAULT=25;
 function suggestDurationFor(subject,kind,difficulty,minSamples){
   const minN=minSamples||TIER0_MIN_BUCKET_SAMPLE;
   // isGeneralTask excluded (2026-08-25) -- a Task ("do laundry") shares
@@ -7148,7 +7153,7 @@ function suggestDurationFor(subject,kind,difficulty,minSamples){
   // a subject someone occasionally tags a chore under would have its
   // duration-learning median quietly pulled toward that chore's length.
   const events=lsGet("events",[]).filter(e=>e.status==="done"&&e.timeSpent&&e.subject===subject&&e.kind===kind&&!e.isGeneralTask);
-  if(events.length<minN)return null;
+  if(events.length===0)return null; // truly nothing to go on -- caller's own ||25 applies
   // Quality-weight each sample by whether its own post-session check-in
   // said the time actually worked, using completionCredit -- the exact
   // same rating->weight table getBucketReliability already trusts
@@ -7181,6 +7186,19 @@ function suggestDurationFor(subject,kind,difficulty,minSamples){
     const mid=Math.floor(shares.length/2);
     return shares.length%2?shares[mid]:Math.round((shares[mid-1]+shares[mid])/2);
   };
+  // Below minN (but not zero), blend the real-but-thin median toward the
+  // generic default instead of discarding it outright -- the old
+  // behavior (null below minN, full trust at minN) was the exact same
+  // hard-cliff problem peak-hour's confidentlyHigher fixed for rate data
+  // (see CLAUDE.md's Certainty & Prediction Rules), just for a continuous
+  // value instead of a completion rate. Reaches the real median exactly
+  // AT minN, where the unchanged full-trust logic below takes over, so
+  // there's no discontinuity at the old cliff's boundary -- every
+  // existing well-sampled (>=minN) test case is untouched.
+  if(events.length<minN){
+    const weight=events.length/minN;
+    return Math.max(15,Math.round((weight*medianOf(events)+(1-weight)*DURATION_GENERIC_DEFAULT)/5)*5);
+  }
   if(difficulty!=null){
     const tier=difficultyTierOf({difficulty});
     const tiered=events.filter(e=>difficultyTierOf(e)===tier);

@@ -4192,10 +4192,11 @@ function studyPlanReasoning(confidenceLevel, importanceLevel, materialCharCount,
   if (hoursTargetAdjusted) lines.push("Adjusted to match the study time you asked for.");
   return lines;
 }
+const DURATION_GENERIC_DEFAULT = 25;
 function suggestDurationFor(subject, kind, difficulty, minSamples) {
   const minN = minSamples || TIER0_MIN_BUCKET_SAMPLE;
   const events = lsGet("events", []).filter((e) => e.status === "done" && e.timeSpent && e.subject === subject && e.kind === kind && !e.isGeneralTask);
-  if (events.length < minN) return null;
+  if (events.length === 0) return null;
   const completionLog = lsGet("completionLog", []);
   const creditByTaskId = /* @__PURE__ */ new Map();
   for (const row of completionLog) {
@@ -4212,6 +4213,10 @@ function suggestDurationFor(subject, kind, difficulty, minSamples) {
     const mid = Math.floor(shares.length / 2);
     return shares.length % 2 ? shares[mid] : Math.round((shares[mid - 1] + shares[mid]) / 2);
   };
+  if (events.length < minN) {
+    const weight = events.length / minN;
+    return Math.max(15, Math.round((weight * medianOf(events) + (1 - weight) * DURATION_GENERIC_DEFAULT) / 5) * 5);
+  }
   if (difficulty != null) {
     const tier = difficultyTierOf({ difficulty });
     const tiered = events.filter((e) => difficultyTierOf(e) === tier);
