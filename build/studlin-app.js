@@ -4087,6 +4087,69 @@ function resolveOrphanedCheckpoint(checkpoint, events) {
   const elapsedMins = Math.max(1, Math.min(checkpoint.totalMins || task.duration || 1, Math.round((checkpoint.focusElapsedSecs || 0) / 60)));
   return { task, elapsedMins, checkpoint };
 }
+const FSRS_PARAMETERS = [0.212, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194, 1e-3, 1.8722, 0.1666, 0.796, 1.4835, 0.0614, 0.2629, 1.6483, 0.6014, 1.8729, 0.5425, 0.0912, 0.0658, 0.1542];
+const FSRS_DECAY = -FSRS_PARAMETERS[20];
+const FSRS_FACTOR = Math.pow(0.9, 1 / FSRS_DECAY) - 1;
+const FSRS_DESIRED_RETENTION = 0.9;
+const FSRS_STABILITY_MIN = 1e-3;
+const FSRS_MIN_DIFFICULTY = 1, FSRS_MAX_DIFFICULTY = 10;
+const fsrsClampDifficulty = (d) => Math.min(Math.max(d, FSRS_MIN_DIFFICULTY), FSRS_MAX_DIFFICULTY);
+const fsrsClampStability = (s) => Math.max(s, FSRS_STABILITY_MIN);
+function fsrsRetrievability(stability, elapsedDays) {
+  if (!stability) return 0;
+  return Math.pow(1 + FSRS_FACTOR * Math.max(0, elapsedDays) / stability, FSRS_DECAY);
+}
+function fsrsInitialStability(rating) {
+  return fsrsClampStability(FSRS_PARAMETERS[rating - 1]);
+}
+function fsrsInitialDifficulty(rating) {
+  return fsrsClampDifficulty(FSRS_PARAMETERS[4] - Math.exp(FSRS_PARAMETERS[5] * (rating - 1)) + 1);
+}
+function fsrsNextDifficulty(difficulty, rating) {
+  const w = FSRS_PARAMETERS;
+  const easyBaseline = w[4] - Math.exp(w[5] * (4 - 1)) + 1;
+  const delta = -(w[6] * (rating - 3));
+  const damped = difficulty + (10 - difficulty) * delta / 9;
+  return fsrsClampDifficulty(w[7] * easyBaseline + (1 - w[7]) * damped);
+}
+function fsrsNextRecallStability(difficulty, stability, retrievability, rating) {
+  const w = FSRS_PARAMETERS;
+  const hardPenalty = rating === 2 ? w[15] : 1;
+  const easyBonus = rating === 4 ? w[16] : 1;
+  return stability * (1 + Math.exp(w[8]) * (11 - difficulty) * Math.pow(stability, -w[9]) * (Math.exp((1 - retrievability) * w[10]) - 1) * hardPenalty * easyBonus);
+}
+function fsrsNextForgetStability(difficulty, stability, retrievability) {
+  const w = FSRS_PARAMETERS;
+  return w[11] * Math.pow(difficulty, -w[12]) * (Math.pow(stability + 1, w[13]) - 1) * Math.exp((1 - retrievability) * w[14]);
+}
+function fsrsNextStability(difficulty, stability, retrievability, rating) {
+  const next = rating === 1 ? fsrsNextForgetStability(difficulty, stability, retrievability) : fsrsNextRecallStability(difficulty, stability, retrievability, rating);
+  return fsrsClampStability(next);
+}
+function fsrsNextIntervalDays(stability) {
+  const days = stability / FSRS_FACTOR * (Math.pow(FSRS_DESIRED_RETENTION, 1 / FSRS_DECAY) - 1);
+  return Math.max(1, Math.round(days));
+}
+function fsrsReviewCard(card, rating, now) {
+  const isNew = card.stability == null || card.difficulty == null;
+  let stability, difficulty;
+  if (isNew) {
+    stability = fsrsInitialStability(rating);
+    difficulty = fsrsInitialDifficulty(rating);
+  } else {
+    const elapsedDays = card.lastReview ? Math.max(0, (now - new Date(card.lastReview)) / 864e5) : 0;
+    const retrievability = fsrsRetrievability(card.stability, elapsedDays);
+    stability = fsrsNextStability(card.difficulty, card.stability, retrievability, rating);
+    difficulty = fsrsNextDifficulty(card.difficulty, rating);
+  }
+  const intervalDays = fsrsNextIntervalDays(stability);
+  const due = new Date(now.getTime() + intervalDays * 864e5);
+  return { ...card, stability, difficulty, lastReview: now.toISOString(), due: due.toISOString(), reps: (card.reps || 0) + 1, state: rating === 1 ? "relearning" : "review" };
+}
+function fsrsCardIsDue(card, now) {
+  if (!card.due) return true;
+  return new Date(card.due).getTime() <= now.getTime();
+}
 function computeReviewOffsets(daysUntil, desiredCount) {
   const count = Math.max(1, Math.min(6, desiredCount || 4));
   if (daysUntil < 0) return [];
@@ -8383,6 +8446,7 @@ function Flashcards({ setActive = () => {
   };
   const studyCards = studyDeck ? studyDeck.cards : [];
   const curCard = studyCards[idx];
+  const dueCardCount = studyDeck ? studyDeck.cards.filter((c) => fsrsCardIsDue(c, /* @__PURE__ */ new Date())).length : 0;
   return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(PH, { title: "Flashcards", sub: "Study now, or schedule reviews before an exam", action: /* @__PURE__ */ React.createElement(Btn, { onClick: () => setNewOpen(true) }, React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 6 } }, Icon.plus, "New deck")) }), showExamLinkTip && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, background: T.lime + "0d", border: `1px solid ${T.lime}33`, borderRadius: 12, padding: "12px 16px", marginBottom: 16 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 18, flexShrink: 0 } }, "\u{1F3AF}"), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: 12.5, color: T.text, lineHeight: 1.5 } }, /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, "Tip:"), " Link a deck to an exam on your calendar and Studlin schedules spaced review sessions for you, no cramming."), /* @__PURE__ */ React.createElement("button", { onClick: dismissExamLinkTip, style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 18, padding: "2px 6px", fontFamily: T.font, lineHeight: 1, flexShrink: 0 } }, "\xD7")), /* @__PURE__ */ React.createElement(
     Modal,
     {
@@ -8487,14 +8551,19 @@ function Flashcards({ setActive = () => {
     dSource === "file" && /* @__PURE__ */ React.createElement(Field, { label: "Upload files", hint: "AI reads the content and generates Q&A flashcards. Add as many files as you need \u2014 e.g. several chapters or lecture sets." }, /* @__PURE__ */ React.createElement("input", { type: "file", multiple: true, ref: fileRef, onChange: handleFile, accept: ".txt,.md,.csv,.pdf,.doc,.docx,.rtf,.png,.jpg,.jpeg,.webp,.gif", style: { display: "none" } }), extractProgress ? /* @__PURE__ */ React.createElement(ExtractionProgress, { ...extractProgress }) : /* @__PURE__ */ React.createElement("div", { onClick: () => fileRef.current && fileRef.current.click(), style: { border: "1px dashed " + T.borderHover, borderRadius: 10, padding: 22, textAlign: "center", background: T.card2, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { color: T.muted, marginBottom: 6, display: "flex", justifyContent: "center" } }, Icon.file), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, fontWeight: 500 } }, fileTexts.length > 0 ? fileTexts.length + " file" + (fileTexts.length !== 1 ? "s" : "") + " loaded \u2014 click to add more" : "Click to browse or drop files")), fileTexts.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4, marginTop: 8 } }, fileTexts.map((f) => /* @__PURE__ */ React.createElement("div", { key: f.name, style: { display: "flex", gap: 8, padding: "6px 10px", background: T.card2, borderRadius: 6, fontSize: 11, alignItems: "center" } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.text, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, f.name), /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, flexShrink: 0 } }, f.text.length, " chars"), /* @__PURE__ */ React.createElement("button", { onClick: () => removeFile(f.name), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", flexShrink: 0 } }, Icon.xmark))))),
     dSource === "record" && /* @__PURE__ */ React.createElement(Field, { label: "Record lecture", hint: "Speak or play audio \u2014 AI generates flashcards from what it hears." }, /* @__PURE__ */ React.createElement("div", { style: { border: "1px solid " + (recOn ? T.red + "55" : T.border), borderRadius: 10, padding: 18, textAlign: "center", background: recOn ? T.red + "0a" : T.card2 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: recOn ? stopRec : startRec, style: { width: 48, height: 48, borderRadius: "50%", border: "none", background: recOn ? T.red : T.lime, color: recOn ? "#fff" : T.ink, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 8 } }, recOn ? /* @__PURE__ */ React.createElement("span", { style: { width: 14, height: 14, background: "#fff", borderRadius: 3 } }) : MicIcon), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: recOn ? T.red : T.white } }, fmtRec(recSecs)), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, recOn ? "Recording... tap to stop" : "Tap to start"), recText && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.text, marginTop: 10, padding: "8px 10px", background: T.card, borderRadius: 6, textAlign: "left", maxHeight: 80, overflowY: "auto" } }, recText))),
     createDeckError && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: 4 } }, createDeckError)
-  ), /* @__PURE__ */ React.createElement(Pills, { tabs: ["study", "decks"], active: tab, onChange: setTab }), tab === "study" && (studyDeck && studyCards.length > 0 ? /* @__PURE__ */ React.createElement("div", { style: { maxWidth: 600, margin: "0 auto" } }, /* @__PURE__ */ React.createElement("button", { onClick: () => setActive("dashboard"), style: { background: "none", border: "none", color: T.muted, fontSize: 12.5, fontWeight: 600, fontFamily: T.font, cursor: "pointer", padding: "0 0 12px", display: "flex", alignItems: "center", gap: 6 } }, "\u2190 Back to Dashboard"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white } }, studyDeck.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Card ", idx + 1, " of ", studyCards.length)), /* @__PURE__ */ React.createElement("div", { onClick: () => setFlipped((f) => !f), style: { cursor: "pointer", userSelect: "none" } }, !flipped ? /* @__PURE__ */ React.createElement(Card, { style: { minHeight: 200, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: 32, background: T.card2 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 15, fontWeight: 600, color: T.white, lineHeight: 1.6, marginBottom: 12 } }, curCard ? curCard.q : "No question"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, letterSpacing: "0.03em" } }, "CLICK TO REVEAL")) : /* @__PURE__ */ React.createElement("div", { style: { background: T.lime, borderRadius: 10, minHeight: 200, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: 32 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: T.bg, lineHeight: 1.7, marginBottom: 10 } }, curCard ? curCard.a : "No answer"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.bg, opacity: 0.5 } }, "RATE YOUR RECALL"))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 14, justifyContent: "center" } }, flipped ? [["Missed", T.red], ["Hard", T.amber], ["Good", T.teal], ["Mastered", T.lime]].map(([l, c]) => /* @__PURE__ */ React.createElement("button", { key: l, onClick: () => {
-    if (l === "Good" || l === "Mastered") {
-      setDeckList((list) => {
-        const next = list.map((d) => d.id === studyDeck.id ? { ...d, done: Math.min(d.cards ? d.cards.length : d.count, (d.done || 0) + 1) } : d);
-        lsSet("decks", next);
-        return next;
+  ), /* @__PURE__ */ React.createElement(Pills, { tabs: ["study", "decks"], active: tab, onChange: setTab }), tab === "study" && (studyDeck && studyCards.length > 0 ? /* @__PURE__ */ React.createElement("div", { style: { maxWidth: 600, margin: "0 auto" } }, /* @__PURE__ */ React.createElement("button", { onClick: () => setActive("dashboard"), style: { background: "none", border: "none", color: T.muted, fontSize: 12.5, fontWeight: 600, fontFamily: T.font, cursor: "pointer", padding: "0 0 12px", display: "flex", alignItems: "center", gap: 6 } }, "\u2190 Back to Dashboard"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white } }, studyDeck.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Card ", idx + 1, " of ", studyCards.length)), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, marginBottom: 12 } }, dueCardCount > 0 ? dueCardCount + " card" + (dueCardCount === 1 ? "" : "s") + " due for review today" : "All caught up for today \u2014 keep reviewing if you'd like"), /* @__PURE__ */ React.createElement("div", { onClick: () => setFlipped((f) => !f), style: { cursor: "pointer", userSelect: "none" } }, !flipped ? /* @__PURE__ */ React.createElement(Card, { style: { minHeight: 200, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: 32, background: T.card2 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 15, fontWeight: 600, color: T.white, lineHeight: 1.6, marginBottom: 12 } }, curCard ? curCard.q : "No question"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, letterSpacing: "0.03em" } }, "CLICK TO REVEAL")) : /* @__PURE__ */ React.createElement("div", { style: { background: T.lime, borderRadius: 10, minHeight: 200, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: 32 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: T.bg, lineHeight: 1.7, marginBottom: 10 } }, curCard ? curCard.a : "No answer"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.bg, opacity: 0.5 } }, "RATE YOUR RECALL"))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 14, justifyContent: "center" } }, flipped ? [["Missed", T.red, 1], ["Hard", T.amber, 2], ["Good", T.teal, 3], ["Mastered", T.lime, 4]].map(([l, c, rating]) => /* @__PURE__ */ React.createElement("button", { key: l, onClick: () => {
+    const updatedCard = curCard ? fsrsReviewCard(curCard, rating, /* @__PURE__ */ new Date()) : null;
+    setDeckList((list) => {
+      const next = list.map((d) => {
+        if (d.id !== studyDeck.id) return d;
+        const cards = updatedCard ? d.cards.map((c2, ci) => ci === idx ? updatedCard : c2) : d.cards;
+        const done = l === "Good" || l === "Mastered" ? Math.min(d.cards ? d.cards.length : d.count, (d.done || 0) + 1) : d.done;
+        return { ...d, cards, done };
       });
-    }
+      lsSet("decks", next);
+      return next;
+    });
+    if (updatedCard) setStudyDeck((sd) => sd ? { ...sd, cards: sd.cards.map((c2, ci) => ci === idx ? updatedCard : c2) } : sd);
     setFlipped(false);
     setIdx((i) => (i + 1) % studyCards.length);
   }, style: { flex: 1, padding: "9px 0", borderRadius: 7, background: c + "14", color: c, border: "1px solid " + c + "33", cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: T.font } }, l)) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: () => {
@@ -8510,7 +8579,10 @@ function Flashcards({ setActive = () => {
     }, style: { position: "absolute", top: 12, right: 12, background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 14 } }, "x"), /* @__PURE__ */ React.createElement("div", { onDoubleClick: (e) => {
       e.stopPropagation();
       openEditDeck(d);
-    }, title: "Double-click to edit", style: { fontSize: 13, fontWeight: 700, color: T.white, marginBottom: 4 } }, d.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginBottom: 10 } }, d.cards ? d.cards.length : d.count, " cards", d.source === "imported" && /* @__PURE__ */ React.createElement("span", { style: { color: T.teal, fontWeight: 600 } }, " \xB7 from ", d.importedFrom)), (() => {
+    }, title: "Double-click to edit", style: { fontSize: 13, fontWeight: 700, color: T.white, marginBottom: 4 } }, d.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginBottom: 10 } }, d.cards ? d.cards.length : d.count, " cards", d.source === "imported" && /* @__PURE__ */ React.createElement("span", { style: { color: T.teal, fontWeight: 600 } }, " \xB7 from ", d.importedFrom), (() => {
+      const due = (d.cards || []).filter((c) => fsrsCardIsDue(c, /* @__PURE__ */ new Date())).length;
+      return due > 0 && /* @__PURE__ */ React.createElement("span", { style: { color: T.amber, fontWeight: 600 } }, " \xB7 ", due, " due");
+    })()), (() => {
       const allEvents = lsGet("events", []);
       const linkedExams = deckExamIds(d).map((id) => allEvents.find((e) => e.id === id)).filter(Boolean);
       return /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 10 } }, linkedExams.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, marginBottom: 6, flexWrap: "wrap" } }, linkedExams.map((ex) => /* @__PURE__ */ React.createElement("span", { key: ex.id, style: { fontSize: 10.5, fontWeight: 700, padding: "3px 8px", borderRadius: 99, background: T.lime + "14", color: T.lime, border: `1px solid ${T.lime}33` } }, "Exam: ", ex.title, " \xB7 ", ex.date)), /* @__PURE__ */ React.createElement("button", { onClick: (e) => {

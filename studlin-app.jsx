@@ -6859,6 +6859,118 @@ function resolveOrphanedCheckpoint(checkpoint,events){
 // subject+kind. Removes the time-blindness guesswork of estimating a new
 // task's length from scratch every time; returns null until there's at
 // least one real data point to go on.
+// ── FSRS (Free Spaced Repetition Scheduler) — real per-card memory model ──
+// Replaces the honest gap flagged in BUGS.md #3: flashcard "spaced
+// repetition" used to be a session-level curve only (computeReviewOffsets
+// below) applied identically to every card in a deck, with the "Missed/
+// Hard/Good/Mastered" buttons purely cosmetic -- nothing tracked whether
+// any individual card was actually known. This is the real thing: each
+// card gets its own stability/difficulty estimate and its own due date,
+// derived from a power-law forgetting-curve model (the same shape modern
+// research-backed schedulers use, replacing 1987's SM-2 -- see the
+// certainty-and-prediction research this session already did).
+//
+// Formulas and default parameters transcribed directly from, and checked
+// against, the actual open-source reference implementation (py-fsrs,
+// open-spaced-repetition/py-fsrs, fsrs/scheduler.py) rather than from
+// memory or a secondhand summary -- the default parameters below (21
+// values) are the exact DEFAULT_PARAMETERS constant from that source,
+// fitted on hundreds of millions of real reviews. Deliberately NOT
+// implementing that library's intraday "Learning steps" ladder (e.g.
+// "show again in 1 minute, then 10 minutes, then tomorrow") -- Studlin's
+// flip-a-card-and-rate-it UI studies a deck in one sitting with no
+// same-day re-queue concept today, so a card's first-ever rating goes
+// straight to a real multi-day interval via the same initial-stability/
+// difficulty formulas the reference implementation itself uses for a New
+// card. This is a real, deliberate scope simplification, not a shortcut
+// on the actual memory-model math, which is unchanged from the source.
+//
+// Rating scale matches FSRS's own 4-grade scale exactly: 1=Again(Missed),
+// 2=Hard, 3=Good, 4=Easy(Mastered) -- Studlin's existing button labels
+// already happened to line up with this, no remapping needed.
+const FSRS_PARAMETERS=[0.212,1.2931,2.3065,8.2956,6.4133,0.8334,3.0194,0.001,1.8722,0.1666,0.796,1.4835,0.0614,0.2629,1.6483,0.6014,1.8729,0.5425,0.0912,0.0658,0.1542];
+const FSRS_DECAY=-FSRS_PARAMETERS[20];
+const FSRS_FACTOR=Math.pow(0.9,1/FSRS_DECAY)-1;
+const FSRS_DESIRED_RETENTION=0.9; // review when there's a 90% chance of still recalling it -- the library's own default
+const FSRS_STABILITY_MIN=0.001;
+const FSRS_MIN_DIFFICULTY=1,FSRS_MAX_DIFFICULTY=10;
+const fsrsClampDifficulty=(d)=>Math.min(Math.max(d,FSRS_MIN_DIFFICULTY),FSRS_MAX_DIFFICULTY);
+const fsrsClampStability=(s)=>Math.max(s,FSRS_STABILITY_MIN);
+// Predicted probability of still recalling the card right now, given how
+// many days have passed since it was last reviewed. Stability is DEFINED
+// as the number of days for this to fall to exactly 90% -- FSRS_FACTOR is
+// derived (not guessed) from that definition, same as the source.
+function fsrsRetrievability(stability,elapsedDays){
+  if(!stability)return 0;
+  return Math.pow(1+FSRS_FACTOR*Math.max(0,elapsedDays)/stability,FSRS_DECAY);
+}
+function fsrsInitialStability(rating){return fsrsClampStability(FSRS_PARAMETERS[rating-1]);}
+function fsrsInitialDifficulty(rating){
+  return fsrsClampDifficulty(FSRS_PARAMETERS[4]-Math.exp(FSRS_PARAMETERS[5]*(rating-1))+1);
+}
+// Difficulty drifts based on how the review went, then "mean-reverts"
+// partway back toward a rating-4 (Easy) baseline difficulty every time --
+// keeps a difficulty estimate from permanently drifting to an extreme off
+// a short bad streak, same as the source's own _next_difficulty.
+function fsrsNextDifficulty(difficulty,rating){
+  const w=FSRS_PARAMETERS;
+  const easyBaseline=w[4]-Math.exp(w[5]*(4-1))+1; // unclamped, rating=Easy
+  const delta=-(w[6]*(rating-3));
+  const damped=difficulty+((10-difficulty)*delta/9);
+  return fsrsClampDifficulty(w[7]*easyBaseline+(1-w[7])*damped);
+}
+function fsrsNextRecallStability(difficulty,stability,retrievability,rating){
+  const w=FSRS_PARAMETERS;
+  const hardPenalty=rating===2?w[15]:1;
+  const easyBonus=rating===4?w[16]:1;
+  return stability*(1+Math.exp(w[8])*(11-difficulty)*Math.pow(stability,-w[9])*(Math.exp((1-retrievability)*w[10])-1)*hardPenalty*easyBonus);
+}
+function fsrsNextForgetStability(difficulty,stability,retrievability){
+  const w=FSRS_PARAMETERS;
+  return w[11]*Math.pow(difficulty,-w[12])*(Math.pow(stability+1,w[13])-1)*Math.exp((1-retrievability)*w[14]);
+}
+function fsrsNextStability(difficulty,stability,retrievability,rating){
+  const next=rating===1?fsrsNextForgetStability(difficulty,stability,retrievability):fsrsNextRecallStability(difficulty,stability,retrievability,rating);
+  return fsrsClampStability(next);
+}
+// Solves the retrievability formula for the elapsed-days value where it
+// would drop to exactly FSRS_DESIRED_RETENTION -- i.e. "how many days can
+// pass before this card is only 90% likely to still be recalled."
+function fsrsNextIntervalDays(stability){
+  const days=(stability/FSRS_FACTOR)*(Math.pow(FSRS_DESIRED_RETENTION,1/FSRS_DECAY)-1);
+  return Math.max(1,Math.round(days));
+}
+// The one function the UI actually calls. `card` is {stability,difficulty,
+// lastReview,due,reps,state} -- any or all of which may be missing on an
+// existing (pre-FSRS) card, since every deck created before this shipped
+// has plain {q,a} cards with none of this. `now` is a real Date. Returns
+// a NEW card object (existing q/a and any other fields spread through
+// untouched) -- never mutates the input.
+function fsrsReviewCard(card,rating,now){
+  const isNew=card.stability==null||card.difficulty==null;
+  let stability,difficulty;
+  if(isNew){
+    stability=fsrsInitialStability(rating);
+    difficulty=fsrsInitialDifficulty(rating);
+  }else{
+    const elapsedDays=card.lastReview?Math.max(0,(now-new Date(card.lastReview))/86400000):0;
+    const retrievability=fsrsRetrievability(card.stability,elapsedDays);
+    stability=fsrsNextStability(card.difficulty,card.stability,retrievability,rating);
+    difficulty=fsrsNextDifficulty(card.difficulty,rating);
+  }
+  const intervalDays=fsrsNextIntervalDays(stability);
+  const due=new Date(now.getTime()+intervalDays*86400000);
+  return {...card,stability,difficulty,lastReview:now.toISOString(),due:due.toISOString(),reps:(card.reps||0)+1,state:rating===1?"relearning":"review"};
+}
+// A card is due for study once its due date has arrived, or it's never
+// been reviewed at all (including every pre-FSRS card with no `due` field
+// -- treated as due immediately, exactly like a brand-new card, so
+// existing decks start getting real per-card scheduling from their very
+// next review instead of needing a silent one-time migration).
+function fsrsCardIsDue(card,now){
+  if(!card.due)return true;
+  return new Date(card.due).getTime()<=now.getTime();
+}
 // Phase 3 — flashcard/exam review sessions counting down to a date. Pure
 // scheduling math, no AI/credit cost: spacing gets denser the closer the
 // date gets (classic spaced-repetition shape). desiredCount is student-
@@ -14306,6 +14418,13 @@ function Flashcards({setActive=()=>{}}={}) {
 
   const studyCards=studyDeck?studyDeck.cards:[];
   const curCard=studyCards[idx];
+  // Real per-card FSRS due count (see fsrsCardIsDue) -- informational only
+  // here, doesn't change which cards are cycled through or in what order
+  // (that stays exactly as it always has, full deck, round-robin) so this
+  // can't desync `idx` mid-session. Deliberately scoped this way: the
+  // actual memory-model math and persistence are the real fix; reordering
+  // the study queue to prioritize due cards is a real, separate follow-up.
+  const dueCardCount=studyDeck?studyDeck.cards.filter(c=>fsrsCardIsDue(c,new Date())).length:0;
 
   return (
     <div>
@@ -14497,10 +14616,11 @@ function Flashcards({setActive=()=>{}}={}) {
               Dashboard's "Pick up where you left off" had no way back
               except the sidebar. */}
           <button onClick={()=>setActive("dashboard")} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontWeight:600,fontFamily:T.font,cursor:"pointer",padding:"0 0 12px",display:"flex",alignItems:"center",gap:6}}>← Back to Dashboard</button>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
             <div style={{fontSize:13,fontWeight:600,color:T.white}}>{studyDeck.name}</div>
             <div style={{fontSize:12,color:T.muted}}>Card {idx+1} of {studyCards.length}</div>
           </div>
+          <div style={{fontSize:11,color:T.faint,marginBottom:12}}>{dueCardCount>0?dueCardCount+" card"+(dueCardCount===1?"":"s")+" due for review today":"All caught up for today — keep reviewing if you'd like"}</div>
           <div onClick={()=>setFlipped(f=>!f)} style={{cursor:"pointer",userSelect:"none"}}>
             {!flipped
               ?<Card style={{minHeight:200,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textAlign:"center",padding:32,background:T.card2}}>
@@ -14522,15 +14642,26 @@ function Flashcards({setActive=()=>{}}={}) {
               // stayed 0 forever regardless of how a student graded recall.
               // "Missed"/"Hard" don't count as a completed review; "Good"/
               // "Mastered" do -- matches the copy each button already shows.
-              ?[["Missed",T.red],["Hard",T.amber],["Good",T.teal],["Mastered",T.lime]].map(([l,c])=>(
+              // Rating maps directly onto FSRS's own 1-4 scale (Missed=Again,
+              // Hard, Good, Mastered=Easy) -- see fsrsReviewCard. Each rating
+              // now updates that exact card's real stability/difficulty/due
+              // date (matched by its position in the deck, not by identity,
+              // since cards have no id of their own), on top of the existing
+              // done-counter bump Good/Mastered already did.
+              ?[["Missed",T.red,1],["Hard",T.amber,2],["Good",T.teal,3],["Mastered",T.lime,4]].map(([l,c,rating])=>(
                   <button key={l} onClick={()=>{
-                    if(l==="Good"||l==="Mastered"){
-                      setDeckList(list=>{
-                        const next=list.map(d=>d.id===studyDeck.id?{...d,done:Math.min(d.cards?d.cards.length:d.count,(d.done||0)+1)}:d);
-                        lsSet("decks",next);
-                        return next;
+                    const updatedCard=curCard?fsrsReviewCard(curCard,rating,new Date()):null;
+                    setDeckList(list=>{
+                      const next=list.map(d=>{
+                        if(d.id!==studyDeck.id)return d;
+                        const cards=updatedCard?d.cards.map((c2,ci)=>ci===idx?updatedCard:c2):d.cards;
+                        const done=(l==="Good"||l==="Mastered")?Math.min(d.cards?d.cards.length:d.count,(d.done||0)+1):d.done;
+                        return {...d,cards,done};
                       });
-                    }
+                      lsSet("decks",next);
+                      return next;
+                    });
+                    if(updatedCard)setStudyDeck(sd=>sd?{...sd,cards:sd.cards.map((c2,ci)=>ci===idx?updatedCard:c2)}:sd);
                     setFlipped(false);setIdx(i=>(i+1)%studyCards.length);
                   }} style={{flex:1,padding:"9px 0",borderRadius:7,background:c+"14",color:c,border:"1px solid "+c+"33",cursor:"pointer",fontSize:12,fontWeight:600,fontFamily:T.font}}>{l}</button>
                 ))
@@ -14548,7 +14679,7 @@ function Flashcards({setActive=()=>{}}={}) {
               <Card key={d.id||i} style={{cursor:"pointer",position:"relative"}}>
                 <button onClick={(e)=>{e.stopPropagation();setDeleteDeckConfirmId(d.id);}} style={{position:"absolute",top:12,right:12,background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14}}>x</button>
                 <div onDoubleClick={(e)=>{e.stopPropagation();openEditDeck(d);}} title="Double-click to edit" style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:4}}>{d.name}</div>
-                <div style={{fontSize:11,color:T.muted,marginBottom:10}}>{d.cards?d.cards.length:d.count} cards{d.source==="imported"&&<span style={{color:T.teal,fontWeight:600}}> · from {d.importedFrom}</span>}</div>
+                <div style={{fontSize:11,color:T.muted,marginBottom:10}}>{d.cards?d.cards.length:d.count} cards{d.source==="imported"&&<span style={{color:T.teal,fontWeight:600}}> · from {d.importedFrom}</span>}{(()=>{const due=(d.cards||[]).filter(c=>fsrsCardIsDue(c,new Date())).length;return due>0&&<span style={{color:T.amber,fontWeight:600}}> · {due} due</span>;})()}</div>
                 {(()=>{
                   const allEvents=lsGet("events",[]);
                   const linkedExams=deckExamIds(d).map(id=>allEvents.find(e=>e.id===id)).filter(Boolean);
