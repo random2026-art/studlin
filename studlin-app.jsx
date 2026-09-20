@@ -126,10 +126,14 @@ const ACCENTS={
   // rest of this object.
   Pink:  {dk:{lime:"#E8829E",limeDk:"#C95F7C",limeLt:"#FFC9D2"}, lt:{lime:"#C23F68",limeDk:"#9E2F52",limeLt:"#FFC9D2"}},
   Slate: {dk:{lime:"#9AA5B1",limeDk:"#7A8592",limeLt:"#C9D1D9"}, lt:{lime:"#5B6672",limeDk:"#454E58",limeLt:"#C9D1D9"}},
+  // New default (see the reset6 migration below) — the "Confidence" blue
+  // from the logo's Navy/Coral/Sky/Cobalt palette, so the app's own accent
+  // matches the brand mark instead of an unrelated 6th color.
+  Cobalt:{dk:{lime:"#6E93F0",limeDk:"#4A72D6",limeLt:"#C9D9FB"}, lt:{lime:"#2563EB",limeDk:"#1D4ECB",limeLt:"#C9D9FB"}},
 };
 function applyTheme(name, accent, density) {
   Object.assign(T, name === 'light' ? lightT : darkT);
-  const acc=ACCENTS[accent]||ACCENTS.Lime;
+  const acc=ACCENTS[accent]||ACCENTS.Cobalt;
   const a=name==='light'?acc.lt:acc.dk;
   T.lime=a.lime; T.limeDk=a.limeDk; T.limeLt=a.limeLt;
   T.glow=hexA(a.lime, name==='light'?0.18:0.22);
@@ -151,7 +155,7 @@ function applyTheme(name, accent, density) {
 }
 applyTheme(
   (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-theme')) || 'light',
-  (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-accent')) || 'Lime',
+  (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-accent')) || 'Cobalt',
   (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-density')) || 'Comfortable'
 );
 
@@ -35261,7 +35265,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
 // Appearance/Notifications/etc, and shadowing that with a same-named prop
 // would be a silent, easy-to-miss bug (or a hard compile error, since both
 // are declared with const in the same scope).
-function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}, onOpenRoutineCenter=()=>{}, setScheduleSettingsOpen=()=>{}, setPricingOpen=()=>{}, setActivePage=()=>{}, pendingOpenSetting=null, onSettingOpened=()=>{}}) {
+function SettingsTab({theme="dark", setTheme=()=>{}, accent="Cobalt", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}, onOpenRoutineCenter=()=>{}, setScheduleSettingsOpen=()=>{}, setPricingOpen=()=>{}, setActivePage=()=>{}, pendingOpenSetting=null, onSettingOpened=()=>{}}) {
   const [active,setActive]=useState(pendingOpenSetting==="shareAvailability"?"Privacy":"General");
   // Deep-link landing from a push notification (see App's own
   // pendingOpenSetting/askFriendsToShareAvailability) -- jumps to the
@@ -36279,7 +36283,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   // still had the pre-removal code. With both gone, the "Study
   // preferences" tab (and its Settings nav entry) has nothing legitimate
   // left in it -- removed below rather than left rendering empty.
-  const accents=[{n:"Lime",c:"#AECE5E"},{n:"Forest",c:"#3E9576"},{n:"Sky",c:"#4F95D6"},{n:"Lilac",c:"#9474C9"},{n:"Peach",c:"#D07C4C"},{n:"Pink",c:"#D9648A"},{n:"Slate",c:"#7A8592"}];
+  const accents=[{n:"Cobalt",c:"#2563EB"},{n:"Lime",c:"#AECE5E"},{n:"Forest",c:"#3E9576"},{n:"Sky",c:"#4F95D6"},{n:"Lilac",c:"#9474C9"},{n:"Peach",c:"#D07C4C"},{n:"Pink",c:"#D9648A"},{n:"Slate",c:"#7A8592"}];
   const [mgmtSubjs,setMgmtSubjs]=useState(()=>getSubjects().map(s=>({...s})));
   const [mgmtSaved,setMgmtSaved]=useState(false);
   const [confirmClearSubjs,setConfirmClearSubjs]=useState(false);
@@ -39005,9 +39009,18 @@ function App() {
   const [accent,setAccentState]=useState(()=>{
     if(typeof localStorage!=="undefined"){
       if(!localStorage.getItem("studlin-accent-reset5")){localStorage.setItem("studlin-accent","Lime");localStorage.setItem("studlin-accent-reset5","1");}
-      return localStorage.getItem("studlin-accent")||"Lime";
+      // New brand default is Cobalt (matches the logo's blue palette), not
+      // green. One-time migration, same shape as reset5 above -- but this
+      // one only moves someone off Lime if they never actually chose it
+      // (still on the old default), never overriding a deliberate pick of
+      // Lime or any other accent in Settings.
+      if(!localStorage.getItem("studlin-accent-reset6")){
+        if(localStorage.getItem("studlin-accent")==="Lime")localStorage.setItem("studlin-accent","Cobalt");
+        localStorage.setItem("studlin-accent-reset6","1");
+      }
+      return localStorage.getItem("studlin-accent")||"Cobalt";
     }
-    return "Lime";
+    return "Cobalt";
   });
   const [density,setDensityState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-density"))||"Comfortable");
   applyTheme(theme, accent, density); // mutate T on every render so all child components re-read

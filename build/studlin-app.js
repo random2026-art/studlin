@@ -106,11 +106,15 @@ const ACCENTS = {
   // every other accent's saturated hue, same dk/lt-pair convention as the
   // rest of this object.
   Pink: { dk: { lime: "#E8829E", limeDk: "#C95F7C", limeLt: "#FFC9D2" }, lt: { lime: "#C23F68", limeDk: "#9E2F52", limeLt: "#FFC9D2" } },
-  Slate: { dk: { lime: "#9AA5B1", limeDk: "#7A8592", limeLt: "#C9D1D9" }, lt: { lime: "#5B6672", limeDk: "#454E58", limeLt: "#C9D1D9" } }
+  Slate: { dk: { lime: "#9AA5B1", limeDk: "#7A8592", limeLt: "#C9D1D9" }, lt: { lime: "#5B6672", limeDk: "#454E58", limeLt: "#C9D1D9" } },
+  // New default (see the reset6 migration below) — the "Confidence" blue
+  // from the logo's Navy/Coral/Sky/Cobalt palette, so the app's own accent
+  // matches the brand mark instead of an unrelated 6th color.
+  Cobalt: { dk: { lime: "#6E93F0", limeDk: "#4A72D6", limeLt: "#C9D9FB" }, lt: { lime: "#2563EB", limeDk: "#1D4ECB", limeLt: "#C9D9FB" } }
 };
 function applyTheme(name, accent, density) {
   Object.assign(T, name === "light" ? lightT : darkT);
-  const acc = ACCENTS[accent] || ACCENTS.Lime;
+  const acc = ACCENTS[accent] || ACCENTS.Cobalt;
   const a = name === "light" ? acc.lt : acc.dk;
   T.lime = a.lime;
   T.limeDk = a.limeDk;
@@ -127,7 +131,7 @@ function applyTheme(name, accent, density) {
 }
 applyTheme(
   typeof localStorage !== "undefined" && localStorage.getItem("studlin-theme") || "light",
-  typeof localStorage !== "undefined" && localStorage.getItem("studlin-accent") || "Lime",
+  typeof localStorage !== "undefined" && localStorage.getItem("studlin-accent") || "Cobalt",
   typeof localStorage !== "undefined" && localStorage.getItem("studlin-density") || "Comfortable"
 );
 function StudlinLogoMark({ size = 28 }) {
@@ -21122,7 +21126,7 @@ Examples:
   ));
 }
 function SettingsTab({ theme = "dark", setTheme = () => {
-}, accent = "Lime", setAccent = () => {
+}, accent = "Cobalt", setAccent = () => {
 }, density = "Comfortable", setDensity = () => {
 }, seriousMode = false, setSeriousMode = () => {
 }, onOpenRoutineCenter = () => {
@@ -21883,7 +21887,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     return /* @__PURE__ */ React.createElement("div", { onClick: () => setTheme(mode), style: { flex: 1, cursor: "pointer", borderRadius: 12, padding: 16, border: `2px solid ${sel ? T.lime : T.border}`, background: sel ? T.lime + "08" : T.card2, transition: "all 0.15s" } }, /* @__PURE__ */ React.createElement("div", { style: { height: 90, borderRadius: 8, overflow: "hidden", background: isLight ? "#FAF6EC" : "#0D120F", border: `1px solid ${isLight ? "rgba(14,31,24,0.08)" : "rgba(255,255,255,0.06)"}`, marginBottom: 12, display: "flex" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 24, background: "#14342A", display: "flex", flexDirection: "column", alignItems: "center", padding: "6px 0", gap: 4 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 10, height: 10, background: "#AECE5E", borderRadius: 2 } }), /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 3, background: "rgba(255,255,255,0.2)", borderRadius: 1, marginTop: 4 } }), /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 3, background: "rgba(255,255,255,0.12)", borderRadius: 1 } }), /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 3, background: "rgba(255,255,255,0.12)", borderRadius: 1 } })), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, padding: 8, display: "flex", flexDirection: "column", gap: 5 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 4 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: 18, background: isLight ? "#14342A" : "#212A24", borderRadius: 3 } }), /* @__PURE__ */ React.createElement("div", { style: { width: 24, height: 18, background: "#AECE5E", borderRadius: 3 } }), /* @__PURE__ */ React.createElement("div", { style: { width: 24, height: 18, background: isLight ? "#fff" : "#212A24", borderRadius: 3, border: isLight ? "1px solid rgba(14,31,24,0.08)" : "none" } })), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 4 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: 14, background: isLight ? "#fff" : "#212A24", borderRadius: 3, border: isLight ? "1px solid rgba(14,31,24,0.08)" : "none" } }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: 14, background: isLight ? "#fff" : "#212A24", borderRadius: 3, border: isLight ? "1px solid rgba(14,31,24,0.08)" : "none" } })))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: T.white, letterSpacing: "-0.01em" } }, label), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, sub)), /* @__PURE__ */ React.createElement("div", { style: { width: 20, height: 20, borderRadius: "50%", border: `2px solid ${sel ? T.lime : T.border}`, background: sel ? T.lime : "transparent", display: "flex", alignItems: "center", justifyContent: "center" } }, sel && /* @__PURE__ */ React.createElement("svg", { width: "10", height: "10", viewBox: "0 0 24 24", fill: "none", stroke: T.bg, strokeWidth: "4", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("polyline", { points: "20 6 9 17 4 12" })))));
   };
   const Chip = ({ active: active2, onClick, children }) => /* @__PURE__ */ React.createElement("button", { type: "button", onClick, style: { padding: "7px 14px", borderRadius: 7, fontSize: 12, cursor: "pointer", border: `1px solid ${active2 ? T.lime + "66" : T.border}`, background: active2 ? T.lime + "14" : "transparent", color: active2 ? T.lime : T.muted, fontFamily: T.font, fontWeight: active2 ? 600 : 400, transition: "all 0.15s" } }, children);
-  const accents = [{ n: "Lime", c: "#AECE5E" }, { n: "Forest", c: "#3E9576" }, { n: "Sky", c: "#4F95D6" }, { n: "Lilac", c: "#9474C9" }, { n: "Peach", c: "#D07C4C" }, { n: "Pink", c: "#D9648A" }, { n: "Slate", c: "#7A8592" }];
+  const accents = [{ n: "Cobalt", c: "#2563EB" }, { n: "Lime", c: "#AECE5E" }, { n: "Forest", c: "#3E9576" }, { n: "Sky", c: "#4F95D6" }, { n: "Lilac", c: "#9474C9" }, { n: "Peach", c: "#D07C4C" }, { n: "Pink", c: "#D9648A" }, { n: "Slate", c: "#7A8592" }];
   const [mgmtSubjs, setMgmtSubjs] = useState(() => getSubjects().map((s) => ({ ...s })));
   const [mgmtSaved, setMgmtSaved] = useState(false);
   const [confirmClearSubjs, setConfirmClearSubjs] = useState(false);
@@ -23000,9 +23004,13 @@ function App() {
         localStorage.setItem("studlin-accent", "Lime");
         localStorage.setItem("studlin-accent-reset5", "1");
       }
-      return localStorage.getItem("studlin-accent") || "Lime";
+      if (!localStorage.getItem("studlin-accent-reset6")) {
+        if (localStorage.getItem("studlin-accent") === "Lime") localStorage.setItem("studlin-accent", "Cobalt");
+        localStorage.setItem("studlin-accent-reset6", "1");
+      }
+      return localStorage.getItem("studlin-accent") || "Cobalt";
     }
-    return "Lime";
+    return "Cobalt";
   });
   const [density, setDensityState] = useState(() => typeof localStorage !== "undefined" && localStorage.getItem("studlin-density") || "Comfortable");
   applyTheme(theme, accent, density);
