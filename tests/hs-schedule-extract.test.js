@@ -86,6 +86,41 @@ describe("deriveFreePeriodsFromPeriods", () => {
     const free = m.deriveFreePeriodsFromPeriods([period()], "15:00", "08:00");
     assert.equal(free.length, 0);
   });
+
+  // Gap-audit fix (2026-09-18): a period whose real time was never
+  // confirmed (the AI genuinely didn't know it, or the student hasn't
+  // answered the clarify question yet -- see buildHsReviewFromPeriods)
+  // used to still feed straight into this gap math with its fake
+  // placeholder time, silently deriving a "free period" that could
+  // actually still be class time.
+  test("a day with a timeUnconfirmed period produces NO free periods for that day at all -- never a gap guessed around a placeholder time", () => {
+    const m = loadStudlinModule();
+    const periods = [
+      period({ startTime: "08:00", endTime: "09:00", days: [0] }),
+      period({ startTime: "08:00", endTime: "08:45", days: [0], timeUnconfirmed: true }), // placeholder time, real duration unknown
+    ];
+    const free = m.deriveFreePeriodsFromPeriods(periods, "08:00", "15:00");
+    assert.equal(free.length, 0);
+  });
+
+  test("a timeUnconfirmed period on one day doesn't suppress a real free period on a different, fully-confirmed day", () => {
+    const m = loadStudlinModule();
+    const periods = [
+      period({ startTime: "08:00", endTime: "09:00", days: [0], timeUnconfirmed: true }), // Monday: unconfirmed
+      period({ startTime: "08:00", endTime: "09:00", days: [1] }), // Tuesday: confirmed
+    ];
+    const free = m.deriveFreePeriodsFromPeriods(periods, "08:00", "15:00");
+    assert.equal(free.length, 1);
+    assert.equal(JSON.stringify(free[0].days), JSON.stringify([1]));
+  });
+
+  test("once the same period is no longer timeUnconfirmed, its day's free period computes normally", () => {
+    const m = loadStudlinModule();
+    const periods = [period({ startTime: "08:00", endTime: "09:00", days: [0], timeUnconfirmed: false })];
+    const free = m.deriveFreePeriodsFromPeriods(periods, "08:00", "15:00");
+    assert.equal(free.length, 1);
+    assert.equal(free[0].startTime, "09:00");
+  });
 });
 
 describe("getHsSchoolHours / saveHsSchoolHours", () => {

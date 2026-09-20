@@ -3052,7 +3052,7 @@ async function extractCollegeScheduleImage(images) {
     return { classes: [], termStart: null, termEnd: null, error: "Couldn't read that image. Try again." };
   }
 }
-const HS_SCHEDULE_JSON_CONTRACT = `For each period return: "subjectName" (the class name as shown, e.g. "English IV", "AP Biology"), "startTime" and "endTime" (24-hour "HH:MM"), "days" (which weekdays this period happens, 0=Monday..6=Sunday -- if the schedule doesn't say otherwise, assume every school day it's shown applies to, most commonly Monday-Friday so [0,1,2,3,4]), "confidence" ("low" when ANYTHING about this row was genuinely uncertain -- the class name or a time was blurry, cut off, handwritten, or otherwise hard to read and you had to guess at it, OR the schedule uses a rotating block system -- "A Day"/"B Day", or a numbered cycle like "Day 1"-"Day 6" -- instead of fixed weekdays, since which actual weekdays a rotating day falls on isn't something a single week's schedule can state with certainty; still give your best guess for whatever was uncertain, just flag the row low-confidence rather than presenting a guess as fact; "high" otherwise). Respond with ONLY valid JSON, no markdown fences, no commentary: {"periods":[{"subjectName":"English IV","startTime":"08:00","endTime":"08:45","days":[0,1,2,3,4],"confidence":"high"}]}. ` + SCHEDULE_EXTRACTION_ROBUSTNESS_RULE;
+const HS_SCHEDULE_JSON_CONTRACT = `For each period return: "subjectName" (the class name as shown, e.g. "English IV", "AP Biology"), "startTime" and "endTime" (24-hour "HH:MM"), ONLY when a real clock time is actually shown or stated for THIS specific period -- never guess one just because most other periods have a similar length or the school day usually starts around a certain time; omit both entirely when this period's own time genuinely isn't stated (common when a bell schedule lists period numbers/names with no times at all, or gives times for some periods but not others), "days" (which weekdays this period happens, 0=Monday..6=Sunday -- if the schedule doesn't say otherwise, assume every school day it's shown applies to, most commonly Monday-Friday so [0,1,2,3,4]), "clarify" (a short, specific question a student could actually answer, ONLY when something essential about THIS period couldn't be determined -- e.g. "How long is Period 3? The schedule doesn't show a time for it.", "Is this an A/B rotating schedule? I could only tell which periods happen, not which weekdays they land on.", "Couldn't read the time for this period clearly -- is it 9:15 or 9:45?" -- null otherwise; most periods should NOT have this). Never use a vague generic flag here -- name the actual thing you couldn't tell. Respond with ONLY valid JSON, no markdown fences, no commentary: {"periods":[{"subjectName":"English IV","startTime":"08:00","endTime":"08:45","days":[0,1,2,3,4],"clarify":null},{"subjectName":"Study Hall","days":[0,1,2,3,4],"clarify":"How long is this period? The schedule doesn't show a time for it."}]}. ` + SCHEDULE_EXTRACTION_ROBUSTNESS_RULE;
 async function extractHsScheduleFromImage(images) {
   try {
     const multi = images.length > 1;
@@ -3426,7 +3426,9 @@ function deriveFreePeriodsFromPeriods(periods, schoolStart, schoolEnd) {
   (periods || []).forEach((p) => (p.days || []).forEach((d) => days.add(d)));
   const gapsByKey = /* @__PURE__ */ new Map();
   Array.from(days).sort((a, b) => a - b).forEach((day) => {
-    const occupied = (periods || []).filter((p) => (p.days || []).includes(day)).map((p) => ({ start: timeToMinutes(p.startTime), end: timeToMinutes(p.endTime) })).sort((a, b) => a.start - b.start);
+    const dayPeriods = (periods || []).filter((p) => (p.days || []).includes(day));
+    if (dayPeriods.some((p) => p.timeUnconfirmed)) return;
+    const occupied = dayPeriods.map((p) => ({ start: timeToMinutes(p.startTime), end: timeToMinutes(p.endTime) })).sort((a, b) => a.start - b.start);
     subtractIntervals(schoolWindow, occupied).forEach((gap) => {
       if (gap.end - gap.start < FREE_PERIOD_MIN_MINS) return;
       const key = gap.start + "-" + gap.end;
@@ -14065,6 +14067,8 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
   const [editingHsTimeId, setEditingHsTimeId] = useState(null);
   const [hsPasteMode, setHsPasteMode] = useState(false);
   const [hsPasteText, setHsPasteText] = useState("");
+  const [hsStagedImages, setHsStagedImages] = useState([]);
+  const [collegeStagedImages, setCollegeStagedImages] = useState([]);
   const [schoolStart, setSchoolStart] = useState("08:00");
   const [schoolEnd, setSchoolEnd] = useState("15:00");
   const [justAdded, setJustAdded] = useState("");
@@ -14460,6 +14464,23 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     startClassQueue(chosen.map((c) => ({ subject: { name: c.title }, meetingTimes: [{ days: c.days, startTime: c.startTime, duration: c.duration }], deadlines: [] })));
   };
   const MAX_SCHEDULE_IMAGES = 6;
+  const clearStagedImages = (setStaged) => setStaged((prev) => {
+    prev.forEach((x) => URL.revokeObjectURL(x.url));
+    return [];
+  });
+  const stageScheduleImages = (files, setStaged) => {
+    setStaged((prev) => {
+      const added = files.map((f) => ({ file: f, url: URL.createObjectURL(f) }));
+      const combined = [...prev, ...added];
+      if (combined.length > MAX_SCHEDULE_IMAGES) {
+        combined.slice(MAX_SCHEDULE_IMAGES).forEach((x) => URL.revokeObjectURL(x.url));
+        setScanError("Max " + MAX_SCHEDULE_IMAGES + " photos at once -- remove one, or scan what you have.");
+        return combined.slice(0, MAX_SCHEDULE_IMAGES);
+      }
+      setScanError("");
+      return combined;
+    });
+  };
   const handleCollegeScheduleFile = async (e) => {
     const files = e.target.files ? Array.from(e.target.files) : [];
     if (files.length === 0) return;
@@ -14470,44 +14491,17 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
       setScanError("Select multiple photos/screenshots together, or a single PDF/Word/text file -- not a mix.");
       return;
     }
-    if (files.length > MAX_SCHEDULE_IMAGES) {
-      setScanError("Too many screenshots at once (max " + MAX_SCHEDULE_IMAGES + "). Try fewer, or scan the rest separately.");
+    if (allImages) {
+      stageScheduleImages(files, setCollegeStagedImages);
       return;
     }
-    if (allImages) {
-      if (!canScanScreenshot() && !canFreeOnboardingScan("schedule")) {
-        setPricingOpen(canScanScreenshotReason() === "free-tier" ? "screenshotScan" : "aiUsageCap");
-        return;
-      }
-    } else {
-      if (!canScanSyllabus() && !canFreeOnboardingScan("schedule")) {
-        setPricingOpen(canScanSyllabusReason() === "free-tier" ? "syllabusScan" : "aiUsageCap");
-        return;
-      }
+    if (!canScanSyllabus() && !canFreeOnboardingScan("schedule")) {
+      setPricingOpen(canScanSyllabusReason() === "free-tier" ? "syllabusScan" : "aiUsageCap");
+      return;
     }
     setScanning(true);
     setScanError("");
     try {
-      if (allImages) {
-        const images = await Promise.all(files.map(async (file2, i) => {
-          const dataUrl = await new Promise((resolve) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result);
-            reader.readAsDataURL(file2);
-          });
-          return { mediaType: IMAGE_EXT_MEDIA_TYPES[exts[i]], data: dataUrl.split(",")[1] || "" };
-        }));
-        const result2 = await extractCollegeScheduleImage(images);
-        if (result2.error) {
-          setScanError(result2.error);
-          return;
-        }
-        if (!canScanScreenshot()) markFreeScanUsed("schedule");
-        recordScreenshotScan();
-        applyExtractedTermDates(result2);
-        startClassQueue(result2.classes);
-        return;
-      }
       const file = files[0], ext = exts[0];
       let text = "";
       if (ext === "pdf") {
@@ -14550,6 +14544,41 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
       setScanning(false);
     }
   };
+  const runCollegeImageScan = async () => {
+    const files = collegeStagedImages;
+    if (files.length === 0) return;
+    if (!canScanScreenshot() && !canFreeOnboardingScan("schedule")) {
+      setPricingOpen(canScanScreenshotReason() === "free-tier" ? "screenshotScan" : "aiUsageCap");
+      return;
+    }
+    setScanning(true);
+    setScanError("");
+    try {
+      const exts = files.map((x) => x.file.name.split(".").pop().toLowerCase());
+      const images = await Promise.all(files.map(async (x, i) => {
+        const dataUrl = await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.readAsDataURL(x.file);
+        });
+        return { mediaType: IMAGE_EXT_MEDIA_TYPES[exts[i]], data: dataUrl.split(",")[1] || "" };
+      }));
+      const result = await extractCollegeScheduleImage(images);
+      if (result.error) {
+        setScanError(result.error);
+        return;
+      }
+      if (!canScanScreenshot()) markFreeScanUsed("schedule");
+      recordScreenshotScan();
+      applyExtractedTermDates(result);
+      startClassQueue(result.classes);
+      clearStagedImages(setCollegeStagedImages);
+    } catch (err) {
+      setScanError("Couldn't read those images: " + err.message);
+    } finally {
+      setScanning(false);
+    }
+  };
   const handleCollegeSchedulePaste = async () => {
     if (!pasteText.trim()) return;
     if (!canScanSyllabus() && !canFreeOnboardingScan("schedule")) {
@@ -14575,18 +14604,22 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     }
   };
   const buildHsReviewFromPeriods = (periods) => {
-    const normalized = periods.map((p) => ({
-      subjectName: p.subjectName || "",
-      startTime: p.startTime || "08:00",
-      endTime: p.endTime || "08:45",
-      days: Array.isArray(p.days) && p.days.length > 0 ? p.days : [0, 1, 2, 3, 4],
-      confidence: p.confidence || "high"
-    }));
+    const normalized = periods.map((p) => {
+      const hasTime = looksLikeTimeString(p.startTime) && looksLikeTimeString(p.endTime);
+      return {
+        subjectName: p.subjectName || "",
+        startTime: hasTime ? p.startTime : "08:00",
+        endTime: hasTime ? p.endTime : "08:45",
+        days: Array.isArray(p.days) && p.days.length > 0 ? p.days : [0, 1, 2, 3, 4],
+        clarify: p.clarify || null,
+        timeUnconfirmed: !hasTime
+      };
+    });
     const hsUsedColors = getSubjects().map((s) => s.color);
     setHsReview(normalized.map((p, i) => {
       const color = nextAvailableSubjectColor(hsUsedColors);
       hsUsedColors.push(color);
-      return { id: "hs-" + i, subjectName: p.subjectName || "Period " + (i + 1), color, startTime: p.startTime, endTime: p.endTime, days: p.days, confidence: p.confidence, isFree: false };
+      return { id: "hs-" + i, subjectName: p.subjectName || "Period " + (i + 1), color, startTime: p.startTime, endTime: p.endTime, days: p.days, clarify: p.clarify, timeUnconfirmed: p.timeUnconfirmed, isFree: false };
     }));
     setHsFreeReview(deriveFreePeriodsFromPeriods(normalized, schoolStart, schoolEnd));
     setEditingHsTimeId(null);
@@ -14602,47 +14635,17 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
       setScanError("Select multiple photos/screenshots together, or a single PDF/Word/text file -- not a mix.");
       return;
     }
-    if (files.length > MAX_SCHEDULE_IMAGES) {
-      setScanError("Too many screenshots at once (max " + MAX_SCHEDULE_IMAGES + "). Try fewer, or scan the rest separately.");
+    if (allImages) {
+      stageScheduleImages(files, setHsStagedImages);
       return;
     }
-    if (allImages) {
-      if (!canScanScreenshot() && !canFreeOnboardingScan("schedule")) {
-        setPricingOpen(canScanScreenshotReason() === "free-tier" ? "screenshotScan" : "aiUsageCap");
-        return;
-      }
-    } else {
-      if (!canScanSyllabus() && !canFreeOnboardingScan("schedule")) {
-        setPricingOpen(canScanSyllabusReason() === "free-tier" ? "syllabusScan" : "aiUsageCap");
-        return;
-      }
+    if (!canScanSyllabus() && !canFreeOnboardingScan("schedule")) {
+      setPricingOpen(canScanSyllabusReason() === "free-tier" ? "syllabusScan" : "aiUsageCap");
+      return;
     }
     setScanning(true);
     setScanError("");
     try {
-      if (allImages) {
-        const images = await Promise.all(files.map(async (file2, i) => {
-          const dataUrl = await new Promise((resolve) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result);
-            reader.readAsDataURL(file2);
-          });
-          return { mediaType: IMAGE_EXT_MEDIA_TYPES[exts[i]], data: dataUrl.split(",")[1] || "" };
-        }));
-        const result2 = await extractHsScheduleFromImage(images);
-        if (result2.error) {
-          setScanError(result2.error);
-          return;
-        }
-        if (result2.periods.length === 0) {
-          setScanError("Couldn't make out any periods in " + (images.length > 1 ? "those images" : "that image") + ". Try a clearer photo, or add classes manually.");
-          return;
-        }
-        if (!canScanScreenshot()) markFreeScanUsed("schedule");
-        recordScreenshotScan();
-        buildHsReviewFromPeriods(result2.periods);
-        return;
-      }
       const file = files[0], ext = exts[0];
       let text = "";
       if (ext === "pdf") {
@@ -14688,6 +14691,44 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
       buildHsReviewFromPeriods(result.periods);
     } catch (err) {
       setScanError("Couldn't read that file: " + err.message);
+    } finally {
+      setScanning(false);
+    }
+  };
+  const runHsImageScan = async () => {
+    const files = hsStagedImages;
+    if (files.length === 0) return;
+    if (!canScanScreenshot() && !canFreeOnboardingScan("schedule")) {
+      setPricingOpen(canScanScreenshotReason() === "free-tier" ? "screenshotScan" : "aiUsageCap");
+      return;
+    }
+    setScanning(true);
+    setScanError("");
+    try {
+      const exts = files.map((x) => x.file.name.split(".").pop().toLowerCase());
+      const images = await Promise.all(files.map(async (x, i) => {
+        const dataUrl = await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.readAsDataURL(x.file);
+        });
+        return { mediaType: IMAGE_EXT_MEDIA_TYPES[exts[i]], data: dataUrl.split(",")[1] || "" };
+      }));
+      const result = await extractHsScheduleFromImage(images);
+      if (result.error) {
+        setScanError(result.error);
+        return;
+      }
+      if (result.periods.length === 0) {
+        setScanError("Couldn't make out any periods in " + (images.length > 1 ? "those images" : "that image") + ". Try a clearer photo, or add classes manually.");
+        return;
+      }
+      if (!canScanScreenshot()) markFreeScanUsed("schedule");
+      recordScreenshotScan();
+      buildHsReviewFromPeriods(result.periods);
+      clearStagedImages(setHsStagedImages);
+    } catch (err) {
+      setScanError("Couldn't read those images: " + err.message);
     } finally {
       setScanning(false);
     }
@@ -14899,7 +14940,16 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
       rows: 8,
       style: { width: "100%", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 10, padding: "12px 14px", color: T.text, fontSize: 13, fontFamily: T.font, outline: "none", resize: "vertical", boxSizing: "border-box" }
     }
-  ), /* @__PURE__ */ React.createElement(Btn, { onClick: handleCollegeSchedulePaste, disabled: !pasteText.trim(), style: { marginTop: 10, width: "100%", justifyContent: "center", opacity: pasteText.trim() ? 1 : 0.45 } }, "Scan this text")) : /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => collegeScheduleFileRef.current && collegeScheduleFileRef.current.click(), style: { width: "100%", padding: "32px", borderRadius: 12, border: `1.5px dashed ${T.borderHover}`, background: T.card2, color: T.muted, cursor: "pointer", fontFamily: T.font, fontSize: 13, textAlign: "center" } }, "Tap to choose a file, or one or more photos"), /* @__PURE__ */ React.createElement("input", { ref: collegeScheduleFileRef, type: "file", accept: ".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,.gif", style: { display: "none" }, onChange: handleCollegeScheduleFile, multiple: true }), scanError && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: 10 } }, scanError), !scanning && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+  ), /* @__PURE__ */ React.createElement(Btn, { onClick: handleCollegeSchedulePaste, disabled: !pasteText.trim(), style: { marginTop: 10, width: "100%", justifyContent: "center", opacity: pasteText.trim() ? 1 : 0.45 } }, "Scan this text")) : collegeStagedImages.length > 0 ? (
+    // Gap-audit fix: staged photos, not an instant scan -- the
+    // student can add more (up to MAX_SCHEDULE_IMAGES) or remove
+    // one before committing to the actual scan.
+    /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 } }, collegeStagedImages.map((img, fi) => /* @__PURE__ */ React.createElement("div", { key: fi, style: { position: "relative", width: 64, height: 64, borderRadius: 8, overflow: "hidden", border: `1px solid ${T.border}`, flexShrink: 0 } }, /* @__PURE__ */ React.createElement("img", { src: img.url, alt: "", style: { width: "100%", height: "100%", objectFit: "cover", display: "block" } }), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setCollegeStagedImages((s) => {
+      const item = s[fi];
+      if (item) URL.revokeObjectURL(item.url);
+      return s.filter((_, i) => i !== fi);
+    }), title: "Remove", style: { position: "absolute", top: 2, right: 2, width: 18, height: 18, borderRadius: "50%", background: "rgba(0,0,0,0.65)", color: "#fff", border: "none", cursor: "pointer", fontSize: 12, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 0 } }, "\xD7"))), collegeStagedImages.length < MAX_SCHEDULE_IMAGES && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => collegeScheduleFileRef.current && collegeScheduleFileRef.current.click(), title: "Add another photo", style: { width: 64, height: 64, borderRadius: 8, border: `1.5px dashed ${T.borderHover}`, background: T.card2, color: T.muted, cursor: "pointer", fontSize: 22, fontFamily: T.font, flexShrink: 0 } }, "+")), /* @__PURE__ */ React.createElement(Btn, { onClick: runCollegeImageScan, style: { width: "100%", justifyContent: "center" } }, "Scan ", collegeStagedImages.length, " photo", collegeStagedImages.length !== 1 ? "s" : ""))
+  ) : /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => collegeScheduleFileRef.current && collegeScheduleFileRef.current.click(), style: { width: "100%", padding: "32px", borderRadius: 12, border: `1.5px dashed ${T.borderHover}`, background: T.card2, color: T.muted, cursor: "pointer", fontFamily: T.font, fontSize: 13, textAlign: "center" } }, "Tap to choose a file, or one or more photos"), /* @__PURE__ */ React.createElement("input", { ref: collegeScheduleFileRef, type: "file", accept: ".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,.gif", style: { display: "none" }, onChange: handleCollegeScheduleFile, multiple: true }), scanError && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: 10 } }, scanError), !scanning && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
     setPasteMode((m) => !m);
     setScanError("");
   }, style: { marginTop: 12, background: "none", border: "none", color: T.muted, fontSize: 12, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, pasteMode ? "Upload a file instead" : "File didn't work? Paste the text instead")), step === "classes" && (addMode === "scan" || addMode === "scanForThisClass") && (() => {
@@ -14938,13 +14988,35 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
       rows: 8,
       style: { width: "100%", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 10, padding: "12px 14px", color: T.text, fontSize: 13, fontFamily: T.font, outline: "none", resize: "vertical", boxSizing: "border-box" }
     }
-  ), /* @__PURE__ */ React.createElement(Btn, { onClick: handleHsPasteScan, disabled: !hsPasteText.trim(), style: { marginTop: 10, width: "100%", justifyContent: "center", opacity: hsPasteText.trim() ? 1 : 0.45 } }, "Scan this text")) : /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => hsFileInputRef.current && hsFileInputRef.current.click(), style: { width: "100%", padding: "32px", borderRadius: 12, border: `1.5px dashed ${T.borderHover}`, background: T.card2, color: T.muted, cursor: "pointer", fontFamily: T.font, fontSize: 13, textAlign: "center" } }, "Tap to choose a file, or one or more photos"), /* @__PURE__ */ React.createElement("input", { ref: hsFileInputRef, type: "file", accept: ".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,.gif", style: { display: "none" }, onChange: handleHsScheduleFile, multiple: true }), scanError && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: 10 } }, scanError), !scanning && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+  ), /* @__PURE__ */ React.createElement(Btn, { onClick: handleHsPasteScan, disabled: !hsPasteText.trim(), style: { marginTop: 10, width: "100%", justifyContent: "center", opacity: hsPasteText.trim() ? 1 : 0.45 } }, "Scan this text")) : hsStagedImages.length > 0 ? (
+    // Gap-audit fix: staged photos, not an instant scan -- see
+    // the identical pattern's own comment on the college step
+    // just above.
+    /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 } }, hsStagedImages.map((img, fi) => /* @__PURE__ */ React.createElement("div", { key: fi, style: { position: "relative", width: 64, height: 64, borderRadius: 8, overflow: "hidden", border: `1px solid ${T.border}`, flexShrink: 0 } }, /* @__PURE__ */ React.createElement("img", { src: img.url, alt: "", style: { width: "100%", height: "100%", objectFit: "cover", display: "block" } }), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setHsStagedImages((s) => {
+      const item = s[fi];
+      if (item) URL.revokeObjectURL(item.url);
+      return s.filter((_, i) => i !== fi);
+    }), title: "Remove", style: { position: "absolute", top: 2, right: 2, width: 18, height: 18, borderRadius: "50%", background: "rgba(0,0,0,0.65)", color: "#fff", border: "none", cursor: "pointer", fontSize: 12, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 0 } }, "\xD7"))), hsStagedImages.length < MAX_SCHEDULE_IMAGES && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => hsFileInputRef.current && hsFileInputRef.current.click(), title: "Add another photo", style: { width: 64, height: 64, borderRadius: 8, border: `1.5px dashed ${T.borderHover}`, background: T.card2, color: T.muted, cursor: "pointer", fontSize: 22, fontFamily: T.font, flexShrink: 0 } }, "+")), /* @__PURE__ */ React.createElement(Btn, { onClick: runHsImageScan, style: { width: "100%", justifyContent: "center" } }, "Scan ", hsStagedImages.length, " photo", hsStagedImages.length !== 1 ? "s" : ""))
+  ) : /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => hsFileInputRef.current && hsFileInputRef.current.click(), style: { width: "100%", padding: "32px", borderRadius: 12, border: `1.5px dashed ${T.borderHover}`, background: T.card2, color: T.muted, cursor: "pointer", fontFamily: T.font, fontSize: 13, textAlign: "center" } }, "Tap to choose a file, or one or more photos"), /* @__PURE__ */ React.createElement("input", { ref: hsFileInputRef, type: "file", accept: ".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,.gif", style: { display: "none" }, onChange: handleHsScheduleFile, multiple: true }), scanError && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: 10 } }, scanError), !scanning && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
     setHsPasteMode((m) => !m);
     setScanError("");
   }, style: { marginTop: 12, background: "none", border: "none", color: T.muted, fontSize: 12, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, hsPasteMode ? "Upload a file instead" : "No file? Paste the text instead")), step === "classes" && addMode === "hsReview" && hsReview && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: "Review your schedule", sub: "Check the class names and colors, then add them all at once." }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 } }, hsReview.map((p, i) => {
-    const isEditingTime = editingHsTimeId === p.id;
-    const toggleDay = (d) => setHsReview((r) => r.map((x, xi) => xi === i ? { ...x, days: x.days.includes(d) ? x.days.filter((y) => y !== d) : [...x.days, d] } : x));
-    return /* @__PURE__ */ React.createElement("div", { key: p.id, style: { padding: "9px 10px", borderRadius: 10, border: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement(ColorSelect, { value: p.color, onChange: (c) => setHsReview((r) => r.map((x, xi) => xi === i ? { ...x, color: c } : x)) }), /* @__PURE__ */ React.createElement(Input, { value: p.subjectName, onChange: (e) => setHsReview((r) => r.map((x, xi) => xi === i ? { ...x, subjectName: e.target.value } : x)), style: { flex: 1 }, disabled: p.isFree }), !isEditingTime && /* @__PURE__ */ React.createElement("div", { onDoubleClick: () => setEditingHsTimeId(p.id), title: "Double-click to edit", style: { fontSize: 11, color: T.muted, whiteSpace: "nowrap", cursor: "pointer" } }, p.days.map((d) => ROUTINE_DOW[d]).join(""), " \xB7 ", fmtClock12(p.startTime), "\u2013", fmtClock12(p.endTime)), p.confidence === "low" && /* @__PURE__ */ React.createElement("span", { title: "Studlin wasn't fully sure about this row -- the class name or a time may have been hard to read, or this looks like a rotating block schedule (A/B days, a numbered cycle) where it had to guess which weekdays apply. Double-check it.", style: { fontSize: 10, color: T.amber, fontWeight: 600, background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 6, padding: "3px 7px", whiteSpace: "nowrap", flexShrink: 0 } }, "Double-check")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 8 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setHsReview((r) => r.map((x, xi) => xi === i ? { ...x, isFree: false } : x)), style: wizardChipStyle(!p.isFree) }, "Class"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setHsReview((r) => r.map((x, xi) => xi === i ? { ...x, isFree: true } : x)), style: wizardChipStyle(!!p.isFree) }, "Free Period")), isEditingTime && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10, paddingTop: 10, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 } }, ROUTINE_DOW.map((d, di) => /* @__PURE__ */ React.createElement("button", { key: di, type: "button", onClick: () => toggleDay(di), style: wizardChipStyle(p.days.includes(di)) }, d))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end" } }, /* @__PURE__ */ React.createElement(TimeInput, { value: p.startTime, onChange: (t) => setHsReview((r) => r.map((x, xi) => xi === i ? { ...x, startTime: t } : x)) }), /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, fontSize: 12 } }, "\u2013"), /* @__PURE__ */ React.createElement(TimeInput, { value: p.endTime, onChange: (t) => setHsReview((r) => r.map((x, xi) => xi === i ? { ...x, endTime: t } : x)) }), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setEditingHsTimeId(null) }, "Done"))));
+    const isEditingTime = editingHsTimeId === p.id || p.timeUnconfirmed;
+    const updateHsPeriod = (patch) => setHsReview((r) => {
+      const next = r.map((x, xi) => xi === i ? { ...x, ...patch } : x);
+      setHsFreeReview(deriveFreePeriodsFromPeriods(next, schoolStart, schoolEnd));
+      return next;
+    });
+    const confirmHsPeriodTime = () => {
+      setEditingHsTimeId(null);
+      setHsReview((r) => {
+        const next = r.map((x, xi) => xi === i ? { ...x, timeUnconfirmed: false } : x);
+        setHsFreeReview(deriveFreePeriodsFromPeriods(next, schoolStart, schoolEnd));
+        return next;
+      });
+    };
+    const toggleDay = (d) => updateHsPeriod({ days: p.days.includes(d) ? p.days.filter((y) => y !== d) : [...p.days, d] });
+    return /* @__PURE__ */ React.createElement("div", { key: p.id, style: { padding: "9px 10px", borderRadius: 10, border: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(ColorSelect, { value: p.color, onChange: (c) => setHsReview((r) => r.map((x, xi) => xi === i ? { ...x, color: c } : x)) }), /* @__PURE__ */ React.createElement(Input, { value: p.subjectName, onChange: (e) => setHsReview((r) => r.map((x, xi) => xi === i ? { ...x, subjectName: e.target.value } : x)), style: { flex: 1 }, disabled: p.isFree }), !isEditingTime && /* @__PURE__ */ React.createElement("div", { onDoubleClick: () => setEditingHsTimeId(p.id), title: "Double-click to edit", style: { fontSize: 11, color: T.muted, whiteSpace: "nowrap", cursor: "pointer" } }, p.days.map((d) => ROUTINE_DOW[d]).join(""), " \xB7 ", fmtClock12(p.startTime), "\u2013", fmtClock12(p.endTime)), p.timeUnconfirmed && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.amber, whiteSpace: "nowrap" } }, "Time TBD"), p.clarify && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: T.amber, fontWeight: 600, background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 6, padding: "3px 8px" } }, p.clarify)), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 8 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setHsReview((r) => r.map((x, xi) => xi === i ? { ...x, isFree: false } : x)), style: wizardChipStyle(!p.isFree) }, "Class"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setHsReview((r) => r.map((x, xi) => xi === i ? { ...x, isFree: true } : x)), style: wizardChipStyle(!!p.isFree) }, "Free Period")), isEditingTime && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10, paddingTop: 10, borderTop: `1px solid ${T.border}` } }, p.timeUnconfirmed && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.amber, marginBottom: 8 } }, "Set the real time for this period."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 } }, ROUTINE_DOW.map((d, di) => /* @__PURE__ */ React.createElement("button", { key: di, type: "button", onClick: () => toggleDay(di), style: wizardChipStyle(p.days.includes(di)) }, d))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end" } }, /* @__PURE__ */ React.createElement(TimeInput, { value: p.startTime, onChange: (t) => updateHsPeriod({ startTime: t }) }), /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, fontSize: 12 } }, "\u2013"), /* @__PURE__ */ React.createElement(TimeInput, { value: p.endTime, onChange: (t) => updateHsPeriod({ endTime: t }) }), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: confirmHsPeriodTime }, "Done"))));
   })), hsFreeReview.length > 0 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 } }, "Free time (worked out from your school hours)"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 } }, hsFreeReview.map((f) => /* @__PURE__ */ React.createElement("div", { key: f.id, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 10, border: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: 13, color: T.text } }, f.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, whiteSpace: "nowrap" } }, f.days.map((d) => ROUTINE_DOW[d]).join(""), " \xB7 ", fmtClock12(f.startTime), "\u2013", fmtClock12(minutesToTime(timeToMinutes(f.startTime) + f.duration))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setHsFreeReview((r) => r.filter((x) => x.id !== f.id)), title: "Remove", style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 16, padding: "2px 6px" } }, "\xD7"))))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: commitHsSchedule }, "Add all ", hsReview.length, " classes"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => {
     setHsReview(null);
     setHsFreeReview([]);

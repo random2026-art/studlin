@@ -98,10 +98,19 @@ describe("applyExtractedTermDates: first real value wins, stays editable, skippe
     const mergeIdx = SOURCE.indexOf("const mergeExtractionIntoReview=(result,sourceText)=>{");
     assert.ok(SOURCE.slice(mergeIdx, mergeIdx + 200).includes("applyExtractedTermDates(result);"));
 
+    // Gap-audit fix, 2026-09-18: the image-scan branch was split out into
+    // its own function (runCollegeImageScan) so the upload step can stage
+    // multiple photos before committing to a scan, instead of firing the
+    // extraction the instant a photo was picked -- handleCollegeScheduleFile
+    // itself now only ever runs the text/document branch directly.
     const fileIdx = SOURCE.indexOf("const handleCollegeScheduleFile=async(e)=>{");
     const fileBody = SOURCE.slice(fileIdx, fileIdx + 3000);
-    assert.ok(fileBody.includes("applyExtractedTermDates(result);"), "handleCollegeScheduleFile must call it (checked across both its image and text branches)");
-    assert.equal((fileBody.match(/applyExtractedTermDates\(result\);/g)||[]).length, 2, "both the image branch and the text branch must call it");
+    assert.ok(fileBody.includes("applyExtractedTermDates(result);"), "handleCollegeScheduleFile's own text branch must call it");
+
+    const imageScanIdx = SOURCE.indexOf("const runCollegeImageScan=async()=>{");
+    assert.ok(imageScanIdx > -1, "runCollegeImageScan should exist");
+    const imageScanBody = SOURCE.slice(imageScanIdx, imageScanIdx + 1500);
+    assert.ok(imageScanBody.includes("applyExtractedTermDates(result);"), "runCollegeImageScan (the image branch) must call it");
 
     const pasteIdx = SOURCE.indexOf("const handleCollegeSchedulePaste=async()=>{");
     const pasteBody = SOURCE.slice(pasteIdx, pasteIdx + 700);
