@@ -1762,7 +1762,7 @@ function findSlotWithEviction(events, routines, prefs, desiredDate, desiredTime,
     return !(exam && exam.sessionsMovable === false);
   };
   const candidates = events.filter(
-    (e) => e.date === desiredDate && e.kind === "study block" && e.status === "pending" && !isCoopStudySession(e) && (!e.deadline || daysUntilDeadline(e) > 7) && (e.reshuffleCount || 0) < RESHUFFLE_ESCALATE_THRESHOLD && isSessionMovable(e)
+    (e) => e.date === desiredDate && e.kind === "study block" && e.status === "pending" && !e.userPinned && !isCoopStudySession(e) && (!e.deadline || daysUntilDeadline(e) > 7) && (e.reshuffleCount || 0) < RESHUFFLE_ESCALATE_THRESHOLD && isSessionMovable(e)
   ).sort((a, b) => {
     const pa = (a.priority ?? 500) + (a.reshuffleCount || 0) * RESHUFFLE_PENALTY;
     const pb = (b.priority ?? 500) + (b.reshuffleCount || 0) * RESHUFFLE_PENALTY;
@@ -2208,6 +2208,7 @@ function findReliableSlotFor(events, routines, prefs, desiredDate, desiredTime, 
   return { date: win.date, time: win.time, reason };
 }
 const CATCHUP_RECOVERY_THRESHOLD = 2;
+const CATCHUP_BANNER_THRESHOLD = 1;
 function computeCatchUpMissedItems(events, today) {
   return events.filter(
     (ev) => ev.status === "pending" && !ev.checklist && !isFixedItem(ev) && !(ev.kind === "deadline" && !ev.duration) && // A materialized Habit occurrence (materializeHabitsForDate) carries
@@ -2301,13 +2302,22 @@ function compressExamPrepForRoom(ev, working, routines, prefs, today, difficulty
   if (slot) return { working: attempt, slot, droppedId: null, shortenedId: shortenCandidate.id };
   return null;
 }
-function computeCatchUpPlan(events, routines, prefs, today, difficulty) {
+function computeCatchUpPlan(events, routines, prefs, today, difficulty, nowMins) {
   const missed = computeCatchUpMissedItems(events, today);
   let working = events;
   const moves = [];
   const unplaceable = [];
+  const tomorrowKey = (() => {
+    const d = /* @__PURE__ */ new Date(today + "T12:00:00");
+    d.setDate(d.getDate() + 1);
+    return dayKey(d);
+  })();
   missed.forEach((ev) => {
-    const t0 = findTier0Slot({ ...ev }, working, routines, prefs, today);
+    const linkedDue = nowMins != null && ev.dueEventId ? working.find((e) => e.id === ev.dueEventId) : null;
+    const passedAlready = examAlreadyPassedToday(linkedDue, today, nowMins);
+    const searchFrom = passedAlready ? tomorrowKey : today;
+    const searchDeadline = passedAlready ? tomorrowKey : ev.deadline || null;
+    const t0 = findTier0Slot({ ...ev, deadline: searchDeadline }, working, routines, prefs, searchFrom);
     if (t0) {
       working = t0.events.map((e) => e.id === ev.id ? { ...e, date: t0.placement.date, time: t0.placement.time } : e);
       moves.push({
@@ -2322,7 +2332,7 @@ function computeCatchUpPlan(events, routines, prefs, today, difficulty) {
       });
       return;
     }
-    const legal = findLegalSlotOrNull(working, routines, prefs, today, ev.time || prefs.workStartTime, ev.duration || 30, ev.deadline || null);
+    const legal = findLegalSlotOrNull(working, routines, prefs, searchFrom, ev.time || prefs.workStartTime, ev.duration || 30, searchDeadline);
     if (legal) {
       working = working.map((e) => e.id === ev.id ? { ...e, date: legal.date, time: legal.time } : e);
       moves.push({
@@ -18031,6 +18041,7 @@ function CalendarTab({ setActive = () => {
     const next = events.map((ev) => {
       if (ev.status === "done" || !ev.time) return ev;
       if (isLeadInFixed(ev)) return ev;
+      if (ev.userPinned) return ev;
       if (ev.date > horizonEnd) return ev;
       const duration = ev.duration || 30;
       const tMins = timeToMinutes(ev.time);
@@ -23410,10 +23421,11 @@ function App() {
     const events = lsGet("events", []);
     const routines = getWeeklyRoutine();
     const prefs = getSchedulePreferences();
-    const plan = computeCatchUpPlan(events, routines, prefs, dayKey(), null);
+    const now = /* @__PURE__ */ new Date();
+    const plan = computeCatchUpPlan(events, routines, prefs, dayKey(), null, now.getHours() * 60 + now.getMinutes());
     setCatchUpPlan(plan);
     setCatchUpOverrides({});
-    setCatchUpExpandedId(null);
+    setCatchUpExpandedId(plan.moves.length === 1 ? plan.moves[0].id : null);
     setCatchUpMoveDraft(null);
     setCatchUpMoveError("");
     setCatchUpPreviewOpen(true);
@@ -23497,7 +23509,7 @@ function App() {
     setCatchUpMoveError("");
     const edited = Object.keys(catchUpOverrides).length > 0;
     setCatchUpOverrides({});
-    setDashToast(applied.length + " thing" + (applied.length !== 1 ? "s" : "") + " rebuilt.");
+    setDashToast(applied.length === 0 ? "Nothing moved." : applied.length === 1 ? "Moved." : applied.length + " things rebuilt.");
     setTimeout(() => setDashToast(""), 3200);
     logCatchUpEvent("rebuild_confirmed", { moveCount: applied.length, edited });
   };
@@ -23513,6 +23525,7 @@ function App() {
     setDashToast(blockedCount > 0 ? blockedCount + " couldn't be undone \u2014 something else is using that time now." : "Rebuild undone.");
     setTimeout(() => setDashToast(""), 3200);
   };
+  const catchUpSingle = !!catchUpPlan && catchUpPlan.moves.length + catchUpPlan.unplaceable.length === 1;
   const catchUpHonesty = (() => {
     if (!catchUpPlan) return null;
     if (catchUpPlan.unplaceable.length > 0) {
@@ -24118,6 +24131,7 @@ function App() {
       lsSet("missedLoggedKeys", Array.from(missedLoggedKeys));
     }
     const missedItems = computeCatchUpMissedItems(evs, today);
+    const catchUpOffered = missedItems.length >= CATCHUP_BANNER_THRESHOLD;
     const recoveryPending = missedItems.length >= CATCHUP_RECOVERY_THRESHOLD;
     const strugglingBucket = detectStrugglingBucket(getSchedulePreferences());
     if (strugglingBucket) {
@@ -24135,47 +24149,6 @@ function App() {
       else setPeakInsightOffer(peakInsight);
     }
     let working = evs;
-    const movedBatch = [];
-    if (!recoveryPending && lsGet("tier0Enabled", true)) {
-      const routines = getWeeklyRoutine();
-      const prefs = getSchedulePreferences();
-      const tomorrowKey = (() => {
-        const d = /* @__PURE__ */ new Date(today + "T12:00:00");
-        d.setDate(d.getDate() + 1);
-        return dayKey(d);
-      })();
-      const nowMins = (() => {
-        const n = /* @__PURE__ */ new Date();
-        return n.getHours() * 60 + n.getMinutes();
-      })();
-      evs.filter((ev) => isTier0Missed(ev, today)).forEach((ev) => {
-        const beforeSnapshot = new Map(working.map((e) => [e.id, { date: e.date, time: e.time }]));
-        const linkedDue = ev.dueEventId ? working.find((e) => e.id === ev.dueEventId) : null;
-        const passedAlready = examAlreadyPassedToday(linkedDue, today, nowMins);
-        const searchTask = passedAlready ? { ...ev, deadline: tomorrowKey } : ev;
-        const searchFrom = passedAlready ? tomorrowKey : today;
-        const result = findTier0Slot(searchTask, working, routines, prefs, searchFrom);
-        if (!result) return;
-        working = result.events.map((e) => e.id === ev.id ? {
-          ...e,
-          date: result.placement.date,
-          time: result.placement.time,
-          movedByStudlin: true,
-          movedFrom: { date: ev.date, time: ev.time },
-          movedAt: Date.now(),
-          movedReason: result.reason || null,
-          reshuffleCount: (ev.reshuffleCount || 0) + 1
-        } : e);
-        movedBatch.push({ id: ev.id, title: ev.title, from: { date: ev.date, time: ev.time }, to: result.placement, reason: result.reason || null });
-        working.forEach((e) => {
-          if (e.id === ev.id || !e.movedByStudlin) return;
-          const prior = beforeSnapshot.get(e.id);
-          if (prior && (prior.date !== e.date || prior.time !== e.time) && !movedBatch.some((m) => m.id === e.id)) {
-            movedBatch.push({ id: e.id, title: e.title, from: prior, to: { date: e.date, time: e.time } });
-          }
-        });
-      });
-    }
     const prepMode = getPrepScheduleMode();
     if (prepMode !== "off") {
       const nowActionable = working.filter((ev) => ev.prepPending && ev.kind === "deadline" && ev.status === "pending" && ev.attackStartDate && today >= ev.attackStartDate);
@@ -24205,8 +24178,8 @@ function App() {
       logCatchUpEvent("missed_blocks_detected", { count: missedItems.length });
       logCatchUpEvent("user_returned_after_missing_blocks", { count: missedItems.length });
     }
-    if (recoveryPending && lsGet("catchUpBannerDismissedDate", null) !== today) {
-      setCatchUpBanner({ count: missedItems.length, staleDays: catchUpStalenessDays(missedItems, today) });
+    if (catchUpOffered && lsGet("catchUpBannerDismissedDate", null) !== today) {
+      setCatchUpBanner({ count: missedItems.length, staleDays: catchUpStalenessDays(missedItems, today), title: missedItems.length === 1 ? missedItems[0].title : null });
       logCatchUpEvent("recovery_banner_shown", { count: missedItems.length });
     }
   }, []);
@@ -24487,16 +24460,16 @@ function App() {
     }
   ), recoveredSession && !timerTask && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 76, right: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 320 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, "Looks like you were ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, recoveredSession.elapsedMins, "min"), ' into "', recoveredSession.task.title, '" \u2014 what happened?'), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: recoverMarkDone }, "Mark as done"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: recoverResume }, "Resume"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: recoverDiscard }, "Discard"))), catchUpBanner && (() => {
     const tokens = StudlinTokens(T);
-    return /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 76, left: "50%", transform: "translateX(-50%)", zIndex: 999, width: "min(480px, calc(100vw - 40px))", padding: "16px 20px", borderRadius: tokens.radius.card, background: tokens.color.accentSubtle, border: `1px solid ${tokens.color.accent}55`, boxShadow: "0 8px 24px rgba(0,0,0,0.25)", animation: "studlinPop 0.2s ease", display: "flex", alignItems: "center", gap: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: tokens.type.size.itemTitle, color: tokens.color.textPrimary } }, catchUpBanner.count, " thing", catchUpBanner.count !== 1 ? "s" : "", " from ", catchUpStalenessLabel(catchUpBanner.staleDays || 1), " didn't get done."), /* @__PURE__ */ React.createElement(Btn, { onClick: openCatchUpPreview, style: { flexShrink: 0 } }, "Rebuild my week"), /* @__PURE__ */ React.createElement("button", { onClick: dismissCatchUpBanner, title: "Dismiss for today", "aria-label": "Dismiss", style: { flexShrink: 0, width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", borderRadius: 6, color: tokens.color.textPrimary, opacity: 0.55, cursor: "pointer" } }, Icon.xmark));
+    return /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 76, left: "50%", transform: "translateX(-50%)", zIndex: 999, width: "min(480px, calc(100vw - 40px))", padding: "16px 20px", borderRadius: tokens.radius.card, background: tokens.color.accentSubtle, border: `1px solid ${tokens.color.accent}55`, boxShadow: "0 8px 24px rgba(0,0,0,0.25)", animation: "studlinPop 0.2s ease", display: "flex", alignItems: "center", gap: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: tokens.type.size.itemTitle, color: tokens.color.textPrimary } }, catchUpBanner.count === 1 && catchUpBanner.title ? '"' + catchUpBanner.title + '" from ' + catchUpStalenessLabel(catchUpBanner.staleDays || 1) + " didn't get done." : catchUpBanner.count + " thing" + (catchUpBanner.count !== 1 ? "s" : "") + " from " + catchUpStalenessLabel(catchUpBanner.staleDays || 1) + " didn't get done."), /* @__PURE__ */ React.createElement(Btn, { onClick: openCatchUpPreview, style: { flexShrink: 0 } }, catchUpBanner.count === 1 ? "Reschedule" : "Rebuild my week"), /* @__PURE__ */ React.createElement("button", { onClick: dismissCatchUpBanner, title: "Dismiss for today", "aria-label": "Dismiss", style: { flexShrink: 0, width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", borderRadius: 6, color: tokens.color.textPrimary, opacity: 0.55, cursor: "pointer" } }, Icon.xmark));
   })(), /* @__PURE__ */ React.createElement(
     Modal,
     {
       open: catchUpPreviewOpen,
       onClose: closeCatchUpPreview,
-      title: "Rebuild your week",
-      sub: catchUpPlan ? catchUpPlan.moves.length + " thing" + (catchUpPlan.moves.length !== 1 ? "s" : "") + " moved." + (catchUpHonesty ? " " + catchUpHonesty : "") : "",
+      title: catchUpSingle ? "Reschedule this" : "Rebuild your week",
+      sub: catchUpPlan ? catchUpSingle && catchUpPlan.moves.length === 1 ? "Here's where Studlin would put it." + (catchUpHonesty ? " " + catchUpHonesty : "") : catchUpPlan.moves.length + " thing" + (catchUpPlan.moves.length !== 1 ? "s" : "") + " moved." + (catchUpHonesty ? " " + catchUpHonesty : "") : "",
       width: 640,
-      footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: 11.5, color: T.muted } }, "Nothing changes until you accept."), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeCatchUpPreview }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: confirmCatchUpRebuild }, "Looks good"))
+      footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: 11.5, color: T.muted } }, "Nothing changes until you accept."), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeCatchUpPreview }, catchUpSingle ? "Not now" : "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: confirmCatchUpRebuild, disabled: !catchUpPlan || catchUpPlan.moves.length === 0 }, catchUpSingle ? "Move it" : "Looks good"))
     },
     catchUpPlan && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", maxHeight: 420, overflowY: "auto" } }, catchUpPlan.moves.map((m) => {
       const override = catchUpOverrides[m.id] || {};

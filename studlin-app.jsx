@@ -2912,8 +2912,12 @@ function findSlotWithEviction(events,routines,prefs,desiredDate,desiredTime,dura
     const exam=events.find(x=>x.id===e.dueEventId);
     return !(exam&&exam.sessionsMovable===false);
   };
+  // !e.userPinned: the calendar tells a student "📌 Pinned. Studlin won't move
+  // this automatically." -- this filter used to have no pin check at all, so
+  // a pinned study block (a hand-typed or dragged assignment session) on a
+  // busy day could still be bumped a day to make room for something else.
   const candidates=events.filter(e=>e.date===desiredDate&&e.kind==="study block"&&e.status==="pending"&&
-    !isCoopStudySession(e)&&(!e.deadline||daysUntilDeadline(e)>7)&&(e.reshuffleCount||0)<RESHUFFLE_ESCALATE_THRESHOLD&&isSessionMovable(e)
+    !e.userPinned&&!isCoopStudySession(e)&&(!e.deadline||daysUntilDeadline(e)>7)&&(e.reshuffleCount||0)<RESHUFFLE_ESCALATE_THRESHOLD&&isSessionMovable(e)
   ).sort((a,b)=>{
     // Priority-first (lowest evicted first) now that sessions actually
     // carry a real, current priority (see computeSessionPriority/
@@ -3945,6 +3949,13 @@ function findReliableSlotFor(events,routines,prefs,desiredDate,desiredTime,durat
 // the two never independently drift on what counts as "a rough week" --
 // previously a bare `2` lived inline only in App()'s daily sweep.
 const CATCHUP_RECOVERY_THRESHOLD=2;
+// The Catch Me Up banner (and its Move / Move-it-myself / Skip preview) is
+// offered for ANY missed item, even a single one. Below
+// CATCHUP_RECOVERY_THRESHOLD a lone missed block used to be relocated
+// silently by Tier 0 with no banner -- a student who'd deliberately placed
+// something found it had moved on its own. Nothing about a missed item
+// changes now until the student accepts the preview.
+const CATCHUP_BANNER_THRESHOLD=1;
 function computeCatchUpMissedItems(events,today){
   return events.filter(ev=>
     ev.status==="pending"&&
@@ -4100,20 +4111,36 @@ function compressExamPrepForRoom(ev,working,routines,prefs,today,difficulty){
 // back once more to compressExamPrepForRoom before giving up on an item
 // entirely. Never mutates events -- the caller (the preview UI) decides
 // whether/when to actually commit the result.
-function computeCatchUpPlan(events,routines,prefs,today,difficulty){
+// nowMins (minutes since midnight, the real current moment) is optional and
+// passed in rather than read internally so this stays testable without
+// mocking the clock. When given, a review/prep session whose linked exam or
+// assignment is due TODAY at a time that's already passed is searched from
+// tomorrow instead (one extra day of grace on its deadline for that search
+// only) -- otherwise the plan would propose "review" time for later this
+// afternoon, after the exam it was meant to prepare for already happened.
+// This is the guard Tier 0's old silent single-item move had, carried over
+// now that every missed item goes through this preview instead.
+function computeCatchUpPlan(events,routines,prefs,today,difficulty,nowMins){
   const missed=computeCatchUpMissedItems(events,today);
   let working=events;
   const moves=[];
   const unplaceable=[];
+  const tomorrowKey=(()=>{const d=new Date(today+"T12:00:00");d.setDate(d.getDate()+1);return dayKey(d);})();
   missed.forEach(ev=>{
-    const t0=findTier0Slot({...ev},working,routines,prefs,today);
+    const linkedDue=(nowMins!=null&&ev.dueEventId)?working.find(e=>e.id===ev.dueEventId):null;
+    const passedAlready=examAlreadyPassedToday(linkedDue,today,nowMins);
+    const searchFrom=passedAlready?tomorrowKey:today;
+    // ev keeps its real stored deadline for everything recorded below
+    // (moves, reasons); only the search itself gets the extra day.
+    const searchDeadline=passedAlready?tomorrowKey:(ev.deadline||null);
+    const t0=findTier0Slot({...ev,deadline:searchDeadline},working,routines,prefs,searchFrom);
     if(t0){
       working=t0.events.map(e=>e.id===ev.id?{...e,date:t0.placement.date,time:t0.placement.time}:e);
       moves.push({id:ev.id,title:ev.title,kind:ev.kind,duration:ev.duration||30,deadline:ev.deadline||null,from:{date:ev.date,time:ev.time},to:t0.placement,
         reason:t0.reason||catchUpReasonFor(ev,t0.placement.date,working,routines,prefs,today)});
       return;
     }
-    const legal=findLegalSlotOrNull(working,routines,prefs,today,ev.time||prefs.workStartTime,ev.duration||30,ev.deadline||null);
+    const legal=findLegalSlotOrNull(working,routines,prefs,searchFrom,ev.time||prefs.workStartTime,ev.duration||30,searchDeadline);
     if(legal){
       working=working.map(e=>e.id===ev.id?{...e,date:legal.date,time:legal.time}:e);
       moves.push({id:ev.id,title:ev.title,kind:ev.kind,duration:ev.duration||30,deadline:ev.deadline||null,from:{date:ev.date,time:ev.time},to:legal,
@@ -30731,6 +30758,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       // get silently relocated here even though Tier 0 would never touch
       // one.
       if(isLeadInFixed(ev))return ev;
+      // Pinned means "Studlin won't move this automatically" -- this runs on
+      // every app open and every routine edit, and used to relocate a pinned
+      // task the moment it overlapped a class/work block. The overlap still
+      // shows as a conflict on the calendar; the student decides what to do.
+      if(ev.userPinned)return ev;
       if(ev.date>horizonEnd)return ev;
       const duration=ev.duration||30;
       const tMins=timeToMinutes(ev.time);
@@ -39325,10 +39357,10 @@ function App() {
   // Catch Me Up -- ONE recovery surface, replacing what used to be three
   // (Tier 0's auto-move banner, Tier 1's rollover panel, and an insight
   // nudge could all fire on the same app-open) plus a fourth found during
-  // review (examPrepSuggestion). Below the 2-item trigger, Tier 0 still
-  // silently relocates exactly as it always did -- no banner at all now,
-  // not even for a single moved item (see the mount effect below).
-  // catchUpBanner holds nothing but the count until "Rebuild my week" is
+  // review (examPrepSuggestion). Any missed item (even one) shows the
+  // banner; nothing is ever relocated without the student accepting the
+  // preview (see the mount effect below). catchUpBanner holds nothing but
+  // the count (and the title, for a single item) until its button is
   // tapped; the actual proposal is computed lazily then, not on every
   // mount, via computeCatchUpPlan.
   const [catchUpBanner,setCatchUpBanner]=useState(null); // {count} | null
@@ -39776,18 +39808,23 @@ function App() {
   };
   const fmtRolloverClock=(t)=>{if(!t)return"";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+ap;};
   // Opens the rebuild preview -- computes the plan once, lazily, only when
-  // the student actually taps "Rebuild my week" (not on every mount, and
+  // the student actually taps the banner's button (not on every mount, and
   // not while the banner is merely sitting there unread). Fresh read from
-  // storage since Tier 0's own commit loop was deliberately skipped while
-  // recovery was pending, so nothing about any missed item has moved yet.
+  // storage -- nothing about any missed item has moved yet, since missed
+  // items are never committed without this preview being accepted.
   const openCatchUpPreview=()=>{
     const events=lsGet("events",[]);
     const routines=getWeeklyRoutine();
     const prefs=getSchedulePreferences();
-    const plan=computeCatchUpPlan(events,routines,prefs,dayKey(),null);
+    const now=new Date();
+    const plan=computeCatchUpPlan(events,routines,prefs,dayKey(),null,now.getHours()*60+now.getMinutes());
     setCatchUpPlan(plan);
     setCatchUpOverrides({});
-    setCatchUpExpandedId(null);
+    // One item: open its Move it myself / Skip / Not this week controls up
+    // front, so "modify or dismiss" is visible without hunting for a tap
+    // target. Several items stay collapsed (a long list of open controls
+    // would bury the one-tap "Looks good").
+    setCatchUpExpandedId(plan.moves.length===1?plan.moves[0].id:null);
     setCatchUpMoveDraft(null);
     setCatchUpMoveError("");
     setCatchUpPreviewOpen(true);
@@ -39888,7 +39925,7 @@ function App() {
     setCatchUpMoveError("");
     const edited=Object.keys(catchUpOverrides).length>0;
     setCatchUpOverrides({});
-    setDashToast(applied.length+" thing"+(applied.length!==1?"s":"")+" rebuilt.");
+    setDashToast(applied.length===0?"Nothing moved.":applied.length===1?"Moved.":applied.length+" things rebuilt.");
     setTimeout(()=>setDashToast(""),3200);
     logCatchUpEvent("rebuild_confirmed",{moveCount:applied.length,edited});
   };
@@ -39907,6 +39944,9 @@ function App() {
   // One honest sentence at the top of the preview when the rebuilt plan is
   // tight or something genuinely didn't fit -- never silently overloads a
   // day. Null (nothing shown) when the plan is comfortable.
+  // A plan about exactly one task (moved or unplaceable) reads as "Reschedule
+  // this / Move it", not a whole-week rebuild.
+  const catchUpSingle=!!catchUpPlan&&(catchUpPlan.moves.length+catchUpPlan.unplaceable.length)===1;
   const catchUpHonesty=(()=>{
     if(!catchUpPlan)return null;
     if(catchUpPlan.unplaceable.length>0){
@@ -40781,8 +40821,8 @@ function App() {
     // stays visible until the student decides via its own banner.
     const expired=evs.filter(ev=>ev.status==="pending"&&ev.deadline&&ev.deadline<today);
     if(expired.length>0)setExpiredPending(expired);
-    // Completion-reliability signal — logged regardless of tier0Enabled so
-    // the data keeps accumulating even if Tier 0 itself is off. Was gated
+    // Completion-reliability signal — logged on every missed item (nothing
+    // is moved automatically anymore, so this is purely a record). Was gated
     // to ev.date===yesterday only, which meant a student who skipped
     // opening the app for more than one day permanently lost the misses
     // from every day in between (not delayed -- dropped), silently
@@ -40803,21 +40843,22 @@ function App() {
       lsSet("missedLoggedKeys",Array.from(missedLoggedKeys));
     }
     // Catch Me Up's trigger: the SAME unified missed-item set Tier 0/Tier 1
-    // used to compute separately, counted once, up front. Below 2 items,
-    // everything below behaves exactly as it always did (Tier 0 commits
-    // silently) except NO banner shows at all now, not even for a single
-    // moved item -- "no interruption for a single missed block" per the
-    // design brief. At 2+, Tier 0's immediate-commit loop is skipped
-    // entirely: nothing about a missed item changes until the student
-    // taps "Rebuild my week" and confirms the preview (Part 3). The
-    // insight nudges below are gated on the same count so they can't fire
-    // on top of (or right after dismissing) the recovery banner.
+    // used to compute separately, counted once, up front. ANY missed item
+    // (catchUpOffered) gets the banner and, on tap, a preview -- nothing
+    // about a missed item changes until the student accepts it (Part 3).
+    // A single missed block used to be moved silently by Tier 0 instead
+    // ("no interruption for a single missed block" per the original design
+    // brief); that was reversed on a direct user report that Studlin moved
+    // assignments a student had pinned. recoveryPending (2+, a genuinely
+    // rough week) still separately gates the insight nudges below so they
+    // can't fire on top of (or right after dismissing) the recovery banner.
     const missedItems=computeCatchUpMissedItems(evs,today);
+    const catchUpOffered=missedItems.length>=CATCHUP_BANNER_THRESHOLD;
     const recoveryPending=missedItems.length>=CATCHUP_RECOVERY_THRESHOLD;
     // Proactive nudge — a RECENT run of misses in one bucket, checked right
     // after the log write above so today's data (if any landed here) is
-    // already included. Independent of tier0Enabled below: this is about
-    // the student's own declared preference, not whether Tier 0 itself is on.
+    // already included. This is about the student's own declared
+    // preference, independent of what happens to any missed item.
     const strugglingBucket=detectStrugglingBucket(getSchedulePreferences());
     if(strugglingBucket){
       if(recoveryPending)queueInsightNudge("strugglingBucket",strugglingBucket);
@@ -40844,57 +40885,15 @@ function App() {
       if(recoveryPending)queueInsightNudge("peakInsight",peakInsight);
       else setPeakInsightOffer(peakInsight);
     }
-    // Tier 0 — the trigger is silent (no click needed to move an eligible
-    // missed task), but the result never is: every move gets recorded into
-    // movedBatch so the per-task undo icon can always show what changed.
-    // Skipped entirely once recoveryPending: holding everything uncommitted
-    // until the rebuild preview is confirmed is the whole point of Catch
-    // Me Up Part 3 ("does NOT apply immediately").
+    // A missed task is NEVER moved on its own anymore. This used to be Tier
+    // 0's silent-commit loop for any lone missed item (banner only from 2+),
+    // which relocated tasks a student hadn't agreed to move. Every missed
+    // item now goes through the Catch Me Up banner below -> preview (Move /
+    // Move it myself / Skip / Not this week) and nothing changes until the
+    // student accepts. Pinned items never reach this at all: isFixedItem
+    // (via computeCatchUpMissedItems) excludes them.
     let working=evs;
-    const movedBatch=[];
-    if(!recoveryPending&&lsGet("tier0Enabled",true)){
-      const routines=getWeeklyRoutine();
-      const prefs=getSchedulePreferences();
-      const tomorrowKey=(()=>{const d=new Date(today+"T12:00:00");d.setDate(d.getDate()+1);return dayKey(d);})();
-      const nowMins=(()=>{const n=new Date();return n.getHours()*60+n.getMinutes();})();
-      evs.filter(ev=>isTier0Missed(ev,today)).forEach(ev=>{
-        // Snapshot before this placement — findTier0Slot's eviction path
-        // (findSlotWithEviction) can silently relocate OTHER pending tasks
-        // to make room for this one. Those get the same movedByStudlin
-        // stamp as the primary move (see findSlotWithEviction), but only
-        // the primary move below ever used to get logged into movedBatch —
-        // diffing against this snapshot surfaces evictions into the same
-        // undo mechanism instead of them moving with zero visibility.
-        const beforeSnapshot=new Map(working.map(e=>[e.id,{date:e.date,time:e.time}]));
-        // A review/prep session whose linked exam or assignment
-        // (dueEventId) is due TODAY at a time that's already passed gets
-        // searched starting tomorrow instead, with one extra day of grace
-        // on its deadline for just this placement call (the stored event's
-        // real deadline is never mutated) — otherwise Tier 0 would happily
-        // schedule "review" time for later this afternoon, after the exam
-        // it was meant to prepare for already happened.
-        const linkedDue=ev.dueEventId?working.find(e=>e.id===ev.dueEventId):null;
-        const passedAlready=examAlreadyPassedToday(linkedDue,today,nowMins);
-        const searchTask=passedAlready?{...ev,deadline:tomorrowKey}:ev;
-        const searchFrom=passedAlready?tomorrowKey:today;
-        const result=findTier0Slot(searchTask,working,routines,prefs,searchFrom);
-        if(!result)return;
-        working=result.events.map(e=>e.id===ev.id?{
-          ...e,date:result.placement.date,time:result.placement.time,
-          movedByStudlin:true,movedFrom:{date:ev.date,time:ev.time},movedAt:Date.now(),movedReason:result.reason||null,
-          reshuffleCount:(ev.reshuffleCount||0)+1,
-        }:e);
-        movedBatch.push({id:ev.id,title:ev.title,from:{date:ev.date,time:ev.time},to:result.placement,reason:result.reason||null});
-        working.forEach(e=>{
-          if(e.id===ev.id||!e.movedByStudlin)return;
-          const prior=beforeSnapshot.get(e.id);
-          if(prior&&(prior.date!==e.date||prior.time!==e.time)&&!movedBatch.some(m=>m.id===e.id)){
-            movedBatch.push({id:e.id,title:e.title,from:prior,to:{date:e.date,time:e.time}});
-          }
-        });
-      });
-    }
-    // Actionable-window sweep — same once-a-day tick as Tier 0 above, but
+    // Actionable-window sweep — same once-a-day tick as the missed-task check above, but
     // for syllabus assignments deferred at scan time because they were too
     // far from their due date to probe yet (see prepPending in
     // commitSyllabusEvents). "off" leaves them as plain due-date pills
@@ -40933,25 +40932,25 @@ function App() {
     // place each day's occurrence gets turned into a real, concretely
     // timed task, same once-a-day cadence as everything else above.
     // Passing the current `working` (not a fresh storage read) matters:
-    // Tier 0 above may already have moved a habit's own prior instance
-    // forward in memory, and this needs to see that to avoid duplicating it.
+    // the sweep above may have just flipped a prepPending assignment, and
+    // this needs to see that to avoid duplicating anything.
     const habitEvents=materializeHabitsForDate(today,working);
     if(habitEvents.length)working=working.concat(habitEvents);
     if(working!==evs)lsSet("events",working);
     // Part 4 instrumentation -- "the number that matters: of users who
     // miss blocks, what fraction come back and rebuild vs. disappear"
-    // needs the denominator captured here regardless of whether the 2-item
-    // banner threshold is met, not just the numerator further down.
+    // needs the denominator captured here regardless of whether the banner
+    // threshold is met, not just the numerator further down.
     if(missedItems.length>0){
       logCatchUpEvent("missed_blocks_detected",{count:missedItems.length});
       logCatchUpEvent("user_returned_after_missing_blocks",{count:missedItems.length});
     }
-    // recoveryPending is the ONLY thing that decides whether the banner
-    // shows -- movedBatch is empty whenever it's true (the loop above was
-    // skipped), so there's nothing left to reconcile against a "seen ids"
-    // set the way the old tier0Batch banner needed. Every one of
-    // missedItems is still exactly as missed as it was; the banner names
-    // the count, "Rebuild my week" computes the actual plan on tap.
+    // catchUpOffered is the ONLY thing that decides whether the banner
+    // shows -- nothing has moved (there's no auto-commit anymore), so
+    // there's nothing to reconcile against a "seen ids" set the way the old
+    // tier0Batch banner needed. Every one of missedItems is still exactly
+    // as missed as it was; the banner names the count (or the task, for a
+    // single one) and the button computes the actual plan on tap.
     // User report, 2026-09-15: "there is no way to dismiss this reconstruct
     // my week thingy" -- true, the banner previously only ever cleared by
     // completing the full Rebuild-my-week flow (see confirmCatchUpRebuild's
@@ -40962,8 +40961,8 @@ function App() {
     // cooldown since this is inherently a once-per-day mount effect anyway.
     // The missed items themselves are untouched either way -- dismissing
     // only silences today's nudge about them, it never marks anything done.
-    if(recoveryPending&&lsGet("catchUpBannerDismissedDate",null)!==today){
-      setCatchUpBanner({count:missedItems.length,staleDays:catchUpStalenessDays(missedItems,today)});
+    if(catchUpOffered&&lsGet("catchUpBannerDismissedDate",null)!==today){
+      setCatchUpBanner({count:missedItems.length,staleDays:catchUpStalenessDays(missedItems,today),title:missedItems.length===1?missedItems[0].title:null});
       logCatchUpEvent("recovery_banner_shown",{count:missedItems.length});
     }
   },[]);
@@ -41543,17 +41542,19 @@ function App() {
           never red, never a shame badge -- this replaces what used to be
           up to four independent panels (Tier 0's auto-move banner, Tier
           1's rollover panel, an insight nudge, and examPrepSuggestion)
-          all potentially firing on the same app-open. Below the 2-item
-          trigger there's nothing here at all -- Tier 0 still relocates a
-          single missed block silently, same as always, no interruption. */}
+          all potentially firing on the same app-open. Shown for any missed
+          item, one or many -- nothing is relocated until the student
+          accepts the preview this opens. */}
       {catchUpBanner&&(()=>{
         const tokens=StudlinTokens(T);
         return (
           <div style={{position:"fixed",top:76,left:"50%",transform:"translateX(-50%)",zIndex:999,width:"min(480px, calc(100vw - 40px))",padding:"16px 20px",borderRadius:tokens.radius.card,background:tokens.color.accentSubtle,border:`1px solid ${tokens.color.accent}55`,boxShadow:"0 8px 24px rgba(0,0,0,0.25)",animation:"studlinPop 0.2s ease",display:"flex",alignItems:"center",gap:16}}>
             <div style={{flex:1,fontSize:tokens.type.size.itemTitle,color:tokens.color.textPrimary}}>
-              {catchUpBanner.count} thing{catchUpBanner.count!==1?"s":""} from {catchUpStalenessLabel(catchUpBanner.staleDays||1)} didn't get done.
+              {catchUpBanner.count===1&&catchUpBanner.title
+                ?"\""+catchUpBanner.title+"\" from "+catchUpStalenessLabel(catchUpBanner.staleDays||1)+" didn't get done."
+                :catchUpBanner.count+" thing"+(catchUpBanner.count!==1?"s":"")+" from "+catchUpStalenessLabel(catchUpBanner.staleDays||1)+" didn't get done."}
             </div>
-            <Btn onClick={openCatchUpPreview} style={{flexShrink:0}}>Rebuild my week</Btn>
+            <Btn onClick={openCatchUpPreview} style={{flexShrink:0}}>{catchUpBanner.count===1?"Reschedule":"Rebuild my week"}</Btn>
             <button onClick={dismissCatchUpBanner} title="Dismiss for today" aria-label="Dismiss" style={{flexShrink:0,width:26,height:26,display:"flex",alignItems:"center",justifyContent:"center",background:"none",border:"none",borderRadius:6,color:tokens.color.textPrimary,opacity:0.55,cursor:"pointer"}}>{Icon.xmark}</button>
           </div>
         );
@@ -41562,13 +41563,13 @@ function App() {
           ("Looks good") accepts everything exactly as proposed, or any
           item can be expanded for optional Move-it-myself/Skip/Not-this-
           week controls. Editing is available, never demanded. */}
-      <Modal open={catchUpPreviewOpen} onClose={closeCatchUpPreview} title="Rebuild your week"
-        sub={catchUpPlan?(catchUpPlan.moves.length+" thing"+(catchUpPlan.moves.length!==1?"s":"")+" moved."+(catchUpHonesty?" "+catchUpHonesty:"")):""}
+      <Modal open={catchUpPreviewOpen} onClose={closeCatchUpPreview} title={catchUpSingle?"Reschedule this":"Rebuild your week"}
+        sub={catchUpPlan?(catchUpSingle&&catchUpPlan.moves.length===1?"Here's where Studlin would put it."+(catchUpHonesty?" "+catchUpHonesty:""):(catchUpPlan.moves.length+" thing"+(catchUpPlan.moves.length!==1?"s":"")+" moved."+(catchUpHonesty?" "+catchUpHonesty:""))):""}
         width={640}
         footer={<>
           <div style={{flex:1,fontSize:11.5,color:T.muted}}>Nothing changes until you accept.</div>
-          <Btn variant="subtle" onClick={closeCatchUpPreview}>Cancel</Btn>
-          <Btn onClick={confirmCatchUpRebuild}>Looks good</Btn>
+          <Btn variant="subtle" onClick={closeCatchUpPreview}>{catchUpSingle?"Not now":"Cancel"}</Btn>
+          <Btn onClick={confirmCatchUpRebuild} disabled={!catchUpPlan||catchUpPlan.moves.length===0}>{catchUpSingle?"Move it":"Looks good"}</Btn>
         </>}>
         {catchUpPlan&&(
           <div style={{display:"flex",flexDirection:"column",maxHeight:420,overflowY:"auto"}}>
