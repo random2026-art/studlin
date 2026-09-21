@@ -45,9 +45,21 @@ const ME_SOURCE = fs.readFileSync(path.join(__dirname, "..", "api", "me.js"), "u
 const SW_SOURCE = fs.readFileSync(path.join(__dirname, "..", "service-worker.js"), "utf8");
 
 describe("FCM token registration no longer depends on a blocked users/{uid} read (source-level regression guards)", () => {
-  test("the registration effect writes via arrayUnion, not a read-then-write against userRef.get()", () => {
-    assert.match(APP_SOURCE, /fsdb\(\)\.collection\('users'\)\.doc\(myUid\)\.set\(\{fcmTokens:firebase\.firestore\.FieldValue\.arrayUnion\(token\),updatedAt:new Date\(\)\.toISOString\(\)\},\{merge:true\}\)\.catch\(\(\)=>\{\}\);/,
+  // 2026-09-20 follow-up: this write now lives inside the shared
+  // registerPushToken() (module scope, near FCM_CONFIGURED) instead of
+  // inline in the Network-tab effect -- pulled out so Settings' own
+  // "Desktop notifications" toggle can call the same real registration
+  // step, not just this one tab (see registerPushToken's own comment for
+  // that follow-up bug). The arrayUnion-not-read-then-write property this
+  // test guards is unchanged, just relocated.
+  test("registerPushToken writes via arrayUnion, not a read-then-write against userRef.get()", () => {
+    assert.match(APP_SOURCE, /async function registerPushToken\(myUid\)\{[\s\S]*?fsdb\(\)\.collection\('users'\)\.doc\(myUid\)\.set\(\{fcmTokens:firebase\.firestore\.FieldValue\.arrayUnion\(token\),updatedAt:new Date\(\)\.toISOString\(\)\},\{merge:true\}\);/,
       "arrayUnion needs no read at all -- Firestore adds the token only if it isn't already present");
+  });
+
+  test("the Network-tab effect and the Settings toggle both call the same shared registerPushToken, instead of duplicating (or only some of them having) the real registration step", () => {
+    const matches = APP_SOURCE.match(/registerPushToken\(myUid\)/g) || [];
+    assert.ok(matches.length >= 3, `expected registerPushToken(myUid) called from the Network-tab effect and both granted-permission branches of the Settings toggle, found ${matches.length} call sites`);
   });
 
   test("the old blocked read-before-write pattern is gone", () => {
