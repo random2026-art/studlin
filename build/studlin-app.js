@@ -294,6 +294,19 @@ function tierProgressFor(minutes) {
 }
 const FCM_VAPID_KEY = "BAgeXH3hA5APFcYuopRiB_7dBey6w1cYHStHBG-b8jnYA3941-4D1pQKILfsfNCjI3Ot2S5BTAwvEMgohR9ubmA";
 const FCM_CONFIGURED = FCM_VAPID_KEY !== "REPLACE_WITH_VAPID_KEY_FROM_FIREBASE_CONSOLE";
+async function registerPushToken(myUid) {
+  if (!myUid || !FCM_CONFIGURED) return null;
+  if (typeof Notification === "undefined" || Notification.permission !== "granted" || !("serviceWorker" in navigator)) return null;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const token = await firebase.messaging().getToken({ vapidKey: FCM_VAPID_KEY, serviceWorkerRegistration: reg });
+    if (!token) return null;
+    await fsdb().collection("users").doc(myUid).set({ fcmTokens: firebase.firestore.FieldValue.arrayUnion(token), updatedAt: (/* @__PURE__ */ new Date()).toISOString() }, { merge: true });
+    return token;
+  } catch (e) {
+    return null;
+  }
+}
 const GOOGLE_OAUTH_CLIENT_ID = "16831354472-bsq7nhbg1jbrovhj69sib9f9fmg4jag2.apps.googleusercontent.com";
 const GDOCS_CONFIGURED = GOOGLE_OAUTH_CLIENT_ID !== "YOUR_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com";
 const DEV_MODE = location.hostname === "localhost" || location.hostname === "127.0.0.1";
@@ -21358,6 +21371,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
       tog("sysPush");
       setSysPushStatus("granted");
       syncPushPref(true);
+      registerPushToken(myUid);
       new Notification("Studlin", { body: "Desktop notifications are on. We'll keep you in sync." });
       return;
     }
@@ -21370,6 +21384,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
       if (perm === "granted") {
         tog("sysPush");
         syncPushPref(true);
+        registerPushToken(myUid);
         new Notification("Studlin", { body: "Desktop notifications are on. We'll keep you in sync." });
       }
     });
@@ -24027,16 +24042,8 @@ function App() {
     Notification.requestPermission();
   }, [active, myUid]);
   useEffect(() => {
-    if (active !== "friends" || !myUid || !FCM_CONFIGURED) return;
-    if (typeof Notification === "undefined" || Notification.permission !== "granted" || !("serviceWorker" in navigator)) return;
-    navigator.serviceWorker.ready.then(
-      (reg) => firebase.messaging().getToken({ vapidKey: FCM_VAPID_KEY, serviceWorkerRegistration: reg })
-    ).then((token) => {
-      if (!token) return;
-      fsdb().collection("users").doc(myUid).set({ fcmTokens: firebase.firestore.FieldValue.arrayUnion(token), updatedAt: (/* @__PURE__ */ new Date()).toISOString() }, { merge: true }).catch(() => {
-      });
-    }).catch(() => {
-    });
+    if (active !== "friends") return;
+    registerPushToken(myUid);
   }, [active, myUid]);
   useEffect(() => {
     if (!FCM_CONFIGURED || typeof firebase === "undefined" || !firebase.messaging) return;

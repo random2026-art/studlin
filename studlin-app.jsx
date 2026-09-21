@@ -348,6 +348,35 @@ function tierProgressFor(minutes){let idx=0;for(let i=0;i<PROF_TIERS.length;i++)
 // api/notify.js can actually call admin.messaging().send() — see api/_lib/firebase-admin.js.
 const FCM_VAPID_KEY = "BAgeXH3hA5APFcYuopRiB_7dBey6w1cYHStHBG-b8jnYA3941-4D1pQKILfsfNCjI3Ot2S5BTAwvEMgohR9ubmA";
 const FCM_CONFIGURED = FCM_VAPID_KEY !== "REPLACE_WITH_VAPID_KEY_FROM_FIREBASE_CONSOLE";
+// Real bug found live, 2026-09-20 ("friend has desktop notifications on
+// but doesn't receive anything"): granting OS notification permission and
+// registering an actual FCM token used to be two separate, disconnected
+// steps. Settings' "Desktop notifications" toggle (handleSysPushToggle)
+// only ever called Notification.requestPermission() and flipped
+// preferences.pushNotificationsEnabled=true -- it never called getToken()
+// or wrote anything to fcmTokens. The ONLY place that actually registered
+// a token was a separate App()-level effect gated on the Studlin Network
+// tab being open. So a student could turn the Settings toggle fully on
+// (real OS permission granted, real Firestore preference flag true -- by
+// every signal they'd check, "notifications are on") and still have an
+// empty fcmTokens array forever if they never separately visited Studlin
+// Network with permission already granted. api/notify.js's sendPush
+// silently skips any recipient with zero tokens -- no error anywhere,
+// for either side. Pulled the actual registration into one shared
+// function so every permission-granted moment (the toggle, the Network
+// tab effect, resetPushDevices) can call the same real thing instead of
+// only some of them doing it.
+async function registerPushToken(myUid){
+  if(!myUid||!FCM_CONFIGURED)return null;
+  if(typeof Notification==="undefined"||Notification.permission!=="granted"||!("serviceWorker"in navigator))return null;
+  try{
+    const reg=await navigator.serviceWorker.ready;
+    const token=await firebase.messaging().getToken({vapidKey:FCM_VAPID_KEY,serviceWorkerRegistration:reg});
+    if(!token)return null;
+    await fsdb().collection('users').doc(myUid).set({fcmTokens:firebase.firestore.FieldValue.arrayUnion(token),updatedAt:new Date().toISOString()},{merge:true});
+    return token;
+  }catch(e){return null;}
+}
 
 // ─── GOOGLE DOCS INTEGRATION ─────────────────────────────────────────────────
 // To enable one-click export to Google Docs, replace the placeholder below
@@ -35670,13 +35699,14 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Cobalt", setAccent=
     if(typeof Notification==="undefined"){return;}
     if(Notification.permission==="granted"){
       tog("sysPush");setSysPushStatus("granted");syncPushPref(true);
+      registerPushToken(myUid); // see registerPushToken's own comment -- the actual fix, permission alone was never enough
       new Notification("Studlin",{body:"Desktop notifications are on. We'll keep you in sync."});
       return;
     }
     if(Notification.permission==="denied"){setSysPushStatus("denied");return;}
     Notification.requestPermission().then(perm=>{
       setSysPushStatus(perm);
-      if(perm==="granted"){tog("sysPush");syncPushPref(true);new Notification("Studlin",{body:"Desktop notifications are on. We'll keep you in sync."});}
+      if(perm==="granted"){tog("sysPush");syncPushPref(true);registerPushToken(myUid);new Notification("Studlin",{body:"Desktop notifications are on. We'll keep you in sync."});}
     });
   };
   const [resettingDevices,setResettingDevices]=useState(false);
@@ -40650,14 +40680,8 @@ function App() {
   // handler (it already reads this doc with admin access on every app
   // boot via fetchUserProfile).
   useEffect(()=>{
-    if(active!=="friends"||!myUid||!FCM_CONFIGURED)return;
-    if(typeof Notification==="undefined"||Notification.permission!=="granted"||!("serviceWorker"in navigator))return;
-    navigator.serviceWorker.ready.then(reg=>
-      firebase.messaging().getToken({vapidKey:FCM_VAPID_KEY,serviceWorkerRegistration:reg})
-    ).then(token=>{
-      if(!token)return;
-      fsdb().collection('users').doc(myUid).set({fcmTokens:firebase.firestore.FieldValue.arrayUnion(token),updatedAt:new Date().toISOString()},{merge:true}).catch(()=>{});
-    }).catch(()=>{});
+    if(active!=="friends")return;
+    registerPushToken(myUid); // now the one shared implementation -- see its own comment (module scope, near FCM_CONFIGURED)
   },[active,myUid]);
 
   // Foreground push handler — FCM routes here (instead of the service
