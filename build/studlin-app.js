@@ -2368,6 +2368,30 @@ function computeCatchUpPlan(events, routines, prefs, today, difficulty, nowMins)
   });
   return { moves, unplaceable };
 }
+const ROUTINE_CONFLICT_HORIZON_DAYS = 13;
+function computeRoutineConflictPlan(events, nextRoutines, prefs, today) {
+  const horizonEnd = (() => {
+    const d = /* @__PURE__ */ new Date(today + "T12:00:00");
+    d.setDate(d.getDate() + ROUTINE_CONFLICT_HORIZON_DAYS);
+    return dayKey(d);
+  })();
+  const moves = [];
+  events.forEach((ev) => {
+    if (ev.status === "done" || !ev.time) return;
+    if (isLeadInFixed(ev)) return;
+    if (ev.userPinned) return;
+    if (ev.date > horizonEnd) return;
+    const duration = ev.duration || 30;
+    const tMins = timeToMinutes(ev.time);
+    const occupied = expandRoutineOccurrences(nextRoutines, ev.date, ev.date).filter((o) => o.kind !== "free period").map((o) => ({ start: timeToMinutes(o.time) - effectiveLeadIn(o), end: timeToMinutes(o.time) + (o.duration || 30) + effectiveTrailOut(o) }));
+    const conflict = occupied.some((o) => !(tMins + duration <= o.start || tMins >= o.end));
+    if (!conflict) return;
+    const slot = findLegalSlotOrNull(events.filter((e) => e.id !== ev.id), nextRoutines, prefs, ev.date, ev.time, duration);
+    if (!slot || slot.date === ev.date && slot.time === ev.time) return;
+    moves.push({ id: ev.id, title: ev.title, duration, from: { date: ev.date, time: ev.time }, to: slot });
+  });
+  return { moves };
+}
 function undoTier0Move(taskId) {
   const events = lsGet("events", []);
   const moved = events.find((e) => e.id === taskId);
@@ -2385,13 +2409,11 @@ function undoTier0Move(taskId) {
   lsSet("events", next);
   return { events: next, blocked: false };
 }
-function reconcileFixedEventConflicts(newFixedEvents) {
+function computeFixedEventConflictPlan(newFixedEvents, existingEvents, routines, prefs) {
   const timed = newFixedEvents.filter((nf) => nf.time);
-  if (timed.length === 0) return { events: lsGet("events", []), moved: [], needsAttention: [] };
+  if (timed.length === 0) return { moved: [], needsAttention: [] };
   const newIds = new Set(timed.map((e) => e.id));
-  const existing = lsGet("events", []).filter((e) => !newIds.has(e.id));
-  const routines = getWeeklyRoutine();
-  const prefs = getSchedulePreferences();
+  const existing = existingEvents.filter((e) => !newIds.has(e.id));
   const toMin = (t) => {
     const p = (t || "00:00").split(":").map(Number);
     return p[0] * 60 + p[1];
@@ -2418,14 +2440,23 @@ function reconcileFixedEventConflicts(newFixedEvents) {
         needsAttention.push({ newEvent: nf, conflictsWith: e, noSlotFound: true });
         return e;
       }
-      const movedReason = { type: "displaced", causedByTitle: nf.title };
-      moved.push({ id: e.id, title: e.title, from: { date: e.date, time: e.time }, to: slot, causedByTitle: nf.title });
-      return { ...e, date: slot.date, time: slot.time, movedByStudlin: true, movedFrom: { date: e.date, time: e.time }, movedAt: Date.now(), movedReason, reshuffleCount: (e.reshuffleCount || 0) + 1 };
+      moved.push({ id: e.id, title: e.title, duration, from: { date: e.date, time: e.time }, to: slot, causedByTitle: nf.title });
+      return { ...e, date: slot.date, time: slot.time };
     });
   });
-  const finalEvents = working.concat(newFixedEvents);
+  return { moved, needsAttention };
+}
+function reconcileFixedEventConflicts(newFixedEvents) {
+  const timed = newFixedEvents.filter((nf) => nf.time);
+  if (timed.length === 0) return { events: lsGet("events", []), moved: [], needsAttention: [] };
+  const newIds = new Set(timed.map((e) => e.id));
+  const existing = lsGet("events", []).filter((e) => !newIds.has(e.id));
+  const routines = getWeeklyRoutine();
+  const prefs = getSchedulePreferences();
+  const plan = computeFixedEventConflictPlan(newFixedEvents, existing, routines, prefs);
+  const finalEvents = existing.concat(newFixedEvents);
   lsSet("events", finalEvents);
-  return { events: finalEvents, moved, needsAttention };
+  return { events: finalEvents, moved: plan.moved, needsAttention: plan.needsAttention };
 }
 function dedupeScheduleAlerts(alerts) {
   const seen = /* @__PURE__ */ new Set();
@@ -2438,7 +2469,9 @@ function dedupeScheduleAlerts(alerts) {
 }
 function surfaceReconcileResult(result) {
   const entries = result.moved.map((m) => ({ kind: "moved", ...m })).concat(result.needsAttention.map((a) => ({ kind: "attention", ...a })));
-  if (entries.length > 0) lsSet("pendingScheduleChangeAlerts", dedupeScheduleAlerts([...lsGet("pendingScheduleChangeAlerts", []), ...entries]));
+  if (entries.length === 0) return;
+  lsSet("pendingScheduleChangeAlerts", dedupeScheduleAlerts([...lsGet("pendingScheduleChangeAlerts", []), ...entries]));
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("studlin:scheduleChangeAlerts", { detail: entries }));
 }
 function diffNewGoogleEvents(previousGcalEvents, freshGcalEvents) {
   const previousIds = new Set((previousGcalEvents || []).map((e) => e.id));
@@ -2545,7 +2578,7 @@ async function pullGoogleCalendarIfConnected() {
 }
 function reconcileToastSuffix(result) {
   const parts = [];
-  if (result.moved.length > 0) parts.push(result.moved.length + " study session" + (result.moved.length !== 1 ? "s" : "") + " moved to make room");
+  if (result.moved.length > 0) parts.push(result.moved.length + " study session" + (result.moved.length !== 1 ? "s" : "") + " need" + (result.moved.length !== 1 ? "" : "s") + " a new time");
   if (result.needsAttention.length > 0) parts.push(result.needsAttention.length + " conflict" + (result.needsAttention.length !== 1 ? "s" : "") + " need" + (result.needsAttention.length !== 1 ? "" : "s") + " your attention");
   return parts.length > 0 ? " \xB7 " + parts.join(" \xB7 ") : "";
 }
@@ -4983,7 +5016,7 @@ function rebalanceDay(dateKey, allEvents, routines, prefs) {
     return e.date === dateKey && e.time && e.duration && isReorderableTask(e);
   };
   const flex = allEvents.filter(isFlexPending);
-  if (flex.length === 0) return allEvents;
+  if (flex.length === 0) return { events: allEvents, moved: [] };
   const rest = allEvents.filter(function(e) {
     return !isFlexPending(e);
   });
@@ -5004,7 +5037,7 @@ function rebalanceDay(dateKey, allEvents, routines, prefs) {
     const collides = occupiedBase.some(function(o) {
       return !(soloEnd <= o.start || soloStart >= o.end);
     });
-    if (!collides) return allEvents;
+    if (!collides) return { events: allEvents, moved: [] };
   }
   const sorted = [...flex].sort(function(a, b) {
     return scoreTask(b, prefs, streak) - scoreTask(a, prefs, streak);
@@ -5020,6 +5053,7 @@ function rebalanceDay(dateKey, allEvents, routines, prefs) {
   }
   const dayEnd = isToday ? Math.min(1440, prefEnd + CATCHUP_BUFFER_MINS) : prefEnd;
   const occupied = occupiedBase.slice();
+  const moved = [];
   const reassigned = sorted.map(function(task) {
     const dur = task.duration || 60;
     if (prefStart + dur > dayEnd) return task;
@@ -5028,12 +5062,19 @@ function rebalanceDay(dateKey, allEvents, routines, prefs) {
         return !(t + dur <= o.start || t >= o.end);
       })) {
         occupied.push({ start: t, end: t + dur + computeBreathingRoom(dur) });
-        return Object.assign({}, task, { time: minutesToTime(t) });
+        const newTime = minutesToTime(t);
+        if (newTime === task.time) return task;
+        moved.push({ id: task.id, title: task.title, from: { date: dateKey, time: task.time }, to: { date: dateKey, time: newTime } });
+        return Object.assign({}, task, { time: newTime, movedByStudlin: true, movedFrom: { date: dateKey, time: task.time }, movedAt: Date.now(), reshuffleCount: (task.reshuffleCount || 0) + 1 });
       }
     }
     return task;
   });
-  return rest.concat(reassigned);
+  return { events: rest.concat(reassigned), moved };
+}
+function rebalanceMovedSuffix(moved) {
+  if (!moved || moved.length === 0) return "";
+  return moved.length === 1 ? ` "${moved[0].title}" also shifted to fit.` : ` ${moved.length} other tasks also shifted to fit.`;
 }
 const WEEK_BALANCE_DAYS = 7;
 const WEEK_BALANCE_HEAVY_THRESHOLD_MINS = 45;
@@ -5540,11 +5581,14 @@ function commitStudlinAiTasks(tasks) {
   const prefs = getSchedulePreferences();
   const datesAffected = new Set(tasks.map((t) => t.date).filter(Boolean));
   let next = events.concat(tasks);
+  const moved = [];
   datesAffected.forEach((dk) => {
-    next = rebalanceDay(dk, next, routines, prefs);
+    const r = rebalanceDay(dk, next, routines, prefs);
+    next = r.events;
+    moved.push(...r.moved);
   });
   lsSet("events", next);
-  return next;
+  return { events: next, moved };
 }
 function commitStudlinAiFixedMove(pausePreview) {
   const all = lsGet("events", []);
@@ -5611,9 +5655,9 @@ function computeHolidayPlan(start, end, label) {
 }
 function addTaskWithRebalance(task) {
   const events = lsGet("events", []);
-  const next = rebalanceDay(task.date, events.concat([task]), getWeeklyRoutine(), getSchedulePreferences());
-  lsSet("events", next);
-  return next;
+  const r = rebalanceDay(task.date, events.concat([task]), getWeeklyRoutine(), getSchedulePreferences());
+  lsSet("events", r.events);
+  return r;
 }
 async function refreshPendingAcceptance(events, ids) {
   const targets = (events || []).filter((ev) => ev.chatRoomId && ev.chatMessageId && ev.proposalMemberUids && !computeAcceptanceSummary(ev.proposalMemberUids, ev.proposalResponses).allAccepted && (!ids || ids.includes(ev.id)));
@@ -6592,7 +6636,7 @@ function StudlinPrep({ setActive = () => {
       return /* @__PURE__ */ React.createElement("div", { key: row.subject }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.text, fontWeight: 600 } }, row.subject), /* @__PURE__ */ React.createElement("span", { style: { color: T.muted } }, hrs, "h", row.daysUntilExam != null && /* @__PURE__ */ React.createElement("span", { style: { color: neglected ? T.red : T.faint, marginLeft: 8, fontWeight: neglected ? 700 : 400 } }, "\u2014 exam in " + row.daysUntilExam + "d"))), /* @__PURE__ */ React.createElement("div", { style: { height: 8, borderRadius: 99, background: T.card2, overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { height: "100%", width: pct + "%", borderRadius: 99, background: neglected ? T.red : T.lime } })));
     }));
   };
-  const fmtRolloverClock = (t) => {
+  const fmtRolloverClock2 = (t) => {
     if (!t) return "";
     const p = t.split(":");
     let h = +p[0];
@@ -7697,7 +7741,7 @@ function StudlinPrep({ setActive = () => {
         if (isDone) return;
         setExpandedSessionId((id) => id === s.id ? null : s.id);
         setEditingSessionId(null);
-      }, style: { display: "flex", justifyContent: "space-between", gap: 12, cursor: isDone ? "default" : "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.faint, fontFamily: T.mono, textTransform: "uppercase", letterSpacing: "0.04em" } }, dayOfWeekLabel(s.date).slice(0, 3), " ", s.date.slice(5).replace("-", "/")), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: T.text, textDecoration: isDone ? "line-through" : "none", marginTop: 2 } }, s.title), s.notes && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, s.notes)), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: statusLabel === "Missed" ? T.red : T.muted, textAlign: "right", flexShrink: 0, whiteSpace: "nowrap" } }, statusLabel || (s.duration || 25) + "min \xB7 " + fmtRolloverClock(s.time))), !isDone && (s.reshuffleCount || 0) >= RESHUFFLE_ESCALATE_THRESHOLD && /* @__PURE__ */ React.createElement(
+      }, style: { display: "flex", justifyContent: "space-between", gap: 12, cursor: isDone ? "default" : "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.faint, fontFamily: T.mono, textTransform: "uppercase", letterSpacing: "0.04em" } }, dayOfWeekLabel(s.date).slice(0, 3), " ", s.date.slice(5).replace("-", "/")), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: T.text, textDecoration: isDone ? "line-through" : "none", marginTop: 2 } }, s.title), s.notes && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, s.notes)), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: statusLabel === "Missed" ? T.red : T.muted, textAlign: "right", flexShrink: 0, whiteSpace: "nowrap" } }, statusLabel || (s.duration || 25) + "min \xB7 " + fmtRolloverClock2(s.time))), !isDone && (s.reshuffleCount || 0) >= RESHUFFLE_ESCALATE_THRESHOLD && /* @__PURE__ */ React.createElement(
         "button",
         {
           onClick: (e) => {
@@ -7741,7 +7785,7 @@ function StudlinPrep({ setActive = () => {
       // 9:00 AM, and this is where the student sets a real
       // one once they actually know it -- clearing
       // timeUnconfirmed the moment they do.
-      /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setExamTimeEditOpen(true), title: "Set the exam's time", style: { background: "none", border: "none", color: T.amber, fontFamily: T.mono, fontSize: 11.5, cursor: "pointer", padding: 0, flexShrink: 0, textDecoration: selectedExam.timeUnconfirmed ? "underline" : "none" } }, dayOfWeekLabel(selectedExam.date).slice(0, 3), " ", selectedExam.date.slice(5).replace("-", "/"), selectedExam.time && !selectedExam.timeUnconfirmed ? " \xB7 " + fmtRolloverClock(selectedExam.time) : " \xB7 time TBD")
+      /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setExamTimeEditOpen(true), title: "Set the exam's time", style: { background: "none", border: "none", color: T.amber, fontFamily: T.mono, fontSize: 11.5, cursor: "pointer", padding: 0, flexShrink: 0, textDecoration: selectedExam.timeUnconfirmed ? "underline" : "none" } }, dayOfWeekLabel(selectedExam.date).slice(0, 3), " ", selectedExam.date.slice(5).replace("-", "/"), selectedExam.time && !selectedExam.timeUnconfirmed ? " \xB7 " + fmtRolloverClock2(selectedExam.time) : " \xB7 time TBD")
     )), hasUnfocusedGenericSessions && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: addFocusToExisting, disabled: sessionScheduleLoading }, sessionScheduleLoading ? "Reading your material\u2026" : "Add study focus from your material"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.faint, marginTop: 4 } }, 'Give your existing sessions a specific "what to study" line, grounded in the material below.')), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addOneSession, style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, marginTop: 10, textDecoration: "underline" } }, "+ Add a session")), examSessions.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 16 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => openBuildPlan(selectedExam) }, "Redo study plan"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.muted, marginTop: 6 } }, "Sessions calibrated to your confidence, plus flashcards and a practice exam if you want them."), genMsg && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginTop: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11.5, color: genMsg.startsWith("\u2713") ? T.teal : T.red } }, genMsg), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setGenMsg(""), style: { background: "none", border: "none", color: T.faint, fontSize: 11, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, "Hide"))), (deck || examSessions.length > 0) && /* @__PURE__ */ React.createElement(Card, { style: { padding: 20, marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: T.white, marginBottom: 10 } }, "Flashcards"), !deck ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "No deck yet. Generate one from material above.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text } }, deck.name, " \xB7 ", deck.count, " cards"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexShrink: 0, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
       lsSet("openDeckId", deck.id);
       lsSet("openDeckAction", "study");
@@ -7956,7 +8000,7 @@ function StudlinPrep({ setActive = () => {
     })(), (() => {
       const oldPending = lsGet("events", []).filter((e) => e.dueEventId === buildPlanExam.id && e.status === "pending" && e.isExamPrepSession && (e.interleavedReview || !e.deckId && !e.practiceExamId));
       if (oldPending.length === 0) return null;
-      return /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 } }, "Replacing ", oldPending.length, " current session", oldPending.length !== 1 ? "s" : ""), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4 } }, oldPending.slice().sort((a, b) => a.date + a.time < b.date + b.time ? -1 : 1).map((s) => /* @__PURE__ */ React.createElement("div", { key: s.id, style: { fontSize: 11.5, color: T.faint, textDecoration: "line-through", padding: "2px 0" } }, s.date, " \xB7 ", fmtRolloverClock(s.time), " \xB7 ", s.duration || 25, "min"))));
+      return /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 } }, "Replacing ", oldPending.length, " current session", oldPending.length !== 1 ? "s" : ""), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4 } }, oldPending.slice().sort((a, b) => a.date + a.time < b.date + b.time ? -1 : 1).map((s) => /* @__PURE__ */ React.createElement("div", { key: s.id, style: { fontSize: 11.5, color: T.faint, textDecoration: "line-through", padding: "2px 0" } }, s.date, " \xB7 ", fmtRolloverClock2(s.time), " \xB7 ", s.duration || 25, "min"))));
     })(), buildPlanGeneric && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, background: T.card2, borderRadius: 8, padding: "10px 12px", marginBottom: 14, lineHeight: 1.5 } }, "No material yet, so these are general review blocks, not focused sessions. Add material anytime to unlock real flashcards for this exam."), (buildPlanGenFlashcards || buildPlanGenPE) && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, background: T.card2, borderRadius: 8, padding: "10px 12px", marginBottom: 14, lineHeight: 1.5 } }, buildPlanGenFlashcards && buildPlanGenPE ? "+ Flashcards and a practice exam will also be generated." : buildPlanGenFlashcards ? "+ Flashcards will also be generated." : "+ A practice exam will also be generated.", allDecks.some((d) => deckLinkedToExam(d, buildPlanExam.id)) || allPracticeExams.some((p) => p.examEventId === buildPlanExam.id) ? " This replaces what's already there for this exam." : ""), buildPlanPreview.dates.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, textAlign: "center", padding: "14px 0", marginBottom: 14 } }, "Too close to the exam to fit a session.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 } }, buildPlanPreview.dates.map((d, i) => {
       const ov = buildPlanOverrides[i];
       const setOv = (patch) => setBuildPlanOverrides((o) => o.map((v, vi) => vi === i ? { date: v?.date ?? d, duration: v?.duration ?? buildPlanPreview.sessionDuration, ...patch } : v));
@@ -11265,6 +11309,7 @@ function ChatDrawer({ open, target, myUid, onClose, onMakePermanent, onDeleteGro
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [sendTextError, setSendTextError] = useState("");
+  const [rebalanceToast, setRebalanceToast] = useState("");
   const [quickOpen, setQuickOpen] = useState(false);
   const [deckPicker, setDeckPicker] = useState(false);
   const [syncRunning, setSyncRunning] = useState(false);
@@ -11423,7 +11468,7 @@ function ChatDrawer({ open, target, myUid, onClose, onMakePermanent, onDeleteGro
     setFindWindowOpen(true);
   };
   const confirmStudyTime = (w, mode, studySessionId, proposal) => {
-    addTaskWithRebalance({
+    const r = addTaskWithRebalance({
       id: "netsync-" + Date.now(),
       date: w.date,
       time: w.time,
@@ -11447,6 +11492,10 @@ function ChatDrawer({ open, target, myUid, onClose, onMakePermanent, onDeleteGro
         proposalResponses: proposal.responses
       } : {}
     });
+    if (r.moved && r.moved.length > 0) {
+      setRebalanceToast(("This landed on a full day." + rebalanceMovedSuffix(r.moved)).trim());
+      setTimeout(() => setRebalanceToast(""), 4200);
+    }
   };
   const scheduleGroupSession = async (id, optionIndex = 0, mode = "busy block") => {
     const msg = messages.find((x) => x.id === id);
@@ -11587,7 +11636,7 @@ function ChatDrawer({ open, target, myUid, onClose, onMakePermanent, onDeleteGro
     }, style: qaBtn }, /* @__PURE__ */ React.createElement("span", { style: { color: T.purple, display: "flex" } }, Icon.cal), /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, "Find Shared Study Window"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: pp.faint, fontWeight: 400 } }, "Find free time")), /* @__PURE__ */ React.createElement("button", { onClick: () => {
       setDeckPicker(true);
       setQuickOpen(false);
-    }, style: qaBtn }, /* @__PURE__ */ React.createElement("span", { style: { color: T.teal, display: "flex" } }, Icon.layers), /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, "Send Flashcard Deck"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: pp.faint, fontWeight: 400 } }, "Share a deck")), /* @__PURE__ */ React.createElement("button", { onClick: requestDeck, style: qaBtn }, /* @__PURE__ */ React.createElement("span", { style: { color: T.teal, display: "flex" } }, Icon.layers), /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, "Request a Deck"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: pp.faint, fontWeight: 400 } }, "Ask ", peerFirst || "them"))), sendTextError && /* @__PURE__ */ React.createElement("div", { style: { padding: "0 16px 8px", fontSize: 11.5, color: T.red } }, sendTextError), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, padding: "12px 90px 12px 16px", borderTop: `1px solid ${pp.border}` } }, /* @__PURE__ */ React.createElement("button", { onClick: () => {
+    }, style: qaBtn }, /* @__PURE__ */ React.createElement("span", { style: { color: T.teal, display: "flex" } }, Icon.layers), /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, "Send Flashcard Deck"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: pp.faint, fontWeight: 400 } }, "Share a deck")), /* @__PURE__ */ React.createElement("button", { onClick: requestDeck, style: qaBtn }, /* @__PURE__ */ React.createElement("span", { style: { color: T.teal, display: "flex" } }, Icon.layers), /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, "Request a Deck"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: pp.faint, fontWeight: 400 } }, "Ask ", peerFirst || "them"))), sendTextError && /* @__PURE__ */ React.createElement("div", { style: { padding: "0 16px 8px", fontSize: 11.5, color: T.red } }, sendTextError), rebalanceToast && /* @__PURE__ */ React.createElement("div", { style: { padding: "0 16px 8px", fontSize: 11.5, color: pp.faint } }, rebalanceToast), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, padding: "12px 90px 12px 16px", borderTop: `1px solid ${pp.border}` } }, /* @__PURE__ */ React.createElement("button", { onClick: () => {
       setQuickOpen((q) => !q);
       setDeckPicker(false);
     }, style: { width: 34, height: 34, borderRadius: 9, border: `1px solid ${quickOpen ? T.lime + "55" : pp.border}`, background: quickOpen ? T.lime + "20" : pp.card2, color: quickOpen ? T.lime : pp.muted, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0 } }, Icon.plus), /* @__PURE__ */ React.createElement("input", { value: input, onChange: (e) => {
@@ -12289,13 +12338,16 @@ CONVERSATION:
       try {
         let next2 = null;
         const doneParts = [];
+        const rebalanceMoved2 = [];
         for (const item of proposal.items) {
           if (item.kind === "create_task") {
             if (!canUseBrainDump()) {
               setPricingOpen(canUseBrainDumpReason() === "free-tier" ? "brainDump" : "aiUsageCap");
               return;
             }
-            next2 = commitStudlinAiTasks(item.tasks);
+            const r = commitStudlinAiTasks(item.tasks);
+            next2 = r.events;
+            rebalanceMoved2.push(...r.moved);
             recordBrainDump();
             doneParts.push(pastTenseProposalLabel(item.label));
           } else if (item.kind === "move_fixed") {
@@ -12335,7 +12387,7 @@ CONVERSATION:
         if (next2) onEventsCommitted(next2);
         setMessages((m) => {
           const withResolved = m.map((mm, i) => i === idx ? { ...mm, proposal: { ...mm.proposal, resolved: "confirmed" } } : mm);
-          return [...withResolved, { role: "ai", text: "Done. " + doneParts.join(" "), kind: "done" }];
+          return [...withResolved, { role: "ai", text: "Done. " + doneParts.join(" ") + rebalanceMovedSuffix(rebalanceMoved2), kind: "done" }];
         });
       } finally {
         setLoading(false);
@@ -12400,12 +12452,15 @@ CONVERSATION:
       return;
     }
     let next;
+    let rebalanceMoved = [];
     if (proposal.kind === "create_task") {
       if (!canUseBrainDump()) {
         setPricingOpen(canUseBrainDumpReason() === "free-tier" ? "brainDump" : "aiUsageCap");
         return;
       }
-      next = commitStudlinAiTasks(proposal.tasks);
+      const r = commitStudlinAiTasks(proposal.tasks);
+      next = r.events;
+      rebalanceMoved = r.moved;
       recordBrainDump();
     } else if (proposal.kind === "move_fixed") {
       if (!canUseSmartReschedule()) {
@@ -12462,7 +12517,7 @@ CONVERSATION:
     const moveTradeoff = proposal.kind === "move_flex_task" ? formatBufferTradeoff(proposal.bufferBeforeMins, proposal.bufferAfterMins) : "";
     setMessages((m) => {
       const withResolved = m.map((mm, i) => i === idx ? { ...mm, proposal: { ...mm.proposal, resolved: "confirmed" } } : mm);
-      return [...withResolved, { role: "ai", text: "Done. " + pastTenseProposalLabel(proposal.label, proposal.moved, moveReason, moveTradeoff) }];
+      return [...withResolved, { role: "ai", text: "Done. " + pastTenseProposalLabel(proposal.label, proposal.moved, moveReason, moveTradeoff) + rebalanceMovedSuffix(rebalanceMoved) }];
     });
     setPendingIndex(null);
   };
@@ -13871,7 +13926,12 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
     }, style: itemStyle, onMouseEnter: (e) => e.currentTarget.style.background = T.card2, onMouseLeave: (e) => e.currentTarget.style.background = "none" }, "Complete"), /* @__PURE__ */ React.createElement("button", { onClick: () => {
       closePopover();
       openEdit(ev);
-    }, style: itemStyle, onMouseEnter: (e) => e.currentTarget.style.background = T.card2, onMouseLeave: (e) => e.currentTarget.style.background = "none" }, "Edit"), ev.userPinned && /* @__PURE__ */ React.createElement("button", { onClick: () => {
+    }, style: itemStyle, onMouseEnter: (e) => e.currentTarget.style.background = T.card2, onMouseLeave: (e) => e.currentTarget.style.background = "none" }, "Edit"), isReorderableTask(ev) && /* @__PURE__ */ React.createElement("button", { onClick: () => {
+      const next = events.map((x) => x.id === ev.id ? { ...x, userPinned: true } : x);
+      setEvents2(next);
+      lsSet("events", next);
+      closePopover();
+    }, style: itemStyle, onMouseEnter: (e) => e.currentTarget.style.background = T.card2, onMouseLeave: (e) => e.currentTarget.style.background = "none" }, "Pin"), ev.userPinned && /* @__PURE__ */ React.createElement("button", { onClick: () => {
       const next = events.map((x) => x.id === ev.id ? { ...x, userPinned: false } : x);
       setEvents2(next);
       lsSet("events", next);
@@ -16475,7 +16535,8 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
       }
       return merged;
     });
-    let next = date ? rebalanceDay(date, updated, routines, prefs) : updated;
+    const rebalanceResult = date ? rebalanceDay(date, updated, routines, prefs) : null;
+    let next = rebalanceResult ? rebalanceResult.events : updated;
     if (attackPair) next = next.concat([attackPair.task]);
     if (switchedAwayFromExam) {
       const cleanup = applyExamTypeSwitchCleanup(next, ev.id, lsGet("decks", []), lsGet("practiceExams", []));
@@ -16528,7 +16589,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
       lsSet("calendarHighlightIds", { ids: newIds, setAt: Date.now() });
       if (setActive) setActive("calendar");
     }
-    if (onToast) onToast("Saved.");
+    if (onToast) onToast("Saved." + rebalanceMovedSuffix(rebalanceResult && rebalanceResult.moved));
     onClose();
   };
   const proceedSave = () => {
@@ -16650,6 +16711,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
       setDate(e.target.value);
       setDeadlineErr("");
     } })), asChecklist && date && /* @__PURE__ */ React.createElement(Field, { label: "Due time" }, /* @__PURE__ */ React.createElement(BoxedTimeInput, { value: deadlineTime, onChange: setDeadlineTime })), !asChecklist && /* @__PURE__ */ React.createElement(Field, { label: kind === "reminder" ? "Reminder time" : "Start time" }, /* @__PURE__ */ React.createElement(BoxedTimeInput, { value: time, onChange: setTime })), !asChecklist && kind !== "reminder" && /* @__PURE__ */ React.createElement(Field, { label: "End time" }, /* @__PURE__ */ React.createElement(BoxedTimeInput, { value: minutesToTime(timeToMinutes(time) + duration), onChange: (v) => setDuration(Math.max(5, timeToMinutes(v) - timeToMinutes(time))) }))),
+    isReorderableTask(ev) && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 2px", marginBottom: 10, fontSize: 12, color: T.muted } }, /* @__PURE__ */ React.createElement("span", null, "Not pinned. Studlin can move this to fit your schedule."), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => commit(allEvents.map((x) => x.id === ev.id ? { ...x, userPinned: true } : x)), style: { background: "none", border: "none", color: T.lime, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: T.font, textDecoration: "underline" } }, "Pin")),
     ev.userPinned && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 2px", marginBottom: 10, fontSize: 12, color: T.muted } }, /* @__PURE__ */ React.createElement("span", null, "\u{1F4CC} Pinned. Studlin won't move this automatically."), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => commit(allEvents.map((x) => x.id === ev.id ? { ...x, userPinned: false } : x)), style: { background: "none", border: "none", color: T.lime, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: T.font, textDecoration: "underline" } }, "Unpin")),
     ev.movedByStudlin && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "6px 2px", marginBottom: 10, fontSize: 12, color: T.muted } }, /* @__PURE__ */ React.createElement("span", null, "\u21BB Studlin moved this from ", fmtMovedFrom(ev.movedFrom), ".", fmtMovedReasonSuffix(ev)), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
       const result = undoTier0Move(ev.id);
@@ -17820,6 +17882,12 @@ function CalendarTab({ setActive = () => {
     setTimeout(() => setLockedMeetingToast(""), 3200);
   };
   const [reconcileToast, setReconcileToast] = useState("");
+  const [routineConflictPlan, setRoutineConflictPlan] = useState(null);
+  const [routineConflictPreviewOpen, setRoutineConflictPreviewOpen] = useState(false);
+  const [routineConflictOverrides, setRoutineConflictOverrides] = useState({});
+  const [routineConflictExpandedId, setRoutineConflictExpandedId] = useState(null);
+  const [routineConflictMoveDraft, setRoutineConflictMoveDraft] = useState(null);
+  const [routineConflictMoveError, setRoutineConflictMoveError] = useState("");
   const [rescheduleTask, setRescheduleTask] = useState(null);
   const [rescheduleToast, setRescheduleToast] = useState("");
   const [placementToast, setPlacementToast] = useState("");
@@ -18030,36 +18098,70 @@ function CalendarTab({ setActive = () => {
   }, [events, routines]);
   const reconcileRoutineConflicts = (nextRoutines) => {
     const prefs = getSchedulePreferences();
-    const now2 = /* @__PURE__ */ new Date();
-    const horizonEnd = (() => {
-      const d = new Date(now2);
-      d.setDate(d.getDate() + 13);
-      return dayKey(d);
-    })();
-    let changed = false;
-    const movedTitles = [];
-    const next = events.map((ev) => {
-      if (ev.status === "done" || !ev.time) return ev;
-      if (isLeadInFixed(ev)) return ev;
-      if (ev.userPinned) return ev;
-      if (ev.date > horizonEnd) return ev;
-      const duration = ev.duration || 30;
-      const tMins = timeToMinutes(ev.time);
-      const occupied = expandRoutineOccurrences(nextRoutines, ev.date, ev.date).filter((o) => o.kind !== "free period").map((o) => ({ start: timeToMinutes(o.time) - effectiveLeadIn(o), end: timeToMinutes(o.time) + (o.duration || 30) + effectiveTrailOut(o) }));
-      const conflict = occupied.some((o) => !(tMins + duration <= o.start || tMins >= o.end));
-      if (!conflict) return ev;
-      const slot = findLegalSlotOrNull(events.filter((e) => e.id !== ev.id), nextRoutines, prefs, ev.date, ev.time, duration);
-      if (!slot || slot.date === ev.date && slot.time === ev.time) return ev;
-      changed = true;
-      movedTitles.push(ev.title);
-      return { ...ev, date: slot.date, time: slot.time, movedByStudlin: true, movedFrom: { date: ev.date, time: ev.time }, movedAt: Date.now(), reshuffleCount: (ev.reshuffleCount || 0) + 1 };
-    });
-    if (changed) {
-      setEvents2(next);
-      lsSet("events", next);
-      setReconcileToast(movedTitles.length === 1 ? `"${movedTitles[0]}" moved \u2014 it conflicted with your schedule.` : `${movedTitles.length} tasks moved \u2014 they conflicted with your schedule.`);
-      setTimeout(() => setReconcileToast(""), 3400);
+    const plan = computeRoutineConflictPlan(events, nextRoutines, prefs, dayKey());
+    if (plan.moves.length > 0) setRoutineConflictPlan(plan);
+  };
+  const openRoutineConflictPreview = () => setRoutineConflictPreviewOpen(true);
+  const closeRoutineConflictPreview = () => setRoutineConflictPreviewOpen(false);
+  const dismissRoutineConflictPlan = () => {
+    lsSet("routineConflictDismissedDate", dayKey());
+    setRoutineConflictPlan(null);
+    setRoutineConflictPreviewOpen(false);
+    setRoutineConflictOverrides({});
+  };
+  const skipRoutineConflictItem = (id) => setRoutineConflictOverrides((o) => ({ ...o, [id]: { skip: true } }));
+  const deferRoutineConflictItem = (id) => setRoutineConflictOverrides((o) => ({ ...o, [id]: { defer: true } }));
+  const clearRoutineConflictOverride = (id) => setRoutineConflictOverrides((o) => {
+    const next = { ...o };
+    delete next[id];
+    return next;
+  });
+  const saveRoutineConflictMove = (m, date, time) => {
+    const prefs = getSchedulePreferences();
+    const others = events.filter((e) => e.id !== m.id);
+    const occupied = computeOccupiedIntervals(others, routines, prefs, date);
+    const tMins = timeToMinutes(time);
+    const conflict = occupied.some((o) => !(tMins + (m.duration || 30) <= o.start || tMins >= o.end));
+    if (conflict) {
+      setRoutineConflictMoveError("That time conflicts with something else that day.");
+      return;
     }
+    setRoutineConflictOverrides((o) => ({ ...o, [m.id]: { date, time } }));
+    setRoutineConflictMoveError("");
+    setRoutineConflictExpandedId(null);
+    setRoutineConflictMoveDraft(null);
+  };
+  const confirmRoutineConflictPlan = () => {
+    if (!routineConflictPlan) return;
+    const today = dayKey();
+    const applied = [];
+    const next = events.map((ev) => {
+      const move = routineConflictPlan.moves.find((m) => m.id === ev.id);
+      if (!move) return ev;
+      const override = routineConflictOverrides[ev.id];
+      if (override && override.skip) return ev;
+      if (override && override.defer) {
+        const d = /* @__PURE__ */ new Date(today + "T12:00:00");
+        d.setDate(d.getDate() + 7);
+        const to2 = { date: dayKey(d), time: ev.time };
+        applied.push({ id: ev.id, from: move.from, to: to2 });
+        return { ...ev, date: to2.date, time: to2.time, movedByStudlin: true, movedFrom: move.from, movedAt: Date.now(), movedReason: { type: "deferred" }, reshuffleCount: (ev.reshuffleCount || 0) + 1 };
+      }
+      const manual = override && override.date && override.time;
+      const to = manual ? { date: override.date, time: override.time } : move.to;
+      applied.push({ id: ev.id, from: move.from, to });
+      return { ...ev, date: to.date, time: to.time, movedByStudlin: true, movedFrom: move.from, movedAt: Date.now(), movedReason: manual ? { type: "manualOverride" } : null, reshuffleCount: (ev.reshuffleCount || 0) + 1 };
+    });
+    setEvents2(next);
+    lsSet("events", next);
+    setRoutineConflictPlan(null);
+    setRoutineConflictPreviewOpen(false);
+    setRoutineConflictOverrides({});
+    setRoutineConflictExpandedId(null);
+    setRoutineConflictMoveDraft(null);
+    setRoutineConflictMoveError("");
+    setPlacementToast(applied.length === 0 ? "Nothing moved." : applied.length === 1 ? "Moved." : applied.length + " tasks moved.");
+    setTimeout(() => setPlacementToast(""), 3200);
   };
   const persistRoutines = (r) => {
     const next = ensureSubjectsForClassRoutines(r);
@@ -18190,7 +18292,7 @@ function CalendarTab({ setActive = () => {
     return () => window.removeEventListener("keydown", handler);
   }, [selectedCalEventId, events, selectedRoutineOccurrence, routines]);
   useEffect(() => {
-    reconcileRoutineConflicts(routines);
+    if (lsGet("routineConflictDismissedDate", null) !== dayKey()) reconcileRoutineConflicts(routines);
   }, []);
   useEffect(() => {
     const byKey = /* @__PURE__ */ new Map();
@@ -18650,7 +18752,7 @@ function CalendarTab({ setActive = () => {
     });
     authFetch("/api/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "push", roomId: gsRoomId, preview: "Shared free time found" }) }).catch(() => {
     });
-    const nextEvents = addTaskWithRebalance({
+    const rebalanceResult = addTaskWithRebalance({
       id: "gs-" + now2,
       date: option.date,
       time: option.time,
@@ -18674,10 +18776,10 @@ function CalendarTab({ setActive = () => {
         proposalResponses: { [myUid]: "accepted" }
       } : {}
     });
-    setEvents2(nextEvents);
+    setEvents2(rebalanceResult.events);
     setGsSending(false);
     closeGroupSchedule();
-    setPlacementToast("Sent. It'll land on their calendar once they accept.");
+    setPlacementToast(("Sent. It'll land on their calendar once they accept." + rebalanceMovedSuffix(rebalanceResult.moved)).trim());
     setTimeout(() => setPlacementToast(""), 3200);
   };
   const buildRoutineObjectsForDays = (base, days, startTime, duration, dayTimes) => {
@@ -19020,11 +19122,18 @@ function CalendarTab({ setActive = () => {
       return t.date;
     }).filter(Boolean));
     let next = events.concat(tasksToAdd);
+    const rebalanceMoved = [];
     datesAffected.forEach(function(dk) {
-      next = rebalanceDay(dk, next, routines, prefs);
+      const r = rebalanceDay(dk, next, routines, prefs);
+      next = r.events;
+      rebalanceMoved.push(...r.moved);
     });
     setEvents2(next);
     lsSet("events", next);
+    if (rebalanceMoved.length > 0) {
+      setReconcileToast(rebalanceMovedSuffix(rebalanceMoved).trim());
+      setTimeout(() => setReconcileToast(""), 3400);
+    }
     if (evKind === "project" && evCollabSelected.length > 0) {
       const marker = tasksToAdd.find((t) => t.phases && t.phases.length > 0 || t.outline && t.outline.length > 0);
       const myUid = firebase.auth().currentUser?.uid;
@@ -20697,7 +20806,47 @@ Examples:
       style: { fontSize: 10.5, fontWeight: 600, padding: "4px 8px", borderRadius: 6, border: `1px solid ${s.color}55`, background: s.color + "18", color: T.text, cursor: "pointer", fontFamily: T.font }
     },
     s.label
-  )))), rescheduleToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.lime, color: T.ink, fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 8 } }, Icon.check, " ", rescheduleToast), reconcileToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.amber, color: T.ink, fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 8 } }, Icon.check, " ", reconcileToast), calClipToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.lime, color: T.ink, fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 8 } }, Icon.check, " ", calClipToast), deleteUndoToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.card, border: `1px solid ${T.border}`, color: T.white, fontSize: 12.5, fontWeight: 600, padding: "10px 16px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("span", null, deleteUndoToast), /* @__PURE__ */ React.createElement("button", { onClick: undoDelete, style: { background: "none", border: "none", color: T.lime, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: T.font, textDecoration: "underline", padding: 0 } }, "Undo")), moveUndoToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.card, border: `1px solid ${T.border}`, color: T.white, fontSize: 12.5, fontWeight: 600, padding: "10px 16px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("span", null, moveUndoToast), /* @__PURE__ */ React.createElement("button", { onClick: undoMove, style: { background: "none", border: "none", color: T.lime, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: T.font, textDecoration: "underline", padding: 0 } }, "Undo")), fillPrompt && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: dismissFillPrompt, style: { position: "fixed", inset: 0, zIndex: 79 } }), /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 360 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, "Freed up ", fmtMinsDur(fillPrompt.duration), " at ", fmtTime2(fillPrompt.time), fillPrompt.date !== dayKey() ? " on " + (/* @__PURE__ */ new Date(fillPrompt.date + "T12:00:00")).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) : "", ". Fill it with something?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 10, maxHeight: 160, overflowY: "auto" } }, fillPrompt.suggestions.map((s) => /* @__PURE__ */ React.createElement("button", { key: s.id, onClick: () => acceptFillSuggestion(s.id), style: { display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12, padding: "8px 10px", background: T.card2, borderRadius: 8, border: `1px solid ${T.border}`, color: T.text, cursor: "pointer", fontFamily: T.font, textAlign: "left" } }, /* @__PURE__ */ React.createElement("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, s.title), /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, flexShrink: 0 } }, s.duration, "m")))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => openNewAtSlot(fillPrompt.date, fillPrompt.time, fillPrompt.duration), style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Add something"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: dismissFillPrompt, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Leave it")))), rescheduleTask && /* @__PURE__ */ React.createElement(RescheduleModal, { task: rescheduleTask, events, onClose: () => setRescheduleTask(null), onManual: () => jumpToSession(rescheduleTask), commit: (next, evictedCount) => {
+  )))), rescheduleToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.lime, color: T.ink, fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 8 } }, Icon.check, " ", rescheduleToast), reconcileToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.amber, color: T.ink, fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 8 } }, Icon.check, " ", reconcileToast), routineConflictPlan && !routineConflictPreviewOpen && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 81, background: T.card, border: `1px solid ${T.border}`, color: T.text, fontSize: 12.5, padding: "10px 12px 10px 16px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement("span", null, routineConflictPlan.moves.length, " task", routineConflictPlan.moves.length !== 1 ? "s" : "", " now conflict", routineConflictPlan.moves.length === 1 ? "s" : "", " with your schedule."), /* @__PURE__ */ React.createElement(BtnSm, { onClick: openRoutineConflictPreview }, "Review"), /* @__PURE__ */ React.createElement("button", { onClick: dismissRoutineConflictPlan, title: "Dismiss for today", "aria-label": "Dismiss", style: { width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", borderRadius: 6, color: T.muted, cursor: "pointer", padding: 0 } }, Icon.xmark)), /* @__PURE__ */ React.createElement(
+    Modal,
+    {
+      open: routineConflictPreviewOpen,
+      onClose: closeRoutineConflictPreview,
+      title: "Review the change",
+      sub: routineConflictPlan ? routineConflictPlan.moves.length + " task" + (routineConflictPlan.moves.length !== 1 ? "s" : "") + " would move." : "",
+      width: 640,
+      footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: 11.5, color: T.muted } }, "Nothing changes until you accept."), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeRoutineConflictPreview }, "Not now"), /* @__PURE__ */ React.createElement(Btn, { onClick: confirmRoutineConflictPlan, disabled: !routineConflictPlan || routineConflictPlan.moves.length === 0 }, "Looks good"))
+    },
+    routineConflictPlan && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", maxHeight: 420, overflowY: "auto" } }, routineConflictPlan.moves.map((m) => {
+      const override = routineConflictOverrides[m.id] || {};
+      const expanded = routineConflictExpandedId === m.id;
+      const effectiveTo = override.date && override.time ? { date: override.date, time: override.time } : m.to;
+      const statusLine = override.skip ? "Won't move \u2014 left where it was." : override.defer ? "Deferred a week." : override.date && override.time ? "You picked this time." : "Your schedule changed \u2014 this no longer fits.";
+      return /* @__PURE__ */ React.createElement("div", { key: m.id, style: { padding: "12px 4px", borderBottom: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setRoutineConflictExpandedId((id) => id === m.id ? null : m.id), style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: T.text } }, m.title), statusLine && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginTop: 2 } }, statusLine)), !override.skip && /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, fontSize: 12, color: T.muted, textAlign: "right", whiteSpace: "nowrap" } }, m.from.date === dayKey() ? "Today" : dayOfWeekLabel(m.from.date).slice(0, 3), " ", fmtRolloverClock(m.from.time), " \u2192 ", effectiveTo.date === dayKey() ? "Today" : dayOfWeekLabel(effectiveTo.date).slice(0, 3), " ", fmtRolloverClock(effectiveTo.time))), expanded && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => {
+        setRoutineConflictMoveDraft({ date: effectiveTo.date, time: effectiveTo.time });
+        setRoutineConflictMoveError("");
+        setRoutineConflictExpandedId("moving-" + m.id);
+      } }, "Move it myself"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => {
+        skipRoutineConflictItem(m.id);
+        setRoutineConflictExpandedId(null);
+      } }, "Skip"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => {
+        deferRoutineConflictItem(m.id);
+        setRoutineConflictExpandedId(null);
+      } }, "Not this week"), (override.skip || override.defer || override.date) && /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => {
+        clearRoutineConflictOverride(m.id);
+        setRoutineConflictExpandedId(null);
+      } }, "Undo edit")), routineConflictExpandedId === "moving-" + m.id && routineConflictMoveDraft && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10, alignItems: "center", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Input, { type: "date", min: dayKey(), value: routineConflictMoveDraft.date, onChange: (e) => {
+        setRoutineConflictMoveDraft((d) => ({ ...d, date: e.target.value }));
+        setRoutineConflictMoveError("");
+      }, style: { width: 150 } }), /* @__PURE__ */ React.createElement(TimeInput, { value: routineConflictMoveDraft.time, onChange: (t) => {
+        setRoutineConflictMoveDraft((d) => ({ ...d, time: t }));
+        setRoutineConflictMoveError("");
+      } }), /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => saveRoutineConflictMove(m, routineConflictMoveDraft.date, routineConflictMoveDraft.time) }, "Save"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => {
+        setRoutineConflictExpandedId(null);
+        setRoutineConflictMoveDraft(null);
+        setRoutineConflictMoveError("");
+      } }, "Cancel")), routineConflictMoveError && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.red, marginTop: 6 } }, routineConflictMoveError)));
+    }))
+  ), calClipToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.lime, color: T.ink, fontSize: 12.5, fontWeight: 600, padding: "10px 18px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 8 } }, Icon.check, " ", calClipToast), deleteUndoToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.card, border: `1px solid ${T.border}`, color: T.white, fontSize: 12.5, fontWeight: 600, padding: "10px 16px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("span", null, deleteUndoToast), /* @__PURE__ */ React.createElement("button", { onClick: undoDelete, style: { background: "none", border: "none", color: T.lime, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: T.font, textDecoration: "underline", padding: 0 } }, "Undo")), moveUndoToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.card, border: `1px solid ${T.border}`, color: T.white, fontSize: 12.5, fontWeight: 600, padding: "10px 16px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("span", null, moveUndoToast), /* @__PURE__ */ React.createElement("button", { onClick: undoMove, style: { background: "none", border: "none", color: T.lime, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: T.font, textDecoration: "underline", padding: 0 } }, "Undo")), fillPrompt && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: dismissFillPrompt, style: { position: "fixed", inset: 0, zIndex: 79 } }), /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 360 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, "Freed up ", fmtMinsDur(fillPrompt.duration), " at ", fmtTime2(fillPrompt.time), fillPrompt.date !== dayKey() ? " on " + (/* @__PURE__ */ new Date(fillPrompt.date + "T12:00:00")).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) : "", ". Fill it with something?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 10, maxHeight: 160, overflowY: "auto" } }, fillPrompt.suggestions.map((s) => /* @__PURE__ */ React.createElement("button", { key: s.id, onClick: () => acceptFillSuggestion(s.id), style: { display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12, padding: "8px 10px", background: T.card2, borderRadius: 8, border: `1px solid ${T.border}`, color: T.text, cursor: "pointer", fontFamily: T.font, textAlign: "left" } }, /* @__PURE__ */ React.createElement("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, s.title), /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, flexShrink: 0 } }, s.duration, "m")))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => openNewAtSlot(fillPrompt.date, fillPrompt.time, fillPrompt.duration), style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Add something"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: dismissFillPrompt, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Leave it")))), rescheduleTask && /* @__PURE__ */ React.createElement(RescheduleModal, { task: rescheduleTask, events, onClose: () => setRescheduleTask(null), onManual: () => jumpToSession(rescheduleTask), commit: (next, evictedCount) => {
     setEvents2(next);
     lsSet("events", next);
     setRescheduleToast(evictedCount > 0 ? `Task rescheduled \u2014 ${evictedCount} other${evictedCount !== 1 ? "s" : ""} shifted to make room.` : "Task rescheduled.");
@@ -23207,6 +23356,39 @@ function App() {
       setScheduleChangeAlerts((a) => dedupeScheduleAlerts([...a, ...pending]));
     }
   }, []);
+  useEffect(() => {
+    const onLiveAlerts = (e) => {
+      setScheduleChangeAlerts((a) => dedupeScheduleAlerts([...a, ...e.detail]));
+    };
+    window.addEventListener("studlin:scheduleChangeAlerts", onLiveAlerts);
+    return () => window.removeEventListener("studlin:scheduleChangeAlerts", onLiveAlerts);
+  }, []);
+  const applyScheduleChangeMove = (a) => {
+    const all = lsGet("events", []);
+    const ev = all.find((e) => e.id === a.id);
+    if (!ev) {
+      setScheduleChangeAlerts((b) => b.filter((x) => x !== a));
+      return;
+    }
+    const routines = getWeeklyRoutine();
+    const prefs = getSchedulePreferences();
+    const occupied = computeOccupiedIntervals(all.filter((e) => e.id !== a.id), routines, prefs, a.to.date);
+    const tMins = timeToMinutes(a.to.time);
+    const conflict = occupied.some((o) => !(tMins + (a.duration || ev.duration || 30) <= o.start || tMins >= o.end));
+    if (conflict) {
+      setDashToast(`Couldn't move "` + a.title + '" \u2014 something else is already using that time.');
+      setTimeout(() => setDashToast(""), 3200);
+      setScheduleChangeAlerts((b) => b.filter((x) => x !== a));
+      return;
+    }
+    const next = all.map((e) => e.id === a.id ? { ...e, date: a.to.date, time: a.to.time, movedByStudlin: true, movedFrom: a.from, movedAt: Date.now(), movedReason: { type: "displaced", causedByTitle: a.causedByTitle }, reshuffleCount: (e.reshuffleCount || 0) + 1 } : e);
+    lsSet("events", next);
+    if (calendarSetEventsRef.current) calendarSetEventsRef.current(next);
+    setScheduleChangeAlerts((b) => b.filter((x) => x !== a));
+  };
+  const applyAllScheduleChangeMoves = () => {
+    scheduleChangeAlerts.filter((a) => a.kind === "moved").forEach(applyScheduleChangeMove);
+  };
   const [prepPromptBatch, setPrepPromptBatch] = useState([]);
   const [prepAutoToast, setPrepAutoToast] = useState("");
   const [prepAttackSlotPicker, setPrepAttackSlotPicker] = useState(null);
@@ -23409,7 +23591,7 @@ function App() {
     }
     setExamPrepSuggestion(null);
   };
-  const fmtRolloverClock = (t) => {
+  const fmtRolloverClock2 = (t) => {
     if (!t) return "";
     const p = t.split(":");
     let h = +p[0];
@@ -24476,7 +24658,7 @@ function App() {
       const expanded = catchUpExpandedId === m.id;
       const effectiveTo = override.date && override.time ? { date: override.date, time: override.time } : m.to;
       const statusLine = override.skip ? "Won't move \u2014 left where it was." : override.defer ? "Deferred to next week." : override.date && override.time ? "You picked this time." : fmtPlacementReason(m.reason, m.to.time);
-      return /* @__PURE__ */ React.createElement("div", { key: m.id, style: { padding: "12px 4px", borderBottom: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setCatchUpExpandedId((id) => id === m.id ? null : m.id), style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: T.text } }, m.title), statusLine && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginTop: 2 } }, statusLine)), !override.skip && /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, fontSize: 12, color: T.muted, textAlign: "right", whiteSpace: "nowrap" } }, m.from.date === dayKey() ? "Today" : dayOfWeekLabel(m.from.date).slice(0, 3), " ", fmtRolloverClock(m.from.time), " \u2192 ", effectiveTo.date === dayKey() ? "Today" : dayOfWeekLabel(effectiveTo.date).slice(0, 3), " ", fmtRolloverClock(effectiveTo.time))), expanded && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => {
+      return /* @__PURE__ */ React.createElement("div", { key: m.id, style: { padding: "12px 4px", borderBottom: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setCatchUpExpandedId((id) => id === m.id ? null : m.id), style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: T.text } }, m.title), statusLine && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginTop: 2 } }, statusLine)), !override.skip && /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, fontSize: 12, color: T.muted, textAlign: "right", whiteSpace: "nowrap" } }, m.from.date === dayKey() ? "Today" : dayOfWeekLabel(m.from.date).slice(0, 3), " ", fmtRolloverClock2(m.from.time), " \u2192 ", effectiveTo.date === dayKey() ? "Today" : dayOfWeekLabel(effectiveTo.date).slice(0, 3), " ", fmtRolloverClock2(effectiveTo.time))), expanded && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => {
         setCatchUpMoveDraft({ date: effectiveTo.date, time: effectiveTo.time });
         setCatchUpMoveError("");
         setCatchUpExpandedId("moving-" + m.id);
@@ -24505,21 +24687,12 @@ function App() {
     const movedCount = scheduleChangeAlerts.filter((a) => a.kind === "moved").length;
     const attnCount = scheduleChangeAlerts.filter((a) => a.kind === "attention").length;
     const headerParts = [];
-    if (movedCount > 0) headerParts.push(movedCount + " study session" + (movedCount !== 1 ? "s" : "") + " moved");
+    if (movedCount > 0) headerParts.push(movedCount + " study session" + (movedCount !== 1 ? "s" : "") + " need" + (movedCount !== 1 ? "" : "s") + " a new time");
     if (attnCount > 0) headerParts.push(attnCount + " conflict" + (attnCount !== 1 ? "s" : "") + " need" + (attnCount !== 1 ? "" : "s") + " your attention");
-    return /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 76, right: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 360 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, "Your new schedule came in \u2014 ", /* @__PURE__ */ React.createElement("strong", { style: { color: attnCount > 0 ? T.amber : T.lime } }, headerParts.join(" \xB7 ")), ":"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 12, maxHeight: 200, overflowY: "auto" } }, scheduleChangeAlerts.map((a, i) => a.kind === "moved" ? /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, fontSize: 12, padding: "6px 9px", background: T.card2, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, a.title), /* @__PURE__ */ React.createElement("div", { style: { color: T.muted, fontSize: 10.5, marginTop: 1 } }, "\u2192 ", a.to.date === dayKey() ? "Today" : a.to.date, " ", fmtRolloverClock(a.to.time), " \xB7 bumped by ", a.causedByTitle)), /* @__PURE__ */ React.createElement("button", { onClick: () => {
-      const result = undoTier0Move(a.id);
-      if (result.blocked) {
-        setDashToast(`Can't undo "` + a.title + '" \u2014 something else is already using that time.');
-        setTimeout(() => setDashToast(""), 3200);
-        return;
-      }
-      setScheduleChangeAlerts((b) => b.filter((x, xi) => xi !== i));
-    }, style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, textDecoration: "underline", flexShrink: 0, padding: 0 } }, "Undo")) : /* @__PURE__ */ React.createElement("div", { key: i, style: { fontSize: 12, padding: "6px 9px", background: T.card2, borderRadius: 8, color: T.text, lineHeight: 1.5 } }, a.noSlotFound ? /* @__PURE__ */ React.createElement(React.Fragment, null, "Couldn't find a new time for ", /* @__PURE__ */ React.createElement("strong", null, a.conflictsWith.title), " \u2014 it still conflicts with ", /* @__PURE__ */ React.createElement("strong", null, a.newEvent.title), " on ", a.newEvent.date === dayKey() ? "today" : a.newEvent.date, ".") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("strong", null, a.newEvent.title), " conflicts with ", /* @__PURE__ */ React.createElement("strong", null, a.conflictsWith.title), " on ", a.newEvent.date === dayKey() ? "today" : a.newEvent.date, " \u2014 neither can move automatically.")))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: () => {
+    return /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 76, right: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 360 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, "Your new schedule came in \u2014 ", /* @__PURE__ */ React.createElement("strong", { style: { color: attnCount > 0 ? T.amber : T.lime } }, headerParts.join(" \xB7 ")), ":"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 12, maxHeight: 200, overflowY: "auto" } }, scheduleChangeAlerts.map((a, i) => a.kind === "moved" ? /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, fontSize: 12, padding: "6px 9px", background: T.card2, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, a.title), /* @__PURE__ */ React.createElement("div", { style: { color: T.muted, fontSize: 10.5, marginTop: 1 } }, "would move to ", a.to.date === dayKey() ? "Today" : a.to.date, " ", fmtRolloverClock2(a.to.time), " \xB7 bumped by ", a.causedByTitle)), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexShrink: 0 } }, /* @__PURE__ */ React.createElement("button", { onClick: () => applyScheduleChangeMove(a), style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, textDecoration: "underline", padding: 0 } }, "Move"), /* @__PURE__ */ React.createElement("button", { onClick: () => setScheduleChangeAlerts((b) => b.filter((x) => x !== a)), style: { background: "none", border: "none", color: T.muted, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, textDecoration: "underline", padding: 0 } }, "Skip"))) : /* @__PURE__ */ React.createElement("div", { key: i, style: { fontSize: 12, padding: "6px 9px", background: T.card2, borderRadius: 8, color: T.text, lineHeight: 1.5 } }, a.noSlotFound ? /* @__PURE__ */ React.createElement(React.Fragment, null, "Couldn't find a new time for ", /* @__PURE__ */ React.createElement("strong", null, a.conflictsWith.title), " \u2014 it still conflicts with ", /* @__PURE__ */ React.createElement("strong", null, a.newEvent.title), " on ", a.newEvent.date === dayKey() ? "today" : a.newEvent.date, ".") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("strong", null, a.newEvent.title), " conflicts with ", /* @__PURE__ */ React.createElement("strong", null, a.conflictsWith.title), " on ", a.newEvent.date === dayKey() ? "today" : a.newEvent.date, " \u2014 neither can move automatically.")))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, movedCount > 1 && /* @__PURE__ */ React.createElement(Btn, { onClick: applyAllScheduleChangeMoves, style: { padding: "7px 14px", fontSize: 12, justifyContent: "center" } }, "Move all ", movedCount), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: () => {
       setActive("calendar");
-      setScheduleChangeAlerts([]);
-    }, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Open Calendar"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: () => setScheduleChangeAlerts([]), style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Dismiss")));
-  })(), coopCancelAlerts.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("strong", { style: { color: T.amber } }, coopCancelAlerts.length, " study session", coopCancelAlerts.length !== 1 ? "s" : ""), " cancelled:"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 4, maxHeight: 220, overflowY: "auto" } }, coopCancelAlerts.map((a) => /* @__PURE__ */ React.createElement("div", { key: a.sessionId, style: { padding: "8px 9px", background: T.card2, borderRadius: 8, fontSize: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { color: T.text, marginBottom: 6 } }, a.byName, ' cancelled "', a.title, '" \u2014 ', a.date === dayKey() ? "today" : a.date, " ", fmtRolloverClock(a.time)), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement("button", { onClick: () => removeCoopCancelAlert(a.sessionId), style: { background: "none", border: `1px solid ${T.border}`, borderRadius: 6, color: T.muted, cursor: "pointer", fontSize: 11, padding: "5px 8px", fontFamily: T.font } }, "Remove from my calendar"), /* @__PURE__ */ React.createElement("button", { onClick: () => keepCoopCancelAlert(a.sessionId), style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, textDecoration: "underline" } }, "Keep it anyway")))))), bottomRightSlot === "promptBatch" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: STUDLIN_AI_BUBBLE_CLEARANCE, right: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, "Due soon. Want Studlin to find prep time for these?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 12, maxHeight: 200, overflowY: "auto" } }, prepPromptBatch.map((m) => /* @__PURE__ */ React.createElement("div", { key: m.id, style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, fontSize: 12, padding: "6px 9px", background: T.card2, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, m.title), /* @__PURE__ */ React.createElement("div", { style: { color: T.muted, fontSize: 10.5 } }, "Due ", m.date)), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexShrink: 0 } }, /* @__PURE__ */ React.createElement("button", { onClick: () => acceptPrepPrompt(m), style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, textDecoration: "underline", padding: 0 } }, "Schedule"), /* @__PURE__ */ React.createElement("button", { onClick: () => declinePrepPrompt(m), style: { background: "none", border: "none", color: T.muted, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, padding: 0 } }, "Not now"))))), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: declineAllPrepPrompts, style: { padding: "7px 14px", fontSize: 12, width: "100%", justifyContent: "center" } }, "Dismiss all")), bottomRightSlot === "autoToast" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: STUDLIN_AI_BUBBLE_CLEARANCE, right: 20, zIndex: 999, padding: "11px 18px", borderRadius: 10, background: T.teal, color: "#fff", fontSize: 13, fontWeight: 600, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, prepAutoToast), bottomRightSlot === "error" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: STUDLIN_AI_BUBBLE_CLEARANCE, right: 20, zIndex: 1001, padding: "11px 18px", borderRadius: 10, background: T.red, color: "#fff", fontSize: 13, fontWeight: 600, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, lockInErrorToast), /* @__PURE__ */ React.createElement(Modal, { open: !!examCheckIn, onClose: () => setExamCheckIn(null), title: examCheckIn && examCheckIn.dueEventId ? "How do you feel about the exam so far?" : "How did that session go?", width: 380 }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, EXAM_CHECKIN_SCALE.map((opt) => /* @__PURE__ */ React.createElement(Btn, { key: opt.value, variant: "ghost", onClick: () => submitExamCheckIn(opt.value), style: { width: "100%", justifyContent: "center" } }, opt.label)))), /* @__PURE__ */ React.createElement(Modal, { open: !!diagnosticQuiz, onClose: () => {
+    }, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Open Calendar"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: () => setScheduleChangeAlerts([]), style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Dismiss"))));
+  })(), coopCancelAlerts.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("strong", { style: { color: T.amber } }, coopCancelAlerts.length, " study session", coopCancelAlerts.length !== 1 ? "s" : ""), " cancelled:"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 4, maxHeight: 220, overflowY: "auto" } }, coopCancelAlerts.map((a) => /* @__PURE__ */ React.createElement("div", { key: a.sessionId, style: { padding: "8px 9px", background: T.card2, borderRadius: 8, fontSize: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { color: T.text, marginBottom: 6 } }, a.byName, ' cancelled "', a.title, '" \u2014 ', a.date === dayKey() ? "today" : a.date, " ", fmtRolloverClock2(a.time)), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement("button", { onClick: () => removeCoopCancelAlert(a.sessionId), style: { background: "none", border: `1px solid ${T.border}`, borderRadius: 6, color: T.muted, cursor: "pointer", fontSize: 11, padding: "5px 8px", fontFamily: T.font } }, "Remove from my calendar"), /* @__PURE__ */ React.createElement("button", { onClick: () => keepCoopCancelAlert(a.sessionId), style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, textDecoration: "underline" } }, "Keep it anyway")))))), bottomRightSlot === "promptBatch" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: STUDLIN_AI_BUBBLE_CLEARANCE, right: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, "Due soon. Want Studlin to find prep time for these?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 12, maxHeight: 200, overflowY: "auto" } }, prepPromptBatch.map((m) => /* @__PURE__ */ React.createElement("div", { key: m.id, style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, fontSize: 12, padding: "6px 9px", background: T.card2, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, m.title), /* @__PURE__ */ React.createElement("div", { style: { color: T.muted, fontSize: 10.5 } }, "Due ", m.date)), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexShrink: 0 } }, /* @__PURE__ */ React.createElement("button", { onClick: () => acceptPrepPrompt(m), style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, textDecoration: "underline", padding: 0 } }, "Schedule"), /* @__PURE__ */ React.createElement("button", { onClick: () => declinePrepPrompt(m), style: { background: "none", border: "none", color: T.muted, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, padding: 0 } }, "Not now"))))), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: declineAllPrepPrompts, style: { padding: "7px 14px", fontSize: 12, width: "100%", justifyContent: "center" } }, "Dismiss all")), bottomRightSlot === "autoToast" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: STUDLIN_AI_BUBBLE_CLEARANCE, right: 20, zIndex: 999, padding: "11px 18px", borderRadius: 10, background: T.teal, color: "#fff", fontSize: 13, fontWeight: 600, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, prepAutoToast), bottomRightSlot === "error" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: STUDLIN_AI_BUBBLE_CLEARANCE, right: 20, zIndex: 1001, padding: "11px 18px", borderRadius: 10, background: T.red, color: "#fff", fontSize: 13, fontWeight: 600, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, lockInErrorToast), /* @__PURE__ */ React.createElement(Modal, { open: !!examCheckIn, onClose: () => setExamCheckIn(null), title: examCheckIn && examCheckIn.dueEventId ? "How do you feel about the exam so far?" : "How did that session go?", width: 380 }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, EXAM_CHECKIN_SCALE.map((opt) => /* @__PURE__ */ React.createElement(Btn, { key: opt.value, variant: "ghost", onClick: () => submitExamCheckIn(opt.value), style: { width: "100%", justifyContent: "center" } }, opt.label)))), /* @__PURE__ */ React.createElement(Modal, { open: !!diagnosticQuiz, onClose: () => {
     diagnosticQuizTaskIdRef.current = null;
     setDiagnosticQuiz(null);
   }, title: diagnosticQuiz?.examEvent?.title || "Quick check", width: 420 }, diagnosticQuiz && diagnosticQuiz.stage === "loading" && /* @__PURE__ */ React.createElement(ExtractionProgress, { fileName: diagnosticQuiz.examEvent.title, stage: "analyze", analyzeLabel: "Let's see what needs another look..." }), diagnosticQuiz && diagnosticQuiz.stage === "taking" && (() => {
@@ -24550,7 +24723,7 @@ function App() {
   }, style: { width: "100%", justifyContent: "center" } }, "Done"))), /* @__PURE__ */ React.createElement(ProjectCheckInModal, { taskId: projectCheckInTaskId, onClose: () => setProjectCheckInTaskId(null), onToast: (msg) => {
     setDashToast(msg);
     setTimeout(() => setDashToast(""), 2800);
-  } }), bottomRightSlot === "suggestion" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: STUDLIN_AI_BUBBLE_CLEARANCE, right: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 360 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, marginBottom: 12, lineHeight: 1.5 } }, examPrepSuggestion.reason), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, ["shorten", "extend", "drop-remaining", "pull-closer", "shaky-packed"].includes(examPrepSuggestion.type) && /* @__PURE__ */ React.createElement(Btn, { onClick: acceptExamPrepSuggestion, style: { flex: 1, justifyContent: "center", fontSize: 12, padding: "7px 14px" } }, examPrepSuggestion.type === "shorten" ? "Shorten it" : examPrepSuggestion.type === "extend" ? "Extend it" : examPrepSuggestion.type === "drop-remaining" ? "Drop them" : examPrepSuggestion.type === "shaky-packed" ? "Fit it in anyway" : "Move it closer"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: dismissExamPrepSuggestion, style: { flex: 1, justifyContent: "center", fontSize: 12, padding: "7px 14px" } }, ["ahead-of-pace", "last-session"].includes(examPrepSuggestion.type) ? "Got it" : "Leave it"))), strugglingBucketOffer && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10, lineHeight: 1.5 } }, "Your ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.amber } }, PEAK_BUCKET_LABELS[strugglingBucketOffer.strugglingBucket].toLowerCase()), " tasks haven't been sticking \u2014 ", strugglingBucketOffer.recentMissedCount, " of your last ", strugglingBucketOffer.recentWindow, " were missed. Default new tasks to ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, PEAK_BUCKET_LABELS[strugglingBucketOffer.suggestedBucket].toLowerCase()), " instead?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: acceptStrugglingBucketOffer, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Switch to ", PEAK_BUCKET_LABELS[strugglingBucketOffer.suggestedBucket]), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: declineStrugglingBucketOffer, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Not now"))), peakInsightOffer && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10, lineHeight: 1.5 } }, "Looks like you actually finish more ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, PEAK_BUCKET_LABELS[peakInsightOffer.suggestedBucket].toLowerCase()), " tasks (", Math.round(peakInsightOffer.suggestedPct * 100), "%) than ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.amber } }, PEAK_BUCKET_LABELS[peakInsightOffer.currentBucket].toLowerCase()), " ones (", Math.round(peakInsightOffer.currentPct * 100), "%) \u2014 update your peak hours?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: acceptPeakHourInsight, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Switch to ", PEAK_BUCKET_LABELS[peakInsightOffer.suggestedBucket]), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: declinePeakHourInsight, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Not now"))), expiredPending.length > 0 && !calendarWizardOpen && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 76, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("strong", { style: { color: T.red } }, expiredPending.length, " task", expiredPending.length !== 1 ? "s" : ""), " missed ", expiredPending.length !== 1 ? "their" : "its", " deadline without being finished."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 12, maxHeight: 160, overflowY: "auto" } }, expiredPending.map((ev) => /* @__PURE__ */ React.createElement("div", { key: ev.id, style: { fontSize: 12, padding: "6px 9px", background: T.card2, borderRadius: 8, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.title))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: clearExpiredPending, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Clear them"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: () => setExpiredPending([]), style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Keep them"))), headsUpEvent && !timerTask && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "12px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 300, display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, /* @__PURE__ */ React.createElement("strong", null, headsUpEvent.title), " starts soon \u2014 ", fmtRolloverClock(headsUpEvent.time), "."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
+  } }), bottomRightSlot === "suggestion" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: STUDLIN_AI_BUBBLE_CLEARANCE, right: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 360 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, marginBottom: 12, lineHeight: 1.5 } }, examPrepSuggestion.reason), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, ["shorten", "extend", "drop-remaining", "pull-closer", "shaky-packed"].includes(examPrepSuggestion.type) && /* @__PURE__ */ React.createElement(Btn, { onClick: acceptExamPrepSuggestion, style: { flex: 1, justifyContent: "center", fontSize: 12, padding: "7px 14px" } }, examPrepSuggestion.type === "shorten" ? "Shorten it" : examPrepSuggestion.type === "extend" ? "Extend it" : examPrepSuggestion.type === "drop-remaining" ? "Drop them" : examPrepSuggestion.type === "shaky-packed" ? "Fit it in anyway" : "Move it closer"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: dismissExamPrepSuggestion, style: { flex: 1, justifyContent: "center", fontSize: 12, padding: "7px 14px" } }, ["ahead-of-pace", "last-session"].includes(examPrepSuggestion.type) ? "Got it" : "Leave it"))), strugglingBucketOffer && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10, lineHeight: 1.5 } }, "Your ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.amber } }, PEAK_BUCKET_LABELS[strugglingBucketOffer.strugglingBucket].toLowerCase()), " tasks haven't been sticking \u2014 ", strugglingBucketOffer.recentMissedCount, " of your last ", strugglingBucketOffer.recentWindow, " were missed. Default new tasks to ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, PEAK_BUCKET_LABELS[strugglingBucketOffer.suggestedBucket].toLowerCase()), " instead?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: acceptStrugglingBucketOffer, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Switch to ", PEAK_BUCKET_LABELS[strugglingBucketOffer.suggestedBucket]), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: declineStrugglingBucketOffer, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Not now"))), peakInsightOffer && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10, lineHeight: 1.5 } }, "Looks like you actually finish more ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, PEAK_BUCKET_LABELS[peakInsightOffer.suggestedBucket].toLowerCase()), " tasks (", Math.round(peakInsightOffer.suggestedPct * 100), "%) than ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.amber } }, PEAK_BUCKET_LABELS[peakInsightOffer.currentBucket].toLowerCase()), " ones (", Math.round(peakInsightOffer.currentPct * 100), "%) \u2014 update your peak hours?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: acceptPeakHourInsight, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Switch to ", PEAK_BUCKET_LABELS[peakInsightOffer.suggestedBucket]), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: declinePeakHourInsight, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Not now"))), expiredPending.length > 0 && !calendarWizardOpen && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 76, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("strong", { style: { color: T.red } }, expiredPending.length, " task", expiredPending.length !== 1 ? "s" : ""), " missed ", expiredPending.length !== 1 ? "their" : "its", " deadline without being finished."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 12, maxHeight: 160, overflowY: "auto" } }, expiredPending.map((ev) => /* @__PURE__ */ React.createElement("div", { key: ev.id, style: { fontSize: 12, padding: "6px 9px", background: T.card2, borderRadius: 8, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.title))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: clearExpiredPending, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Clear them"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: () => setExpiredPending([]), style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Keep them"))), headsUpEvent && !timerTask && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "12px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 300, display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, /* @__PURE__ */ React.createElement("strong", null, headsUpEvent.title), " starts soon \u2014 ", fmtRolloverClock2(headsUpEvent.time), "."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
     setTimerTask(headsUpEvent);
     setHeadsUpEvent(null);
   }, style: { padding: "6px 12px", fontSize: 11 } }, "Begin now"), /* @__PURE__ */ React.createElement("button", { onClick: () => setHeadsUpEvent(null), style: { background: "none", border: "none", color: T.faint, fontSize: 11, cursor: "pointer", fontFamily: T.font } }, "Dismiss"))), liveInvite && !timerTask && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: headsUpEvent ? 110 : 20, left: 20, zIndex: 999, padding: "12px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.teal}55`, boxShadow: `0 8px 24px rgba(0,0,0,0.35), 0 0 0 1px ${T.teal}22`, animation: "studlinPop 0.2s ease", maxWidth: 300, display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, /* @__PURE__ */ React.createElement("strong", null, liveInvite.title), " is locking in right now \u2014 join?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: joinLiveInvite, style: { padding: "6px 12px", fontSize: 11, background: T.teal } }, "Join now"), /* @__PURE__ */ React.createElement("button", { onClick: () => setLiveInvite(null), style: { background: "none", border: "none", color: T.faint, fontSize: 11, cursor: "pointer", fontFamily: T.font } }, "Dismiss"))), /* @__PURE__ */ React.createElement(ScheduleSettingsPanel, { open: scheduleSettingsOpen, onClose: () => setScheduleSettingsOpen(false), onSave: () => {

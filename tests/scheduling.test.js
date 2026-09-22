@@ -44,7 +44,7 @@ describe("rebalanceDay", () => {
     const { rebalanceDay } = loadStudlinModule();
     const marker = dueDateMarker();
     const events = [marker, realTask({ id: "task-1" }), realTask({ id: "task-2", time: "10:00" })];
-    const next = rebalanceDay("2026-07-20", events, [], DEFAULT_PREFS);
+    const { events: next } = rebalanceDay("2026-07-20", events, [], DEFAULT_PREFS);
     const markerAfter = next.find((e) => e.id === "marker-1");
     assert.equal(markerAfter.date, "2026-07-20");
     assert.equal(markerAfter.time, "23:59");
@@ -56,10 +56,59 @@ describe("rebalanceDay", () => {
       realTask({ id: "task-1", time: "10:00", priority: 800 }),
       realTask({ id: "task-2", time: "10:00", priority: 200 }),
     ];
-    const next = rebalanceDay("2026-07-20", events, [], DEFAULT_PREFS);
+    const { events: next } = rebalanceDay("2026-07-20", events, [], DEFAULT_PREFS);
     const t1 = next.find((e) => e.id === "task-1");
     const t2 = next.find((e) => e.id === "task-2");
     assert.notEqual(t1.time, t2.time, "two same-time real tasks should no longer overlap after rebalancing");
+  });
+
+  // 2026-09-22: rebalanceDay used to silently retime other pending tasks
+  // with no stamp at all, so the existing per-task Undo (popover/edit
+  // modal) never picked it up. It now returns {events,moved} and stamps
+  // exactly the tasks whose time actually changed.
+  test("stamps every task it actually retimes with movedByStudlin/movedFrom, and returns it in `moved`", () => {
+    const { rebalanceDay } = loadStudlinModule();
+    // workStartTime pinned to match both tasks' own time: the higher-
+    // priority winner's first available slot IS its own original time (it
+    // isn't itself displaced), so only the loser it displaces gets stamped
+    // -- isolates "does the displaced task get stamped" from "does the
+    // winner also incidentally move," which rebalanceDay legitimately can
+    // do (repacking from the top of the work window) but isn't what this
+    // test is about.
+    const prefs = { ...DEFAULT_PREFS, workStartTime: "10:00" };
+    const events = [
+      realTask({ id: "task-1", time: "10:00", priority: 800 }),
+      realTask({ id: "task-2", time: "10:00", priority: 200 }),
+    ];
+    const { events: next, moved } = rebalanceDay("2026-07-20", events, [], prefs);
+    const t1 = next.find((e) => e.id === "task-1");
+    const t2 = next.find((e) => e.id === "task-2");
+    assert.equal(t1.time, "10:00", "the winner keeps its own original slot");
+    assert.equal(t1.movedByStudlin, undefined);
+    assert.equal(t2.movedByStudlin, true);
+    assert.equal(t2.movedFrom.date, "2026-07-20");
+    assert.equal(t2.movedFrom.time, "10:00");
+    assert.equal(moved.length, 1);
+    assert.equal(moved[0].id, "task-2");
+  });
+
+  test("a task that lands back on its own original time is not stamped and not reported in `moved`", () => {
+    const { rebalanceDay } = loadStudlinModule();
+    const events = [realTask({ id: "task-1", time: "10:00" })];
+    const { events: next, moved } = rebalanceDay("2026-07-20", events, [], DEFAULT_PREFS);
+    const t1 = next.find((e) => e.id === "task-1");
+    assert.equal(t1.movedByStudlin, undefined);
+    assert.equal(moved.length, 0);
+  });
+
+  test("the two early-return paths (nothing flexible, a solo non-colliding task) also return the {events,moved} shape", () => {
+    const { rebalanceDay } = loadStudlinModule();
+    const noFlex = rebalanceDay("2026-07-20", [dueDateMarker()], [], DEFAULT_PREFS);
+    assert.ok(Array.isArray(noFlex.events));
+    assert.equal(noFlex.moved.length, 0);
+    const solo = rebalanceDay("2026-07-20", [realTask({ id: "task-1", time: "10:00" })], [], DEFAULT_PREFS);
+    assert.ok(Array.isArray(solo.events));
+    assert.equal(solo.moved.length, 0);
   });
 });
 
@@ -1801,7 +1850,7 @@ describe("timeUnconfirmed exclusion from occupied-interval math (2026-08-26: a f
       realTask({ id: "reminder-1", kind: "reminder", date: "2026-08-26", time: "09:00", duration: 0, timeUnconfirmed: true }),
       realTask({ id: "task-1", time: "09:00", priority: 500 }),
     ];
-    const next = rebalanceDay("2026-08-26", events, [], DEFAULT_PREFS);
+    const { events: next } = rebalanceDay("2026-08-26", events, [], DEFAULT_PREFS);
     const task1 = next.find(e => e.id === "task-1");
     // The real task should be allowed to sit right at 09:00 -- no fake
     // reminder buffer should have bumped it elsewhere.
@@ -2120,7 +2169,7 @@ describe("scoreTask difficulty preference (regression: read a dead prefs key, so
     const prefs = { ...DEFAULT_PREFS, difficultyPreference: "hardFirst" };
     const easy = realTask({ id: "easy-1", time: "10:00", priority: 500, difficulty: 100 });
     const hard = realTask({ id: "hard-1", time: "10:00", priority: 500, difficulty: 900 });
-    const result = m.rebalanceDay("2026-07-20", [easy, hard], [], prefs);
+    const { events: result } = m.rebalanceDay("2026-07-20", [easy, hard], [], prefs);
     const easyAfter = result.find((e) => e.id === "easy-1");
     const hardAfter = result.find((e) => e.id === "hard-1");
     assert.ok(hardAfter.time < easyAfter.time, "the hard task should win the earlier slot under an explicit Hard First preference");
@@ -4010,21 +4059,31 @@ describe("catchUpStalenessDays / catchUpStalenessLabel (regression: Catch Me Up 
 describe("reconcileFixedEventConflicts (regression: a new fixed exam/class/activity could silently double-book an existing flexible study block sitting in that slot)", () => {
   function seedEvents(m, events) { m.lsSet("events", events); }
 
-  test("a new fixed exam relocates an existing flexible study block that collides with it", () => {
+  // 2026-09-22: this used to relocate the colliding study block immediately
+  // and silently. It now only PROPOSES the relocation (result.moved) --
+  // nothing about the study block itself changes until the student reviews
+  // and accepts it via the scheduleChangeAlerts preview. The new fixed
+  // event still commits unconditionally either way (that part's unchanged).
+  test("a new fixed exam proposes relocating an existing flexible study block that collides with it, without touching it yet", () => {
     const m = loadStudlinModule();
     seedEvents(m, [
       { id: "study-1", title: "Study: Calc", kind: "study block", date: "2026-08-06", time: "10:00", duration: 30, status: "pending" },
     ]);
     const exam = { id: "exam-1", title: "math 101", kind: "exam", date: "2026-08-06", time: "10:00", duration: 60 };
     const result = m.reconcileFixedEventConflicts([exam]);
-    const moved = result.events.find((e) => e.id === "study-1");
-    assert.ok(moved, "the flexible session must still exist, just relocated");
+    const untouched = result.events.find((e) => e.id === "study-1");
+    assert.ok(untouched, "the flexible session must still exist");
+    // Not relocated, not stamped -- the whole point of the fix.
+    assert.equal(untouched.date, "2026-08-06");
+    assert.equal(untouched.time, "10:00");
+    assert.equal(untouched.movedByStudlin, undefined);
+    // But a real proposal for it exists, with a genuinely different slot.
     assert.equal(result.moved.length, 1);
     assert.equal(result.moved[0].id, "study-1");
-    // Either the date or the time actually changed -- it didn't just get
-    // relabeled movedByStudlin while staying at the exact colliding slot.
-    assert.ok(moved.date !== "2026-08-06" || moved.time !== "10:00");
-    assert.equal(moved.movedByStudlin, true);
+    assert.ok(result.moved[0].to.date !== "2026-08-06" || result.moved[0].to.time !== "10:00");
+    assert.equal(result.moved[0].from.date, "2026-08-06");
+    assert.equal(result.moved[0].from.time, "10:00");
+    assert.equal(result.moved[0].causedByTitle, "math 101");
   });
 
   test("the new fixed event itself is preserved unmodified in the result", () => {

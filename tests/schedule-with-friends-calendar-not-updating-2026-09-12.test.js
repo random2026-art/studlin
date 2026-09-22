@@ -24,7 +24,10 @@ describe("postGroupSchedule updates the organizer's own on-screen calendar, not 
     const idx = SOURCE.indexOf("const postGroupSchedule=async()=>{");
     assert.notEqual(idx, -1, "postGroupSchedule should still exist under this name");
     const body = SOURCE.slice(idx, idx + 3800);
-    assert.match(body, /const nextEvents=addTaskWithRebalance\(\{/, "must capture addTaskWithRebalance's return value instead of discarding it");
-    assert.match(body, /setEvents\(nextEvents\)/, "must push the new array into CalendarTab's own events state, same as commitManualBlockDrop/commitNewTaskDrop");
+    // 2026-09-22: addTaskWithRebalance now returns {events,moved} instead of
+    // a bare array (moved is whatever else rebalanceDay silently reshuffled
+    // on the same day) -- setEvents reads .events, same underlying fix.
+    assert.match(body, /const rebalanceResult=addTaskWithRebalance\(\{/, "must capture addTaskWithRebalance's return value instead of discarding it");
+    assert.match(body, /setEvents\(rebalanceResult\.events\)/, "must push the new array into CalendarTab's own events state, same as commitManualBlockDrop/commitNewTaskDrop");
   });
 });

@@ -93,6 +93,8 @@ function loadStudlinModule(options) {
     "splitSessionDuration","SPLIT_SESSION_MIN_MINUTES",
     "catchUpStalenessDays","catchUpStalenessLabel",
     "reconcileFixedEventConflicts","surfaceReconcileResult","dedupeScheduleAlerts",
+    "computeFixedEventConflictPlan","computeRoutineConflictPlan","rebalanceMovedSuffix",
+    "reconcileToastSuffix","ROUTINE_CONFLICT_HORIZON_DAYS",
     "dayWorkloadMinutes","dayWorkloadTier","DAY_WORKLOAD_MODERATE_MINS","DAY_WORKLOAD_HEAVY_MINS",
     "computeMonthHeavyDays","MONTH_HEAVY_RELATIVE_RATIO","MONTH_HEAVY_MIN_ABSOLUTE_MINS",
     "MAX_VISIBLE_DAY_COLUMNS",

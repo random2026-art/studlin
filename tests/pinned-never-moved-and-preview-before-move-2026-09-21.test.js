@@ -130,11 +130,16 @@ describe("computeCatchUpPlan keeps Tier 0's exam-already-passed guard (single mi
 });
 
 describe("source guards for the component-closure code", () => {
-  test("reconcileRoutineConflicts skips pinned tasks before it ever searches for a new slot", () => {
-    const start = SOURCE.indexOf("const reconcileRoutineConflicts=(nextRoutines)=>{");
+  // 2026-09-22: reconcileRoutineConflicts no longer relocates anything
+  // itself -- it computes a plan via the pure computeRoutineConflictPlan
+  // and offers it (see pinned-never-moved-and-preview-before-move's sibling
+  // 2026-09-22 file for the full preview-before-move coverage). The pin
+  // check now lives in that pure function.
+  test("computeRoutineConflictPlan skips pinned tasks before it ever searches for a new slot", () => {
+    const start = SOURCE.indexOf("function computeRoutineConflictPlan(");
     assert.notEqual(start, -1);
-    const body = SOURCE.slice(start, start + 4500);
-    const pinIdx = body.indexOf("if(ev.userPinned)return ev;");
+    const body = SOURCE.slice(start, start + 1500);
+    const pinIdx = body.indexOf("if(ev.userPinned)return;");
     const searchIdx = body.indexOf("findLegalSlotOrNull(");
     assert.notEqual(pinIdx, -1, "a pinned task must be left alone");
     assert.ok(searchIdx === -1 || pinIdx < searchIdx, "the pin check has to come before any relocation search");

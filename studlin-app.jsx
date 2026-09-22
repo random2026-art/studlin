@@ -4159,6 +4159,39 @@ function computeCatchUpPlan(events,routines,prefs,today,difficulty,nowMins){
   });
   return {moves,unplaceable};
 }
+// A routine edit (adding/moving a class, an activity, a work shift) can
+// make an already-scheduled pending task overlap the new routine block.
+// This used to relocate that task immediately and silently (see
+// CalendarTab's own reconcileRoutineConflicts, which now calls this to
+// PREVIEW instead of committing) -- 2026-09-22 user request, same "show me
+// before you move it" ask the missed-task flow already got. Pure: no
+// lsSet/setEvents, mirrors computeCatchUpPlan's compute/confirm split. No
+// lower bound on `ev.date` (a still-pending task dated in the past that
+// overlaps the new routine stays stuck otherwise); ROUTINE_CONFLICT_
+// HORIZON_DAYS keeps the same 13-day forward window the original silent
+// version used.
+const ROUTINE_CONFLICT_HORIZON_DAYS=13;
+function computeRoutineConflictPlan(events,nextRoutines,prefs,today){
+  const horizonEnd=(()=>{const d=new Date(today+"T12:00:00");d.setDate(d.getDate()+ROUTINE_CONFLICT_HORIZON_DAYS);return dayKey(d);})();
+  const moves=[];
+  events.forEach(ev=>{
+    if(ev.status==="done"||!ev.time)return;
+    if(isLeadInFixed(ev))return;
+    if(ev.userPinned)return; // pinned means "Studlin won't move this" -- never offered, not even as a preview
+    if(ev.date>horizonEnd)return;
+    const duration=ev.duration||30;
+    const tMins=timeToMinutes(ev.time);
+    const occupied=expandRoutineOccurrences(nextRoutines,ev.date,ev.date)
+      .filter(o=>o.kind!=="free period")
+      .map(o=>({start:timeToMinutes(o.time)-effectiveLeadIn(o),end:timeToMinutes(o.time)+(o.duration||30)+effectiveTrailOut(o)}));
+    const conflict=occupied.some(o=>!(tMins+duration<=o.start||tMins>=o.end));
+    if(!conflict)return;
+    const slot=findLegalSlotOrNull(events.filter(e=>e.id!==ev.id),nextRoutines,prefs,ev.date,ev.time,duration);
+    if(!slot||(slot.date===ev.date&&slot.time===ev.time))return;
+    moves.push({id:ev.id,title:ev.title,duration,from:{date:ev.date,time:ev.time},to:slot});
+  });
+  return {moves};
+}
 // Restores a Tier0-moved task to its pre-move {date,time} and strips the
 // marker fields. The original slot was always legal at move time, but not
 // necessarily still free now — another Tier 0 move, a manual add, or an
@@ -4207,13 +4240,22 @@ function undoTier0Move(taskId){
 // Studlin at all -- neither side is allowed to move -- so that goes to
 // needsAttention instead, same as a flexible block Studlin searched for
 // and genuinely couldn't find a new home for.
-function reconcileFixedEventConflicts(newFixedEvents){
+// Pure preview half of what used to be reconcileFixedEventConflicts'
+// whole job -- 2026-09-22 user request, same "show me before you move it"
+// ask the other 3 auto-movers already got. No lsSet: the caller below
+// commits `newFixedEvents` unconditionally (a synced/imported/added exam
+// or class isn't optional -- only whichever flexible study block it
+// displaces waits for review). `working` is still updated internally as
+// each new fixed event is processed, same sequential chaining the original
+// immediate-commit version relied on so a second new event in the same
+// batch doesn't propose landing a displaced task on a slot another
+// displaced task in this same batch was just hypothetically given -- it's
+// just never written to storage.
+function computeFixedEventConflictPlan(newFixedEvents,existingEvents,routines,prefs){
   const timed=newFixedEvents.filter(nf=>nf.time);
-  if(timed.length===0)return{events:lsGet("events",[]),moved:[],needsAttention:[]};
+  if(timed.length===0)return{moved:[],needsAttention:[]};
   const newIds=new Set(timed.map(e=>e.id));
-  const existing=lsGet("events",[]).filter(e=>!newIds.has(e.id));
-  const routines=getWeeklyRoutine();
-  const prefs=getSchedulePreferences();
+  const existing=existingEvents.filter(e=>!newIds.has(e.id));
   const toMin=(t)=>{const p=(t||"00:00").split(":").map(Number);return p[0]*60+p[1];};
   const overlaps=(a,b)=>{
     if(a.date!==b.date)return false;
@@ -4243,14 +4285,30 @@ function reconcileFixedEventConflicts(newFixedEvents){
         needsAttention.push({newEvent:nf,conflictsWith:e,noSlotFound:true});
         return e;
       }
-      const movedReason={type:"displaced",causedByTitle:nf.title};
-      moved.push({id:e.id,title:e.title,from:{date:e.date,time:e.time},to:slot,causedByTitle:nf.title});
-      return{...e,date:slot.date,time:slot.time,movedByStudlin:true,movedFrom:{date:e.date,time:e.time},movedAt:Date.now(),movedReason,reshuffleCount:(e.reshuffleCount||0)+1};
+      moved.push({id:e.id,title:e.title,duration,from:{date:e.date,time:e.time},to:slot,causedByTitle:nf.title});
+      // Update the WORKING copy (not stored -- see comment above) so a
+      // later `nf` in this same batch sees this proposed new slot.
+      return{...e,date:slot.date,time:slot.time};
     });
   });
-  const finalEvents=working.concat(newFixedEvents);
+  return{moved,needsAttention};
+}
+function reconcileFixedEventConflicts(newFixedEvents){
+  const timed=newFixedEvents.filter(nf=>nf.time);
+  if(timed.length===0)return{events:lsGet("events",[]),moved:[],needsAttention:[]};
+  const newIds=new Set(timed.map(e=>e.id));
+  const existing=lsGet("events",[]).filter(e=>!newIds.has(e.id));
+  const routines=getWeeklyRoutine();
+  const prefs=getSchedulePreferences();
+  const plan=computeFixedEventConflictPlan(newFixedEvents,existing,routines,prefs);
+  // Only the new fixed events commit here. plan.moved's flexible study
+  // blocks stay exactly where they are -- still visibly flagged by the
+  // existing conflict badge (conflictTitles/isExpectedInClassOverlap) --
+  // until the student reviews and accepts via the scheduleChangeAlerts
+  // preview (surfaceReconcileResult/App's own commitFixedEventConflictMoves).
+  const finalEvents=existing.concat(newFixedEvents);
   lsSet("events",finalEvents);
-  return{events:finalEvents,moved,needsAttention};
+  return{events:finalEvents,moved:plan.moved,needsAttention:plan.needsAttention};
 }
 // Handoff for reconcileFixedEventConflicts' result from a component that
 // doesn't own App's scheduleChangeAlerts state (SettingsTab isn't a child
@@ -4284,7 +4342,22 @@ function dedupeScheduleAlerts(alerts){
 function surfaceReconcileResult(result){
   const entries=result.moved.map(m=>({kind:"moved",...m}))
     .concat(result.needsAttention.map(a=>({kind:"attention",...a})));
-  if(entries.length>0)lsSet("pendingScheduleChangeAlerts",dedupeScheduleAlerts([...lsGet("pendingScheduleChangeAlerts",[]),...entries]));
+  if(entries.length===0)return;
+  lsSet("pendingScheduleChangeAlerts",dedupeScheduleAlerts([...lsGet("pendingScheduleChangeAlerts",[]),...entries]));
+  // Bug fix, 2026-09-22: the localStorage handoff above was the ONLY way
+  // App ever learned about a new batch of entries, and App only ever read
+  // it once on mount -- so every trigger except the one App-mount effect
+  // that bypassed this whole function (see App's own Google-pull effect)
+  // produced nothing visible until the next full page reload, even though
+  // `result.moved` now represents proposed-not-yet-applied moves the
+  // student is specifically supposed to review. A plain window event
+  // reaches an already-mounted App immediately, with no ref/prop threading
+  // needed across SettingsTab/CalendarTab/this module-level function --
+  // same "component doesn't share React state with App" problem
+  // calendarSetEventsRef already solves for events writes, just via an
+  // event instead of a ref since there's no single natural owner to attach
+  // a ref to here (this fires from several unrelated call sites).
+  if(typeof window!=="undefined")window.dispatchEvent(new CustomEvent("studlin:scheduleChangeAlerts",{detail:entries}));
 }
 // Merges a batch of server-shaped gcal-* events (googleItemToEvent's
 // shape, produced identically by connectGoogleCalendar's response and by
@@ -4465,10 +4538,14 @@ async function pullGoogleCalendarIfConnected(){
 }
 // Short suffix for the toast each call site already shows on success, so
 // what just happened is hinted at immediately rather than only discoverable
-// by noticing the separate banners.
+// by noticing the separate banners. 2026-09-22: result.moved is no longer
+// already-applied (see reconcileFixedEventConflicts/computeFixedEventConflictPlan)
+// -- wording changed from "moved to make room" (a completed-action claim
+// that would now be false) to "need a new time" (an honest description of
+// what's pending review).
 function reconcileToastSuffix(result){
   const parts=[];
-  if(result.moved.length>0)parts.push(result.moved.length+" study session"+(result.moved.length!==1?"s":"")+" moved to make room");
+  if(result.moved.length>0)parts.push(result.moved.length+" study session"+(result.moved.length!==1?"s":"")+" need"+(result.moved.length!==1?"":"s")+" a new time");
   if(result.needsAttention.length>0)parts.push(result.needsAttention.length+" conflict"+(result.needsAttention.length!==1?"s":"")+" need"+(result.needsAttention.length!==1?"":"s")+" your attention");
   return parts.length>0?" · "+parts.join(" · "):"";
 }
@@ -8333,7 +8410,19 @@ function scoreTask(task,prefs,streak){
 }
 
 // Re-score and re-slot all pending flexible tasks on dateKey.
-// Returns the full updated events array; does not persist.
+// Returns {events,moved}; does not persist. `moved` is every task whose
+// time actually changed, stamped movedByStudlin/movedFrom/movedAt the same
+// shape reconcileRoutineConflicts already uses -- 2026-09-22 user request:
+// this used to silently retime other pending tasks on the same day (from
+// editing/adding ANY task, confirming an AI task, or accepting a shared
+// study time) with no stamp at all, so none of the app's existing per-task
+// "Undo move" affordances (popover, edit modal) ever picked it up and there
+// was no way to tell it had happened. Deliberately NOT a preview-first gate
+// like the missed-task/routine-conflict/calendar-sync flows -- this fires
+// on essentially every task save, and a review-and-confirm screen on every
+// single save would be a worse tradeoff than the app it's replacing. Every
+// call site appends a short toast clause when moved.length>0 and stays
+// exactly as silent as before otherwise.
 function rebalanceDay(dateKey,allEvents,routines,prefs){
   const streak=getStreak();
   const isFixed=isLeadInFixed;
@@ -8356,7 +8445,7 @@ function rebalanceDay(dateKey,allEvents,routines,prefs){
   const isFlexPending=function(e){return e.date===dateKey&&e.time&&e.duration&&isReorderableTask(e);};
 
   const flex=allEvents.filter(isFlexPending);
-  if(flex.length===0)return allEvents;
+  if(flex.length===0)return {events:allEvents,moved:[]};
 
   const rest=allEvents.filter(function(e){return !isFlexPending(e);});
 
@@ -8376,7 +8465,7 @@ function rebalanceDay(dateKey,allEvents,routines,prefs){
     const soloStart=timeToMinutes(solo.time);
     const soloEnd=soloStart+(solo.duration||60);
     const collides=occupiedBase.some(function(o){return!(soloEnd<=o.start||soloStart>=o.end);});
-    if(!collides)return allEvents;
+    if(!collides)return {events:allEvents,moved:[]};
   }
 
   const sorted=[...flex].sort(function(a,b){return scoreTask(b,prefs,streak)-scoreTask(a,prefs,streak);});
@@ -8403,19 +8492,35 @@ function rebalanceDay(dateKey,allEvents,routines,prefs){
 
   const occupied=occupiedBase.slice();
 
+  const moved=[];
   const reassigned=sorted.map(function(task){
     const dur=task.duration||60;
     if(prefStart+dur>dayEnd)return task; // no room left even with the catch-up buffer — leave it where it was rather than force a slot
     for(let t=prefStart;t+dur<=dayEnd;t+=15){
       if(!occupied.some(function(o){return!(t+dur<=o.start||t>=o.end);})){
         occupied.push({start:t,end:t+dur+computeBreathingRoom(dur)});
-        return Object.assign({},task,{time:minutesToTime(t)});
+        const newTime=minutesToTime(t);
+        if(newTime===task.time)return task; // landed back on its own slot -- not a real move, don't stamp it
+        moved.push({id:task.id,title:task.title,from:{date:dateKey,time:task.time},to:{date:dateKey,time:newTime}});
+        return Object.assign({},task,{time:newTime,movedByStudlin:true,movedFrom:{date:dateKey,time:task.time},movedAt:Date.now(),reshuffleCount:(task.reshuffleCount||0)+1});
       }
     }
     return task;
   });
 
-  return rest.concat(reassigned);
+  return {events:rest.concat(reassigned),moved};
+}
+// Shared phrasing for rebalanceDay's own `moved` list -- every call site
+// (chat task confirm, shared-study-time accept, Edit Task save, Add Task
+// save) appends this to whatever it already shows, and ONLY when
+// moved.length>0, so the common case (nothing else needed to move) stays
+// exactly as silent as before. One function so the wording can't drift
+// between call sites.
+function rebalanceMovedSuffix(moved){
+  if(!moved||moved.length===0)return "";
+  return moved.length===1
+    ? ` "${moved[0].title}" also shifted to fit.`
+    : ` ${moved.length} other tasks also shifted to fit.`;
 }
 
 // "Balance my week" — manually triggered only, never automatic. Everything
@@ -9415,15 +9520,20 @@ function studlinAiSessionTimelineSpec(proposal){
 // lsSet-syncing it into CalendarTab's live grid via calendarSetEventsRef,
 // the same bridge App()'s own event writes (deleteEventFromDetail etc.)
 // already use for exactly this reason.
+// Returns {events,moved} -- moved accumulates rebalanceDay's own per-date
+// `moved` list across every affected date, so the chat confirmation can
+// name it ("...also shifted N other tasks to fit") instead of staying
+// silent the way this used to.
 function commitStudlinAiTasks(tasks){
   const events=lsGet("events",[]);
   const routines=getWeeklyRoutine();
   const prefs=getSchedulePreferences();
   const datesAffected=new Set(tasks.map(t=>t.date).filter(Boolean));
   let next=events.concat(tasks);
-  datesAffected.forEach(dk=>{next=rebalanceDay(dk,next,routines,prefs);});
+  const moved=[];
+  datesAffected.forEach(dk=>{const r=rebalanceDay(dk,next,routines,prefs);next=r.events;moved.push(...r.moved);});
   lsSet("events",next);
-  return next;
+  return {events:next,moved};
 }
 // Mirrors confirmPausePlan's write body exactly (Tier 3 Reschedule) --
 // kept as a separate copy rather than refactoring confirmPausePlan
@@ -9512,9 +9622,9 @@ function computeHolidayPlan(start,end,label){
 // scheduleAttackBlockFollowUp.
 function addTaskWithRebalance(task){
   const events=lsGet("events",[]);
-  const next=rebalanceDay(task.date,events.concat([task]),getWeeklyRoutine(),getSchedulePreferences());
-  lsSet("events",next);
-  return next;
+  const r=rebalanceDay(task.date,events.concat([task]),getWeeklyRoutine(),getSchedulePreferences());
+  lsSet("events",r.events);
+  return r;
 }
 
 // Pending group-proposal calendar blocks (Schedule with Friends / Find
@@ -18946,6 +19056,11 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
   // send just made the typed text vanish with no error and no way to
   // retry it, since it was already gone from the input.
   const [sendTextError,setSendTextError]=useState("");
+  // 2026-09-22: accepting a shared study time can land on a day that's
+  // already full, which addTaskWithRebalance quietly resolves by re-timing
+  // other pending tasks that day -- this used to have no toast at all
+  // (fire-and-forget), unlike every other rebalanceDay call site.
+  const [rebalanceToast,setRebalanceToast]=useState("");
   const [quickOpen,setQuickOpen]=useState(false);
   const [deckPicker,setDeckPicker]=useState(false);
   const [syncRunning,setSyncRunning]=useState(false);
@@ -19135,7 +19250,7 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
   // used to get no trackable reference at all once written to the local
   // calendar, unlike a study block's studySessionId.
   const confirmStudyTime=(w,mode,studySessionId,proposal)=>{
-    addTaskWithRebalance({
+    const r=addTaskWithRebalance({
       id:"netsync-"+Date.now(),date:w.date,time:w.time,duration:w.duration,
       title:mode==="study block"?peerName+" study session":"Meet up with "+peerName,
       subject:peerName,kind:mode,notes:"",
@@ -19147,6 +19262,10 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
         proposalResponses:proposal.responses,
       }:{}),
     });
+    if(r.moved&&r.moved.length>0){
+      setRebalanceToast(("This landed on a full day."+rebalanceMovedSuffix(r.moved)).trim());
+      setTimeout(()=>setRebalanceToast(""),4200);
+    }
   };
   // Proposes a time — no longer finalizes it for everyone unilaterally.
   // optionIndex picks which suggested slot the user chose; msg.meta.options
@@ -19401,6 +19520,9 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
 
           {sendTextError&&(
             <div style={{padding:"0 16px 8px",fontSize:11.5,color:T.red}}>{sendTextError}</div>
+          )}
+          {rebalanceToast&&(
+            <div style={{padding:"0 16px 8px",fontSize:11.5,color:pp.faint}}>{rebalanceToast}</div>
           )}
           {/* Bug fix, 2026-09-05 user report: Studlin AI's floating bubble
               is deliberately global (fixed bottom:20/right:20, above
@@ -20592,10 +20714,13 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
       try{
         let next=null;
         const doneParts=[];
+        const rebalanceMoved=[];
         for(const item of proposal.items){
           if(item.kind==="create_task"){
             if(!canUseBrainDump()){setPricingOpen(canUseBrainDumpReason()==="free-tier"?"brainDump":"aiUsageCap");return;}
-            next=commitStudlinAiTasks(item.tasks);
+            const r=commitStudlinAiTasks(item.tasks);
+            next=r.events;
+            rebalanceMoved.push(...r.moved);
             recordBrainDump();
             doneParts.push(pastTenseProposalLabel(item.label));
           }else if(item.kind==="move_fixed"){
@@ -20623,7 +20748,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
         if(next)onEventsCommitted(next);
         setMessages(m=>{
           const withResolved=m.map((mm,i)=>i===idx?{...mm,proposal:{...mm.proposal,resolved:"confirmed"}}:mm);
-          return [...withResolved,{role:"ai",text:"Done. "+doneParts.join(" "),kind:"done"}];
+          return [...withResolved,{role:"ai",text:"Done. "+doneParts.join(" ")+rebalanceMovedSuffix(rebalanceMoved),kind:"done"}];
         });
       }finally{
         setLoading(false);
@@ -20701,9 +20826,12 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
       return;
     }
     let next;
+    let rebalanceMoved=[];
     if(proposal.kind==="create_task"){
       if(!canUseBrainDump()){setPricingOpen(canUseBrainDumpReason()==="free-tier"?"brainDump":"aiUsageCap");return;}
-      next=commitStudlinAiTasks(proposal.tasks);
+      const r=commitStudlinAiTasks(proposal.tasks);
+      next=r.events;
+      rebalanceMoved=r.moved;
       recordBrainDump();
     }else if(proposal.kind==="move_fixed"){
       if(!canUseSmartReschedule()){setPricingOpen(canUseSmartRescheduleReason()==="free-tier"?"smartReschedule":"aiUsageCap");return;}
@@ -20767,7 +20895,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
     const moveTradeoff=proposal.kind==="move_flex_task"?formatBufferTradeoff(proposal.bufferBeforeMins,proposal.bufferAfterMins):"";
     setMessages(m=>{
       const withResolved=m.map((mm,i)=>i===idx?{...mm,proposal:{...mm.proposal,resolved:"confirmed"}}:mm);
-      return [...withResolved,{role:"ai",text:"Done. "+pastTenseProposalLabel(proposal.label,proposal.moved,moveReason,moveTradeoff)}];
+      return [...withResolved,{role:"ai",text:"Done. "+pastTenseProposalLabel(proposal.label,proposal.moved,moveReason,moveTradeoff)+rebalanceMovedSuffix(rebalanceMoved)}];
     });
     setPendingIndex(null);
   };
@@ -23099,6 +23227,17 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                 <button onClick={()=>{setEvents(markEventDone(ev.id));closePopover();}} style={itemStyle} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="none"}>Complete</button>
               )}
               <button onClick={()=>{closePopover();openEdit(ev);}} style={itemStyle} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="none"}>Edit</button>
+              {/* Pin/Unpin: a real 2026-09-22 user request -- pinning was
+                  previously only ever a SIDE EFFECT (typing a time,
+                  dragging), with no deliberate way to protect a task.
+                  isReorderableTask already means "not fixed/coop, not a
+                  checklist item, not done, not already pinned" -- exactly
+                  the set of tasks it's meaningful to offer Pin on, and its
+                  negation (once userPinned is true) is exactly the set
+                  Unpin below already gates on, so no new predicate needed. */}
+              {isReorderableTask(ev)&&(
+                <button onClick={()=>{const next=events.map(x=>x.id===ev.id?{...x,userPinned:true}:x);setEvents(next);lsSet("events",next);closePopover();}} style={itemStyle} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="none"}>Pin</button>
+              )}
               {ev.userPinned&&(
                 <button onClick={()=>{const next=events.map(x=>x.id===ev.id?{...x,userPinned:false}:x);setEvents(next);lsSet("events",next);closePopover();}} style={itemStyle} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="none"}>Unpin</button>
               )}
@@ -27699,7 +27838,8 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
       if(timeChanged){const {movedByStudlin,movedFrom,movedAt,placementReason,...rest}=merged;return rest;}
       return merged;
     });
-    let next=date?rebalanceDay(date,updated,routines,prefs):updated;
+    const rebalanceResult=date?rebalanceDay(date,updated,routines,prefs):null;
+    let next=rebalanceResult?rebalanceResult.events:updated;
     if(attackPair)next=next.concat([attackPair.task]);
     // Real linked prep work orphaned by leaving Exam -- reuses the exact
     // same cleanup Studlin Prep's own deleteDeckAndSessions/
@@ -27796,7 +27936,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
     // flashcard-ready toast just above) -- fires here instead of there
     // specifically because it needs to run for every save kind, not just
     // exam-material generation.
-    if(onToast)onToast("Saved.");
+    if(onToast)onToast("Saved."+rebalanceMovedSuffix(rebalanceResult&&rebalanceResult.moved));
     onClose();
   };
   // Split out of save() so the two type-switch confirms below (and the
@@ -28004,6 +28144,19 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
           rows now (padding only, no box), matching Google's own
           icon+text convention -- the embedded action link stays exactly
           as clickable as before, it just isn't wrapped in a card anymore. */}
+      {/* Pin/Unpin: 2026-09-22 user request -- pinning used to only ever be
+          a SIDE EFFECT (typing a time, dragging), with no deliberate way to
+          protect a task. Same isReorderableTask gate the popover's Pin
+          button uses (not fixed/coop, not a checklist item, not done, not
+          already pinned) -- shows for the ordinary case, not for a kind
+          that's already immune to automation (an exam/class) or a to-do
+          with no time to protect. */}
+      {isReorderableTask(ev)&&(
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 2px",marginBottom:10,fontSize:12,color:T.muted}}>
+          <span>Not pinned. Studlin can move this to fit your schedule.</span>
+          <button type="button" onClick={()=>commit(allEvents.map(x=>x.id===ev.id?{...x,userPinned:true}:x))} style={{background:"none",border:"none",color:T.lime,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline"}}>Pin</button>
+        </div>
+      )}
       {ev.userPinned&&(
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 2px",marginBottom:10,fontSize:12,color:T.muted}}>
           <span>📌 Pinned. Studlin won't move this automatically.</span>
@@ -30428,6 +30581,19 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const [lockedMeetingToast,setLockedMeetingToast]=useState("");
   const showLockedMeetingToast=()=>{setLockedMeetingToast("This is a confirmed meeting — open it and use Edit to propose a new time instead of dragging it.");setTimeout(()=>setLockedMeetingToast(""),3200);};
   const [reconcileToast,setReconcileToast]=useState("");
+  // Routine-edit conflict preview -- 2026-09-22 user request. A routine edit
+  // (adding/moving a class) used to immediately relocate any task it now
+  // conflicts with, silently. routineConflictPlan doubles as the small
+  // banner's visibility flag (plan exists, modal not open yet) and the
+  // modal's own data once opened -- unlike Catch Me Up there's no separate
+  // lazy-compute step, since computing "does anything conflict" already
+  // requires computing the real candidate slots.
+  const [routineConflictPlan,setRoutineConflictPlan]=useState(null); // {moves:[...]} | null
+  const [routineConflictPreviewOpen,setRoutineConflictPreviewOpen]=useState(false);
+  const [routineConflictOverrides,setRoutineConflictOverrides]=useState({});
+  const [routineConflictExpandedId,setRoutineConflictExpandedId]=useState(null);
+  const [routineConflictMoveDraft,setRoutineConflictMoveDraft]=useState(null);
+  const [routineConflictMoveError,setRoutineConflictMoveError]=useState("");
   // Velocity Impact reschedule confirmation — set to the task being
   // rescheduled, null when closed.
   const [rescheduleTask,setRescheduleTask]=useState(null);
@@ -30737,73 +30903,80 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // overlaps a routine occurrence, using the same conflict/slot logic aiArrange
   // trusts. Fixed real-world blocks (exam/class/busy block) and done tasks are
   // never touched — mirrors aiArrange's own "never touch fixed blocks" rule.
+  // 2026-09-22 user request: this used to relocate a conflicting task
+  // immediately and silently (a 3.4s toast, no action, was the only
+  // record). Now computes the same plan via the shared pure
+  // computeRoutineConflictPlan and OFFERS it -- nothing moves until the
+  // student reviews and confirms via the banner/modal below. Called
+  // unconditionally from persistRoutines (a direct, deliberate consequence
+  // of the edit the student just made -- always worth surfacing right
+  // away) and, separately, from the mount effect with its own
+  // dismissed-today gate (a still-unresolved conflict from a prior
+  // session shouldn't re-nag every time the Calendar tab is revisited).
   const reconcileRoutineConflicts=(nextRoutines)=>{
     const prefs=getSchedulePreferences();
-    const now=new Date();
-    // No lower bound on date: a still-pending task dated in the past (never
-    // marked done) that overlaps a routine block stays visibly stuck there
-    // forever otherwise — e.g. still rendered mid-"SCHOOL HOURS" in the
-    // current week's grid the day after it was created. findLegalSlotOrNull
-    // searches forward from the task's own date, so it naturally lands on a
-    // later opening the same day if one exists, or a future day otherwise —
-    // never further in the past.
-    const horizonEnd=(()=>{const d=new Date(now);d.setDate(d.getDate()+13);return dayKey(d);})();
-    let changed=false;
-    const movedTitles=[];
+    const plan=computeRoutineConflictPlan(events,nextRoutines,prefs,dayKey());
+    if(plan.moves.length>0)setRoutineConflictPlan(plan);
+  };
+  const openRoutineConflictPreview=()=>setRoutineConflictPreviewOpen(true);
+  const closeRoutineConflictPreview=()=>setRoutineConflictPreviewOpen(false);
+  // Dismiss silences today's offer without touching anything -- same
+  // once-a-day idiom dismissCatchUpBanner uses. The conflicting tasks stay
+  // exactly as conflicting as before; they keep showing the existing
+  // conflict badge (conflictTitles/isExpectedInClassOverlap) on the grid.
+  const dismissRoutineConflictPlan=()=>{
+    lsSet("routineConflictDismissedDate",dayKey());
+    setRoutineConflictPlan(null);setRoutineConflictPreviewOpen(false);setRoutineConflictOverrides({});
+  };
+  const skipRoutineConflictItem=(id)=>setRoutineConflictOverrides(o=>({...o,[id]:{skip:true}}));
+  const deferRoutineConflictItem=(id)=>setRoutineConflictOverrides(o=>({...o,[id]:{defer:true}}));
+  const clearRoutineConflictOverride=(id)=>setRoutineConflictOverrides(o=>{const next={...o};delete next[id];return next;});
+  // Same re-validate-before-accepting shape saveCatchUpMove uses -- a
+  // student-chosen time that collides with something else is rejected
+  // inline, never silently accepted.
+  const saveRoutineConflictMove=(m,date,time)=>{
+    const prefs=getSchedulePreferences();
+    const others=events.filter(e=>e.id!==m.id);
+    const occupied=computeOccupiedIntervals(others,routines,prefs,date);
+    const tMins=timeToMinutes(time);
+    const conflict=occupied.some(o=>!(tMins+(m.duration||30)<=o.start||tMins>=o.end));
+    if(conflict){setRoutineConflictMoveError("That time conflicts with something else that day.");return;}
+    setRoutineConflictOverrides(o=>({...o,[m.id]:{date,time}}));
+    setRoutineConflictMoveError("");
+    setRoutineConflictExpandedId(null);
+    setRoutineConflictMoveDraft(null);
+  };
+  // Applies exactly what the student reviewed -- skip leaves it untouched,
+  // defer pushes it 7 days out, a manual pick lands where they chose,
+  // everything else lands at the plan's own proposed slot. Every actually-
+  // moved item gets the same movedByStudlin stamp every other move in this
+  // app uses, so the generic per-task Undo (popover/edit modal) works here
+  // too -- no separate undo mechanism needed.
+  const confirmRoutineConflictPlan=()=>{
+    if(!routineConflictPlan)return;
+    const today=dayKey();
+    const applied=[];
     const next=events.map(ev=>{
-      if(ev.status==="done"||!ev.time)return ev;
-      // Reuses Tier 0's own fixed-kind set (rather than a hand-rolled copy)
-      // so this silent, automatic reflow shares Tier 0's conservatism —
-      // this used to omit "reminder", meaning a point-in-time nudge could
-      // get silently relocated here even though Tier 0 would never touch
-      // one.
-      if(isLeadInFixed(ev))return ev;
-      // Pinned means "Studlin won't move this automatically" -- this runs on
-      // every app open and every routine edit, and used to relocate a pinned
-      // task the moment it overlapped a class/work block. The overlap still
-      // shows as a conflict on the calendar; the student decides what to do.
-      if(ev.userPinned)return ev;
-      if(ev.date>horizonEnd)return ev;
-      const duration=ev.duration||30;
-      const tMins=timeToMinutes(ev.time);
-      // Free periods are open windows, not locked blocks — a task inside one
-      // is never a conflict to shuffle away from. effectiveLeadIn/
-      // effectiveTrailOut applied here too (2026-08-25) -- this used to
-      // check raw start/end only, so a task sitting inside another block's
-      // commute/lead-in buffer after a routine edit could be judged
-      // conflict-free and left in place instead of relocated.
-      const occupied=expandRoutineOccurrences(nextRoutines,ev.date,ev.date)
-        .filter(o=>o.kind!=="free period")
-        .map(o=>({start:timeToMinutes(o.time)-effectiveLeadIn(o),end:timeToMinutes(o.time)+(o.duration||30)+effectiveTrailOut(o)}));
-      const conflict=occupied.some(o=>!(tMins+duration<=o.start||tMins>=o.end));
-      if(!conflict)return ev;
-      // findLegalSlotOrNull instead of plain findOpenSlotFor: this silent
-      // background reflow must never place a task somewhere new that's
-      // itself occupied — a null here means genuinely leave it put, not
-      // lean on findOpenSlotFor's own last-resort fallback happening to
-      // hand back this event's existing (already-conflicting) slot.
-      const slot=findLegalSlotOrNull(events.filter(e=>e.id!==ev.id),nextRoutines,prefs,ev.date,ev.time,duration);
-      if(!slot||(slot.date===ev.date&&slot.time===ev.time))return ev;
-      changed=true;
-      movedTitles.push(ev.title);
-      // Stamped the same way Tier 0 stamps its own moves — gives this the
-      // same per-item undo icon and lets the fully generic undoTier0Move
-      // reverse it. Previously the ~3.4s toast below was the only record
-      // this ever happened.
-      return {...ev,date:slot.date,time:slot.time,movedByStudlin:true,movedFrom:{date:ev.date,time:ev.time},movedAt:Date.now(),reshuffleCount:(ev.reshuffleCount||0)+1};
+      const move=routineConflictPlan.moves.find(m=>m.id===ev.id);
+      if(!move)return ev;
+      const override=routineConflictOverrides[ev.id];
+      if(override&&override.skip)return ev;
+      if(override&&override.defer){
+        const d=new Date(today+"T12:00:00");d.setDate(d.getDate()+7);
+        const to={date:dayKey(d),time:ev.time};
+        applied.push({id:ev.id,from:move.from,to});
+        return {...ev,date:to.date,time:to.time,movedByStudlin:true,movedFrom:move.from,movedAt:Date.now(),movedReason:{type:"deferred"},reshuffleCount:(ev.reshuffleCount||0)+1};
+      }
+      const manual=override&&override.date&&override.time;
+      const to=manual?{date:override.date,time:override.time}:move.to;
+      applied.push({id:ev.id,from:move.from,to});
+      return {...ev,date:to.date,time:to.time,movedByStudlin:true,movedFrom:move.from,movedAt:Date.now(),movedReason:manual?{type:"manualOverride"}:null,reshuffleCount:(ev.reshuffleCount||0)+1};
     });
-    if(changed){
-      setEvents(next);lsSet("events",next);
-      // This runs automatically (on mount, and whenever routines change) —
-      // unlike every other reschedule path in the app, nothing here is a
-      // direct response to a click, so it's the one place a task can move
-      // with no visible trigger. Always surface it, matching the app's own
-      // "successful async actions get a toast, not silence" convention.
-      setReconcileToast(movedTitles.length===1
-        ? `"${movedTitles[0]}" moved — it conflicted with your schedule.`
-        : `${movedTitles.length} tasks moved — they conflicted with your schedule.`);
-      setTimeout(()=>setReconcileToast(""),3400);
-    }
+    setEvents(next);lsSet("events",next);
+    setRoutineConflictPlan(null);setRoutineConflictPreviewOpen(false);setRoutineConflictOverrides({});
+    setRoutineConflictExpandedId(null);setRoutineConflictMoveDraft(null);setRoutineConflictMoveError("");
+    setPlacementToast(applied.length===0?"Nothing moved.":applied.length===1?"Moved.":applied.length+" tasks moved.");
+    setTimeout(()=>setPlacementToast(""),3200);
   };
   // S5 in the audit: ensureSubjectsForClassRoutines is a no-op for any
   // item that already has a courseId (every routine edit/move/resize call
@@ -30986,8 +31159,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // Reconciliation above only fires on a routine *change* — it never touches
   // tasks that were already conflicting before this logic existed, or that
   // drifted into conflict for any other reason. Run it once on every Calendar
-  // visit too, so stale conflicts don't sit there forever.
-  useEffect(()=>{ reconcileRoutineConflicts(routines); },[]);
+  // visit too, so stale conflicts don't sit there forever -- but respect a
+  // dismissal from earlier today, unlike persistRoutines' own call (a fresh
+  // edit's own direct consequence is always worth surfacing; a stale
+  // conflict the student already said "not now" to today is not).
+  useEffect(()=>{ if(lsGet("routineConflictDismissedDate",null)!==dayKey())reconcileRoutineConflicts(routines); },[]);
   // One-time cleanup for a since-fixed bug (ab7a55a/acde552): before groupId
   // existed, each drag-and-drop placement of an activity landed as its own
   // standalone routine record, so accounts with pre-fix history can still
@@ -31546,7 +31722,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // silently didn't show the block they just placed and sent until they
     // left the tab and came back -- indistinguishable from the whole
     // feature doing nothing.
-    const nextEvents=addTaskWithRebalance({
+    const rebalanceResult=addTaskWithRebalance({
       id:"gs-"+now,date:option.date,time:option.time,duration:option.duration,
       title:gsDraft.title||(gsDraft.mode==="study block"?"Study session":"Meeting"),
       subject:"",kind:gsDraft.mode,notes:"",
@@ -31558,10 +31734,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         proposalResponses:{[myUid]:"accepted"},
       }:{}),
     });
-    setEvents(nextEvents);
+    setEvents(rebalanceResult.events);
     setGsSending(false);
     closeGroupSchedule();
-    setPlacementToast("Sent. It'll land on their calendar once they accept.");
+    setPlacementToast(("Sent. It'll land on their calendar once they accept."+rebalanceMovedSuffix(rebalanceResult.moved)).trim());
     setTimeout(()=>setPlacementToast(""),3200);
   };
   // Builds one-or-more routine objects for a repeating item from its
@@ -31988,8 +32164,20 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     const tasksToAdd=(opts&&opts.userPinned)?newTasks.map(function(t){return t.isExamPrepSession?t:{...t,userPinned:true};}):newTasks;
     const datesAffected=new Set(tasksToAdd.map(function(t){return t.date;}).filter(Boolean));
     let next=events.concat(tasksToAdd);
-    datesAffected.forEach(function(dk){next=rebalanceDay(dk,next,routines,prefs);});
+    const rebalanceMoved=[];
+    datesAffected.forEach(function(dk){const r=rebalanceDay(dk,next,routines,prefs);next=r.events;rebalanceMoved.push(...r.moved);});
     setEvents(next);lsSet("events",next);
+    // commitTasks has 12 call sites, most with their own specific toast
+    // (or none at all, relying on the calendar-grid update itself) -- rather
+    // than thread a moved-suffix through every one of them individually,
+    // reuse reconcileRoutineConflicts' own toast slot: same category of
+    // message ("some other tasks moved because of what you just did"),
+    // already has its own 3.4s auto-dismiss render, and this fires
+    // independently of whatever the call site itself shows.
+    if(rebalanceMoved.length>0){
+      setReconcileToast(rebalanceMovedSuffix(rebalanceMoved).trim());
+      setTimeout(()=>setReconcileToast(""),3400);
+    }
     // Collaborators can only be picked before the project exists (the Add
     // Task form has no event id yet to hang an invite off of), so the
     // actual createSharedProject call is deferred to right here, once the
@@ -34314,6 +34502,82 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       {reconcileToast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.amber,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {reconcileToast}</div>
       )}
+      {/* Routine-conflict banner -- 2026-09-22. Same slot/style family as
+          reconcileToast just above (the two never fire from the same
+          trigger in practice), but with a real action instead of just
+          auto-dismissing: Review opens the preview, the X silences today's
+          offer without moving anything. */}
+      {routineConflictPlan&&!routineConflictPreviewOpen&&(
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:81,background:T.card,border:`1px solid ${T.border}`,color:T.text,fontSize:12.5,padding:"10px 12px 10px 16px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:10}}>
+          <span>{routineConflictPlan.moves.length} task{routineConflictPlan.moves.length!==1?"s":""} now conflict{routineConflictPlan.moves.length===1?"s":""} with your schedule.</span>
+          <BtnSm onClick={openRoutineConflictPreview}>Review</BtnSm>
+          <button onClick={dismissRoutineConflictPlan} title="Dismiss for today" aria-label="Dismiss" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"none",border:"none",borderRadius:6,color:T.muted,cursor:"pointer",padding:0}}>{Icon.xmark}</button>
+        </div>
+      )}
+      {/* Routine-conflict preview -- same Move it myself / Skip / Not this
+          week shape as Catch Me Up's own preview, deliberately not factored
+          into a shared component (see the plan: 3 bespoke previews already
+          existed before this, a 4th kept simple beats a new abstraction
+          none of them were built to share). Nothing moves until Confirm. */}
+      <Modal open={routineConflictPreviewOpen} onClose={closeRoutineConflictPreview} title="Review the change"
+        sub={routineConflictPlan?(routineConflictPlan.moves.length+" task"+(routineConflictPlan.moves.length!==1?"s":"")+" would move."):""}
+        width={640}
+        footer={<>
+          <div style={{flex:1,fontSize:11.5,color:T.muted}}>Nothing changes until you accept.</div>
+          <Btn variant="subtle" onClick={closeRoutineConflictPreview}>Not now</Btn>
+          <Btn onClick={confirmRoutineConflictPlan} disabled={!routineConflictPlan||routineConflictPlan.moves.length===0}>Looks good</Btn>
+        </>}>
+        {routineConflictPlan&&(
+          <div style={{display:"flex",flexDirection:"column",maxHeight:420,overflowY:"auto"}}>
+            {routineConflictPlan.moves.map(m=>{
+              const override=routineConflictOverrides[m.id]||{};
+              const expanded=routineConflictExpandedId===m.id;
+              const effectiveTo=override.date&&override.time?{date:override.date,time:override.time}:m.to;
+              const statusLine=override.skip
+                ?"Won't move — left where it was."
+                :override.defer
+                  ?"Deferred a week."
+                  :override.date&&override.time
+                    ?"You picked this time."
+                    :"Your schedule changed — this no longer fits.";
+              return (
+                <div key={m.id} style={{padding:"12px 4px",borderBottom:`1px solid ${T.border}`}}>
+                  <div onClick={()=>setRoutineConflictExpandedId(id=>id===m.id?null:m.id)} style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,cursor:"pointer"}}>
+                    <div style={{minWidth:0}}>
+                      <div style={{fontSize:14,fontWeight:600,color:T.text}}>{m.title}</div>
+                      {statusLine&&<div style={{fontSize:12,color:T.muted,marginTop:2}}>{statusLine}</div>}
+                    </div>
+                    {!override.skip&&(
+                      <div style={{flexShrink:0,fontSize:12,color:T.muted,textAlign:"right",whiteSpace:"nowrap"}}>
+                        {m.from.date===dayKey()?"Today":dayOfWeekLabel(m.from.date).slice(0,3)} {fmtRolloverClock(m.from.time)} → {effectiveTo.date===dayKey()?"Today":dayOfWeekLabel(effectiveTo.date).slice(0,3)} {fmtRolloverClock(effectiveTo.time)}
+                      </div>
+                    )}
+                  </div>
+                  {expanded&&(
+                    <div style={{display:"flex",gap:8,marginTop:10,flexWrap:"wrap"}}>
+                      <BtnSm variant="ghost" onClick={()=>{setRoutineConflictMoveDraft({date:effectiveTo.date,time:effectiveTo.time});setRoutineConflictMoveError("");setRoutineConflictExpandedId("moving-"+m.id);}}>Move it myself</BtnSm>
+                      <BtnSm variant="ghost" onClick={()=>{skipRoutineConflictItem(m.id);setRoutineConflictExpandedId(null);}}>Skip</BtnSm>
+                      <BtnSm variant="ghost" onClick={()=>{deferRoutineConflictItem(m.id);setRoutineConflictExpandedId(null);}}>Not this week</BtnSm>
+                      {(override.skip||override.defer||override.date)&&<BtnSm variant="ghost" onClick={()=>{clearRoutineConflictOverride(m.id);setRoutineConflictExpandedId(null);}}>Undo edit</BtnSm>}
+                    </div>
+                  )}
+                  {routineConflictExpandedId==="moving-"+m.id&&routineConflictMoveDraft&&(
+                    <div>
+                      <div style={{display:"flex",gap:8,marginTop:10,alignItems:"center",flexWrap:"wrap"}}>
+                        <Input type="date" min={dayKey()} value={routineConflictMoveDraft.date} onChange={e=>{setRoutineConflictMoveDraft(d=>({...d,date:e.target.value}));setRoutineConflictMoveError("");}} style={{width:150}} />
+                        <TimeInput value={routineConflictMoveDraft.time} onChange={t=>{setRoutineConflictMoveDraft(d=>({...d,time:t}));setRoutineConflictMoveError("");}} />
+                        <BtnSm onClick={()=>saveRoutineConflictMove(m,routineConflictMoveDraft.date,routineConflictMoveDraft.time)}>Save</BtnSm>
+                        <BtnSm variant="ghost" onClick={()=>{setRoutineConflictExpandedId(null);setRoutineConflictMoveDraft(null);setRoutineConflictMoveError("");}}>Cancel</BtnSm>
+                      </div>
+                      {routineConflictMoveError&&<div style={{fontSize:11.5,color:T.red,marginTop:6}}>{routineConflictMoveError}</div>}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Modal>
       {calClipToast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {calClipToast}</div>
       )}
@@ -39440,6 +39704,55 @@ function App() {
       setScheduleChangeAlerts(a=>dedupeScheduleAlerts([...a,...pending]));
     }
   },[]);
+  // Bug fix, 2026-09-22: the localStorage handoff above only ever ran once,
+  // on mount -- every surfaceReconcileResult call that happened DURING this
+  // same session (Add Task exam/fixed-kind save, "Sync now," a calendar
+  // import confirm, a work-shift scan confirm, the 10-min background poll)
+  // produced nothing visible here until the next full reload. This is the
+  // live counterpart: surfaceReconcileResult also dispatches this event, so
+  // an already-mounted App picks it up immediately, same dedup as the
+  // mount-time path.
+  useEffect(()=>{
+    const onLiveAlerts=(e)=>{setScheduleChangeAlerts(a=>dedupeScheduleAlerts([...a,...e.detail]));};
+    window.addEventListener("studlin:scheduleChangeAlerts",onLiveAlerts);
+    return ()=>window.removeEventListener("studlin:scheduleChangeAlerts",onLiveAlerts);
+  },[]);
+  // 2026-09-22: a "moved" scheduleChangeAlerts entry is now a PROPOSAL, not
+  // an already-applied move (see reconcileFixedEventConflicts/
+  // computeFixedEventConflictPlan) -- these apply it for real, one at a
+  // time, only once the student actually accepts. Re-checks the slot is
+  // still actually free first, same reasoning undoTier0Move's own re-check
+  // uses (time has passed since the plan was computed; something else
+  // could have taken it since) -- a stale proposal must never silently
+  // create an overlap. Same movedByStudlin stamp every other move in this
+  // app uses, so the generic per-task Undo (popover/edit modal) works on it
+  // afterward same as any other move.
+  const applyScheduleChangeMove=(a)=>{
+    const all=lsGet("events",[]);
+    const ev=all.find(e=>e.id===a.id);
+    if(!ev){setScheduleChangeAlerts(b=>b.filter(x=>x!==a));return;}
+    const routines=getWeeklyRoutine();
+    const prefs=getSchedulePreferences();
+    const occupied=computeOccupiedIntervals(all.filter(e=>e.id!==a.id),routines,prefs,a.to.date);
+    const tMins=timeToMinutes(a.to.time);
+    const conflict=occupied.some(o=>!(tMins+(a.duration||ev.duration||30)<=o.start||tMins>=o.end));
+    if(conflict){
+      setDashToast("Couldn't move \""+a.title+"\" — something else is already using that time.");
+      setTimeout(()=>setDashToast(""),3200);
+      setScheduleChangeAlerts(b=>b.filter(x=>x!==a));
+      return;
+    }
+    const next=all.map(e=>e.id===a.id?{...e,date:a.to.date,time:a.to.time,movedByStudlin:true,movedFrom:a.from,movedAt:Date.now(),movedReason:{type:"displaced",causedByTitle:a.causedByTitle},reshuffleCount:(e.reshuffleCount||0)+1}:e);
+    lsSet("events",next);
+    if(calendarSetEventsRef.current)calendarSetEventsRef.current(next);
+    setScheduleChangeAlerts(b=>b.filter(x=>x!==a));
+  };
+  // Applies every proposed move in the list -- each call re-reads storage
+  // fresh, so a later item in this same batch correctly sees the slot the
+  // earlier one just took.
+  const applyAllScheduleChangeMoves=()=>{
+    scheduleChangeAlerts.filter(a=>a.kind==="moved").forEach(applyScheduleChangeMove);
+  };
   // Actionable-window prep prompt — same "silent trigger, visible result"
   // idiom as Tier 0 above, but for syllabus assignments that were too far
   // out to schedule real prep time for when the syllabus was first scanned
@@ -41626,7 +41939,10 @@ function App() {
         const movedCount=scheduleChangeAlerts.filter(a=>a.kind==="moved").length;
         const attnCount=scheduleChangeAlerts.filter(a=>a.kind==="attention").length;
         const headerParts=[];
-        if(movedCount>0)headerParts.push(movedCount+" study session"+(movedCount!==1?"s":"")+" moved");
+        // 2026-09-22: a "moved" entry is a PROPOSAL now, not something that
+        // already happened -- "need a new time" instead of "moved" (see
+        // reconcileToastSuffix's own matching wording change).
+        if(movedCount>0)headerParts.push(movedCount+" study session"+(movedCount!==1?"s":"")+" need"+(movedCount!==1?"":"s")+" a new time");
         if(attnCount>0)headerParts.push(attnCount+" conflict"+(attnCount!==1?"s":"")+" need"+(attnCount!==1?"":"s")+" your attention");
         return(
         <div style={{position:"fixed",top:76,right:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:360}}>
@@ -41638,17 +41954,12 @@ function App() {
               <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,fontSize:12,padding:"6px 9px",background:T.card2,borderRadius:8}}>
                 <div style={{minWidth:0}}>
                   <div style={{color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.title}</div>
-                  <div style={{color:T.muted,fontSize:10.5,marginTop:1}}>→ {a.to.date===dayKey()?"Today":a.to.date} {fmtRolloverClock(a.to.time)} · bumped by {a.causedByTitle}</div>
+                  <div style={{color:T.muted,fontSize:10.5,marginTop:1}}>would move to {a.to.date===dayKey()?"Today":a.to.date} {fmtRolloverClock(a.to.time)} · bumped by {a.causedByTitle}</div>
                 </div>
-                <button onClick={()=>{
-                  const result=undoTier0Move(a.id);
-                  if(result.blocked){
-                    setDashToast("Can't undo \""+a.title+"\" — something else is already using that time.");
-                    setTimeout(()=>setDashToast(""),3200);
-                    return;
-                  }
-                  setScheduleChangeAlerts(b=>b.filter((x,xi)=>xi!==i));
-                }} style={{background:"none",border:"none",color:T.lime,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline",flexShrink:0,padding:0}}>Undo</button>
+                <div style={{display:"flex",gap:8,flexShrink:0}}>
+                  <button onClick={()=>applyScheduleChangeMove(a)} style={{background:"none",border:"none",color:T.lime,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline",padding:0}}>Move</button>
+                  <button onClick={()=>setScheduleChangeAlerts(b=>b.filter(x=>x!==a))} style={{background:"none",border:"none",color:T.muted,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline",padding:0}}>Skip</button>
+                </div>
               </div>
             ):(
               <div key={i} style={{fontSize:12,padding:"6px 9px",background:T.card2,borderRadius:8,color:T.text,lineHeight:1.5}}>
@@ -41658,9 +41969,12 @@ function App() {
               </div>
             ))}
           </div>
-          <div style={{display:"flex",gap:8}}>
-            <Btn onClick={()=>{setActive("calendar");setScheduleChangeAlerts([]);}} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Open Calendar</Btn>
-            <Btn variant="ghost" onClick={()=>setScheduleChangeAlerts([])} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Dismiss</Btn>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {movedCount>1&&<Btn onClick={applyAllScheduleChangeMoves} style={{padding:"7px 14px",fontSize:12,justifyContent:"center"}}>Move all {movedCount}</Btn>}
+            <div style={{display:"flex",gap:8}}>
+              <Btn variant="ghost" onClick={()=>{setActive("calendar");}} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Open Calendar</Btn>
+              <Btn variant="ghost" onClick={()=>setScheduleChangeAlerts([])} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Dismiss</Btn>
+            </div>
           </div>
         </div>
         );

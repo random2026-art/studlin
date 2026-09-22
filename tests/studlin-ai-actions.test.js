@@ -337,10 +337,11 @@ describe("commit helpers", () => {
     const m = loadStudlinModule({ now: "2026-09-14T08:00:00" });
     m.lsSet("events", []);
     const task = { id: "nt1", title: "New Task", date: "2026-09-14", time: "11:00", duration: 30, kind: "study block", status: "pending" };
-    const next = m.commitStudlinAiTasks([task]);
+    const { events: next, moved } = m.commitStudlinAiTasks([task]);
     assert.equal(next.length, 1);
     assert.equal(next[0].id, "nt1");
     assert.equal(m.lsGet("events", []).length, 1);
+    assert.equal(moved.length, 0, "a single brand-new task has nothing else on its day to reshuffle");
   });
 
   test("commitStudlinAiFlexMove only mutates the targeted event's date/time", () => {

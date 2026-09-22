@@ -86,7 +86,10 @@ describe("runMultiAction (source-level regression guards -- component closure, s
 describe("confirmProposal's multi branch (source-level regression guards -- component closure, see this file's own top comment)", () => {
   test("commits each sub-proposal in order via the existing per-kind commit helpers, same ones the single-action path already uses", () => {
     assert.match(APP_SOURCE, /if\(proposal\.kind==="multi"\)\{/);
-    assert.match(APP_SOURCE, /next=commitStudlinAiTasks\(item\.tasks\);/);
+    // 2026-09-22: commitStudlinAiTasks now returns {events,moved} (moved is
+    // whatever else rebalanceDay silently reshuffled) instead of a bare
+    // array -- next is destructured from .events, same commit helper.
+    assert.match(APP_SOURCE, /const r=commitStudlinAiTasks\(item\.tasks\);\s*\n\s*next=r\.events;/);
     assert.match(APP_SOURCE, /next=commitStudlinAiFixedMove\(item\.pausePreview\);/);
     assert.match(APP_SOURCE, /next=commitStudlinAiFlexMove\(item\.moved\);/);
     assert.match(APP_SOURCE, /onDeleteEvent\(item\.event\);/);
