@@ -22,7 +22,10 @@ describe("catchUpBanner now has a real dismiss control", () => {
   });
 
   test("the mount effect that shows the banner is gated on that same dismissed-date check", () => {
-    assert.match(SOURCE, /if\(recoveryPending&&lsGet\("catchUpBannerDismissedDate",null\)!==today\)\{/);
+    // 2026-09-21: gate renamed recoveryPending -> catchUpOffered when the
+    // banner started showing for a single missed item too (see
+    // pinned-never-moved-and-preview-before-move-2026-09-21.test.js).
+    assert.match(SOURCE, /if\(catchUpOffered&&lsGet\("catchUpBannerDismissedDate",null\)!==today\)\{/);
   });
 
   test("the banner renders a visible close button wired to dismissCatchUpBanner, not just the Rebuild action", () => {
