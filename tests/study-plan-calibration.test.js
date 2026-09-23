@@ -332,6 +332,169 @@ describe("suggestDurationFor (historical duration learning)", () => {
       assert.equal(m.suggestDurationFor("Chemistry", "study block"), null);
     });
   });
+
+  describe("subjectDurationOverride (student-edited Insights tab correction)", () => {
+    test("an override wins outright, ignoring real completion history entirely", () => {
+      const m = loadStudlinModule();
+      const events = Array.from({ length: 8 }, (_, i) => doneSession({ id: "e-" + i, timeSpent: 60 }));
+      m.lsSet("events", events);
+      m.lsSet("subjectDurationOverride", { Chemistry: 45 });
+      assert.equal(m.suggestDurationFor("Chemistry", "study block"), 45);
+    });
+
+    test("with zero real history, an override still returns the student's number instead of null", () => {
+      const m = loadStudlinModule();
+      m.lsSet("events", []);
+      m.lsSet("subjectDurationOverride", { Chemistry: 50 });
+      assert.equal(m.suggestDurationFor("Chemistry", "study block"), 50);
+    });
+
+    test("an override for one subject doesn't touch another subject's real learned duration", () => {
+      const m = loadStudlinModule();
+      const events = Array.from({ length: 8 }, (_, i) => doneSession({ id: "e-" + i, timeSpent: 60 }));
+      m.lsSet("events", events);
+      m.lsSet("subjectDurationOverride", { Biology: 20 });
+      assert.equal(m.suggestDurationFor("Chemistry", "study block"), 60, "Chemistry has no override, so it should still learn from its own real data");
+    });
+  });
+
+  describe("timeSpentSource:'self-reported' (the non-timer duration follow-up) counts for less than a timer-measured sample", () => {
+    test("a self-reported sample still counts toward the sample-size gate, but is discounted in the median itself", () => {
+      const m = loadStudlinModule();
+      // 4 real 20min timer sessions + 4 self-reported 60min guesses. An
+      // unweighted median of [20,20,20,20,60,60,60,60] would be 40; the
+      // self-reported group's halved credit should pull the result below
+      // that, toward the timer-measured 20min group instead.
+      const timed = Array.from({ length: 4 }, (_, i) => doneSession({ id: "t-" + i, timeSpent: 20 }));
+      const selfReported = Array.from({ length: 4 }, (_, i) => doneSession({ id: "sr-" + i, timeSpent: 60, timeSpentSource: "self-reported" }));
+      m.lsSet("events", [...timed, ...selfReported]);
+      const result = m.suggestDurationFor("Chemistry", "study block");
+      assert.ok(result < 40, "self-reported samples should be discounted below an unweighted median of 40, got " + result);
+    });
+
+    test("all-timer data of the exact same shape is unaffected by the self-report discount", () => {
+      const m = loadStudlinModule();
+      const events = [
+        ...Array.from({ length: 4 }, (_, i) => doneSession({ id: "a-" + i, timeSpent: 20 })),
+        ...Array.from({ length: 4 }, (_, i) => doneSession({ id: "b-" + i, timeSpent: 40 })),
+      ];
+      m.lsSet("events", events);
+      assert.equal(m.suggestDurationFor("Chemistry", "study block"), 30, "identical to the existing untouched-by-self-report-discount test above");
+    });
+  });
+});
+
+describe("durationSampleCountFor (the follow-up question's own trigger gate)", () => {
+  function doneSession(overrides) {
+    return { id: "s1", subject: "Chemistry", kind: "study block", status: "done", timeSpent: 30, ...overrides };
+  }
+  test("mirrors suggestDurationFor's own filter -- same exclusions, same count", () => {
+    const m = loadStudlinModule();
+    const real = Array.from({ length: 3 }, (_, i) => doneSession({ id: "r-" + i }));
+    const chores = Array.from({ length: 2 }, (_, i) => doneSession({ id: "c-" + i, isGeneralTask: true }));
+    m.lsSet("events", [...real, ...chores]);
+    assert.equal(m.durationSampleCountFor("Chemistry", "study block"), 3, "isGeneralTask completions must not inflate the count, same as suggestDurationFor");
+  });
+  test("zero for a subject/kind with no completions at all", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", []);
+    assert.equal(m.durationSampleCountFor("Chemistry", "study block"), 0);
+  });
+});
+
+describe("computeSubjectDurationInsights (Insights tab's duration card)", () => {
+  function doneSession(overrides) {
+    return { id: "s1", subject: "Chemistry", kind: "study block", status: "done", timeSpent: 30, ...overrides };
+  }
+  test("a subject with zero data and no override is dropped entirely, not shown as a fake row", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", []);
+    assert.equal(m.computeSubjectDurationInsights(["Chemistry"]).length, 0);
+  });
+  test("below the sample floor: shown, but flagged not confident", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", [doneSession({ id: "a" }), doneSession({ id: "b" })]);
+    const rows = m.computeSubjectDurationInsights(["Chemistry"]);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].isConfident, false);
+    assert.equal(rows[0].sampleCount, 2);
+  });
+  test("at/above the sample floor: flagged confident", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", Array.from({ length: 8 }, (_, i) => doneSession({ id: "e-" + i })));
+    const rows = m.computeSubjectDurationInsights(["Chemistry"]);
+    assert.equal(rows[0].isConfident, true);
+  });
+  test("an override alone (zero real data) is shown, confident, and flagged as the student's own number", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", []);
+    m.lsSet("subjectDurationOverride", { Chemistry: 40 });
+    const rows = m.computeSubjectDurationInsights(["Chemistry"]);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].minutes, 40);
+    assert.equal(rows[0].isOverridden, true);
+    assert.equal(rows[0].isConfident, true);
+  });
+});
+
+describe("question-asking dismiss streaks (recordQuestionDismissed/recordQuestionAnswered)", () => {
+  test("a skip below the streak limit does not auto-off the toggle", () => {
+    const m = loadStudlinModule();
+    m.lsSet("settings", { askDurationQuestions: true });
+    const r1 = m.recordQuestionDismissed("duration");
+    const r2 = m.recordQuestionDismissed("duration");
+    assert.equal(r1.autoOff, false);
+    assert.equal(r2.autoOff, false);
+    assert.equal(m.lsGet("settings", {}).askDurationQuestions, true, "toggle must stay on below the streak limit");
+  });
+
+  test("hitting the streak limit auto-flips the matching toggle off and resets the streak", () => {
+    const m = loadStudlinModule();
+    m.lsSet("settings", { askCheckIns: true });
+    m.recordQuestionDismissed("checkIn");
+    m.recordQuestionDismissed("checkIn");
+    const r3 = m.recordQuestionDismissed("checkIn");
+    assert.equal(r3.autoOff, true);
+    assert.equal(r3.prefKey, "askCheckIns");
+    assert.equal(m.lsGet("settings", {}).askCheckIns, false, "the matching toggle should have been flipped off");
+    assert.equal(m.lsGet("questionDismissStreak", {}).checkIn, 0, "streak resets once it fires, so it doesn't refire every subsequent skip");
+  });
+
+  test("a real answer resets the streak -- an impatient moment followed by engagement doesn't get punished", () => {
+    const m = loadStudlinModule();
+    m.lsSet("settings", { askDurationQuestions: true });
+    m.recordQuestionDismissed("duration");
+    m.recordQuestionDismissed("duration");
+    m.recordQuestionAnswered("duration");
+    const r3 = m.recordQuestionDismissed("duration");
+    assert.equal(r3.autoOff, false, "the streak should have been reset by the real answer in between");
+  });
+
+  test("the two kinds track independent streaks", () => {
+    const m = loadStudlinModule();
+    m.lsSet("settings", { askCheckIns: true, askDurationQuestions: true });
+    m.recordQuestionDismissed("checkIn");
+    m.recordQuestionDismissed("checkIn");
+    m.recordQuestionDismissed("checkIn");
+    assert.equal(m.lsGet("settings", {}).askDurationQuestions, true, "dismissing check-ins repeatedly must not touch the separate duration toggle");
+  });
+});
+
+describe("duration-question per-subject cooldown (isDurationQuestionOnCooldown/dismissDurationQuestion)", () => {
+  test("not on cooldown before any dismissal", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.isDurationQuestionOnCooldown("Chemistry", "study block"), false);
+  });
+  test("dismissing puts that exact subject+kind on cooldown", () => {
+    const m = loadStudlinModule();
+    m.dismissDurationQuestion("Chemistry", "study block");
+    assert.equal(m.isDurationQuestionOnCooldown("Chemistry", "study block"), true);
+  });
+  test("cooldown is scoped to the specific subject -- a different subject is unaffected", () => {
+    const m = loadStudlinModule();
+    m.dismissDurationQuestion("Chemistry", "study block");
+    assert.equal(m.isDurationQuestionOnCooldown("Biology", "study block"), false);
+  });
 });
 
 describe("gradeWeightNudgeFor (shared by computeSessionPriority and computeStudyPlanParams)", () => {

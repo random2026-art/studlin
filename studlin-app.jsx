@@ -3525,6 +3525,25 @@ function computeSubjectHourReliabilityMatrix(subjects){
     })
     .filter(row=>row.cells.some(c=>c.rate!==null));
 }
+// Sibling to computeSubjectHourReliabilityMatrix for the Insights tab's
+// duration card -- reuses suggestDurationFor/durationSampleCountFor rather
+// than recomputing a second median, so this card and every scheduling path
+// that already calls suggestDurationFor can never quietly disagree.
+// sampleCount rides along (not just the blended minutes) so the UI can say
+// "still learning this one" honestly instead of presenting a thin-sample
+// blend as a confident number -- isConfident mirrors suggestDurationFor's
+// own TIER0_MIN_BUCKET_SAMPLE gate exactly, plus a standing manual override.
+function computeSubjectDurationInsights(subjects){
+  const overrides=lsGet("subjectDurationOverride",{});
+  return subjects
+    .map(subject=>{
+      const isOverridden=typeof overrides[subject]==="number";
+      const sampleCount=durationSampleCountFor(subject,"study block");
+      const minutes=suggestDurationFor(subject,"study block");
+      return {subject,minutes,sampleCount,isOverridden,isConfident:isOverridden||sampleCount>=TIER0_MIN_BUCKET_SAMPLE};
+    })
+    .filter(row=>row.isOverridden||row.sampleCount>0);
+}
 // A recent-streak detector, separate from getBucketReliability's all-time
 // aggregate — a student sliding lately deserves a nudge before enough bad
 // history piles up to drag the long-run rate down on its own. Suppressed
@@ -3569,6 +3588,60 @@ function dismissStrugglingBucket(bucketId){
   const dismissed=lsGet("strugglingBucketDismissed",{});
   dismissed[bucketId]=Date.now();
   lsSet("strugglingBucketDismissed",dismissed);
+}
+// Mirrors SettingsTab's own syncShareAvailabilityPref/syncPushPref write
+// (preferences.<key> on users/{uid}, merge:true) but as a standalone
+// function -- this needs to fire from wherever a question gets dismissed
+// (handleTaskCompleted, the Timer's completion block), not just from inside
+// the Settings screen itself. Writes localStorage too so any already-open
+// Settings screen picks it up next time it re-reads "settings".
+function setQuestionAskPref(key,enabled){
+  const next={...lsGet("settings",{}),[key]:enabled};
+  lsSet("settings",next);
+  const myUid=firebase.auth().currentUser&&firebase.auth().currentUser.uid;
+  if(myUid)fsdb().collection('users').doc(myUid).set({preferences:{[key]:enabled},updatedAt:new Date().toISOString()},{merge:true}).catch(reportError("setQuestionAskPref"));
+  return next;
+}
+// A single "no thanks" on one question isn't evidence the student wants
+// Studlin to stop asking -- they might just be mid-something right now. A
+// real streak of consecutive skips (across the check-in and/or duration
+// question, tracked separately) is what should trigger backing off, and
+// even then it must be visible and reversible (see the toast this drives in
+// App()), never a silent behavior change -- same instinct as the rest of
+// this file's certainty rules, applied to annoyance instead of statistics.
+const QUESTION_DISMISS_STREAK_LIMIT=3;
+function recordQuestionDismissed(kind){
+  const streaks=lsGet("questionDismissStreak",{});
+  const next=(streaks[kind]||0)+1;
+  if(next>=QUESTION_DISMISS_STREAK_LIMIT){
+    lsSet("questionDismissStreak",{...streaks,[kind]:0});
+    const prefKey=kind==="checkIn"?"askCheckIns":"askDurationQuestions";
+    setQuestionAskPref(prefKey,false);
+    return {autoOff:true,prefKey};
+  }
+  lsSet("questionDismissStreak",{...streaks,[kind]:next});
+  return {autoOff:false};
+}
+function recordQuestionAnswered(kind){
+  const streaks=lsGet("questionDismissStreak",{});
+  if(!streaks[kind])return;
+  lsSet("questionDismissStreak",{...streaks,[kind]:0});
+}
+// Separate from the streak above -- this is "not about this specific class
+// right now," not "stop asking me things." Same per-item cooldown shape as
+// dismissStrugglingBucket, just keyed by subject+kind instead of an hour
+// bucket, and shorter (a week, not two) since skipping one duration question
+// is a much lower-stakes signal than a real struggling-bucket nudge.
+const DURATION_QUESTION_COOLDOWN_MS=7*86400000;
+function isDurationQuestionOnCooldown(subject,kind){
+  const dismissed=lsGet("durationQuestionDismissed",{});
+  const key=subject+"|"+kind;
+  return !!(dismissed[key]&&Date.now()-dismissed[key]<DURATION_QUESTION_COOLDOWN_MS);
+}
+function dismissDurationQuestion(subject,kind){
+  const dismissed=lsGet("durationQuestionDismissed",{});
+  dismissed[subject+"|"+kind]=Date.now();
+  lsSet("durationQuestionDismissed",dismissed);
 }
 // Surfaces it purely from the student's own real completion history — no
 // declared peak-focus bucket needed. Onboarding used to ask for one and
@@ -7312,7 +7385,26 @@ function studyPlanReasoning(confidenceLevel,importanceLevel,materialCharCount,ha
 // too so the below-threshold blend shrinks toward the exact same anchor
 // instead of a second, possibly-drifting constant.
 const DURATION_GENERIC_DEFAULT=25;
+// A duration typed in after the fact (the "how long did this really take"
+// follow-up for a completion that never touched the Lock-In Timer) is a
+// guess from memory, not a stopwatch reading -- weaker evidence than a
+// timer-measured sample, same category of discount completionCredit already
+// applies to a "shaky" rating, just applied to this dimension instead.
+const SELF_REPORTED_DURATION_CREDIT=0.5;
+// Same filter suggestDurationFor uses internally to build its sample pool,
+// exposed on its own so callers that only need "how thin is this subject's
+// data" (the duration follow-up's trigger gate, the Insights tab's duration
+// card) can check it without duplicating -- or drifting from -- that filter.
+function durationSampleCountFor(subject,kind){
+  return lsGet("events",[]).filter(e=>e.status==="done"&&e.timeSpent&&e.subject===subject&&e.kind===kind&&!e.isGeneralTask).length;
+}
 function suggestDurationFor(subject,kind,difficulty,minSamples){
+  // A student-edited override (Insights tab's per-subject duration card)
+  // pins this number until they change or clear it themselves -- never
+  // silently recomputed over by new sessions landing later, same "don't
+  // overwrite an explicit correction" principle as everywhere else here.
+  const durationOverrides=lsGet("subjectDurationOverride",{});
+  if(subject&&typeof durationOverrides[subject]==="number")return durationOverrides[subject];
   const minN=minSamples||TIER0_MIN_BUCKET_SAMPLE;
   // isGeneralTask excluded (2026-08-25) -- a Task ("do laundry") shares
   // kind:"study block" with a real Study Session so it can reuse the same
@@ -7346,7 +7438,8 @@ function suggestDurationFor(subject,kind,difficulty,minSamples){
   const medianOf=(pool)=>{
     const shares=[];
     for(const e of pool){
-      const credit=creditByTaskId.has(e.id)?creditByTaskId.get(e.id):1;
+      let credit=creditByTaskId.has(e.id)?creditByTaskId.get(e.id):1;
+      if(e.timeSpentSource==="self-reported")credit=credit*SELF_REPORTED_DURATION_CREDIT;
       const n=Math.max(1,Math.round(credit*4));
       for(let i=0;i<n;i++)shares.push(e.timeSpent);
     }
@@ -10768,6 +10861,18 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
   // selected exam changes so it never stays open pointed at a different
   // exam's header.
   const [examTimeEditOpen,setExamTimeEditOpen]=useState(false);
+  // Insights tab's per-subject duration card -- which row (if any) is
+  // currently showing its inline edit input, and the draft value in it.
+  // A student's correction here pins subjectDurationOverride[subject]
+  // (see suggestDurationFor) until they edit or clear it again themselves.
+  const [durationOverrideEdit,setDurationOverrideEdit]=useState(null); // {subject, value}
+  const saveDurationOverride=(subject,minutes)=>{
+    const overrides=lsGet("subjectDurationOverride",{});
+    if(minutes==null||isNaN(minutes)){delete overrides[subject];}
+    else{overrides[subject]=Math.max(15,Math.round(minutes));}
+    lsSet("subjectDurationOverride",overrides);
+    setDurationOverrideEdit(null);
+  };
   const [selectedExamId,setSelectedExamId]=useState(()=>{
     const pending=lsGet("openPrepExamId",null);
     if(pending)lsSet("openPrepExamId",null);
@@ -11256,6 +11361,52 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
               <div style={{height:8,borderRadius:99,background:T.card2,overflow:"hidden"}}>
                 <div style={{height:"100%",width:pct+"%",borderRadius:99,background:neglected?T.red:T.lime}} />
               </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+  // Sibling to SubjectHourReliabilityMatrix -- the per-class duration number
+  // (see computeSubjectDurationInsights) shown plainly, editable inline. A
+  // thin-sample subject still shows its blended-toward-default number, but
+  // greyed out with "Still learning this one" rather than hidden or dressed
+  // up as confident -- same honesty rule the matrix above already follows.
+  const SubjectDurationInsights=({rows})=>{
+    if(!rows||rows.length===0){
+      return (
+        <div style={{padding:"20px 16px",textAlign:"center",color:T.faint,fontSize:12.5,border:`1px dashed ${T.border}`,borderRadius:8}}>
+          Complete a few real study sessions and Studlin will start learning how long each class actually takes you.
+        </div>
+      );
+    }
+    return (
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {rows.map(row=>{
+          const editing=durationOverrideEdit&&durationOverrideEdit.subject===row.subject;
+          return (
+            <div key={row.subject} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 12px",borderRadius:8,background:T.card2}}>
+              <div>
+                <div style={{fontSize:13,color:T.text,fontWeight:600}}>{row.subject}</div>
+                {!row.isConfident&&<div style={{fontSize:11,color:T.faint,marginTop:2}}>Still learning this one</div>}
+                {row.isOverridden&&<div style={{fontSize:11,color:T.faint,marginTop:2}}>Set by you</div>}
+              </div>
+              {editing?(
+                <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  <input type="number" min={15} step={5} autoFocus value={durationOverrideEdit.value}
+                    onChange={e=>setDurationOverrideEdit({subject:row.subject,value:e.target.value})}
+                    style={{width:60,padding:"4px 6px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card,color:T.text,fontSize:12.5}} />
+                  <span style={{fontSize:11,color:T.faint}}>min</span>
+                  <BtnSm onClick={()=>saveDurationOverride(row.subject,Number(durationOverrideEdit.value))}>Save</BtnSm>
+                  {row.isOverridden&&<BtnSm variant="ghost" onClick={()=>saveDurationOverride(row.subject,null)}>Clear</BtnSm>}
+                  <BtnSm variant="subtle" onClick={()=>setDurationOverrideEdit(null)}>Cancel</BtnSm>
+                </div>
+              ):(
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <span style={{fontSize:14,fontWeight:700,color:row.isConfident?T.text:T.faint}}>{row.minutes} min</span>
+                  <BtnSm variant="subtle" onClick={()=>setDurationOverrideEdit({subject:row.subject,value:String(row.minutes)})}>Edit</BtnSm>
+                </div>
+              )}
             </div>
           );
         })}
@@ -13413,12 +13564,18 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
         const subjectLabels=userSubjects.map(s=>s.label);
         const reliabilityRows=computeSubjectHourReliabilityMatrix(subjectLabels);
         const balanceRows=computeAttentionBalance(allEvents,today);
+        const durationRows=computeSubjectDurationInsights(subjectLabels);
         return (
           <div style={{display:"flex",flexDirection:"column",gap:28}}>
             <div>
               <div style={{fontSize:15,fontWeight:700,color:T.white,marginBottom:4}}>When you actually do your best work, by class</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:14,lineHeight:1.5}}>Not just "you're a morning person" -- this breaks it down per class, since it's rarely the same for every subject.</div>
               <SubjectHourReliabilityMatrix rows={reliabilityRows} />
+            </div>
+            <div>
+              <div style={{fontSize:15,fontWeight:700,color:T.white,marginBottom:4}}>How long things actually take you, by class</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:14,lineHeight:1.5}}>What Studlin's learned from your real sessions -- not a guess. Think it's off for a class? Edit it and Studlin uses your number instead.</div>
+              <SubjectDurationInsights rows={durationRows} />
             </div>
             <div>
               <div style={{fontSize:15,fontWeight:700,color:T.white,marginBottom:4}}>Where your time is actually going</div>
@@ -23841,6 +23998,11 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   const [planningHorizonPref,setPlanningHorizonPref]=useState(null);
   const [startTimingPref,setStartTimingPref]=useState(null);
   const [collisionPref,setCollisionPref]=useState(null);
+  // Onboarding opt-in for Studlin's follow-up questions (post-session
+  // check-ins, "how long did this take") -- null means untouched/skipped,
+  // in which case both toggles just keep their existing true-by-default
+  // (see SettingsTab), no forced choice either way.
+  const [askQuestionsPref,setAskQuestionsPref]=useState(null);
 
   const persistPending=(next)=>{setPendingClasses(next);lsSet("classSetupPending",next);};
   // 2026-08-26 fix: onboarding's own Profile step already requires
@@ -24809,6 +24971,12 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     // never actually written to the real profile, so Settings' own
     // StatusChip (:19049) would show blank even after finishing here.
     if(status)saveProfile({...getProfile(),status});
+    // Only writes when the student actually answered -- untouched/skipped
+    // leaves both toggles at their existing true-by-default (SettingsTab).
+    if(askQuestionsPref!=null){
+      setQuestionAskPref("askCheckIns",askQuestionsPref==="yes");
+      setQuestionAskPref("askDurationQuestions",askQuestionsPref==="yes");
+    }
     // Phase 8: the preamble steps that actually persist something
     // (Timezone doesn't -- getProfile() always recomputes tz live via
     // detectTz() on every read, by design, so it auto-updates if a
@@ -24964,6 +25132,14 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
               {value:"split_time",label:"Split time"},
               {value:"finish_one_first",label:"Finish one first"},
             ]} />
+            <div style={{marginTop:18,paddingTop:16,borderTop:`1px solid ${T.border}`}}>
+              <div style={{fontSize:13,fontWeight:600,color:T.text,marginBottom:4}}>One more thing</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:10,lineHeight:1.5}}>With your permission, Studlin might ask a quick question here and there -- like how a study session went, or how long something really took when you didn't use the timer. That's how it learns real things about you, like when you're most productive or how long a class actually takes. Always skippable, and adjustable anytime in Settings.</div>
+              <PrefChipRow label="Okay to ask?" value={askQuestionsPref} onChange={setAskQuestionsPref} options={[
+                {value:"yes",label:"Yes, ask me"},
+                {value:"no",label:"No thanks"},
+              ]} />
+            </div>
           </>)}
 
           {step==="status"&&(<>
@@ -35580,7 +35756,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Cobalt", setAccent=
     setMergeConfirm(null);
   };
   const [canvasSeeding,setCanvasSeeding]=useState(false);
-  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,classReminders:false,analytics:false,onlineStatus:true,incognito:false,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false},...lsGet("settings",{})}));
+  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,classReminders:false,analytics:false,onlineStatus:true,incognito:false,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false,askCheckIns:true,askDurationQuestions:true},...lsGet("settings",{})}));
   // 2026-09-13: "Share my free/busy time" used to be all-or-nothing (on =
   // every current accepted friend). shareAvailabilityMode lets a student
   // restrict it to specific people instead -- see the picker modal below
@@ -35623,6 +35799,15 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Cobalt", setAccent=
         if(result&&result.ok===false)showToast("Couldn't update sharing -- "+(result.reason||"try again")+".","error");
       });
     }
+  };
+  // Same cross-device shape as syncShareAvailabilityPref, generalized for
+  // both question-asking toggles (see setQuestionAskPref, also the write
+  // the auto-off dismiss-streak logic uses -- this is just the manual path
+  // through Settings for the exact same preference).
+  const handleAskToggle=(key)=>{
+    const enabled=!toggles[key];
+    setQuestionAskPref(key,enabled);
+    setToggles(t=>({...t,[key]:enabled}));
   };
   const tog=k=>setToggles(t=>{
     const n={...t,[k]:!t[k]};
@@ -35719,6 +35904,25 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Cobalt", setAccent=
       setToggles(t=>{
         if(t.shareAvailability===real)return t;
         const n={...t,shareAvailability:real};
+        lsSet("settings",n);
+        return n;
+      });
+    }).catch(()=>{});
+  },[myUid]);
+  // Same reconcile as shareAvailability above, for the two question-asking
+  // toggles -- field missing means no device has ever set it yet (keep the
+  // opt-in-by-default true this browser already has), field present (even
+  // false, e.g. from the auto-off dismiss-streak logic on another device)
+  // wins over local state.
+  useEffect(()=>{
+    if(!myUid)return;
+    fetchUserProfile().then(d=>{
+      if(!d)return;
+      setToggles(t=>{
+        let n=t,changed=false;
+        if(d.askCheckIns!==undefined&&t.askCheckIns!==d.askCheckIns){n={...n,askCheckIns:d.askCheckIns};changed=true;}
+        if(d.askDurationQuestions!==undefined&&t.askDurationQuestions!==d.askDurationQuestions){n={...n,askDurationQuestions:d.askDurationQuestions};changed=true;}
+        if(!changed)return t;
         lsSet("settings",n);
         return n;
       });
@@ -36996,6 +37200,20 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Cobalt", setAccent=
                 </div>
               </>)}
             </Modal>
+            <Card style={{marginBottom:12}}>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Questions Studlin asks</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:10}}>These are how Studlin learns things like how long a class really takes you or how a session went — never required, always skippable, and if you keep skipping one Studlin turns it off for you automatically.</div>
+              <Row label="Post-session check-ins" sub="A quick 'how did that go?' after a study session tied to an exam or assignment." k="_" right={
+                <div onClick={()=>handleAskToggle("askCheckIns")} style={{width:38,height:20,borderRadius:10,background:toggles.askCheckIns?T.lime:T.card2,border:`1px solid ${toggles.askCheckIns?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
+                  <div style={{width:14,height:14,borderRadius:"50%",background:toggles.askCheckIns?T.bg:"#fff",position:"absolute",top:2,left:toggles.askCheckIns?21:2,transition:"left 0.2s"}} />
+                </div>
+              } />
+              <Row label={'"How long did this really take?"'} sub="Asked only when you finish a session without using the Lock-In Timer, and only for a class Studlin doesn't have enough real data on yet." k="_" right={
+                <div onClick={()=>handleAskToggle("askDurationQuestions")} style={{width:38,height:20,borderRadius:10,background:toggles.askDurationQuestions?T.lime:T.card2,border:`1px solid ${toggles.askDurationQuestions?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
+                  <div style={{width:14,height:14,borderRadius:"50%",background:toggles.askDurationQuestions?T.bg:"#fff",position:"absolute",top:2,left:toggles.askDurationQuestions?21:2,transition:"left 0.2s"}} />
+                </div>
+              } />
+            </Card>
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Data &amp; AI</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>You own your notes, essays, and recordings.</div>
@@ -39585,6 +39803,49 @@ function App() {
     },()=>{}));
     return ()=>unsubs.forEach(u=>u());
   },[]);
+  // Shared by the confidence check-in's own dismiss (below) and the new
+  // duration question's skip -- a visible, reversible notice the moment the
+  // dismiss-streak auto-off actually fires (see recordQuestionDismissed),
+  // never a silent behavior change.
+  const handleQuestionDismissed=(kind)=>{
+    const{autoOff}=recordQuestionDismissed(kind);
+    if(autoOff){
+      const label=kind==="checkIn"?"\"how did that go?\" check-ins":"\"how long did this take\" questions";
+      setDashToast("Noticed you've been skipping these -- turned off "+label+". Turn back on in Settings → Privacy anytime.");
+      setTimeout(()=>setDashToast(""),6000);
+    }
+  };
+  // "How long did this really take?" -- the non-timer counterpart to the
+  // Lock-In Timer's own timeSpent measurement (see suggestDurationFor's own
+  // comment on why a plain checkbox-done completion never taught Studlin
+  // duration before this). Gated behind the askDurationQuestions setting, a
+  // real per-subject+kind sample-count threshold (stop asking once a class
+  // has enough data), and a per-subject+kind cooldown after a skip.
+  const [durationQuestionOffer,setDurationQuestionOffer]=useState(null); // {task}
+  const offerDurationQuestionIfDue=(task)=>{
+    if(!task||task.timeSpent||task.isGeneralTask||task.routineId)return;
+    if(task.kind!=="study block"||!task.subject)return;
+    if(lsGet("settings",{}).askDurationQuestions===false)return;
+    if(durationSampleCountFor(task.subject,task.kind)>=TIER0_MIN_BUCKET_SAMPLE)return;
+    if(isDurationQuestionOnCooldown(task.subject,task.kind))return;
+    setDurationQuestionOffer({task});
+  };
+  const skipDurationQuestion=()=>{
+    if(!durationQuestionOffer)return;
+    const{subject,kind}=durationQuestionOffer.task;
+    dismissDurationQuestion(subject,kind);
+    setDurationQuestionOffer(null);
+    handleQuestionDismissed("duration");
+  };
+  const answerDurationQuestion=(mins)=>{
+    if(!durationQuestionOffer)return;
+    const taskId=durationQuestionOffer.task.id;
+    const all=lsGet("events",[]);
+    const next=all.map(e=>e.id===taskId?{...e,timeSpent:mins,timeSpentSource:"self-reported"}:e);
+    lsSet("events",next);
+    setDurationQuestionOffer(null);
+    recordQuestionAnswered("duration");
+  };
   const handleTaskCompleted=(taskId)=>{
     const events=lsGet("events",[]);
     const task=events.find(e=>e.id===taskId);
@@ -39632,6 +39893,7 @@ function App() {
         setExamCheckIn(task);
       }
     }
+    offerDurationQuestionIfDue(task);
   };
   // Generates the real "let's see what needs another look" check that
   // replaces the plain confidence self-report when session 1 of a real,
@@ -39748,6 +40010,7 @@ function App() {
     // reflects how it actually went, not just that it got marked done —
     // this part applies to every flexible study block, exam-linked or not.
     applyCheckInRating(ci.id,rating);
+    recordQuestionAnswered("checkIn");
     const events=lsGet("events",[]);
     const examEvent=ci.dueEventId?events.find(e=>e.id===ci.dueEventId):null;
     if(!taskOverride)setExamCheckIn(null);
@@ -41738,12 +42001,30 @@ function App() {
           applyCheckInRating's completionLog signal for every flexible
           study block regardless of exam link, same as before; this just
           stops it from falsely referencing "the exam" when there isn't one. */}
-      <Modal open={!!examCheckIn} onClose={()=>setExamCheckIn(null)} title={examCheckIn&&examCheckIn.dueEventId?"How do you feel about the exam so far?":"How did that session go?"} width={380}>
+      <Modal open={!!examCheckIn} onClose={()=>{setExamCheckIn(null);handleQuestionDismissed("checkIn");}} title={examCheckIn&&examCheckIn.dueEventId?"How do you feel about the exam so far?":"How did that session go?"} width={380}>
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
           {EXAM_CHECKIN_SCALE.map(opt=>(
             <Btn key={opt.value} variant="ghost" onClick={()=>submitExamCheckIn(opt.value)} style={{width:"100%",justifyContent:"center"}}>{opt.label}</Btn>
           ))}
         </div>
+      </Modal>
+      {/* "How long did this really take?" -- the non-timer counterpart to
+          the Lock-In Timer's own duration measurement (see
+          offerDurationQuestionIfDue). Preset chips, not a free-text field --
+          same low-friction, one-tap idiom the confidence check-in above
+          already uses. */}
+      <Modal open={!!durationQuestionOffer} onClose={skipDurationQuestion} title="Roughly how long did that take?" width={380}>
+        {durationQuestionOffer&&(
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            <div style={{fontSize:12.5,color:T.muted}}>&quot;{durationQuestionOffer.task.title}&quot; -- helps Studlin learn {durationQuestionOffer.task.subject}&apos;s real pace, even without the timer.</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+              {[15,30,45,60,90].map(mins=>(
+                <Btn key={mins} variant="ghost" onClick={()=>answerDurationQuestion(mins)} style={{flex:"1 0 30%",justifyContent:"center"}}>{mins} min</Btn>
+              ))}
+            </div>
+            <Btn variant="subtle" onClick={skipDurationQuestion} style={{width:"100%",justifyContent:"center"}}>Skip</Btn>
+          </div>
+        )}
       </Modal>
       {/* The real "smart" half of Smart Study Plan Flow -- replaces the
           plain confidence self-report above with an actual check, only
