@@ -1990,14 +1990,44 @@ function computeSubjectHourReliabilityMatrix(subjects) {
     return { subject, cells };
   }).filter((row) => row.cells.some((c) => c.rate !== null));
 }
+const DURATION_RANGE_MIN_SAMPLE = 4;
+function durationRangeFor(subject, kind) {
+  const times = lsGet("events", []).filter((e) => e.status === "done" && e.timeSpent && e.subject === subject && e.kind === kind && !e.isGeneralTask).map((e) => e.timeSpent).sort((a, b) => a - b);
+  if (times.length < DURATION_RANGE_MIN_SAMPLE) return null;
+  const quantile = (p) => {
+    const idx = (times.length - 1) * p, lo = Math.floor(idx), hi = Math.ceil(idx);
+    return lo === hi ? times[lo] : times[lo] + (times[hi] - times[lo]) * (idx - lo);
+  };
+  return { low: Math.max(15, Math.round(quantile(0.25) / 5) * 5), high: Math.round(quantile(0.75) / 5) * 5 };
+}
 function computeSubjectDurationInsights(subjects) {
   const overrides = lsGet("subjectDurationOverride", {});
   return subjects.map((subject) => {
     const isOverridden = typeof overrides[subject] === "number";
     const sampleCount = durationSampleCountFor(subject, "study block");
     const minutes = suggestDurationFor(subject, "study block");
-    return { subject, minutes, sampleCount, isOverridden, isConfident: isOverridden || sampleCount >= TIER0_MIN_BUCKET_SAMPLE };
+    const isConfident = isOverridden || sampleCount >= TIER0_MIN_BUCKET_SAMPLE;
+    const range = isConfident && !isOverridden ? durationRangeFor(subject, "study block") : null;
+    return { subject, minutes, sampleCount, isOverridden, isConfident, range };
   }).filter((row) => row.isOverridden || row.sampleCount > 0);
+}
+const MIN_EXAMS_FOR_PREP_TOTAL = 2;
+function computeSubjectExamPrepTotals(subject) {
+  const events = lsGet("events", []);
+  const pastExams = events.filter((e) => e.kind === "exam" && e.subject === subject && e.status === "done");
+  const byWeight = {};
+  for (const exam of pastExams) {
+    const prepMinutes = events.filter((e) => e.isExamPrepSession && e.dueEventId === exam.id && e.status === "done" && e.timeSpent).reduce((sum, e) => sum + e.timeSpent, 0);
+    if (prepMinutes <= 0) continue;
+    const weight = exam.examWeight === "quiz" ? "quiz" : "major";
+    (byWeight[weight] = byWeight[weight] || []).push(prepMinutes);
+  }
+  return Object.keys(byWeight).map((weight) => {
+    const totals = byWeight[weight].sort((a, b) => a - b);
+    const mid = Math.floor(totals.length / 2);
+    const minutes = totals.length % 2 ? totals[mid] : Math.round((totals[mid - 1] + totals[mid]) / 2);
+    return { weight, minutes, examCount: totals.length, isConfident: totals.length >= MIN_EXAMS_FOR_PREP_TOTAL };
+  });
 }
 const STRUGGLING_BUCKET_RECENT_WINDOW = 5;
 const STRUGGLING_BUCKET_MIN_RECENT_MISSES = 4;
@@ -4328,39 +4358,45 @@ const SELF_REPORTED_DURATION_CREDIT = 0.5;
 function durationSampleCountFor(subject, kind) {
   return lsGet("events", []).filter((e) => e.status === "done" && e.timeSpent && e.subject === subject && e.kind === kind && !e.isGeneralTask).length;
 }
-function suggestDurationFor(subject, kind, difficulty, minSamples) {
-  const durationOverrides = lsGet("subjectDurationOverride", {});
-  if (subject && typeof durationOverrides[subject] === "number") return durationOverrides[subject];
-  const minN = minSamples || TIER0_MIN_BUCKET_SAMPLE;
-  const events = lsGet("events", []).filter((e) => e.status === "done" && e.timeSpent && e.subject === subject && e.kind === kind && !e.isGeneralTask);
-  if (events.length === 0) return null;
+function weightedDurationMedian(pool) {
   const completionLog = lsGet("completionLog", []);
   const creditByTaskId = /* @__PURE__ */ new Map();
   for (const row of completionLog) {
     if (row.taskId) creditByTaskId.set(row.taskId, completionCredit(row));
   }
-  const medianOf = (pool) => {
-    const shares = [];
-    for (const e of pool) {
-      let credit = creditByTaskId.has(e.id) ? creditByTaskId.get(e.id) : 1;
-      if (e.timeSpentSource === "self-reported") credit = credit * SELF_REPORTED_DURATION_CREDIT;
-      const n = Math.max(1, Math.round(credit * 4));
-      for (let i = 0; i < n; i++) shares.push(e.timeSpent);
-    }
-    shares.sort((a, b) => a - b);
-    const mid = Math.floor(shares.length / 2);
-    return shares.length % 2 ? shares[mid] : Math.round((shares[mid - 1] + shares[mid]) / 2);
-  };
+  const shares = [];
+  for (const e of pool) {
+    let credit = creditByTaskId.has(e.id) ? creditByTaskId.get(e.id) : 1;
+    if (e.timeSpentSource === "self-reported") credit = credit * SELF_REPORTED_DURATION_CREDIT;
+    const n = Math.max(1, Math.round(credit * 4));
+    for (let i = 0; i < n; i++) shares.push(e.timeSpent);
+  }
+  shares.sort((a, b) => a - b);
+  const mid = Math.floor(shares.length / 2);
+  return shares.length % 2 ? shares[mid] : Math.round((shares[mid - 1] + shares[mid]) / 2);
+}
+function studentBaselineDuration(excludeSubject) {
+  const events = lsGet("events", []).filter((e) => e.status === "done" && e.timeSpent && e.kind === "study block" && !e.isGeneralTask && (excludeSubject == null || e.subject !== excludeSubject));
+  if (events.length < TIER0_MIN_BUCKET_SAMPLE) return null;
+  return weightedDurationMedian(events);
+}
+function suggestDurationFor(subject, kind, difficulty, minSamples) {
+  const durationOverrides = lsGet("subjectDurationOverride", {});
+  if (subject && typeof durationOverrides[subject] === "number") return durationOverrides[subject];
+  const minN = minSamples || TIER0_MIN_BUCKET_SAMPLE;
+  const events = lsGet("events", []).filter((e) => e.status === "done" && e.timeSpent && e.subject === subject && e.kind === kind && !e.isGeneralTask);
+  if (events.length === 0) return studentBaselineDuration(subject);
   if (events.length < minN) {
     const weight = events.length / minN;
-    return Math.max(15, Math.round((weight * medianOf(events) + (1 - weight) * DURATION_GENERIC_DEFAULT) / 5) * 5);
+    const fallback = studentBaselineDuration(subject) ?? DURATION_GENERIC_DEFAULT;
+    return Math.max(15, Math.round((weight * weightedDurationMedian(events) + (1 - weight) * fallback) / 5) * 5);
   }
   if (difficulty != null) {
     const tier = difficultyTierOf({ difficulty });
     const tiered = events.filter((e) => difficultyTierOf(e) === tier);
-    if (tiered.length >= minN) return Math.max(15, Math.round(medianOf(tiered) / 5) * 5);
+    if (tiered.length >= minN) return Math.max(15, Math.round(weightedDurationMedian(tiered) / 5) * 5);
   }
-  return Math.max(15, Math.round(medianOf(events) / 5) * 5);
+  return Math.max(15, Math.round(weightedDurationMedian(events) / 5) * 5);
 }
 function upcomingExams() {
   return lsGet("events", []).filter((e) => e.kind === "exam" && e.date >= dayKey()).sort((a, b) => a.date.localeCompare(b.date));
@@ -6661,7 +6697,8 @@ function StudlinPrep({ setActive = () => {
     }
     return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, rows.map((row) => {
       const editing = durationOverrideEdit && durationOverrideEdit.subject === row.subject;
-      return /* @__PURE__ */ React.createElement("div", { key: row.subject, style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderRadius: 8, background: T.card2 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, fontWeight: 600 } }, row.subject), !row.isConfident && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, marginTop: 2 } }, "Still learning this one"), row.isOverridden && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, marginTop: 2 } }, "Set by you")), editing ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6 } }, /* @__PURE__ */ React.createElement(
+      const examPrepRows = computeSubjectExamPrepTotals(row.subject);
+      return /* @__PURE__ */ React.createElement("div", { key: row.subject, style: { padding: "10px 12px", borderRadius: 8, background: T.card2 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, fontWeight: 600 } }, row.subject), !row.isConfident && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, marginTop: 2 } }, "Still learning this one"), row.isOverridden && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, marginTop: 2 } }, "Set by you"), row.range && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, marginTop: 2 } }, "Usually ", row.range.low, "-", row.range.high, " min")), editing ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6 } }, /* @__PURE__ */ React.createElement(
         "input",
         {
           type: "number",
@@ -6672,7 +6709,7 @@ function StudlinPrep({ setActive = () => {
           onChange: (e) => setDurationOverrideEdit({ subject: row.subject, value: e.target.value }),
           style: { width: 60, padding: "4px 6px", borderRadius: 6, border: `1px solid ${T.border}`, background: T.card, color: T.text, fontSize: 12.5 }
         }
-      ), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.faint } }, "min"), /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => saveDurationOverride(row.subject, Number(durationOverrideEdit.value)) }, "Save"), row.isOverridden && /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => saveDurationOverride(row.subject, null) }, "Clear"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => setDurationOverrideEdit(null) }, "Cancel")) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 14, fontWeight: 700, color: row.isConfident ? T.text : T.faint } }, row.minutes, " min"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => setDurationOverrideEdit({ subject: row.subject, value: String(row.minutes) }) }, "Edit")));
+      ), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.faint } }, "min"), /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => saveDurationOverride(row.subject, Number(durationOverrideEdit.value)) }, "Save"), row.isOverridden && /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => saveDurationOverride(row.subject, null) }, "Clear"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => setDurationOverrideEdit(null) }, "Cancel")) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 14, fontWeight: 700, color: row.isConfident ? T.text : T.faint } }, row.minutes, " min"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => setDurationOverrideEdit({ subject: row.subject, value: String(row.minutes) }) }, "Edit"))), examPrepRows.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 8, paddingTop: 8, borderTop: `1px solid ${T.border}`, display: "flex", flexDirection: "column", gap: 4 } }, examPrepRows.map((pr) => /* @__PURE__ */ React.createElement("div", { key: pr.weight, style: { display: "flex", justifyContent: "space-between", fontSize: 11.5 } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.muted } }, "Total study time before a ", pr.weight === "quiz" ? "quiz" : "major exam", !pr.isConfident ? " (still learning)" : ""), /* @__PURE__ */ React.createElement("span", { style: { color: pr.isConfident ? T.text : T.faint, fontWeight: 600 } }, fmtMinsDur(pr.minutes))))));
     }));
   };
   const fmtRolloverClock = (t) => {

@@ -326,10 +326,54 @@ describe("suggestDurationFor (historical duration learning)", () => {
       assert.ok(withTwo > 25, "even 2 real samples should move the estimate off the flat generic default");
     });
 
-    test("zero real samples still returns null -- there's nothing to blend, caller's own ||25 applies", () => {
+    test("zero real samples still returns null when the student has no broader history to personalize from either -- caller's own ||25 applies", () => {
       const m = loadStudlinModule();
       m.lsSet("events", []);
       assert.equal(m.suggestDurationFor("Chemistry", "study block"), null);
+    });
+  });
+
+  describe("personalized fallback (studentBaselineDuration) -- replaces the old flat 25-minute default with this student's own cross-subject pace", () => {
+    test("studentBaselineDuration is null below the sample floor, same gate as everything else here", () => {
+      const m = loadStudlinModule();
+      m.lsSet("events", Array.from({ length: 7 }, (_, i) => doneSession({ id: "e-" + i, subject: "Physics", timeSpent: 90 })));
+      assert.equal(m.studentBaselineDuration(), null);
+    });
+
+    test("studentBaselineDuration is this student's own median across every subject, once there's enough of it", () => {
+      const m = loadStudlinModule();
+      const events = Array.from({ length: 8 }, (_, i) => doneSession({ id: "e-" + i, subject: "Physics", timeSpent: 90 }));
+      m.lsSet("events", events);
+      assert.equal(m.studentBaselineDuration(), 90);
+    });
+
+    test("a brand-new subject (zero samples) uses the student's own baseline instead of returning null, when they have one", () => {
+      const m = loadStudlinModule();
+      // 8 real Physics sessions at 90min establish this student's baseline;
+      // Chemistry has never been touched at all.
+      const physics = Array.from({ length: 8 }, (_, i) => doneSession({ id: "p-" + i, subject: "Physics", timeSpent: 90 }));
+      m.lsSet("events", physics);
+      assert.equal(m.suggestDurationFor("Chemistry", "study block"), 90, "a new class should start from what this student is actually like, not a flat platform-wide constant");
+    });
+
+    test("below-threshold blending targets the student's own baseline instead of the flat generic default, once they have one", () => {
+      const m = loadStudlinModule();
+      // 8 Physics sessions at 90min (this student's real baseline, clearly
+      // not the old flat 25) + 2 thin real Chemistry sessions at 90min too.
+      // If the blend still targeted the flat 25 default, 2/8 real weight on
+      // a 90min median would land well below 90; targeting the 90min
+      // baseline instead means the blend barely needs to move at all.
+      const physics = Array.from({ length: 8 }, (_, i) => doneSession({ id: "p-" + i, subject: "Physics", timeSpent: 90 }));
+      const chemistry = [doneSession({ id: "c1", timeSpent: 90 }), doneSession({ id: "c2", timeSpent: 90 })];
+      m.lsSet("events", [...physics, ...chemistry]);
+      const result = m.suggestDurationFor("Chemistry", "study block");
+      assert.ok(result > 60, `blend should land near the 90min personal baseline, not pulled down toward the old flat 25 default, got ${result}`);
+    });
+
+    test("a student with no broader history yet still falls all the way back to the flat generic default -- personalization needs real evidence too", () => {
+      const m = loadStudlinModule();
+      m.lsSet("events", []);
+      assert.equal(m.suggestDurationFor("Chemistry", "study block"), null, "no baseline AND no subject data -- null, caller's own ||25 still applies");
     });
   });
 
@@ -434,6 +478,107 @@ describe("computeSubjectDurationInsights (Insights tab's duration card)", () => 
     assert.equal(rows[0].minutes, 40);
     assert.equal(rows[0].isOverridden, true);
     assert.equal(rows[0].isConfident, true);
+  });
+  test("a confident, non-overridden subject carries a real spread range, not just the single point estimate", () => {
+    const m = loadStudlinModule();
+    const events = [20, 20, 30, 30, 40, 40, 50, 50].map((t, i) => doneSession({ id: "e-" + i, timeSpent: t }));
+    m.lsSet("events", events);
+    const rows = m.computeSubjectDurationInsights(["Chemistry"]);
+    assert.ok(rows[0].range, "a well-sampled subject should carry a range");
+    assert.ok(rows[0].range.low < rows[0].range.high, "range should be a real spread, not a single point");
+  });
+  test("an overridden subject never shows a computed range -- the override IS the number, there's nothing to spread", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", Array.from({ length: 8 }, (_, i) => doneSession({ id: "e-" + i, timeSpent: 60 })));
+    m.lsSet("subjectDurationOverride", { Chemistry: 45 });
+    const rows = m.computeSubjectDurationInsights(["Chemistry"]);
+    assert.equal(rows[0].range, null);
+  });
+  test("a still-thin subject carries no range either -- too few real points for a spread to mean anything", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", [doneSession({ id: "a" }), doneSession({ id: "b" })]);
+    const rows = m.computeSubjectDurationInsights(["Chemistry"]);
+    assert.equal(rows[0].range, null);
+  });
+});
+
+describe("durationRangeFor (the Insights card's honest spread, not a fake-precise point number)", () => {
+  function doneSession(overrides) {
+    return { id: "s1", subject: "Chemistry", kind: "study block", status: "done", timeSpent: 30, ...overrides };
+  }
+  test("null below its own sample floor (4) -- fewer real points aren't a real spread", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", [doneSession({ id: "a", timeSpent: 20 }), doneSession({ id: "b", timeSpent: 40 }), doneSession({ id: "c", timeSpent: 60 })]);
+    assert.equal(m.durationRangeFor("Chemistry", "study block"), null);
+  });
+  test("a real 25th-75th percentile spread once there's enough data", () => {
+    const m = loadStudlinModule();
+    const events = [10, 20, 30, 40, 50, 60, 70, 80].map((t, i) => doneSession({ id: "e-" + i, timeSpent: t }));
+    m.lsSet("events", events);
+    const range = m.durationRangeFor("Chemistry", "study block");
+    assert.ok(range.low < range.high);
+    assert.ok(range.low >= 15, "the range floor should never drop below the app-wide 15min minimum");
+  });
+  test("all-identical durations collapse to a zero-width range, not an error", () => {
+    const m = loadStudlinModule();
+    const events = Array.from({ length: 4 }, (_, i) => doneSession({ id: "e-" + i, timeSpent: 50 }));
+    m.lsSet("events", events);
+    const range = m.durationRangeFor("Chemistry", "study block");
+    assert.equal(range.low, 50);
+    assert.equal(range.high, 50);
+  });
+});
+
+describe("computeSubjectExamPrepTotals (total study time before an exam, split by quiz vs. major)", () => {
+  function examEvent(overrides) {
+    return { id: "exam1", subject: "Chemistry", kind: "exam", status: "done", examWeight: "major", ...overrides };
+  }
+  function prepSession(overrides) {
+    return { id: "p1", subject: "Chemistry", kind: "study block", status: "done", isExamPrepSession: true, dueEventId: "exam1", timeSpent: 60, ...overrides };
+  }
+  test("no exams at all -- empty result, not a fabricated zero", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", []);
+    assert.equal(m.computeSubjectExamPrepTotals("Chemistry").length, 0);
+  });
+  test("an exam with a plan but zero completed prep sessions contributes nothing -- it's not evidence either way", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", [examEvent({})]);
+    assert.equal(m.computeSubjectExamPrepTotals("Chemistry").length, 0);
+  });
+  test("a still-upcoming (not done) exam is excluded even if it somehow has completed prep sessions", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", [examEvent({ status: "pending" }), prepSession({})]);
+    assert.equal(m.computeSubjectExamPrepTotals("Chemistry").length, 0);
+  });
+  test("sums real completed prep time per exam, below its own MIN_EXAMS_FOR_PREP_TOTAL floor it's flagged not confident", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", [examEvent({}), prepSession({ id: "p1", timeSpent: 60 }), prepSession({ id: "p2", timeSpent: 40 })]);
+    const rows = m.computeSubjectExamPrepTotals("Chemistry");
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].minutes, 100, "should sum, not average, the sessions within one exam");
+    assert.equal(rows[0].examCount, 1);
+    assert.equal(rows[0].isConfident, false, "only one real exam -- below the 2-exam floor");
+  });
+  test("quiz and major exams are split into separate rows, never averaged together", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", [
+      examEvent({ id: "quiz1", examWeight: "quiz" }), prepSession({ id: "pq1", dueEventId: "quiz1", timeSpent: 30 }),
+      examEvent({ id: "quiz2", examWeight: "quiz" }), prepSession({ id: "pq2", dueEventId: "quiz2", timeSpent: 50 }),
+      examEvent({ id: "final1", examWeight: "major" }), prepSession({ id: "pf1", dueEventId: "final1", timeSpent: 600 }),
+      examEvent({ id: "final2", examWeight: "major" }), prepSession({ id: "pf2", dueEventId: "final2", timeSpent: 700 }),
+    ]);
+    const rows = m.computeSubjectExamPrepTotals("Chemistry");
+    const quiz = rows.find(r => r.weight === "quiz"), major = rows.find(r => r.weight === "major");
+    assert.ok(quiz && major, "both weight buckets should be present");
+    assert.ok(quiz.minutes < major.minutes, "a quiz's real total shouldn't be dragged up by a final's, or vice versa");
+    assert.equal(quiz.isConfident, true, "2 real quizzes clears MIN_EXAMS_FOR_PREP_TOTAL");
+    assert.equal(major.isConfident, true, "2 real finals clears MIN_EXAMS_FOR_PREP_TOTAL");
+  });
+  test("only counts this exact subject -- a different subject's exams never leak in", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", [examEvent({ subject: "Physics" }), prepSession({ subject: "Physics" })]);
+    assert.equal(m.computeSubjectExamPrepTotals("Chemistry").length, 0);
   });
 });
 

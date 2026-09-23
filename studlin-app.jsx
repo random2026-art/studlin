@@ -3533,6 +3533,24 @@ function computeSubjectHourReliabilityMatrix(subjects){
 // "still learning this one" honestly instead of presenting a thin-sample
 // blend as a confident number -- isConfident mirrors suggestDurationFor's
 // own TIER0_MIN_BUCKET_SAMPLE gate exactly, plus a standing manual override.
+// "Bio: 45 min" flattens real variance away as if every Bio session is the
+// same length -- a plain 25th/75th-percentile spread of the REAL raw
+// timeSpent values (not the weighted/replicated pool suggestDurationFor's
+// own median uses -- a range is just describing how much it varies, doesn't
+// need that same credit-weighting rigor) says the honest thing instead:
+// "usually 35-55 min," not a fake-precise single number. Needs its own
+// small sample floor (4) separate from TIER0_MIN_BUCKET_SAMPLE -- a range
+// from 2-3 points isn't a real spread, it's just those points.
+const DURATION_RANGE_MIN_SAMPLE=4;
+function durationRangeFor(subject,kind){
+  const times=lsGet("events",[]).filter(e=>e.status==="done"&&e.timeSpent&&e.subject===subject&&e.kind===kind&&!e.isGeneralTask).map(e=>e.timeSpent).sort((a,b)=>a-b);
+  if(times.length<DURATION_RANGE_MIN_SAMPLE)return null;
+  const quantile=(p)=>{
+    const idx=(times.length-1)*p,lo=Math.floor(idx),hi=Math.ceil(idx);
+    return lo===hi?times[lo]:times[lo]+(times[hi]-times[lo])*(idx-lo);
+  };
+  return {low:Math.max(15,Math.round(quantile(0.25)/5)*5),high:Math.round(quantile(0.75)/5)*5};
+}
 function computeSubjectDurationInsights(subjects){
   const overrides=lsGet("subjectDurationOverride",{});
   return subjects
@@ -3540,9 +3558,41 @@ function computeSubjectDurationInsights(subjects){
       const isOverridden=typeof overrides[subject]==="number";
       const sampleCount=durationSampleCountFor(subject,"study block");
       const minutes=suggestDurationFor(subject,"study block");
-      return {subject,minutes,sampleCount,isOverridden,isConfident:isOverridden||sampleCount>=TIER0_MIN_BUCKET_SAMPLE};
+      const isConfident=isOverridden||sampleCount>=TIER0_MIN_BUCKET_SAMPLE;
+      const range=isConfident&&!isOverridden?durationRangeFor(subject,"study block"):null;
+      return {subject,minutes,sampleCount,isOverridden,isConfident,range};
     })
     .filter(row=>row.isOverridden||row.sampleCount>0);
+}
+// "How much do I usually study total before an exam" -- a real question a
+// per-session duration number can't answer. Splits by examWeight (quiz vs
+// major/final) rather than averaging them together, since those are
+// genuinely different prep efforts and a flat blend of a 1-hour quiz cram
+// and a 12-hour final push describes neither. Only counts REAL completed
+// exam-prep time (isExamPrepSession events actually finished with real
+// timeSpent) against exams that have actually happened -- an exam with a
+// plan but zero completed sessions isn't evidence of anything yet, and a
+// still-upcoming exam's total isn't settled. MIN_EXAMS_FOR_PREP_TOTAL is its
+// own, much lower floor than TIER0_MIN_BUCKET_SAMPLE -- exams are far rarer
+// than study sessions, so reusing the 8-sample bar here would mean this
+// almost never has enough evidence in a single real term.
+const MIN_EXAMS_FOR_PREP_TOTAL=2;
+function computeSubjectExamPrepTotals(subject){
+  const events=lsGet("events",[]);
+  const pastExams=events.filter(e=>e.kind==="exam"&&e.subject===subject&&e.status==="done");
+  const byWeight={};
+  for(const exam of pastExams){
+    const prepMinutes=events.filter(e=>e.isExamPrepSession&&e.dueEventId===exam.id&&e.status==="done"&&e.timeSpent).reduce((sum,e)=>sum+e.timeSpent,0);
+    if(prepMinutes<=0)continue; // an exam with no completed prep sessions isn't real evidence either way
+    const weight=exam.examWeight==="quiz"?"quiz":"major"; // same two-bucket split defaultSessionCountFor already uses
+    (byWeight[weight]=byWeight[weight]||[]).push(prepMinutes);
+  }
+  return Object.keys(byWeight).map(weight=>{
+    const totals=byWeight[weight].sort((a,b)=>a-b);
+    const mid=Math.floor(totals.length/2);
+    const minutes=totals.length%2?totals[mid]:Math.round((totals[mid-1]+totals[mid])/2);
+    return {weight,minutes,examCount:totals.length,isConfident:totals.length>=MIN_EXAMS_FOR_PREP_TOTAL};
+  });
 }
 // A recent-streak detector, separate from getBucketReliability's all-time
 // aggregate — a student sliding lately deserves a nudge before enough bad
@@ -7398,6 +7448,51 @@ const SELF_REPORTED_DURATION_CREDIT=0.5;
 function durationSampleCountFor(subject,kind){
   return lsGet("events",[]).filter(e=>e.status==="done"&&e.timeSpent&&e.subject===subject&&e.kind===kind&&!e.isGeneralTask).length;
 }
+// Shared by suggestDurationFor and studentBaselineDuration below -- the same
+// weighted-median idea (completionCredit weight, self-reported-duration
+// discount) parameterized by whatever pool of done+timed events the caller
+// has already filtered down to, so the per-subject number and the
+// cross-subject baseline can never quietly use two different notions of
+// "median" that drift apart.
+function weightedDurationMedian(pool){
+  const completionLog=lsGet("completionLog",[]);
+  const creditByTaskId=new Map();
+  for(const row of completionLog){if(row.taskId)creditByTaskId.set(row.taskId,completionCredit(row));}
+  const shares=[];
+  for(const e of pool){
+    let credit=creditByTaskId.has(e.id)?creditByTaskId.get(e.id):1;
+    if(e.timeSpentSource==="self-reported")credit=credit*SELF_REPORTED_DURATION_CREDIT;
+    const n=Math.max(1,Math.round(credit*4));
+    for(let i=0;i<n;i++)shares.push(e.timeSpent);
+  }
+  shares.sort((a,b)=>a-b);
+  const mid=Math.floor(shares.length/2);
+  return shares.length%2?shares[mid]:Math.round((shares[mid-1]+shares[mid])/2);
+}
+// Direct user feedback: a flat "25 minutes" fallback for every thin/unknown
+// subject is the same number whether a student's own real sessions run 50
+// minutes or 90 -- it ignores everything Studlin already knows about THIS
+// student just because it's looking at one specific subject that happens to
+// be thin. This is that smarter fallback: this student's own median across
+// every subject's real completed sessions, so a brand-new class (or a
+// still-thin one) starts from "what this student is actually like," not a
+// platform-wide constant. Gated by the same TIER0_MIN_BUCKET_SAMPLE floor as
+// everywhere else -- a student who is THEMSELVES still new to Studlin has
+// nothing real to personalize from yet, and null here means callers fall
+// back one more level, to the true last-resort DURATION_GENERIC_DEFAULT.
+// excludeSubject matters: without it, a student who has only ever studied
+// ONE subject would have their baseline literally equal that subject's own
+// (possibly still-thin, by a caller's own stricter minSamples) data -- not
+// independent outside evidence at all, just the same numbers counted twice.
+// Excluding the subject being estimated keeps this an honest "what does
+// Studlin know about this student from EVERYTHING ELSE," which also
+// correctly returns null (no double-counted shortcut) for a single-subject
+// account, same as before this fallback existed.
+function studentBaselineDuration(excludeSubject){
+  const events=lsGet("events",[]).filter(e=>e.status==="done"&&e.timeSpent&&e.kind==="study block"&&!e.isGeneralTask&&(excludeSubject==null||e.subject!==excludeSubject));
+  if(events.length<TIER0_MIN_BUCKET_SAMPLE)return null;
+  return weightedDurationMedian(events);
+}
 function suggestDurationFor(subject,kind,difficulty,minSamples){
   // A student-edited override (Insights tab's per-subject duration card)
   // pins this number until they change or clear it themselves -- never
@@ -7413,59 +7508,38 @@ function suggestDurationFor(subject,kind,difficulty,minSamples){
   // a subject someone occasionally tags a chore under would have its
   // duration-learning median quietly pulled toward that chore's length.
   const events=lsGet("events",[]).filter(e=>e.status==="done"&&e.timeSpent&&e.subject===subject&&e.kind===kind&&!e.isGeneralTask);
-  if(events.length===0)return null; // truly nothing to go on -- caller's own ||25 applies
-  // Quality-weight each sample by whether its own post-session check-in
-  // said the time actually worked, using completionCredit -- the exact
-  // same rating->weight table getBucketReliability already trusts
-  // (unrated/solid completions count in full; a rated-shaky completion
-  // counts as partial evidence, since a session someone said didn't click
-  // is weaker proof its duration was the right amount). No new scale
-  // invented here, same credit everywhere a rating matters. completionLog
-  // rows are keyed by taskId (the event's own id), same join
-  // applyCheckInRating already does; last row per taskId wins, matching
-  // its own "search from the end" convention for repeat completions.
-  const completionLog=lsGet("completionLog",[]);
-  const creditByTaskId=new Map();
-  for(const row of completionLog){if(row.taskId)creditByTaskId.set(row.taskId,completionCredit(row));}
-  // A weighted median, not a weighted average -- keeps the same outlier-
-  // resistant character the plain median already had. completionCredit
-  // returns quarters (0.25/1), so replicating each sample by 4x its
-  // credit (1-4 shares) and taking a normal median of the expanded pool
-  // is a weighted median without new statistical machinery. An event with
-  // no completionLog row at all (old data, or the check-in was skipped)
-  // gets full weight, same "unrated counts as 1.0" convention as
-  // completionCredit's own default.
-  const medianOf=(pool)=>{
-    const shares=[];
-    for(const e of pool){
-      let credit=creditByTaskId.has(e.id)?creditByTaskId.get(e.id):1;
-      if(e.timeSpentSource==="self-reported")credit=credit*SELF_REPORTED_DURATION_CREDIT;
-      const n=Math.max(1,Math.round(credit*4));
-      for(let i=0;i<n;i++)shares.push(e.timeSpent);
-    }
-    shares.sort((a,b)=>a-b);
-    const mid=Math.floor(shares.length/2);
-    return shares.length%2?shares[mid]:Math.round((shares[mid-1]+shares[mid])/2);
-  };
-  // Below minN (but not zero), blend the real-but-thin median toward the
-  // generic default instead of discarding it outright -- the old
-  // behavior (null below minN, full trust at minN) was the exact same
-  // hard-cliff problem peak-hour's confidentlyHigher fixed for rate data
-  // (see CLAUDE.md's Certainty & Prediction Rules), just for a continuous
-  // value instead of a completion rate. Reaches the real median exactly
-  // AT minN, where the unchanged full-trust logic below takes over, so
-  // there's no discontinuity at the old cliff's boundary -- every
-  // existing well-sampled (>=minN) test case is untouched.
+  // Zero samples for this exact subject -- used to always be a flat null
+  // (caller's own ||25 applies), same one-size-fits-all number regardless of
+  // whether this is a brand-new account or a student Studlin has watched for
+  // a whole term. Now tries this student's own cross-subject baseline first
+  // (see studentBaselineDuration) -- a new class should start from "what
+  // this student is actually like," not a platform-wide constant. Only a
+  // student who is themselves still new to Studlin (baseline also null)
+  // falls all the way through to null here, same as before.
+  if(events.length===0)return studentBaselineDuration(subject);
+  // Below minN (but not zero), blend the real-but-thin median toward a
+  // fallback instead of discarding it outright -- the old behavior (null
+  // below minN, full trust at minN) was the exact same hard-cliff problem
+  // peak-hour's confidentlyHigher fixed for rate data (see CLAUDE.md's
+  // Certainty & Prediction Rules), just for a continuous value instead of a
+  // completion rate. Reaches the real median exactly AT minN, where the
+  // unchanged full-trust logic below takes over, so there's no discontinuity
+  // at the old cliff's boundary -- every existing well-sampled (>=minN) test
+  // case is untouched. The blend target itself is now this student's own
+  // baseline when they have one (real personalization instead of a flat
+  // constant), falling back to DURATION_GENERIC_DEFAULT only when the
+  // student has no broader history to personalize from either.
   if(events.length<minN){
     const weight=events.length/minN;
-    return Math.max(15,Math.round((weight*medianOf(events)+(1-weight)*DURATION_GENERIC_DEFAULT)/5)*5);
+    const fallback=studentBaselineDuration(subject)??DURATION_GENERIC_DEFAULT;
+    return Math.max(15,Math.round((weight*weightedDurationMedian(events)+(1-weight)*fallback)/5)*5);
   }
   if(difficulty!=null){
     const tier=difficultyTierOf({difficulty});
     const tiered=events.filter(e=>difficultyTierOf(e)===tier);
-    if(tiered.length>=minN)return Math.max(15,Math.round(medianOf(tiered)/5)*5);
+    if(tiered.length>=minN)return Math.max(15,Math.round(weightedDurationMedian(tiered)/5)*5);
   }
-  return Math.max(15,Math.round(medianOf(events)/5)*5);
+  return Math.max(15,Math.round(weightedDurationMedian(events)/5)*5);
 }
 // Shared by deck review scheduling (Flashcards) and practice-exam
 // scheduling (Studlin Prep) -- both are "N spaced sessions counting down
@@ -11384,27 +11458,44 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
       <div style={{display:"flex",flexDirection:"column",gap:8}}>
         {rows.map(row=>{
           const editing=durationOverrideEdit&&durationOverrideEdit.subject===row.subject;
+          // Computed here (not passed in via rows) so a subject with no
+          // exam-prep evidence yet just renders nothing extra, same "only
+          // show what's real" convention the rest of this card follows.
+          const examPrepRows=computeSubjectExamPrepTotals(row.subject);
           return (
-            <div key={row.subject} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 12px",borderRadius:8,background:T.card2}}>
-              <div>
-                <div style={{fontSize:13,color:T.text,fontWeight:600}}>{row.subject}</div>
-                {!row.isConfident&&<div style={{fontSize:11,color:T.faint,marginTop:2}}>Still learning this one</div>}
-                {row.isOverridden&&<div style={{fontSize:11,color:T.faint,marginTop:2}}>Set by you</div>}
-              </div>
-              {editing?(
-                <div style={{display:"flex",alignItems:"center",gap:6}}>
-                  <input type="number" min={15} step={5} autoFocus value={durationOverrideEdit.value}
-                    onChange={e=>setDurationOverrideEdit({subject:row.subject,value:e.target.value})}
-                    style={{width:60,padding:"4px 6px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card,color:T.text,fontSize:12.5}} />
-                  <span style={{fontSize:11,color:T.faint}}>min</span>
-                  <BtnSm onClick={()=>saveDurationOverride(row.subject,Number(durationOverrideEdit.value))}>Save</BtnSm>
-                  {row.isOverridden&&<BtnSm variant="ghost" onClick={()=>saveDurationOverride(row.subject,null)}>Clear</BtnSm>}
-                  <BtnSm variant="subtle" onClick={()=>setDurationOverrideEdit(null)}>Cancel</BtnSm>
+            <div key={row.subject} style={{padding:"10px 12px",borderRadius:8,background:T.card2}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                <div>
+                  <div style={{fontSize:13,color:T.text,fontWeight:600}}>{row.subject}</div>
+                  {!row.isConfident&&<div style={{fontSize:11,color:T.faint,marginTop:2}}>Still learning this one</div>}
+                  {row.isOverridden&&<div style={{fontSize:11,color:T.faint,marginTop:2}}>Set by you</div>}
+                  {row.range&&<div style={{fontSize:11,color:T.faint,marginTop:2}}>Usually {row.range.low}-{row.range.high} min</div>}
                 </div>
-              ):(
-                <div style={{display:"flex",alignItems:"center",gap:10}}>
-                  <span style={{fontSize:14,fontWeight:700,color:row.isConfident?T.text:T.faint}}>{row.minutes} min</span>
-                  <BtnSm variant="subtle" onClick={()=>setDurationOverrideEdit({subject:row.subject,value:String(row.minutes)})}>Edit</BtnSm>
+                {editing?(
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <input type="number" min={15} step={5} autoFocus value={durationOverrideEdit.value}
+                      onChange={e=>setDurationOverrideEdit({subject:row.subject,value:e.target.value})}
+                      style={{width:60,padding:"4px 6px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card,color:T.text,fontSize:12.5}} />
+                    <span style={{fontSize:11,color:T.faint}}>min</span>
+                    <BtnSm onClick={()=>saveDurationOverride(row.subject,Number(durationOverrideEdit.value))}>Save</BtnSm>
+                    {row.isOverridden&&<BtnSm variant="ghost" onClick={()=>saveDurationOverride(row.subject,null)}>Clear</BtnSm>}
+                    <BtnSm variant="subtle" onClick={()=>setDurationOverrideEdit(null)}>Cancel</BtnSm>
+                  </div>
+                ):(
+                  <div style={{display:"flex",alignItems:"center",gap:10}}>
+                    <span style={{fontSize:14,fontWeight:700,color:row.isConfident?T.text:T.faint}}>{row.minutes} min</span>
+                    <BtnSm variant="subtle" onClick={()=>setDurationOverrideEdit({subject:row.subject,value:String(row.minutes)})}>Edit</BtnSm>
+                  </div>
+                )}
+              </div>
+              {examPrepRows.length>0&&(
+                <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${T.border}`,display:"flex",flexDirection:"column",gap:4}}>
+                  {examPrepRows.map(pr=>(
+                    <div key={pr.weight} style={{display:"flex",justifyContent:"space-between",fontSize:11.5}}>
+                      <span style={{color:T.muted}}>Total study time before a {pr.weight==="quiz"?"quiz":"major exam"}{!pr.isConfident?" (still learning)":""}</span>
+                      <span style={{color:pr.isConfident?T.text:T.faint,fontWeight:600}}>{fmtMinsDur(pr.minutes)}</span>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
