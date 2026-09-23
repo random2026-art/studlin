@@ -2029,6 +2029,53 @@ function computeSubjectExamPrepTotals(subject) {
     return { weight, minutes, examCount: totals.length, isConfident: totals.length >= MIN_EXAMS_FOR_PREP_TOTAL };
   });
 }
+const MIN_EXAMS_FOR_TIMING_STYLE = 2;
+const MIN_SESSIONS_FOR_TIMING_STYLE = 6;
+const CRAMMER_MEDIAN_DAYS_THRESHOLD = 2;
+function computeExamPrepTimingStyle() {
+  const events = lsGet("events", []);
+  const examsById = new Map(events.filter((e) => e.kind === "exam" && e.status === "done").map((e) => [e.id, e]));
+  const daysBeforeList = [];
+  const examIdsSeen = /* @__PURE__ */ new Set();
+  for (const e of events) {
+    if (!(e.isExamPrepSession && e.status === "done" && e.completedAt && e.dueEventId)) continue;
+    const exam = examsById.get(e.dueEventId);
+    if (!exam) continue;
+    const daysBeforeExam = ((/* @__PURE__ */ new Date(exam.date + "T12:00:00")).getTime() - e.completedAt) / 864e5;
+    if (daysBeforeExam < 0) continue;
+    daysBeforeList.push(daysBeforeExam);
+    examIdsSeen.add(exam.id);
+  }
+  if (examIdsSeen.size < MIN_EXAMS_FOR_TIMING_STYLE || daysBeforeList.length < MIN_SESSIONS_FOR_TIMING_STYLE) {
+    return { style: null, sampleCount: daysBeforeList.length, examCount: examIdsSeen.size };
+  }
+  daysBeforeList.sort((a, b) => a - b);
+  const mid = Math.floor(daysBeforeList.length / 2);
+  const medianDaysBefore = daysBeforeList.length % 2 ? daysBeforeList[mid] : (daysBeforeList[mid - 1] + daysBeforeList[mid]) / 2;
+  return { style: medianDaysBefore <= CRAMMER_MEDIAN_DAYS_THRESHOLD ? "close-to-deadline" : "spread-out", medianDaysBefore, sampleCount: daysBeforeList.length, examCount: examIdsSeen.size };
+}
+function computeCloseToDeadlineReviewOffsets(daysUntil, desiredCount) {
+  const count = Math.max(1, Math.min(4, desiredCount || 3));
+  if (daysUntil < 0) return [];
+  if (daysUntil === 0) return [0];
+  const offsets = [];
+  for (let i = 1; i <= count; i++) {
+    if (i > daysUntil) break;
+    offsets.push(i);
+  }
+  return offsets.reverse();
+}
+const EXAM_PREP_SPACING_OFFER_COOLDOWN_MS = 30 * 864e5;
+function detectExamPrepSpacingOffer() {
+  if (getSchedulePreferences().examPrepSpacingStyle) return null;
+  const dismissedAt = lsGet("examPrepSpacingOfferDismissed", 0);
+  if (dismissedAt && Date.now() - dismissedAt < EXAM_PREP_SPACING_OFFER_COOLDOWN_MS) return null;
+  const timing = computeExamPrepTimingStyle();
+  return timing.style === "close-to-deadline" ? timing : null;
+}
+function dismissExamPrepSpacingOffer() {
+  lsSet("examPrepSpacingOfferDismissed", Date.now());
+}
 const STRUGGLING_BUCKET_RECENT_WINDOW = 5;
 const STRUGGLING_BUCKET_MIN_RECENT_MISSES = 4;
 const STRUGGLING_BUCKET_COOLDOWN_MS = 14 * 864e5;
@@ -4267,7 +4314,8 @@ function computeReviewDates(examDateKey, todayKey, desiredCount) {
   const exam = /* @__PURE__ */ new Date(examDateKey + "T12:00:00");
   const today = /* @__PURE__ */ new Date(todayKey + "T12:00:00");
   const daysUntil = Math.round((exam - today) / 864e5);
-  return computeReviewOffsets(daysUntil, desiredCount).map((o) => {
+  const offsetsFn = getSchedulePreferences().examPrepSpacingStyle === "close-to-deadline" ? computeCloseToDeadlineReviewOffsets : computeReviewOffsets;
+  return offsetsFn(daysUntil, desiredCount).map((o) => {
     const d = new Date(exam);
     d.setDate(d.getDate() - o);
     return dayKey(d);
@@ -6085,6 +6133,8 @@ function ScheduleSettingsPanel({ open, onClose, onSave }) {
   const [peakBuckets, setPeakBuckets] = useState(prefs.peakHourBuckets || []);
   const [manualBufferMode, setManualBufferMode] = useState(prefs.manualBufferMode || "off");
   const [automatedBufferEnabled, setAutomatedBufferEnabled] = useState(prefs.automatedBufferEnabled !== false);
+  const [examPrepSpacingStyle, setExamPrepSpacingStyle] = useState(prefs.examPrepSpacingStyle || "spread-out");
+  const [examPrepSpacingTouched, setExamPrepSpacingTouched] = useState(false);
   const togglePeakBucket = (id) => setPeakBuckets(peakBuckets.includes(id) ? peakBuckets.filter((b) => b !== id) : [...peakBuckets, id]);
   const [saved, setSaved] = useState(false);
   const workHoursInvalid = timeToMinutes(workEnd) <= timeToMinutes(workStart);
@@ -6120,7 +6170,8 @@ function ScheduleSettingsPanel({ open, onClose, onSave }) {
       weekendEndTime: weekendEnd,
       peakHourBuckets: peakBuckets,
       manualBufferMode,
-      automatedBufferEnabled
+      automatedBufferEnabled,
+      ...examPrepSpacingTouched ? { examPrepSpacingStyle } : {}
     };
     setSchedulePreferences(newPrefs);
     setSaved(true);
@@ -6179,7 +6230,30 @@ function ScheduleSettingsPanel({ open, onClose, onSave }) {
     },
     /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600 } }, opt.label),
     /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, opacity: 0.8, marginTop: 2 } }, opt.desc)
-  )))), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 22 } }, /* @__PURE__ */ React.createElement("label", { style: { display: "block", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, marginBottom: 8 } }, "Peak Focus Hours ", /* @__PURE__ */ React.createElement("span", { style: { textTransform: "none", fontWeight: 400, color: T.faint } }, "(optional)")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } }, TIER0_HOUR_BUCKETS.map((b) => /* @__PURE__ */ React.createElement("button", { key: b.id, type: "button", onClick: () => togglePeakBucket(b.id), style: peakChipStyle(peakBuckets.includes(b.id)) }, PEAK_BUCKET_LABELS[b.id], /* @__PURE__ */ React.createElement("span", { style: { opacity: 0.7, marginLeft: 4 } }, fmtClock12(minutesToTime(b.startMin)), "\u2013", fmtClock12(minutesToTime(b.endMin)))))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 6, lineHeight: 1.4 } }, "Studlin prefers these times when rescheduling missed tasks. Pick 1-2 for the strongest effect. Leave blank and Studlin will learn your best hours from your habits over time."), unreachablePeakBuckets.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.amber, marginTop: 8, lineHeight: 1.4 } }, unreachablePeakBuckets.map((b) => PEAK_BUCKET_LABELS[b.id]).join(" and "), " ", unreachablePeakBuckets.length > 1 ? "don't" : "doesn't", " overlap your Work Hours (", fmtClock12(workStart), "\u2013", fmtClock12(workEnd), ") at all, so Studlin can't actually place anything there yet \u2014 widen your Work Hours above to cover it.")), saved && /* @__PURE__ */ React.createElement("div", { style: { background: T.lime + "20", border: "1px solid " + T.lime + "44", borderRadius: 8, padding: 12, fontSize: 12, color: T.lime, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { display: "inline-flex" } }, "\u2713"), "Preferences saved! Your schedule will instantly re-sort."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10, justifyContent: "flex-end" } }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, style: { padding: "10px 18px", borderRadius: 8, border: "1px solid " + T.border, background: "transparent", color: T.muted, fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: T.font } }, "Cancel"), /* @__PURE__ */ React.createElement("button", { onClick: handleSave, disabled: !canSave, style: { padding: "10px 18px", borderRadius: 8, border: "none", background: T.lime, color: T.ink, fontSize: 12.5, fontWeight: 600, cursor: canSave ? "pointer" : "not-allowed", fontFamily: T.font, opacity: canSave ? 1 : 0.45 } }, "Save Preferences"))));
+  )))), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 22 } }, /* @__PURE__ */ React.createElement("label", { style: { display: "block", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, marginBottom: 8 } }, "Peak Focus Hours ", /* @__PURE__ */ React.createElement("span", { style: { textTransform: "none", fontWeight: 400, color: T.faint } }, "(optional)")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } }, TIER0_HOUR_BUCKETS.map((b) => /* @__PURE__ */ React.createElement("button", { key: b.id, type: "button", onClick: () => togglePeakBucket(b.id), style: peakChipStyle(peakBuckets.includes(b.id)) }, PEAK_BUCKET_LABELS[b.id], /* @__PURE__ */ React.createElement("span", { style: { opacity: 0.7, marginLeft: 4 } }, fmtClock12(minutesToTime(b.startMin)), "\u2013", fmtClock12(minutesToTime(b.endMin)))))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 6, lineHeight: 1.4 } }, "Studlin prefers these times when rescheduling missed tasks. Pick 1-2 for the strongest effect. Leave blank and Studlin will learn your best hours from your habits over time."), unreachablePeakBuckets.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.amber, marginTop: 8, lineHeight: 1.4 } }, unreachablePeakBuckets.map((b) => PEAK_BUCKET_LABELS[b.id]).join(" and "), " ", unreachablePeakBuckets.length > 1 ? "don't" : "doesn't", " overlap your Work Hours (", fmtClock12(workStart), "\u2013", fmtClock12(workEnd), ") at all, so Studlin can't actually place anything there yet \u2014 widen your Work Hours above to cover it.")), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 22 } }, /* @__PURE__ */ React.createElement("label", { style: { display: "block", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, marginBottom: 8 } }, "Exam Prep Spacing"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, [{ key: "spread-out", label: "Spread out (recommended)" }, { key: "close-to-deadline", label: "Close to the deadline" }].map((opt) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: opt.key,
+      type: "button",
+      onClick: () => {
+        setExamPrepSpacingStyle(opt.key);
+        setExamPrepSpacingTouched(true);
+      },
+      style: {
+        flex: 1,
+        fontSize: 12,
+        fontWeight: 600,
+        padding: "9px 10px",
+        borderRadius: 7,
+        cursor: "pointer",
+        fontFamily: T.font,
+        background: examPrepSpacingStyle === opt.key ? T.lime : T.card2,
+        color: examPrepSpacingStyle === opt.key ? T.ink : T.text,
+        border: "1px solid " + (examPrepSpacingStyle === opt.key ? T.lime : T.border)
+      }
+    },
+    opt.label
+  ))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 6, lineHeight: 1.4 } }, `How Studlin schedules the sessions counting down to an exam. Spread out is backed by real research on retention -- pick "Close to the deadline" if you know a spread-out plan just won't get touched.`)), saved && /* @__PURE__ */ React.createElement("div", { style: { background: T.lime + "20", border: "1px solid " + T.lime + "44", borderRadius: 8, padding: 12, fontSize: 12, color: T.lime, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { display: "inline-flex" } }, "\u2713"), "Preferences saved! Your schedule will instantly re-sort."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10, justifyContent: "flex-end" } }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, style: { padding: "10px 18px", borderRadius: 8, border: "1px solid " + T.border, background: "transparent", color: T.muted, fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: T.font } }, "Cancel"), /* @__PURE__ */ React.createElement("button", { onClick: handleSave, disabled: !canSave, style: { padding: "10px 18px", borderRadius: 8, border: "none", background: T.lime, color: T.ink, fontSize: 12.5, fontWeight: 600, cursor: canSave ? "pointer" : "not-allowed", fontFamily: T.font, opacity: canSave ? 1 : 0.45 } }, "Save Preferences"))));
 }
 function UpgradeModal({ open, onClose, feature, detail, onUpgraded }) {
   const [billing, setBilling] = useState("monthly");
@@ -23349,6 +23423,7 @@ function App() {
   const [catchUpMoveError, setCatchUpMoveError] = useState("");
   const [catchUpMoveDraft, setCatchUpMoveDraft] = useState(null);
   const [strugglingBucketOffer, setStrugglingBucketOffer] = useState(null);
+  const [examPrepSpacingOffer, setExamPrepSpacingOffer] = useState(null);
   const [peakInsightOffer, setPeakInsightOffer] = useState(null);
   const [unscheduledDueSoonOffer, setUnscheduledDueSoonOffer] = useState(null);
   const studlinAiProactive = deriveStudlinAiProactiveSignal(strugglingBucketOffer, unscheduledDueSoonOffer, peakInsightOffer);
@@ -23748,6 +23823,17 @@ function App() {
       dismissStrugglingBucket(strugglingBucketOffer.strugglingBucket);
     }
     setStrugglingBucketOffer(null);
+  };
+  const acceptExamPrepSpacingOffer = () => {
+    if (!examPrepSpacingOffer) return;
+    logSuggestionDecision("examPrepSpacing", "accepted", examPrepSpacingOffer);
+    setSchedulePreferences({ ...getSchedulePreferences(), examPrepSpacingStyle: "close-to-deadline" });
+    setExamPrepSpacingOffer(null);
+  };
+  const declineExamPrepSpacingOffer = () => {
+    if (examPrepSpacingOffer) logSuggestionDecision("examPrepSpacing", "dismissed", examPrepSpacingOffer);
+    dismissExamPrepSpacingOffer();
+    setExamPrepSpacingOffer(null);
   };
   const acceptPeakHourInsight = () => {
     if (!peakInsightOffer) return;
@@ -24338,6 +24424,10 @@ function App() {
       if (recoveryPending) queueInsightNudge("peakInsight", peakInsight);
       else setPeakInsightOffer(peakInsight);
     }
+    if (!strugglingBucket && !peakInsight) {
+      const spacingOffer = detectExamPrepSpacingOffer();
+      if (spacingOffer) setExamPrepSpacingOffer(spacingOffer);
+    }
     let working = evs;
     const prepMode = getPrepScheduleMode();
     if (prepMode !== "off") {
@@ -24743,7 +24833,7 @@ function App() {
   }, style: { width: "100%", justifyContent: "center" } }, "Done"))), /* @__PURE__ */ React.createElement(ProjectCheckInModal, { taskId: projectCheckInTaskId, onClose: () => setProjectCheckInTaskId(null), onToast: (msg) => {
     setDashToast(msg);
     setTimeout(() => setDashToast(""), 2800);
-  } }), bottomRightSlot === "suggestion" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: STUDLIN_AI_BUBBLE_CLEARANCE, right: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 360 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, marginBottom: 12, lineHeight: 1.5 } }, examPrepSuggestion.reason), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, ["shorten", "extend", "drop-remaining", "pull-closer", "shaky-packed"].includes(examPrepSuggestion.type) && /* @__PURE__ */ React.createElement(Btn, { onClick: acceptExamPrepSuggestion, style: { flex: 1, justifyContent: "center", fontSize: 12, padding: "7px 14px" } }, examPrepSuggestion.type === "shorten" ? "Shorten it" : examPrepSuggestion.type === "extend" ? "Extend it" : examPrepSuggestion.type === "drop-remaining" ? "Drop them" : examPrepSuggestion.type === "shaky-packed" ? "Fit it in anyway" : "Move it closer"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: dismissExamPrepSuggestion, style: { flex: 1, justifyContent: "center", fontSize: 12, padding: "7px 14px" } }, ["ahead-of-pace", "last-session"].includes(examPrepSuggestion.type) ? "Got it" : "Leave it"))), strugglingBucketOffer && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10, lineHeight: 1.5 } }, "Your ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.amber } }, PEAK_BUCKET_LABELS[strugglingBucketOffer.strugglingBucket].toLowerCase()), " tasks haven't been sticking \u2014 ", strugglingBucketOffer.recentMissedCount, " of your last ", strugglingBucketOffer.recentWindow, " were missed. Default new tasks to ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, PEAK_BUCKET_LABELS[strugglingBucketOffer.suggestedBucket].toLowerCase()), " instead?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: acceptStrugglingBucketOffer, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Switch to ", PEAK_BUCKET_LABELS[strugglingBucketOffer.suggestedBucket]), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: declineStrugglingBucketOffer, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Not now"))), peakInsightOffer && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10, lineHeight: 1.5 } }, "Looks like you actually finish more ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, PEAK_BUCKET_LABELS[peakInsightOffer.suggestedBucket].toLowerCase()), " tasks (", Math.round(peakInsightOffer.suggestedPct * 100), "%) than ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.amber } }, PEAK_BUCKET_LABELS[peakInsightOffer.currentBucket].toLowerCase()), " ones (", Math.round(peakInsightOffer.currentPct * 100), "%) \u2014 update your peak hours?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: acceptPeakHourInsight, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Switch to ", PEAK_BUCKET_LABELS[peakInsightOffer.suggestedBucket]), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: declinePeakHourInsight, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Not now"))), expiredPending.length > 0 && !calendarWizardOpen && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 76, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("strong", { style: { color: T.red } }, expiredPending.length, " task", expiredPending.length !== 1 ? "s" : ""), " missed ", expiredPending.length !== 1 ? "their" : "its", " deadline without being finished."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 12, maxHeight: 160, overflowY: "auto" } }, expiredPending.map((ev) => /* @__PURE__ */ React.createElement("div", { key: ev.id, style: { fontSize: 12, padding: "6px 9px", background: T.card2, borderRadius: 8, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.title))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: clearExpiredPending, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Clear them"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: () => setExpiredPending([]), style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Keep them"))), headsUpEvent && !timerTask && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "12px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 300, display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, /* @__PURE__ */ React.createElement("strong", null, headsUpEvent.title), " starts soon \u2014 ", fmtRolloverClock(headsUpEvent.time), "."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
+  } }), bottomRightSlot === "suggestion" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: STUDLIN_AI_BUBBLE_CLEARANCE, right: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 360 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, marginBottom: 12, lineHeight: 1.5 } }, examPrepSuggestion.reason), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, ["shorten", "extend", "drop-remaining", "pull-closer", "shaky-packed"].includes(examPrepSuggestion.type) && /* @__PURE__ */ React.createElement(Btn, { onClick: acceptExamPrepSuggestion, style: { flex: 1, justifyContent: "center", fontSize: 12, padding: "7px 14px" } }, examPrepSuggestion.type === "shorten" ? "Shorten it" : examPrepSuggestion.type === "extend" ? "Extend it" : examPrepSuggestion.type === "drop-remaining" ? "Drop them" : examPrepSuggestion.type === "shaky-packed" ? "Fit it in anyway" : "Move it closer"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: dismissExamPrepSuggestion, style: { flex: 1, justifyContent: "center", fontSize: 12, padding: "7px 14px" } }, ["ahead-of-pace", "last-session"].includes(examPrepSuggestion.type) ? "Got it" : "Leave it"))), strugglingBucketOffer && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10, lineHeight: 1.5 } }, "Your ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.amber } }, PEAK_BUCKET_LABELS[strugglingBucketOffer.strugglingBucket].toLowerCase()), " tasks haven't been sticking \u2014 ", strugglingBucketOffer.recentMissedCount, " of your last ", strugglingBucketOffer.recentWindow, " were missed. Default new tasks to ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, PEAK_BUCKET_LABELS[strugglingBucketOffer.suggestedBucket].toLowerCase()), " instead?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: acceptStrugglingBucketOffer, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Switch to ", PEAK_BUCKET_LABELS[strugglingBucketOffer.suggestedBucket]), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: declineStrugglingBucketOffer, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Not now"))), examPrepSpacingOffer && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10, lineHeight: 1.5 } }, "Your real exam prep tends to happen close to the deadline, no matter how far out Studlin schedules it. Want fewer, closer-together sessions instead of a spread-out plan you might not get to?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: acceptExamPrepSpacingOffer, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Switch it"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: declineExamPrepSpacingOffer, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Not now"))), peakInsightOffer && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10, lineHeight: 1.5 } }, "Looks like you actually finish more ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, PEAK_BUCKET_LABELS[peakInsightOffer.suggestedBucket].toLowerCase()), " tasks (", Math.round(peakInsightOffer.suggestedPct * 100), "%) than ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.amber } }, PEAK_BUCKET_LABELS[peakInsightOffer.currentBucket].toLowerCase()), " ones (", Math.round(peakInsightOffer.currentPct * 100), "%) \u2014 update your peak hours?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: acceptPeakHourInsight, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Switch to ", PEAK_BUCKET_LABELS[peakInsightOffer.suggestedBucket]), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: declinePeakHourInsight, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Not now"))), expiredPending.length > 0 && !calendarWizardOpen && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 76, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("strong", { style: { color: T.red } }, expiredPending.length, " task", expiredPending.length !== 1 ? "s" : ""), " missed ", expiredPending.length !== 1 ? "their" : "its", " deadline without being finished."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 12, maxHeight: 160, overflowY: "auto" } }, expiredPending.map((ev) => /* @__PURE__ */ React.createElement("div", { key: ev.id, style: { fontSize: 12, padding: "6px 9px", background: T.card2, borderRadius: 8, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.title))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: clearExpiredPending, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Clear them"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: () => setExpiredPending([]), style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Keep them"))), headsUpEvent && !timerTask && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "12px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 300, display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, /* @__PURE__ */ React.createElement("strong", null, headsUpEvent.title), " starts soon \u2014 ", fmtRolloverClock(headsUpEvent.time), "."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
     setTimerTask(headsUpEvent);
     setHeadsUpEvent(null);
   }, style: { padding: "6px 12px", fontSize: 11 } }, "Begin now"), /* @__PURE__ */ React.createElement("button", { onClick: () => setHeadsUpEvent(null), style: { background: "none", border: "none", color: T.faint, fontSize: 11, cursor: "pointer", fontFamily: T.font } }, "Dismiss"))), liveInvite && !timerTask && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: headsUpEvent ? 110 : 20, left: 20, zIndex: 999, padding: "12px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.teal}55`, boxShadow: `0 8px 24px rgba(0,0,0,0.35), 0 0 0 1px ${T.teal}22`, animation: "studlinPop 0.2s ease", maxWidth: 300, display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, /* @__PURE__ */ React.createElement("strong", null, liveInvite.title), " is locking in right now \u2014 join?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: joinLiveInvite, style: { padding: "6px 12px", fontSize: 11, background: T.teal } }, "Join now"), /* @__PURE__ */ React.createElement("button", { onClick: () => setLiveInvite(null), style: { background: "none", border: "none", color: T.faint, fontSize: 11, cursor: "pointer", fontFamily: T.font } }, "Dismiss"))), /* @__PURE__ */ React.createElement(ScheduleSettingsPanel, { open: scheduleSettingsOpen, onClose: () => setScheduleSettingsOpen(false), onSave: () => {

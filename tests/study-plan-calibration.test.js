@@ -752,3 +752,179 @@ describe("computeStudyPlanParams: gradeWeightPercent and shaky-streak (2026-08-2
     assert.deepEqual(withStreak, withoutStreak);
   });
 });
+
+describe("computeExamPrepTimingStyle (real crammer vs. spread-out detection, from completedAt vs. the exam's own date)", () => {
+  function examEvent(id, dateKey) {
+    return { id, subject: "Chemistry", kind: "exam", status: "done", date: dateKey };
+  }
+  function prepDoneDaysBefore(id, dueEventId, examDateKey, daysBefore) {
+    const examMoment = new Date(examDateKey + "T12:00:00").getTime();
+    return { id, subject: "Chemistry", kind: "study block", status: "done", isExamPrepSession: true, dueEventId, completedAt: examMoment - daysBefore * 86400000 };
+  }
+
+  test("no data at all -- null, not a guess", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", []);
+    assert.equal(m.computeExamPrepTimingStyle().style, null);
+  });
+
+  test("below MIN_EXAMS_FOR_TIMING_STYLE (only 1 real exam) -- null even with plenty of sessions", () => {
+    const m = loadStudlinModule();
+    const events = [examEvent("e1", "2026-05-20")];
+    for (let i = 0; i < 8; i++) events.push(prepDoneDaysBefore("p" + i, "e1", "2026-05-20", 1));
+    m.lsSet("events", events);
+    assert.equal(m.computeExamPrepTimingStyle().style, null, "one exam's worth of evidence isn't enough, no matter how many sessions");
+  });
+
+  test("below MIN_SESSIONS_FOR_TIMING_STYLE even with 2 real exams -- null", () => {
+    const m = loadStudlinModule();
+    const events = [
+      examEvent("e1", "2026-05-20"), prepDoneDaysBefore("p1", "e1", "2026-05-20", 1),
+      examEvent("e2", "2026-06-20"), prepDoneDaysBefore("p2", "e2", "2026-06-20", 1),
+    ];
+    m.lsSet("events", events);
+    assert.equal(m.computeExamPrepTimingStyle().style, null);
+  });
+
+  test("a real close-to-the-deadline pattern across 2 exams, 6+ sessions, calls the right style", () => {
+    const m = loadStudlinModule();
+    const events = [
+      examEvent("e1", "2026-05-20"),
+      prepDoneDaysBefore("p1", "e1", "2026-05-20", 0),
+      prepDoneDaysBefore("p2", "e1", "2026-05-20", 1),
+      prepDoneDaysBefore("p3", "e1", "2026-05-20", 2),
+      examEvent("e2", "2026-06-20"),
+      prepDoneDaysBefore("p4", "e2", "2026-06-20", 0),
+      prepDoneDaysBefore("p5", "e2", "2026-06-20", 1),
+      prepDoneDaysBefore("p6", "e2", "2026-06-20", 2),
+    ];
+    m.lsSet("events", events);
+    const result = m.computeExamPrepTimingStyle();
+    assert.equal(result.style, "close-to-deadline");
+    assert.equal(result.examCount, 2);
+    assert.equal(result.sampleCount, 6);
+  });
+
+  test("a real spread-out pattern calls the opposite style with the same amount of evidence", () => {
+    const m = loadStudlinModule();
+    const events = [
+      examEvent("e1", "2026-05-20"),
+      prepDoneDaysBefore("p1", "e1", "2026-05-20", 14),
+      prepDoneDaysBefore("p2", "e1", "2026-05-20", 8),
+      prepDoneDaysBefore("p3", "e1", "2026-05-20", 3),
+      examEvent("e2", "2026-06-20"),
+      prepDoneDaysBefore("p4", "e2", "2026-06-20", 14),
+      prepDoneDaysBefore("p5", "e2", "2026-06-20", 8),
+      prepDoneDaysBefore("p6", "e2", "2026-06-20", 3),
+    ];
+    m.lsSet("events", events);
+    assert.equal(m.computeExamPrepTimingStyle().style, "spread-out");
+  });
+
+  test("a still-upcoming (not done) exam's sessions don't count as evidence -- the outcome isn't settled yet", () => {
+    const m = loadStudlinModule();
+    const events = [
+      { id: "e1", subject: "Chemistry", kind: "exam", status: "pending", date: "2026-05-20" },
+      prepDoneDaysBefore("p1", "e1", "2026-05-20", 1),
+      prepDoneDaysBefore("p2", "e1", "2026-05-20", 1),
+      prepDoneDaysBefore("p3", "e1", "2026-05-20", 1),
+      examEvent("e2", "2026-06-20"),
+      prepDoneDaysBefore("p4", "e2", "2026-06-20", 1),
+      prepDoneDaysBefore("p5", "e2", "2026-06-20", 1),
+      prepDoneDaysBefore("p6", "e2", "2026-06-20", 1),
+    ];
+    m.lsSet("events", events);
+    assert.equal(m.computeExamPrepTimingStyle().style, null, "only e2 (done) counts -- 1 real exam is below the floor");
+  });
+
+  test("a session somehow completed after the exam date is excluded from the evidence entirely", () => {
+    const m = loadStudlinModule();
+    const events = [
+      examEvent("e1", "2026-05-20"),
+      prepDoneDaysBefore("p1", "e1", "2026-05-20", -2), // "completed" after the exam
+      prepDoneDaysBefore("p2", "e1", "2026-05-20", 1),
+      prepDoneDaysBefore("p3", "e1", "2026-05-20", 1),
+      examEvent("e2", "2026-06-20"),
+      prepDoneDaysBefore("p4", "e2", "2026-06-20", 1),
+      prepDoneDaysBefore("p5", "e2", "2026-06-20", 1),
+      prepDoneDaysBefore("p6", "e2", "2026-06-20", 1),
+    ];
+    m.lsSet("events", events);
+    const result = m.computeExamPrepTimingStyle();
+    assert.equal(result.sampleCount, 5, "the after-the-exam completion shouldn't count toward the sample");
+  });
+});
+
+describe("computeCloseToDeadlineReviewOffsets (the alternate curve -- never applied without the student's own choice)", () => {
+  test("fewer sessions than the default curve, capped at 4", () => {
+    const m = loadStudlinModule();
+    assert.ok(m.computeCloseToDeadlineReviewOffsets(60, 4).length <= 4);
+    assert.ok(m.computeCloseToDeadlineReviewOffsets(60, 10).length <= 4, "should cap even if a caller asks for more");
+  });
+
+  test("defaults to 3 sessions when no count is given", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.computeCloseToDeadlineReviewOffsets(60, undefined).length, 3);
+  });
+
+  test("sessions are packed on the days immediately before the exam, not spread outward", () => {
+    const m = loadStudlinModule();
+    const offsets = m.computeCloseToDeadlineReviewOffsets(60, 3);
+    // Cross-realm array from the vm-loaded module -- assert.deepEqual isn't
+    // reliable against a plain literal here (see harness.js's own vm
+    // comment), compare serialized instead.
+    assert.equal(JSON.stringify(offsets), JSON.stringify([3, 2, 1]), "furthest-out first, matching computeReviewOffsets' own return convention");
+  });
+
+  test("never schedules further out than there's real room for", () => {
+    const m = loadStudlinModule();
+    const offsets = m.computeCloseToDeadlineReviewOffsets(2, 3);
+    assert.ok(offsets.every(o => o <= 2));
+  });
+
+  test("daysUntil 0 -- one session, today", () => {
+    const m = loadStudlinModule();
+    assert.equal(JSON.stringify(m.computeCloseToDeadlineReviewOffsets(0, 3)), JSON.stringify([0]));
+  });
+
+  test("exam already passed -- empty, never schedules into the past", () => {
+    const m = loadStudlinModule();
+    assert.equal(JSON.stringify(m.computeCloseToDeadlineReviewOffsets(-1, 3)), JSON.stringify([]));
+  });
+});
+
+describe("computeReviewDates branches on examPrepSpacingStyle, defaulting to today's unchanged curve", () => {
+  test("no preference set -- byte-identical to calling computeReviewOffsets directly", () => {
+    const m = loadStudlinModule();
+    m.lsSet("schedulePrefs", {});
+    const viaDates = m.computeReviewDates("2026-06-20", "2026-05-01", 4);
+    const direct = m.computeReviewOffsets(Math.round((new Date("2026-06-20T12:00:00") - new Date("2026-05-01T12:00:00")) / 86400000), 4)
+      .map(o => { const d = new Date("2026-06-20T12:00:00"); d.setDate(d.getDate() - o); return m.dayKey(d); }).sort();
+    assert.equal(JSON.stringify(viaDates), JSON.stringify(direct));
+  });
+
+  test("an explicit 'spread-out' preference is identical to leaving it unset", () => {
+    const m = loadStudlinModule();
+    m.lsSet("schedulePrefs", { examPrepSpacingStyle: "spread-out" });
+    const withExplicit = m.computeReviewDates("2026-06-20", "2026-05-01", 4);
+    m.lsSet("schedulePrefs", {});
+    const withUnset = m.computeReviewDates("2026-06-20", "2026-05-01", 4);
+    assert.equal(JSON.stringify(withExplicit), JSON.stringify(withUnset));
+  });
+
+  test("'close-to-deadline' preference actually changes the result", () => {
+    const m = loadStudlinModule();
+    m.lsSet("schedulePrefs", {});
+    const defaultDates = m.computeReviewDates("2026-06-20", "2026-05-01", 4);
+    m.lsSet("schedulePrefs", { examPrepSpacingStyle: "close-to-deadline" });
+    const closeDates = m.computeReviewDates("2026-06-20", "2026-05-01", 4);
+    assert.notEqual(JSON.stringify(closeDates), JSON.stringify(defaultDates));
+    // Every close-to-deadline session should land within a few days of the
+    // exam, not weeks out like the default expanding curve's earliest slot.
+    const examMs = new Date("2026-06-20T12:00:00").getTime();
+    for (const dateKey of closeDates) {
+      const daysBefore = Math.round((examMs - new Date(dateKey + "T12:00:00").getTime()) / 86400000);
+      assert.ok(daysBefore <= 4, `close-to-deadline session landed ${daysBefore} days out, expected close to the exam`);
+    }
+  });
+});

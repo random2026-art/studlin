@@ -3594,6 +3594,83 @@ function computeSubjectExamPrepTotals(subject){
     return {weight,minutes,examCount:totals.length,isConfident:totals.length>=MIN_EXAMS_FOR_PREP_TOTAL};
   });
 }
+// Whether this student's real exam prep actually happens spread out, or
+// only right before the deadline no matter how far out Studlin schedules
+// it. Measures this from completedAt vs. the exam's own date -- both fully
+// durable, no new tracking needed -- rather than trying to reconstruct
+// whether a session was ever rescheduled along the way (movedByStudlin/
+// reshuffleCount track the MECHANICS of rescheduling, not survivable
+// through every completion path anyway; when real work actually happened
+// relative to the deadline is the more direct, already-durable signal, and
+// the thing that actually matters here). Same "exams are rare" reasoning as
+// MIN_EXAMS_FOR_PREP_TOTAL -- TIER0_MIN_BUCKET_SAMPLE would almost never be
+// reached by exam count alone in a real term.
+const MIN_EXAMS_FOR_TIMING_STYLE=2;
+const MIN_SESSIONS_FOR_TIMING_STYLE=6;
+// A judgment call, not a cited research number -- the real feature here is
+// detecting a real pattern and offering an alternative at all; exactly
+// where the line sits is a reasonable choice, not something worth dressing
+// up as more precise than it is.
+const CRAMMER_MEDIAN_DAYS_THRESHOLD=2;
+function computeExamPrepTimingStyle(){
+  const events=lsGet("events",[]);
+  const examsById=new Map(events.filter(e=>e.kind==="exam"&&e.status==="done").map(e=>[e.id,e]));
+  const daysBeforeList=[];
+  const examIdsSeen=new Set();
+  for(const e of events){
+    if(!(e.isExamPrepSession&&e.status==="done"&&e.completedAt&&e.dueEventId))continue;
+    const exam=examsById.get(e.dueEventId);
+    if(!exam)continue;
+    const daysBeforeExam=(new Date(exam.date+"T12:00:00").getTime()-e.completedAt)/86400000;
+    if(daysBeforeExam<0)continue; // completed after the exam date somehow -- not real prep evidence
+    daysBeforeList.push(daysBeforeExam);
+    examIdsSeen.add(exam.id);
+  }
+  if(examIdsSeen.size<MIN_EXAMS_FOR_TIMING_STYLE||daysBeforeList.length<MIN_SESSIONS_FOR_TIMING_STYLE){
+    return {style:null,sampleCount:daysBeforeList.length,examCount:examIdsSeen.size};
+  }
+  daysBeforeList.sort((a,b)=>a-b);
+  const mid=Math.floor(daysBeforeList.length/2);
+  const medianDaysBefore=daysBeforeList.length%2?daysBeforeList[mid]:(daysBeforeList[mid-1]+daysBeforeList[mid])/2;
+  return {style:medianDaysBefore<=CRAMMER_MEDIAN_DAYS_THRESHOLD?"close-to-deadline":"spread-out",medianDaysBefore,sampleCount:daysBeforeList.length,examCount:examIdsSeen.size};
+}
+// Studlin never applies this on its own -- see the offer/dismiss pair below
+// and computeReviewDates' own branch. Fewer sessions than the default
+// expanding curve, packed on the days immediately before the exam instead
+// of spread outward, matching what a demonstrated close-to-the-deadline
+// worker will realistically use rather than padding a plan with far-out
+// sessions computeExamPrepTimingStyle's own evidence already says tend to
+// go undone.
+function computeCloseToDeadlineReviewOffsets(daysUntil,desiredCount){
+  const count=Math.max(1,Math.min(4,desiredCount||3));
+  if(daysUntil<0)return [];
+  if(daysUntil===0)return [0];
+  const offsets=[];
+  for(let i=1;i<=count;i++){
+    if(i>daysUntil)break;
+    offsets.push(i);
+  }
+  return offsets.reverse();
+}
+// Same offer/dismiss/cooldown shape as detectStrugglingBucket/
+// dismissStrugglingBucket -- detect a real pattern, offer it once, never
+// auto-apply, back off after a decline instead of nagging. Account-wide
+// (not per-item) so a single Date.now() timestamp is enough, no keyed map
+// needed. Never offered again once the student has made an explicit choice
+// either way through Settings (examPrepSpacingStyle set to anything, even
+// the default "spread-out" if they confirmed it) -- an explicit choice is
+// the real signal to stop suggesting, whichever direction it went.
+const EXAM_PREP_SPACING_OFFER_COOLDOWN_MS=30*86400000;
+function detectExamPrepSpacingOffer(){
+  if(getSchedulePreferences().examPrepSpacingStyle)return null;
+  const dismissedAt=lsGet("examPrepSpacingOfferDismissed",0);
+  if(dismissedAt&&Date.now()-dismissedAt<EXAM_PREP_SPACING_OFFER_COOLDOWN_MS)return null;
+  const timing=computeExamPrepTimingStyle();
+  return timing.style==="close-to-deadline"?timing:null;
+}
+function dismissExamPrepSpacingOffer(){
+  lsSet("examPrepSpacingOfferDismissed",Date.now());
+}
 // A recent-streak detector, separate from getBucketReliability's all-time
 // aggregate — a student sliding lately deserves a nudge before enough bad
 // history piles up to drag the long-run rate down on its own. Suppressed
@@ -7183,7 +7260,14 @@ function computeReviewDates(examDateKey,todayKey,desiredCount){
   const exam=new Date(examDateKey+"T12:00:00");
   const today=new Date(todayKey+"T12:00:00");
   const daysUntil=Math.round((exam-today)/86400000);
-  return computeReviewOffsets(daysUntil,desiredCount).map(o=>{
+  // The one integration point for examPrepSpacingStyle (see
+  // computeExamPrepTimingStyle/computeCloseToDeadlineReviewOffsets) --
+  // every real caller (buildExamSessionEvents, buildSpacedSessionPreviews)
+  // goes through this function, so neither needs its own awareness of the
+  // choice. Anything other than an explicit "close-to-deadline" (unset, or
+  // an explicitly-confirmed "spread-out") keeps today's exact curve.
+  const offsetsFn=getSchedulePreferences().examPrepSpacingStyle==="close-to-deadline"?computeCloseToDeadlineReviewOffsets:computeReviewOffsets;
+  return offsetsFn(daysUntil,desiredCount).map(o=>{
     const d=new Date(exam);d.setDate(d.getDate()-o);return dayKey(d);
   }).sort();
 }
@@ -10279,6 +10363,16 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
   const [peakBuckets,setPeakBuckets]=useState(prefs.peakHourBuckets||[]);
   const [manualBufferMode,setManualBufferMode]=useState(prefs.manualBufferMode||"off");
   const [automatedBufferEnabled,setAutomatedBufferEnabled]=useState(prefs.automatedBufferEnabled!==false);
+  // examPrepSpacingTouched (same "touched" idiom Add Task's own Duration
+  // field uses) -- only written into newPrefs on Save if the student
+  // actually interacted with this control. Without it, saving this modal
+  // for any OTHER reason (just widening Work Hours) would silently stamp
+  // an implicit "spread-out" confirmation, which is exactly the signal
+  // detectExamPrepSpacingOffer uses to permanently stop offering the
+  // close-to-deadline alternative -- that should only happen when the
+  // student actually looked at and confirmed this specific choice.
+  const [examPrepSpacingStyle,setExamPrepSpacingStyle]=useState(prefs.examPrepSpacingStyle||"spread-out");
+  const [examPrepSpacingTouched,setExamPrepSpacingTouched]=useState(false);
   const togglePeakBucket=(id)=>setPeakBuckets(peakBuckets.includes(id)?peakBuckets.filter(b=>b!==id):[...peakBuckets,id]);
   const [saved,setSaved]=useState(false);
 
@@ -10345,6 +10439,7 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
       peakHourBuckets:peakBuckets,
       manualBufferMode,
       automatedBufferEnabled,
+      ...(examPrepSpacingTouched?{examPrepSpacingStyle}:{}),
     };
     setSchedulePreferences(newPrefs);
     setSaved(true);
@@ -10514,6 +10609,22 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
               {unreachablePeakBuckets.map(b=>PEAK_BUCKET_LABELS[b.id]).join(" and ")} {unreachablePeakBuckets.length>1?"don't":"doesn't"} overlap your Work Hours ({fmtClock12(workStart)}–{fmtClock12(workEnd)}) at all, so Studlin can't actually place anything there yet — widen your Work Hours above to cover it.
             </div>
           )}
+        </div>
+
+        <div style={{marginBottom:22}}>
+          <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>Exam Prep Spacing</label>
+          <div style={{display:"flex",gap:8}}>
+            {[{key:"spread-out",label:"Spread out (recommended)"},{key:"close-to-deadline",label:"Close to the deadline"}].map(opt=>(
+              <button key={opt.key} type="button" onClick={()=>{setExamPrepSpacingStyle(opt.key);setExamPrepSpacingTouched(true);}}
+                style={{flex:1,fontSize:12,fontWeight:600,padding:"9px 10px",borderRadius:7,cursor:"pointer",fontFamily:T.font,
+                  background:examPrepSpacingStyle===opt.key?T.lime:T.card2,
+                  color:examPrepSpacingStyle===opt.key?T.ink:T.text,
+                  border:"1px solid "+(examPrepSpacingStyle===opt.key?T.lime:T.border)}}>
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>How Studlin schedules the sessions counting down to an exam. Spread out is backed by real research on retention -- pick "Close to the deadline" if you know a spread-out plan just won't get touched.</div>
         </div>
 
         {saved&&<div style={{background:T.lime+"20",border:"1px solid "+T.lime+"44",borderRadius:8,padding:12,fontSize:12,color:T.lime,marginBottom:16,display:"flex",alignItems:"center",gap:8}}>
@@ -39703,6 +39814,7 @@ function App() {
   // {strugglingBucket,suggestedBucket,...} or null. Never set while
   // catchUpBanner is pending -- queued to Dashboard instead (mount effect).
   const [strugglingBucketOffer,setStrugglingBucketOffer]=useState(null);
+  const [examPrepSpacingOffer,setExamPrepSpacingOffer]=useState(null);
   // Same idiom again, this time for detectPeakHourInsight — an all-time,
   // well-sampled gap between the declared peak bucket and a better-
   // performing one, not a recent miss streak. {currentBucket,suggestedBucket,...} or null.
@@ -40337,6 +40449,21 @@ function App() {
       dismissStrugglingBucket(strugglingBucketOffer.strugglingBucket);
     }
     setStrugglingBucketOffer(null);
+  };
+  // Writes examPrepSpacingStyle directly (not through examPrepSpacingTouched
+  // -- that flag only exists to protect ScheduleSettingsPanel's own Save
+  // from implicitly confirming a choice the student never looked at; this
+  // IS the student looking at and confirming it).
+  const acceptExamPrepSpacingOffer=()=>{
+    if(!examPrepSpacingOffer)return;
+    logSuggestionDecision("examPrepSpacing","accepted",examPrepSpacingOffer);
+    setSchedulePreferences({...getSchedulePreferences(),examPrepSpacingStyle:"close-to-deadline"});
+    setExamPrepSpacingOffer(null);
+  };
+  const declineExamPrepSpacingOffer=()=>{
+    if(examPrepSpacingOffer)logSuggestionDecision("examPrepSpacing","dismissed",examPrepSpacingOffer);
+    dismissExamPrepSpacingOffer();
+    setExamPrepSpacingOffer(null);
   };
   // Same explicit-action-only contract as acceptStrugglingBucketOffer above.
   const acceptPeakHourInsight=()=>{
@@ -41238,6 +41365,14 @@ function App() {
     if(peakInsight){
       if(recoveryPending)queueInsightNudge("peakInsight",peakInsight);
       else setPeakInsightOffer(peakInsight);
+    }
+    // Same shared-slot deference as peakInsight above, plus this one has
+    // its own long (30-day) cooldown already, so deferring on a busy day
+    // costs nothing -- it isn't urgent the way a real recovery signal is,
+    // not worth its own queueInsightNudge path.
+    if(!strugglingBucket&&!peakInsight){
+      const spacingOffer=detectExamPrepSpacingOffer();
+      if(spacingOffer)setExamPrepSpacingOffer(spacingOffer);
     }
     // A missed task is NEVER moved on its own anymore. This used to be Tier
     // 0's silent-commit loop for any lone missed item (banner only from 2+),
@@ -42195,6 +42330,17 @@ function App() {
           <div style={{display:"flex",gap:8}}>
             <Btn onClick={acceptStrugglingBucketOffer} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Switch to {PEAK_BUCKET_LABELS[strugglingBucketOffer.suggestedBucket]}</Btn>
             <Btn variant="ghost" onClick={declineStrugglingBucketOffer} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Not now</Btn>
+          </div>
+        </div>
+      )}
+      {examPrepSpacingOffer&&(
+        <div style={{position:"fixed",bottom:20,left:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
+          <div style={{fontSize:13,color:T.white,marginBottom:10,lineHeight:1.5}}>
+            Your real exam prep tends to happen close to the deadline, no matter how far out Studlin schedules it. Want fewer, closer-together sessions instead of a spread-out plan you might not get to?
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <Btn onClick={acceptExamPrepSpacingOffer} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Switch it</Btn>
+            <Btn variant="ghost" onClick={declineExamPrepSpacingOffer} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Not now</Btn>
           </div>
         </div>
       )}
