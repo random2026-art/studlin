@@ -326,11 +326,319 @@ describe("suggestDurationFor (historical duration learning)", () => {
       assert.ok(withTwo > 25, "even 2 real samples should move the estimate off the flat generic default");
     });
 
-    test("zero real samples still returns null -- there's nothing to blend, caller's own ||25 applies", () => {
+    test("zero real samples still returns null when the student has no broader history to personalize from either -- caller's own ||25 applies", () => {
       const m = loadStudlinModule();
       m.lsSet("events", []);
       assert.equal(m.suggestDurationFor("Chemistry", "study block"), null);
     });
+  });
+
+  describe("personalized fallback (studentBaselineDuration) -- replaces the old flat 25-minute default with this student's own cross-subject pace", () => {
+    test("studentBaselineDuration is null below the sample floor, same gate as everything else here", () => {
+      const m = loadStudlinModule();
+      m.lsSet("events", Array.from({ length: 7 }, (_, i) => doneSession({ id: "e-" + i, subject: "Physics", timeSpent: 90 })));
+      assert.equal(m.studentBaselineDuration(), null);
+    });
+
+    test("studentBaselineDuration is this student's own median across every subject, once there's enough of it", () => {
+      const m = loadStudlinModule();
+      const events = Array.from({ length: 8 }, (_, i) => doneSession({ id: "e-" + i, subject: "Physics", timeSpent: 90 }));
+      m.lsSet("events", events);
+      assert.equal(m.studentBaselineDuration(), 90);
+    });
+
+    test("a brand-new subject (zero samples) uses the student's own baseline instead of returning null, when they have one", () => {
+      const m = loadStudlinModule();
+      // 8 real Physics sessions at 90min establish this student's baseline;
+      // Chemistry has never been touched at all.
+      const physics = Array.from({ length: 8 }, (_, i) => doneSession({ id: "p-" + i, subject: "Physics", timeSpent: 90 }));
+      m.lsSet("events", physics);
+      assert.equal(m.suggestDurationFor("Chemistry", "study block"), 90, "a new class should start from what this student is actually like, not a flat platform-wide constant");
+    });
+
+    test("below-threshold blending targets the student's own baseline instead of the flat generic default, once they have one", () => {
+      const m = loadStudlinModule();
+      // 8 Physics sessions at 90min (this student's real baseline, clearly
+      // not the old flat 25) + 2 thin real Chemistry sessions at 90min too.
+      // If the blend still targeted the flat 25 default, 2/8 real weight on
+      // a 90min median would land well below 90; targeting the 90min
+      // baseline instead means the blend barely needs to move at all.
+      const physics = Array.from({ length: 8 }, (_, i) => doneSession({ id: "p-" + i, subject: "Physics", timeSpent: 90 }));
+      const chemistry = [doneSession({ id: "c1", timeSpent: 90 }), doneSession({ id: "c2", timeSpent: 90 })];
+      m.lsSet("events", [...physics, ...chemistry]);
+      const result = m.suggestDurationFor("Chemistry", "study block");
+      assert.ok(result > 60, `blend should land near the 90min personal baseline, not pulled down toward the old flat 25 default, got ${result}`);
+    });
+
+    test("a student with no broader history yet still falls all the way back to the flat generic default -- personalization needs real evidence too", () => {
+      const m = loadStudlinModule();
+      m.lsSet("events", []);
+      assert.equal(m.suggestDurationFor("Chemistry", "study block"), null, "no baseline AND no subject data -- null, caller's own ||25 still applies");
+    });
+  });
+
+  describe("subjectDurationOverride (student-edited Insights tab correction)", () => {
+    test("an override wins outright, ignoring real completion history entirely", () => {
+      const m = loadStudlinModule();
+      const events = Array.from({ length: 8 }, (_, i) => doneSession({ id: "e-" + i, timeSpent: 60 }));
+      m.lsSet("events", events);
+      m.lsSet("subjectDurationOverride", { Chemistry: 45 });
+      assert.equal(m.suggestDurationFor("Chemistry", "study block"), 45);
+    });
+
+    test("with zero real history, an override still returns the student's number instead of null", () => {
+      const m = loadStudlinModule();
+      m.lsSet("events", []);
+      m.lsSet("subjectDurationOverride", { Chemistry: 50 });
+      assert.equal(m.suggestDurationFor("Chemistry", "study block"), 50);
+    });
+
+    test("an override for one subject doesn't touch another subject's real learned duration", () => {
+      const m = loadStudlinModule();
+      const events = Array.from({ length: 8 }, (_, i) => doneSession({ id: "e-" + i, timeSpent: 60 }));
+      m.lsSet("events", events);
+      m.lsSet("subjectDurationOverride", { Biology: 20 });
+      assert.equal(m.suggestDurationFor("Chemistry", "study block"), 60, "Chemistry has no override, so it should still learn from its own real data");
+    });
+  });
+
+  describe("timeSpentSource:'self-reported' (the non-timer duration follow-up) counts for less than a timer-measured sample", () => {
+    test("a self-reported sample still counts toward the sample-size gate, but is discounted in the median itself", () => {
+      const m = loadStudlinModule();
+      // 4 real 20min timer sessions + 4 self-reported 60min guesses. An
+      // unweighted median of [20,20,20,20,60,60,60,60] would be 40; the
+      // self-reported group's halved credit should pull the result below
+      // that, toward the timer-measured 20min group instead.
+      const timed = Array.from({ length: 4 }, (_, i) => doneSession({ id: "t-" + i, timeSpent: 20 }));
+      const selfReported = Array.from({ length: 4 }, (_, i) => doneSession({ id: "sr-" + i, timeSpent: 60, timeSpentSource: "self-reported" }));
+      m.lsSet("events", [...timed, ...selfReported]);
+      const result = m.suggestDurationFor("Chemistry", "study block");
+      assert.ok(result < 40, "self-reported samples should be discounted below an unweighted median of 40, got " + result);
+    });
+
+    test("all-timer data of the exact same shape is unaffected by the self-report discount", () => {
+      const m = loadStudlinModule();
+      const events = [
+        ...Array.from({ length: 4 }, (_, i) => doneSession({ id: "a-" + i, timeSpent: 20 })),
+        ...Array.from({ length: 4 }, (_, i) => doneSession({ id: "b-" + i, timeSpent: 40 })),
+      ];
+      m.lsSet("events", events);
+      assert.equal(m.suggestDurationFor("Chemistry", "study block"), 30, "identical to the existing untouched-by-self-report-discount test above");
+    });
+  });
+});
+
+describe("durationSampleCountFor (the follow-up question's own trigger gate)", () => {
+  function doneSession(overrides) {
+    return { id: "s1", subject: "Chemistry", kind: "study block", status: "done", timeSpent: 30, ...overrides };
+  }
+  test("mirrors suggestDurationFor's own filter -- same exclusions, same count", () => {
+    const m = loadStudlinModule();
+    const real = Array.from({ length: 3 }, (_, i) => doneSession({ id: "r-" + i }));
+    const chores = Array.from({ length: 2 }, (_, i) => doneSession({ id: "c-" + i, isGeneralTask: true }));
+    m.lsSet("events", [...real, ...chores]);
+    assert.equal(m.durationSampleCountFor("Chemistry", "study block"), 3, "isGeneralTask completions must not inflate the count, same as suggestDurationFor");
+  });
+  test("zero for a subject/kind with no completions at all", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", []);
+    assert.equal(m.durationSampleCountFor("Chemistry", "study block"), 0);
+  });
+});
+
+describe("computeSubjectDurationInsights (Insights tab's duration card)", () => {
+  function doneSession(overrides) {
+    return { id: "s1", subject: "Chemistry", kind: "study block", status: "done", timeSpent: 30, ...overrides };
+  }
+  test("a subject with zero data and no override is dropped entirely, not shown as a fake row", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", []);
+    assert.equal(m.computeSubjectDurationInsights(["Chemistry"]).length, 0);
+  });
+  test("below the sample floor: shown, but flagged not confident", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", [doneSession({ id: "a" }), doneSession({ id: "b" })]);
+    const rows = m.computeSubjectDurationInsights(["Chemistry"]);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].isConfident, false);
+    assert.equal(rows[0].sampleCount, 2);
+  });
+  test("at/above the sample floor: flagged confident", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", Array.from({ length: 8 }, (_, i) => doneSession({ id: "e-" + i })));
+    const rows = m.computeSubjectDurationInsights(["Chemistry"]);
+    assert.equal(rows[0].isConfident, true);
+  });
+  test("an override alone (zero real data) is shown, confident, and flagged as the student's own number", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", []);
+    m.lsSet("subjectDurationOverride", { Chemistry: 40 });
+    const rows = m.computeSubjectDurationInsights(["Chemistry"]);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].minutes, 40);
+    assert.equal(rows[0].isOverridden, true);
+    assert.equal(rows[0].isConfident, true);
+  });
+  test("a confident, non-overridden subject carries a real spread range, not just the single point estimate", () => {
+    const m = loadStudlinModule();
+    const events = [20, 20, 30, 30, 40, 40, 50, 50].map((t, i) => doneSession({ id: "e-" + i, timeSpent: t }));
+    m.lsSet("events", events);
+    const rows = m.computeSubjectDurationInsights(["Chemistry"]);
+    assert.ok(rows[0].range, "a well-sampled subject should carry a range");
+    assert.ok(rows[0].range.low < rows[0].range.high, "range should be a real spread, not a single point");
+  });
+  test("an overridden subject never shows a computed range -- the override IS the number, there's nothing to spread", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", Array.from({ length: 8 }, (_, i) => doneSession({ id: "e-" + i, timeSpent: 60 })));
+    m.lsSet("subjectDurationOverride", { Chemistry: 45 });
+    const rows = m.computeSubjectDurationInsights(["Chemistry"]);
+    assert.equal(rows[0].range, null);
+  });
+  test("a still-thin subject carries no range either -- too few real points for a spread to mean anything", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", [doneSession({ id: "a" }), doneSession({ id: "b" })]);
+    const rows = m.computeSubjectDurationInsights(["Chemistry"]);
+    assert.equal(rows[0].range, null);
+  });
+});
+
+describe("durationRangeFor (the Insights card's honest spread, not a fake-precise point number)", () => {
+  function doneSession(overrides) {
+    return { id: "s1", subject: "Chemistry", kind: "study block", status: "done", timeSpent: 30, ...overrides };
+  }
+  test("null below its own sample floor (4) -- fewer real points aren't a real spread", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", [doneSession({ id: "a", timeSpent: 20 }), doneSession({ id: "b", timeSpent: 40 }), doneSession({ id: "c", timeSpent: 60 })]);
+    assert.equal(m.durationRangeFor("Chemistry", "study block"), null);
+  });
+  test("a real 25th-75th percentile spread once there's enough data", () => {
+    const m = loadStudlinModule();
+    const events = [10, 20, 30, 40, 50, 60, 70, 80].map((t, i) => doneSession({ id: "e-" + i, timeSpent: t }));
+    m.lsSet("events", events);
+    const range = m.durationRangeFor("Chemistry", "study block");
+    assert.ok(range.low < range.high);
+    assert.ok(range.low >= 15, "the range floor should never drop below the app-wide 15min minimum");
+  });
+  test("all-identical durations collapse to a zero-width range, not an error", () => {
+    const m = loadStudlinModule();
+    const events = Array.from({ length: 4 }, (_, i) => doneSession({ id: "e-" + i, timeSpent: 50 }));
+    m.lsSet("events", events);
+    const range = m.durationRangeFor("Chemistry", "study block");
+    assert.equal(range.low, 50);
+    assert.equal(range.high, 50);
+  });
+});
+
+describe("computeSubjectExamPrepTotals (total study time before an exam, split by quiz vs. major)", () => {
+  function examEvent(overrides) {
+    return { id: "exam1", subject: "Chemistry", kind: "exam", status: "done", examWeight: "major", ...overrides };
+  }
+  function prepSession(overrides) {
+    return { id: "p1", subject: "Chemistry", kind: "study block", status: "done", isExamPrepSession: true, dueEventId: "exam1", timeSpent: 60, ...overrides };
+  }
+  test("no exams at all -- empty result, not a fabricated zero", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", []);
+    assert.equal(m.computeSubjectExamPrepTotals("Chemistry").length, 0);
+  });
+  test("an exam with a plan but zero completed prep sessions contributes nothing -- it's not evidence either way", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", [examEvent({})]);
+    assert.equal(m.computeSubjectExamPrepTotals("Chemistry").length, 0);
+  });
+  test("a still-upcoming (not done) exam is excluded even if it somehow has completed prep sessions", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", [examEvent({ status: "pending" }), prepSession({})]);
+    assert.equal(m.computeSubjectExamPrepTotals("Chemistry").length, 0);
+  });
+  test("sums real completed prep time per exam, below its own MIN_EXAMS_FOR_PREP_TOTAL floor it's flagged not confident", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", [examEvent({}), prepSession({ id: "p1", timeSpent: 60 }), prepSession({ id: "p2", timeSpent: 40 })]);
+    const rows = m.computeSubjectExamPrepTotals("Chemistry");
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].minutes, 100, "should sum, not average, the sessions within one exam");
+    assert.equal(rows[0].examCount, 1);
+    assert.equal(rows[0].isConfident, false, "only one real exam -- below the 2-exam floor");
+  });
+  test("quiz and major exams are split into separate rows, never averaged together", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", [
+      examEvent({ id: "quiz1", examWeight: "quiz" }), prepSession({ id: "pq1", dueEventId: "quiz1", timeSpent: 30 }),
+      examEvent({ id: "quiz2", examWeight: "quiz" }), prepSession({ id: "pq2", dueEventId: "quiz2", timeSpent: 50 }),
+      examEvent({ id: "final1", examWeight: "major" }), prepSession({ id: "pf1", dueEventId: "final1", timeSpent: 600 }),
+      examEvent({ id: "final2", examWeight: "major" }), prepSession({ id: "pf2", dueEventId: "final2", timeSpent: 700 }),
+    ]);
+    const rows = m.computeSubjectExamPrepTotals("Chemistry");
+    const quiz = rows.find(r => r.weight === "quiz"), major = rows.find(r => r.weight === "major");
+    assert.ok(quiz && major, "both weight buckets should be present");
+    assert.ok(quiz.minutes < major.minutes, "a quiz's real total shouldn't be dragged up by a final's, or vice versa");
+    assert.equal(quiz.isConfident, true, "2 real quizzes clears MIN_EXAMS_FOR_PREP_TOTAL");
+    assert.equal(major.isConfident, true, "2 real finals clears MIN_EXAMS_FOR_PREP_TOTAL");
+  });
+  test("only counts this exact subject -- a different subject's exams never leak in", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", [examEvent({ subject: "Physics" }), prepSession({ subject: "Physics" })]);
+    assert.equal(m.computeSubjectExamPrepTotals("Chemistry").length, 0);
+  });
+});
+
+describe("question-asking dismiss streaks (recordQuestionDismissed/recordQuestionAnswered)", () => {
+  test("a skip below the streak limit does not auto-off the toggle", () => {
+    const m = loadStudlinModule();
+    m.lsSet("settings", { askDurationQuestions: true });
+    const r1 = m.recordQuestionDismissed("duration");
+    const r2 = m.recordQuestionDismissed("duration");
+    assert.equal(r1.autoOff, false);
+    assert.equal(r2.autoOff, false);
+    assert.equal(m.lsGet("settings", {}).askDurationQuestions, true, "toggle must stay on below the streak limit");
+  });
+
+  test("hitting the streak limit auto-flips the matching toggle off and resets the streak", () => {
+    const m = loadStudlinModule();
+    m.lsSet("settings", { askCheckIns: true });
+    m.recordQuestionDismissed("checkIn");
+    m.recordQuestionDismissed("checkIn");
+    const r3 = m.recordQuestionDismissed("checkIn");
+    assert.equal(r3.autoOff, true);
+    assert.equal(r3.prefKey, "askCheckIns");
+    assert.equal(m.lsGet("settings", {}).askCheckIns, false, "the matching toggle should have been flipped off");
+    assert.equal(m.lsGet("questionDismissStreak", {}).checkIn, 0, "streak resets once it fires, so it doesn't refire every subsequent skip");
+  });
+
+  test("a real answer resets the streak -- an impatient moment followed by engagement doesn't get punished", () => {
+    const m = loadStudlinModule();
+    m.lsSet("settings", { askDurationQuestions: true });
+    m.recordQuestionDismissed("duration");
+    m.recordQuestionDismissed("duration");
+    m.recordQuestionAnswered("duration");
+    const r3 = m.recordQuestionDismissed("duration");
+    assert.equal(r3.autoOff, false, "the streak should have been reset by the real answer in between");
+  });
+
+  test("the two kinds track independent streaks", () => {
+    const m = loadStudlinModule();
+    m.lsSet("settings", { askCheckIns: true, askDurationQuestions: true });
+    m.recordQuestionDismissed("checkIn");
+    m.recordQuestionDismissed("checkIn");
+    m.recordQuestionDismissed("checkIn");
+    assert.equal(m.lsGet("settings", {}).askDurationQuestions, true, "dismissing check-ins repeatedly must not touch the separate duration toggle");
+  });
+});
+
+describe("duration-question per-subject cooldown (isDurationQuestionOnCooldown/dismissDurationQuestion)", () => {
+  test("not on cooldown before any dismissal", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.isDurationQuestionOnCooldown("Chemistry", "study block"), false);
+  });
+  test("dismissing puts that exact subject+kind on cooldown", () => {
+    const m = loadStudlinModule();
+    m.dismissDurationQuestion("Chemistry", "study block");
+    assert.equal(m.isDurationQuestionOnCooldown("Chemistry", "study block"), true);
+  });
+  test("cooldown is scoped to the specific subject -- a different subject is unaffected", () => {
+    const m = loadStudlinModule();
+    m.dismissDurationQuestion("Chemistry", "study block");
+    assert.equal(m.isDurationQuestionOnCooldown("Biology", "study block"), false);
   });
 });
 
@@ -442,5 +750,181 @@ describe("computeStudyPlanParams: gradeWeightPercent and shaky-streak (2026-08-2
     const withStreak = computeStudyPlanParams("exam", 25, "okay", 0, "major", 20, undefined, ["shaky", "shaky"]);
     const withoutStreak = computeStudyPlanParams("exam", 25, "okay", 0, "major", 20, undefined, []);
     assert.deepEqual(withStreak, withoutStreak);
+  });
+});
+
+describe("computeExamPrepTimingStyle (real crammer vs. spread-out detection, from completedAt vs. the exam's own date)", () => {
+  function examEvent(id, dateKey) {
+    return { id, subject: "Chemistry", kind: "exam", status: "done", date: dateKey };
+  }
+  function prepDoneDaysBefore(id, dueEventId, examDateKey, daysBefore) {
+    const examMoment = new Date(examDateKey + "T12:00:00").getTime();
+    return { id, subject: "Chemistry", kind: "study block", status: "done", isExamPrepSession: true, dueEventId, completedAt: examMoment - daysBefore * 86400000 };
+  }
+
+  test("no data at all -- null, not a guess", () => {
+    const m = loadStudlinModule();
+    m.lsSet("events", []);
+    assert.equal(m.computeExamPrepTimingStyle().style, null);
+  });
+
+  test("below MIN_EXAMS_FOR_TIMING_STYLE (only 1 real exam) -- null even with plenty of sessions", () => {
+    const m = loadStudlinModule();
+    const events = [examEvent("e1", "2026-05-20")];
+    for (let i = 0; i < 8; i++) events.push(prepDoneDaysBefore("p" + i, "e1", "2026-05-20", 1));
+    m.lsSet("events", events);
+    assert.equal(m.computeExamPrepTimingStyle().style, null, "one exam's worth of evidence isn't enough, no matter how many sessions");
+  });
+
+  test("below MIN_SESSIONS_FOR_TIMING_STYLE even with 2 real exams -- null", () => {
+    const m = loadStudlinModule();
+    const events = [
+      examEvent("e1", "2026-05-20"), prepDoneDaysBefore("p1", "e1", "2026-05-20", 1),
+      examEvent("e2", "2026-06-20"), prepDoneDaysBefore("p2", "e2", "2026-06-20", 1),
+    ];
+    m.lsSet("events", events);
+    assert.equal(m.computeExamPrepTimingStyle().style, null);
+  });
+
+  test("a real close-to-the-deadline pattern across 2 exams, 6+ sessions, calls the right style", () => {
+    const m = loadStudlinModule();
+    const events = [
+      examEvent("e1", "2026-05-20"),
+      prepDoneDaysBefore("p1", "e1", "2026-05-20", 0),
+      prepDoneDaysBefore("p2", "e1", "2026-05-20", 1),
+      prepDoneDaysBefore("p3", "e1", "2026-05-20", 2),
+      examEvent("e2", "2026-06-20"),
+      prepDoneDaysBefore("p4", "e2", "2026-06-20", 0),
+      prepDoneDaysBefore("p5", "e2", "2026-06-20", 1),
+      prepDoneDaysBefore("p6", "e2", "2026-06-20", 2),
+    ];
+    m.lsSet("events", events);
+    const result = m.computeExamPrepTimingStyle();
+    assert.equal(result.style, "close-to-deadline");
+    assert.equal(result.examCount, 2);
+    assert.equal(result.sampleCount, 6);
+  });
+
+  test("a real spread-out pattern calls the opposite style with the same amount of evidence", () => {
+    const m = loadStudlinModule();
+    const events = [
+      examEvent("e1", "2026-05-20"),
+      prepDoneDaysBefore("p1", "e1", "2026-05-20", 14),
+      prepDoneDaysBefore("p2", "e1", "2026-05-20", 8),
+      prepDoneDaysBefore("p3", "e1", "2026-05-20", 3),
+      examEvent("e2", "2026-06-20"),
+      prepDoneDaysBefore("p4", "e2", "2026-06-20", 14),
+      prepDoneDaysBefore("p5", "e2", "2026-06-20", 8),
+      prepDoneDaysBefore("p6", "e2", "2026-06-20", 3),
+    ];
+    m.lsSet("events", events);
+    assert.equal(m.computeExamPrepTimingStyle().style, "spread-out");
+  });
+
+  test("a still-upcoming (not done) exam's sessions don't count as evidence -- the outcome isn't settled yet", () => {
+    const m = loadStudlinModule();
+    const events = [
+      { id: "e1", subject: "Chemistry", kind: "exam", status: "pending", date: "2026-05-20" },
+      prepDoneDaysBefore("p1", "e1", "2026-05-20", 1),
+      prepDoneDaysBefore("p2", "e1", "2026-05-20", 1),
+      prepDoneDaysBefore("p3", "e1", "2026-05-20", 1),
+      examEvent("e2", "2026-06-20"),
+      prepDoneDaysBefore("p4", "e2", "2026-06-20", 1),
+      prepDoneDaysBefore("p5", "e2", "2026-06-20", 1),
+      prepDoneDaysBefore("p6", "e2", "2026-06-20", 1),
+    ];
+    m.lsSet("events", events);
+    assert.equal(m.computeExamPrepTimingStyle().style, null, "only e2 (done) counts -- 1 real exam is below the floor");
+  });
+
+  test("a session somehow completed after the exam date is excluded from the evidence entirely", () => {
+    const m = loadStudlinModule();
+    const events = [
+      examEvent("e1", "2026-05-20"),
+      prepDoneDaysBefore("p1", "e1", "2026-05-20", -2), // "completed" after the exam
+      prepDoneDaysBefore("p2", "e1", "2026-05-20", 1),
+      prepDoneDaysBefore("p3", "e1", "2026-05-20", 1),
+      examEvent("e2", "2026-06-20"),
+      prepDoneDaysBefore("p4", "e2", "2026-06-20", 1),
+      prepDoneDaysBefore("p5", "e2", "2026-06-20", 1),
+      prepDoneDaysBefore("p6", "e2", "2026-06-20", 1),
+    ];
+    m.lsSet("events", events);
+    const result = m.computeExamPrepTimingStyle();
+    assert.equal(result.sampleCount, 5, "the after-the-exam completion shouldn't count toward the sample");
+  });
+});
+
+describe("computeCloseToDeadlineReviewOffsets (the alternate curve -- never applied without the student's own choice)", () => {
+  test("fewer sessions than the default curve, capped at 4", () => {
+    const m = loadStudlinModule();
+    assert.ok(m.computeCloseToDeadlineReviewOffsets(60, 4).length <= 4);
+    assert.ok(m.computeCloseToDeadlineReviewOffsets(60, 10).length <= 4, "should cap even if a caller asks for more");
+  });
+
+  test("defaults to 3 sessions when no count is given", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.computeCloseToDeadlineReviewOffsets(60, undefined).length, 3);
+  });
+
+  test("sessions are packed on the days immediately before the exam, not spread outward", () => {
+    const m = loadStudlinModule();
+    const offsets = m.computeCloseToDeadlineReviewOffsets(60, 3);
+    // Cross-realm array from the vm-loaded module -- assert.deepEqual isn't
+    // reliable against a plain literal here (see harness.js's own vm
+    // comment), compare serialized instead.
+    assert.equal(JSON.stringify(offsets), JSON.stringify([3, 2, 1]), "furthest-out first, matching computeReviewOffsets' own return convention");
+  });
+
+  test("never schedules further out than there's real room for", () => {
+    const m = loadStudlinModule();
+    const offsets = m.computeCloseToDeadlineReviewOffsets(2, 3);
+    assert.ok(offsets.every(o => o <= 2));
+  });
+
+  test("daysUntil 0 -- one session, today", () => {
+    const m = loadStudlinModule();
+    assert.equal(JSON.stringify(m.computeCloseToDeadlineReviewOffsets(0, 3)), JSON.stringify([0]));
+  });
+
+  test("exam already passed -- empty, never schedules into the past", () => {
+    const m = loadStudlinModule();
+    assert.equal(JSON.stringify(m.computeCloseToDeadlineReviewOffsets(-1, 3)), JSON.stringify([]));
+  });
+});
+
+describe("computeReviewDates branches on examPrepSpacingStyle, defaulting to today's unchanged curve", () => {
+  test("no preference set -- byte-identical to calling computeReviewOffsets directly", () => {
+    const m = loadStudlinModule();
+    m.lsSet("schedulePrefs", {});
+    const viaDates = m.computeReviewDates("2026-06-20", "2026-05-01", 4);
+    const direct = m.computeReviewOffsets(Math.round((new Date("2026-06-20T12:00:00") - new Date("2026-05-01T12:00:00")) / 86400000), 4)
+      .map(o => { const d = new Date("2026-06-20T12:00:00"); d.setDate(d.getDate() - o); return m.dayKey(d); }).sort();
+    assert.equal(JSON.stringify(viaDates), JSON.stringify(direct));
+  });
+
+  test("an explicit 'spread-out' preference is identical to leaving it unset", () => {
+    const m = loadStudlinModule();
+    m.lsSet("schedulePrefs", { examPrepSpacingStyle: "spread-out" });
+    const withExplicit = m.computeReviewDates("2026-06-20", "2026-05-01", 4);
+    m.lsSet("schedulePrefs", {});
+    const withUnset = m.computeReviewDates("2026-06-20", "2026-05-01", 4);
+    assert.equal(JSON.stringify(withExplicit), JSON.stringify(withUnset));
+  });
+
+  test("'close-to-deadline' preference actually changes the result", () => {
+    const m = loadStudlinModule();
+    m.lsSet("schedulePrefs", {});
+    const defaultDates = m.computeReviewDates("2026-06-20", "2026-05-01", 4);
+    m.lsSet("schedulePrefs", { examPrepSpacingStyle: "close-to-deadline" });
+    const closeDates = m.computeReviewDates("2026-06-20", "2026-05-01", 4);
+    assert.notEqual(JSON.stringify(closeDates), JSON.stringify(defaultDates));
+    // Every close-to-deadline session should land within a few days of the
+    // exam, not weeks out like the default expanding curve's earliest slot.
+    const examMs = new Date("2026-06-20T12:00:00").getTime();
+    for (const dateKey of closeDates) {
+      const daysBefore = Math.round((examMs - new Date(dateKey + "T12:00:00").getTime()) / 86400000);
+      assert.ok(daysBefore <= 4, `close-to-deadline session landed ${daysBefore} days out, expected close to the exam`);
+    }
   });
 });

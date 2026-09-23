@@ -3525,6 +3525,152 @@ function computeSubjectHourReliabilityMatrix(subjects){
     })
     .filter(row=>row.cells.some(c=>c.rate!==null));
 }
+// Sibling to computeSubjectHourReliabilityMatrix for the Insights tab's
+// duration card -- reuses suggestDurationFor/durationSampleCountFor rather
+// than recomputing a second median, so this card and every scheduling path
+// that already calls suggestDurationFor can never quietly disagree.
+// sampleCount rides along (not just the blended minutes) so the UI can say
+// "still learning this one" honestly instead of presenting a thin-sample
+// blend as a confident number -- isConfident mirrors suggestDurationFor's
+// own TIER0_MIN_BUCKET_SAMPLE gate exactly, plus a standing manual override.
+// "Bio: 45 min" flattens real variance away as if every Bio session is the
+// same length -- a plain 25th/75th-percentile spread of the REAL raw
+// timeSpent values (not the weighted/replicated pool suggestDurationFor's
+// own median uses -- a range is just describing how much it varies, doesn't
+// need that same credit-weighting rigor) says the honest thing instead:
+// "usually 35-55 min," not a fake-precise single number. Needs its own
+// small sample floor (4) separate from TIER0_MIN_BUCKET_SAMPLE -- a range
+// from 2-3 points isn't a real spread, it's just those points.
+const DURATION_RANGE_MIN_SAMPLE=4;
+function durationRangeFor(subject,kind){
+  const times=lsGet("events",[]).filter(e=>e.status==="done"&&e.timeSpent&&e.subject===subject&&e.kind===kind&&!e.isGeneralTask).map(e=>e.timeSpent).sort((a,b)=>a-b);
+  if(times.length<DURATION_RANGE_MIN_SAMPLE)return null;
+  const quantile=(p)=>{
+    const idx=(times.length-1)*p,lo=Math.floor(idx),hi=Math.ceil(idx);
+    return lo===hi?times[lo]:times[lo]+(times[hi]-times[lo])*(idx-lo);
+  };
+  return {low:Math.max(15,Math.round(quantile(0.25)/5)*5),high:Math.round(quantile(0.75)/5)*5};
+}
+function computeSubjectDurationInsights(subjects){
+  const overrides=lsGet("subjectDurationOverride",{});
+  return subjects
+    .map(subject=>{
+      const isOverridden=typeof overrides[subject]==="number";
+      const sampleCount=durationSampleCountFor(subject,"study block");
+      const minutes=suggestDurationFor(subject,"study block");
+      const isConfident=isOverridden||sampleCount>=TIER0_MIN_BUCKET_SAMPLE;
+      const range=isConfident&&!isOverridden?durationRangeFor(subject,"study block"):null;
+      return {subject,minutes,sampleCount,isOverridden,isConfident,range};
+    })
+    .filter(row=>row.isOverridden||row.sampleCount>0);
+}
+// "How much do I usually study total before an exam" -- a real question a
+// per-session duration number can't answer. Splits by examWeight (quiz vs
+// major/final) rather than averaging them together, since those are
+// genuinely different prep efforts and a flat blend of a 1-hour quiz cram
+// and a 12-hour final push describes neither. Only counts REAL completed
+// exam-prep time (isExamPrepSession events actually finished with real
+// timeSpent) against exams that have actually happened -- an exam with a
+// plan but zero completed sessions isn't evidence of anything yet, and a
+// still-upcoming exam's total isn't settled. MIN_EXAMS_FOR_PREP_TOTAL is its
+// own, much lower floor than TIER0_MIN_BUCKET_SAMPLE -- exams are far rarer
+// than study sessions, so reusing the 8-sample bar here would mean this
+// almost never has enough evidence in a single real term.
+const MIN_EXAMS_FOR_PREP_TOTAL=2;
+function computeSubjectExamPrepTotals(subject){
+  const events=lsGet("events",[]);
+  const pastExams=events.filter(e=>e.kind==="exam"&&e.subject===subject&&e.status==="done");
+  const byWeight={};
+  for(const exam of pastExams){
+    const prepMinutes=events.filter(e=>e.isExamPrepSession&&e.dueEventId===exam.id&&e.status==="done"&&e.timeSpent).reduce((sum,e)=>sum+e.timeSpent,0);
+    if(prepMinutes<=0)continue; // an exam with no completed prep sessions isn't real evidence either way
+    const weight=exam.examWeight==="quiz"?"quiz":"major"; // same two-bucket split defaultSessionCountFor already uses
+    (byWeight[weight]=byWeight[weight]||[]).push(prepMinutes);
+  }
+  return Object.keys(byWeight).map(weight=>{
+    const totals=byWeight[weight].sort((a,b)=>a-b);
+    const mid=Math.floor(totals.length/2);
+    const minutes=totals.length%2?totals[mid]:Math.round((totals[mid-1]+totals[mid])/2);
+    return {weight,minutes,examCount:totals.length,isConfident:totals.length>=MIN_EXAMS_FOR_PREP_TOTAL};
+  });
+}
+// Whether this student's real exam prep actually happens spread out, or
+// only right before the deadline no matter how far out Studlin schedules
+// it. Measures this from completedAt vs. the exam's own date -- both fully
+// durable, no new tracking needed -- rather than trying to reconstruct
+// whether a session was ever rescheduled along the way (movedByStudlin/
+// reshuffleCount track the MECHANICS of rescheduling, not survivable
+// through every completion path anyway; when real work actually happened
+// relative to the deadline is the more direct, already-durable signal, and
+// the thing that actually matters here). Same "exams are rare" reasoning as
+// MIN_EXAMS_FOR_PREP_TOTAL -- TIER0_MIN_BUCKET_SAMPLE would almost never be
+// reached by exam count alone in a real term.
+const MIN_EXAMS_FOR_TIMING_STYLE=2;
+const MIN_SESSIONS_FOR_TIMING_STYLE=6;
+// A judgment call, not a cited research number -- the real feature here is
+// detecting a real pattern and offering an alternative at all; exactly
+// where the line sits is a reasonable choice, not something worth dressing
+// up as more precise than it is.
+const CRAMMER_MEDIAN_DAYS_THRESHOLD=2;
+function computeExamPrepTimingStyle(){
+  const events=lsGet("events",[]);
+  const examsById=new Map(events.filter(e=>e.kind==="exam"&&e.status==="done").map(e=>[e.id,e]));
+  const daysBeforeList=[];
+  const examIdsSeen=new Set();
+  for(const e of events){
+    if(!(e.isExamPrepSession&&e.status==="done"&&e.completedAt&&e.dueEventId))continue;
+    const exam=examsById.get(e.dueEventId);
+    if(!exam)continue;
+    const daysBeforeExam=(new Date(exam.date+"T12:00:00").getTime()-e.completedAt)/86400000;
+    if(daysBeforeExam<0)continue; // completed after the exam date somehow -- not real prep evidence
+    daysBeforeList.push(daysBeforeExam);
+    examIdsSeen.add(exam.id);
+  }
+  if(examIdsSeen.size<MIN_EXAMS_FOR_TIMING_STYLE||daysBeforeList.length<MIN_SESSIONS_FOR_TIMING_STYLE){
+    return {style:null,sampleCount:daysBeforeList.length,examCount:examIdsSeen.size};
+  }
+  daysBeforeList.sort((a,b)=>a-b);
+  const mid=Math.floor(daysBeforeList.length/2);
+  const medianDaysBefore=daysBeforeList.length%2?daysBeforeList[mid]:(daysBeforeList[mid-1]+daysBeforeList[mid])/2;
+  return {style:medianDaysBefore<=CRAMMER_MEDIAN_DAYS_THRESHOLD?"close-to-deadline":"spread-out",medianDaysBefore,sampleCount:daysBeforeList.length,examCount:examIdsSeen.size};
+}
+// Studlin never applies this on its own -- see the offer/dismiss pair below
+// and computeReviewDates' own branch. Fewer sessions than the default
+// expanding curve, packed on the days immediately before the exam instead
+// of spread outward, matching what a demonstrated close-to-the-deadline
+// worker will realistically use rather than padding a plan with far-out
+// sessions computeExamPrepTimingStyle's own evidence already says tend to
+// go undone.
+function computeCloseToDeadlineReviewOffsets(daysUntil,desiredCount){
+  const count=Math.max(1,Math.min(4,desiredCount||3));
+  if(daysUntil<0)return [];
+  if(daysUntil===0)return [0];
+  const offsets=[];
+  for(let i=1;i<=count;i++){
+    if(i>daysUntil)break;
+    offsets.push(i);
+  }
+  return offsets.reverse();
+}
+// Same offer/dismiss/cooldown shape as detectStrugglingBucket/
+// dismissStrugglingBucket -- detect a real pattern, offer it once, never
+// auto-apply, back off after a decline instead of nagging. Account-wide
+// (not per-item) so a single Date.now() timestamp is enough, no keyed map
+// needed. Never offered again once the student has made an explicit choice
+// either way through Settings (examPrepSpacingStyle set to anything, even
+// the default "spread-out" if they confirmed it) -- an explicit choice is
+// the real signal to stop suggesting, whichever direction it went.
+const EXAM_PREP_SPACING_OFFER_COOLDOWN_MS=30*86400000;
+function detectExamPrepSpacingOffer(){
+  if(getSchedulePreferences().examPrepSpacingStyle)return null;
+  const dismissedAt=lsGet("examPrepSpacingOfferDismissed",0);
+  if(dismissedAt&&Date.now()-dismissedAt<EXAM_PREP_SPACING_OFFER_COOLDOWN_MS)return null;
+  const timing=computeExamPrepTimingStyle();
+  return timing.style==="close-to-deadline"?timing:null;
+}
+function dismissExamPrepSpacingOffer(){
+  lsSet("examPrepSpacingOfferDismissed",Date.now());
+}
 // A recent-streak detector, separate from getBucketReliability's all-time
 // aggregate — a student sliding lately deserves a nudge before enough bad
 // history piles up to drag the long-run rate down on its own. Suppressed
@@ -3569,6 +3715,60 @@ function dismissStrugglingBucket(bucketId){
   const dismissed=lsGet("strugglingBucketDismissed",{});
   dismissed[bucketId]=Date.now();
   lsSet("strugglingBucketDismissed",dismissed);
+}
+// Mirrors SettingsTab's own syncShareAvailabilityPref/syncPushPref write
+// (preferences.<key> on users/{uid}, merge:true) but as a standalone
+// function -- this needs to fire from wherever a question gets dismissed
+// (handleTaskCompleted, the Timer's completion block), not just from inside
+// the Settings screen itself. Writes localStorage too so any already-open
+// Settings screen picks it up next time it re-reads "settings".
+function setQuestionAskPref(key,enabled){
+  const next={...lsGet("settings",{}),[key]:enabled};
+  lsSet("settings",next);
+  const myUid=firebase.auth().currentUser&&firebase.auth().currentUser.uid;
+  if(myUid)fsdb().collection('users').doc(myUid).set({preferences:{[key]:enabled},updatedAt:new Date().toISOString()},{merge:true}).catch(reportError("setQuestionAskPref"));
+  return next;
+}
+// A single "no thanks" on one question isn't evidence the student wants
+// Studlin to stop asking -- they might just be mid-something right now. A
+// real streak of consecutive skips (across the check-in and/or duration
+// question, tracked separately) is what should trigger backing off, and
+// even then it must be visible and reversible (see the toast this drives in
+// App()), never a silent behavior change -- same instinct as the rest of
+// this file's certainty rules, applied to annoyance instead of statistics.
+const QUESTION_DISMISS_STREAK_LIMIT=3;
+function recordQuestionDismissed(kind){
+  const streaks=lsGet("questionDismissStreak",{});
+  const next=(streaks[kind]||0)+1;
+  if(next>=QUESTION_DISMISS_STREAK_LIMIT){
+    lsSet("questionDismissStreak",{...streaks,[kind]:0});
+    const prefKey=kind==="checkIn"?"askCheckIns":"askDurationQuestions";
+    setQuestionAskPref(prefKey,false);
+    return {autoOff:true,prefKey};
+  }
+  lsSet("questionDismissStreak",{...streaks,[kind]:next});
+  return {autoOff:false};
+}
+function recordQuestionAnswered(kind){
+  const streaks=lsGet("questionDismissStreak",{});
+  if(!streaks[kind])return;
+  lsSet("questionDismissStreak",{...streaks,[kind]:0});
+}
+// Separate from the streak above -- this is "not about this specific class
+// right now," not "stop asking me things." Same per-item cooldown shape as
+// dismissStrugglingBucket, just keyed by subject+kind instead of an hour
+// bucket, and shorter (a week, not two) since skipping one duration question
+// is a much lower-stakes signal than a real struggling-bucket nudge.
+const DURATION_QUESTION_COOLDOWN_MS=7*86400000;
+function isDurationQuestionOnCooldown(subject,kind){
+  const dismissed=lsGet("durationQuestionDismissed",{});
+  const key=subject+"|"+kind;
+  return !!(dismissed[key]&&Date.now()-dismissed[key]<DURATION_QUESTION_COOLDOWN_MS);
+}
+function dismissDurationQuestion(subject,kind){
+  const dismissed=lsGet("durationQuestionDismissed",{});
+  dismissed[subject+"|"+kind]=Date.now();
+  lsSet("durationQuestionDismissed",dismissed);
 }
 // Surfaces it purely from the student's own real completion history — no
 // declared peak-focus bucket needed. Onboarding used to ask for one and
@@ -7060,7 +7260,14 @@ function computeReviewDates(examDateKey,todayKey,desiredCount){
   const exam=new Date(examDateKey+"T12:00:00");
   const today=new Date(todayKey+"T12:00:00");
   const daysUntil=Math.round((exam-today)/86400000);
-  return computeReviewOffsets(daysUntil,desiredCount).map(o=>{
+  // The one integration point for examPrepSpacingStyle (see
+  // computeExamPrepTimingStyle/computeCloseToDeadlineReviewOffsets) --
+  // every real caller (buildExamSessionEvents, buildSpacedSessionPreviews)
+  // goes through this function, so neither needs its own awareness of the
+  // choice. Anything other than an explicit "close-to-deadline" (unset, or
+  // an explicitly-confirmed "spread-out") keeps today's exact curve.
+  const offsetsFn=getSchedulePreferences().examPrepSpacingStyle==="close-to-deadline"?computeCloseToDeadlineReviewOffsets:computeReviewOffsets;
+  return offsetsFn(daysUntil,desiredCount).map(o=>{
     const d=new Date(exam);d.setDate(d.getDate()-o);return dayKey(d);
   }).sort();
 }
@@ -7312,7 +7519,71 @@ function studyPlanReasoning(confidenceLevel,importanceLevel,materialCharCount,ha
 // too so the below-threshold blend shrinks toward the exact same anchor
 // instead of a second, possibly-drifting constant.
 const DURATION_GENERIC_DEFAULT=25;
+// A duration typed in after the fact (the "how long did this really take"
+// follow-up for a completion that never touched the Lock-In Timer) is a
+// guess from memory, not a stopwatch reading -- weaker evidence than a
+// timer-measured sample, same category of discount completionCredit already
+// applies to a "shaky" rating, just applied to this dimension instead.
+const SELF_REPORTED_DURATION_CREDIT=0.5;
+// Same filter suggestDurationFor uses internally to build its sample pool,
+// exposed on its own so callers that only need "how thin is this subject's
+// data" (the duration follow-up's trigger gate, the Insights tab's duration
+// card) can check it without duplicating -- or drifting from -- that filter.
+function durationSampleCountFor(subject,kind){
+  return lsGet("events",[]).filter(e=>e.status==="done"&&e.timeSpent&&e.subject===subject&&e.kind===kind&&!e.isGeneralTask).length;
+}
+// Shared by suggestDurationFor and studentBaselineDuration below -- the same
+// weighted-median idea (completionCredit weight, self-reported-duration
+// discount) parameterized by whatever pool of done+timed events the caller
+// has already filtered down to, so the per-subject number and the
+// cross-subject baseline can never quietly use two different notions of
+// "median" that drift apart.
+function weightedDurationMedian(pool){
+  const completionLog=lsGet("completionLog",[]);
+  const creditByTaskId=new Map();
+  for(const row of completionLog){if(row.taskId)creditByTaskId.set(row.taskId,completionCredit(row));}
+  const shares=[];
+  for(const e of pool){
+    let credit=creditByTaskId.has(e.id)?creditByTaskId.get(e.id):1;
+    if(e.timeSpentSource==="self-reported")credit=credit*SELF_REPORTED_DURATION_CREDIT;
+    const n=Math.max(1,Math.round(credit*4));
+    for(let i=0;i<n;i++)shares.push(e.timeSpent);
+  }
+  shares.sort((a,b)=>a-b);
+  const mid=Math.floor(shares.length/2);
+  return shares.length%2?shares[mid]:Math.round((shares[mid-1]+shares[mid])/2);
+}
+// Direct user feedback: a flat "25 minutes" fallback for every thin/unknown
+// subject is the same number whether a student's own real sessions run 50
+// minutes or 90 -- it ignores everything Studlin already knows about THIS
+// student just because it's looking at one specific subject that happens to
+// be thin. This is that smarter fallback: this student's own median across
+// every subject's real completed sessions, so a brand-new class (or a
+// still-thin one) starts from "what this student is actually like," not a
+// platform-wide constant. Gated by the same TIER0_MIN_BUCKET_SAMPLE floor as
+// everywhere else -- a student who is THEMSELVES still new to Studlin has
+// nothing real to personalize from yet, and null here means callers fall
+// back one more level, to the true last-resort DURATION_GENERIC_DEFAULT.
+// excludeSubject matters: without it, a student who has only ever studied
+// ONE subject would have their baseline literally equal that subject's own
+// (possibly still-thin, by a caller's own stricter minSamples) data -- not
+// independent outside evidence at all, just the same numbers counted twice.
+// Excluding the subject being estimated keeps this an honest "what does
+// Studlin know about this student from EVERYTHING ELSE," which also
+// correctly returns null (no double-counted shortcut) for a single-subject
+// account, same as before this fallback existed.
+function studentBaselineDuration(excludeSubject){
+  const events=lsGet("events",[]).filter(e=>e.status==="done"&&e.timeSpent&&e.kind==="study block"&&!e.isGeneralTask&&(excludeSubject==null||e.subject!==excludeSubject));
+  if(events.length<TIER0_MIN_BUCKET_SAMPLE)return null;
+  return weightedDurationMedian(events);
+}
 function suggestDurationFor(subject,kind,difficulty,minSamples){
+  // A student-edited override (Insights tab's per-subject duration card)
+  // pins this number until they change or clear it themselves -- never
+  // silently recomputed over by new sessions landing later, same "don't
+  // overwrite an explicit correction" principle as everywhere else here.
+  const durationOverrides=lsGet("subjectDurationOverride",{});
+  if(subject&&typeof durationOverrides[subject]==="number")return durationOverrides[subject];
   const minN=minSamples||TIER0_MIN_BUCKET_SAMPLE;
   // isGeneralTask excluded (2026-08-25) -- a Task ("do laundry") shares
   // kind:"study block" with a real Study Session so it can reuse the same
@@ -7321,58 +7592,38 @@ function suggestDurationFor(subject,kind,difficulty,minSamples){
   // a subject someone occasionally tags a chore under would have its
   // duration-learning median quietly pulled toward that chore's length.
   const events=lsGet("events",[]).filter(e=>e.status==="done"&&e.timeSpent&&e.subject===subject&&e.kind===kind&&!e.isGeneralTask);
-  if(events.length===0)return null; // truly nothing to go on -- caller's own ||25 applies
-  // Quality-weight each sample by whether its own post-session check-in
-  // said the time actually worked, using completionCredit -- the exact
-  // same rating->weight table getBucketReliability already trusts
-  // (unrated/solid completions count in full; a rated-shaky completion
-  // counts as partial evidence, since a session someone said didn't click
-  // is weaker proof its duration was the right amount). No new scale
-  // invented here, same credit everywhere a rating matters. completionLog
-  // rows are keyed by taskId (the event's own id), same join
-  // applyCheckInRating already does; last row per taskId wins, matching
-  // its own "search from the end" convention for repeat completions.
-  const completionLog=lsGet("completionLog",[]);
-  const creditByTaskId=new Map();
-  for(const row of completionLog){if(row.taskId)creditByTaskId.set(row.taskId,completionCredit(row));}
-  // A weighted median, not a weighted average -- keeps the same outlier-
-  // resistant character the plain median already had. completionCredit
-  // returns quarters (0.25/1), so replicating each sample by 4x its
-  // credit (1-4 shares) and taking a normal median of the expanded pool
-  // is a weighted median without new statistical machinery. An event with
-  // no completionLog row at all (old data, or the check-in was skipped)
-  // gets full weight, same "unrated counts as 1.0" convention as
-  // completionCredit's own default.
-  const medianOf=(pool)=>{
-    const shares=[];
-    for(const e of pool){
-      const credit=creditByTaskId.has(e.id)?creditByTaskId.get(e.id):1;
-      const n=Math.max(1,Math.round(credit*4));
-      for(let i=0;i<n;i++)shares.push(e.timeSpent);
-    }
-    shares.sort((a,b)=>a-b);
-    const mid=Math.floor(shares.length/2);
-    return shares.length%2?shares[mid]:Math.round((shares[mid-1]+shares[mid])/2);
-  };
-  // Below minN (but not zero), blend the real-but-thin median toward the
-  // generic default instead of discarding it outright -- the old
-  // behavior (null below minN, full trust at minN) was the exact same
-  // hard-cliff problem peak-hour's confidentlyHigher fixed for rate data
-  // (see CLAUDE.md's Certainty & Prediction Rules), just for a continuous
-  // value instead of a completion rate. Reaches the real median exactly
-  // AT minN, where the unchanged full-trust logic below takes over, so
-  // there's no discontinuity at the old cliff's boundary -- every
-  // existing well-sampled (>=minN) test case is untouched.
+  // Zero samples for this exact subject -- used to always be a flat null
+  // (caller's own ||25 applies), same one-size-fits-all number regardless of
+  // whether this is a brand-new account or a student Studlin has watched for
+  // a whole term. Now tries this student's own cross-subject baseline first
+  // (see studentBaselineDuration) -- a new class should start from "what
+  // this student is actually like," not a platform-wide constant. Only a
+  // student who is themselves still new to Studlin (baseline also null)
+  // falls all the way through to null here, same as before.
+  if(events.length===0)return studentBaselineDuration(subject);
+  // Below minN (but not zero), blend the real-but-thin median toward a
+  // fallback instead of discarding it outright -- the old behavior (null
+  // below minN, full trust at minN) was the exact same hard-cliff problem
+  // peak-hour's confidentlyHigher fixed for rate data (see CLAUDE.md's
+  // Certainty & Prediction Rules), just for a continuous value instead of a
+  // completion rate. Reaches the real median exactly AT minN, where the
+  // unchanged full-trust logic below takes over, so there's no discontinuity
+  // at the old cliff's boundary -- every existing well-sampled (>=minN) test
+  // case is untouched. The blend target itself is now this student's own
+  // baseline when they have one (real personalization instead of a flat
+  // constant), falling back to DURATION_GENERIC_DEFAULT only when the
+  // student has no broader history to personalize from either.
   if(events.length<minN){
     const weight=events.length/minN;
-    return Math.max(15,Math.round((weight*medianOf(events)+(1-weight)*DURATION_GENERIC_DEFAULT)/5)*5);
+    const fallback=studentBaselineDuration(subject)??DURATION_GENERIC_DEFAULT;
+    return Math.max(15,Math.round((weight*weightedDurationMedian(events)+(1-weight)*fallback)/5)*5);
   }
   if(difficulty!=null){
     const tier=difficultyTierOf({difficulty});
     const tiered=events.filter(e=>difficultyTierOf(e)===tier);
-    if(tiered.length>=minN)return Math.max(15,Math.round(medianOf(tiered)/5)*5);
+    if(tiered.length>=minN)return Math.max(15,Math.round(weightedDurationMedian(tiered)/5)*5);
   }
-  return Math.max(15,Math.round(medianOf(events)/5)*5);
+  return Math.max(15,Math.round(weightedDurationMedian(events)/5)*5);
 }
 // Shared by deck review scheduling (Flashcards) and practice-exam
 // scheduling (Studlin Prep) -- both are "N spaced sessions counting down
@@ -10112,6 +10363,16 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
   const [peakBuckets,setPeakBuckets]=useState(prefs.peakHourBuckets||[]);
   const [manualBufferMode,setManualBufferMode]=useState(prefs.manualBufferMode||"off");
   const [automatedBufferEnabled,setAutomatedBufferEnabled]=useState(prefs.automatedBufferEnabled!==false);
+  // examPrepSpacingTouched (same "touched" idiom Add Task's own Duration
+  // field uses) -- only written into newPrefs on Save if the student
+  // actually interacted with this control. Without it, saving this modal
+  // for any OTHER reason (just widening Work Hours) would silently stamp
+  // an implicit "spread-out" confirmation, which is exactly the signal
+  // detectExamPrepSpacingOffer uses to permanently stop offering the
+  // close-to-deadline alternative -- that should only happen when the
+  // student actually looked at and confirmed this specific choice.
+  const [examPrepSpacingStyle,setExamPrepSpacingStyle]=useState(prefs.examPrepSpacingStyle||"spread-out");
+  const [examPrepSpacingTouched,setExamPrepSpacingTouched]=useState(false);
   const togglePeakBucket=(id)=>setPeakBuckets(peakBuckets.includes(id)?peakBuckets.filter(b=>b!==id):[...peakBuckets,id]);
   const [saved,setSaved]=useState(false);
 
@@ -10178,6 +10439,7 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
       peakHourBuckets:peakBuckets,
       manualBufferMode,
       automatedBufferEnabled,
+      ...(examPrepSpacingTouched?{examPrepSpacingStyle}:{}),
     };
     setSchedulePreferences(newPrefs);
     setSaved(true);
@@ -10347,6 +10609,22 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
               {unreachablePeakBuckets.map(b=>PEAK_BUCKET_LABELS[b.id]).join(" and ")} {unreachablePeakBuckets.length>1?"don't":"doesn't"} overlap your Work Hours ({fmtClock12(workStart)}–{fmtClock12(workEnd)}) at all, so Studlin can't actually place anything there yet — widen your Work Hours above to cover it.
             </div>
           )}
+        </div>
+
+        <div style={{marginBottom:22}}>
+          <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>Exam Prep Spacing</label>
+          <div style={{display:"flex",gap:8}}>
+            {[{key:"spread-out",label:"Spread out (recommended)"},{key:"close-to-deadline",label:"Close to the deadline"}].map(opt=>(
+              <button key={opt.key} type="button" onClick={()=>{setExamPrepSpacingStyle(opt.key);setExamPrepSpacingTouched(true);}}
+                style={{flex:1,fontSize:12,fontWeight:600,padding:"9px 10px",borderRadius:7,cursor:"pointer",fontFamily:T.font,
+                  background:examPrepSpacingStyle===opt.key?T.lime:T.card2,
+                  color:examPrepSpacingStyle===opt.key?T.ink:T.text,
+                  border:"1px solid "+(examPrepSpacingStyle===opt.key?T.lime:T.border)}}>
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>How Studlin schedules the sessions counting down to an exam. Spread out is backed by real research on retention -- pick "Close to the deadline" if you know a spread-out plan just won't get touched.</div>
         </div>
 
         {saved&&<div style={{background:T.lime+"20",border:"1px solid "+T.lime+"44",borderRadius:8,padding:12,fontSize:12,color:T.lime,marginBottom:16,display:"flex",alignItems:"center",gap:8}}>
@@ -10768,6 +11046,18 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
   // selected exam changes so it never stays open pointed at a different
   // exam's header.
   const [examTimeEditOpen,setExamTimeEditOpen]=useState(false);
+  // Insights tab's per-subject duration card -- which row (if any) is
+  // currently showing its inline edit input, and the draft value in it.
+  // A student's correction here pins subjectDurationOverride[subject]
+  // (see suggestDurationFor) until they edit or clear it again themselves.
+  const [durationOverrideEdit,setDurationOverrideEdit]=useState(null); // {subject, value}
+  const saveDurationOverride=(subject,minutes)=>{
+    const overrides=lsGet("subjectDurationOverride",{});
+    if(minutes==null||isNaN(minutes)){delete overrides[subject];}
+    else{overrides[subject]=Math.max(15,Math.round(minutes));}
+    lsSet("subjectDurationOverride",overrides);
+    setDurationOverrideEdit(null);
+  };
   const [selectedExamId,setSelectedExamId]=useState(()=>{
     const pending=lsGet("openPrepExamId",null);
     if(pending)lsSet("openPrepExamId",null);
@@ -11256,6 +11546,69 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
               <div style={{height:8,borderRadius:99,background:T.card2,overflow:"hidden"}}>
                 <div style={{height:"100%",width:pct+"%",borderRadius:99,background:neglected?T.red:T.lime}} />
               </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+  // Sibling to SubjectHourReliabilityMatrix -- the per-class duration number
+  // (see computeSubjectDurationInsights) shown plainly, editable inline. A
+  // thin-sample subject still shows its blended-toward-default number, but
+  // greyed out with "Still learning this one" rather than hidden or dressed
+  // up as confident -- same honesty rule the matrix above already follows.
+  const SubjectDurationInsights=({rows})=>{
+    if(!rows||rows.length===0){
+      return (
+        <div style={{padding:"20px 16px",textAlign:"center",color:T.faint,fontSize:12.5,border:`1px dashed ${T.border}`,borderRadius:8}}>
+          Complete a few real study sessions and Studlin will start learning how long each class actually takes you.
+        </div>
+      );
+    }
+    return (
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {rows.map(row=>{
+          const editing=durationOverrideEdit&&durationOverrideEdit.subject===row.subject;
+          // Computed here (not passed in via rows) so a subject with no
+          // exam-prep evidence yet just renders nothing extra, same "only
+          // show what's real" convention the rest of this card follows.
+          const examPrepRows=computeSubjectExamPrepTotals(row.subject);
+          return (
+            <div key={row.subject} style={{padding:"10px 12px",borderRadius:8,background:T.card2}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                <div>
+                  <div style={{fontSize:13,color:T.text,fontWeight:600}}>{row.subject}</div>
+                  {!row.isConfident&&<div style={{fontSize:11,color:T.faint,marginTop:2}}>Still learning this one</div>}
+                  {row.isOverridden&&<div style={{fontSize:11,color:T.faint,marginTop:2}}>Set by you</div>}
+                  {row.range&&<div style={{fontSize:11,color:T.faint,marginTop:2}}>Usually {row.range.low}-{row.range.high} min</div>}
+                </div>
+                {editing?(
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <input type="number" min={15} step={5} autoFocus value={durationOverrideEdit.value}
+                      onChange={e=>setDurationOverrideEdit({subject:row.subject,value:e.target.value})}
+                      style={{width:60,padding:"4px 6px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card,color:T.text,fontSize:12.5}} />
+                    <span style={{fontSize:11,color:T.faint}}>min</span>
+                    <BtnSm onClick={()=>saveDurationOverride(row.subject,Number(durationOverrideEdit.value))}>Save</BtnSm>
+                    {row.isOverridden&&<BtnSm variant="ghost" onClick={()=>saveDurationOverride(row.subject,null)}>Clear</BtnSm>}
+                    <BtnSm variant="subtle" onClick={()=>setDurationOverrideEdit(null)}>Cancel</BtnSm>
+                  </div>
+                ):(
+                  <div style={{display:"flex",alignItems:"center",gap:10}}>
+                    <span style={{fontSize:14,fontWeight:700,color:row.isConfident?T.text:T.faint}}>{row.minutes} min</span>
+                    <BtnSm variant="subtle" onClick={()=>setDurationOverrideEdit({subject:row.subject,value:String(row.minutes)})}>Edit</BtnSm>
+                  </div>
+                )}
+              </div>
+              {examPrepRows.length>0&&(
+                <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${T.border}`,display:"flex",flexDirection:"column",gap:4}}>
+                  {examPrepRows.map(pr=>(
+                    <div key={pr.weight} style={{display:"flex",justifyContent:"space-between",fontSize:11.5}}>
+                      <span style={{color:T.muted}}>Total study time before a {pr.weight==="quiz"?"quiz":"major exam"}{!pr.isConfident?" (still learning)":""}</span>
+                      <span style={{color:pr.isConfident?T.text:T.faint,fontWeight:600}}>{fmtMinsDur(pr.minutes)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           );
         })}
@@ -13413,12 +13766,18 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
         const subjectLabels=userSubjects.map(s=>s.label);
         const reliabilityRows=computeSubjectHourReliabilityMatrix(subjectLabels);
         const balanceRows=computeAttentionBalance(allEvents,today);
+        const durationRows=computeSubjectDurationInsights(subjectLabels);
         return (
           <div style={{display:"flex",flexDirection:"column",gap:28}}>
             <div>
               <div style={{fontSize:15,fontWeight:700,color:T.white,marginBottom:4}}>When you actually do your best work, by class</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:14,lineHeight:1.5}}>Not just "you're a morning person" -- this breaks it down per class, since it's rarely the same for every subject.</div>
               <SubjectHourReliabilityMatrix rows={reliabilityRows} />
+            </div>
+            <div>
+              <div style={{fontSize:15,fontWeight:700,color:T.white,marginBottom:4}}>How long things actually take you, by class</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:14,lineHeight:1.5}}>What Studlin's learned from your real sessions -- not a guess. Think it's off for a class? Edit it and Studlin uses your number instead.</div>
+              <SubjectDurationInsights rows={durationRows} />
             </div>
             <div>
               <div style={{fontSize:15,fontWeight:700,color:T.white,marginBottom:4}}>Where your time is actually going</div>
@@ -23841,6 +24200,11 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   const [planningHorizonPref,setPlanningHorizonPref]=useState(null);
   const [startTimingPref,setStartTimingPref]=useState(null);
   const [collisionPref,setCollisionPref]=useState(null);
+  // Onboarding opt-in for Studlin's follow-up questions (post-session
+  // check-ins, "how long did this take") -- null means untouched/skipped,
+  // in which case both toggles just keep their existing true-by-default
+  // (see SettingsTab), no forced choice either way.
+  const [askQuestionsPref,setAskQuestionsPref]=useState(null);
 
   const persistPending=(next)=>{setPendingClasses(next);lsSet("classSetupPending",next);};
   // 2026-08-26 fix: onboarding's own Profile step already requires
@@ -24809,6 +25173,12 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     // never actually written to the real profile, so Settings' own
     // StatusChip (:19049) would show blank even after finishing here.
     if(status)saveProfile({...getProfile(),status});
+    // Only writes when the student actually answered -- untouched/skipped
+    // leaves both toggles at their existing true-by-default (SettingsTab).
+    if(askQuestionsPref!=null){
+      setQuestionAskPref("askCheckIns",askQuestionsPref==="yes");
+      setQuestionAskPref("askDurationQuestions",askQuestionsPref==="yes");
+    }
     // Phase 8: the preamble steps that actually persist something
     // (Timezone doesn't -- getProfile() always recomputes tz live via
     // detectTz() on every read, by design, so it auto-updates if a
@@ -24964,6 +25334,14 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
               {value:"split_time",label:"Split time"},
               {value:"finish_one_first",label:"Finish one first"},
             ]} />
+            <div style={{marginTop:18,paddingTop:16,borderTop:`1px solid ${T.border}`}}>
+              <div style={{fontSize:13,fontWeight:600,color:T.text,marginBottom:4}}>One more thing</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:10,lineHeight:1.5}}>With your permission, Studlin might ask a quick question here and there -- like how a study session went, or how long something really took when you didn't use the timer. That's how it learns real things about you, like when you're most productive or how long a class actually takes. Always skippable, and adjustable anytime in Settings.</div>
+              <PrefChipRow label="Okay to ask?" value={askQuestionsPref} onChange={setAskQuestionsPref} options={[
+                {value:"yes",label:"Yes, ask me"},
+                {value:"no",label:"No thanks"},
+              ]} />
+            </div>
           </>)}
 
           {step==="status"&&(<>
@@ -35580,7 +35958,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Cobalt", setAccent=
     setMergeConfirm(null);
   };
   const [canvasSeeding,setCanvasSeeding]=useState(false);
-  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,classReminders:false,analytics:false,onlineStatus:true,incognito:false,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false},...lsGet("settings",{})}));
+  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,classReminders:false,analytics:false,onlineStatus:true,incognito:false,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false,askCheckIns:true,askDurationQuestions:true},...lsGet("settings",{})}));
   // 2026-09-13: "Share my free/busy time" used to be all-or-nothing (on =
   // every current accepted friend). shareAvailabilityMode lets a student
   // restrict it to specific people instead -- see the picker modal below
@@ -35623,6 +36001,15 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Cobalt", setAccent=
         if(result&&result.ok===false)showToast("Couldn't update sharing -- "+(result.reason||"try again")+".","error");
       });
     }
+  };
+  // Same cross-device shape as syncShareAvailabilityPref, generalized for
+  // both question-asking toggles (see setQuestionAskPref, also the write
+  // the auto-off dismiss-streak logic uses -- this is just the manual path
+  // through Settings for the exact same preference).
+  const handleAskToggle=(key)=>{
+    const enabled=!toggles[key];
+    setQuestionAskPref(key,enabled);
+    setToggles(t=>({...t,[key]:enabled}));
   };
   const tog=k=>setToggles(t=>{
     const n={...t,[k]:!t[k]};
@@ -35719,6 +36106,25 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Cobalt", setAccent=
       setToggles(t=>{
         if(t.shareAvailability===real)return t;
         const n={...t,shareAvailability:real};
+        lsSet("settings",n);
+        return n;
+      });
+    }).catch(()=>{});
+  },[myUid]);
+  // Same reconcile as shareAvailability above, for the two question-asking
+  // toggles -- field missing means no device has ever set it yet (keep the
+  // opt-in-by-default true this browser already has), field present (even
+  // false, e.g. from the auto-off dismiss-streak logic on another device)
+  // wins over local state.
+  useEffect(()=>{
+    if(!myUid)return;
+    fetchUserProfile().then(d=>{
+      if(!d)return;
+      setToggles(t=>{
+        let n=t,changed=false;
+        if(d.askCheckIns!==undefined&&t.askCheckIns!==d.askCheckIns){n={...n,askCheckIns:d.askCheckIns};changed=true;}
+        if(d.askDurationQuestions!==undefined&&t.askDurationQuestions!==d.askDurationQuestions){n={...n,askDurationQuestions:d.askDurationQuestions};changed=true;}
+        if(!changed)return t;
         lsSet("settings",n);
         return n;
       });
@@ -36996,6 +37402,20 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Cobalt", setAccent=
                 </div>
               </>)}
             </Modal>
+            <Card style={{marginBottom:12}}>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Questions Studlin asks</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:10}}>These are how Studlin learns things like how long a class really takes you or how a session went — never required, always skippable, and if you keep skipping one Studlin turns it off for you automatically.</div>
+              <Row label="Post-session check-ins" sub="A quick 'how did that go?' after a study session tied to an exam or assignment." k="_" right={
+                <div onClick={()=>handleAskToggle("askCheckIns")} style={{width:38,height:20,borderRadius:10,background:toggles.askCheckIns?T.lime:T.card2,border:`1px solid ${toggles.askCheckIns?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
+                  <div style={{width:14,height:14,borderRadius:"50%",background:toggles.askCheckIns?T.bg:"#fff",position:"absolute",top:2,left:toggles.askCheckIns?21:2,transition:"left 0.2s"}} />
+                </div>
+              } />
+              <Row label={'"How long did this really take?"'} sub="Asked only when you finish a session without using the Lock-In Timer, and only for a class Studlin doesn't have enough real data on yet." k="_" right={
+                <div onClick={()=>handleAskToggle("askDurationQuestions")} style={{width:38,height:20,borderRadius:10,background:toggles.askDurationQuestions?T.lime:T.card2,border:`1px solid ${toggles.askDurationQuestions?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
+                  <div style={{width:14,height:14,borderRadius:"50%",background:toggles.askDurationQuestions?T.bg:"#fff",position:"absolute",top:2,left:toggles.askDurationQuestions?21:2,transition:"left 0.2s"}} />
+                </div>
+              } />
+            </Card>
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Data &amp; AI</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>You own your notes, essays, and recordings.</div>
@@ -39394,6 +39814,7 @@ function App() {
   // {strugglingBucket,suggestedBucket,...} or null. Never set while
   // catchUpBanner is pending -- queued to Dashboard instead (mount effect).
   const [strugglingBucketOffer,setStrugglingBucketOffer]=useState(null);
+  const [examPrepSpacingOffer,setExamPrepSpacingOffer]=useState(null);
   // Same idiom again, this time for detectPeakHourInsight — an all-time,
   // well-sampled gap between the declared peak bucket and a better-
   // performing one, not a recent miss streak. {currentBucket,suggestedBucket,...} or null.
@@ -39585,6 +40006,49 @@ function App() {
     },()=>{}));
     return ()=>unsubs.forEach(u=>u());
   },[]);
+  // Shared by the confidence check-in's own dismiss (below) and the new
+  // duration question's skip -- a visible, reversible notice the moment the
+  // dismiss-streak auto-off actually fires (see recordQuestionDismissed),
+  // never a silent behavior change.
+  const handleQuestionDismissed=(kind)=>{
+    const{autoOff}=recordQuestionDismissed(kind);
+    if(autoOff){
+      const label=kind==="checkIn"?"\"how did that go?\" check-ins":"\"how long did this take\" questions";
+      setDashToast("Noticed you've been skipping these -- turned off "+label+". Turn back on in Settings → Privacy anytime.");
+      setTimeout(()=>setDashToast(""),6000);
+    }
+  };
+  // "How long did this really take?" -- the non-timer counterpart to the
+  // Lock-In Timer's own timeSpent measurement (see suggestDurationFor's own
+  // comment on why a plain checkbox-done completion never taught Studlin
+  // duration before this). Gated behind the askDurationQuestions setting, a
+  // real per-subject+kind sample-count threshold (stop asking once a class
+  // has enough data), and a per-subject+kind cooldown after a skip.
+  const [durationQuestionOffer,setDurationQuestionOffer]=useState(null); // {task}
+  const offerDurationQuestionIfDue=(task)=>{
+    if(!task||task.timeSpent||task.isGeneralTask||task.routineId)return;
+    if(task.kind!=="study block"||!task.subject)return;
+    if(lsGet("settings",{}).askDurationQuestions===false)return;
+    if(durationSampleCountFor(task.subject,task.kind)>=TIER0_MIN_BUCKET_SAMPLE)return;
+    if(isDurationQuestionOnCooldown(task.subject,task.kind))return;
+    setDurationQuestionOffer({task});
+  };
+  const skipDurationQuestion=()=>{
+    if(!durationQuestionOffer)return;
+    const{subject,kind}=durationQuestionOffer.task;
+    dismissDurationQuestion(subject,kind);
+    setDurationQuestionOffer(null);
+    handleQuestionDismissed("duration");
+  };
+  const answerDurationQuestion=(mins)=>{
+    if(!durationQuestionOffer)return;
+    const taskId=durationQuestionOffer.task.id;
+    const all=lsGet("events",[]);
+    const next=all.map(e=>e.id===taskId?{...e,timeSpent:mins,timeSpentSource:"self-reported"}:e);
+    lsSet("events",next);
+    setDurationQuestionOffer(null);
+    recordQuestionAnswered("duration");
+  };
   const handleTaskCompleted=(taskId)=>{
     const events=lsGet("events",[]);
     const task=events.find(e=>e.id===taskId);
@@ -39632,6 +40096,7 @@ function App() {
         setExamCheckIn(task);
       }
     }
+    offerDurationQuestionIfDue(task);
   };
   // Generates the real "let's see what needs another look" check that
   // replaces the plain confidence self-report when session 1 of a real,
@@ -39748,6 +40213,7 @@ function App() {
     // reflects how it actually went, not just that it got marked done —
     // this part applies to every flexible study block, exam-linked or not.
     applyCheckInRating(ci.id,rating);
+    recordQuestionAnswered("checkIn");
     const events=lsGet("events",[]);
     const examEvent=ci.dueEventId?events.find(e=>e.id===ci.dueEventId):null;
     if(!taskOverride)setExamCheckIn(null);
@@ -39983,6 +40449,21 @@ function App() {
       dismissStrugglingBucket(strugglingBucketOffer.strugglingBucket);
     }
     setStrugglingBucketOffer(null);
+  };
+  // Writes examPrepSpacingStyle directly (not through examPrepSpacingTouched
+  // -- that flag only exists to protect ScheduleSettingsPanel's own Save
+  // from implicitly confirming a choice the student never looked at; this
+  // IS the student looking at and confirming it).
+  const acceptExamPrepSpacingOffer=()=>{
+    if(!examPrepSpacingOffer)return;
+    logSuggestionDecision("examPrepSpacing","accepted",examPrepSpacingOffer);
+    setSchedulePreferences({...getSchedulePreferences(),examPrepSpacingStyle:"close-to-deadline"});
+    setExamPrepSpacingOffer(null);
+  };
+  const declineExamPrepSpacingOffer=()=>{
+    if(examPrepSpacingOffer)logSuggestionDecision("examPrepSpacing","dismissed",examPrepSpacingOffer);
+    dismissExamPrepSpacingOffer();
+    setExamPrepSpacingOffer(null);
   };
   // Same explicit-action-only contract as acceptStrugglingBucketOffer above.
   const acceptPeakHourInsight=()=>{
@@ -40885,6 +41366,14 @@ function App() {
       if(recoveryPending)queueInsightNudge("peakInsight",peakInsight);
       else setPeakInsightOffer(peakInsight);
     }
+    // Same shared-slot deference as peakInsight above, plus this one has
+    // its own long (30-day) cooldown already, so deferring on a busy day
+    // costs nothing -- it isn't urgent the way a real recovery signal is,
+    // not worth its own queueInsightNudge path.
+    if(!strugglingBucket&&!peakInsight){
+      const spacingOffer=detectExamPrepSpacingOffer();
+      if(spacingOffer)setExamPrepSpacingOffer(spacingOffer);
+    }
     // A missed task is NEVER moved on its own anymore. This used to be Tier
     // 0's silent-commit loop for any lone missed item (banner only from 2+),
     // which relocated tasks a student hadn't agreed to move. Every missed
@@ -41738,12 +42227,30 @@ function App() {
           applyCheckInRating's completionLog signal for every flexible
           study block regardless of exam link, same as before; this just
           stops it from falsely referencing "the exam" when there isn't one. */}
-      <Modal open={!!examCheckIn} onClose={()=>setExamCheckIn(null)} title={examCheckIn&&examCheckIn.dueEventId?"How do you feel about the exam so far?":"How did that session go?"} width={380}>
+      <Modal open={!!examCheckIn} onClose={()=>{setExamCheckIn(null);handleQuestionDismissed("checkIn");}} title={examCheckIn&&examCheckIn.dueEventId?"How do you feel about the exam so far?":"How did that session go?"} width={380}>
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
           {EXAM_CHECKIN_SCALE.map(opt=>(
             <Btn key={opt.value} variant="ghost" onClick={()=>submitExamCheckIn(opt.value)} style={{width:"100%",justifyContent:"center"}}>{opt.label}</Btn>
           ))}
         </div>
+      </Modal>
+      {/* "How long did this really take?" -- the non-timer counterpart to
+          the Lock-In Timer's own duration measurement (see
+          offerDurationQuestionIfDue). Preset chips, not a free-text field --
+          same low-friction, one-tap idiom the confidence check-in above
+          already uses. */}
+      <Modal open={!!durationQuestionOffer} onClose={skipDurationQuestion} title="Roughly how long did that take?" width={380}>
+        {durationQuestionOffer&&(
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            <div style={{fontSize:12.5,color:T.muted}}>&quot;{durationQuestionOffer.task.title}&quot; -- helps Studlin learn {durationQuestionOffer.task.subject}&apos;s real pace, even without the timer.</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+              {[15,30,45,60,90].map(mins=>(
+                <Btn key={mins} variant="ghost" onClick={()=>answerDurationQuestion(mins)} style={{flex:"1 0 30%",justifyContent:"center"}}>{mins} min</Btn>
+              ))}
+            </div>
+            <Btn variant="subtle" onClick={skipDurationQuestion} style={{width:"100%",justifyContent:"center"}}>Skip</Btn>
+          </div>
+        )}
       </Modal>
       {/* The real "smart" half of Smart Study Plan Flow -- replaces the
           plain confidence self-report above with an actual check, only
@@ -41823,6 +42330,17 @@ function App() {
           <div style={{display:"flex",gap:8}}>
             <Btn onClick={acceptStrugglingBucketOffer} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Switch to {PEAK_BUCKET_LABELS[strugglingBucketOffer.suggestedBucket]}</Btn>
             <Btn variant="ghost" onClick={declineStrugglingBucketOffer} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Not now</Btn>
+          </div>
+        </div>
+      )}
+      {examPrepSpacingOffer&&(
+        <div style={{position:"fixed",bottom:20,left:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
+          <div style={{fontSize:13,color:T.white,marginBottom:10,lineHeight:1.5}}>
+            Your real exam prep tends to happen close to the deadline, no matter how far out Studlin schedules it. Want fewer, closer-together sessions instead of a spread-out plan you might not get to?
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <Btn onClick={acceptExamPrepSpacingOffer} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Switch it</Btn>
+            <Btn variant="ghost" onClick={declineExamPrepSpacingOffer} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Not now</Btn>
           </div>
         </div>
       )}

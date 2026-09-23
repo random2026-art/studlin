@@ -1026,6 +1026,14 @@ module.exports = withSentry(async (req, res) => {
     // defaulting a never-written flag to false would silently overwrite
     // that back to off on next load instead of backfilling it up.
     const shareAvailability=(data.preferences&&typeof data.preferences.shareAvailability==="boolean")?data.preferences.shareAvailability:undefined;
+    // Same "omit unless some device already wrote it" reasoning as
+    // shareAvailability above, for the two question-asking toggles
+    // (studlin-app.jsx's askCheckIns/askDurationQuestions) -- these default
+    // to true client-side until explicitly set, so a missing key here must
+    // stay missing rather than come back false and silently flip a fresh
+    // device's default off.
+    const askCheckIns=(data.preferences&&typeof data.preferences.askCheckIns==="boolean")?data.preferences.askCheckIns:undefined;
+    const askDurationQuestions=(data.preferences&&typeof data.preferences.askDurationQuestions==="boolean")?data.preferences.askDurationQuestions:undefined;
     return res.status(200).json({
       plan,
       credits: data.credits ?? DEFAULT_CREDITS,
@@ -1042,6 +1050,8 @@ module.exports = withSentry(async (req, res) => {
       freeScheduleScanUsed: !!data.freeScheduleScanUsed,
       freeSyllabusScanUsed: !!data.freeSyllabusScanUsed,
       ...(shareAvailability===undefined?{}:{shareAvailability}),
+      ...(askCheckIns===undefined?{}:{askCheckIns}),
+      ...(askDurationQuestions===undefined?{}:{askDurationQuestions}),
     });
   } catch (err) {
     console.warn('Profile lookup unavailable, returning defaults:', err.message);
