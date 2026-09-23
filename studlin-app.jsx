@@ -19030,7 +19030,24 @@ function ChatBubble({m,myUid,onRespond,onSchedule,onCounter}){
   if(m.kind==="note"||m.kind==="deck"){
     const isNote=m.kind==="note";
     const incoming=m.senderId!==myUid;
-    const pending=m.status==="pending";
+    // Bug fix, 2026-09-23 user report ("first share worked, the rest
+    // didn't"): this used to gate on one shared m.status field that
+    // EITHER side's Approve button overwrote. If the sender clicked their
+    // own "Approve & Send" first, status flipped to "approved" for
+    // everyone, the recipient's buttons vanished before they ever got to
+    // click, and their bubble then falsely showed "Added to your
+    // workspace" even though respondToShare's copy-into-decks branch
+    // never ran for them. Same per-uid responses map the calendar-invite
+    // flow above already uses -- each recipient (there can be more than
+    // one, in a group chat) accepts or declines independently, and the
+    // sender never gets a button at all since they have nothing to
+    // approve here (the message already went out the moment it was sent).
+    const responses=m.responses||{};
+    const myResponse=responses[myUid];
+    const needsMyResponse=incoming&&!myResponse;
+    const responseValues=Object.values(responses);
+    const anyAccepted=responseValues.includes("approved");
+    const allDeclined=responseValues.length>0&&responseValues.every(r=>r==="declined");
     return (
       <div style={{alignSelf:align,maxWidth:"86%",padding:"10px 12px",background:bg,border:`1px solid ${border}`,borderRadius:12}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -19040,14 +19057,17 @@ function ChatBubble({m,myUid,onRespond,onSchedule,onCounter}){
             <div style={{fontSize:10.5,color:pp.muted}}>{isNote?"Note":m.meta.count+" cards"}{incoming?" · shared with you":" · you shared this"}</div>
           </div>
         </div>
-        {pending&&(
+        {needsMyResponse&&(
           <div style={{display:"flex",gap:8,marginTop:10}}>
-            <button onClick={()=>onRespond(m.id,"approved")} style={{flex:1,padding:"7px 0",borderRadius:7,background:T.lime,color:T.bg,border:"none",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>{incoming?"Approve & Accept":"Approve & Send"}</button>
+            <button onClick={()=>onRespond(m.id,"approved")} style={{flex:1,padding:"7px 0",borderRadius:7,background:T.lime,color:T.bg,border:"none",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Approve & Accept</button>
             <button onClick={()=>onRespond(m.id,"declined")} style={{flex:1,padding:"7px 0",borderRadius:7,background:"transparent",color:pp.muted,border:`1px solid ${pp.border}`,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Decline</button>
           </div>
         )}
-        {m.status==="approved"&&<div style={{fontSize:10,color:T.lime,marginTop:8,fontWeight:600}}>{incoming?"✓ Added to your workspace":"✓ Sent"}</div>}
-        {m.status==="declined"&&<div style={{fontSize:10,color:pp.faint,marginTop:8,fontWeight:600}}>Declined</div>}
+        {incoming&&myResponse==="approved"&&<div style={{fontSize:10,color:T.lime,marginTop:8,fontWeight:600}}>✓ Added to your workspace</div>}
+        {incoming&&myResponse==="declined"&&<div style={{fontSize:10,color:pp.faint,marginTop:8,fontWeight:600}}>Declined</div>}
+        {!incoming&&anyAccepted&&<div style={{fontSize:10,color:T.lime,marginTop:8,fontWeight:600}}>✓ Accepted</div>}
+        {!incoming&&!anyAccepted&&allDeclined&&<div style={{fontSize:10,color:pp.faint,marginTop:8,fontWeight:600}}>Declined</div>}
+        {!incoming&&!anyAccepted&&!allDeclined&&<div style={{fontSize:10,color:pp.faint,marginTop:8,fontWeight:600}}>Waiting for them to accept…</div>}
       </div>
     );
   }
@@ -19560,7 +19580,7 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
   // Comments live in a separate note-comments localStorage map keyed by note
   // id (see Notes' doAddComment) — body alone doesn't carry them, so they're
   // pulled in explicitly here and carried through respondToShare below.
-  const attachDeck=(deck)=>{sendMessage({kind:"deck",status:"pending",meta:{name:deck.name,count:deck.cards?deck.cards.length:(deck.count||0),id:deck.id,cards:deck.cards}});setDeckPicker(false);};
+  const attachDeck=(deck)=>{sendMessage({kind:"deck",responses:{},meta:{name:deck.name,count:deck.cards?deck.cards.length:(deck.count||0),id:deck.id,cards:deck.cards}});setDeckPicker(false);};
 
   const peerName=target?(isGroup?target.group.name:target.user.n):"";
   const peerFirst=peerName.split(" ")[0];
@@ -19663,7 +19683,12 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
         lsSet("decks",[copy,...decks]);
       }
     }
-    fsdb().collection('chatRooms').doc(roomId).collection('messages').doc(id).update({status:decision}).catch(()=>{});
+    // Per-uid write, not a shared status field -- see ChatBubble's own
+    // comment on this same bug. Writing only "responses.<myUid>" means
+    // this recipient's own accept/decline can never be clobbered by (or
+    // clobber) another recipient's, or by the sender, since the sender's
+    // bubble no longer offers a button that reaches this code path at all.
+    fsdb().collection('chatRooms').doc(roomId).collection('messages').doc(id).update({["responses."+myUid]:decision}).catch(()=>{});
   };
 
   // Ask the other person to share a deck. There's no way to make them

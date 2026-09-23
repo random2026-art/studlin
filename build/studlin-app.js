@@ -11295,8 +11295,13 @@ function ChatBubble({ m, myUid, onRespond, onSchedule, onCounter }) {
   if (m.kind === "note" || m.kind === "deck") {
     const isNote = m.kind === "note";
     const incoming = m.senderId !== myUid;
-    const pending = m.status === "pending";
-    return /* @__PURE__ */ React.createElement("div", { style: { alignSelf: align, maxWidth: "86%", padding: "10px 12px", background: bg, border: `1px solid ${border}`, borderRadius: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { color: isNote ? T.amber : T.teal, flexShrink: 0 } }, isNote ? Icon.file : Icon.layers), /* @__PURE__ */ React.createElement("div", { style: { minWidth: 0, flex: 1 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: pp.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, isNote ? m.meta.title : m.meta.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: pp.muted } }, isNote ? "Note" : m.meta.count + " cards", incoming ? " \xB7 shared with you" : " \xB7 you shared this"))), pending && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement("button", { onClick: () => onRespond(m.id, "approved"), style: { flex: 1, padding: "7px 0", borderRadius: 7, background: T.lime, color: T.bg, border: "none", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: T.font } }, incoming ? "Approve & Accept" : "Approve & Send"), /* @__PURE__ */ React.createElement("button", { onClick: () => onRespond(m.id, "declined"), style: { flex: 1, padding: "7px 0", borderRadius: 7, background: "transparent", color: pp.muted, border: `1px solid ${pp.border}`, fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: T.font } }, "Decline")), m.status === "approved" && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.lime, marginTop: 8, fontWeight: 600 } }, incoming ? "\u2713 Added to your workspace" : "\u2713 Sent"), m.status === "declined" && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: pp.faint, marginTop: 8, fontWeight: 600 } }, "Declined"));
+    const responses = m.responses || {};
+    const myResponse = responses[myUid];
+    const needsMyResponse = incoming && !myResponse;
+    const responseValues = Object.values(responses);
+    const anyAccepted = responseValues.includes("approved");
+    const allDeclined = responseValues.length > 0 && responseValues.every((r) => r === "declined");
+    return /* @__PURE__ */ React.createElement("div", { style: { alignSelf: align, maxWidth: "86%", padding: "10px 12px", background: bg, border: `1px solid ${border}`, borderRadius: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { color: isNote ? T.amber : T.teal, flexShrink: 0 } }, isNote ? Icon.file : Icon.layers), /* @__PURE__ */ React.createElement("div", { style: { minWidth: 0, flex: 1 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: pp.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, isNote ? m.meta.title : m.meta.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: pp.muted } }, isNote ? "Note" : m.meta.count + " cards", incoming ? " \xB7 shared with you" : " \xB7 you shared this"))), needsMyResponse && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement("button", { onClick: () => onRespond(m.id, "approved"), style: { flex: 1, padding: "7px 0", borderRadius: 7, background: T.lime, color: T.bg, border: "none", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: T.font } }, "Approve & Accept"), /* @__PURE__ */ React.createElement("button", { onClick: () => onRespond(m.id, "declined"), style: { flex: 1, padding: "7px 0", borderRadius: 7, background: "transparent", color: pp.muted, border: `1px solid ${pp.border}`, fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: T.font } }, "Decline")), incoming && myResponse === "approved" && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.lime, marginTop: 8, fontWeight: 600 } }, "\u2713 Added to your workspace"), incoming && myResponse === "declined" && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: pp.faint, marginTop: 8, fontWeight: 600 } }, "Declined"), !incoming && anyAccepted && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.lime, marginTop: 8, fontWeight: 600 } }, "\u2713 Accepted"), !incoming && !anyAccepted && allDeclined && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: pp.faint, marginTop: 8, fontWeight: 600 } }, "Declined"), !incoming && !anyAccepted && !allDeclined && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: pp.faint, marginTop: 8, fontWeight: 600 } }, "Waiting for them to accept\u2026"));
   }
   return /* @__PURE__ */ React.createElement("div", { style: { alignSelf: align, maxWidth: "78%", padding: "9px 13px", background: bg, border: `1px solid ${border}`, borderRadius: 12, fontSize: 13, color: pp.text, lineHeight: 1.5 } }, m.text);
 }
@@ -11694,7 +11699,7 @@ function ChatDrawer({ open, target, myUid, onClose, onMakePermanent, onDeleteGro
     }).catch(reportError("scheduleGroupSession"));
   };
   const attachDeck = (deck) => {
-    sendMessage({ kind: "deck", status: "pending", meta: { name: deck.name, count: deck.cards ? deck.cards.length : deck.count || 0, id: deck.id, cards: deck.cards } });
+    sendMessage({ kind: "deck", responses: {}, meta: { name: deck.name, count: deck.cards ? deck.cards.length : deck.count || 0, id: deck.id, cards: deck.cards } });
     setDeckPicker(false);
   };
   const peerName = target ? isGroup ? target.group.name : target.user.n : "";
@@ -11761,7 +11766,7 @@ function ChatDrawer({ open, target, myUid, onClose, onMakePermanent, onDeleteGro
         lsSet("decks", [copy, ...decks]);
       }
     }
-    fsdb().collection("chatRooms").doc(roomId).collection("messages").doc(id).update({ status: decision }).catch(() => {
+    fsdb().collection("chatRooms").doc(roomId).collection("messages").doc(id).update({ ["responses." + myUid]: decision }).catch(() => {
     });
   };
   const requestDeck = () => {
