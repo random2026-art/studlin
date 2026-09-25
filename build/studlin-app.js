@@ -14276,7 +14276,7 @@ const fmtTimeShort = (t) => {
   return h + ":" + p[1] + " " + ap;
 };
 const wizardChipStyle = (sel) => ({ padding: "7px 12px", borderRadius: 8, fontSize: 12, fontWeight: sel ? 600 : 400, cursor: "pointer", border: `1px solid ${sel ? T.lime + "66" : T.border}`, background: sel ? T.lime + "14" : "transparent", color: sel ? T.lime : T.muted, fontFamily: T.font });
-const wizardStatusChipStyle = (sel) => ({ flex: 1, padding: "16px", borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: "pointer", border: `1.5px solid ${sel ? T.lime : T.border}`, background: sel ? T.lime + "14" : T.card2, color: sel ? T.lime : T.muted, fontFamily: T.font, textAlign: "center" });
+const wizardStatusChipStyle = (sel) => ({ flex: 1, padding: "16px", borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: "pointer", border: `1.5px solid ${sel ? T.lime : T.border}`, background: sel ? T.lime + "14" : T.card, color: sel ? T.lime : T.muted, fontFamily: T.font, textAlign: "center" });
 const wizardSelectStyle = { padding: "10px 8px", borderRadius: 8, border: `1px solid ${T.border}`, background: T.card2, fontSize: 13, color: T.text, fontFamily: T.font, outline: "none" };
 const wizardAddBtnStyle = { padding: "10px 16px", borderRadius: 8, border: "none", background: T.lime, color: T.ink, fontSize: 13, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" };
 function WizardRoutineList({ items, onRemove }) {
