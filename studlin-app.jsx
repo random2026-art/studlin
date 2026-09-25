@@ -4120,8 +4120,8 @@ function findReliableSlotFor(events,routines,prefs,desiredDate,desiredTime,durat
 // Same shape as isTier0Missed minus its !ev.time requirement, so a
 // timeless overdue task is still included the way the old Tier 1 filter
 // (and thus this replacement for it) always did.
-// Shared with Dashboard's own attackOverrun card (see D9 in the audit) so
-// the two never independently drift on what counts as "a rough week" --
+// Also used to gate the proactive insight nudges below (see
+// recoveryPending) so they can't fire on top of a genuinely rough week --
 // previously a bare `2` lived inline only in App()'s daily sweep.
 const CATCHUP_RECOVERY_THRESHOLD=2;
 // The Catch Me Up banner (and its Move / Move-it-myself / Skip preview) is
@@ -38602,46 +38602,6 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
     setChecklistConvertToast(`Added "${item.title}" to Calendar's "To place" tray — drag it onto a day there.`);
     setTimeout(()=>setChecklistConvertToast(""),3800);
   };
-  // Needs-attention card — an Attack Block project whose self-reported
-  // pace has fallen behind what can still fit before its deadline. Own
-  // local modal/state rather than reusing CalendarTab's "Balance my week"
-  // instance (that state lives inside a different component) — both call
-  // the exact same computeWeekBalancePlan engine underneath, so the two
-  // never disagree about what's actually movable, they just each own their
-  // own preview-then-confirm UI.
-  // D9 in the audit: this card and the App()-level Catch Me Up recovery
-  // banner are independently triggered and could stack when viewing
-  // Dashboard during a genuinely rough week -- same CATCHUP_RECOVERY_THRESHOLD
-  // used there, computed fresh here since this card has no other way to
-  // know recovery is pending (App() owns that state, not Dashboard).
-  const attackOverrun=computeCatchUpMissedItems(allEvents,today).length>=CATCHUP_RECOVERY_THRESHOLD?null:(detectAttackBlockOverruns(allEvents,today).filter(o=>!isAttackOverrunDismissedToday(o.dismissKey))[0]||null);
-  const [overrunModalOpen,setOverrunModalOpen]=useState(false);
-  const [overrunPlan,setOverrunPlan]=useState(null);
-  const [overrunToast,setOverrunToast]=useState("");
-  const openOverrunRestructure=()=>{
-    if(!attackOverrun)return;
-    logSuggestionDecision("attackOverrun","accepted",{chainId:attackOverrun.chainId,pendingMins:attackOverrun.pendingMins,capacityMins:attackOverrun.capacityMins,runwayDays:attackOverrun.runwayDays});
-    setOverrunPlan(computeWeekBalancePlan(lsGet("events",[]),getWeeklyRoutine(),getSchedulePreferences(),dayKey()));
-    setOverrunModalOpen(true);
-  };
-  const dismissOverrun=()=>{
-    if(!attackOverrun)return;
-    logSuggestionDecision("attackOverrun","dismissed",{chainId:attackOverrun.chainId,pendingMins:attackOverrun.pendingMins,capacityMins:attackOverrun.capacityMins});
-    dismissAttackOverrunToday(attackOverrun.dismissKey);
-    forcePlan(x=>x+1);
-  };
-  const confirmOverrunRestructure=()=>{
-    if(!overrunPlan||overrunPlan.moves.length===0){setOverrunModalOpen(false);setOverrunPlan(null);return;}
-    logSuggestionDecision("attackOverrunRestructure","accepted",{moveCount:overrunPlan.moves.length});
-    const all=lsGet("events",[]);
-    const moveMap=new Map(overrunPlan.moves.map(m=>[m.id,m]));
-    const next=all.map(ev=>moveMap.has(ev.id)?{...ev,date:moveMap.get(ev.id).toDate,time:moveMap.get(ev.id).toTime}:ev);
-    lsSet("events",next);
-    setOverrunModalOpen(false);setOverrunPlan(null);
-    forcePlan(x=>x+1);
-    setOverrunToast(overrunPlan.moves.length+" task"+(overrunPlan.moves.length!==1?"s":"")+" rebalanced across your week");
-    setTimeout(()=>setOverrunToast(""),3200);
-  };
   // Real weekly wrapped stats
   const weeklyFocusMin=realStats.weekMin;
   // "Reviewed" not "mastered" -- this counts every card marked correct in
@@ -38737,9 +38697,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
     <div style={{display:"flex",flexDirection:"column",gap:16,paddingBottom:40}}>
 
       {/* One-time "Studlin is learning you" reveal -- see
-          shouldShowLearnsYouReveal's own comment. Good news, not a
-          warning, so this gets the lime/positive treatment rather than
-          attackOverrun's red one just below. */}
+          shouldShowLearnsYouReveal's own comment. */}
       {learnsYouReveal&&(
         <div style={{background:T.card,border:`1px solid ${T.lime}44`,borderRadius:8,padding:"18px 20px",display:"flex",alignItems:"flex-start",gap:16}}>
           <div style={{flexShrink:0,width:38,height:38,borderRadius:8,background:T.lime+"1A",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🧠</div>
@@ -38753,50 +38711,6 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
         </div>
       )}
 
-      {/* Needs-attention — Attack Block project running behind its runway */}
-      {attackOverrun&&(
-        <div style={{background:T.card,border:`1px solid ${T.red}55`,borderRadius:8,padding:"18px 20px",display:"flex",alignItems:"flex-start",gap:16}}>
-          <div style={{flexShrink:0,width:38,height:38,borderRadius:8,background:T.red+"1A",display:"flex",alignItems:"center",justifyContent:"center"}}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={T.red} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-          </div>
-          <div style={{flex:1,minWidth:0}}>
-            <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Falling behind on "{attackOverrun.title}"</div>
-            <div style={{fontSize:13,color:T.text,lineHeight:1.5,marginBottom:14}}>
-              At a sustainable pace there's only about <strong style={{color:T.white}}>{(attackOverrun.capacityMins/60).toFixed(1)}h</strong> of runway left before it needs to be done, but the plan still has <strong style={{color:T.red}}>{(attackOverrun.pendingMins/60).toFixed(1)}h</strong> scheduled. Worth restructuring the week around it now, before it's a last-minute scramble.
-            </div>
-            <div style={{display:"flex",gap:8}}>
-              <Btn onClick={openOverrunRestructure} style={{padding:"7px 14px",fontSize:12}}>Restructure my week</Btn>
-              <Btn variant="ghost" onClick={dismissOverrun} style={{padding:"7px 14px",fontSize:12}}>I'll handle it</Btn>
-            </div>
-          </div>
-        </div>
-      )}
-      <Modal open={overrunModalOpen} onClose={()=>{setOverrunModalOpen(false);setOverrunPlan(null);}}
-        title="Restructure my week"
-        sub={overrunPlan?(overrunPlan.moves.length>0?overrunPlan.moves.length+" task"+(overrunPlan.moves.length!==1?"s":"")+" would move to make room":"Nothing safely movable right now. Try adjusting the plan by hand."):""}
-        width={520}
-        footer={overrunPlan&&overrunPlan.moves.length>0?(
-          <><Btn variant="subtle" onClick={()=>{setOverrunModalOpen(false);setOverrunPlan(null);}}>Cancel</Btn><Btn onClick={confirmOverrunRestructure}>Apply {overrunPlan.moves.length} change{overrunPlan.moves.length!==1?"s":""}</Btn></>
-        ):(
-          <Btn variant="subtle" onClick={()=>{setOverrunModalOpen(false);setOverrunPlan(null);}}>Close</Btn>
-        )}>
-        {overrunPlan&&overrunPlan.moves.length>0&&(
-          <div style={{display:"flex",flexDirection:"column",gap:7,maxHeight:280,overflowY:"auto"}}>
-            {overrunPlan.moves.map(m=>(
-              <div key={m.id} style={{display:"flex",flexDirection:"column",gap:4,padding:"9px 12px",background:T.card2,borderRadius:8,border:`1px solid ${T.border}`}}>
-                <div style={{display:"flex",alignItems:"center",gap:10}}>
-                  <div style={{flex:1,fontSize:13,color:T.text,fontWeight:500}}>{m.title}</div>
-                  <div style={{fontSize:11,color:T.muted,flexShrink:0}}>{m.fromDate} {fmtClock(m.fromTime)} → <strong style={{color:T.lime}}>{m.toDate} {fmtClock(m.toTime)}</strong></div>
-                </div>
-                {m.reason&&<div style={{fontSize:10.5,color:T.faint}}>{m.reason}</div>}
-              </div>
-            ))}
-          </div>
-        )}
-      </Modal>
-      {overrunToast&&(
-        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:7,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {overrunToast}</div>
-      )}
       {checklistConvertToast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:7,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8,maxWidth:420,textAlign:"center"}}>{Icon.check} {checklistConvertToast}</div>
       )}
