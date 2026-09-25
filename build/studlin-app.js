@@ -5195,11 +5195,7 @@ async function hydrateSettingsSyncOnAuth() {
 }
 function applyStudyStylePrefs(prefs, answers) {
   return { ...prefs, studyStylePrefs: {
-    sessionOrder: answers && answers.sessionOrder || null,
-    interleave: answers && answers.interleave || null,
-    planningHorizon: answers && answers.planningHorizon || null,
-    startTiming: answers && answers.startTiming || null,
-    collisionPref: answers && answers.collisionPref || null
+    sessionOrder: answers && answers.sessionOrder || null
   } };
 }
 function applySessionOrderPreference(sessions, sessionOrderPref) {
@@ -14548,6 +14544,8 @@ const WizardStepper = ({ step }) => {
     return /* @__PURE__ */ React.createElement("div", { key: s.key, style: { flex: 1 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600, color: done || current ? T.text : T.faint, marginBottom: 6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, done && /* @__PURE__ */ React.createElement("span", { style: { color: T.lime } }, "\u2713"), s.label), /* @__PURE__ */ React.createElement("div", { style: { height: 2, borderRadius: 2, background: done || current ? T.lime : T.border } }));
   })));
 };
+const TitleSub = ({ title, sub }) => /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 22 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 19, fontWeight: 700, color: T.white, letterSpacing: "-0.01em", marginBottom: 5 } }, title), sub && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, lineHeight: 1.5 } }, sub));
+const PrefChipRow = ({ label, value, onChange, options }) => /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 18 } }, /* @__PURE__ */ React.createElement("label", { style: { display: "block", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, marginBottom: 8 } }, label), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } }, options.map((opt) => /* @__PURE__ */ React.createElement("button", { key: opt.value, type: "button", onClick: () => onChange(value === opt.value ? null : opt.value), style: { ...peakChipStyle(value === opt.value), borderRadius: 10 } }, opt.label))));
 function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, targetCourseId, onPartialSync, setPricingOpen = () => {
 }, setActivePage = () => {
 } }) {
@@ -14603,10 +14601,6 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
   const [expandedItemId, setExpandedItemId] = useState(null);
   const togglePeakBucket = (id) => setPeakBuckets((prev) => prev.includes(id) ? prev.filter((b) => b !== id) : [...prev, id]);
   const [sessionOrderPref, setSessionOrderPref] = useState(null);
-  const [interleavePref, setInterleavePref] = useState(null);
-  const [planningHorizonPref, setPlanningHorizonPref] = useState(null);
-  const [startTimingPref, setStartTimingPref] = useState(null);
-  const [collisionPref, setCollisionPref] = useState(null);
   const [askQuestionsPref, setAskQuestionsPref] = useState(null);
   const persistPending = (next) => {
     setPendingClasses(next);
@@ -15377,7 +15371,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     if (activities.length > 0) saveWeeklyRoutine([...getWeeklyRoutine(), ...activities]);
     setSchedulePreferences(applyStudyStylePrefs(
       { ...getSchedulePreferences(), workStartTime: workStart, workEndTime: workEnd, peakHourBuckets: peakBuckets, bedtime: sleepTime },
-      { sessionOrder: sessionOrderPref, interleave: interleavePref, planningHorizon: planningHorizonPref, startTiming: startTimingPref, collisionPref }
+      { sessionOrder: sessionOrderPref }
     ));
     if (status) saveProfile({ ...getProfile(), status });
     if (askQuestionsPref != null) {
@@ -15394,8 +15388,6 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     }
     onFinish(newlyCommittedIdsRef.current);
   };
-  const TitleSub = ({ title, sub }) => /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 22 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 19, fontWeight: 700, color: T.white, letterSpacing: "-0.01em", marginBottom: 5 } }, title), sub && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, lineHeight: 1.5 } }, sub));
-  const PrefChipRow = ({ label, value, onChange, options }) => /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 18 } }, /* @__PURE__ */ React.createElement("label", { style: { display: "block", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, marginBottom: 8 } }, label), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } }, options.map((opt) => /* @__PURE__ */ React.createElement("button", { key: opt.value, type: "button", onClick: () => onChange(value === opt.value ? null : opt.value), style: { ...peakChipStyle(value === opt.value), borderRadius: 10 } }, opt.label))));
   return /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", inset: 0, zIndex: 300, background: "rgba(8,12,10,0.97)", backdropFilter: "blur(10px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px 16px", overflowY: "auto" } }, /* @__PURE__ */ React.createElement("div", { style: { width: "100%", maxWidth: 620, maxHeight: "88vh", display: "flex", flexDirection: "column", background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: "0 48px 100px -30px rgba(0,0,0,0.7)", animation: "studlinPop 0.25s ease" } }, /* @__PURE__ */ React.createElement(WizardStepper, { step }), /* @__PURE__ */ React.createElement("div", { style: { padding: "28px 32px 0", overflowY: "auto", flex: 1, minHeight: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { minHeight: 210, display: "flex", flexDirection: "column", justifyContent: "center" } }, step === "term" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: "When does this term run?", sub: "Studlin stops expecting your classes outside these dates -- summer, before the term starts. You can always change this later in Settings." }), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } }, /* @__PURE__ */ React.createElement(DateField, { label: "Term starts", value: termStart, onChange: setTermStart }), /* @__PURE__ */ React.createElement(DateField, { label: "Term ends", value: termEnd, onChange: setTermEnd, min: termStart })), termWindowInvalid && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.red, marginTop: 8 } }, "Term ends must be after term starts.")), step === "awake" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: "When are you awake, and when do you like to study?" }), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 } }, /* @__PURE__ */ React.createElement(TimeField, { label: "Wake up", value: wakeTime, onChange: setWakeTime }), /* @__PURE__ */ React.createElement(TimeField, { label: "Sleep", value: sleepTime, onChange: setSleepTime })), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } }, /* @__PURE__ */ React.createElement(TimeField, { label: "Study start", value: workStart, onChange: setWorkStart }), /* @__PURE__ */ React.createElement(TimeField, { label: "Study end", value: workEnd, onChange: setWorkEnd })), windowInvalid && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.red, marginTop: 8 } }, "End time must be after start time."), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 20 } }, /* @__PURE__ */ React.createElement("label", { style: { display: "block", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, marginBottom: 8 } }, "Peak Focus Hours ", /* @__PURE__ */ React.createElement("span", { style: { textTransform: "none", fontWeight: 400, color: T.faint } }, "(optional)")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } }, TIER0_HOUR_BUCKETS.map((b) => (
     // borderRadius:10 overrides peakChipStyle's own default
     // (8px) here only -- peakChipStyle is a shared helper
@@ -15408,20 +15400,6 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     { value: "hardest_first", label: "Hardest first" },
     { value: "easy_first", label: "Warm up first" },
     { value: "no_preference", label: "No preference" }
-  ] }), /* @__PURE__ */ React.createElement(PrefChipRow, { label: "Studying for a few things at once", value: interleavePref, onChange: setInterleavePref, options: [
-    { value: "one_at_a_time", label: "One at a time" },
-    { value: "mix_it_up", label: "Mix it up" }
-  ] }), /* @__PURE__ */ React.createElement(PrefChipRow, { label: "How far ahead you want to see your plan", value: planningHorizonPref, onChange: setPlanningHorizonPref, options: [
-    { value: "just_today", label: "Just today" },
-    { value: "this_week", label: "This week" },
-    { value: "whole_plan", label: "The whole plan" }
-  ] }), /* @__PURE__ */ React.createElement(PrefChipRow, { label: "Be honest -- when do you actually start?", value: startTimingPref, onChange: setStartTimingPref, options: [
-    { value: "way_ahead", label: "Way ahead" },
-    { value: "a_few_days_before", label: "A few days before" },
-    { value: "the_night_before", label: "The night before" }
-  ] }), /* @__PURE__ */ React.createElement(PrefChipRow, { label: "Two things collide on the same day", value: collisionPref, onChange: setCollisionPref, options: [
-    { value: "split_time", label: "Split time" },
-    { value: "finish_one_first", label: "Finish one first" }
   ] }), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 18, paddingTop: 16, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text, marginBottom: 4 } }, "One more thing"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10, lineHeight: 1.5 } }, "With your permission, Studlin might ask a quick question here and there -- like how a study session went, or how long something really took when you didn't use the timer. That's how it learns real things about you, like when you're most productive or how long a class actually takes. Always skippable, and adjustable anytime in Settings."), /* @__PURE__ */ React.createElement(PrefChipRow, { label: "Okay to ask?", value: askQuestionsPref, onChange: setAskQuestionsPref, options: [
     { value: "yes", label: "Yes, ask me" },
     { value: "no", label: "No thanks" }

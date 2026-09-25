@@ -8553,24 +8553,18 @@ async function hydrateSettingsSyncOnAuth(){
     }
   }catch(e){}
 }
-// The one write step for the Calendar wizard's optional "personalize" step
-// (5 single-select preference chips -- session order, interleaving
-// tolerance, planning horizon, start timing, collision tie-break). Each
-// stays null if the student skipped/never answered that one -- same
-// "always present, individually empty" convention peakHourBuckets already
-// uses, not an all-or-nothing object that's sometimes absent. Collection
-// only: nothing in the placement/priority engine reads studyStylePrefs
-// yet -- that's real, separate follow-up work (the collisionPref answer in
-// particular is worded to match the exam-clustering priority signal
-// discussed separately, so it has a real preference to read once that
-// lands).
+// The one write step for the Calendar wizard's optional "personalize" step.
+// Used to collect 4 more preferences (interleaving tolerance, planning
+// horizon, start timing, collision tie-break) that nothing in the
+// placement/priority engine ever read -- removed 2026-09-25 on a user
+// report that the questions "don't do anything" (correct: they didn't).
+// sessionOrder is the one real, working preference -- see
+// applySessionOrderPreference. Still its own nested object (not just a
+// bare field on prefs) so a future real preference has an obvious place
+// to land without another prefs-shape migration.
 function applyStudyStylePrefs(prefs,answers){
   return {...prefs,studyStylePrefs:{
     sessionOrder:(answers&&answers.sessionOrder)||null,
-    interleave:(answers&&answers.interleave)||null,
-    planningHorizon:(answers&&answers.planningHorizon)||null,
-    startTiming:(answers&&answers.startTiming)||null,
-    collisionPref:(answers&&answers.collisionPref)||null,
   }};
 }
 // The first real consumer of studyStylePrefs.sessionOrder (the Calendar
@@ -23655,7 +23649,14 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
 const ROUTINE_DOW=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const fmtTimeShort=(t)=>{if(!t)return "";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+" "+ap;};
 const wizardChipStyle=(sel)=>({padding:"7px 12px",borderRadius:8,fontSize:12,fontWeight:sel?600:400,cursor:"pointer",border:`1px solid ${sel?T.lime+"66":T.border}`,background:sel?T.lime+"14":"transparent",color:sel?T.lime:T.muted,fontFamily:T.font});
-const wizardStatusChipStyle=(sel)=>({flex:1,padding:"16px",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",border:`1.5px solid ${sel?T.lime:T.border}`,background:sel?T.lime+"14":T.card2,color:sel?T.lime:T.muted,fontFamily:T.font,textAlign:"center"});
+// Bug fix, 2026-09-25 user report (screenshot: "am i highschool or
+// college" chips read cream inside the wizard's white modal) -- the exact
+// same issue classSetupChoiceStyle's own comment already documents fixing
+// on 2026-09-09 (T.card2, the light theme's cream/off-white card tone,
+// reads dirty against this wizard's own white T.card modal), just missed
+// on this one wizard-exclusive chip style at the time. Same fix: plain
+// white background, the existing border still reads as a distinct card.
+const wizardStatusChipStyle=(sel)=>({flex:1,padding:"16px",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",border:`1.5px solid ${sel?T.lime:T.border}`,background:sel?T.lime+"14":T.card,color:sel?T.lime:T.muted,fontFamily:T.font,textAlign:"center"});
 const wizardSelectStyle={padding:"10px 8px",borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,fontSize:13,color:T.text,fontFamily:T.font,outline:"none"};
 const wizardAddBtnStyle={padding:"10px 16px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontSize:13,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"};
 
@@ -24240,6 +24241,42 @@ const WizardStepper=({step})=>{
   );
 };
 
+// Bug fix, 2026-09-25 user report ("when i select something it takes me
+// back up," i.e. the wizard's scroll position jumped to the top): both of
+// these used to be defined INSIDE ClassSetupWizard's own render body,
+// recreated as a brand-new function/component identity on every single
+// render -- picking any chip anywhere in the wizard (e.g. PrefChipRow's
+// own onClick) triggers a state update, which redefines these, which
+// makes every element created from them a different component type than
+// last render as far as React's reconciler is concerned, forcing a full
+// unmount+remount of that subtree instead of an in-place update. That
+// remount is what was actually causing the scroll jump. Hoisted to module
+// scope for a stable identity -- neither closes over anything from
+// ClassSetupWizard (TitleSub only uses T; PrefChipRow only uses
+// peakChipStyle, both already module-level), so this is a pure
+// mechanical move, no behavior change.
+const TitleSub=({title,sub})=>(
+  <div style={{marginBottom:22}}>
+    <div style={{fontSize:19,fontWeight:700,color:T.white,letterSpacing:"-0.01em",marginBottom:5}}>{title}</div>
+    {sub&&<div style={{fontSize:13,color:T.muted,lineHeight:1.5}}>{sub}</div>}
+  </div>
+);
+// One optional single-select preference question, reusing the same chip
+// visual language as the Peak Focus Hours row right above it on the
+// "awake" step (peakChipStyle, radius overridden to 10 the same way) --
+// this is the one place peakChipStyle's multi-select toggle behavior
+// doesn't apply, so selection/deselection is handled locally here instead
+// of via togglePeakBucket.
+const PrefChipRow=({label,value,onChange,options})=>(
+  <div style={{marginBottom:18}}>
+    <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>{label}</label>
+    <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+      {options.map(opt=>(
+        <button key={opt.value} type="button" onClick={()=>onChange(value===opt.value?null:opt.value)} style={{...peakChipStyle(value===opt.value),borderRadius:10}}>{opt.label}</button>
+      ))}
+    </div>
+  </div>
+);
 function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCourseId,onPartialSync,setPricingOpen=()=>{},setActivePage=()=>{}}){
   const [step,setStep]=useState("status"); // timezone | term | awake | status | classes | activities | calendarSync | window | finalReview
   const [status,setStatus]=useState(initialStatus||"");
@@ -24354,17 +24391,21 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   const [expandedClassId,setExpandedClassId]=useState(null); // final drill-down review: which class is expanded
   const [expandedItemId,setExpandedItemId]=useState(null); // final drill-down review: which item within it is expanded
   const togglePeakBucket=(id)=>setPeakBuckets(prev=>prev.includes(id)?prev.filter(b=>b!==id):[...prev,id]);
-  // "personalize" step -- 5 optional single-select preference chips, see
-  // applyStudyStylePrefs. Each stays null until picked; clicking an
+  // "personalize" step -- one optional single-select preference chip, see
+  // applyStudyStylePrefs. Stays null until picked; clicking an
   // already-selected chip deselects it back to null (a real "no
   // preference," not just "hasn't answered yet" vs "picked no
   // preference" -- there's no meaningful difference for either of those
   // right now, so one null state covers both).
+  // 2026-09-25 user report ("some of the questions don't do anything"):
+  // this step used to ask 4 more questions (interleave/planningHorizon/
+  // startTiming/collisionPref) that were collection-only -- nothing in
+  // the placement/priority engine ever read them (see this file's git
+  // history for applyStudyStylePrefs' own prior comment admitting as
+  // much). Removed rather than left as a half-finished "we'll wire this
+  // up eventually" -- sessionOrder is the one real, working preference
+  // here (see applySessionOrderPreference).
   const [sessionOrderPref,setSessionOrderPref]=useState(null);
-  const [interleavePref,setInterleavePref]=useState(null);
-  const [planningHorizonPref,setPlanningHorizonPref]=useState(null);
-  const [startTimingPref,setStartTimingPref]=useState(null);
-  const [collisionPref,setCollisionPref]=useState(null);
   // Onboarding opt-in for Studlin's follow-up questions (post-session
   // check-ins, "how long did this take") -- null means untouched/skipped,
   // in which case both toggles just keep their existing true-by-default
@@ -25345,7 +25386,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     // saved alongside the rest of this same commit.
     setSchedulePreferences(applyStudyStylePrefs(
       {...getSchedulePreferences(),workStartTime:workStart,workEndTime:workEnd,peakHourBuckets:peakBuckets,bedtime:sleepTime},
-      {sessionOrder:sessionOrderPref,interleave:interleavePref,planningHorizon:planningHorizonPref,startTiming:startTimingPref,collisionPref}
+      {sessionOrder:sessionOrderPref}
     ));
     // Latent bug fix (Phase 9d): `status` was a purely local UI branch
     // before this -- chosen at the very first step of this wizard, then
@@ -25396,29 +25437,6 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     // staged (e.g. "Skip, I'll add classes later" all the way through).
     onFinish(newlyCommittedIdsRef.current);
   };
-
-  const TitleSub=({title,sub})=>(
-    <div style={{marginBottom:22}}>
-      <div style={{fontSize:19,fontWeight:700,color:T.white,letterSpacing:"-0.01em",marginBottom:5}}>{title}</div>
-      {sub&&<div style={{fontSize:13,color:T.muted,lineHeight:1.5}}>{sub}</div>}
-    </div>
-  );
-  // One optional single-select preference question, reusing the same chip
-  // visual language as the Peak Focus Hours row right above it on the
-  // "awake" step (peakChipStyle, radius overridden to 10 the same way) --
-  // this is the one place peakChipStyle's multi-select toggle behavior
-  // doesn't apply, so selection/deselection is handled locally here
-  // instead of via togglePeakBucket.
-  const PrefChipRow=({label,value,onChange,options})=>(
-    <div style={{marginBottom:18}}>
-      <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>{label}</label>
-      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-        {options.map(opt=>(
-          <button key={opt.value} type="button" onClick={()=>onChange(value===opt.value?null:opt.value)} style={{...peakChipStyle(value===opt.value),borderRadius:10}}>{opt.label}</button>
-        ))}
-      </div>
-    </div>
-  );
 
   return (
     <div style={{position:"fixed",inset:0,zIndex:300,background:"rgba(8,12,10,0.97)",backdropFilter:"blur(10px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px 16px",overflowY:"auto"}}>
@@ -25498,24 +25516,6 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
               {value:"hardest_first",label:"Hardest first"},
               {value:"easy_first",label:"Warm up first"},
               {value:"no_preference",label:"No preference"},
-            ]} />
-            <PrefChipRow label="Studying for a few things at once" value={interleavePref} onChange={setInterleavePref} options={[
-              {value:"one_at_a_time",label:"One at a time"},
-              {value:"mix_it_up",label:"Mix it up"},
-            ]} />
-            <PrefChipRow label="How far ahead you want to see your plan" value={planningHorizonPref} onChange={setPlanningHorizonPref} options={[
-              {value:"just_today",label:"Just today"},
-              {value:"this_week",label:"This week"},
-              {value:"whole_plan",label:"The whole plan"},
-            ]} />
-            <PrefChipRow label="Be honest -- when do you actually start?" value={startTimingPref} onChange={setStartTimingPref} options={[
-              {value:"way_ahead",label:"Way ahead"},
-              {value:"a_few_days_before",label:"A few days before"},
-              {value:"the_night_before",label:"The night before"},
-            ]} />
-            <PrefChipRow label="Two things collide on the same day" value={collisionPref} onChange={setCollisionPref} options={[
-              {value:"split_time",label:"Split time"},
-              {value:"finish_one_first",label:"Finish one first"},
             ]} />
             <div style={{marginTop:18,paddingTop:16,borderTop:`1px solid ${T.border}`}}>
               <div style={{fontSize:13,fontWeight:600,color:T.text,marginBottom:4}}>One more thing</div>
