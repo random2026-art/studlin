@@ -66,6 +66,21 @@ describe("matchStudlinHelpEntry: real invocations against the verified answer ta
     assert.equal(entry.id, "google-unverified");
     assert.match(entry.answer, /Calendar or work schedule/);
   });
+
+  test("the Weekly Wrapped entry correctly states ONE toggle covers both the email and the in-app popup -- verified against the real bug fix (isWrappedWindow reads settings.wrapped directly), not assumed from the label alone", () => {
+    const m = loadStudlinModule();
+    const entry = m.matchStudlinHelpEntry("turn off weekly wrapped");
+    assert.ok(entry);
+    assert.equal(entry.id, "weekly-wrapped");
+    assert.match(entry.answer, /both the email and the/);
+  });
+
+  test("the task-kinds entry, sourced directly from classifyStudlinAiMessage's own taskKind rules (not re-guessed)", () => {
+    const m = loadStudlinModule();
+    const entry = m.matchStudlinHelpEntry("what's the difference between a task and an event");
+    assert.ok(entry);
+    assert.equal(entry.id, "task-kinds");
+  });
 });
 
 describe("StudlinAiDrawer: app_help is wired into both the classifier and the dispatch", () => {

@@ -1694,6 +1694,26 @@ const STUDLIN_HELP_ENTRIES = [
     id: "two-factor",
     keywords: ["two factor", "2fa", "two-factor", "active sessions"],
     answer: "Not live yet -- two-factor authentication and active-session management are marked Coming Soon in Settings \u2192 Privacy."
+  },
+  {
+    id: "weekly-wrapped",
+    keywords: ["turn off weekly wrapped", "stop weekly wrapped", "disable weekly wrapped", "weekly wrapped popup"],
+    answer: 'Settings \u2192 Notifications \u2192 Email \u2192 "Weekly Wrapped digest." One toggle controls both the email and the Sunday/Monday-evening in-app popup.'
+  },
+  {
+    id: "shared-study-window",
+    keywords: ["find shared study window", "study time with a friend", "schedule with a friend", "find time with a friend"],
+    answer: 'Open the quick-actions menu and choose "Find Shared Study Window." Manual checks one specific time against your own calendar; Match scans for free time automatically.'
+  },
+  {
+    id: "join-lock-in",
+    keywords: ["join lock-in", "join lock in", "what is lock-in"],
+    answer: "It's the button on a friend's live study-session card -- tap it to join their session in real time."
+  },
+  {
+    id: "task-kinds",
+    keywords: ["difference between a task and", "task vs assignment", "what's a reminder vs", "event vs task", "todo vs task"],
+    answer: 'Exam/Project/Event/Reminder are their own real kinds. "Study" is the default -- Studlin finds real time to work on it before its deadline. "Todo" just tracks a due date with no work time scheduled.'
   }
 ];
 function scoreHelpEntry(text, entry) {
