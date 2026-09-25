@@ -2460,6 +2460,116 @@ function routeStudlinAiQuestion(text,knownSubjects){
   }
   return flags;
 }
+// "How do I do X in Studlin?" help, 2026-09-25 user request. Deliberately
+// NOT a free-form AI call, on purpose -- a model asked to describe
+// Studlin's own UI from general knowledge (or worse, from its training
+// data's idea of what a study app "probably" has) can hallucinate a
+// setting that doesn't exist, which is exactly the "confident wrong
+// answer" CLAUDE.md's Certainty Policy says is worse than no answer at
+// all. This is the same "deterministic keyword routing, not a model
+// call" precedent routeStudlinAiQuestion above already established for
+// the identical reason -- every answer here is hand-written and verified
+// against the real Settings UI (see each entry's own file:line), so
+// there's zero hallucination surface. It's also free to run (no API
+// call, no credit cost, no Pro gate) since this is basic product support,
+// not a premium AI capability -- see answerAppHelp in StudlinAiDrawer for
+// the caller.
+//
+// Each entry's `answer` is written to CLAUDE.md's copywriting rule (short
+// sentences, no filler) and names the exact real path: Settings tab,
+// then section/label, verbatim as it renders. When two entries could
+// plausibly match the same message, the more specific one should list
+// more/longer keywords so scoreHelpEntry's word-count weighting favors it
+// naturally -- see matchStudlinHelpEntry's own comment.
+const STUDLIN_HELP_ENTRIES=[
+  {id:"theme",keywords:["dark mode","light mode","dark theme","light theme","switch theme","change theme","theme"],
+    answer:"Settings → Appearance has a Light/Dark switch at the top. Your choice is saved automatically."},
+  {id:"accent-color",keywords:["accent color","app color","change color","theme color"],
+    answer:"Settings → Appearance → Accent color -- pick from the swatches there."},
+  {id:"incognito",keywords:["incognito","hide my status","appear offline","stop showing online","go offline"],
+    answer:"Settings → Privacy → Visibility → Incognito Mode. It masks your live study status everywhere and turns off Join Lock-In requests."},
+  {id:"online-status",keywords:["online status","presence dot","show online"],
+    answer:"Settings → Privacy → Visibility → Show Online Status. Turn it off and your presence dot disappears -- you'll show as offline to friends."},
+  {id:"deadline-notifications",keywords:["stop overdue","overdue notif","overdue remind","deadline alert","deadline notif","stop reminding","turn off reminders","turn off notifications","telling me this is overdue","telling me it's overdue","telling me things are overdue","says overdue","marks overdue","keeps saying overdue","stop it from telling me","overdue"],
+    answer:"Settings → Notifications → Reminders → \"Deadline alerts\" is the real toggle for heads-up-before-due-date pings. Note: the small red dot on an overdue calendar block itself has no toggle -- it clears when you finish, reschedule, or delete that item."},
+  {id:"desktop-notifications",keywords:["desktop notification","push notification","native alert","browser notification"],
+    answer:"Settings → Notifications → \"Enable Desktop Notifications.\" Your browser will also ask you to allow them the first time."},
+  {id:"google-calendar",keywords:["connect google calendar","sync google calendar","import google calendar","link google calendar"],
+    answer:"Settings → Integrations → Google Calendar → Connect. It's read-only -- Studlin never edits your real Google Calendar."},
+  {id:"add-class",keywords:["add a class","add a course","new class","new course","add subject"],
+    answer:"Settings → Subjects & Labels → \"+ Add,\" or from Calendar's sidebar, \"+ Add new\" next to Courses."},
+  {id:"remove-class",keywords:["delete a class","remove a class","delete a course","remove a course","delete subject"],
+    answer:"Settings → Subjects & Labels -- click \"Remove\" on the class. It'll warn you first about any linked assignments/exams before deleting anything."},
+  {id:"serious-mode",keywords:["serious mode","private account","hide gamification","hide streaks","hide levels"],
+    answer:"Settings → Privacy → \"Private Account / Serious Mode.\" It hides focus minutes and levels on your Profile; your calendar stays the same either way."},
+  {id:"reduce-motion",keywords:["reduce motion","disable animations","turn off animations","stop animations"],
+    answer:"Settings → Appearance → Density → \"Reduce motion.\" It turns off parallax and bouncy transitions."},
+  {id:"beta-code",keywords:["beta code","redeem code","beta tester"],
+    answer:"Settings → Subscription has a \"Have a beta code?\" box near the bottom, if you're on the Free plan."},
+  {id:"term-dates",keywords:["term dates","school starts","semester dates","end of term","set my term"],
+    answer:"Settings → Calendar Preferences → Term dates. Studlin stops expecting your classes outside that range."},
+  {id:"study-hours",keywords:["study hours","work hours","awake time","wake up time","sleep time","where are my peak hours","change my peak hours setting"],
+    // "peak hours"/"focus hours" deliberately NOT bare keywords here --
+    // "set my peak hours to evening" is a real, already-supported
+    // set_peak_hours ACTION (an imperative command, not a question), and
+    // this entry's pre-classification check (see send()'s preMatch,
+    // minScore=2) would otherwise wrongly intercept it as app_help before
+    // the real classifier ever got a chance to route it correctly. The
+    // two longer phrases above are safe: they're unambiguously
+    // question-shaped, not commands.
+    answer:"Settings → Calendar Preferences → \"Customize Schedule.\" Wake/sleep, your study-hours window, and Peak Focus Hours are all in that panel."},
+  {id:"google-unverified",keywords:["unverified app","google warning","google won't connect","google wont connect","google not working","google calendar not working","google calendar broken"],
+    answer:"That warning is real -- Studlin's Google Calendar connection is still pending Google's own app verification, so everyone sees it for now. Use Settings → Integrations → \"Calendar or work schedule\" instead: paste your calendar's secret address there, no verification needed."},
+  {id:"change-password",keywords:["change my password","change password","reset password","new password"],
+    answer:"Settings → Privacy → \"Change password\" sends a reset link to your email."},
+  {id:"delete-account",keywords:["delete my account","delete account","close my account","cancel my account"],
+    answer:"Settings → General → \"Delete account.\" It's permanent -- you'll need to type DELETE to confirm."},
+  {id:"ai-memory",keywords:["what does studlin ai remember","ai memory","forget what you know","clear ai memory","stop ai remembering"],
+    answer:"Settings → Privacy → \"What Studlin AI remembers\" lists everything it's learned, each with its own Remove button, plus a Clear all."},
+  {id:"ai-questions",keywords:["stop asking me questions","check-in questions","how long did this take question","stop check-ins"],
+    answer:"Settings → Privacy → \"Questions Studlin asks\" -- toggle off post-session check-ins or \"how long did this really take\" questions separately. Both also auto-disable on their own if you keep skipping them."},
+  {id:"auto-schedule-prep",keywords:["auto schedule","auto-schedule","automatically add study sessions","auto add study sessions"],
+    answer:"Settings → Calendar Preferences → \"Auto-schedule prep time\" -- choose Always ask, Auto-add, or Off for newly scanned assignments."},
+  {id:"two-factor",keywords:["two factor","2fa","two-factor","active sessions"],
+    answer:"Not live yet -- two-factor authentication and active-session management are marked Coming Soon in Settings → Privacy."},
+];
+// Scores an entry against the message: an exact multi-word phrase match
+// counts far more than a lone generic word overlapping, so "stop overdue
+// reminders" doesn't get outscored by some unrelated entry that happens
+// to also mention "notifications" once. Mirrors matchEventByTitle's own
+// scoring-tiers precedent in this file rather than inventing a new
+// approach for what's the same kind of bounded-matching problem.
+function scoreHelpEntry(text,entry){
+  let score=0;
+  entry.keywords.forEach(k=>{if(text.includes(k))score+=k.split(" ").length;});
+  return score;
+}
+// Never guesses: returns null (not a weak/best-effort guess) when nothing
+// scores -- answerAppHelp's caller treats that as "say so plainly," the
+// same Certainty Policy behavior STUDLIN_AI_SYSTEM_PROMPT already
+// requires of the model itself for schedule questions. A tie is resolved
+// by whichever entry appears first in STUDLIN_HELP_ENTRIES -- deliberately
+// unspecified beyond that, since two entries genuinely tying on real
+// keyword weight means the message was ambiguous between them anyway.
+// minScore defaults to 1 (any match at all) for the normal case -- once
+// classifyStudlinAiMessage has already confirmed kind==="app_help", even
+// a single generic keyword is useful signal. StudlinAiDrawer's send()
+// passes a stricter minScore=2 for its own PRE-classification check (see
+// that call site's own comment) -- unlike this function's normal use,
+// that check runs on every single message, including real questions and
+// actions, so it needs real specificity (a genuine multi-word phrase, not
+// one generic word) before it's confident enough to skip classification
+// and the Pro-gated real AI entirely.
+function matchStudlinHelpEntry(text,minScore){
+  const t=(text||"").toLowerCase();
+  const min=minScore||1;
+  let best=null,bestScore=0;
+  STUDLIN_HELP_ENTRIES.forEach(entry=>{
+    const s=scoreHelpEntry(t,entry);
+    if(s>=min&&s>bestScore){bestScore=s;best=entry;}
+  });
+  return best;
+}
 // Matches a free-text phrase (e.g. "gym", "track practice") against the
 // calendar items on one date — used by Tier 3's move_event/retime_event
 // intents to resolve a student's plain-English target into a real event or
@@ -20187,11 +20297,11 @@ async function classifyStudlinAiMessage(text,history){
   const weekday=new Date().toLocaleDateString("en-US",{weekday:"long"});
   const nowTime=currentClockLabel();
   const memLine=formatAiMemoryForPrompt();
-  const prompt="You are a message router for a student calendar assistant chat. Today is "+weekday+", "+today+". The current time right now is "+nowTime+". "+(memLine?memLine+" ":"")+"The student typed: \""+text+"\". Decide whether this is a QUESTION about their existing schedule/study history (a real number/fact), a COACHING ask (wants real study-strategy help, not a fact), an ACTION request (create something new, move/reschedule something that already exists, or turn pasted study material into flashcards/a quiz), TWO clearly separate action requests in one message, a request to check specific date/time OPTIONS against their calendar, or unsupported. Respond with ONLY this JSON, no markdown fences, no explanation:\n"+
-    "{\"kind\":\"question\"|\"coaching\"|\"action\"|\"multi_action\"|\"availability_match\"|\"unsupported\",\"intent\":\"create_task\"|\"delete_task\"|\"set_peak_hours\"|\"shift\"|\"clear_day\"|\"clear_week\"|\"skip_class\"|\"move_event\"|\"retime_event\"|\"move_flex_task\"|\"generate_study_material\"|\"import_syllabus_items\"|null,\"days\":<integer 1-14 or null>,\"date\":\"YYYY-MM-DD or null\",\"target\":\"<short name of the specific existing item, or null>\",\"targetDate\":\"YYYY-MM-DD or null\",\"destDate\":\"YYYY-MM-DD or null\",\"newStart\":\"HH:MM 24h or null\",\"newDuration\":<integer minutes or null>,\"title\":\"<short name of the NEW item to create, or null>\",\"dueDate\":\"YYYY-MM-DD or null\",\"dueTime\":\"HH:MM 24h or null\",\"durationMin\":<integer minutes or null>,\"taskKind\":\"study\"|\"todo\"|\"event\"|\"reminder\"|\"exam\"|\"project\"|null,\"genFormat\":\"flashcards\"|\"quiz\"|null,\"peakHours\":\"morning\"|\"midday\"|\"afternoon\"|\"evening\"|null,\"subject\":\"<the class/subject name the student named, or null>\",\"duringClass\":<true for import_syllabus_items when EITHER the student's own words say these items happen/are due during class, OR the pasted syllabus/material text itself states that for these items (e.g. \"completed in class,\" \"due in class,\" \"in-class assignment\"), false otherwise>,\"clarify\":\"<a short, specific question, or null>\",\"actions\":<for kind \"multi_action\" ONLY, an array of exactly 2 objects, each with the SAME shape as this whole envelope but only intent/days/date/target/targetDate/destDate/newStart/newDuration/title/dueDate/dueTime/durationMin/taskKind/peakHours/subject/duringClass (no kind/clarify/actions inside each one) -- otherwise null>,\"matchCandidates\":<for kind \"availability_match\" ONLY, an array of 1-8 objects {\"date\":\"YYYY-MM-DD\",\"startTime\":\"HH:MM 24h\",\"endTime\":\"HH:MM 24h or null\"} -- otherwise null>,\"matchDurationMin\":<for kind \"availability_match\" ONLY, integer minutes -- otherwise null>}\n"+
+  const prompt="You are a message router for a student calendar assistant chat. Today is "+weekday+", "+today+". The current time right now is "+nowTime+". "+(memLine?memLine+" ":"")+"The student typed: \""+text+"\". Decide whether this is a QUESTION about their existing schedule/study history (a real number/fact), a COACHING ask (wants real study-strategy help, not a fact), an APP_HELP ask (wants to know how to use/find/turn on/off a Studlin feature or setting, not a fact about their own schedule), an ACTION request (create something new, move/reschedule something that already exists, or turn pasted study material into flashcards/a quiz), TWO clearly separate action requests in one message, a request to check specific date/time OPTIONS against their calendar, or unsupported. Respond with ONLY this JSON, no markdown fences, no explanation:\n"+
+    "{\"kind\":\"question\"|\"coaching\"|\"app_help\"|\"action\"|\"multi_action\"|\"availability_match\"|\"unsupported\",\"intent\":\"create_task\"|\"delete_task\"|\"set_peak_hours\"|\"shift\"|\"clear_day\"|\"clear_week\"|\"skip_class\"|\"move_event\"|\"retime_event\"|\"move_flex_task\"|\"generate_study_material\"|\"import_syllabus_items\"|null,\"days\":<integer 1-14 or null>,\"date\":\"YYYY-MM-DD or null\",\"target\":\"<short name of the specific existing item, or null>\",\"targetDate\":\"YYYY-MM-DD or null\",\"destDate\":\"YYYY-MM-DD or null\",\"newStart\":\"HH:MM 24h or null\",\"newDuration\":<integer minutes or null>,\"title\":\"<short name of the NEW item to create, or null>\",\"dueDate\":\"YYYY-MM-DD or null\",\"dueTime\":\"HH:MM 24h or null\",\"durationMin\":<integer minutes or null>,\"taskKind\":\"study\"|\"todo\"|\"event\"|\"reminder\"|\"exam\"|\"project\"|null,\"genFormat\":\"flashcards\"|\"quiz\"|null,\"peakHours\":\"morning\"|\"midday\"|\"afternoon\"|\"evening\"|null,\"subject\":\"<the class/subject name the student named, or null>\",\"duringClass\":<true for import_syllabus_items when EITHER the student's own words say these items happen/are due during class, OR the pasted syllabus/material text itself states that for these items (e.g. \"completed in class,\" \"due in class,\" \"in-class assignment\"), false otherwise>,\"clarify\":\"<a short, specific question, or null>\",\"actions\":<for kind \"multi_action\" ONLY, an array of exactly 2 objects, each with the SAME shape as this whole envelope but only intent/days/date/target/targetDate/destDate/newStart/newDuration/title/dueDate/dueTime/durationMin/taskKind/peakHours/subject/duringClass (no kind/clarify/actions inside each one) -- otherwise null>,\"matchCandidates\":<for kind \"availability_match\" ONLY, an array of 1-8 objects {\"date\":\"YYYY-MM-DD\",\"startTime\":\"HH:MM 24h\",\"endTime\":\"HH:MM 24h or null\"} -- otherwise null>,\"matchDurationMin\":<for kind \"availability_match\" ONLY, integer minutes -- otherwise null>}\n"+
     "\"availability_match\" is for a message that lists specific date/time OPTIONS for something external (an interview, a meeting someone else proposed, appointment slots someone gave them) and asks which ones actually fit the student's own calendar -- NOT the student stating a personal focus/productivity preference (that's set_peak_hours, see its own rule), and NOT asking Studlin to just find/pick a time itself with no options given (that's create_task, which already finds real open time on its own). Extract each distinct date+time mentioned into \"matchCandidates\" exactly as stated -- one entry per single named time (\"endTime\" null), one entry per stated range (\"endTime\" set, e.g. \"1pm to 3:30pm\") -- never invent a candidate that wasn't actually mentioned, never merge two different times on the same date into one entry. \"matchDurationMin\" is how long the real thing needs -- only set it when the message states or clearly implies a length (e.g. \"a 30 minute call,\" \"an hour-long interview\"); if it's genuinely not stated or impliable, set kind to \"unsupported\" instead with clarify asking how long it needs to be, same as any other required-field gap below.\n"+
     "\"multi_action\" is ONLY for a message containing exactly TWO distinct, clearly separate action requests, each one individually unambiguous enough to qualify as its own single action below with nothing missing (as if you classified each half on its own and both came back clean, no clarify needed for either). Each item in \"actions\" is restricted to intent \"create_task\", \"delete_task\", \"move_flex_task\", \"move_event\", \"retime_event\", or \"set_peak_hours\" ONLY -- never \"shift\", \"clear_day\", \"clear_week\", \"skip_class\", \"generate_study_material\", or \"import_syllabus_items\" inside a multi_action (those are bulk/complex enough to stay single-action-only, even paired with something simple). If either half would need \"clarify\", involves more than two distinct requests, mixes in one of the disallowed bulk intents, or the two requests aren't clearly separable from one another, do NOT use multi_action -- fall back to \"action\" (if only one half is real) or \"unsupported\" (with \"clarify\" set, same as today) instead. Never guess a second action that wasn't clearly there.\n"+
-    "Rules: \"question\" is asking for a real FACT about their schedule/workload/streak/pace/productivity (a number, a date, a yes/no). \"coaching\" is asking for real help or a plan -- \"how should I study for X,\" \"help me prepare,\" \"where do I start,\" \"I'm stressed about Y and don't know the material\" -- wanting strategy/advice, not a fact, and not (yet) asking to add/move anything. Neither ever changes anything -- leave intent and every other field null for both. \"unsupported\" covers anything ambiguous, THREE OR MORE distinct action requests in one message, deleting/cancelling MULTIPLE things or an entire day/week/recurring routine, or that doesn't clearly match one action below -- never guess. Deleting exactly ONE clearly-named item uses delete_task instead, not unsupported. Exactly TWO clean, separable action requests uses multi_action instead of unsupported -- see its own rule below.\n"+
+    "Rules: \"question\" is asking for a real FACT about their schedule/workload/streak/pace/productivity (a number, a date, a yes/no). \"coaching\" is asking for real help or a plan -- \"how should I study for X,\" \"help me prepare,\" \"where do I start,\" \"I'm stressed about Y and don't know the material\" -- wanting strategy/advice, not a fact, and not (yet) asking to add/move anything. \"app_help\" is asking how to use Studlin ITSELF -- how to turn a setting on/off, where a feature lives, how to change something about the app (\"how do I turn on dark mode,\" \"how do I stop it telling me things are overdue,\" \"where do I add a class,\" \"how do I connect Google Calendar\") -- this is about the PRODUCT, never about their own personal schedule data or study strategy. None of these three ever changes anything -- leave intent and every other field null for all three. \"unsupported\" covers anything ambiguous, THREE OR MORE distinct action requests in one message, deleting/cancelling MULTIPLE things or an entire day/week/recurring routine, or that doesn't clearly match one action below -- never guess. Deleting exactly ONE clearly-named item uses delete_task instead, not unsupported. Exactly TWO clean, separable action requests uses multi_action instead of unsupported -- see its own rule below.\n"+
     "\"clarify\": if the message clearly WANTS one of the actions below but is missing something required to do it (no title for a new item, no clear name for what to move/retime/delete, no day count for \"shift\", no class named for \"import_syllabus_items\", no duration for \"availability_match\"), set kind to \"unsupported\", intent to null, and \"clarify\" to ONE short, specific question asking for exactly the missing thing (e.g. \"When is that due?\", \"Which day would you like it moved to?\", \"Which class are these for?\", or \"About how long do you need?\"). Leave \"clarify\" null for every other case -- genuinely off-topic, too vague to guess the intended action at all, three-plus distinct requests, or a bulk/destructive request. Never set clarify when kind is \"question\", \"coaching\", \"action\", \"multi_action\", or \"availability_match\".\n"+
     "\"create_task\" is for adding something NEW that doesn't exist yet -- \"title\" is required, \"dueDate\" if a deadline/date was mentioned (resolve relative phrases like \"tomorrow\"/\"Friday\" against today's date above), \"dueTime\" only if a real clock time was mentioned, \"durationMin\" only if a specific work-time length was mentioned. \"taskKind\" picks which kind of thing: \"exam\" for a test/quiz/final, \"project\" for a multi-step project, \"event\" for a fixed real-world thing at a specific time (an appointment, a meeting -- not a class or something already on a routine), \"reminder\" for a simple point-in-time nudge with no real work involved (\"remind me to email my professor\"), \"todo\" if the student explicitly just wants a due date tracked with no work time scheduled (\"just remind me,\" \"don't schedule time for it\"), otherwise \"study\" (the default -- a task/assignment/homework Studlin finds real time to work on before its deadline). IMPORTANT: only classify as create_task when the student is actually ASKING to add/track/schedule something. A message that merely mentions, describes, or shares feelings about an exam/assignment/deadline (stress, context, background) without asking for it to be added is \"question\" or \"coaching\" instead -- the mere presence of a date or an exam name is not itself a request to create anything, look for real intent to add.\n"+
     "\"delete_task\" is for permanently removing ONE existing, clearly-named item from the calendar -- a task, assignment, event, exam, or reminder, NEVER a recurring class/routine (\"delete my chem homework,\" \"cancel my dentist appointment\" -- not \"delete all my chem classes\") -- \"target\" is its name as the student said it, \"targetDate\" is the date it's currently on (default today's date above if not mentioned).\n"+
@@ -20206,6 +20316,9 @@ async function classifyStudlinAiMessage(text,history){
     "Relative TIME phrases work the same way, against the current time above -- never guessed, never defaulted to some other hour: \"in 15 minutes\"/\"in an hour\"/\"in 20 min\" means exactly the current time plus that many minutes, computed for real (e.g. if the current time above were 12:08 PM, \"in 15 minutes\" is 12:23 PM, \"in an hour\" is 1:08 PM). \"soon\"/\"in a bit\"/\"right now\" with no specific number given still means close to the current time above -- within about 15 minutes of it, never later in the day. This applies to dueTime (create_task) and newStart (retime_event) alike.\n"+
     "Examples:\n"+
     "\"which day next week is busiest?\" -> {\"kind\":\"question\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
+    "\"how do i turn on dark mode\" (about the APP, not their own schedule) -> {\"kind\":\"app_help\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
+    "\"how do i get studlin to stop telling me stuff is overdue\" (asking how to change a Studlin setting/behavior, not asking WHAT is overdue -- that would be \"question\" instead) -> {\"kind\":\"app_help\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
+    "\"where do i add a class\" -> {\"kind\":\"app_help\",\"intent\":null,\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":null,\"dueDate\":null,\"dueTime\":null,\"durationMin\":null,\"taskKind\":null,\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
     "\"add a task to finish my history essay, due Friday\" -> {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"Finish history essay\",\"dueDate\":\"<the real date of this Friday>\",\"dueTime\":null,\"durationMin\":null,\"taskKind\":\"study\",\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
     "\"just track that my chem lab report is due next Monday, don't schedule time for it\" -> {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"Chem lab report\",\"dueDate\":\"<that Monday's date>\",\"dueTime\":null,\"durationMin\":null,\"taskKind\":\"todo\",\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
     "\"add my chem final, it's on the 20th\" -> {\"kind\":\"action\",\"intent\":\"create_task\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null,\"title\":\"Chem final\",\"dueDate\":\"<the 20th of the current or next occurring month>\",\"dueTime\":null,\"durationMin\":null,\"taskKind\":\"exam\",\"genFormat\":null,\"peakHours\":null,\"subject\":null,\"duringClass\":false,\"clarify\":null}\n"+
@@ -20338,7 +20451,7 @@ function deriveStudlinAiProactiveSignal(strugglingBucketOffer,unscheduledDueSoon
 // read at a glance instead of as one undifferentiated stream of text.
 // Kept as its own small map, not inline per call site, so every message
 // push in this drawer stays consistent with the same small vocabulary.
-const STUDLIN_AI_MSG_KIND_ACCENT={proposal:T.lime,done:T.lime,fact:T.teal,coaching:T.purple,clarify:T.amber,paywall:T.amber,error:T.red,info:T.faint};
+const STUDLIN_AI_MSG_KIND_ACCENT={proposal:T.lime,done:T.lime,fact:T.teal,coaching:T.purple,clarify:T.amber,paywall:T.amber,error:T.red,info:T.faint,help:T.teal};
 function StudlinAiMiniDayPreview({dateKey,proposedBlock}){
   const pp=panelPalette();
   if(!dateKey)return null;
@@ -20660,6 +20773,20 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
     setMessages(m=>[...m,{role:"ai",text:(data.reply||"").trim()||"I didn't get a real answer back. Try again.",kind:"fact"}]);
   };
 
+  // "How do I do X in Studlin?" -- see STUDLIN_HELP_ENTRIES' own comment
+  // for why this is a local keyword match, not an API call: zero
+  // hallucination surface, free for every plan (this is product support,
+  // not a premium AI feature), and instant. No canUseStudlinAiQna gate on
+  // purpose -- Free accounts get real help here same as Pro.
+  const answerAppHelp=async(text)=>{
+    const entry=matchStudlinHelpEntry(text);
+    if(entry){
+      setMessages(m=>[...m,{role:"ai",text:entry.answer,kind:"help"}]);
+      return;
+    }
+    setMessages(m=>[...m,{role:"ai",text:"I don't have a specific answer for that one. Check Settings, or use Feedback in the sidebar to ask a real person.",kind:"info"}]);
+  };
+
   // availability_match (2026-09-15): the student pasted/described specific
   // date+time options for something external and asked which fit their
   // real calendar -- the gap a real screenshot exposed (Studlin AI
@@ -20863,6 +20990,24 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
     setInput("");
     setLoading(true);
     setPendingClarification(false);
+    // Checked BEFORE classification, not after -- classifyStudlinAiMessage
+    // is a real Anthropic call, and both it and the rest of this drawer
+    // are Pro-gated server-side (api/chat.js's isStudlinAiFormat check
+    // covers studlin_ai_intent too, the classifier itself). "How do I
+    // turn on dark mode" is basic product support, not a premium AI
+    // capability -- paywalling it would mean a Free student can't even
+    // find out HOW to unlock the rest of Studlin. minScore=2 (a genuine
+    // multi-word phrase, not one generic word) keeps this pre-check from
+    // ever misfiring on a real schedule question or action that happens
+    // to share a single keyword -- see matchStudlinHelpEntry's own
+    // comment. A weaker match still gets a chance further down, but only
+    // once the real classifier has independently agreed this is app_help.
+    const preMatch=matchStudlinHelpEntry(text,2);
+    if(preMatch){
+      setMessages(m=>[...m,{role:"ai",text:preMatch.answer,kind:"help"}]);
+      setLoading(false);
+      return;
+    }
     let parsed;
     try{
       parsed=await classifyStudlinAiMessage(text,history);
@@ -20874,12 +21019,13 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
     try{
       if(parsed.kind==="question")await askQuestion(text,history);
       else if(parsed.kind==="coaching")await giveCoaching(text,history);
+      else if(parsed.kind==="app_help")await answerAppHelp(text);
       else if(parsed.kind==="unsupported"){
         if(parsed.clarify){
           setMessages(m=>[...m,{role:"ai",text:parsed.clarify,kind:"clarify"}]);
           setPendingClarification(true);
         }else{
-          setMessages(m=>[...m,{role:"ai",text:"I can answer questions about your schedule, help you plan how to study for something, check specific times against your calendar, turn pasted material into flashcards or a quiz, add several syllabus dates at once, or create, move, or delete a task. Try rephrasing that.",kind:"info"}]);
+          setMessages(m=>[...m,{role:"ai",text:"I can answer questions about your schedule, help you plan how to study for something, tell you how to use a Studlin feature, check specific times against your calendar, turn pasted material into flashcards or a quiz, add several syllabus dates at once, or create, move, or delete a task. Try rephrasing that.",kind:"info"}]);
         }
       }
       else if(parsed.kind==="multi_action")await runMultiAction(parsed,text);
@@ -21160,7 +21306,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
         </div>
         <div ref={scrollRef} style={{flex:1,overflowY:"auto",padding:"14px 18px",display:"flex",flexDirection:"column",gap:10}}>
           {messages.length===0&&!loading&&(
-            <div style={{fontSize:12.5,color:pp.muted,lineHeight:1.6,marginTop:10}}>Ask something like "which day next week is busiest?" or "how should I study for my calc exam," paste your notes and ask for flashcards or a quiz, or tell me to add a task or move something on your calendar.</div>
+            <div style={{fontSize:12.5,color:pp.muted,lineHeight:1.6,marginTop:10}}>Try "which day next week is busiest?" or "how do I turn on dark mode."</div>
           )}
           {messages.map((m,i)=>(
             <div key={i} style={{alignSelf:m.role==="user"?"flex-end":"flex-start",maxWidth:"85%",display:"flex",flexDirection:"column",gap:6}}>
