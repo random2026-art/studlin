@@ -35,7 +35,10 @@ const APP_SOURCE = fs.readFileSync(path.join(__dirname, "..", "studlin-app.jsx")
 
 describe("classifyStudlinAiMessage's prompt now supports availability_match (source-level regression guards)", () => {
   test("the JSON envelope's kind enum includes availability_match, and gained matchCandidates/matchDurationMin fields", () => {
-    assert.ok(APP_SOURCE.includes(String.raw`\"kind\":\"question\"|\"coaching\"|\"action\"|\"multi_action\"|\"availability_match\"|\"unsupported\"`));
+    // 2026-09-25: app_help was added between coaching and action (see
+    // tests/studlin-ai-app-help-2026-09-25.test.js) -- updated to match,
+    // availability_match's own presence is still what this test pins.
+    assert.ok(APP_SOURCE.includes(String.raw`\"kind\":\"question\"|\"coaching\"|\"app_help\"|\"action\"|\"multi_action\"|\"availability_match\"|\"unsupported\"`));
     assert.ok(APP_SOURCE.includes(String.raw`\"matchCandidates\":<for kind \"availability_match\" ONLY, an array of 1-8 objects`));
     assert.ok(APP_SOURCE.includes(String.raw`\"matchDurationMin\":<for kind \"availability_match\" ONLY, integer minutes`));
   });

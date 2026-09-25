@@ -172,6 +172,7 @@ function loadStudlinModule(options) {
     "deriveFreePeriodsFromPeriods","getHsSchoolHours","saveHsSchoolHours",
     "subtractIntervals","effectiveLeadIn","effectiveTrailOut","effectiveLeadInForManualPlacement","effectiveTrailOutForManualPlacement","isLeadInFixed","isDuePill","isZeroDurationTimedReminder","isExpectedInClassOverlap","formatRealWorldScheduleForDate","findNowConflict",
     "assembleStudlinAiDigest","routeStudlinAiQuestion","STUDLIN_AI_DIGEST_DAYS",
+    "STUDLIN_HELP_ENTRIES","scoreHelpEntry","matchStudlinHelpEntry",
     "buildCreateTaskProposal","buildMoveFixedProposal","buildMoveFlexTaskProposal","buildStudlinAiActionProposal",
     "describeCreateProposal","commitStudlinAiTasks","commitStudlinAiFixedMove","commitStudlinAiFlexMove",
     "buildDeleteProposal","buildSetPeakHoursProposal","commitStudlinAiPeakHours","deriveStudlinAiProactiveSignal",

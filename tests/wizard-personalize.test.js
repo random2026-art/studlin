@@ -1,53 +1,29 @@
-// Calendar first-visit wizard's new optional "personalize" step --
+// Calendar first-visit wizard's optional "personalize" step --
 // applyStudyStylePrefs is the one pure function behind collecting it
 // (everything else is component-internal wizard state/JSX, not
 // unit-testable, same as the rest of ClassSetupWizard).
-// applySessionOrderPreference is the first real CONSUMER of one of these
-// answers (sessionOrder) -- interleave/planningHorizon/startTiming/
-// collisionPref are still collection-only as of this writing, see
-// studlin-app.jsx's own comments for what each still needs before it's
-// real.
+// applySessionOrderPreference is the real CONSUMER of the one remaining
+// answer (sessionOrder). 2026-09-25 user report ("some of the questions
+// don't do anything"): this step used to also collect interleave/
+// planningHorizon/startTiming/collisionPref, none of which anything in
+// the placement/priority engine ever read -- removed rather than left as
+// dead UI. See studlin-app.jsx's own comment on applyStudyStylePrefs.
 const { test, describe } = require("node:test");
 const assert = require("node:assert/strict");
 const { loadStudlinModule } = require("./harness.js");
 
 describe("applyStudyStylePrefs", () => {
-  test("no answers at all -> studyStylePrefs is present with every field null, not omitted", () => {
+  test("no answer -> studyStylePrefs is present with sessionOrder null, not omitted", () => {
     const m = loadStudlinModule();
     const next = m.applyStudyStylePrefs({ workStartTime: "09:00" }, {});
     assert.ok(next.studyStylePrefs);
     assert.equal(next.studyStylePrefs.sessionOrder, null);
-    assert.equal(next.studyStylePrefs.interleave, null);
-    assert.equal(next.studyStylePrefs.planningHorizon, null);
-    assert.equal(next.studyStylePrefs.startTiming, null);
-    assert.equal(next.studyStylePrefs.collisionPref, null);
   });
 
-  test("all 5 answered -> each real value carried through untouched", () => {
+  test("sessionOrder answered -> carried through untouched", () => {
     const m = loadStudlinModule();
-    const answers = {
-      sessionOrder: "hardest_first",
-      interleave: "mix_it_up",
-      planningHorizon: "this_week",
-      startTiming: "a_few_days_before",
-      collisionPref: "split_time",
-    };
-    const next = m.applyStudyStylePrefs({}, answers);
+    const next = m.applyStudyStylePrefs({}, { sessionOrder: "hardest_first" });
     assert.equal(next.studyStylePrefs.sessionOrder, "hardest_first");
-    assert.equal(next.studyStylePrefs.interleave, "mix_it_up");
-    assert.equal(next.studyStylePrefs.planningHorizon, "this_week");
-    assert.equal(next.studyStylePrefs.startTiming, "a_few_days_before");
-    assert.equal(next.studyStylePrefs.collisionPref, "split_time");
-  });
-
-  test("a partial skip -- some answered, some not -- keeps the real ones and nulls the rest", () => {
-    const m = loadStudlinModule();
-    const next = m.applyStudyStylePrefs({}, { sessionOrder: "easy_first", collisionPref: "finish_one_first" });
-    assert.equal(next.studyStylePrefs.sessionOrder, "easy_first");
-    assert.equal(next.studyStylePrefs.collisionPref, "finish_one_first");
-    assert.equal(next.studyStylePrefs.interleave, null);
-    assert.equal(next.studyStylePrefs.planningHorizon, null);
-    assert.equal(next.studyStylePrefs.startTiming, null);
   });
 
   test("every other field on the real schedulePreferences object survives untouched", () => {
@@ -61,11 +37,26 @@ describe("applyStudyStylePrefs", () => {
     assert.equal(next.bedtime, "23:00");
   });
 
-  test("answers is undefined (e.g. a caller that forgot to pass it) -- never throws, everything null", () => {
+  test("answers is undefined (e.g. a caller that forgot to pass it) -- never throws, sessionOrder null", () => {
     const m = loadStudlinModule();
     const next = m.applyStudyStylePrefs({ workStartTime: "09:00" }, undefined);
     assert.equal(next.studyStylePrefs.sessionOrder, null);
-    assert.equal(next.studyStylePrefs.collisionPref, null);
+  });
+});
+
+describe("ClassSetupWizard's personalize step only renders the one real question", () => {
+  test("the dead interleave/planningHorizon/startTiming/collisionPref chip rows are gone from the JSX", () => {
+    const fs = require("fs");
+    const path = require("path");
+    const source = fs.readFileSync(path.join(__dirname, "..", "studlin-app.jsx"), "utf8");
+    const idx = source.indexOf('label="When you sit down to study"');
+    assert.notEqual(idx, -1);
+    const body = source.slice(idx, idx + 600);
+    assert.doesNotMatch(body, /Studying for a few things at once/);
+    assert.doesNotMatch(body, /How far ahead you want to see your plan/);
+    assert.doesNotMatch(body, /Be honest -- when do you actually start/);
+    assert.doesNotMatch(body, /Two things collide on the same day/);
+    assert.match(body, /One more thing/, "the real 'Okay to ask?' question right after it must still be there");
   });
 });
 
