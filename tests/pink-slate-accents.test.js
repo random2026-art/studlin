@@ -50,16 +50,16 @@ describe("applyTheme actually picks up both new accents (same code path every ex
     assert.equal(m.T.lime, "#C23F68");
   });
 
-  test("an unrecognized accent name falls back to Cobalt (the current default) rather than crashing -- same safety net every existing accent already relies on", () => {
+  test("an unrecognized accent name falls back to Lime rather than crashing -- same safety net every existing accent already relies on", () => {
     const m = loadStudlinModule();
     m.applyTheme("dark", "NotARealAccent", "Comfortable");
-    assert.equal(m.T.lime, "#6E93F0");
+    assert.equal(m.T.lime, "#AECE5E");
   });
 });
 
 describe("Settings' Appearance picker offers both new accents alongside the original 5", () => {
   test("the accents array used to render the picker now includes Pink and Slate", () => {
-    assert.match(SOURCE, /const accents=\[\{n:"Cobalt",c:"#2563EB"\},\{n:"Lime",c:"#AECE5E"\},\{n:"Forest",c:"#3E9576"\},\{n:"Sky",c:"#4F95D6"\},\{n:"Lilac",c:"#9474C9"\},\{n:"Peach",c:"#D07C4C"\},\{n:"Pink",c:"#D9648A"\},\{n:"Slate",c:"#7A8592"\}\];/);
+    assert.match(SOURCE, /const accents=\[\{n:"Lime",c:"#AECE5E"\},\{n:"Forest",c:"#3E9576"\},\{n:"Sky",c:"#4F95D6"\},\{n:"Lilac",c:"#9474C9"\},\{n:"Peach",c:"#D07C4C"\},\{n:"Pink",c:"#D9648A"\},\{n:"Slate",c:"#7A8592"\}\];/);
   });
 
   test("every original accent is still present -- this only adds, it doesn't replace or reorder anything a returning user already picked", () => {
