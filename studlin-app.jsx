@@ -4120,8 +4120,8 @@ function findReliableSlotFor(events,routines,prefs,desiredDate,desiredTime,durat
 // Same shape as isTier0Missed minus its !ev.time requirement, so a
 // timeless overdue task is still included the way the old Tier 1 filter
 // (and thus this replacement for it) always did.
-// Shared with Dashboard's own attackOverrun card (see D9 in the audit) so
-// the two never independently drift on what counts as "a rough week" --
+// Also used to gate the proactive insight nudges below (see
+// recoveryPending) so they can't fire on top of a genuinely rough week --
 // previously a bare `2` lived inline only in App()'s daily sweep.
 const CATCHUP_RECOVERY_THRESHOLD=2;
 // The Catch Me Up banner (and its Move / Move-it-myself / Skip preview) is
@@ -25033,7 +25033,13 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     // college, but only commitAllToCalendar (the college path) was ever
     // persisting it via saveSchoolTerm -- an HS account's answer to that
     // step was silently discarded.
-    if(termStart&&termEnd)saveSchoolTerm({start:termStart,end:termEnd});
+    // termWindowInvalid guard (2026-09-24 audit): the term step's own
+    // Continue button blocks on this, but this commit path is also
+    // reachable via Skip or a returning user who never revisits the term
+    // step -- belt-and-suspenders against ever persisting an inverted
+    // range, matching the same defense at commitAllToCalendar's identical
+    // saveSchoolTerm call below.
+    if(termStart&&termEnd&&termEnd>=termStart)saveSchoolTerm({start:termStart,end:termEnd});
     if(status)saveProfile({...getProfile(),status});
     // Whole-schedule photo/paste import has no deadlines to review, so
     // there's nothing to stage -- it commits immediately, same as it always has.
@@ -25057,6 +25063,14 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   const removePendingClass=(id)=>persistPending(pendingClasses.filter(c=>c.id!==id));
 
   const windowInvalid=timeToMinutes(workEnd)<=timeToMinutes(workStart);
+  // Bug found in a 2026-09-24 audit: unlike windowInvalid right below
+  // (wake/sleep, study start/end all gate Continue), the term step had NO
+  // order check at all -- a fat-fingered date (very plausible on a native
+  // date picker) silently produced Term ends before Term starts, with no
+  // error and nothing blocking Continue, and commitAllToCalendar below
+  // writes it straight through via saveSchoolTerm. Same pattern applied
+  // here: string-compare is safe since both are YYYY-MM-DD.
+  const termWindowInvalid=!!(termStart&&termEnd&&termEnd<termStart);
   // The one place anything from this wizard actually touches the real
   // calendar: subjects + weekly routine rows for every staged class first
   // (so every class exists before any class's events get built against
@@ -25187,7 +25201,10 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     // Holidays no longer lives here at all -- see WIZARD_STEP_ORDER's own
     // comment). Both below quietly no-op if a returning user skipped
     // straight to "classes" and never touched them.
-    if(termStart&&termEnd)saveSchoolTerm({start:termStart,end:termEnd});
+    // termEnd>=termStart guard (2026-09-24 audit): see the identical guard
+    // in commitHsSchedule above for why this can't just trust the step's
+    // own Continue button to have caught it.
+    if(termStart&&termEnd&&termEnd>=termStart)saveSchoolTerm({start:termStart,end:termEnd});
     saveWakeSleep({wakeTime,sleepTime});
     lsSet("classSetupPending",[]);
     setPendingClasses([]);
@@ -25267,8 +25284,9 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
             <TitleSub title="When does this term run?" sub="Studlin stops expecting your classes outside these dates -- summer, before the term starts. You can always change this later in Settings." />
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
               <DateField label="Term starts" value={termStart} onChange={setTermStart} />
-              <DateField label="Term ends" value={termEnd} onChange={setTermEnd} />
+              <DateField label="Term ends" value={termEnd} onChange={setTermEnd} min={termStart} />
             </div>
+            {termWindowInvalid&&<div style={{fontSize:11.5,color:T.red,marginTop:8}}>Term ends must be after term starts.</div>}
           </>)}
 
           {step==="awake"&&(<>
@@ -25383,52 +25401,55 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
           {step==="classes"&&addMode==="choose"&&(<>
             <TitleSub title="How do you want to add it?" />
             <div style={{display:"flex",flexDirection:"column",gap:10}}>
-              {/* HS students use the whole-schedule upload below instead --
-                  a per-class syllabus doesn't map to how a school day
-                  actually works for them (periods, not standalone
-                  syllabi), so this option is college-only. */}
-              {status!=="highschool"&&(<>
+              {/* 2026-09-24 user request: lead with the two options that
+                  always just work (a one-shot whole-schedule scan, or
+                  typing it in) instead of putting three equal-weight cards
+                  in front of a student on step 1 -- three parallel choices
+                  this early is decision paralysis, not a real choice. HS
+                  students get the whole-schedule photo upload here instead
+                  of the college-only syllabus-scan flow below -- a per-class
+                  syllabus doesn't map to how a school day actually works
+                  for them (periods, not standalone syllabi). */}
+              {status!=="highschool"?(
                 <button type="button" onClick={()=>{setScanError("");setPasteMode(false);setPasteText("");setAddMode("collegeSchedule");}} style={classSetupChoiceStyle}>
                   <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Scan my whole schedule</div>
                   <div style={{fontSize:12,color:T.muted}}>Upload a screenshot, photo, or paste your full schedule — Studlin splits it into classes and finds each one's meeting time and exam dates automatically.</div>
                 </button>
-                {/* 2026-09-09 user decision: scan-whole-schedule-first, then
-                    syllabus per class -- offering both as equal parallel
-                    choices before a single class exists meant nothing
-                    steered a student toward the faster, one-shot path.
-                    "Scan a syllabus" now only appears once at least one
-                    class already exists this session (staged or, for a
-                    prior HS bell-schedule commit, already committed) --
-                    exactly the "for each class" ordering asked for. */}
-                {(pendingClasses.length>0||hsClassesCommitted>0)&&(
-                  <button type="button" onClick={()=>{setScanError("");setPasteMode(false);setPasteText("");setAddMode("scan");}} style={classSetupChoiceStyle}>
-                    <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Scan a syllabus</div>
-                    <div style={{fontSize:12,color:T.muted}}>Upload a file or photo — Studlin reads the class name, meeting time, and deadlines.</div>
-                  </button>
-                )}
-              </>)}
-              {/* 2026-09-11 user idea: someone who already has their class
-                  schedule in Google Calendar shouldn't have to retype every
-                  meeting time by hand. This is a one-time COPY into a real
-                  Studlin course (see openGoogleImport's own comment for why
-                  not a live link) -- available regardless of HS/college
-                  status, since either could plausibly already have their
-                  schedule on Google Calendar. */}
-              <button type="button" onClick={openGoogleImport} style={classSetupChoiceStyle}>
-                <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Import from Google Calendar</div>
-                <div style={{fontSize:12,color:T.muted}}>Already on Google Calendar? Studlin can find your recurring classes there and use their real meeting times.</div>
-              </button>
-              <button type="button" onClick={startManual} style={classSetupChoiceStyle}>
-                <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Enter manually</div>
-                <div style={{fontSize:12,color:T.muted}}>Type in the class name and when it meets yourself.</div>
-              </button>
-              {status==="highschool"&&(
+              ):(
                 <button type="button" onClick={()=>{setScanError("");setAddMode("hsSchedule");}} style={classSetupChoiceStyle}>
                   <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Upload your class schedule</div>
                   <div style={{fontSize:12,color:T.muted}}>One photo of your whole schedule adds every period at once, color-coded.</div>
                 </button>
               )}
+              <button type="button" onClick={startManual} style={classSetupChoiceStyle}>
+                <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Enter manually</div>
+                <div style={{fontSize:12,color:T.muted}}>Type in the class name and when it meets yourself.</div>
+              </button>
+              {/* 2026-09-09 user decision: scan-whole-schedule-first, then
+                  syllabus per class -- offering both as equal parallel
+                  choices before a single class exists meant nothing
+                  steered a student toward the faster, one-shot path.
+                  "Scan a syllabus" now only appears once at least one
+                  class already exists this session (staged or, for a
+                  prior HS bell-schedule commit, already committed) --
+                  exactly the "for each class" ordering asked for. */}
+              {status!=="highschool"&&(pendingClasses.length>0||hsClassesCommitted>0)&&(
+                <button type="button" onClick={()=>{setScanError("");setPasteMode(false);setPasteText("");setAddMode("scan");}} style={classSetupChoiceStyle}>
+                  <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Scan a syllabus</div>
+                  <div style={{fontSize:12,color:T.muted}}>Upload a file or photo — Studlin reads the class name, meeting time, and deadlines.</div>
+                </button>
+              )}
             </div>
+            {/* 2026-09-11 user idea: someone who already has their class
+                schedule in Google Calendar shouldn't have to retype every
+                meeting time by hand. This is a one-time COPY into a real
+                Studlin course (see openGoogleImport's own comment for why
+                not a live link) -- available regardless of HS/college
+                status. Demoted from a full equal-weight card (2026-09-24
+                user report: a friend tried it and it didn't work, and it
+                shouldn't be competing with the two paths that always
+                succeed) to a small secondary link underneath. */}
+              <button type="button" onClick={openGoogleImport} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,marginTop:14,textDecoration:"underline"}}>or import from Google Calendar instead</button>
           </>)}
 
           {step==="classes"&&addMode==="googleImport"&&(<>
@@ -26018,7 +26039,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                   needs status first) always runs before End of Term, see
                   WIZARD_STEP_ORDER's own comment. */}
               <Btn variant="subtle" onClick={()=>setStep("awake")}>Skip</Btn>
-              <Btn onClick={()=>setStep("awake")}>Continue</Btn>
+              <Btn onClick={()=>setStep("awake")} disabled={termWindowInvalid} style={{opacity:termWindowInvalid?0.45:1}}>Continue</Btn>
             </>)}
             {step==="awake"&&(<Btn onClick={()=>setStep("personalize")} disabled={windowInvalid} style={{opacity:windowInvalid?0.45:1}}>Continue</Btn>)}
             {step==="personalize"&&(<>
@@ -26865,7 +26886,15 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
   // consumed by expandRoutineOccurrences), nothing else needs it live.
   const [termStart,setTermStartState]=useState(()=>{const t=getSchoolTerm();return t?t.start:"";});
   const [termEnd,setTermEndState]=useState(()=>{const t=getSchoolTerm();return t?t.end:"";});
-  const saveTerm=(start,end)=>saveSchoolTerm(start&&end?{start,end}:null);
+  // termWindowInvalid guard (2026-09-24 audit): same gap as the onboarding
+  // wizard's identical Term dates fields (see ClassSetupWizard's own
+  // termWindowInvalid) -- an inverted range used to save silently on every
+  // keystroke here, with nothing to catch it since this pair persists
+  // immediately rather than behind a Continue button. Still updates the
+  // input so what the user typed stays visible; just skips the actual
+  // saveSchoolTerm write until the range is sane again.
+  const termWindowInvalid=!!(termStart&&termEnd&&termEnd<termStart);
+  const saveTerm=(start,end)=>{if(start&&end&&end<start)return;saveSchoolTerm(start&&end?{start,end}:null);};
   const setTermStart=(v)=>{setTermStartState(v);saveTerm(v,termEnd);};
   const setTermEnd=(v)=>{setTermEndState(v);saveTerm(termStart,v);};
   // Same self-contained convention as Term dates above (getHolidays/
@@ -27063,8 +27092,9 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
         <div style={{fontSize:11.5,color:T.muted,marginBottom:10}}>Outside these dates, summer, before the term starts, Studlin stops expecting your classes. Everything else on your routine still applies.</div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
           <DateField label="School starts" value={termStart} onChange={setTermStart} />
-          <DateField label="School ends" value={termEnd} onChange={setTermEnd} />
+          <DateField label="School ends" value={termEnd} onChange={setTermEnd} min={termStart} />
         </div>
+        {termWindowInvalid&&<div style={{fontSize:11.5,color:T.red,marginTop:8}}>School ends must be after school starts -- not saved until fixed.</div>}
       </div>
       <div style={{border:`1px solid ${T.border}`,borderRadius:10,padding:14,marginBottom:16}}>
         <div style={{fontSize:12,fontWeight:700,color:T.white,marginBottom:2}}>Holidays</div>
@@ -29833,7 +29863,7 @@ function resolveCalendarHighlightFlag(flag, nowMs){
 // setPricingOpen(true)) already merged into this function's BODY cleanly,
 // so dropping this prop would leave those calls throwing on an undefined
 // setPricingOpen.
-function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRoutineCenterOpenedFromSettings,detailEventId,setDetailEventId,registerSetEvents,registerSkipSetEvents,onTaskCompleted,catchUpPending,onWizardOpenChange,jumpToSessionOnMount,onJumpSessionConsumed,setPricingOpen=()=>{}}={}){
+function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRoutineCenterOpenedFromSettings,detailEventId,setDetailEventId,registerSetEvents,registerSkipSetEvents,onTaskCompleted,catchUpPending,onWizardOpenChange,jumpToSessionOnMount,onJumpSessionConsumed,highlightDraftIdOnMount,onHighlightDraftConsumed,setPricingOpen=()=>{}}={}){
   const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
   const SUBJ=[{value:"None",label:"None",color:T.lime},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
   // Accepts either a real course id or a label, same as StudlinPrep/Notes'
@@ -29847,6 +29877,17 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // Own collapse state, independent of the global icon rail's.
   const [calSidebarCollapsed,setCalSidebarCollapsedState]=useState(()=>lsGet("calSidebarCollapsed",false));
   const toggleCalSidebarCollapsed=()=>setCalSidebarCollapsedState(v=>{lsSet("calSidebarCollapsed",!v);return !v;});
+  // 2026-09-25 user request: Dashboard's checklist "To calendar" button
+  // used to just show a toast and leave you on Dashboard -- the item
+  // "disappeared" into the sidebar's "To place" tray with nothing showing
+  // you where it actually went. highlightedDraftId briefly outlines the
+  // matching tray chip (same amber-outline convention as
+  // highlightedSessionId's grid-block highlight below), and the mount
+  // effect forces the sidebar open (state only, not persisted to
+  // localStorage -- a one-time reveal shouldn't silently overwrite
+  // whatever the student last chose for calSidebarCollapsed) so the tray
+  // is actually visible to highlight in the first place.
+  const [highlightedDraftId,setHighlightedDraftId]=useState(null);
   const [calRightColCollapsed,setCalRightColCollapsedState]=useState(()=>lsGet("calRightColCollapsed",false));
   const toggleCalRightColCollapsed=()=>setCalRightColCollapsedState(v=>{lsSet("calRightColCollapsed",!v);return !v;});
   // Phase 10b: Shovel's right column also shows two collapsible sections
@@ -30363,6 +30404,22 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   useEffect(()=>{
     if(jumpToSessionOnMount){jumpToSession(jumpToSessionOnMount);if(onJumpSessionConsumed)onJumpSessionConsumed();}
   },[jumpToSessionOnMount]);
+  // Same one-shot deep-link handoff as jumpToSessionOnMount right above --
+  // see highlightedDraftId's own comment for why this exists. The draft
+  // has no date/time yet (it's unplaced, sitting in the "To place" tray,
+  // not on the grid), so this scrolls the SIDEBAR to the chip rather than
+  // jumpToSession's grid-centering -- genuinely different targets, not a
+  // duplicate of that mechanism.
+  useEffect(()=>{
+    if(!highlightDraftIdOnMount)return;
+    setCalSidebarCollapsedState(false);
+    setHighlightedDraftId(highlightDraftIdOnMount);
+    setTimeout(()=>{
+      document.getElementById("to-place-draft-"+highlightDraftIdOnMount)?.scrollIntoView({behavior:"smooth",block:"center"});
+    },50);
+    setTimeout(()=>setHighlightedDraftId(id=>id===highlightDraftIdOnMount?null:id),3000);
+    if(onHighlightDraftConsumed)onHighlightDraftConsumed();
+  },[highlightDraftIdOnMount]);
   // ClassSetupWizard's own finish/skip -- both mark subjects AND routine
   // "handled" together (it's one combined flow now), then re-sync this
   // component's React state from what the wizard just wrote straight to
@@ -33929,10 +33986,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
               <div style={{display:"flex",flexDirection:"column",gap:6}}>
                 {unplacedTaskDrafts.map(draft=>{
                   const tagColor=colorOf(draft.subject)||T.lime;
+                  const isHighlighted=highlightedDraftId===draft.id;
                   return (
                     <div key={draft.id} onMouseDown={startDraftChipDrag(draft)}
+                      id={"to-place-draft-"+draft.id}
                       title="Drag onto the calendar to place it"
-                      style={{...subjectRowStyle(tagColor),cursor:"grab",border:`1px dashed ${tagColor}66`,flexDirection:"column",alignItems:"flex-start",gap:1,position:"relative",opacity:(draftChipDragging&&draftChipDragRef.current&&draftChipDragRef.current.draft.id===draft.id)?0.35:1}}>
+                      style={{...subjectRowStyle(tagColor),cursor:"grab",border:`1px dashed ${tagColor}66`,flexDirection:"column",alignItems:"flex-start",gap:1,position:"relative",opacity:(draftChipDragging&&draftChipDragRef.current&&draftChipDragRef.current.draft.id===draft.id)?0.35:1,...(isHighlighted?{outline:`2px solid ${T.amber}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.amber}33`}:{})}}>
                       <span style={{fontSize:12,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"100%"}}>{draft.title}</span>
                       <span style={{fontSize:9,color:T.faint}}>{draft.subject||"—"} · drag to place</span>
                       <button type="button" onClick={(e)=>{e.stopPropagation();removeUnplacedTaskDraft(draft.id);}} title="Remove" style={{position:"absolute",top:4,right:4,background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:12,lineHeight:1,padding:2}}>×</button>
@@ -38474,7 +38533,7 @@ function StreakDetailModal({open,onClose,streak}){
 }
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
-function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleTask, dashToast, setDashToast, setDetailEventId, onTaskCompleted}) {
+function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleTask, dashToast, setDashToast, setDetailEventId, onTaskCompleted, setPendingHighlightDraftId=()=>{}}) {
   const realStats=sessionStats();
   const realStreak=getStreak(); // D12: a genuine 0-day streak now honestly shows 0, not a floored "1"
   // D5 in the audit: levelInfo() used to be computed here (const lvl=...)
@@ -38576,7 +38635,6 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
     lsSet("events",[...all,item]);
     setChecklistDraft("");forcePlan(x=>x+1);
   };
-  const [checklistConvertToast,setChecklistConvertToast]=useState("");
   // User request, 2026-09-16: a checklist item sometimes turns out to need
   // real focused time ("send AP scores" -> "actually sit down and do this
   // Thursday"), not just a checkbox. Converting drops it into the exact
@@ -38592,55 +38650,23 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   // this" is the right shape, not "deadline". The old checklist entry is
   // removed rather than kept alongside the new draft -- it's being turned
   // into the draft, not duplicated.
+  // Bug fix, 2026-09-25 user report: this used to just show a toast and
+  // leave the student on Dashboard -- the item "disappeared" into
+  // Calendar's sidebar with nothing showing where it actually went (and
+  // the toast itself was invisible anyway once the tab switched, since it
+  // lives in Dashboard's own tree). Now navigates straight to Calendar and
+  // hands off the new draft's id via the same one-shot deep-link pattern
+  // jumpToSessionOnMount already uses -- see CalendarTab's
+  // highlightDraftIdOnMount for the consuming side (forces the sidebar
+  // open, scrolls to the chip, briefly outlines it).
   const convertChecklistItemToBlock=(item)=>{
     const draft={title:item.title,kind:"study block",subject:"",deadline:null,notes:item.notes||"",isGeneralTask:true,id:"draft-"+Date.now()};
     const drafts=lsGet("unplacedTaskDrafts",[]);
     lsSet("unplacedTaskDrafts",[...drafts,draft]);
     const all=lsGet("events",[]);
     lsSet("events",all.filter(ev=>ev.id!==item.id));
-    forcePlan(x=>x+1);
-    setChecklistConvertToast(`Added "${item.title}" to Calendar's "To place" tray — drag it onto a day there.`);
-    setTimeout(()=>setChecklistConvertToast(""),3800);
-  };
-  // Needs-attention card — an Attack Block project whose self-reported
-  // pace has fallen behind what can still fit before its deadline. Own
-  // local modal/state rather than reusing CalendarTab's "Balance my week"
-  // instance (that state lives inside a different component) — both call
-  // the exact same computeWeekBalancePlan engine underneath, so the two
-  // never disagree about what's actually movable, they just each own their
-  // own preview-then-confirm UI.
-  // D9 in the audit: this card and the App()-level Catch Me Up recovery
-  // banner are independently triggered and could stack when viewing
-  // Dashboard during a genuinely rough week -- same CATCHUP_RECOVERY_THRESHOLD
-  // used there, computed fresh here since this card has no other way to
-  // know recovery is pending (App() owns that state, not Dashboard).
-  const attackOverrun=computeCatchUpMissedItems(allEvents,today).length>=CATCHUP_RECOVERY_THRESHOLD?null:(detectAttackBlockOverruns(allEvents,today).filter(o=>!isAttackOverrunDismissedToday(o.dismissKey))[0]||null);
-  const [overrunModalOpen,setOverrunModalOpen]=useState(false);
-  const [overrunPlan,setOverrunPlan]=useState(null);
-  const [overrunToast,setOverrunToast]=useState("");
-  const openOverrunRestructure=()=>{
-    if(!attackOverrun)return;
-    logSuggestionDecision("attackOverrun","accepted",{chainId:attackOverrun.chainId,pendingMins:attackOverrun.pendingMins,capacityMins:attackOverrun.capacityMins,runwayDays:attackOverrun.runwayDays});
-    setOverrunPlan(computeWeekBalancePlan(lsGet("events",[]),getWeeklyRoutine(),getSchedulePreferences(),dayKey()));
-    setOverrunModalOpen(true);
-  };
-  const dismissOverrun=()=>{
-    if(!attackOverrun)return;
-    logSuggestionDecision("attackOverrun","dismissed",{chainId:attackOverrun.chainId,pendingMins:attackOverrun.pendingMins,capacityMins:attackOverrun.capacityMins});
-    dismissAttackOverrunToday(attackOverrun.dismissKey);
-    forcePlan(x=>x+1);
-  };
-  const confirmOverrunRestructure=()=>{
-    if(!overrunPlan||overrunPlan.moves.length===0){setOverrunModalOpen(false);setOverrunPlan(null);return;}
-    logSuggestionDecision("attackOverrunRestructure","accepted",{moveCount:overrunPlan.moves.length});
-    const all=lsGet("events",[]);
-    const moveMap=new Map(overrunPlan.moves.map(m=>[m.id,m]));
-    const next=all.map(ev=>moveMap.has(ev.id)?{...ev,date:moveMap.get(ev.id).toDate,time:moveMap.get(ev.id).toTime}:ev);
-    lsSet("events",next);
-    setOverrunModalOpen(false);setOverrunPlan(null);
-    forcePlan(x=>x+1);
-    setOverrunToast(overrunPlan.moves.length+" task"+(overrunPlan.moves.length!==1?"s":"")+" rebalanced across your week");
-    setTimeout(()=>setOverrunToast(""),3200);
+    setActive("calendar");
+    setPendingHighlightDraftId(draft.id);
   };
   // Real weekly wrapped stats
   const weeklyFocusMin=realStats.weekMin;
@@ -38737,9 +38763,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
     <div style={{display:"flex",flexDirection:"column",gap:16,paddingBottom:40}}>
 
       {/* One-time "Studlin is learning you" reveal -- see
-          shouldShowLearnsYouReveal's own comment. Good news, not a
-          warning, so this gets the lime/positive treatment rather than
-          attackOverrun's red one just below. */}
+          shouldShowLearnsYouReveal's own comment. */}
       {learnsYouReveal&&(
         <div style={{background:T.card,border:`1px solid ${T.lime}44`,borderRadius:8,padding:"18px 20px",display:"flex",alignItems:"flex-start",gap:16}}>
           <div style={{flexShrink:0,width:38,height:38,borderRadius:8,background:T.lime+"1A",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🧠</div>
@@ -38751,54 +38775,6 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
             <Btn variant="ghost" onClick={closeLearnsYouReveal} style={{padding:"7px 14px",fontSize:12}}>Got it</Btn>
           </div>
         </div>
-      )}
-
-      {/* Needs-attention — Attack Block project running behind its runway */}
-      {attackOverrun&&(
-        <div style={{background:T.card,border:`1px solid ${T.red}55`,borderRadius:8,padding:"18px 20px",display:"flex",alignItems:"flex-start",gap:16}}>
-          <div style={{flexShrink:0,width:38,height:38,borderRadius:8,background:T.red+"1A",display:"flex",alignItems:"center",justifyContent:"center"}}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={T.red} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-          </div>
-          <div style={{flex:1,minWidth:0}}>
-            <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Falling behind on "{attackOverrun.title}"</div>
-            <div style={{fontSize:13,color:T.text,lineHeight:1.5,marginBottom:14}}>
-              At a sustainable pace there's only about <strong style={{color:T.white}}>{(attackOverrun.capacityMins/60).toFixed(1)}h</strong> of runway left before it needs to be done, but the plan still has <strong style={{color:T.red}}>{(attackOverrun.pendingMins/60).toFixed(1)}h</strong> scheduled. Worth restructuring the week around it now, before it's a last-minute scramble.
-            </div>
-            <div style={{display:"flex",gap:8}}>
-              <Btn onClick={openOverrunRestructure} style={{padding:"7px 14px",fontSize:12}}>Restructure my week</Btn>
-              <Btn variant="ghost" onClick={dismissOverrun} style={{padding:"7px 14px",fontSize:12}}>I'll handle it</Btn>
-            </div>
-          </div>
-        </div>
-      )}
-      <Modal open={overrunModalOpen} onClose={()=>{setOverrunModalOpen(false);setOverrunPlan(null);}}
-        title="Restructure my week"
-        sub={overrunPlan?(overrunPlan.moves.length>0?overrunPlan.moves.length+" task"+(overrunPlan.moves.length!==1?"s":"")+" would move to make room":"Nothing safely movable right now. Try adjusting the plan by hand."):""}
-        width={520}
-        footer={overrunPlan&&overrunPlan.moves.length>0?(
-          <><Btn variant="subtle" onClick={()=>{setOverrunModalOpen(false);setOverrunPlan(null);}}>Cancel</Btn><Btn onClick={confirmOverrunRestructure}>Apply {overrunPlan.moves.length} change{overrunPlan.moves.length!==1?"s":""}</Btn></>
-        ):(
-          <Btn variant="subtle" onClick={()=>{setOverrunModalOpen(false);setOverrunPlan(null);}}>Close</Btn>
-        )}>
-        {overrunPlan&&overrunPlan.moves.length>0&&(
-          <div style={{display:"flex",flexDirection:"column",gap:7,maxHeight:280,overflowY:"auto"}}>
-            {overrunPlan.moves.map(m=>(
-              <div key={m.id} style={{display:"flex",flexDirection:"column",gap:4,padding:"9px 12px",background:T.card2,borderRadius:8,border:`1px solid ${T.border}`}}>
-                <div style={{display:"flex",alignItems:"center",gap:10}}>
-                  <div style={{flex:1,fontSize:13,color:T.text,fontWeight:500}}>{m.title}</div>
-                  <div style={{fontSize:11,color:T.muted,flexShrink:0}}>{m.fromDate} {fmtClock(m.fromTime)} → <strong style={{color:T.lime}}>{m.toDate} {fmtClock(m.toTime)}</strong></div>
-                </div>
-                {m.reason&&<div style={{fontSize:10.5,color:T.faint}}>{m.reason}</div>}
-              </div>
-            ))}
-          </div>
-        )}
-      </Modal>
-      {overrunToast&&(
-        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:7,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {overrunToast}</div>
-      )}
-      {checklistConvertToast&&(
-        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:7,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8,maxWidth:420,textAlign:"center"}}>{Icon.check} {checklistConvertToast}</div>
       )}
 
       {/* ROW 2: Today's plan + Checklist (Ask Studlin/aichat card removed
@@ -40916,6 +40892,10 @@ function App() {
   // Dashboard's Reschedule modal's own "I'll pick it myself" link -- see
   // CalendarTab's jumpToSessionOnMount for the consuming side.
   const [pendingJumpSession,setPendingJumpSession]=useState(null);
+  // Same pending-until-mounted handoff, for Dashboard's checklist
+  // "To calendar" button -- see CalendarTab's highlightDraftIdOnMount for
+  // the consuming side.
+  const [pendingHighlightDraftId,setPendingHighlightDraftId]=useState(null);
   const openRoutineCenterOnCalendar=()=>{setActive("calendar");setPendingRoutineCenter(true);};
   const myUid=firebase.auth().currentUser?.uid||null;
 
@@ -41638,9 +41618,9 @@ function App() {
             container instead of the real viewport. Clearing it once done
             keeps the entrance animation but stops that side effect. */}
         <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?T.bg:undefined}}>
-          {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} setDetailEventId={setDetailEventId} onTaskCompleted={handleTaskCompleted} />:
+          {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} setDetailEventId={setDetailEventId} onTaskCompleted={handleTaskCompleted} setPendingHighlightDraftId={setPendingHighlightDraftId} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineCenter={openRoutineCenterOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} setActivePage={setActive} pendingOpenSetting={pendingOpenSetting} onSettingOpened={()=>setPendingOpenSetting(null)} />:
-           active==="calendar"?<CalendarTab setActive={setActive} onTaskSaved={handleTaskSaved} openRoutineCenterOnMount={pendingRoutineCenter} onRoutineCenterOpenedFromSettings={()=>setPendingRoutineCenter(false)} detailEventId={detailEventId} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} registerSkipSetEvents={(fn)=>{calendarSkipSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} onWizardOpenChange={setCalendarWizardOpen} jumpToSessionOnMount={pendingJumpSession} onJumpSessionConsumed={()=>setPendingJumpSession(null)} setPricingOpen={setPricingOpen} />:
+           active==="calendar"?<CalendarTab setActive={setActive} onTaskSaved={handleTaskSaved} openRoutineCenterOnMount={pendingRoutineCenter} onRoutineCenterOpenedFromSettings={()=>setPendingRoutineCenter(false)} detailEventId={detailEventId} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} registerSkipSetEvents={(fn)=>{calendarSkipSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} onWizardOpenChange={setCalendarWizardOpen} jumpToSessionOnMount={pendingJumpSession} onJumpSessionConsumed={()=>setPendingJumpSession(null)} highlightDraftIdOnMount={pendingHighlightDraftId} onHighlightDraftConsumed={()=>setPendingHighlightDraftId(null)} setPricingOpen={setPricingOpen} />:
            active==="notes"?<Notes setActive={setActive} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
            active==="profile"?<Profile setActive={setActive} seriousMode={seriousMode} />:
