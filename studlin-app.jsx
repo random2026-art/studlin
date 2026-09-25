@@ -25033,7 +25033,13 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     // college, but only commitAllToCalendar (the college path) was ever
     // persisting it via saveSchoolTerm -- an HS account's answer to that
     // step was silently discarded.
-    if(termStart&&termEnd)saveSchoolTerm({start:termStart,end:termEnd});
+    // termWindowInvalid guard (2026-09-24 audit): the term step's own
+    // Continue button blocks on this, but this commit path is also
+    // reachable via Skip or a returning user who never revisits the term
+    // step -- belt-and-suspenders against ever persisting an inverted
+    // range, matching the same defense at commitAllToCalendar's identical
+    // saveSchoolTerm call below.
+    if(termStart&&termEnd&&termEnd>=termStart)saveSchoolTerm({start:termStart,end:termEnd});
     if(status)saveProfile({...getProfile(),status});
     // Whole-schedule photo/paste import has no deadlines to review, so
     // there's nothing to stage -- it commits immediately, same as it always has.
@@ -25057,6 +25063,14 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   const removePendingClass=(id)=>persistPending(pendingClasses.filter(c=>c.id!==id));
 
   const windowInvalid=timeToMinutes(workEnd)<=timeToMinutes(workStart);
+  // Bug found in a 2026-09-24 audit: unlike windowInvalid right below
+  // (wake/sleep, study start/end all gate Continue), the term step had NO
+  // order check at all -- a fat-fingered date (very plausible on a native
+  // date picker) silently produced Term ends before Term starts, with no
+  // error and nothing blocking Continue, and commitAllToCalendar below
+  // writes it straight through via saveSchoolTerm. Same pattern applied
+  // here: string-compare is safe since both are YYYY-MM-DD.
+  const termWindowInvalid=!!(termStart&&termEnd&&termEnd<termStart);
   // The one place anything from this wizard actually touches the real
   // calendar: subjects + weekly routine rows for every staged class first
   // (so every class exists before any class's events get built against
@@ -25187,7 +25201,10 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     // Holidays no longer lives here at all -- see WIZARD_STEP_ORDER's own
     // comment). Both below quietly no-op if a returning user skipped
     // straight to "classes" and never touched them.
-    if(termStart&&termEnd)saveSchoolTerm({start:termStart,end:termEnd});
+    // termEnd>=termStart guard (2026-09-24 audit): see the identical guard
+    // in commitHsSchedule above for why this can't just trust the step's
+    // own Continue button to have caught it.
+    if(termStart&&termEnd&&termEnd>=termStart)saveSchoolTerm({start:termStart,end:termEnd});
     saveWakeSleep({wakeTime,sleepTime});
     lsSet("classSetupPending",[]);
     setPendingClasses([]);
@@ -25267,8 +25284,9 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
             <TitleSub title="When does this term run?" sub="Studlin stops expecting your classes outside these dates -- summer, before the term starts. You can always change this later in Settings." />
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
               <DateField label="Term starts" value={termStart} onChange={setTermStart} />
-              <DateField label="Term ends" value={termEnd} onChange={setTermEnd} />
+              <DateField label="Term ends" value={termEnd} onChange={setTermEnd} min={termStart} />
             </div>
+            {termWindowInvalid&&<div style={{fontSize:11.5,color:T.red,marginTop:8}}>Term ends must be after term starts.</div>}
           </>)}
 
           {step==="awake"&&(<>
@@ -26021,7 +26039,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                   needs status first) always runs before End of Term, see
                   WIZARD_STEP_ORDER's own comment. */}
               <Btn variant="subtle" onClick={()=>setStep("awake")}>Skip</Btn>
-              <Btn onClick={()=>setStep("awake")}>Continue</Btn>
+              <Btn onClick={()=>setStep("awake")} disabled={termWindowInvalid} style={{opacity:termWindowInvalid?0.45:1}}>Continue</Btn>
             </>)}
             {step==="awake"&&(<Btn onClick={()=>setStep("personalize")} disabled={windowInvalid} style={{opacity:windowInvalid?0.45:1}}>Continue</Btn>)}
             {step==="personalize"&&(<>
@@ -26868,7 +26886,15 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
   // consumed by expandRoutineOccurrences), nothing else needs it live.
   const [termStart,setTermStartState]=useState(()=>{const t=getSchoolTerm();return t?t.start:"";});
   const [termEnd,setTermEndState]=useState(()=>{const t=getSchoolTerm();return t?t.end:"";});
-  const saveTerm=(start,end)=>saveSchoolTerm(start&&end?{start,end}:null);
+  // termWindowInvalid guard (2026-09-24 audit): same gap as the onboarding
+  // wizard's identical Term dates fields (see ClassSetupWizard's own
+  // termWindowInvalid) -- an inverted range used to save silently on every
+  // keystroke here, with nothing to catch it since this pair persists
+  // immediately rather than behind a Continue button. Still updates the
+  // input so what the user typed stays visible; just skips the actual
+  // saveSchoolTerm write until the range is sane again.
+  const termWindowInvalid=!!(termStart&&termEnd&&termEnd<termStart);
+  const saveTerm=(start,end)=>{if(start&&end&&end<start)return;saveSchoolTerm(start&&end?{start,end}:null);};
   const setTermStart=(v)=>{setTermStartState(v);saveTerm(v,termEnd);};
   const setTermEnd=(v)=>{setTermEndState(v);saveTerm(termStart,v);};
   // Same self-contained convention as Term dates above (getHolidays/
@@ -27066,8 +27092,9 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
         <div style={{fontSize:11.5,color:T.muted,marginBottom:10}}>Outside these dates, summer, before the term starts, Studlin stops expecting your classes. Everything else on your routine still applies.</div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
           <DateField label="School starts" value={termStart} onChange={setTermStart} />
-          <DateField label="School ends" value={termEnd} onChange={setTermEnd} />
+          <DateField label="School ends" value={termEnd} onChange={setTermEnd} min={termStart} />
         </div>
+        {termWindowInvalid&&<div style={{fontSize:11.5,color:T.red,marginTop:8}}>School ends must be after school starts -- not saved until fixed.</div>}
       </div>
       <div style={{border:`1px solid ${T.border}`,borderRadius:10,padding:14,marginBottom:16}}>
         <div style={{fontSize:12,fontWeight:700,color:T.white,marginBottom:2}}>Holidays</div>
