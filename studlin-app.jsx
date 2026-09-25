@@ -25383,52 +25383,55 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
           {step==="classes"&&addMode==="choose"&&(<>
             <TitleSub title="How do you want to add it?" />
             <div style={{display:"flex",flexDirection:"column",gap:10}}>
-              {/* HS students use the whole-schedule upload below instead --
-                  a per-class syllabus doesn't map to how a school day
-                  actually works for them (periods, not standalone
-                  syllabi), so this option is college-only. */}
-              {status!=="highschool"&&(<>
+              {/* 2026-09-24 user request: lead with the two options that
+                  always just work (a one-shot whole-schedule scan, or
+                  typing it in) instead of putting three equal-weight cards
+                  in front of a student on step 1 -- three parallel choices
+                  this early is decision paralysis, not a real choice. HS
+                  students get the whole-schedule photo upload here instead
+                  of the college-only syllabus-scan flow below -- a per-class
+                  syllabus doesn't map to how a school day actually works
+                  for them (periods, not standalone syllabi). */}
+              {status!=="highschool"?(
                 <button type="button" onClick={()=>{setScanError("");setPasteMode(false);setPasteText("");setAddMode("collegeSchedule");}} style={classSetupChoiceStyle}>
                   <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Scan my whole schedule</div>
                   <div style={{fontSize:12,color:T.muted}}>Upload a screenshot, photo, or paste your full schedule — Studlin splits it into classes and finds each one's meeting time and exam dates automatically.</div>
                 </button>
-                {/* 2026-09-09 user decision: scan-whole-schedule-first, then
-                    syllabus per class -- offering both as equal parallel
-                    choices before a single class exists meant nothing
-                    steered a student toward the faster, one-shot path.
-                    "Scan a syllabus" now only appears once at least one
-                    class already exists this session (staged or, for a
-                    prior HS bell-schedule commit, already committed) --
-                    exactly the "for each class" ordering asked for. */}
-                {(pendingClasses.length>0||hsClassesCommitted>0)&&(
-                  <button type="button" onClick={()=>{setScanError("");setPasteMode(false);setPasteText("");setAddMode("scan");}} style={classSetupChoiceStyle}>
-                    <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Scan a syllabus</div>
-                    <div style={{fontSize:12,color:T.muted}}>Upload a file or photo — Studlin reads the class name, meeting time, and deadlines.</div>
-                  </button>
-                )}
-              </>)}
-              {/* 2026-09-11 user idea: someone who already has their class
-                  schedule in Google Calendar shouldn't have to retype every
-                  meeting time by hand. This is a one-time COPY into a real
-                  Studlin course (see openGoogleImport's own comment for why
-                  not a live link) -- available regardless of HS/college
-                  status, since either could plausibly already have their
-                  schedule on Google Calendar. */}
-              <button type="button" onClick={openGoogleImport} style={classSetupChoiceStyle}>
-                <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Import from Google Calendar</div>
-                <div style={{fontSize:12,color:T.muted}}>Already on Google Calendar? Studlin can find your recurring classes there and use their real meeting times.</div>
-              </button>
-              <button type="button" onClick={startManual} style={classSetupChoiceStyle}>
-                <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Enter manually</div>
-                <div style={{fontSize:12,color:T.muted}}>Type in the class name and when it meets yourself.</div>
-              </button>
-              {status==="highschool"&&(
+              ):(
                 <button type="button" onClick={()=>{setScanError("");setAddMode("hsSchedule");}} style={classSetupChoiceStyle}>
                   <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Upload your class schedule</div>
                   <div style={{fontSize:12,color:T.muted}}>One photo of your whole schedule adds every period at once, color-coded.</div>
                 </button>
               )}
+              <button type="button" onClick={startManual} style={classSetupChoiceStyle}>
+                <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Enter manually</div>
+                <div style={{fontSize:12,color:T.muted}}>Type in the class name and when it meets yourself.</div>
+              </button>
+              {/* 2026-09-09 user decision: scan-whole-schedule-first, then
+                  syllabus per class -- offering both as equal parallel
+                  choices before a single class exists meant nothing
+                  steered a student toward the faster, one-shot path.
+                  "Scan a syllabus" now only appears once at least one
+                  class already exists this session (staged or, for a
+                  prior HS bell-schedule commit, already committed) --
+                  exactly the "for each class" ordering asked for. */}
+              {status!=="highschool"&&(pendingClasses.length>0||hsClassesCommitted>0)&&(
+                <button type="button" onClick={()=>{setScanError("");setPasteMode(false);setPasteText("");setAddMode("scan");}} style={classSetupChoiceStyle}>
+                  <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Scan a syllabus</div>
+                  <div style={{fontSize:12,color:T.muted}}>Upload a file or photo — Studlin reads the class name, meeting time, and deadlines.</div>
+                </button>
+              )}
             </div>
+            {/* 2026-09-11 user idea: someone who already has their class
+                schedule in Google Calendar shouldn't have to retype every
+                meeting time by hand. This is a one-time COPY into a real
+                Studlin course (see openGoogleImport's own comment for why
+                not a live link) -- available regardless of HS/college
+                status. Demoted from a full equal-weight card (2026-09-24
+                user report: a friend tried it and it didn't work, and it
+                shouldn't be competing with the two paths that always
+                succeed) to a small secondary link underneath. */}
+              <button type="button" onClick={openGoogleImport} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,marginTop:14,textDecoration:"underline"}}>or import from Google Calendar instead</button>
           </>)}
 
           {step==="classes"&&addMode==="googleImport"&&(<>
