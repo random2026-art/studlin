@@ -42,10 +42,38 @@ describe("convertChecklistItemToBlock: turns a checklist to-do into a real dragg
     assert.match(body, /lsSet\("events",all\.filter\(ev=>ev\.id!==item\.id\)\)/);
   });
 
-  test("shows a toast naming the item and where it went, not a silent update -- CLAUDE.md's async-confirmation guardrail", () => {
+  test("navigates to Calendar and hands off the new draft's id, rather than a toast the student would never see after the tab switch (2026-09-25 fix)", () => {
+    // The old version showed a toast and left the student on Dashboard --
+    // the item "disappeared" into Calendar's sidebar with no visible
+    // confirmation of where it went (and the toast itself lived in
+    // Dashboard's own tree, so it wouldn't even render post-navigation).
+    // Now it navigates straight there and hands off via the same one-shot
+    // deep-link pattern jumpToSessionOnMount already uses -- see
+    // CalendarTab's highlightDraftIdOnMount for the consuming side.
     const idx = SOURCE.indexOf("const convertChecklistItemToBlock=(item)=>{");
     const body = SOURCE.slice(idx, idx + 900);
-    assert.match(body, /setChecklistConvertToast\(`Added "\$\{item\.title\}" to Calendar's "To place" tray/);
+    assert.match(body, /setActive\("calendar"\)/);
+    assert.match(body, /setPendingHighlightDraftId\(draft\.id\)/);
+  });
+});
+
+describe("CalendarTab: highlightDraftIdOnMount scrolls to and briefly outlines the new 'To place' chip", () => {
+  test("the mount effect forces the sidebar open (state only, not persisted) and sets highlightedDraftId", () => {
+    const idx = SOURCE.indexOf("if(!highlightDraftIdOnMount)return;");
+    assert.notEqual(idx, -1);
+    const body = SOURCE.slice(idx, idx + 500);
+    assert.match(body, /setCalSidebarCollapsedState\(false\)/, "must force the sidebar open with the raw state setter, not the persisting toggle -- a one-time reveal shouldn't overwrite the student's own remembered collapse preference");
+    assert.match(body, /setHighlightedDraftId\(highlightDraftIdOnMount\)/);
+    assert.match(body, /scrollIntoView/);
+    assert.match(body, /onHighlightDraftConsumed/);
+  });
+
+  test("the 'To place' tray chip reads highlightedDraftId and gets the same amber-outline treatment as a highlighted grid session", () => {
+    const idx = SOURCE.indexOf('const isHighlighted=highlightedDraftId===draft.id;');
+    assert.notEqual(idx, -1);
+    const body = SOURCE.slice(idx, idx + 700);
+    assert.match(body, /id=\{"to-place-draft-"\+draft\.id\}/, "scrollIntoView targets this exact id");
+    assert.match(body, /isHighlighted\?\{outline:`2px solid \$\{T\.amber\}`/);
   });
 });
 

@@ -29863,7 +29863,7 @@ function resolveCalendarHighlightFlag(flag, nowMs){
 // setPricingOpen(true)) already merged into this function's BODY cleanly,
 // so dropping this prop would leave those calls throwing on an undefined
 // setPricingOpen.
-function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRoutineCenterOpenedFromSettings,detailEventId,setDetailEventId,registerSetEvents,registerSkipSetEvents,onTaskCompleted,catchUpPending,onWizardOpenChange,jumpToSessionOnMount,onJumpSessionConsumed,setPricingOpen=()=>{}}={}){
+function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRoutineCenterOpenedFromSettings,detailEventId,setDetailEventId,registerSetEvents,registerSkipSetEvents,onTaskCompleted,catchUpPending,onWizardOpenChange,jumpToSessionOnMount,onJumpSessionConsumed,highlightDraftIdOnMount,onHighlightDraftConsumed,setPricingOpen=()=>{}}={}){
   const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
   const SUBJ=[{value:"None",label:"None",color:T.lime},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
   // Accepts either a real course id or a label, same as StudlinPrep/Notes'
@@ -29877,6 +29877,17 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // Own collapse state, independent of the global icon rail's.
   const [calSidebarCollapsed,setCalSidebarCollapsedState]=useState(()=>lsGet("calSidebarCollapsed",false));
   const toggleCalSidebarCollapsed=()=>setCalSidebarCollapsedState(v=>{lsSet("calSidebarCollapsed",!v);return !v;});
+  // 2026-09-25 user request: Dashboard's checklist "To calendar" button
+  // used to just show a toast and leave you on Dashboard -- the item
+  // "disappeared" into the sidebar's "To place" tray with nothing showing
+  // you where it actually went. highlightedDraftId briefly outlines the
+  // matching tray chip (same amber-outline convention as
+  // highlightedSessionId's grid-block highlight below), and the mount
+  // effect forces the sidebar open (state only, not persisted to
+  // localStorage -- a one-time reveal shouldn't silently overwrite
+  // whatever the student last chose for calSidebarCollapsed) so the tray
+  // is actually visible to highlight in the first place.
+  const [highlightedDraftId,setHighlightedDraftId]=useState(null);
   const [calRightColCollapsed,setCalRightColCollapsedState]=useState(()=>lsGet("calRightColCollapsed",false));
   const toggleCalRightColCollapsed=()=>setCalRightColCollapsedState(v=>{lsSet("calRightColCollapsed",!v);return !v;});
   // Phase 10b: Shovel's right column also shows two collapsible sections
@@ -30393,6 +30404,22 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   useEffect(()=>{
     if(jumpToSessionOnMount){jumpToSession(jumpToSessionOnMount);if(onJumpSessionConsumed)onJumpSessionConsumed();}
   },[jumpToSessionOnMount]);
+  // Same one-shot deep-link handoff as jumpToSessionOnMount right above --
+  // see highlightedDraftId's own comment for why this exists. The draft
+  // has no date/time yet (it's unplaced, sitting in the "To place" tray,
+  // not on the grid), so this scrolls the SIDEBAR to the chip rather than
+  // jumpToSession's grid-centering -- genuinely different targets, not a
+  // duplicate of that mechanism.
+  useEffect(()=>{
+    if(!highlightDraftIdOnMount)return;
+    setCalSidebarCollapsedState(false);
+    setHighlightedDraftId(highlightDraftIdOnMount);
+    setTimeout(()=>{
+      document.getElementById("to-place-draft-"+highlightDraftIdOnMount)?.scrollIntoView({behavior:"smooth",block:"center"});
+    },50);
+    setTimeout(()=>setHighlightedDraftId(id=>id===highlightDraftIdOnMount?null:id),3000);
+    if(onHighlightDraftConsumed)onHighlightDraftConsumed();
+  },[highlightDraftIdOnMount]);
   // ClassSetupWizard's own finish/skip -- both mark subjects AND routine
   // "handled" together (it's one combined flow now), then re-sync this
   // component's React state from what the wizard just wrote straight to
@@ -33959,10 +33986,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
               <div style={{display:"flex",flexDirection:"column",gap:6}}>
                 {unplacedTaskDrafts.map(draft=>{
                   const tagColor=colorOf(draft.subject)||T.lime;
+                  const isHighlighted=highlightedDraftId===draft.id;
                   return (
                     <div key={draft.id} onMouseDown={startDraftChipDrag(draft)}
+                      id={"to-place-draft-"+draft.id}
                       title="Drag onto the calendar to place it"
-                      style={{...subjectRowStyle(tagColor),cursor:"grab",border:`1px dashed ${tagColor}66`,flexDirection:"column",alignItems:"flex-start",gap:1,position:"relative",opacity:(draftChipDragging&&draftChipDragRef.current&&draftChipDragRef.current.draft.id===draft.id)?0.35:1}}>
+                      style={{...subjectRowStyle(tagColor),cursor:"grab",border:`1px dashed ${tagColor}66`,flexDirection:"column",alignItems:"flex-start",gap:1,position:"relative",opacity:(draftChipDragging&&draftChipDragRef.current&&draftChipDragRef.current.draft.id===draft.id)?0.35:1,...(isHighlighted?{outline:`2px solid ${T.amber}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.amber}33`}:{})}}>
                       <span style={{fontSize:12,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"100%"}}>{draft.title}</span>
                       <span style={{fontSize:9,color:T.faint}}>{draft.subject||"—"} · drag to place</span>
                       <button type="button" onClick={(e)=>{e.stopPropagation();removeUnplacedTaskDraft(draft.id);}} title="Remove" style={{position:"absolute",top:4,right:4,background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:12,lineHeight:1,padding:2}}>×</button>
@@ -38504,7 +38533,7 @@ function StreakDetailModal({open,onClose,streak}){
 }
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
-function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleTask, dashToast, setDashToast, setDetailEventId, onTaskCompleted}) {
+function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleTask, dashToast, setDashToast, setDetailEventId, onTaskCompleted, setPendingHighlightDraftId=()=>{}}) {
   const realStats=sessionStats();
   const realStreak=getStreak(); // D12: a genuine 0-day streak now honestly shows 0, not a floored "1"
   // D5 in the audit: levelInfo() used to be computed here (const lvl=...)
@@ -38606,7 +38635,6 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
     lsSet("events",[...all,item]);
     setChecklistDraft("");forcePlan(x=>x+1);
   };
-  const [checklistConvertToast,setChecklistConvertToast]=useState("");
   // User request, 2026-09-16: a checklist item sometimes turns out to need
   // real focused time ("send AP scores" -> "actually sit down and do this
   // Thursday"), not just a checkbox. Converting drops it into the exact
@@ -38622,15 +38650,23 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   // this" is the right shape, not "deadline". The old checklist entry is
   // removed rather than kept alongside the new draft -- it's being turned
   // into the draft, not duplicated.
+  // Bug fix, 2026-09-25 user report: this used to just show a toast and
+  // leave the student on Dashboard -- the item "disappeared" into
+  // Calendar's sidebar with nothing showing where it actually went (and
+  // the toast itself was invisible anyway once the tab switched, since it
+  // lives in Dashboard's own tree). Now navigates straight to Calendar and
+  // hands off the new draft's id via the same one-shot deep-link pattern
+  // jumpToSessionOnMount already uses -- see CalendarTab's
+  // highlightDraftIdOnMount for the consuming side (forces the sidebar
+  // open, scrolls to the chip, briefly outlines it).
   const convertChecklistItemToBlock=(item)=>{
     const draft={title:item.title,kind:"study block",subject:"",deadline:null,notes:item.notes||"",isGeneralTask:true,id:"draft-"+Date.now()};
     const drafts=lsGet("unplacedTaskDrafts",[]);
     lsSet("unplacedTaskDrafts",[...drafts,draft]);
     const all=lsGet("events",[]);
     lsSet("events",all.filter(ev=>ev.id!==item.id));
-    forcePlan(x=>x+1);
-    setChecklistConvertToast(`Added "${item.title}" to Calendar's "To place" tray — drag it onto a day there.`);
-    setTimeout(()=>setChecklistConvertToast(""),3800);
+    setActive("calendar");
+    setPendingHighlightDraftId(draft.id);
   };
   // Real weekly wrapped stats
   const weeklyFocusMin=realStats.weekMin;
@@ -38739,10 +38775,6 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
             <Btn variant="ghost" onClick={closeLearnsYouReveal} style={{padding:"7px 14px",fontSize:12}}>Got it</Btn>
           </div>
         </div>
-      )}
-
-      {checklistConvertToast&&(
-        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:7,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8,maxWidth:420,textAlign:"center"}}>{Icon.check} {checklistConvertToast}</div>
       )}
 
       {/* ROW 2: Today's plan + Checklist (Ask Studlin/aichat card removed
@@ -40860,6 +40892,10 @@ function App() {
   // Dashboard's Reschedule modal's own "I'll pick it myself" link -- see
   // CalendarTab's jumpToSessionOnMount for the consuming side.
   const [pendingJumpSession,setPendingJumpSession]=useState(null);
+  // Same pending-until-mounted handoff, for Dashboard's checklist
+  // "To calendar" button -- see CalendarTab's highlightDraftIdOnMount for
+  // the consuming side.
+  const [pendingHighlightDraftId,setPendingHighlightDraftId]=useState(null);
   const openRoutineCenterOnCalendar=()=>{setActive("calendar");setPendingRoutineCenter(true);};
   const myUid=firebase.auth().currentUser?.uid||null;
 
@@ -41582,9 +41618,9 @@ function App() {
             container instead of the real viewport. Clearing it once done
             keeps the entrance animation but stops that side effect. */}
         <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?T.bg:undefined}}>
-          {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} setDetailEventId={setDetailEventId} onTaskCompleted={handleTaskCompleted} />:
+          {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} setDetailEventId={setDetailEventId} onTaskCompleted={handleTaskCompleted} setPendingHighlightDraftId={setPendingHighlightDraftId} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineCenter={openRoutineCenterOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} setActivePage={setActive} pendingOpenSetting={pendingOpenSetting} onSettingOpened={()=>setPendingOpenSetting(null)} />:
-           active==="calendar"?<CalendarTab setActive={setActive} onTaskSaved={handleTaskSaved} openRoutineCenterOnMount={pendingRoutineCenter} onRoutineCenterOpenedFromSettings={()=>setPendingRoutineCenter(false)} detailEventId={detailEventId} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} registerSkipSetEvents={(fn)=>{calendarSkipSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} onWizardOpenChange={setCalendarWizardOpen} jumpToSessionOnMount={pendingJumpSession} onJumpSessionConsumed={()=>setPendingJumpSession(null)} setPricingOpen={setPricingOpen} />:
+           active==="calendar"?<CalendarTab setActive={setActive} onTaskSaved={handleTaskSaved} openRoutineCenterOnMount={pendingRoutineCenter} onRoutineCenterOpenedFromSettings={()=>setPendingRoutineCenter(false)} detailEventId={detailEventId} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} registerSkipSetEvents={(fn)=>{calendarSkipSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} onWizardOpenChange={setCalendarWizardOpen} jumpToSessionOnMount={pendingJumpSession} onJumpSessionConsumed={()=>setPendingJumpSession(null)} highlightDraftIdOnMount={pendingHighlightDraftId} onHighlightDraftConsumed={()=>setPendingHighlightDraftId(null)} setPricingOpen={setPricingOpen} />:
            active==="notes"?<Notes setActive={setActive} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
            active==="profile"?<Profile setActive={setActive} seriousMode={seriousMode} />:
