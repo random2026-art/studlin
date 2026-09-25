@@ -2519,7 +2519,18 @@ const STUDLIN_HELP_ENTRIES=[
     // question-shaped, not commands.
     answer:"Settings → Calendar Preferences → \"Customize Schedule.\" Wake/sleep, your study-hours window, and Peak Focus Hours are all in that panel."},
   {id:"google-unverified",keywords:["unverified app","google warning","google won't connect","google wont connect","google not working","google calendar not working","google calendar broken"],
-    answer:"That warning is real -- Studlin's Google Calendar connection is still pending Google's own app verification, so everyone sees it for now. Use Settings → Integrations → \"Calendar or work schedule\" instead: paste your calendar's secret address there, no verification needed."},
+    // 2026-09-25: a report that a friend's connection worked came in, but
+    // the underlying app-verification status was NOT independently
+    // confirmed (no Google Cloud Console access from this environment,
+    // and testing through an already-signed-in/allowlisted account proves
+    // nothing either way -- test users never see the warning regardless
+    // of real verification status). Deliberately NOT claiming this is
+    // fixed -- that would be exactly the kind of unverified-but-confident
+    // answer the Certainty Policy exists to prevent. The real check is
+    // Google Cloud Console -> OAuth consent screen -> Publishing status.
+    // The paste-link fallback is true either way, so it's still the
+    // honest, safe thing to lead with.
+    answer:"Not confirmed either way yet -- if you're seeing it, the safe bet is Settings → Integrations → \"Calendar or work schedule\" instead: paste your calendar's secret address there, no verification needed."},
   {id:"change-password",keywords:["change my password","change password","reset password","new password"],
     answer:"Settings → Privacy → \"Change password\" sends a reset link to your email."},
   {id:"delete-account",keywords:["delete my account","delete account","close my account","cancel my account"],
