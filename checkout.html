@@ -31,7 +31,7 @@ body{font-family:'Geist',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;b
 .checkout{display:grid;grid-template-columns:1fr 1fr;gap:0;max-width:920px;width:100%;background:white;border-radius:24px;border:1px solid var(--line);overflow:hidden;box-shadow:0 30px 60px -30px rgba(11,32,26,0.2)}
 .summary{padding:44px 40px;background:var(--forest);color:var(--cream);display:flex;flex-direction:column}
 .summary .brand{display:flex;align-items:center;gap:10px;font-family:'Instrument Serif',serif;font-style:italic;font-size:22px;margin-bottom:40px}
-.summary .brand .glyph{width:28px;height:28px;flex-shrink:0}
+.summary .brand .glyph{width:28px;height:28px;background:var(--lime);border-radius:8px;display:grid;place-items:center;font-size:18px;font-weight:700;color:var(--ink);font-family:'Geist',sans-serif;font-style:normal}
 .summary h2{font-size:28px;font-weight:600;letter-spacing:-0.02em;margin-bottom:8px}
 .summary h2 em{font-family:'Instrument Serif',serif;font-style:italic;color:var(--lime);font-weight:400}
 .summary .sub{font-size:14.5px;color:rgba(246,241,230,0.65);line-height:1.5;margin-bottom:32px}
@@ -81,7 +81,7 @@ body{font-family:'Geist',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;b
 <body>
 <div class="checkout">
   <div class="summary">
-    <div class="brand"><svg class="glyph" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#123A66"/><path d="M6,2 L22,2 L22,10 L6,10 A4,4 0 0 1 6,2 Z" fill="#FFFFFF"/><rect x="24" y="2" width="6" height="8" rx="2.2" fill="#FF7A59"/><rect x="2" y="12" width="6" height="8" rx="2.2" fill="#93C5FD"/><path d="M10,12 L26,12 A4,4 0 0 1 26,20 L10,20 Z" fill="#FFFFFF"/><path d="M6,22 L22,22 L22,30 L6,30 A4,4 0 0 1 6,22 Z" fill="#FFFFFF"/><rect x="24" y="22" width="6" height="8" rx="2.2" fill="#2563EB"/></svg> Studlin</div>
+    <div class="brand"><span class="glyph">S</span> Studlin</div>
     <h2 id="summaryHeading">Start your <em>Pro plan.</em></h2>
     <p class="sub" id="summarySub">Cancel anytime. No trial games -- just a real free tier underneath if you're not ready.</p>
     <div class="plan-card">
