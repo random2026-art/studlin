@@ -5,6 +5,7 @@ const { withSentry } = require('./_lib/sentry');
 const { exchangeCodeForTokens, refreshAccessToken, fetchGoogleCalendarEvents, registerCalendarWatch, stopCalendarWatch } = require('./_lib/google-calendar');
 const { resolveCanvasDomain, fetchAllCanvasData, fetchAllCanvasDataDetailed } = require('./_lib/canvas');
 const { fetchCalendarRevalidated, parseICS } = require('./cal-proxy');
+const { cleanupMissedCollections } = require('./_lib/account-cleanup');
 
 // Source of truth for the Free plan's monthly AI chat allowance — this is
 // what actually creates the user doc on first load. Must match
@@ -888,6 +889,8 @@ async function handleDeleteAccount(user, res) {
   for (const field of ['uid', 'userId', 'ownerUid', 'createdBy']) {
     stats.sharedChats += (await safeStep(`sharedChats:${field}`, () => deleteQuery(db.collection('shared_chats').where(field, '==', uid)))) || 0;
   }
+
+  stats.missedCollections = await cleanupMissedCollections(db, admin, uid, safeStep);
 
   await safeStep('profiles', () => db.collection('profiles').doc(uid).delete());
   await safeStep('emailOtps', () => db.collection('emailOtps').doc(uid).delete());
