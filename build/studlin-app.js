@@ -14447,6 +14447,38 @@ function WizardCollegeBuilder({ items, addItem, removeItem, updateItem, defaultT
     })));
   })));
 }
+const SCAN_TEXT_LIMIT = 3e4;
+function scanReviewNotice(sourceText, deadlines) {
+  const parts = [];
+  if (sourceText && sourceText.length > SCAN_TEXT_LIMIT) parts.push("This file is long, so Studlin only read the first " + SCAN_TEXT_LIMIT.toLocaleString("en-US") + " characters. Anything later in it, like dates near the end, may be missing. Scan the rest separately if you need it.");
+  const today = dayKey();
+  const past = (deadlines || []).filter((d) => d && d.date && d.date < today).length;
+  if (past > 0) parts.push(past + " of the " + (deadlines || []).length + " dates found " + (past === 1 ? "is" : "are") + " already past, so " + (past === 1 ? "it starts" : "they start") + " unchecked.");
+  return parts.join(" ");
+}
+async function shrinkImageForScan(file, maxDim = 1800) {
+  try {
+    const url = URL.createObjectURL(file);
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = reject;
+      i.src = url;
+    });
+    URL.revokeObjectURL(url);
+    const long = Math.max(img.naturalWidth, img.naturalHeight);
+    if (long <= maxDim && file.size <= 15e5) return null;
+    const scale = Math.min(1, maxDim / long);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(img.naturalWidth * scale);
+    canvas.height = Math.round(img.naturalHeight * scale);
+    canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+    const out = canvas.toDataURL("image/jpeg", 0.85);
+    return { base64: out.split(",")[1] || "", mediaType: "image/jpeg" };
+  } catch (e) {
+    return null;
+  }
+}
 function RosterList({ items, setItems, makeNewItem, addLabel, withSchedule }) {
   const [dragIdx, setDragIdx] = useState(null);
   const addRow = () => setItems((prev) => [...prev, makeNewItem(prev.length)]);
@@ -14883,7 +14915,8 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
       // confidence read on the class name/meeting time).
       scheduleConfidence: result.scheduleConfidence,
       meetingTimes: (result.meetingTimes || []).map((mt, i) => ({ id: "mt-" + Date.now() + "-" + i, days: Array.isArray(mt.days) ? mt.days : [], startTime: mt.startTime || "09:00", duration: mt.duration || 50 })),
-      items: mapDeadlinesToReviewItems(result.deadlines, "cd")
+      items: mapDeadlinesToReviewItems(result.deadlines, "cd"),
+      notice: scanReviewNotice(sourceText, result.deadlines)
     });
     setEditingPendingId(null);
     setReviewSub("items");
@@ -14925,8 +14958,9 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
           reader.onload = () => resolve(reader.result);
           reader.readAsDataURL(file);
         });
-        const base64 = dataUrl.split(",")[1] || "";
-        const result2 = await extractClassSyllabusImage(base64, IMAGE_EXT_MEDIA_TYPES[ext]);
+        const shrunk = await shrinkImageForScan(file);
+        const base64 = shrunk ? shrunk.base64 : dataUrl.split(",")[1] || "";
+        const result2 = await extractClassSyllabusImage(base64, shrunk ? shrunk.mediaType : IMAGE_EXT_MEDIA_TYPES[ext]);
         if (result2.error) {
           setScanError(result2.error);
           return;
@@ -14966,6 +15000,10 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
           reader.onload = () => resolve(reader.result);
           reader.readAsText(file);
         });
+      }
+      if (text.replace(/s/g, "").length < 20) {
+        setScanError(ext === "pdf" ? "This PDF looks like a scan, so there's no text Studlin can read. Try a photo or screenshot of it instead, or paste the text." : "That file doesn't have any text Studlin can read. Try a different copy, or paste the text.");
+        return;
       }
       const result = await extractClassSyllabusText(text);
       if (result.error) {
@@ -15650,7 +15688,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
         title: editingPendingId ? "Edit this class" : "Review this class",
         sub: scanQueue.length > 0 ? scanQueue.length + " more class" + (scanQueue.length !== 1 ? "es" : "") + " found in your schedule, up next after this one." : "Check what Studlin found, fix anything wrong, and mark what each thing actually is."
       }
-    ), /* @__PURE__ */ React.createElement(Field, { label: "Class name" }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10, alignItems: "center" } }, /* @__PURE__ */ React.createElement(ColorSelect, { value: review.color, onChange: (c) => setReview((r) => ({ ...r, color: c })) }), /* @__PURE__ */ React.createElement(Input, { value: review.subjectName, onChange: (e) => setReview((r) => ({ ...r, subjectName: e.target.value })), placeholder: "e.g. Biology 101", style: { flex: 1 } }), review.scheduleConfidence === "low" && /* @__PURE__ */ React.createElement("span", { title: "Studlin wasn't fully sure it read this class's name or meeting time correctly -- double-check both below.", style: { fontSize: 10.5, color: T.amber, fontWeight: 600, background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 6, padding: "3px 8px", whiteSpace: "nowrap", flexShrink: 0 } }, "Double-check"))), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 16, marginBottom: 16 } }, meetingTimeExpandedManually ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, marginBottom: 8 } }, "When does it meet?"), /* @__PURE__ */ React.createElement(WizardCollegeBuilder, { items: meetingItemsForBuilder, addItem: addMeetingTime, removeItem: removeMeetingTime, updateItem: updateMeetingTime, defaultTitle: review.subjectName || "Class", hideHeading: true })) : review.meetingTimes.length === 0 ? /* @__PURE__ */ React.createElement(
+    ), review.notice && /* @__PURE__ */ React.createElement("div", { role: "status", style: { fontSize: 12, color: T.amber, background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 8, padding: "8px 10px", marginBottom: 12, lineHeight: 1.5 } }, review.notice), /* @__PURE__ */ React.createElement(Field, { label: "Class name" }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10, alignItems: "center" } }, /* @__PURE__ */ React.createElement(ColorSelect, { value: review.color, onChange: (c) => setReview((r) => ({ ...r, color: c })) }), /* @__PURE__ */ React.createElement(Input, { value: review.subjectName, onChange: (e) => setReview((r) => ({ ...r, subjectName: e.target.value })), placeholder: "e.g. Biology 101", style: { flex: 1 } }), review.scheduleConfidence === "low" && /* @__PURE__ */ React.createElement("span", { title: "Studlin wasn't fully sure it read this class's name or meeting time correctly -- double-check both below.", style: { fontSize: 10.5, color: T.amber, fontWeight: 600, background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 6, padding: "3px 8px", whiteSpace: "nowrap", flexShrink: 0 } }, "Double-check"))), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 16, marginBottom: 16 } }, meetingTimeExpandedManually ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, marginBottom: 8 } }, "When does it meet?"), /* @__PURE__ */ React.createElement(WizardCollegeBuilder, { items: meetingItemsForBuilder, addItem: addMeetingTime, removeItem: removeMeetingTime, updateItem: updateMeetingTime, defaultTitle: review.subjectName || "Class", hideHeading: true })) : review.meetingTimes.length === 0 ? /* @__PURE__ */ React.createElement(
       "button",
       {
         type: "button",

@@ -69,7 +69,7 @@ function loadStudlinModule(options) {
   // and explicitly exposes the ones tests actually need.
   const epilogue = `
 ;(function(){
-  var exportNames = ["dayKey","isDiscoverableFor","shouldShowSyllabusNudge","syllabusPaywallKey","selectSidebarDueItems","SIDEBAR_DUE_CAP","checklistItemVisible","lsGet","lsSet","findOpenSlotFor","findReliableSlotFor",
+  var exportNames = ["dayKey","scanReviewNotice","isDiscoverableFor","shouldShowSyllabusNudge","syllabusPaywallKey","selectSidebarDueItems","SIDEBAR_DUE_CAP","checklistItemVisible","lsGet","lsSet","findOpenSlotFor","findReliableSlotFor",
     "findLegalSlotOrNull","rebalanceDay","isTier0Missed","computePausePlan","computeOccupiedIntervals",
     "IMMEDIATE_CATCHUP_MINS","IMMEDIATE_NOW_BUFFER_MINS",
     "findAllOverlaps","CALENDAR_OVERLAP_SCAN_DAYS_AHEAD","CALENDAR_OVERLAP_SCAN_DAYS_BEHIND",
