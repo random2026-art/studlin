@@ -41,16 +41,14 @@ describe("Studlin AI hardening pass: routeStudlinAiQuestion against a battery of
     assert.equal(routeStudlinAiQuestion("Am I behind on anything?", []).needsOverdue, true);
     assert.equal(routeStudlinAiQuestion("Am I on track with everything?", []).needsPace, true);
     assert.equal(routeStudlinAiQuestion("When am I most productive?", []).needsPeakHours, true);
-    assert.equal(routeStudlinAiQuestion("How's my streak looking?", []).needsStreak, true);
     assert.equal(routeStudlinAiQuestion("How long does homework usually take me?", []).needsDuration, true);
   });
 
-  test("a genuinely unrecognized question still falls back to a real answer (workload+overdue+streak), never an empty digest", () => {
+  test("a genuinely unrecognized question still falls back to a real answer (workload+overdue), never an empty digest", () => {
     const { routeStudlinAiQuestion } = loadStudlinModule({ now: "2026-09-11T09:00:00" });
     const flags = routeStudlinAiQuestion("What's up with everything", []);
     assert.equal(flags.needsWorkload, true);
     assert.equal(flags.needsOverdue, true);
-    assert.equal(flags.needsStreak, true);
   });
 });
 

@@ -96,7 +96,6 @@ describe("routeStudlinAiQuestion", () => {
     const flags = m.routeStudlinAiQuestion("which day next week is busiest?", ["Chemistry", "Biology"]);
     assert.equal(flags.needsWorkload, true);
     assert.equal(flags.needsOverdue, false);
-    assert.equal(flags.needsStreak, false);
   });
 
   test("a peak-hours question routes to needsPeakHours only", () => {
@@ -125,7 +124,6 @@ describe("routeStudlinAiQuestion", () => {
     const flags = m.routeStudlinAiQuestion("should I go to the gym tomorrow", ["Chemistry", "Biology"]);
     assert.equal(flags.needsWorkload, true);
     assert.equal(flags.needsOverdue, true);
-    assert.equal(flags.needsStreak, true);
     assert.equal(flags.subject, null);
   });
 

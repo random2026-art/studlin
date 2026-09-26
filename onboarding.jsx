@@ -156,7 +156,7 @@ function LeftRail({ step, state }) {
         <p className="lead">Sign up is simple, free and fast. One workspace for everything you study, write, and remember.</p>
         <div className="rail-tiles">
           <div className="rail-tile"><div className="ic">{Ic.spark}</div><div className="t">AI study plans, built for you</div><div className="s">Sessions, flashcards, and a practice exam</div></div>
-          <div className="rail-tile"><div className="ic">{Ic.flame}</div><div className="t">Streaks that keep you going</div><div className="s">Daily momentum, milestones, and Weekly Wrapped</div></div>
+          <div className="rail-tile"><div className="ic">{Ic.star}</div><div className="t">Weekly Wrapped</div><div className="s">A recap of your week, every Sunday</div></div>
           <div className="rail-tile"><div className="ic">{Ic.zap}</div><div className="t">A calendar that gets you</div><div className="s">Learns your habits, plans your week</div></div>
         </div>
       </aside>
