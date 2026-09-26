@@ -69,9 +69,10 @@ describe("Calendar sidebar's Due Today/Overdue/date-groups use the real deadline
   });
 
   test("the raw upcoming-items sort also uses dueKeyOf, so same-due-date items stay adjacent for the grouping pass below", () => {
-    const idx = SOURCE.indexOf("const sidebarUpcomingItems=(()=>{");
+    const idx = SOURCE.indexOf("function selectSidebarDueItems(");
     const body = SOURCE.slice(idx, idx + 1600);
-    assert.match(body, /\.sort\(\(a,b\)=>\{const ka=dueKeyOf\(a\),kb=dueKeyOf\(b\);/, "sorting by raw .date while grouping by dueKeyOf would split one due-date group into multiple non-adjacent runs");
+    assert.match(body, /const keyOf=(item)=>item.deadline||item.date;/);
+    assert.match(body, /const byKey=\(a,b\)=>\{const ka=keyOf\(a\),kb=keyOf\(b\);/, "sorting by raw .date while grouping by the due key would split one due-date group into non-adjacent runs");
   });
 
   test("Due Today, Overdue, and the future date-groups all key off dueKeyOf consistently", () => {
