@@ -60,8 +60,8 @@ describe("wiring", () => {
     const app = fs.readFileSync(path.join(ROOT, "studlin-app.jsx"), "utf8");
     assert.ok(app.includes("if(u&&window.StudlinOwnerGuard)StudlinOwnerGuard.claim(u.uid);"));
     assert.equal(app.split("StudlinOwnerGuard.clearOnSignOut();").length - 1, 3);
-    assert.ok(fs.readFileSync(path.join(ROOT, "signin.jsx"), "utf8").includes("StudlinOwnerGuard.claim(u.uid)"));
+    assert.ok(fs.readFileSync(path.join(ROOT, "signin.jsx"), "utf8").includes("StudlinOwnerGuard.claim(u.uid,"));
     const onb = fs.readFileSync(path.join(ROOT, "onboarding.jsx"), "utf8");
-    assert.ok(onb.includes("StudlinOwnerGuard.claim(u.uid)") && onb.includes("StudlinOwnerGuard.clearOnSignOut()"));
+    assert.ok(onb.includes("StudlinOwnerGuard.claim(u.uid,") && onb.includes("StudlinOwnerGuard.clearOnSignOut()"));
   });
 });
