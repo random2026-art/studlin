@@ -255,7 +255,7 @@ function loadStudlinModule(options) {
     ...(now ? { Date: makeFrozenDateClass(now) } : {}),
     // ErrorBoundary's "extends React.Component" only needs the class to
     // exist at definition time -- nothing here ever instantiates it.
-    React: { Component: class {}, useState: () => [undefined, () => {}], useEffect: () => {}, useRef: () => ({ current: undefined }), createElement: () => null },
+    React: { Component: class {}, useState: () => [undefined, () => {}], useEffect: () => {}, useRef: () => ({ current: undefined }), createElement: () => null, createContext: (d) => ({ Provider: null, _d: d }), useContext: (c) => c._d },
     Notification: undefined,
     navigator: { serviceWorker: undefined },
     document: undefined,
