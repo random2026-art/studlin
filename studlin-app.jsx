@@ -6665,6 +6665,7 @@ async function upsertProfile(extra={}){
     // profiles/{userId} write rule is a plain owner-check with no field
     // allowlist, so this needs no firestore.rules change.
     incognito:isIncognitoOn(),
+    discoverable:isDiscoverableFor(status,lsGet("profileDiscoverable",null)),
     // Bug fix, 2026-09-04 audit: "Show Online Status" had the exact same
     // gap Incognito had before the fix above -- isOnlineStatusOn() only
     // ever read local settings, so turning it off had zero effect on what
@@ -16371,6 +16372,15 @@ const isRoomUnread=(room,myUid)=>{
 };
 const isOnlineStatusOn=()=>lsGet("settings",{}).onlineStatus!==false;
 const isIncognitoOn=()=>lsGet("settings",{}).incognito===true;
+// Whether other students can find this account in search. An explicit choice
+// always wins; with none, high school accounts default to private and
+// everyone else to findable. Stored under its own key (not `toggles`, whose
+// defaults get persisted the moment any other toggle is touched).
+function isDiscoverableFor(status,stored){
+  if(stored===true||stored===false)return stored;
+  return status!=="highschool";
+}
+const isDiscoverable=()=>isDiscoverableFor(getProfile().status,lsGet("profileDiscoverable",null));
 // A fresh AudioContext created with no user gesture anywhere in the call
 // stack (this fires off a Firestore onSnapshot listener, purely async)
 // starts life "suspended" under browser autoplay policy and never actually
@@ -16828,7 +16838,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
     const runQuery=async(field,value)=>{
       if(!value)return[];
       const snap=await fsdb().collection('profiles').where(field,'>=',value).where(field,'<=',value+String.fromCharCode(0xf8ff)).limit(10).get();
-      return snap.docs.map(d=>profileToFriend(d.id,d.data()));
+      return snap.docs.filter(d=>d.data().discoverable!==false).map(d=>profileToFriend(d.id,d.data()));
     };
     const t=setTimeout(async()=>{
       try{
@@ -36318,7 +36328,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     setMergeConfirm(null);
   };
   const [canvasSeeding,setCanvasSeeding]=useState(false);
-  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,classReminders:false,onlineStatus:true,incognito:false,profile:true,share:true,twofa:false,motion:false,hand:true,wrapped:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false,askCheckIns:true,askDurationQuestions:true},...lsGet("settings",{})}));
+  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,classReminders:false,onlineStatus:true,incognito:false,twofa:false,motion:false,hand:true,wrapped:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false,askCheckIns:true,askDurationQuestions:true},...lsGet("settings",{})}));
   // 2026-09-13: "Share my free/busy time" used to be all-or-nothing (on =
   // every current accepted friend). shareAvailabilityMode lets a student
   // restrict it to specific people instead -- see the picker modal below
@@ -36376,6 +36386,13 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   // toggle is touched, which would read as "opted out" for someone who
   // never chose anything.
   const [analyticsOptOut,setAnalyticsOptOut]=useState(()=>lsGet("analyticsOptOut",false)===true);
+  const [discoverableNow,setDiscoverableNow]=useState(()=>isDiscoverable());
+  const toggleDiscoverable=()=>{
+    const next=!discoverableNow;
+    setDiscoverableNow(next);
+    lsSet("profileDiscoverable",next);
+    upsertProfile();
+  };
   const toggleAnalytics=()=>{
     const next=!analyticsOptOut;
     setAnalyticsOptOut(next);
@@ -37662,8 +37679,11 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Visibility</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Control what others can see.</div>
-              <Row label="Public profile" sub="Let others find you by name or handle." k="profile" />
-              <Row label="Share Weekly Wrapped" sub="Allow sharing your stats card on social." k="share" />
+              <Row label="Public profile" sub="Let other students find you by name, handle or school. Off by default for high school accounts." k="_" right={
+                <button type="button" role="switch" aria-checked={discoverableNow} aria-label="Public profile" onClick={toggleDiscoverable} style={{padding:0,boxSizing:"border-box",width:38,height:20,borderRadius:10,background:discoverableNow?T.lime:T.card2,border:`1px solid ${discoverableNow?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
+                  <div style={{width:14,height:14,borderRadius:"50%",background:discoverableNow?T.bg:"#fff",position:"absolute",top:2,left:discoverableNow?21:2,transition:"left 0.2s"}} />
+                </button>
+              } />
               <Row label="Show Online Status" sub="When off, your presence dot is hidden from friends and you'll appear offline in the Studlin Network." k="onlineStatus" />
               <Row label="Incognito Mode" sub="Completely masks your live study status. You'll appear offline everywhere and won't receive Join Lock-In requests." k="incognito" />
               <Row label="Share my free/busy time" sub="Lets accepted friends' 'Find Shared Study Window' searches see your busy times too — never event titles or subjects, and only current friends. Off by default." k="shareAvailability" highlight={highlightSetting==="shareAvailability"} right={
