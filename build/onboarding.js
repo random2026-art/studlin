@@ -542,7 +542,13 @@ function App() {
   });
   useEffect(() => {
     return firebase.auth().onAuthStateChanged((u) => {
-      if (u && window.StudlinOwnerGuard) StudlinOwnerGuard.claim(u.uid);
+      if (u && window.StudlinOwnerGuard) StudlinOwnerGuard.claim(u.uid, function() {
+        try {
+          return Date.now() - Date.parse(u.metadata.lastSignInTime) < 12e4;
+        } catch (e) {
+          return false;
+        }
+      }());
       if (u) {
         const minStep = isVerifiedOrGoogle(u) ? 2 : 1;
         setStep((prev) => prev < minStep ? minStep : prev);

@@ -22,15 +22,20 @@
 
   function make(storage) {
     return {
-      // Call with the signed-in uid. Returns true when a different account's
-      // data was cleared. With no recorded owner (data from before this
-      // existed) the current account adopts it rather than losing it.
-      claim: function (uid) {
+      // Call with the signed-in uid. Returns true when other data was cleared.
+      // A different recorded owner always clears. With no recorded owner (data
+      // from before this existed) it depends on `freshSignIn`: someone who
+      // just typed their credentials is starting a session, so the unknown
+      // leftovers are cleared and their own data reloads from the cloud (this
+      // is what stops a second account adopting the first one's calendar).
+      // An already-open session with no owner adopts what is there instead of
+      // losing it.
+      claim: function (uid, freshSignIn) {
         if (!uid) return false;
         try {
           var owner = storage.getItem(OWNER_KEY);
           var cleared = false;
-          if (owner && owner !== uid) { wipe(storage); cleared = true; }
+          if ((owner && owner !== uid) || (!owner && freshSignIn)) { wipe(storage); cleared = true; }
           storage.setItem(OWNER_KEY, uid);
           return cleared;
         } catch (e) { return false; }

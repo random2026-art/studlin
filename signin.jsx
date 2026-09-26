@@ -191,7 +191,7 @@ function App() {
   };
 
   React.useEffect(()=>{
-    return firebase.auth().onAuthStateChanged(function(u){if(u&&window.StudlinOwnerGuard)StudlinOwnerGuard.claim(u.uid);if(u&&!suppressAuthRedirect.current)window.location.href=APP_URL;});
+    return firebase.auth().onAuthStateChanged(function(u){if(u&&window.StudlinOwnerGuard)StudlinOwnerGuard.claim(u.uid,(function(){try{return Date.now()-Date.parse(u.metadata.lastSignInTime)<120000;}catch(e){return false;}})());if(u&&!suppressAuthRedirect.current)window.location.href=APP_URL;});
   },[]);
 
   return (
