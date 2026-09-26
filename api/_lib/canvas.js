@@ -154,10 +154,16 @@ function computeGroupWeightPercents(assignments, weightById) {
 // and flattened into one list. Assignments with no due date, or one
 // already past, are skipped -- same reasoning as parseICS skipping
 // all-day/past entries, there's no real upcoming time to schedule around.
-async function fetchAllCanvasData(domain, token) {
+// 2026-09-25 persona audit: a course whose assignments failed to load used
+// to be skipped with no trace, so a student could silently miss everything
+// due in it. fetchAllCanvasDataDetailed also reports which courses were
+// skipped; fetchAllCanvasData below keeps its original return shape (a bare
+// events array) so the cron and any other caller is untouched.
+async function fetchAllCanvasDataDetailed(domain, token) {
   const courses = await fetchCanvasCourses(domain, token);
   if (!Array.isArray(courses)) throw new Error('Unexpected response from Canvas.');
   const events = [];
+  const skippedCourses = [];
   const now = new Date();
   for (const course of courses.slice(0, 20)) {
     const courseName = course.name || course.course_code || 'Course';
@@ -165,8 +171,8 @@ async function fetchAllCanvasData(domain, token) {
     try { groups = await fetchCanvasAssignmentGroups(domain, token, course.id); } catch (e) { groups = []; }
     const weightById = new Map((Array.isArray(groups) ? groups : []).map(g => [g.id, g.group_weight]));
     let assignments = [];
-    try { assignments = await fetchCanvasAssignments(domain, token, course.id); } catch (e) { continue; }
-    if (!Array.isArray(assignments)) continue;
+    try { assignments = await fetchCanvasAssignments(domain, token, course.id); } catch (e) { skippedCourses.push(courseName); continue; }
+    if (!Array.isArray(assignments)) { skippedCourses.push(courseName); continue; }
     const weightPercents = computeGroupWeightPercents(assignments, weightById);
     for (const a of assignments) {
       if (!a.due_at) continue;
@@ -175,7 +181,11 @@ async function fetchAllCanvasData(domain, token) {
       events.push(canvasAssignmentToEvent(a, courseName, weightPercents.get(a.id)));
     }
   }
-  return events;
+  return { events, skippedCourses };
+}
+
+async function fetchAllCanvasData(domain, token) {
+  return (await fetchAllCanvasDataDetailed(domain, token)).events;
 }
 
 module.exports = {
@@ -188,5 +198,6 @@ module.exports = {
   canvasAssignmentToEvent,
   computeGroupWeightPercents,
   fetchAllCanvasData,
+  fetchAllCanvasDataDetailed,
   stripHtml,
 };

@@ -47,7 +47,7 @@ describe("publishBusyWindows/unpublishBusyWindows report real failures instead o
   test("the Settings toggle awaits the result and shows a real error toast on failure, not silence", () => {
     const idx = SOURCE.indexOf('label="Share my free/busy time"');
     assert.notEqual(idx, -1);
-    const body = SOURCE.slice(idx, idx + 3000);
+    const body = SOURCE.slice(idx, idx + 3600);
     assert.match(body, /\(next\?publishBusyWindows\(\):unpublishBusyWindows\(\)\)\.then\(result=>\{/);
     assert.match(body, /if\(result&&result\.ok===false\)showToast\(/, "a real failure must actually surface to the student, not just to Sentry");
   });

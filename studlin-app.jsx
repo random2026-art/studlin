@@ -473,13 +473,13 @@ const Modal = ({open, onClose, title, sub, children, footer, width=540}) => {
   // for call sites that exist today and any added later.
   return ReactDOM.createPortal((
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
-      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:width,maxHeight:"90vh",background:T.card,borderRadius:8,border:`1px solid ${T.border}`,overflow:"hidden",display:"flex",flexDirection:"column",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)",boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)"}}>
+      <div role="dialog" aria-modal="true" aria-label={typeof title==="string"?title:undefined} onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:width,maxHeight:"90vh",background:T.card,borderRadius:8,border:`1px solid ${T.border}`,overflow:"hidden",display:"flex",flexDirection:"column",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)",boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)"}}>
         <div style={{padding:"20px 22px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"flex-start",gap:12}}>
           <div style={{flex:1}}>
             <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>{title}</div>
             {sub && <div style={{fontSize:12.5,color:T.muted,marginTop:3}}>{sub}</div>}
           </div>
-          <button onClick={onClose} style={{width:30,height:30,borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,display:"grid",placeItems:"center",cursor:"pointer"}}>
+          <button type="button" aria-label="Close" onClick={onClose}style={{width:30,height:30,borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,display:"grid",placeItems:"center",cursor:"pointer"}}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
@@ -918,6 +918,21 @@ const lsGet=(k,d)=>{try{const v=localStorage.getItem("studlin-"+k);return v===nu
 // transparently at this single choke point instead.
 const syncWriteHooks={};
 const lsSet=(k,v)=>{try{localStorage.setItem("studlin-"+k,JSON.stringify(v));}catch(e){}if(syncWriteHooks[k])syncWriteHooks[k](v);};
+// Settings > Privacy "Anonymous usage analytics". 2026-09-25 persona audit:
+// this toggle used to be read by nothing while PostHog and Firebase
+// Analytics started unconditionally on every page load -- and it defaulted
+// to "off", so the switch actively described the opposite of what was
+// happening. Now real: the choice lives under its own key
+// (studlin-analyticsOptOut, written ONLY when the student flips the switch
+// -- SettingsTab's tog() saves every toggle's default when any one is
+// touched, so the old settings.analytics value can't tell "chose off" from
+// "never touched") and the HTML entry points read it before starting
+// either tracker. This applies a change made while the app is already
+// open. Device-local, like every other setting today.
+function applyAnalyticsChoice(optOut){
+  try{if(window.posthog){optOut?window.posthog.opt_out_capturing():window.posthog.opt_in_capturing();}}catch(e){}
+  try{if(window.firebase&&firebase.analytics)firebase.analytics().setAnalyticsCollectionEnabled(!optOut);}catch(e){}
+}
 // A fire-and-forget write failing used to just vanish — no record anywhere,
 // for us or the student. This is the one place that decides "does a caught
 // error get reported," so a silent .catch(()=>{}) can become
@@ -2560,7 +2575,12 @@ const STUDLIN_HELP_ENTRIES=[
     // claimed the toggle controls an email. Nothing in api/ sends a Weekly
     // Wrapped email (only note/welcome/verification emails exist), so that
     // half was never true -- it was assumed from the Settings label.
-    answer:"Settings → Notifications → Email → \"Weekly Wrapped digest\" turns off the Weekly Wrapped popup that opens Sunday/Monday evening."},
+    answer:"Settings → Notifications → Reminders → \"Weekly Wrapped popup\" turns off the recap that opens Sunday and Monday evenings."},
+  // Added 2026-09-25 with the analytics opt-out becoming real (it was a
+  // do-nothing toggle before). Device-local, so the answer says "on this
+  // device" rather than promising it follows the account.
+  {id:"analytics-opt-out",keywords:["turn off analytics","opt out of analytics","stop tracking me","usage analytics","stop analytics"],
+    answer:"Settings → Privacy → Data & AI → \"Anonymous usage analytics.\" It's on by default. Turning it off stops it on this device."},
   {id:"shared-study-window",keywords:["find shared study window","study time with a friend","schedule with a friend","find time with a friend"],
     answer:"Open the quick-actions menu and choose \"Find Shared Study Window.\" Manual checks one specific time against your own calendar; Match scans for free time automatically."},
   {id:"join-lock-in",keywords:["join lock-in","join lock in","what is lock-in"],
@@ -7063,6 +7083,17 @@ function checklistItemVisible(ev,todayKey){
   if(ev.status!=="done")return true;
   return !!(ev.completedAt&&dayKey(new Date(ev.completedAt))===(todayKey||dayKey()));
 }
+// Overdue and upcoming are capped separately (a pile of old overdue items
+// used to push everything upcoming off the list); overdue is newest-first.
+const SIDEBAR_DUE_CAP=20;
+function selectSidebarDueItems(events,todayK,matches){
+  const keyOf=(item)=>item.deadline||item.date;
+  const byKey=(a,b)=>{const ka=keyOf(a),kb=keyOf(b);return ka===kb?(a.time||"").localeCompare(b.time||""):ka.localeCompare(kb);};
+  const due=events.filter(e=>e.status!=="done"&&e.date&&(!e.checklist||e.subject)&&matches(e)&&(e.kind==="deadline"||(e.kind==="exam"&&e.date>=todayK)));
+  const overdue=due.filter(e=>keyOf(e)<todayK).sort((a,b)=>byKey(b,a)).slice(0,SIDEBAR_DUE_CAP);
+  const upcoming=due.filter(e=>keyOf(e)>=todayK).sort(byKey).slice(0,SIDEBAR_DUE_CAP);
+  return overdue.concat(upcoming);
+}
 function daysOverdue(ev){if(!ev.deadline)return 0;if(ev.date<=ev.deadline)return 0;const d1=new Date(ev.date),d2=new Date(ev.deadline);return Math.ceil((d1-d2)/86400000);}
 function daysUntilDeadline(ev){if(!ev.deadline)return null;const d1=new Date(ev.deadline),d2=new Date(dayKey());return Math.ceil((d1-d2)/86400000);}
 // Per-task one-shot notification scheduling used to live here, but it only
@@ -8174,6 +8205,11 @@ function aiGateBlockReason(usage,limit){
   return usage.count<effectiveProLimit(limit)?null:"feature-cap";
 }
 function canScanSyllabusReason(){return aiGateBlockReason(getSyllabusScanUsage(),PRO_SYLLABUS_SCAN_LIMIT);}
+// A free student who already spent their one scan should hear that, not a generic "Pro feature".
+function syllabusPaywallKey(){
+  if(canScanSyllabusReason()!=="free-tier")return "aiUsageCap";
+  return lsGet("freeSyllabusScanUsed",false)?"syllabusScanUsed":"syllabusScan";
+}
 
 // A screenshot import (Canvas weekly view, a photographed syllabus page)
 // costs meaningfully more than a text-only syllabus scan -- image tokens,
@@ -8964,6 +9000,7 @@ function dismissImportReviewNudge(){
 // still deserve the nudge, same reasoning as shouldShowWeekBalanceNudge above.
 const SYLLABUS_NUDGE_COOLDOWN_MS=3*86400000;
 function shouldShowSyllabusNudge(){
+  if(!canScanSyllabus())return false;
   const dismissedAt=lsGet("syllabusNudgeDismissedAt",0);
   return Date.now()-dismissedAt>=SYLLABUS_NUDGE_COOLDOWN_MS;
 }
@@ -16843,7 +16880,11 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
     if(!myUid||targetUid===myUid)return;
     const theirs=incomingReqs.find(r=>r.senderId===targetUid);
     if(theirs){await acceptReq(theirs.id);return;}
-    try{await fsdb().collection('friendships').add({senderId:myUid,receiverId:targetUid,status:'pending',createdAt:new Date().toISOString()});if(onFriendRequestSent)onFriendRequestSent();}catch(e){}
+    // 2026-09-25 persona audit: all three friend-request writes below used
+    // to swallow their errors -- a failed send looked exactly like a
+    // successful one, and the student had no way to know their friend
+    // never got anything.
+    try{await fsdb().collection('friendships').add({senderId:myUid,receiverId:targetUid,status:'pending',createdAt:new Date().toISOString()});if(onFriendRequestSent)onFriendRequestSent();}catch(e){showNetToast("Couldn't send that request. Check your connection and try again.");}
   };
   // Referral trial grant (see api/me.js's handleReferralTrialGrant) only
   // ever fires for a friendship whose own `source` is "invite_link" (see
@@ -16860,9 +16901,9 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
       await fsdb().collection('friendships').doc(id).update({status:'accepted',updatedAt:new Date().toISOString()});
       authFetch("/api/me",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"accept-friend-referral",friendshipId:id})})
         .then(()=>fetchUserProfile()).catch(()=>{});
-    }catch(e){}
+    }catch(e){showNetToast("Couldn't accept that request. Try again.");}
   };
-  const declineReq=async(id)=>{try{await fsdb().collection('friendships').doc(id).delete();}catch(e){}};
+  const declineReq=async(id)=>{try{await fsdb().collection('friendships').doc(id).delete();}catch(e){showNetToast("Couldn't decline that request. Try again.");}};
   const [projectInviteBusyId,setProjectInviteBusyId]=useState(null);
   const acceptProjectInvite=async(proj)=>{
     if(!myUid)return;
@@ -17387,10 +17428,10 @@ function panelPalette(){
 // Standalone pill switch — the real `Toggle` component (used in Settings) is
 // closure-bound to that component's own `toggles` state, so it can't be
 // reused here; this is the same 38x20 visual, taking on/onClick directly.
-const MiniToggle=({on,onClick})=>(
-  <div onClick={onClick} style={{width:38,height:20,borderRadius:10,background:on?T.lime:T.card2,border:`1px solid ${on?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
+const MiniToggle=({on,onClick,label})=>(
+  <button type="button" role="switch" aria-checked={!!on} aria-label={label||"Toggle"} onClick={onClick} style={{padding:0,boxSizing:"border-box",width:38,height:20,borderRadius:10,background:on?T.lime:T.card2,border:`1px solid ${on?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
     <div style={{width:14,height:14,borderRadius:"50%",background:on?T.bg:"#fff",position:"absolute",top:2,left:on?21:2,transition:"left 0.2s"}} />
-  </div>
+  </button>
 );
 
 // Injects the non-TBD events of the given classes into the student's real
@@ -20809,6 +20850,22 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
       return;
     }
     setMessages(m=>[...m,{role:"ai",text:(data.reply||"").trim()||"I didn't get a real answer back. Try again.",kind:"fact"}]);
+    noteCostCapDowngrade(data);
+  };
+
+  // 2026-09-25 persona audit: once a Pro account passes its monthly real-
+  // dollar AI spend cap, api/chat.js quietly answers with the cheaper model
+  // instead of blocking a paying subscriber, and returns
+  // downgradedForCostCap -- which nothing on the client ever read, so
+  // answers just got worse with no explanation. Says so once per calendar
+  // month (not per message) so it informs without nagging. Resets each
+  // billing renewal server-side, so the copy says "renews," not a date.
+  const noteCostCapDowngrade=(data)=>{
+    if(!data||!data.downgradedForCostCap)return;
+    const key="costCapNoteShown-"+dayKey().slice(0,7);
+    if(lsGet(key,false))return;
+    lsSet(key,true);
+    setMessages(m=>[...m,{role:"ai",text:"Heads up: you've used this cycle's full-power AI allowance, so answers may be shorter until your plan renews.",kind:"info"}]);
   };
 
   // "How do I do X in Studlin?" -- see STUDLIN_HELP_ENTRIES' own comment
@@ -20880,6 +20937,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
       return;
     }
     setMessages(m=>[...m,{role:"ai",text:(data.reply||"").trim()||"I didn't get a real answer back. Try again.",kind:"coaching"}]);
+    noteCostCapDowngrade(data);
   };
 
   // Builds and shows a proposal card for a classified action -- never
@@ -20912,7 +20970,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
     }else if(isImportSyllabus){
       if(!canScanSyllabus()){
         const reason=canScanSyllabusReason();
-        setPricingOpen(reason==="free-tier"?"syllabusScan":"aiUsageCap");
+        setPricingOpen(syllabusPaywallKey());
         setMessages(m=>[...m,{role:"ai",text:"Importing several dates at once through Studlin AI needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
         return;
       }
@@ -21277,7 +21335,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
       commitStudlinAiPeakHours(getSchedulePreferences(),proposal.bucketId);
       recordSmartReschedule();
     }else if(proposal.kind==="import_syllabus_items"){
-      if(!canScanSyllabus()){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}
+      if(!canScanSyllabus()){setPricingOpen(syllabusPaywallKey());return;}
       // Same courseIdForLabelFuzzy-then-create-if-missing pattern the
       // syllabus review screen's own "Add to Calendar" button uses (see
       // its comment) -- a name typed slightly differently than an
@@ -23499,7 +23557,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                       {/* Suppressed while a Catch Me Up rebuild is pending -- the
                           one recovery banner is the single source of "you're
                           behind" now, not a per-item red dot competing with it. */}
-                      {!catchUpPending&&over>0&&<span title={over+"d overdue"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:"0 0 0 1.5px rgba(255,255,255,0.9)",zIndex:1}} />}
+                      {!catchUpPending&&over>0&&<span title={"Scheduled "+over+(over===1?" day":" days")+" after its due date"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:"0 0 0 1.5px rgba(255,255,255,0.9)",zIndex:1}} />}
                       {overflowCount>0&&<span title={overflowCount+" more at this time — open the day to see them"} style={{position:"absolute",bottom:2,right:2,fontSize:8,fontWeight:800,color:kindStyle.color,background:"rgba(0,0,0,0.18)",borderRadius:8,padding:"1px 4px",lineHeight:1.3,zIndex:1}}>+{overflowCount}</span>}
                       {/* Acceptance-progress badge -- same corner-pill style
                           as the overflow "+N" badge above (bottom-left
@@ -24789,7 +24847,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";
     const ext=file.name.split(".").pop().toLowerCase();
     if(IMAGE_EXT_MEDIA_TYPES[ext]){if(!canScanScreenshot()&&!canFreeOnboardingScan("syllabus")){setPricingOpen(canScanScreenshotReason()==="free-tier"?"screenshotScan":"aiUsageCap");return;}}
-    else{if(!canScanSyllabus()&&!canFreeOnboardingScan("syllabus")){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}}
+    else{if(!canScanSyllabus()&&!canFreeOnboardingScan("syllabus")){setPricingOpen(syllabusPaywallKey());return;}}
     setScanning(true);setScanError("");
     try{
       if(IMAGE_EXT_MEDIA_TYPES[ext]){
@@ -24831,7 +24889,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
 
   const handlePasteScan=async({merge}={})=>{
     if(!pasteText.trim())return;
-    if(!canScanSyllabus()&&!canFreeOnboardingScan("syllabus")){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}
+    if(!canScanSyllabus()&&!canFreeOnboardingScan("syllabus")){setPricingOpen(syllabusPaywallKey());return;}
     setScanning(true);setScanError("");
     try{
       const result=await extractClassSyllabusText(pasteText);
@@ -24976,7 +25034,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     const allImages=exts.every(ext=>IMAGE_EXT_MEDIA_TYPES[ext]);
     if(files.length>1&&!allImages){setScanError("Select multiple photos/screenshots together, or a single PDF/Word/text file -- not a mix.");return;}
     if(allImages){stageScheduleImages(files,setCollegeStagedImages);return;}
-    if(!canScanSyllabus()&&!canFreeOnboardingScan("schedule")){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}
+    if(!canScanSyllabus()&&!canFreeOnboardingScan("schedule")){setPricingOpen(syllabusPaywallKey());return;}
     setScanning(true);setScanError("");
     try{
       const file=files[0],ext=exts[0];
@@ -25032,7 +25090,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   };
   const handleCollegeSchedulePaste=async()=>{
     if(!pasteText.trim())return;
-    if(!canScanSyllabus()&&!canFreeOnboardingScan("schedule")){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}
+    if(!canScanSyllabus()&&!canFreeOnboardingScan("schedule")){setPricingOpen(syllabusPaywallKey());return;}
     setScanning(true);setScanError("");
     try{
       const result=await extractCollegeScheduleText(pasteText);
@@ -25098,7 +25156,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     const allImages=exts.every(ext=>IMAGE_EXT_MEDIA_TYPES[ext]);
     if(files.length>1&&!allImages){setScanError("Select multiple photos/screenshots together, or a single PDF/Word/text file -- not a mix.");return;}
     if(allImages){stageScheduleImages(files,setHsStagedImages);return;}
-    if(!canScanSyllabus()&&!canFreeOnboardingScan("schedule")){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}
+    if(!canScanSyllabus()&&!canFreeOnboardingScan("schedule")){setPricingOpen(syllabusPaywallKey());return;}
     setScanning(true);setScanError("");
     try{
       const file=files[0],ext=exts[0];
@@ -25155,7 +25213,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
 
   const handleHsPasteScan=async()=>{
     if(!hsPasteText.trim())return;
-    if(!canScanSyllabus()&&!canFreeOnboardingScan("schedule")){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}
+    if(!canScanSyllabus()&&!canFreeOnboardingScan("schedule")){setPricingOpen(syllabusPaywallKey());return;}
     setScanning(true);setScanError("");
     try{
       const result=await extractHsScheduleFromText(hsPasteText);
@@ -26762,7 +26820,7 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
                       <span style={{fontSize:10,fontWeight:700,color,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",textDecoration:isDone?"line-through":"none"}}>{ev.title}</span>
                     </div>
                   ) : (<>
-                  {!catchUpPending&&over>0&&<span title={over+"d overdue"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:`0 0 0 1.5px ${isExam?T.ink:"#fff"}`,zIndex:1}} />}
+                  {!catchUpPending&&over>0&&<span title={"Scheduled "+over+(over===1?" day":" days")+" after its due date"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:`0 0 0 1.5px ${isExam?T.ink:"#fff"}`,zIndex:1}} />}
                   {overflowCount>0&&<span title={overflowCount+" more at this time"} style={{position:"absolute",bottom:2,right:2,fontSize:8,fontWeight:800,color:kindStyle.color,background:"rgba(0,0,0,0.18)",borderRadius:8,padding:"1px 4px",lineHeight:1.3,zIndex:1}}>+{overflowCount}</span>}
                   {isPendingAcceptance&&<span title={isDeclined?"Declined":acceptanceSummary.accepted+"/"+acceptanceSummary.total+" accepted"} style={{position:"absolute",bottom:2,left:2,fontSize:8,fontWeight:800,color:isDeclined?"#fff":kindStyle.color,background:isDeclined?T.red+"cc":"rgba(0,0,0,0.18)",borderRadius:8,padding:"1px 4px",lineHeight:1.3,zIndex:1}}>{isDeclined?"Declined":acceptanceSummary.accepted+"/"+acceptanceSummary.total}</span>}
                   {conflictTitles.length>0&&<span title={"Overlaps with "+conflictTitles.join(", ")} style={{position:"absolute",top:2,left:2,fontSize:9,lineHeight:1,zIndex:1,filter:"drop-shadow(0 1px 1px rgba(0,0,0,0.35))"}}>⚠️</span>}
@@ -33584,14 +33642,29 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       "\"push things back a couple days\" -> {\"intent\":\"unsupported\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null}\n"+
       "\"cancel everything forever\" -> {\"intent\":\"unsupported\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null}\n"+
       "\"my stuff got moved around\" -> {\"intent\":\"unsupported\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null}";
+    // 2026-09-25 persona audit: this never checked res.ok, so a rate limit,
+    // out-of-credits, or outage reply (no `reply` field) fell through to
+    // JSON.parse, threw, and showed "That doesn't look like a schedule
+    // change" -- blaming the student's phrasing for a server problem --
+    // and still counted against the monthly cap. serverAnswered separates
+    // "the model answered but not with a usable intent" (phrasing message,
+    // counts) from everything else (real reason, doesn't count).
+    let serverAnswered=false;
     try{
       const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash"})});
       const data=await res.json();
-      // Recorded right after the real API round-trip completes, not after
-      // the JSON parse/validation below -- the cost is already spent at
-      // this point regardless of whether this attempt's phrasing turns
-      // out to classify cleanly, and a retry-until-it-parses loop should
-      // still count every real call against the cap.
+      if(!res.ok){
+        setPauseError((data&&data.error)||"Something went wrong on our end. Try again in a moment.");
+        setPauseLoading(false);
+        return;
+      }
+      serverAnswered=true;
+      // Recorded right after the real API round-trip SUCCEEDS, not after
+      // the JSON parse/validation below -- the cost is spent at this point
+      // regardless of whether this attempt's phrasing turns out to classify
+      // cleanly, and a retry-until-it-parses loop should still count every
+      // real call against the cap. (A refused call costs nothing, so it
+      // returned above without counting.)
       recordSmartReschedule();
       const raw=(data.reply||"").replace(/```json?|```/g,"").trim();
       const parsed=JSON.parse(raw);
@@ -33602,7 +33675,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       setPauseLastIntent(parsed);
       setPausePreview(computePausePlan(parsed));
     }catch(e){
-      setPauseError("That doesn't look like a schedule change Studlin can act on. Try phrasing it like “I'm sick, push things back 3 days,” or pick a quick action below.");
+      setPauseError(serverAnswered
+        ?"That doesn't look like a schedule change Studlin can act on. Try phrasing it like “I'm sick, push things back 3 days,” or pick a quick action below."
+        :"Couldn't reach Studlin. Check your connection and try again.");
     }
     setPauseLoading(false);
   };
@@ -33775,10 +33850,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // card quick-add) is excluded. Plain !e.checklist used to drop the
     // class-linked case too, so a due-date-only assignment could show in
     // Prep's class view but silently vanish from this sidebar.
-    return events
-      .filter(e=>e.status!=="done"&&e.date&&(!e.checklist||e.subject)&&matches(e)&&(e.kind==="deadline"||(e.kind==="exam"&&e.date>=todayK)))
-      .sort((a,b)=>{const ka=dueKeyOf(a),kb=dueKeyOf(b);return ka===kb?(a.time||"").localeCompare(b.time||""):ka.localeCompare(kb);})
-      .slice(0,20);
+    return selectSidebarDueItems(events,todayK,matches);
   })();
   // "Due: Tomorrow" / "Due: Monday" style grouping (Shovel's right column
   // groups by relative due date instead of a flat list) -- items are
@@ -35588,6 +35660,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             <button type="button" onClick={bdListening?stopBdRec:startBdRec} title={bdListening?"Stop listening":"Speak instead of typing"} style={{position:"absolute",right:8,bottom:8,width:30,height:30,borderRadius:"50%",border:"none",background:bdListening?T.red:T.lime,color:bdListening?"#fff":T.ink,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{bdListening?<span style={{width:10,height:10,background:"#fff",borderRadius:2}} />:Icon.mic}</button>
           )}
         </div>
+        {!canUseBrainDump()&&<div style={{fontSize:12,color:T.muted,marginTop:8}}>{canUseBrainDumpReason()==="free-tier"?"Brain dump is a Pro feature. ":AI_USAGE_CAP_MESSAGE+" "}<span role="button" tabIndex={0} onClick={()=>setPricingOpen(canUseBrainDumpReason()==="free-tier"?"brainDump":"aiUsageCap")} onKeyDown={e=>{if(e.key==="Enter")setPricingOpen(canUseBrainDumpReason()==="free-tier"?"brainDump":"aiUsageCap");}} style={{color:T.lime,fontWeight:600,cursor:"pointer"}}>See plans</span></div>}
         {bdListening&&<div style={{fontSize:11.5,color:T.red,marginTop:6}}>Listening... tap the mic to stop</div>}
         {!bdListening&&bdMicError&&<div style={{fontSize:11.5,color:T.red,marginTop:6}}>{bdMicError}</div>}
         {brainDumpLoading&&<div style={{fontSize:11.5,color:T.muted,marginTop:6}}>Reading through everything you said...</div>}
@@ -35962,7 +36035,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                           {ev.subject && ev.time ? " · " : ""}
                           {ev.time ? fmtTime(ev.time) : ""}
                           {ev.duration ? " · " + ev.duration + "m" : ""}
-                          {!catchUpPending&&over>0&&<span style={{color:T.red,fontWeight:600}}> · {over}d overdue</span>}
+                          {!catchUpPending&&over>0&&<span style={{color:T.red,fontWeight:600}}> · {over}d after due date</span>}
                         </div>
                       </div>
                       <div style={{display:"flex",gap:4,flexShrink:0}}>
@@ -36187,6 +36260,36 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
 // Appearance/Notifications/etc, and shadowing that with a same-named prop
 // would be a silent, easy-to-miss bug (or a hard compile error, since both
 // are declared with const in the same scope).
+// Module-level (not defined inside SettingsTab) so React keeps the same
+// component identity across renders: a component created inside another
+// remounts on every render, which drops keyboard focus from a switch the
+// moment it is toggled.
+const SettingsCtx=React.createContext({toggles:{},tog:()=>{}});
+function SettingsToggle({k,label}){
+  const {toggles,tog}=React.useContext(SettingsCtx);
+  const on=!!toggles[k];
+  return (
+    <button type="button" role="switch" aria-checked={on} aria-label={label} onClick={()=>tog(k)} style={{padding:0,boxSizing:"border-box",width:38,height:20,borderRadius:10,background:on?T.lime:T.card2,border:`1px solid ${on?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
+      <div style={{width:14,height:14,borderRadius:"50%",background:on?T.bg:"#fff",position:"absolute",top:2,left:on?21:2,transition:"left 0.2s"}} />
+    </button>
+  );
+}
+function SettingsRow({label,sub,k,right,highlight}){
+  const rowRef=useRef(null);
+  useEffect(()=>{
+    if(highlight&&rowRef.current)rowRef.current.scrollIntoView({behavior:"smooth",block:"center"});
+  },[highlight]);
+  return (
+    <div ref={rowRef} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"13px 10px",margin:"0 -10px",borderRadius:8,borderBottom:`1px solid ${T.border}`,background:highlight?T.lime+"14":"transparent",boxShadow:highlight?`0 0 0 1.5px ${T.lime}`:"none",transition:"background 0.4s ease, box-shadow 0.4s ease"}}>
+      <div style={{flex:1,marginRight:14}}>
+        <div style={{fontSize:13,color:T.text,fontWeight:500}}>{label}</div>
+        {sub && <div style={{fontSize:11.5,color:T.muted,marginTop:2,lineHeight:1.45}}>{sub}</div>}
+      </div>
+      {right || <SettingsToggle k={k} label={typeof label==="string"?label:undefined} />}
+    </div>
+  );
+}
+
 function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}, onOpenRoutineCenter=()=>{}, setScheduleSettingsOpen=()=>{}, setPricingOpen=()=>{}, setActivePage=()=>{}, pendingOpenSetting=null, onSettingOpened=()=>{}}) {
   const [active,setActive]=useState(pendingOpenSetting==="shareAvailability"?"Privacy":"General");
   // Deep-link landing from a push notification (see App's own
@@ -36215,7 +36318,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     setMergeConfirm(null);
   };
   const [canvasSeeding,setCanvasSeeding]=useState(false);
-  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,classReminders:false,analytics:false,onlineStatus:true,incognito:false,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false,askCheckIns:true,askDurationQuestions:true},...lsGet("settings",{})}));
+  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,classReminders:false,onlineStatus:true,incognito:false,profile:true,share:true,twofa:false,motion:false,hand:true,wrapped:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false,askCheckIns:true,askDurationQuestions:true},...lsGet("settings",{})}));
   // 2026-09-13: "Share my free/busy time" used to be all-or-nothing (on =
   // every current accepted friend). shareAvailabilityMode lets a student
   // restrict it to specific people instead -- see the picker modal below
@@ -36267,6 +36370,17 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     const enabled=!toggles[key];
     setQuestionAskPref(key,enabled);
     setToggles(t=>({...t,[key]:enabled}));
+  };
+  // See applyAnalyticsChoice. Own state + own storage key, deliberately not
+  // part of `toggles`: that object persists every default the moment any
+  // toggle is touched, which would read as "opted out" for someone who
+  // never chose anything.
+  const [analyticsOptOut,setAnalyticsOptOut]=useState(()=>lsGet("analyticsOptOut",false)===true);
+  const toggleAnalytics=()=>{
+    const next=!analyticsOptOut;
+    setAnalyticsOptOut(next);
+    lsSet("analyticsOptOut",next);
+    applyAnalyticsChoice(next);
   };
   const tog=k=>setToggles(t=>{
     const n={...t,[k]:!t[k]};
@@ -36790,6 +36904,10 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
       if(!res.ok)throw new Error(data.error||"Couldn't connect to Canvas. Check your domain and token.");
       setImportCalLoading(false);
       let events=data.events;
+      // A course whose assignments failed to load used to be skipped with
+      // no trace (persona audit, 2026-09-25) -- say which ones, so a missing
+      // class isn't mistaken for "nothing due in it."
+      if(Array.isArray(data.skippedCourses)&&data.skippedCourses.length>0)showToast("Canvas: couldn't load assignments for "+data.skippedCourses.join(", ")+". Try syncing again later.","error");
       if(events.length>0){
         setImportCalClassifying(true);
         // Silent degrade, not a paywall interrupt, when Pro-only/over cap --
@@ -36985,6 +37103,9 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
           showToast(sub.label+": "+data.lastSyncError,"error");
           return;
         }
+        // Manual syncs only -- the once-a-day silent auto-resync stays quiet,
+        // a toast every morning would just be noise.
+        if(manual&&Array.isArray(data.skippedCourses)&&data.skippedCourses.length>0)showToast(sub.label+": couldn't load assignments for "+data.skippedCourses.join(", ")+".","error");
       }else{
         // Same platform hint as fetchCalendarPreview above, this time
         // sourced from the subscription's own sourceType so a Blackboard
@@ -37161,26 +37282,8 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     {id:"Usage",icon:Icon.zap},
     {id:"Subscription",icon:Icon.layers},
   ];
-  const Toggle = ({k}) => (
-    <div onClick={()=>tog(k)} style={{width:38,height:20,borderRadius:10,background:toggles[k]?T.lime:T.card2,border:`1px solid ${toggles[k]?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
-      <div style={{width:14,height:14,borderRadius:"50%",background:toggles[k]?T.bg:"#fff",position:"absolute",top:2,left:toggles[k]?21:2,transition:"left 0.2s"}} />
-    </div>
-  );
-  const Row = ({label,sub,k,right,highlight}) => {
-    const rowRef=useRef(null);
-    useEffect(()=>{
-      if(highlight&&rowRef.current)rowRef.current.scrollIntoView({behavior:"smooth",block:"center"});
-    },[highlight]);
-    return (
-      <div ref={rowRef} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"13px 10px",margin:"0 -10px",borderRadius:8,borderBottom:`1px solid ${T.border}`,background:highlight?T.lime+"14":"transparent",boxShadow:highlight?`0 0 0 1.5px ${T.lime}`:"none",transition:"background 0.4s ease, box-shadow 0.4s ease"}}>
-        <div style={{flex:1,marginRight:14}}>
-          <div style={{fontSize:13,color:T.text,fontWeight:500}}>{label}</div>
-          {sub && <div style={{fontSize:11.5,color:T.muted,marginTop:2,lineHeight:1.45}}>{sub}</div>}
-        </div>
-        {right || <Toggle k={k} />}
-      </div>
-    );
-  };
+  const Toggle=SettingsToggle;
+  const Row=SettingsRow;
   // Theme preview card
   const ThemeCard = ({mode,label,sub}) => {
     const sel=theme===mode;
@@ -37303,6 +37406,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   };
 
   return (
+    <SettingsCtx.Provider value={{toggles,tog}}>
     <div>
       <PH title="Settings" sub="Manage your account and preferences" />
       <div style={{display:"grid",gridTemplateColumns:"200px 1fr",gap:16}}>
@@ -37481,9 +37585,9 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                   <div style={{fontSize:13,color:T.text,fontWeight:500}}>Enable Desktop Notifications</div>
                   <div style={{fontSize:11.5,color:T.muted,marginTop:2,lineHeight:1.45}}>Native desktop alerts for incoming chat messages and study session updates, even when this tab is closed or in the background.</div>
                 </div>
-                <div onClick={handleSysPushToggle} style={{width:38,height:20,borderRadius:10,background:toggles.sysPush?T.lime:T.card2,border:`1px solid ${toggles.sysPush?T.lime:T.border}`,position:"relative",cursor:sysPushStatus==="denied"?"not-allowed":"pointer",transition:"all 0.2s",flexShrink:0,opacity:sysPushStatus==="unsupported"?0.45:1}}>
+                <button type="button" role="switch" aria-checked={!!(toggles.sysPush)} aria-label="Enable Desktop Notifications" onClick={handleSysPushToggle} style={{padding:0,boxSizing:"border-box",width:38,height:20,borderRadius:10,background:toggles.sysPush?T.lime:T.card2,border:`1px solid ${toggles.sysPush?T.lime:T.border}`,position:"relative",cursor:sysPushStatus==="denied"?"not-allowed":"pointer",transition:"all 0.2s",flexShrink:0,opacity:sysPushStatus==="unsupported"?0.45:1}}>
                   <div style={{width:14,height:14,borderRadius:"50%",background:toggles.sysPush?T.bg:"#fff",position:"absolute",top:2,left:toggles.sysPush?21:2,transition:"left 0.2s"}} />
-                </div>
+                </button>
               </div>
               {sysPushStatus==="denied"&&(
                 <div style={{fontSize:11.5,color:T.amber,background:T.amber+"10",border:`1px solid ${T.amber}22`,borderRadius:6,padding:"9px 12px",lineHeight:1.5,marginTop:10}}>
@@ -37528,13 +37632,15 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <Row label="Class & activity reminders" sub="A heads-up 10 and 5 minutes before any class, meeting, or activity on your Weekly Routine starts." k="classReminders" />
               <Row label="Streak reminders" sub="A nudge if you haven't logged any study time by 8pm." k="streak" />
               <Row label="Focus sound alerts" sub="Audio cue when Pomodoro sessions complete." k="sound" />
-            </Card>
-            <Card>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Email</div>
-              <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Studlin will only email you when it matters.</div>
-              <Row label="Weekly Wrapped digest" sub="Your stats, every Sunday evening." k="wrapped" />
-              <Row label="Study milestones" sub="When you hit a streak milestone or level up." k="squad" />
-              <Row label="Product updates" sub="Occasional notes about new features and tips." k="emails" />
+              {/* 2026-09-25 persona audit: this used to sit in an "Email" card
+                  alongside "Study milestones" and "Product updates" -- neither
+                  of those was read anywhere, and no server code sends any of
+                  those three emails (the only emails api/ sends are note
+                  shares, the welcome message and the sign-up code). The
+                  Weekly Wrapped switch itself IS real, but what it gates is
+                  the in-app popup (see isWrappedWindow), so it lives here
+                  with an honest name instead. */}
+              <Row label="Weekly Wrapped popup" sub="A recap of your week that opens Sunday and Monday evenings." k="wrapped" />
             </Card>
           </>)}
 
@@ -37548,9 +37654,9 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                   card's own accurate description just above instead of
                   contradicting it. */}
               <Row label="Private Account / Serious Mode" sub="Hides focus minutes and tiers on Profile. Calendar stays a clean task grid either way." k="_" right={
-                <div onClick={()=>{const next=!seriousMode;setSeriousMode(next);const s=lsGet("settings",{});lsSet("settings",{...s,seriousMode:next});}} style={{width:38,height:20,borderRadius:10,background:seriousMode?T.purple:T.card2,border:`1px solid ${seriousMode?T.purple:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
+                <button type="button" role="switch" aria-checked={!!(seriousMode)} aria-label="Private Account / Serious Mode" onClick={()=>{const next=!seriousMode;setSeriousMode(next);const s=lsGet("settings",{});lsSet("settings",{...s,seriousMode:next});}} style={{padding:0,boxSizing:"border-box",width:38,height:20,borderRadius:10,background:seriousMode?T.purple:T.card2,border:`1px solid ${seriousMode?T.purple:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
                   <div style={{width:14,height:14,borderRadius:"50%",background:seriousMode?T.bg:"#fff",position:"absolute",top:2,left:seriousMode?21:2,transition:"left 0.2s"}} />
-                </div>
+                </button>
               } />
             </Card>
             <Card style={{marginBottom:12}}>
@@ -37561,7 +37667,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <Row label="Show Online Status" sub="When off, your presence dot is hidden from friends and you'll appear offline in the Studlin Network." k="onlineStatus" />
               <Row label="Incognito Mode" sub="Completely masks your live study status. You'll appear offline everywhere and won't receive Join Lock-In requests." k="incognito" />
               <Row label="Share my free/busy time" sub="Lets accepted friends' 'Find Shared Study Window' searches see your busy times too — never event titles or subjects, and only current friends. Off by default." k="shareAvailability" highlight={highlightSetting==="shareAvailability"} right={
-                <div onClick={()=>{
+                <button type="button" role="switch" aria-checked={!!(toggles.shareAvailability)} aria-label="Share my availability with friends" onClick={()=>{
                   const next=!toggles.shareAvailability;
                   // Bug fix, 2026-09-09 user report ("she already had her
                   // settings on so something's wrong"): publishBusyWindows
@@ -37600,9 +37706,9 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                   (next?publishBusyWindows():unpublishBusyWindows()).then(result=>{
                     if(result&&result.ok===false)showToast("Couldn't "+(next?"turn on":"turn off")+" sharing -- "+(result.reason||"try again")+".","error");
                   });
-                }} style={{width:38,height:20,borderRadius:10,background:toggles.shareAvailability?T.lime:T.card2,border:`1px solid ${toggles.shareAvailability?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
+                }} style={{padding:0,boxSizing:"border-box",width:38,height:20,borderRadius:10,background:toggles.shareAvailability?T.lime:T.card2,border:`1px solid ${toggles.shareAvailability?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
                   <div style={{width:14,height:14,borderRadius:"50%",background:toggles.shareAvailability?T.bg:"#fff",position:"absolute",top:2,left:toggles.shareAvailability?21:2,transition:"left 0.2s"}} />
-                </div>
+                </button>
               } />
               {/* 2026-09-13 user request: sharing used to be all-or-nothing
                   (on = every current friend). "Choose people" restricts it
@@ -37663,21 +37769,28 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Questions Studlin asks</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>These are how Studlin learns things like how long a class really takes you or how a session went — never required, always skippable, and if you keep skipping one Studlin turns it off for you automatically.</div>
               <Row label="Post-session check-ins" sub="A quick 'how did that go?' after a study session tied to an exam or assignment." k="_" right={
-                <div onClick={()=>handleAskToggle("askCheckIns")} style={{width:38,height:20,borderRadius:10,background:toggles.askCheckIns?T.lime:T.card2,border:`1px solid ${toggles.askCheckIns?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
+                <button type="button" role="switch" aria-checked={!!(toggles.askCheckIns)} aria-label="Post-session check-ins" onClick={()=>handleAskToggle("askCheckIns")} style={{padding:0,boxSizing:"border-box",width:38,height:20,borderRadius:10,background:toggles.askCheckIns?T.lime:T.card2,border:`1px solid ${toggles.askCheckIns?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
                   <div style={{width:14,height:14,borderRadius:"50%",background:toggles.askCheckIns?T.bg:"#fff",position:"absolute",top:2,left:toggles.askCheckIns?21:2,transition:"left 0.2s"}} />
-                </div>
+                </button>
               } />
               <Row label={'"How long did this really take?"'} sub="Asked only when you finish a session without using the Lock-In Timer, and only for a class Studlin doesn't have enough real data on yet." k="_" right={
-                <div onClick={()=>handleAskToggle("askDurationQuestions")} style={{width:38,height:20,borderRadius:10,background:toggles.askDurationQuestions?T.lime:T.card2,border:`1px solid ${toggles.askDurationQuestions?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
+                <button type="button" role="switch" aria-checked={!!(toggles.askDurationQuestions)} aria-label="How long did this really take question" onClick={()=>handleAskToggle("askDurationQuestions")} style={{padding:0,boxSizing:"border-box",width:38,height:20,borderRadius:10,background:toggles.askDurationQuestions?T.lime:T.card2,border:`1px solid ${toggles.askDurationQuestions?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
                   <div style={{width:14,height:14,borderRadius:"50%",background:toggles.askDurationQuestions?T.bg:"#fff",position:"absolute",top:2,left:toggles.askDurationQuestions?21:2,transition:"left 0.2s"}} />
-                </div>
+                </button>
               } />
             </Card>
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Data &amp; AI</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>You own your notes, essays, and recordings.</div>
-              <Row label="Use my work to train Studlin AI" sub="Off by default. We will never share your raw content." k="collect" />
-              <Row label="Anonymous usage analytics" sub="Helps us fix bugs and prioritise features." k="analytics" />
+              {/* "Use my work to train Studlin AI" used to be here -- read by
+                  nothing, and nothing trains on student content (privacy.html
+                  says as much), so it promised a control that didn't exist.
+                  Removed 2026-09-25. */}
+              <Row label="Anonymous usage analytics" sub="Helps us fix bugs and prioritise features. On by default; turn it off any time." k="_" right={
+                <button type="button" role="switch" aria-checked={!!(!analyticsOptOut)} aria-label="Anonymous usage analytics" onClick={toggleAnalytics} style={{padding:0,boxSizing:"border-box",width:38,height:20,borderRadius:10,background:!analyticsOptOut?T.lime:T.card2,border:`1px solid ${!analyticsOptOut?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
+                  <div style={{width:14,height:14,borderRadius:"50%",background:!analyticsOptOut?T.bg:"#fff",position:"absolute",top:2,left:!analyticsOptOut?21:2,transition:"left 0.2s"}} />
+                </button>
+              } />
               <div style={{display:"flex",gap:8,marginTop:14,flexWrap:"wrap"}}>
                 <Btn variant="subtle" onClick={exportAllData}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.copy,"Export all data")}</Btn>
                 <Btn variant="subtle" onClick={downloadChatHistory} disabled={chatHistoryLoading}>{chatHistoryLoading?"Preparing…":"Download chat history"}</Btn>
@@ -37875,7 +37988,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                     {Icon.file}
                   </div>
                   <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:13,fontWeight:600,color:T.white}}>Scan your work schedule</div>
+                    <div style={{fontSize:13,fontWeight:600,color:T.white}}>Scan your work schedule{!canScanSyllabus()&&<span style={{marginLeft:8,fontSize:10.5,fontWeight:700,color:T.lime}}>PRO</span>}</div>
                     <div style={{fontSize:11,color:T.muted,marginTop:2}}>No calendar link? Upload a photo — for When I Work, Homebase, or any shift app</div>
                   </div>
                   <BtnSm variant="lime" onClick={openWorkScanModal} style={{flexShrink:0}}>Scan</BtnSm>
@@ -37985,7 +38098,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             </Card>
             <Modal open={importCalOpen} onClose={()=>{setImportCalOpen(false);openNextQueuedImportCal();}}
               title={importCalReview?"Review "+importCalReview.label:importCalPlatformHint?"Connect "+PLATFORM_HELP[importCalPlatformHint].label:"Connect a calendar or work schedule"}
-              sub={importCalReview?(importCalReview.classified?"Studlin sorted these into assignments, exams, and projects. Check anything that looks off before adding.":"These will be added as fixed, occupied time. Studlin will plan around them."):(
+              sub={importCalReview?(importCalReview.classified?"Studlin sorted these into assignments, exams, and projects. Check anything that looks off before adding.":"Studlin didn't sort these into assignments and exams (that's a Pro feature, or this month's limit is used up). They'll be added as fixed, occupied time and Studlin will plan around them."):(
                 importCalPlatformHint==="canvas"&&importCalMethod==="token"?"Connect with an access token to pull real assignment details and grade weights straight from Canvas.":
                 importCalPlatformHint?"Paste your personal "+PLATFORM_HELP[importCalPlatformHint].label+" calendar feed link. See how below.":
                 "Paste a calendar or work-schedule link (Google, Outlook, iCloud, or your shift-scheduling app's calendar feed)."
@@ -38349,6 +38462,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
         </div>
       </div>
     </div>
+    </SettingsCtx.Provider>
   );
 }
 
@@ -40821,6 +40935,7 @@ function App() {
     projectBreakdown:"AI project breakdowns are a Pro feature.",
     aiArrange:"AI scheduling is a Pro feature.",
     syllabusScan:"Syllabus & schedule scans are a Pro feature.",
+    syllabusScanUsed:"You've used your free scan. Pro scans every class.",
     screenshotScan:"Screenshot imports are a Pro feature.",
     studlinAiQna:"Studlin AI is a Pro feature.",
     studyMaterialGen:"AI flashcards & practice quizzes are a Pro feature.",

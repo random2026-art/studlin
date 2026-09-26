@@ -3,7 +3,7 @@ const { admin, db, auth } = require('./_lib/firebase-admin');
 const { setCors, verifyAuth } = require('./_lib/auth');
 const { withSentry } = require('./_lib/sentry');
 const { exchangeCodeForTokens, refreshAccessToken, fetchGoogleCalendarEvents, registerCalendarWatch, stopCalendarWatch } = require('./_lib/google-calendar');
-const { resolveCanvasDomain, fetchAllCanvasData } = require('./_lib/canvas');
+const { resolveCanvasDomain, fetchAllCanvasData, fetchAllCanvasDataDetailed } = require('./_lib/canvas');
 const { fetchCalendarRevalidated, parseICS } = require('./cal-proxy');
 
 // Source of truth for the Free plan's monthly AI chat allowance — this is
@@ -390,7 +390,7 @@ async function handleCanvasConnect(user, req, res) {
   if (!token || !String(token).trim()) return res.status(400).json({ error: 'Missing access token.' });
 
   try {
-    const events = await fetchAllCanvasData(domain, String(token).trim());
+    const { events, skippedCourses } = await fetchAllCanvasDataDetailed(domain, String(token).trim());
     const now = new Date().toISOString();
     await db.collection('users').doc(user.uid).set({
       canvasDomain: domain,
@@ -400,7 +400,9 @@ async function handleCanvasConnect(user, req, res) {
       canvasLastSyncedAt: now,
       canvasLastSyncError: null,
     }, { merge: true });
-    return res.status(200).json({ events, lastSyncedAt: now });
+    // skippedCourses: courses whose assignments failed to load (persona
+    // audit, 2026-09-25) -- surfaced instead of silently dropped.
+    return res.status(200).json({ events, skippedCourses, lastSyncedAt: now });
   } catch (err) {
     console.error('canvas connect error:', err);
     return res.status(err.status && err.status < 500 ? err.status : 500).json({ error: err.message || 'Could not connect to Canvas. Please try again.' });
@@ -427,14 +429,14 @@ async function handleCanvasPull(user, res) {
       // (see resolveCanvasDomain).
       const resolved = await resolveCanvasDomain(data.canvasDomain);
       if (!resolved.ok) throw new Error("Couldn't verify the Canvas domain on file. Try reconnecting.");
-      const events = await fetchAllCanvasData(resolved.domain, data.canvasAccessToken);
+      const { events, skippedCourses } = await fetchAllCanvasDataDetailed(resolved.domain, data.canvasAccessToken);
       const now = new Date().toISOString();
       await db.collection('users').doc(user.uid).update({
         canvasSyncedEvents: events,
         canvasLastSyncedAt: now,
         canvasLastSyncError: null,
       });
-      return res.status(200).json({ connected: true, events, lastSyncedAt: now, lastSyncError: null });
+      return res.status(200).json({ connected: true, events, skippedCourses, lastSyncedAt: now, lastSyncError: null });
     } catch (syncErr) {
       await db.collection('users').doc(user.uid).update({ canvasLastSyncError: syncErr.message || 'Sync failed' }).catch(() => {});
       return res.status(200).json({ connected: true, events: data.canvasSyncedEvents || [], lastSyncedAt: data.canvasLastSyncedAt || null, lastSyncError: syncErr.message || 'Sync failed' });

@@ -69,7 +69,7 @@ function loadStudlinModule(options) {
   // and explicitly exposes the ones tests actually need.
   const epilogue = `
 ;(function(){
-  var exportNames = ["dayKey","checklistItemVisible","lsGet","lsSet","findOpenSlotFor","findReliableSlotFor",
+  var exportNames = ["dayKey","shouldShowSyllabusNudge","syllabusPaywallKey","selectSidebarDueItems","SIDEBAR_DUE_CAP","checklistItemVisible","lsGet","lsSet","findOpenSlotFor","findReliableSlotFor",
     "findLegalSlotOrNull","rebalanceDay","isTier0Missed","computePausePlan","computeOccupiedIntervals",
     "IMMEDIATE_CATCHUP_MINS","IMMEDIATE_NOW_BUFFER_MINS",
     "findAllOverlaps","CALENDAR_OVERLAP_SCAN_DAYS_AHEAD","CALENDAR_OVERLAP_SCAN_DAYS_BEHIND",
@@ -255,7 +255,7 @@ function loadStudlinModule(options) {
     ...(now ? { Date: makeFrozenDateClass(now) } : {}),
     // ErrorBoundary's "extends React.Component" only needs the class to
     // exist at definition time -- nothing here ever instantiates it.
-    React: { Component: class {}, useState: () => [undefined, () => {}], useEffect: () => {}, useRef: () => ({ current: undefined }), createElement: () => null },
+    React: { Component: class {}, useState: () => [undefined, () => {}], useEffect: () => {}, useRef: () => ({ current: undefined }), createElement: () => null, createContext: (d) => ({ Provider: null, _d: d }), useContext: (c) => c._d },
     Notification: undefined,
     navigator: { serviceWorker: undefined },
     document: undefined,
