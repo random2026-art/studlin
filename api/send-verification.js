@@ -47,7 +47,10 @@ async function verifyCode(user, submittedCode, res) {
     return res.status(429).json({ error: 'Too many attempts. Request a new code.' });
   }
 
-  if (hashCode(code) !== data.codeHash) {
+  // A resend keeps the earlier still-valid code(s) working (see sendCode), so
+  // an email that arrives late does not get invalidated by a newer one.
+  const validHashes = Array.isArray(data.codeHashes) && data.codeHashes.length ? data.codeHashes : [data.codeHash];
+  if (!validHashes.includes(hashCode(code))) {
     await ref.update({ attempts: (data.attempts || 0) + 1 }).catch(() => {});
     return res.status(400).json({ error: 'Incorrect code. Try again.' });
   }
@@ -77,8 +80,14 @@ async function sendCode(user, res) {
 
   const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
   try {
-    await db.collection('emailOtps').doc(user.uid).set({
+    const ref = db.collection('emailOtps').doc(user.uid);
+    const prev = await ref.get().catch(() => null);
+    const prevData = prev && prev.exists ? prev.data() : null;
+    const stillValid = prevData && Date.now() <= prevData.expiresAt;
+    const earlier = stillValid ? (Array.isArray(prevData.codeHashes) && prevData.codeHashes.length ? prevData.codeHashes : [prevData.codeHash]) : [];
+    await ref.set({
       codeHash: hashCode(code),
+      codeHashes: [...earlier, hashCode(code)].slice(-3),
       expiresAt: Date.now() + OTP_TTL_MS,
       attempts: 0,
       createdAt: Date.now(),

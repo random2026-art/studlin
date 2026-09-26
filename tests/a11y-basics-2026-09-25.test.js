@@ -25,7 +25,7 @@ describe("Settings switches", () => {
     const body = end > 0 ? settings.slice(0, end) : settings;
     assert.ok(!/<div onClick=[^\n]*width:38,height:20/.test(body));
     const switches = body.match(/role="switch" aria-checked=/g) || [];
-    assert.equal(switches.length, 6);
+    assert.equal(switches.length, 7);
     assert.ok(/aria-label="Anonymous usage analytics"/.test(body));
   });
 

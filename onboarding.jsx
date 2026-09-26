@@ -277,8 +277,11 @@ function StepSignup({ state, set, advance }) {
       if(window.posthog){posthog.identify(cred.user.uid,{email:state.email,provider:"email"});posthog.capture("signup_completed",{method:"email"});}
       try {
         const token = await cred.user.getIdToken();
-        await fetch("/api/send-verification", { method: "POST", headers: { Authorization: "Bearer " + token } });
-      } catch(e) {}
+        const sendRes = await fetch("/api/send-verification", { method: "POST", headers: { Authorization: "Bearer " + token } });
+        try { localStorage.setItem("studlin-verifySent", sendRes.ok ? "ok" : "failed"); } catch(e) {}
+      } catch(e) {
+        try { localStorage.setItem("studlin-verifySent", "failed"); } catch(e2) {}
+      }
       advance(true);
     } catch(err) {
       setAuthError(ERR_MAP[err.code]||"Something went wrong. Please try again.");
@@ -394,9 +397,28 @@ function StepVerify({ advanceToProfile }) {
       const token = await user.getIdToken();
       const res = await fetch("/api/send-verification", { method: "POST", headers: { Authorization: "Bearer " + token } });
       const d = await res.json().catch(()=>({}));
-      if (res.ok && d.ok) { setSendStatus("sent"); setTimeout(()=>setSendStatus("idle"), 30000); }
+      if (res.ok && d.ok) { try { localStorage.setItem("studlin-verifySent", "ok"); } catch(e) {} setSendStatus("sent"); setTimeout(()=>setSendStatus("idle"), 30000); }
       else { setErr(d.error || "Couldn't send the email. Try again shortly."); setSendStatus("idle"); }
     } catch(e) { setErr("Couldn't send the email. Try again shortly."); setSendStatus("idle"); }
+  };
+
+  // If the first send at sign-up failed (or this step was reached some other
+  // way, like a reload), send once automatically so nobody sits here waiting
+  // for an email that was never sent.
+  const autoSent = useRef(false);
+  useEffect(() => {
+    if (!user || autoSent.current) return;
+    let flag = "";
+    try { flag = localStorage.getItem("studlin-verifySent") || ""; } catch(e) {}
+    if (flag === "ok") return;
+    autoSent.current = true;
+    resend();
+  }, [user]);
+
+  const startOver = async () => {
+    try { localStorage.removeItem("studlin-onboarding"); localStorage.removeItem("studlin-verifySent"); } catch(e) {}
+    try { await firebase.auth().signOut(); } catch(e) {}
+    window.location.href = "/onboarding";
   };
 
   const submitCode = async () => {
@@ -425,6 +447,9 @@ function StepVerify({ advanceToProfile }) {
       </button>
       <button className="provider" disabled={sendStatus==="sending"||sendStatus==="sent"} onClick={resend}>
         {sendStatus==="sending" ? "Sending…" : sendStatus==="sent" ? "Sent, check your inbox" : "Resend code"}
+      </button>
+      <button type="button" onClick={startOver} style={{display:"block",margin:"14px auto 0",background:"none",border:"none",color:"inherit",opacity:0.7,fontSize:13,textDecoration:"underline",cursor:"pointer"}}>
+        Wrong email? Start over.
       </button>
     </div>
   );
