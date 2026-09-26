@@ -18,8 +18,8 @@ describe("Tour now runs AFTER onboarding, not before", () => {
   test("classSetupOpen's initial state no longer excludes a fresh account", () => {
     const idx = SOURCE.indexOf("const [classSetupOpen,setClassSetupOpen]=useState(");
     assert.ok(idx > -1, "classSetupOpen should still exist");
-    const line = SOURCE.slice(idx, idx + 200);
-    assert.ok(line.includes('useState(()=>!lsGet("subjects-configured",false)&&!lsGet("hasConfiguredRoutine",false));'), "must open for ANY unconfigured account (fresh or not), not defer for fresh accounts specifically");
+    const line = SOURCE.slice(idx, idx + 400);
+    assert.ok(line.includes('useState(()=>!lsGet("subjects-configured",false)&&!lsGet("hasConfiguredRoutine",false)'), "must open for ANY unconfigured account (fresh or not), not defer for fresh accounts specifically");
     assert.equal(line.includes("isFreshAccount"), false, "the old fresh-account exclusion must be gone");
   });
 

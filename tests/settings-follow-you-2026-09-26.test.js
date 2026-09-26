@@ -33,7 +33,7 @@ describe("term rollover asks for the new dates", () => {
   });
   test("only the Set up next term banner turns it on, and every exit turns it off", () => {
     assert.match(SOURCE, /onClick=\{\(\)=>\{setClassSetupRollover\(true\);setClassSetupOpen\(true\);\}\}/);
-    assert.match(SOURCE, /onSkip=\{\(\)=>\{setClassSetupOpen\(false\);setClassSetupRollover\(false\);\}\}/);
+    assert.match(SOURCE, /onSkip=\{\(\)=>\{lsSet\("classSetupDeferredUntil",Date\.now\(\)\+86400000\);setClassSetupOpen\(false\);setClassSetupRollover\(false\);\}\}/);
     assert.match(SOURCE, /setClassSetupRollover\(false\);\s*setClassSetupOpen\(false\);/);
   });
 });
