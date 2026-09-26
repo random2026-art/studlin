@@ -7083,6 +7083,17 @@ function checklistItemVisible(ev,todayKey){
   if(ev.status!=="done")return true;
   return !!(ev.completedAt&&dayKey(new Date(ev.completedAt))===(todayKey||dayKey()));
 }
+// Overdue and upcoming are capped separately (a pile of old overdue items
+// used to push everything upcoming off the list); overdue is newest-first.
+const SIDEBAR_DUE_CAP=20;
+function selectSidebarDueItems(events,todayK,matches){
+  const keyOf=(item)=>item.deadline||item.date;
+  const byKey=(a,b)=>{const ka=keyOf(a),kb=keyOf(b);return ka===kb?(a.time||"").localeCompare(b.time||""):ka.localeCompare(kb);};
+  const due=events.filter(e=>e.status!=="done"&&e.date&&(!e.checklist||e.subject)&&matches(e)&&(e.kind==="deadline"||(e.kind==="exam"&&e.date>=todayK)));
+  const overdue=due.filter(e=>keyOf(e)<todayK).sort((a,b)=>byKey(b,a)).slice(0,SIDEBAR_DUE_CAP);
+  const upcoming=due.filter(e=>keyOf(e)>=todayK).sort(byKey).slice(0,SIDEBAR_DUE_CAP);
+  return overdue.concat(upcoming);
+}
 function daysOverdue(ev){if(!ev.deadline)return 0;if(ev.date<=ev.deadline)return 0;const d1=new Date(ev.date),d2=new Date(ev.deadline);return Math.ceil((d1-d2)/86400000);}
 function daysUntilDeadline(ev){if(!ev.deadline)return null;const d1=new Date(ev.deadline),d2=new Date(dayKey());return Math.ceil((d1-d2)/86400000);}
 // Per-task one-shot notification scheduling used to live here, but it only
@@ -23540,7 +23551,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                       {/* Suppressed while a Catch Me Up rebuild is pending -- the
                           one recovery banner is the single source of "you're
                           behind" now, not a per-item red dot competing with it. */}
-                      {!catchUpPending&&over>0&&<span title={over+"d overdue"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:"0 0 0 1.5px rgba(255,255,255,0.9)",zIndex:1}} />}
+                      {!catchUpPending&&over>0&&<span title={"Scheduled "+over+(over===1?" day":" days")+" after its due date"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:"0 0 0 1.5px rgba(255,255,255,0.9)",zIndex:1}} />}
                       {overflowCount>0&&<span title={overflowCount+" more at this time — open the day to see them"} style={{position:"absolute",bottom:2,right:2,fontSize:8,fontWeight:800,color:kindStyle.color,background:"rgba(0,0,0,0.18)",borderRadius:8,padding:"1px 4px",lineHeight:1.3,zIndex:1}}>+{overflowCount}</span>}
                       {/* Acceptance-progress badge -- same corner-pill style
                           as the overflow "+N" badge above (bottom-left
@@ -26803,7 +26814,7 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
                       <span style={{fontSize:10,fontWeight:700,color,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",textDecoration:isDone?"line-through":"none"}}>{ev.title}</span>
                     </div>
                   ) : (<>
-                  {!catchUpPending&&over>0&&<span title={over+"d overdue"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:`0 0 0 1.5px ${isExam?T.ink:"#fff"}`,zIndex:1}} />}
+                  {!catchUpPending&&over>0&&<span title={"Scheduled "+over+(over===1?" day":" days")+" after its due date"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:`0 0 0 1.5px ${isExam?T.ink:"#fff"}`,zIndex:1}} />}
                   {overflowCount>0&&<span title={overflowCount+" more at this time"} style={{position:"absolute",bottom:2,right:2,fontSize:8,fontWeight:800,color:kindStyle.color,background:"rgba(0,0,0,0.18)",borderRadius:8,padding:"1px 4px",lineHeight:1.3,zIndex:1}}>+{overflowCount}</span>}
                   {isPendingAcceptance&&<span title={isDeclined?"Declined":acceptanceSummary.accepted+"/"+acceptanceSummary.total+" accepted"} style={{position:"absolute",bottom:2,left:2,fontSize:8,fontWeight:800,color:isDeclined?"#fff":kindStyle.color,background:isDeclined?T.red+"cc":"rgba(0,0,0,0.18)",borderRadius:8,padding:"1px 4px",lineHeight:1.3,zIndex:1}}>{isDeclined?"Declined":acceptanceSummary.accepted+"/"+acceptanceSummary.total}</span>}
                   {conflictTitles.length>0&&<span title={"Overlaps with "+conflictTitles.join(", ")} style={{position:"absolute",top:2,left:2,fontSize:9,lineHeight:1,zIndex:1,filter:"drop-shadow(0 1px 1px rgba(0,0,0,0.35))"}}>⚠️</span>}
@@ -33833,10 +33844,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // card quick-add) is excluded. Plain !e.checklist used to drop the
     // class-linked case too, so a due-date-only assignment could show in
     // Prep's class view but silently vanish from this sidebar.
-    return events
-      .filter(e=>e.status!=="done"&&e.date&&(!e.checklist||e.subject)&&matches(e)&&(e.kind==="deadline"||(e.kind==="exam"&&e.date>=todayK)))
-      .sort((a,b)=>{const ka=dueKeyOf(a),kb=dueKeyOf(b);return ka===kb?(a.time||"").localeCompare(b.time||""):ka.localeCompare(kb);})
-      .slice(0,20);
+    return selectSidebarDueItems(events,todayK,matches);
   })();
   // "Due: Tomorrow" / "Due: Monday" style grouping (Shovel's right column
   // groups by relative due date instead of a flat list) -- items are
@@ -36020,7 +36028,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                           {ev.subject && ev.time ? " · " : ""}
                           {ev.time ? fmtTime(ev.time) : ""}
                           {ev.duration ? " · " + ev.duration + "m" : ""}
-                          {!catchUpPending&&over>0&&<span style={{color:T.red,fontWeight:600}}> · {over}d overdue</span>}
+                          {!catchUpPending&&over>0&&<span style={{color:T.red,fontWeight:600}}> · {over}d after due date</span>}
                         </div>
                       </div>
                       <div style={{display:"flex",gap:4,flexShrink:0}}>
