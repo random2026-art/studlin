@@ -73,12 +73,12 @@ function LeftRail() {
       </div>
       <div className="rail-icon">{Ic.login}</div>
       <h1>Welcome back.</h1>
-      <p className="lead">Your workspace is exactly where you left it. Sign in to pick up your notes, decks, and streak.</p>
+      <p className="lead">Your workspace is exactly where you left it. Sign in to pick up your notes, decks, and calendar.</p>
       <div className="rail-tiles">
         <div className="rail-tile">
-          <div className="ic">{Ic.flame}</div>
-          <div className="t">Your streak is waiting</div>
-          <div className="s">Sign in today to keep your momentum alive</div>
+          <div className="ic">{Ic.clock}</div>
+          <div className="t">Your week is waiting</div>
+          <div className="s">Sign in to see what's due and what's next</div>
         </div>
         <div className="rail-tile">
           <div className="ic">{Ic.spark}</div>

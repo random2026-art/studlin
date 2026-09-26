@@ -604,7 +604,7 @@ const PRICING_PLANS=(billing)=>([
   {
     key:"free",name:"Free",price:"$0",per:"forever",tag:null,
     desc:"Get organized, manually. No credit card needed.",
-    features:["Calendar, tasks, focus timer, streaks & XP: unlimited","Add classes, assignments & exams manually: unlimited","Studlin Network & calendar connections: unlimited","Attack sessions: unlimited"],
+    features:["Calendar, tasks, focus timer & XP: unlimited","Add classes, assignments & exams manually: unlimited","Studlin Network & calendar connections: unlimited","Attack sessions: unlimited"],
     cta:"Get started free",variant:"subtle",
   },
   {
@@ -2441,7 +2441,7 @@ function assembleStudlinAiDigest(events,routines,prefs,todayKey){
 // already has its own separate chat surface). Mirrors matchEventByTitle's
 // existing precedent in this file: solve a bounded matching problem with
 // keyword scoring instead of a model call. Nothing confidently matching
-// falls back to a baseline (workload+overdue+streak) rather than an empty
+// falls back to a baseline (workload+overdue) rather than an empty
 // digest, so even a wrong route usually still contains the real answer.
 function routeStudlinAiQuestion(text,knownSubjects){
   const t=(text||"").toLowerCase();
@@ -2458,7 +2458,6 @@ function routeStudlinAiQuestion(text,knownSubjects){
     // ways to ask this -- matched nothing here before; only the gerund
     // "running out" and a narrow set of exact negations were covered.
     needsAttackRisk:has("attack block","running out","run out","won't finish","wont finish","won't have time","wont have time","won't be done","wont be done","not going to finish","not gonna finish"),
-    needsStreak:has("streak","consistent","consistency","activity","engagement"),
     needsPeakHours:has("productive","peak","best time","focus","when am i","when do i"),
     needsStrugglingBucket:has("struggl","worst time","trouble focusing","hard time"),
     needsDuration:has("how long","duration","usually take"),
@@ -2471,7 +2470,6 @@ function routeStudlinAiQuestion(text,knownSubjects){
   if(!anyFlag){
     flags.needsWorkload=true;
     flags.needsOverdue=true;
-    flags.needsStreak=true;
   }
   return flags;
 }
@@ -2526,7 +2524,7 @@ const STUDLIN_HELP_ENTRIES=[
     answer:"Settings → Subjects & Labels → \"+ Add,\" or from Calendar's sidebar, \"+ Add new\" next to Courses."},
   {id:"remove-class",keywords:["delete a class","remove a class","delete a course","remove a course","delete subject"],
     answer:"Settings → Subjects & Labels -- click \"Remove\" on the class. It'll warn you first about any linked assignments/exams before deleting anything."},
-  {id:"serious-mode",keywords:["serious mode","private account","hide gamification","hide streaks","hide levels"],
+  {id:"serious-mode",keywords:["serious mode","private account","hide gamification","hide levels"],
     answer:"Settings → Privacy → \"Private Account / Serious Mode.\" It hides focus minutes and levels on your Profile; your calendar stays the same either way."},
   {id:"reduce-motion",keywords:["reduce motion","disable animations","turn off animations","stop animations"],
     answer:"Settings → Appearance → Density → \"Reduce motion.\" It turns off parallax and bouncy transitions."},
@@ -6657,7 +6655,7 @@ async function upsertProfile(extra={}){
     schoolLower:(school||"").toLowerCase(),
     status,
     total_minutes_focused:getTotalMinutesFocused(),
-    streak:getStreak(),
+    streak:firebase.firestore.FieldValue.delete(),
     // Bug fix, 2026-09-03: Incognito Mode's own copy promised "you'll
     // appear offline everywhere" but there was no channel at all for a
     // friend to ever learn you're incognito -- isIncognitoOn() only ever
@@ -7128,111 +7126,6 @@ function readabilityOf(html){
   var letter=ease>=90?"A+":ease>=80?"A":ease>=70?"B+":ease>=60?"B":ease>=50?"C+":ease>=30?"C":"D";
   var lvl=gradeNum<=6?"Grade 6 or below":gradeNum>=16?"College level":"Grade "+Math.max(1,Math.round(gradeNum));
   return{grade:letter,level:lvl};
-}
-// D11 in the audit: the streak had no grace mechanic at all -- a single
-// day genuinely not opened (illness, travel, finals) reset it to zero
-// with no recovery path, despite the app's own copy ("study today to
-// keep it alive") implying more than the mechanic actually checked.
-// Decided mechanic (Duolingo-style, not invented on this branch --
-// confirmed with the product owner): earn one freeze token per
-// STREAK_FREEZE_MILESTONE_DAYS of streak, banked up to STREAK_FREEZE_MAX,
-// auto-spent on a day that turns out to have been missed instead of
-// breaking the streak.
-const STREAK_FREEZE_MILESTONE_DAYS=7;
-const STREAK_FREEZE_MAX=2;
-// Pure so the token math is testable without faking the clock across
-// multiple real days. Walks backward from `today` through the open-days
-// set; a day that's neither opened nor already frozen consumes one
-// available token (recorded in newlyFrozen) to keep the streak alive,
-// and the walk stops the moment neither applies. Read-only -- callers
-// decide whether/what to actually persist from newlyFrozen/remainingTokens.
-function computeStreakWithFreezes(openDays,frozenDays,tokens,today){
-  const openSet=new Set(openDays||[]);
-  const frozenSet=new Set(frozenDays||[]);
-  // Without this floor, a token would keep getting spent walking backward
-  // past the account's actual earliest real day -- treating "no data
-  // because the account didn't exist yet" as if it were a missed day,
-  // inflating the streak for as many extra days as there happened to be
-  // spare tokens. A gap can only ever be real between two days that
-  // genuinely have (or could have had) activity.
-  const earliestRealDay=(openDays&&openDays.length>0)?openDays.reduce((min,k)=>k<min?k:min):null;
-  let remainingTokens=tokens||0;
-  const newlyFrozen=[];
-  let streak=0;
-  const d=new Date(today+"T12:00:00");
-  for(;;){
-    const k=dayKey(d);
-    if(openSet.has(k)||frozenSet.has(k)){
-      streak++;
-    }else if(remainingTokens>0&&earliestRealDay&&k>=earliestRealDay){
-      remainingTokens--;
-      newlyFrozen.push(k);
-      streak++;
-    }else{
-      break;
-    }
-    d.setDate(d.getDate()-1);
-  }
-  return {streak,remainingTokens,newlyFrozen};
-}
-// Awards one freeze token the moment the streak actually crosses a new
-// STREAK_FREEZE_MILESTONE_DAYS multiple (comparing before/after, not just
-// "is newStreak a multiple of 7") so it's granted exactly once per
-// milestone rather than every single day the streak happens to stay past
-// it. Never exceeds STREAK_FREEZE_MAX.
-function awardFreezeTokenIfMilestone(prevStreak,newStreak,currentTokens){
-  if((currentTokens||0)>=STREAK_FREEZE_MAX)return currentTokens||0;
-  const prevMilestones=Math.floor((prevStreak||0)/STREAK_FREEZE_MILESTONE_DAYS);
-  const newMilestones=Math.floor((newStreak||0)/STREAK_FREEZE_MILESTONE_DAYS);
-  if(newMilestones>prevMilestones)return Math.min(STREAK_FREEZE_MAX,(currentTokens||0)+1);
-  return currentTokens||0;
-}
-const getStreakFreezeTokens=()=>lsGet("streakFreezeTokens",0);
-function touchStreak(){
-  const days=lsGet("days",[]);
-  const t=dayKey();
-  if(days.includes(t))return; // already touched today -- nothing to resolve
-  const frozenDays=lsGet("streakFrozenDays",[]);
-  const tokens=lsGet("streakFreezeTokens",0);
-  // Read-only comparison point: what the streak was, as of yesterday,
-  // under the state that existed before today's open -- used only to
-  // detect whether today's open crosses a new milestone, never persisted.
-  const yesterday=(()=>{const d=new Date(t+"T12:00:00");d.setDate(d.getDate()-1);return dayKey(d);})();
-  const before=computeStreakWithFreezes(days,frozenDays,tokens,yesterday);
-  const nextDays=[...days,t];
-  const after=computeStreakWithFreezes(nextDays,frozenDays,tokens,t);
-  lsSet("days",nextDays);
-  if(after.newlyFrozen.length>0)lsSet("streakFrozenDays",[...frozenDays,...after.newlyFrozen]);
-  lsSet("streakFreezeTokens",awardFreezeTokenIfMilestone(before.streak,after.streak,after.remainingTokens));
-  upsertProfile();
-}
-function getStreak(){
-  return computeStreakWithFreezes(lsGet("days",[]),lsGet("streakFrozenDays",[]),lsGet("streakFreezeTokens",0),dayKey()).streak;
-}
-// Shared 91-day heatmap data — used by both Profile/nav's StreakDetailModal
-// and (previously) Dashboard's inline streak card, so the two never disagree
-// about what counts as an active day.
-function computeStreakHeatmap(){
-  const loginDaysSet=new Set(lsGet("days",[]));
-  const minsByDay={};
-  lsGet("sessions",[]).forEach(s=>{minsByDay[s.d]=(minsByDay[s.d]||0)+(s.m||0);});
-  const cells=[];
-  const now=new Date();
-  for(let i=90;i>=0;i--){
-    const d=new Date(now);d.setDate(now.getDate()-i);
-    const k=dayKey(d);
-    const mins=minsByDay[k]||0;
-    let lvl=0;
-    if(loginDaysSet.has(k)||mins>0)lvl=mins>=120?4:mins>=60?3:mins>=30?2:1;
-    cells.push(lvl);
-  }
-  let longest=0,cur=0;
-  cells.forEach(v=>{if(v>0){cur++;if(cur>longest)longest=cur;}else{cur=0;}});
-  return {cells,longest};
-}
-function streakCellColor(lvl){
-  if(!lvl)return T.mode==="light"?"rgba(8,12,40,0.06)":"rgba(255,255,255,0.06)";
-  return [null,T.lime+"40",T.lime+"80",T.limeDk,T.forest][lvl];
 }
 // id retrofitted here for step 4 of the Firestore migration (DataStore.timerLogs
 // -- see createCollectionSync) -- entries logged before this change have no id
@@ -8445,20 +8338,6 @@ function getTotalMinutesFocused(){
   const s=lsGet("sessions",[]);
   return s.reduce((acc,x)=>acc+(x.m||0),0);
 }
-// "Streak reminders" in Settings used to be a toggle with no engine behind
-// it at all -- "a nudge if you haven't studied by 8pm" described a feature
-// that didn't exist anywhere in the codebase (see S2 in the audit). Pure
-// decision so it's testable without faking Notification/timers/clock: given
-// the current hour, whether today's nudge already went out, and today's
-// logged sessions, decides whether to fire one right now.
-function shouldFireStreakNudge(hour,alreadySentToday,todaySessions){
-  if(alreadySentToday)return false;
-  if(hour<20)return false;
-  if((todaySessions||[]).some(s=>(s.m||0)>0))return false;
-  return true;
-}
-const getStreakNudgeSentDate=()=>lsGet("streak-nudge-sent-date",null);
-const markStreakNudgeSent=(dateKey)=>lsSet("streak-nudge-sent-date",dateKey);
 // "Deadline alerts" was the same story -- a toggle nothing read, so there
 // was no way to say "only notify me about exams/assignments" the way the
 // audit's S2 finding put it. Scoped narrowly: due-date kinds need this
@@ -8508,7 +8387,6 @@ function cleanupOrphanedPenaltyStorage(){
   lsSet("penaltyStorageCleaned",true);
 }
 function levelInfo(){const minutes=getTotalMinutesFocused();const per=300;const level=Math.floor(minutes/per)+1;const into=minutes-(level-1)*per;const title=getProfTitle(minutes);const nextTier=PROF_TIERS.find(t=>t.minMinutes>minutes)||null;const curTierMinutes=(PROF_TIERS.slice().reverse().find(t=>minutes>=t.minMinutes)||PROF_TIERS[0]).minMinutes;const tierPct=nextTier?Math.round(Math.max(0,Math.min(100,(minutes-curTierMinutes)/(nextTier.minMinutes-curTierMinutes)*100))):100;return {minutes,level,into,per,toNext:per-into,pct:Math.round(into/per*100),title,nextTier,tierPct};}
-function weekStreak(){const days=new Set(lsGet("days",[]));const now=new Date();const dow=(now.getDay()+6)%7;const mon=new Date(now);mon.setDate(now.getDate()-dow);return ["M","T","W","T","F","S","S"].map((lab,i)=>{const d=new Date(mon);d.setDate(mon.getDate()+i);const k=dayKey(d);const today=k===dayKey(now);return {lab,on:days.has(k),today,future:d>now&&!today};});}
 // ─── ADVANCED SCHEDULING SYSTEM (5 features integrated) ──────────────────────
 // Feature 1: User preference storage + getters/setters (complete with all onboarding preferences)
 function getSchedulePreferences(){
@@ -8721,8 +8599,8 @@ function normalizeTaskVal(v,defaultVal){
 }
 
 // Weighted scoring formula (returns 0-1000 integer, higher = schedule sooner).
-// W_priority=0.35, W_deadline=0.35, W_difficulty=0.20, W_streak=0.10
-function scoreTask(task,prefs,streak){
+// W_priority=0.35, W_deadline=0.35, W_difficulty=0.20
+function scoreTask(task,prefs){
   const p=normalizeTaskVal(task.priority,5);
 
   const rawDiff=task.difficulty!=null?task.difficulty:500;
@@ -8747,16 +8625,13 @@ function scoreTask(task,prefs,streak){
   const pref=(prefs&&prefs.difficultyPreference)||"balanced";
   const diffWeight=pref==="hardFirst"?d:pref==="easyFirst"?1-d:0.5;
 
-  const streakBoost=(streak||0)>=3?1.0:0.0;
-
-  const raw=0.35*p+0.35*urgency+0.20*diffWeight+0.10*streakBoost;
+  const raw=0.35*p+0.35*urgency+0.20*diffWeight;
   return Math.round(Math.min(1,raw)*1000);
 }
 
 // Re-score and re-slot all pending flexible tasks on dateKey.
 // Returns the full updated events array; does not persist.
 function rebalanceDay(dateKey,allEvents,routines,prefs){
-  const streak=getStreak();
   const isFixed=isLeadInFixed;
   // userPinned tasks (manually dragged, or hand-typed a time in Add Task /
   // Edit) are excluded from reshuffling the same way FIXED kinds are — they
@@ -8800,7 +8675,7 @@ function rebalanceDay(dateKey,allEvents,routines,prefs){
     if(!collides)return allEvents;
   }
 
-  const sorted=[...flex].sort(function(a,b){return scoreTask(b,prefs,streak)-scoreTask(a,prefs,streak);});
+  const sorted=[...flex].sort(function(a,b){return scoreTask(b,prefs)-scoreTask(a,prefs);});
 
   const dayWindow=getWorkWindowMinsFor(prefs,dateKey);
   let prefStart=dayWindow.start;
@@ -20180,7 +20055,7 @@ const STUDLIN_AI_BUBBLE_CLEARANCE=90;
 // non-pure "profile-level" signals routeStudlinAiQuestion flagged as
 // relevant (see assembleStudlinAiDigest's own comment for why these
 // can't live inside that pure function: several of them read localStorage
-// directly and take no params at all, e.g. getStreak()). Deliberately NOT
+// directly and take no params at all, e.g. getTotalMinutesFocused()). Deliberately NOT
 // added to tests/harness.js -- this is formatting/orchestration over
 // already-tested decision logic (routing, the digest itself, each signal
 // function), not new decision logic of its own to pin with tests.
@@ -20194,7 +20069,6 @@ const STUDLIN_AI_BUBBLE_CLEARANCE=90;
 // own internal floor exactly, rather than trusting its return value alone.
 function gatherStudlinAiProfileSignals(flags,prefs){
   const profile={};
-  if(flags.needsStreak)profile.streak=getStreak();
   if(flags.needsPeakHours)profile.peakInsight=detectPeakHourInsight(prefs);
   if(flags.needsStrugglingBucket)profile.strugglingBucket=detectStrugglingBucket(prefs);
   if(flags.subject&&flags.needsSubjectTrend){
@@ -20251,9 +20125,6 @@ function formatStudlinAiDigestForPrompt(question,digest,flags,profile){
   if(flags.needsAttackRisk){
     if(digest.attackBlockRisks.length===0)lines.push("No study chains currently at risk of running out of time.");
     else digest.attackBlockRisks.forEach(r=>lines.push("\""+r.title+"\" (due "+r.deadline+") has "+r.pendingMins+" minutes of work left but only "+r.capacityMins+" realistic minutes before then -- at risk of not finishing."));
-  }
-  if(flags.needsStreak){
-    lines.push(profile.streak>0?("Current study streak: "+profile.streak+" day"+(profile.streak===1?"":"s")+"."):"No active study streak right now.");
   }
   if(flags.needsPeakHours){
     lines.push(profile.peakInsight
@@ -20400,7 +20271,7 @@ async function classifyStudlinAiMessage(text,history){
     "{\"kind\":\"question\"|\"coaching\"|\"app_help\"|\"action\"|\"multi_action\"|\"availability_match\"|\"unsupported\",\"intent\":\"create_task\"|\"delete_task\"|\"set_peak_hours\"|\"shift\"|\"clear_day\"|\"clear_week\"|\"skip_class\"|\"move_event\"|\"retime_event\"|\"move_flex_task\"|\"generate_study_material\"|\"import_syllabus_items\"|null,\"days\":<integer 1-14 or null>,\"date\":\"YYYY-MM-DD or null\",\"target\":\"<short name of the specific existing item, or null>\",\"targetDate\":\"YYYY-MM-DD or null\",\"destDate\":\"YYYY-MM-DD or null\",\"newStart\":\"HH:MM 24h or null\",\"newDuration\":<integer minutes or null>,\"title\":\"<short name of the NEW item to create, or null>\",\"dueDate\":\"YYYY-MM-DD or null\",\"dueTime\":\"HH:MM 24h or null\",\"durationMin\":<integer minutes or null>,\"taskKind\":\"study\"|\"todo\"|\"event\"|\"reminder\"|\"exam\"|\"project\"|null,\"genFormat\":\"flashcards\"|\"quiz\"|null,\"peakHours\":\"morning\"|\"midday\"|\"afternoon\"|\"evening\"|null,\"subject\":\"<the class/subject name the student named, or null>\",\"duringClass\":<true for import_syllabus_items when EITHER the student's own words say these items happen/are due during class, OR the pasted syllabus/material text itself states that for these items (e.g. \"completed in class,\" \"due in class,\" \"in-class assignment\"), false otherwise>,\"clarify\":\"<a short, specific question, or null>\",\"actions\":<for kind \"multi_action\" ONLY, an array of exactly 2 objects, each with the SAME shape as this whole envelope but only intent/days/date/target/targetDate/destDate/newStart/newDuration/title/dueDate/dueTime/durationMin/taskKind/peakHours/subject/duringClass (no kind/clarify/actions inside each one) -- otherwise null>,\"matchCandidates\":<for kind \"availability_match\" ONLY, an array of 1-8 objects {\"date\":\"YYYY-MM-DD\",\"startTime\":\"HH:MM 24h\",\"endTime\":\"HH:MM 24h or null\"} -- otherwise null>,\"matchDurationMin\":<for kind \"availability_match\" ONLY, integer minutes -- otherwise null>}\n"+
     "\"availability_match\" is for a message that lists specific date/time OPTIONS for something external (an interview, a meeting someone else proposed, appointment slots someone gave them) and asks which ones actually fit the student's own calendar -- NOT the student stating a personal focus/productivity preference (that's set_peak_hours, see its own rule), and NOT asking Studlin to just find/pick a time itself with no options given (that's create_task, which already finds real open time on its own). Extract each distinct date+time mentioned into \"matchCandidates\" exactly as stated -- one entry per single named time (\"endTime\" null), one entry per stated range (\"endTime\" set, e.g. \"1pm to 3:30pm\") -- never invent a candidate that wasn't actually mentioned, never merge two different times on the same date into one entry. \"matchDurationMin\" is how long the real thing needs -- only set it when the message states or clearly implies a length (e.g. \"a 30 minute call,\" \"an hour-long interview\"); if it's genuinely not stated or impliable, set kind to \"unsupported\" instead with clarify asking how long it needs to be, same as any other required-field gap below.\n"+
     "\"multi_action\" is ONLY for a message containing exactly TWO distinct, clearly separate action requests, each one individually unambiguous enough to qualify as its own single action below with nothing missing (as if you classified each half on its own and both came back clean, no clarify needed for either). Each item in \"actions\" is restricted to intent \"create_task\", \"delete_task\", \"move_flex_task\", \"move_event\", \"retime_event\", or \"set_peak_hours\" ONLY -- never \"shift\", \"clear_day\", \"clear_week\", \"skip_class\", \"generate_study_material\", or \"import_syllabus_items\" inside a multi_action (those are bulk/complex enough to stay single-action-only, even paired with something simple). If either half would need \"clarify\", involves more than two distinct requests, mixes in one of the disallowed bulk intents, or the two requests aren't clearly separable from one another, do NOT use multi_action -- fall back to \"action\" (if only one half is real) or \"unsupported\" (with \"clarify\" set, same as today) instead. Never guess a second action that wasn't clearly there.\n"+
-    "Rules: \"question\" is asking for a real FACT about their schedule/workload/streak/pace/productivity (a number, a date, a yes/no). \"coaching\" is asking for real help or a plan -- \"how should I study for X,\" \"help me prepare,\" \"where do I start,\" \"I'm stressed about Y and don't know the material\" -- wanting strategy/advice, not a fact, and not (yet) asking to add/move anything. \"app_help\" is asking how to use Studlin ITSELF -- how to turn a setting on/off, where a feature lives, how to change something about the app (\"how do I turn on dark mode,\" \"how do I stop it telling me things are overdue,\" \"where do I add a class,\" \"how do I connect Google Calendar\") -- this is about the PRODUCT, never about their own personal schedule data or study strategy. None of these three ever changes anything -- leave intent and every other field null for all three. \"unsupported\" covers anything ambiguous, THREE OR MORE distinct action requests in one message, deleting/cancelling MULTIPLE things or an entire day/week/recurring routine, or that doesn't clearly match one action below -- never guess. Deleting exactly ONE clearly-named item uses delete_task instead, not unsupported. Exactly TWO clean, separable action requests uses multi_action instead of unsupported -- see its own rule below.\n"+
+    "Rules: \"question\" is asking for a real FACT about their schedule/workload/pace/productivity (a number, a date, a yes/no). \"coaching\" is asking for real help or a plan -- \"how should I study for X,\" \"help me prepare,\" \"where do I start,\" \"I'm stressed about Y and don't know the material\" -- wanting strategy/advice, not a fact, and not (yet) asking to add/move anything. \"app_help\" is asking how to use Studlin ITSELF -- how to turn a setting on/off, where a feature lives, how to change something about the app (\"how do I turn on dark mode,\" \"how do I stop it telling me things are overdue,\" \"where do I add a class,\" \"how do I connect Google Calendar\") -- this is about the PRODUCT, never about their own personal schedule data or study strategy. None of these three ever changes anything -- leave intent and every other field null for all three. \"unsupported\" covers anything ambiguous, THREE OR MORE distinct action requests in one message, deleting/cancelling MULTIPLE things or an entire day/week/recurring routine, or that doesn't clearly match one action below -- never guess. Deleting exactly ONE clearly-named item uses delete_task instead, not unsupported. Exactly TWO clean, separable action requests uses multi_action instead of unsupported -- see its own rule below.\n"+
     "\"clarify\": if the message clearly WANTS one of the actions below but is missing something required to do it (no title for a new item, no clear name for what to move/retime/delete, no day count for \"shift\", no class named for \"import_syllabus_items\", no duration for \"availability_match\"), set kind to \"unsupported\", intent to null, and \"clarify\" to ONE short, specific question asking for exactly the missing thing (e.g. \"When is that due?\", \"Which day would you like it moved to?\", \"Which class are these for?\", or \"About how long do you need?\"). Leave \"clarify\" null for every other case -- genuinely off-topic, too vague to guess the intended action at all, three-plus distinct requests, or a bulk/destructive request. Never set clarify when kind is \"question\", \"coaching\", \"action\", \"multi_action\", or \"availability_match\".\n"+
     "\"create_task\" is for adding something NEW that doesn't exist yet -- \"title\" is required, \"dueDate\" if a deadline/date was mentioned (resolve relative phrases like \"tomorrow\"/\"Friday\" against today's date above), \"dueTime\" only if a real clock time was mentioned, \"durationMin\" only if a specific work-time length was mentioned. \"taskKind\" picks which kind of thing: \"exam\" for a test/quiz/final, \"project\" for a multi-step project, \"event\" for a fixed real-world thing at a specific time (an appointment, a meeting -- not a class or something already on a routine), \"reminder\" for a simple point-in-time nudge with no real work involved (\"remind me to email my professor\"), \"todo\" if the student explicitly just wants a due date tracked with no work time scheduled (\"just remind me,\" \"don't schedule time for it\"), otherwise \"study\" (the default -- a task/assignment/homework Studlin finds real time to work on before its deadline). IMPORTANT: only classify as create_task when the student is actually ASKING to add/track/schedule something. A message that merely mentions, describes, or shares feelings about an exam/assignment/deadline (stress, context, background) without asking for it to be added is \"question\" or \"coaching\" instead -- the mere presence of a date or an exam name is not itself a request to create anything, look for real intent to add.\n"+
     "\"delete_task\" is for permanently removing ONE existing, clearly-named item from the calendar -- a task, assignment, event, exam, or reminder, NEVER a recurring class/routine (\"delete my chem homework,\" \"cancel my dentist appointment\" -- not \"delete all my chem classes\") -- \"target\" is its name as the student said it, \"targetDate\" is the date it's currently on (default today's date above if not mentioned).\n"+
@@ -36447,7 +36318,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     setMergeConfirm(null);
   };
   const [canvasSeeding,setCanvasSeeding]=useState(false);
-  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,classReminders:false,onlineStatus:true,incognito:false,twofa:false,motion:false,hand:true,wrapped:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false,askCheckIns:true,askDurationQuestions:true},...lsGet("settings",{})}));
+  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,deadline:true,classReminders:false,onlineStatus:true,incognito:false,twofa:false,motion:false,hand:true,wrapped:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false,askCheckIns:true,askDurationQuestions:true},...lsGet("settings",{})}));
   // 2026-09-13: "Share my free/busy time" used to be all-or-nothing (on =
   // every current accepted friend). shareAvailabilityMode lets a student
   // restrict it to specific people instead -- see the picker modal below
@@ -37752,22 +37623,21 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Task &amp; App Notifications</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Master switch for all Studlin alerts. Smart reminders fire before study blocks begin.</div>
-              <Row label="Task & App Notifications" sub="Smart alerts before study blocks, deadline reminders, and streak nudges." k="notifMaster" />
+              <Row label="Task & App Notifications" sub="Smart alerts before study blocks and deadline reminders." k="notifMaster" />
             </Card>
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Reminders</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Choose what wakes you up.</div>
               {/* "Push notifications" used to sit here too, describing the
                   exact same scope as "Task & App Notifications" above --
-                  a second master switch, and neither it nor Deadline/Streak
+                  a second master switch, and neither it nor Deadline
                   below actually gated anything (see S2 in the audit). Removed
                   as a pure duplicate rather than wiring a third redundant
-                  kill switch; Deadline alerts and Streak reminders below are
+                  kill switch; Deadline alerts below is
                   now real, independent category filters under that one
                   master switch. */}
               <Row label="Deadline alerts" sub="Get a heads-up before an assignment or exam's own start time." k="deadline" />
               <Row label="Class & activity reminders" sub="A heads-up 10 and 5 minutes before any class, meeting, or activity on your Weekly Routine starts." k="classReminders" />
-              <Row label="Streak reminders" sub="A nudge if you haven't logged any study time by 8pm." k="streak" />
               <Row label="Focus sound alerts" sub="Audio cue when Pomodoro sessions complete." k="sound" />
               {/* 2026-09-25 persona audit: this used to sit in an "Email" card
                   alongside "Study milestones" and "Product updates" -- neither
@@ -38662,13 +38532,11 @@ function Profile({setActive,seriousMode=false}={}) {
   const camInputRef=useRef(null);
   const [prefSaved,setPrefSaved]=useState(false);
   const lvl=levelInfo();
-  const streak=getStreak(); // D12: a genuine 0-day streak now honestly shows 0, not a floored "1"
   const ps=profileStats();
   const initials=((prof.name||"").split(" ").map(x=>x[0]).join("").slice(0,2).toUpperCase())||"S";
   const firstName=(prof.name||"there").split(" ")[0];
 
   const [levelRoadmapOpen,setLevelRoadmapOpen]=useState(false);
-  const [streakModalOpen,setStreakModalOpen]=useState(false);
 
   const handlePicFile=async(e)=>{
     const file=e.target.files&&e.target.files[0];
@@ -38756,7 +38624,6 @@ function Profile({setActive,seriousMode=false}={}) {
                 reads the real plan correctly (account.plan||getPlan()),
                 just needed the same check here. */}
             <Badge color={T.lime}>{getPlan()}</Badge>
-            {!seriousMode&&<span onClick={()=>setStreakModalOpen(true)} style={{cursor:"pointer"}}><Badge color={T.amber}>{streak}-day streak</Badge></span>}
             {!seriousMode&&<Badge color={T.blue}>{lvl.title}</Badge>}
             {status&&<Badge color={T.teal}>{status==="highschool"?"High School":"College"}</Badge>}
           </div>
@@ -38816,11 +38683,10 @@ function Profile({setActive,seriousMode=false}={}) {
           ["Total study time",fmtH(ps.totalMin)||"0m",T.lime],
           ["Focus sessions",String(ps.focusSessions),T.teal],
           ["Cards reviewed",String(cardsMastered),T.blue],
-          ["Day streak",String(streak),T.amber,()=>setStreakModalOpen(true)],
           ["Level",lvl.title,T.red,()=>setLevelRoadmapOpen(true)],
         ];
         return(
-          <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:10,marginBottom:16}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:16}}>
             {stats.map(([l,v,c,onClick],i)=>(
               <Card key={i} onClick={onClick} style={{textAlign:"center",padding:16,cursor:onClick?"pointer":"default"}}>
                 <div style={{fontSize:26,fontWeight:700,color:c,letterSpacing:"-0.02em",lineHeight:1}}>{v}</div>
@@ -38875,7 +38741,6 @@ function Profile({setActive,seriousMode=false}={}) {
       })()}
     </div>
     <LevelRoadmapModal open={levelRoadmapOpen} onClose={()=>setLevelRoadmapOpen(false)} currentMinutes={lvl.minutes} />
-    <StreakDetailModal open={streakModalOpen} onClose={()=>setStreakModalOpen(false)} streak={streak} />
     </>
   );
 }
@@ -38934,60 +38799,9 @@ function LevelRoadmapModal({open,onClose,currentMinutes}){
   ),document.body);
 }
 
-// ─── STREAK DETAIL MODAL ─────────────────────────────────────────────────────
-// The one shared "streak widget" every streak-showing surface (nav bar,
-// Profile header badge, Profile stat tile) opens — same heatmap Dashboard's
-// old inline card used to render, now backed by computeStreakHeatmap() so
-// there's exactly one source of truth for what counts as an active day.
-function StreakDetailModal({open,onClose,streak}){
-  if(!open)return null;
-  const {cells,longest}=computeStreakHeatmap();
-  const freezeTokens=getStreakFreezeTokens();
-  // Portaled straight to <body> -- same [data-page] containing-block issue
-  // as LevelRoadmapModal above (Profile renders inside [data-page], which
-  // is a containing block for position:fixed descendants regardless of
-  // nesting depth, so un-portaled this lands off-center).
-  return ReactDOM.createPortal((
-    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
-      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:460,background:T.card,borderRadius:10,border:`1px solid ${T.border}`,overflow:"hidden",boxShadow:"0 28px 70px -20px rgba(0,0,0,0.55)",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
-        <div style={{padding:"20px 22px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-          <div>
-            <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>Study Streak</div>
-            <div style={{fontSize:12.5,color:T.muted,marginTop:3}}>Last 91 days</div>
-          </div>
-          <button onClick={onClose} style={{width:30,height:30,borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,display:"grid",placeItems:"center",cursor:"pointer",fontSize:15}}>×</button>
-        </div>
-        <div style={{padding:"20px 22px"}}>
-          <div style={{display:"flex",alignItems:"baseline",justifyContent:"center",gap:6,marginBottom:2}}>
-            <span style={{fontFamily:T.hand,fontSize:38,fontWeight:600,color:T.text}}>{streak}</span>
-            <span style={{fontSize:13,color:T.muted}}>day streak</span>
-          </div>
-          <div style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.10em",color:T.muted,marginBottom:10,textAlign:"center"}}>LONGEST: {longest}</div>
-          {/* D11 in the audit: the freeze-token mechanic needs to actually
-              be visible to mean anything -- same "earn a token every 7
-              days, bank up to 2, auto-spent on a missed day" idea
-              Duolingo uses, surfaced here so a student can see why a real
-              gap day didn't reset their count. */}
-          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:18,padding:"8px 12px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,fontSize:12,color:T.text}}>
-            <span style={{fontSize:14}}>🧊</span>
-            <span>{freezeTokens} freeze token{freezeTokens!==1?"s":""} banked</span>
-            <span style={{color:T.muted,marginLeft:"auto",fontSize:11}}>1 earned every {STREAK_FREEZE_MILESTONE_DAYS} days, up to {STREAK_FREEZE_MAX}</span>
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(26,1fr)",gap:3}}>
-            {cells.map((lv,i)=>(
-              <div key={i} style={{aspectRatio:"1",borderRadius:3,background:streakCellColor(lv)}} />
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  ),document.body);
-}
-
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
 function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleTask, dashToast, setDashToast, setDetailEventId, onTaskCompleted, setPendingHighlightDraftId=()=>{}}) {
   const realStats=sessionStats();
-  const realStreak=getStreak(); // D12: a genuine 0-day streak now honestly shows 0, not a floored "1"
   // D5 in the audit: levelInfo() used to be computed here (const lvl=...)
   // but never rendered anywhere in Dashboard -- dead since whatever level
   // badge it fed got moved to Profile at some point, leaving this call
@@ -39433,7 +39247,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
       </div>
 
       {/* "This week, you..." — the second Weekly Wrapped duplicate, removed.
-          Same content (focus hours, streak) as the Sunday wrappedOpen popup
+          Same content (focus hours) as the Sunday wrappedOpen popup
           below; the popup is the one real weekly-summary surface now. */}
 
     </div>
@@ -39497,9 +39311,6 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
               ))}
             </div>
           )}
-          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:12,marginBottom:20}}>
-            <span style={{fontSize:10.5,padding:"5px 10px",background:"rgba(246,241,230,0.08)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:5,color:T.cream,fontWeight:600}}>{realStreak}-day streak</span>
-          </div>
           {/* Weekly Wrapped's forward-looking half -- everything above this
               line recaps the week that just ended; this looks ahead to the
               one starting tomorrow/today. isChillWeek gets the same soft,
@@ -39995,14 +39806,6 @@ function App() {
       // hand it tomorrow's items every poll -- only ones actually inside
       // that window ever notify.
       const tomorrowK=dayKey(new Date(now+86400000));
-      // Real per-day, once-only nudge (see shouldFireStreakNudge) -- the
-      // "Streak reminders" toggle used to gate nothing, since no engine like
-      // this existed at all. Persisted (not just in notifiedRef) so a reload
-      // after 8pm doesn't send a second one the same day.
-      if(settings.streak!==false&&shouldFireStreakNudge(new Date().getHours(),getStreakNudgeSentDate()===todayK,lsGet("sessions",[]).filter(s=>s.d===todayK))){
-        markStreakNudgeSent(todayK);
-        try{new Notification("Studlin",{body:"Haven't studied yet today — a quick session keeps your streak alive."});}catch(e){}
-      }
       // Shared by both the plain events loop and the class/activity loop
       // below -- pulled out so the two never quietly drift into different
       // dedup/timing behavior. `ev` just needs a stable id, a real time,
@@ -41700,8 +41503,7 @@ function App() {
     const in14days=dayKey(new Date(Date.now()+14*86400000));
     const up=ev.filter(e=>!e.checklist&&e.status!=="done"&&e.date>=tk&&e.date<=in14days).sort((a,b)=>a.date===b.date?((a.time||"")<(b.time||"")?-1:1):(a.date<b.date?-1:1)).slice(0,4)
       .map(e=>({id:e.id,icon:Icon.cal,title:e.title,sub:rel(e.date)+" · "+e.subject,color:T.blue}));
-    const list=[{id:"streak",icon:Icon.flame,title:getStreak()+"-day streak going",sub:"Study today to keep it alive",color:T.amber}].concat(up);
-    return list;
+    return up;
   })();
   // D8 in the audit: notifSeen used to start false on every mount
   // regardless of whether this exact set of notifications had already
@@ -41711,7 +41513,8 @@ function App() {
   useEffect(()=>{
     if(notifSignatureOf(notifs)===getNotifSeenSignature())setNotifSeen(true);
   },[]);
-  useEffect(()=>{ touchStreak(); },[]);
+  // Streaks were removed from Studlin: clear what the old feature left on this device.
+  useEffect(()=>{ ["days","streakFrozenDays","streakFreezeTokens","streak-nudge-sent-date"].forEach(k=>{try{localStorage.removeItem("studlin-"+k);}catch(e){}}); },[]);
   useEffect(()=>{ try{localStorage.setItem("studlin-active-tab",active);}catch(e){} },[active]);
   // Google Calendar's background sync (api/me.js google-calendar-pull)
   // needs to actually reach the browser to feel automatic. This used to
@@ -41719,7 +41522,7 @@ function App() {
   // never ran at all unless the student happened to visit Settings first
   // -- server-side data could be fully up to date and still never show up
   // in the Calendar tab for an entire session. Runs unconditionally here
-  // instead, on every app load, same as touchStreak just above -- both
+  // instead, on every app load, same as the effect just above -- both
   // CalendarTab and SettingsTab mount fresh (reading localStorage at that
   // moment) each time the student switches to them, so this just needs to
   // win the race against a first click, which a single fast Firestore
@@ -42002,12 +41805,6 @@ function App() {
           const barColor=pct<50?T.lime:pct<80?"#F5A623":"#E05252";
           const daysLeft=(()=>{const n=new Date();const e=new Date(n.getFullYear(),n.getMonth()+1,1);return Math.ceil((e-n)/86400000);})();
           const email=firebase.auth().currentUser?.email||"";
-          // Persistent streak badge — the full stats picture moved to
-          // Profile once Dashboard was removed, but the streak's whole
-          // motivational pull comes from being seen every time the app
-          // opens (same instinct as Duolingo keeping its flame in the
-          // persistent header rather than burying it in a profile tab).
-          const streak=getStreak(); // D12: a genuine 0-day streak now honestly shows 0, not a floored "1"
           // Notifications used to live in the now-removed top bar -- it's
           // the one thing there that had no other entry point anywhere
           // else in the app (unlike streak/level/pricing/avatar, all
@@ -42033,6 +41830,7 @@ function App() {
                     <span onClick={()=>{setNotifSeenSignature(notifSignatureOf(notifs));setNotifOpen(false);}} style={{fontSize:11,color:T.lime,cursor:"pointer",fontWeight:600}}>Mark all read</span>
                   </div>
                   <div style={{maxHeight:360,overflowY:"auto"}}>
+                    {notifs.length===0&&<div style={{padding:"24px 16px",textAlign:"center",fontSize:12.5,color:T.muted,lineHeight:1.5}}>You're all caught up. Nothing due in the next two weeks.</div>}
                     {notifs.map((n,i)=>(
                       <div key={i} onClick={()=>{setActive("calendar");setNotifOpen(false);}} style={{display:"flex",gap:11,padding:"12px 16px",borderBottom:i<notifs.length-1?`1px solid ${T.border}`:"none",cursor:"pointer",alignItems:"flex-start"}}>
                         <span style={{width:30,height:30,borderRadius:8,flexShrink:0,background:n.color+"18",border:`1px solid ${n.color}33`,color:n.color,display:"grid",placeItems:"center"}}>{n.icon}</span>
@@ -42052,7 +41850,6 @@ function App() {
           <div style={{marginTop:"auto",borderTop:`1px solid ${sidebarBorder}`,paddingTop:10,display:"flex",flexDirection:"column",alignItems:"center",gap:8}}>
             <div onClick={()=>setActive("profile")} title={getUserName()} style={{cursor:"pointer",position:"relative"}}>
               <Av initials={getUserInitials()} color={T.lime} size={32} />
-              {!seriousMode&&<div title={streak+"-day streak"} style={{position:"absolute",bottom:-4,right:-6,display:"flex",alignItems:"center",gap:2,background:T.amber,color:"#1a1200",borderRadius:8,padding:"1px 4px",fontSize:9,fontWeight:700}}>{streak}</div>}
             </div>
             {notifBell}
             <div onClick={()=>setCreditsOpen(true)} title={cr+" credits remaining"} style={{cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
@@ -42065,7 +41862,6 @@ function App() {
             <div onClick={()=>setActive("profile")} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderRadius:9,cursor:"pointer",marginBottom:2,transition:"background 0.15s"}} onMouseEnter={e=>e.currentTarget.style.background=sidebarCardBg} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
               <div style={{position:"relative",flexShrink:0}}>
                 <Av initials={getUserInitials()} color={T.lime} size={32} />
-                {!seriousMode&&<div title={streak+"-day streak"} style={{position:"absolute",bottom:-4,right:-6,display:"flex",alignItems:"center",gap:2,background:T.amber,color:"#1a1200",borderRadius:8,padding:"1px 4px",fontSize:9,fontWeight:700}}>{streak}</div>}
               </div>
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontSize:12.5,fontWeight:600,color:sidebarText,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{getUserName()}</div>
@@ -42085,7 +41881,6 @@ function App() {
       {/* MAIN AREA */}
       <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",background:T.bg}}>
         {/* Top bar removed (every tab shifts up, more calendar visible) --
-            streak is still on the sidebar avatar's corner badge, full
             level/ranking detail lives in Profile, pricing is reachable via
             Settings' "Upgrade to Pro", and the profile avatar duplicated
             the sidebar's own profile row exactly. Notifications had no
