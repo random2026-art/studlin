@@ -5225,9 +5225,10 @@ function computeBreathingRoom(mins) {
 function setSchedulePreferences(prefs) {
   lsSet("schedulePrefs", prefs);
 }
+let settingsSyncHydrated = false;
 function pushSettingsSync() {
   const u = firebase.auth().currentUser;
-  if (!u) return;
+  if (!u || !settingsSyncHydrated) return;
   try {
     fsdb().collection("settingsSync").doc(u.uid).set({
       schedulePrefs: lsGet("schedulePrefs", {}),
@@ -5246,6 +5247,7 @@ function pushSettingsSync() {
 async function hydrateSettingsSyncOnAuth() {
   const u = firebase.auth().currentUser;
   if (!u) return;
+  settingsSyncHydrated = false;
   try {
     const doc = await fsdb().collection("settingsSync").doc(u.uid).get();
     if (doc.exists) {
@@ -5260,6 +5262,7 @@ async function hydrateSettingsSyncOnAuth() {
     }
   } catch (e) {
   }
+  settingsSyncHydrated = true;
 }
 function applyStudyStylePrefs(prefs, answers) {
   return { ...prefs, studyStylePrefs: {
@@ -18014,7 +18017,7 @@ function CalendarTab({ setActive = () => {
   const [courseDeleteToast, setCourseDeleteToast] = useState("");
   const isFreshAccount = !lsGet("subjects-configured", false) && !lsGet("hasConfiguredRoutine", false) && !lsGet("seenCalendarTour", false);
   const [classSetupRollover, setClassSetupRollover] = useState(false);
-  const [classSetupOpen, setClassSetupOpen] = useState(() => !lsGet("subjects-configured", false) && !lsGet("hasConfiguredRoutine", false));
+  const [classSetupOpen, setClassSetupOpen] = useState(() => !lsGet("subjects-configured", false) && !lsGet("hasConfiguredRoutine", false) && Date.now() >= lsGet("classSetupDeferredUntil", 0));
   const [quickScanOpen, setQuickScanOpen] = useState(false);
   const [quickScanTargetCourseId, setQuickScanTargetCourseId] = useState(null);
   const [syllabusNudgeDismissed, setSyllabusNudgeDismissed] = useState(false);
@@ -21029,6 +21032,7 @@ Examples:
       onSkip: skipCalTour
     }
   ), /* @__PURE__ */ React.createElement(ClassSetupWizard, { open: classSetupOpen, termRollover: classSetupRollover, initialStatus: getProfile().status, onSkip: () => {
+    lsSet("classSetupDeferredUntil", Date.now() + 864e5);
     setClassSetupOpen(false);
     setClassSetupRollover(false);
   }, onFinish: finishClassSetup, onPartialSync: syncClassSetupState, setPricingOpen, setActivePage: setActive }), /* @__PURE__ */ React.createElement(ClassSetupWizard, { open: quickScanOpen, quickScan: true, targetCourseId: quickScanTargetCourseId, initialStatus: getProfile().status, onFinish: finishQuickScan, onSkip: () => {

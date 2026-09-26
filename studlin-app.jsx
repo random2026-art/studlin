@@ -8577,9 +8577,14 @@ function setSchedulePreferences(prefs){
 // pulled once on auth. Remote wins outright on hydrate, same policy as
 // every other single-doc sync in this file -- infrequent writes, no
 // per-field conflict merge needed.
+// Pushing before the cloud copy has been read would overwrite it with this
+// device's empty defaults (a wiped browser saying "setup not done" over an
+// account that finished it, which brought the setup wizard back on every
+// visit). So nothing is pushed until hydrateSettingsSyncOnAuth has finished.
+let settingsSyncHydrated=false;
 function pushSettingsSync(){
   const u=firebase.auth().currentUser;
-  if(!u)return;
+  if(!u||!settingsSyncHydrated)return;
   try{
     fsdb().collection('settingsSync').doc(u.uid).set({
       schedulePrefs:lsGet("schedulePrefs",{}),
@@ -8604,6 +8609,7 @@ function pushSettingsSync(){
 async function hydrateSettingsSyncOnAuth(){
   const u=firebase.auth().currentUser;
   if(!u)return;
+  settingsSyncHydrated=false;
   try{
     const doc=await fsdb().collection('settingsSync').doc(u.uid).get();
     if(doc.exists){
@@ -8617,6 +8623,7 @@ async function hydrateSettingsSyncOnAuth(){
       if(typeof data.incognito==="boolean")lsSet("settings",{...lsGet("settings",{}),incognito:data.incognito});
     }
   }catch(e){}
+  settingsSyncHydrated=true;
 }
 // The one write step for the Calendar wizard's optional "personalize" step.
 // Used to collect 4 more preferences (interleaving tolerance, planning
@@ -30635,7 +30642,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // once THIS finishes, over a calendar that actually has real classes/
   // exams/assignments on it.
   const [classSetupRollover,setClassSetupRollover]=useState(false);
-  const [classSetupOpen,setClassSetupOpen]=useState(()=>!lsGet("subjects-configured",false)&&!lsGet("hasConfiguredRoutine",false));
+  // "Save and finish later" pauses the auto-open for a day; without this the
+  // wizard came straight back on every visit to Calendar.
+  const [classSetupOpen,setClassSetupOpen]=useState(()=>!lsGet("subjects-configured",false)&&!lsGet("hasConfiguredRoutine",false)&&Date.now()>=lsGet("classSetupDeferredUntil",0));
   // Toolbar's "Scan syllabus" -- a second, independent instance of the same
   // wizard used for onboarding, opened straight into its scan step (see
   // quickScan prop) so an already-onboarded student can add one more class's
@@ -34728,7 +34737,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         <TourStep {...CAL_TOUR_STEPS[calTourStep]} step={calTourStep} total={CAL_TOUR_STEPS.length}
           isLast={calTourStep===CAL_TOUR_STEPS.length-1} onNext={advanceCalTour} onSkip={skipCalTour} />
       )}
-      <ClassSetupWizard open={classSetupOpen} termRollover={classSetupRollover} initialStatus={getProfile().status} onSkip={()=>{setClassSetupOpen(false);setClassSetupRollover(false);}} onFinish={finishClassSetup} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
+      <ClassSetupWizard open={classSetupOpen} termRollover={classSetupRollover} initialStatus={getProfile().status} onSkip={()=>{lsSet("classSetupDeferredUntil",Date.now()+86400000);setClassSetupOpen(false);setClassSetupRollover(false);}} onFinish={finishClassSetup} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
       <ClassSetupWizard open={quickScanOpen} quickScan targetCourseId={quickScanTargetCourseId} initialStatus={getProfile().status} onFinish={finishQuickScan} onSkip={()=>{setQuickScanOpen(false);setQuickScanTargetCourseId(null);syncClassSetupState();}} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
       <Modal open={!!weeklyContentCourseId} onClose={()=>setWeeklyContentCourseId(null)} title="Class notes" sub="A short note for each day this class meets -- lecture, lab, homework due, whatever's useful." width={460}
         footer={<><Btn variant="subtle" onClick={()=>setWeeklyContentCourseId(null)}>Cancel</Btn><Btn onClick={saveWeeklyContent}>Save</Btn></>}>
