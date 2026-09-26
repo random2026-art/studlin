@@ -3331,7 +3331,84 @@ function looksLikeRealDeadlineTitle(title) {
   return true;
 }
 function looksLikeDateString(v) {
-  return typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+  if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const d = /* @__PURE__ */ new Date(v + "T12:00:00");
+  return !isNaN(d.getTime()) && dayKey(d) === v;
+}
+function parseJsonReply(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    const a = raw.indexOf("{"), b = raw.lastIndexOf("}");
+    if (a >= 0 && b > a) return JSON.parse(raw.slice(a, b + 1));
+    throw e;
+  }
+}
+function sanitizeMeetingTimes(list) {
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  (Array.isArray(list) ? list : []).forEach((mt) => {
+    if (!mt || typeof mt !== "object") return;
+    const days = [...new Set((Array.isArray(mt.days) ? mt.days : []).map((d) => typeof d === "string" && /^\d$/.test(d) ? parseInt(d, 10) : d).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))].sort((a, b) => a - b);
+    if (days.length === 0 || !looksLikeTimeString(mt.startTime)) return;
+    const dur = Number.isFinite(mt.duration) ? Math.round(mt.duration) : 50;
+    const duration = Math.max(10, Math.min(480, dur));
+    const key = days.join(",") + "@" + mt.startTime;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ ...mt, days, startTime: mt.startTime, duration });
+  });
+  return out;
+}
+function sanitizeHsPeriods(list) {
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  (Array.isArray(list) ? list : []).forEach((p) => {
+    if (!p || typeof p !== "object") return;
+    const subjectName = typeof p.subjectName === "string" ? p.subjectName.trim().slice(0, 80) : "";
+    if (!subjectName) return;
+    const timesOk = looksLikeTimeString(p.startTime) && looksLikeTimeString(p.endTime) && p.endTime > p.startTime;
+    const days = [...new Set((Array.isArray(p.days) ? p.days : []).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))].sort((a, b) => a - b);
+    const q = { subjectName, days: days.length > 0 ? days : void 0, daysAssumed: days.length === 0, clarify: typeof p.clarify === "string" && p.clarify.trim() ? p.clarify.trim() : null };
+    if (timesOk) {
+      q.startTime = p.startTime;
+      q.endTime = p.endTime;
+    }
+    const key = subjectName.toLowerCase() + "|" + (q.startTime || "") + "|" + (q.endTime || "") + "|" + (q.days || []).join(",");
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(q);
+  });
+  return out;
+}
+function findOverlappingPeriods(periods) {
+  const out = [];
+  const list = (periods || []).filter((p) => !p.isFree && looksLikeTimeString(p.startTime) && looksLikeTimeString(p.endTime) && !p.timeUnconfirmed);
+  for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
+    const a = list[i], b = list[j];
+    const shared = (a.days || []).filter((d) => (b.days || []).includes(d));
+    if (shared.length === 0) continue;
+    if (a.startTime < b.endTime && b.startTime < a.endTime) out.push([a.subjectName || "A period", b.subjectName || "A period"]);
+  }
+  return out;
+}
+function sanitizeDeadlineDate(d) {
+  if (!d || typeof d !== "object") return d;
+  if (d.date == null || d.date === "") return d;
+  const y = looksLikeDateString(d.date) ? parseInt(d.date.slice(0, 4), 10) : NaN;
+  const thisYear = (/* @__PURE__ */ new Date()).getFullYear();
+  if (!Number.isFinite(y) || y < thisYear - 1 || y > thisYear + 2) return { ...d, date: null };
+  return d;
+}
+function uniqueDeadlineFilter() {
+  const seen = /* @__PURE__ */ new Set();
+  return (d) => {
+    if (!d || !d.title) return true;
+    const key = String(d.title).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim() + "|" + (d.date || "") + "|" + (d.kind || "");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  };
 }
 function looksLikeTimeString(v) {
   return typeof v === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
@@ -3345,8 +3422,8 @@ async function extractSyllabusDeadlinesFromImage(base64Data, mediaType) {
     const data = await res.json();
     if (!res.ok) return { items: [], error: data.error || "Couldn't read that image. Try again." };
     const raw = (data.reply || "").replace(/```json?\n?/gi, "").replace(/```/g, "").trim();
-    const parsed = JSON.parse(raw);
-    if (parsed && Array.isArray(parsed.deadlines)) return { items: parsed.deadlines.filter((d) => looksLikeRealDeadlineTitle(d && d.title)).map(withDerivedExamImportance).map((d) => d.kind === "exam" && looksLikeTimeString(d.time) ? d : { ...d, time: void 0 }), error: null };
+    const parsed = parseJsonReply(raw);
+    if (parsed && Array.isArray(parsed.deadlines)) return { items: parsed.deadlines.filter((d) => looksLikeRealDeadlineTitle(d && d.title)).map(withDerivedExamImportance).map(sanitizeDeadlineDate).filter(uniqueDeadlineFilter()).map((d) => d.kind === "exam" && looksLikeTimeString(d.time) ? d : { ...d, time: void 0 }), error: null };
     return { items: [], error: null };
   } catch (e) {
     return { items: [], error: "Couldn't read that image. Try again." };
@@ -3363,15 +3440,15 @@ async function extractClassSyllabusText(text) {
     const raw = (data.reply || "").replace(/```json?\n?/gi, "").replace(/```/g, "").trim();
     let parsed;
     try {
-      parsed = JSON.parse(raw);
+      parsed = parseJsonReply(raw);
     } catch (parseErr) {
       console.warn("extractClassSyllabusText: reply was not valid JSON", parseErr.message, raw.slice(0, 500));
       return { subject: null, meetingTimes: [], deadlines: [], termStart: null, termEnd: null, error: "Couldn't understand what came back. Try again, or paste a shorter section of the syllabus." };
     }
     return {
       subject: parsed && parsed.subject && parsed.subject.name ? parsed.subject : null,
-      meetingTimes: parsed && Array.isArray(parsed.meetingTimes) ? parsed.meetingTimes : [],
-      deadlines: parsed && Array.isArray(parsed.deadlines) ? parsed.deadlines.filter((d) => looksLikeRealDeadlineTitle(d && d.title)).map(withDerivedExamImportance) : [],
+      meetingTimes: sanitizeMeetingTimes(parsed && parsed.meetingTimes),
+      deadlines: parsed && Array.isArray(parsed.deadlines) ? parsed.deadlines.filter((d) => looksLikeRealDeadlineTitle(d && d.title)).map(withDerivedExamImportance).map(sanitizeDeadlineDate).filter(uniqueDeadlineFilter()) : [],
       termStart: looksLikeDateString(parsed && parsed.termStart) ? parsed.termStart : null,
       termEnd: looksLikeDateString(parsed && parsed.termEnd) ? parsed.termEnd : null,
       error: null
@@ -3388,11 +3465,11 @@ async function extractClassSyllabusImage(base64Data, mediaType) {
     const data = await res.json();
     if (!res.ok) return { subject: null, meetingTimes: [], deadlines: [], termStart: null, termEnd: null, error: data.error || "Couldn't read that image. Try again." };
     const raw = (data.reply || "").replace(/```json?\n?/gi, "").replace(/```/g, "").trim();
-    const parsed = JSON.parse(raw);
+    const parsed = parseJsonReply(raw);
     return {
       subject: parsed && parsed.subject && parsed.subject.name ? parsed.subject : null,
-      meetingTimes: parsed && Array.isArray(parsed.meetingTimes) ? parsed.meetingTimes : [],
-      deadlines: parsed && Array.isArray(parsed.deadlines) ? parsed.deadlines.filter((d) => looksLikeRealDeadlineTitle(d && d.title)).map(withDerivedExamImportance) : [],
+      meetingTimes: sanitizeMeetingTimes(parsed && parsed.meetingTimes),
+      deadlines: parsed && Array.isArray(parsed.deadlines) ? parsed.deadlines.filter((d) => looksLikeRealDeadlineTitle(d && d.title)).map(withDerivedExamImportance).map(sanitizeDeadlineDate).filter(uniqueDeadlineFilter()) : [],
       termStart: looksLikeDateString(parsed && parsed.termStart) ? parsed.termStart : null,
       termEnd: looksLikeDateString(parsed && parsed.termEnd) ? parsed.termEnd : null,
       error: null
@@ -3412,16 +3489,16 @@ async function extractCollegeScheduleText(text) {
     const raw = (data.reply || "").replace(/```json?\n?/gi, "").replace(/```/g, "").trim();
     let parsed;
     try {
-      parsed = JSON.parse(raw);
+      parsed = parseJsonReply(raw);
     } catch (parseErr) {
       console.warn("extractCollegeScheduleText: reply was not valid JSON", parseErr.message, raw.slice(0, 500));
       return { classes: [], termStart: null, termEnd: null, error: "Couldn't understand what came back. Try again, or paste a shorter section of your schedule." };
     }
     const classes = parsed && Array.isArray(parsed.classes) ? parsed.classes.filter((c) => c && c.subject && c.subject.name).map((c) => ({
       subject: c.subject,
-      meetingTimes: Array.isArray(c.meetingTimes) ? c.meetingTimes : [],
+      meetingTimes: sanitizeMeetingTimes(c.meetingTimes),
       scheduleConfidence: c.scheduleConfidence === "low" ? "low" : "high",
-      deadlines: (Array.isArray(c.deadlines) ? c.deadlines : []).filter((d) => looksLikeRealDeadlineTitle(d && d.title)).map(withDerivedExamImportance)
+      deadlines: (Array.isArray(c.deadlines) ? c.deadlines : []).filter((d) => looksLikeRealDeadlineTitle(d && d.title)).map(withDerivedExamImportance).map(sanitizeDeadlineDate).filter(uniqueDeadlineFilter())
     })) : [];
     return { classes, termStart: looksLikeDateString(parsed && parsed.termStart) ? parsed.termStart : null, termEnd: looksLikeDateString(parsed && parsed.termEnd) ? parsed.termEnd : null, error: null };
   } catch (e) {
@@ -3437,12 +3514,12 @@ async function extractCollegeScheduleImage(images) {
     const data = await res.json();
     if (!res.ok) return { classes: [], termStart: null, termEnd: null, error: data.error || "Couldn't read that image. Try again." };
     const raw = (data.reply || "").replace(/```json?\n?/gi, "").replace(/```/g, "").trim();
-    const parsed = JSON.parse(raw);
+    const parsed = parseJsonReply(raw);
     const classes = parsed && Array.isArray(parsed.classes) ? parsed.classes.filter((c) => c && c.subject && c.subject.name).map((c) => ({
       subject: c.subject,
-      meetingTimes: Array.isArray(c.meetingTimes) ? c.meetingTimes : [],
+      meetingTimes: sanitizeMeetingTimes(c.meetingTimes),
       scheduleConfidence: c.scheduleConfidence === "low" ? "low" : "high",
-      deadlines: (Array.isArray(c.deadlines) ? c.deadlines : []).filter((d) => looksLikeRealDeadlineTitle(d && d.title)).map(withDerivedExamImportance)
+      deadlines: (Array.isArray(c.deadlines) ? c.deadlines : []).filter((d) => looksLikeRealDeadlineTitle(d && d.title)).map(withDerivedExamImportance).map(sanitizeDeadlineDate).filter(uniqueDeadlineFilter())
     })) : [];
     return { classes, termStart: looksLikeDateString(parsed && parsed.termStart) ? parsed.termStart : null, termEnd: looksLikeDateString(parsed && parsed.termEnd) ? parsed.termEnd : null, error: null };
   } catch (e) {
@@ -3458,8 +3535,8 @@ async function extractHsScheduleFromImage(images) {
     const data = await res.json();
     if (!res.ok) return { periods: [], error: data.error || "Couldn't read that image. Try again." };
     const raw = (data.reply || "").replace(/```json?\n?/gi, "").replace(/```/g, "").trim();
-    const parsed = JSON.parse(raw);
-    return { periods: parsed && Array.isArray(parsed.periods) ? parsed.periods : [], error: null };
+    const parsed = parseJsonReply(raw);
+    return { periods: sanitizeHsPeriods(parsed && parsed.periods), error: null };
   } catch (e) {
     return { periods: [], error: "Couldn't read that image. Try again." };
   }
@@ -3476,12 +3553,12 @@ async function extractHsScheduleFromText(text) {
     const raw = (data.reply || "").replace(/```json?\n?/gi, "").replace(/```/g, "").trim();
     let parsed;
     try {
-      parsed = JSON.parse(raw);
+      parsed = parseJsonReply(raw);
     } catch (parseErr) {
       console.warn("extractHsScheduleFromText: reply was not valid JSON", parseErr.message, raw.slice(0, 500));
       return { periods: [], error: "Couldn't understand what came back. Try again, or paste a shorter section of your schedule." };
     }
-    return { periods: parsed && Array.isArray(parsed.periods) ? parsed.periods : [], error: null };
+    return { periods: sanitizeHsPeriods(parsed && parsed.periods), error: null };
   } catch (e) {
     console.warn("extractHsScheduleFromText: unexpected failure", e.message);
     return { periods: [], error: "Couldn't read that text. Try again." };
@@ -9251,7 +9328,7 @@ function Notes({ setActive = () => {
       const data = await res.json();
       const raw = (data.reply || "").replace(/```json?\n?/gi, "").replace(/```/g, "").trim();
       const parsed = JSON.parse(raw);
-      if (parsed && Array.isArray(parsed.deadlines)) return parsed.deadlines.filter((d) => looksLikeRealDeadlineTitle(d && d.title)).map(withDerivedExamImportance).map((d) => d.kind === "exam" && looksLikeTimeString(d.time) ? d : { ...d, time: void 0 });
+      if (parsed && Array.isArray(parsed.deadlines)) return parsed.deadlines.filter((d) => looksLikeRealDeadlineTitle(d && d.title)).map(withDerivedExamImportance).map(sanitizeDeadlineDate).filter(uniqueDeadlineFilter()).map((d) => d.kind === "exam" && looksLikeTimeString(d.time) ? d : { ...d, time: void 0 });
       return regexScanDeadlines(text);
     } catch (e) {
       return regexScanDeadlines(text);
@@ -14378,6 +14455,10 @@ function scanReviewNotice(sourceText, deadlines) {
   const today = dayKey();
   const past = (deadlines || []).filter((d) => d && d.date && d.date < today).length;
   if (past > 0) parts.push(past + " of the " + (deadlines || []).length + " dates found " + (past === 1 ? "is" : "are") + " already past, so " + (past === 1 ? "it starts" : "they start") + " unchecked.");
+  const unsure = (deadlines || []).filter((d) => d && d.confidence === "low" && !(d.date && d.date < today)).length;
+  if (unsure > 0) parts.push(unsure + " " + (unsure === 1 ? "item looks" : "items look") + " uncertain, so " + (unsure === 1 ? "it starts" : "they start") + " unchecked. Check the date, then tick it to add it.");
+  const undated = (deadlines || []).filter((d) => d && !d.date).length;
+  if (undated > 0) parts.push(undated + " " + (undated === 1 ? "item has" : "items have") + " no date Studlin could trust. Add one or leave it off.");
   return parts.join(" ");
 }
 async function shrinkImageForScan(file, maxDim = 1800) {
@@ -14766,7 +14847,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
         // A mid-semester scan surfaces work that's already done -- default
         // those unchecked (still visible, freely re-checkable) instead of
         // presenting a pile of finished work as if it were new.
-        include: !isPast,
+        include: !isPast && d.confidence !== "low",
         // Bug fix, 2026-09-17 internal audit: this used to be hardcoded
         // false regardless of whether the AI actually found a date. The
         // extraction prompt is deliberately told "never omit date even if
@@ -15187,7 +15268,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
         startTime: hasTime ? p.startTime : "08:00",
         endTime: hasTime ? p.endTime : "08:45",
         days: Array.isArray(p.days) && p.days.length > 0 ? p.days : [0, 1, 2, 3, 4],
-        clarify: p.clarify || null,
+        clarify: p.clarify || (p.daysAssumed ? "The schedule didn't show which days, so Mon to Fri is a guess. Check the days." : null),
         timeUnconfirmed: !hasTime
       };
     });
@@ -15585,8 +15666,22 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
       });
     };
     const toggleDay = (d) => updateHsPeriod({ days: p.days.includes(d) ? p.days.filter((y) => y !== d) : [...p.days, d] });
-    return /* @__PURE__ */ React.createElement("div", { key: p.id, style: { padding: "9px 10px", borderRadius: 10, border: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(ColorSelect, { value: p.color, onChange: (c) => setHsReview((r) => r.map((x, xi) => xi === i ? { ...x, color: c } : x)) }), /* @__PURE__ */ React.createElement(Input, { value: p.subjectName, onChange: (e) => setHsReview((r) => r.map((x, xi) => xi === i ? { ...x, subjectName: e.target.value } : x)), style: { flex: 1 }, disabled: p.isFree }), !isEditingTime && /* @__PURE__ */ React.createElement("div", { onDoubleClick: () => setEditingHsTimeId(p.id), title: "Double-click to edit", style: { fontSize: 11, color: T.muted, whiteSpace: "nowrap", cursor: "pointer" } }, p.days.map((d) => ROUTINE_DOW[d]).join(""), " \xB7 ", fmtClock12(p.startTime), "\u2013", fmtClock12(p.endTime)), p.timeUnconfirmed && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.amber, whiteSpace: "nowrap" } }, "Time TBD"), p.clarify && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: T.amber, fontWeight: 600, background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 6, padding: "3px 8px" } }, p.clarify)), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 8 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setHsReview((r) => r.map((x, xi) => xi === i ? { ...x, isFree: false } : x)), style: wizardChipStyle(!p.isFree) }, "Class"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setHsReview((r) => r.map((x, xi) => xi === i ? { ...x, isFree: true } : x)), style: wizardChipStyle(!!p.isFree) }, "Free Period")), isEditingTime && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10, paddingTop: 10, borderTop: `1px solid ${T.border}` } }, p.timeUnconfirmed && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.amber, marginBottom: 8 } }, "Set the real time for this period."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 } }, ROUTINE_DOW.map((d, di) => /* @__PURE__ */ React.createElement("button", { key: di, type: "button", onClick: () => toggleDay(di), style: wizardChipStyle(p.days.includes(di)) }, d))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end" } }, /* @__PURE__ */ React.createElement(TimeInput, { value: p.startTime, onChange: (t) => updateHsPeriod({ startTime: t }) }), /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, fontSize: 12 } }, "\u2013"), /* @__PURE__ */ React.createElement(TimeInput, { value: p.endTime, onChange: (t) => updateHsPeriod({ endTime: t }) }), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: confirmHsPeriodTime }, "Done"))));
-  })), hsFreeReview.length > 0 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 } }, "Free time (worked out from your school hours)"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 } }, hsFreeReview.map((f) => /* @__PURE__ */ React.createElement("div", { key: f.id, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 10, border: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: 13, color: T.text } }, f.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, whiteSpace: "nowrap" } }, f.days.map((d) => ROUTINE_DOW[d]).join(""), " \xB7 ", fmtClock12(f.startTime), "\u2013", fmtClock12(minutesToTime(timeToMinutes(f.startTime) + f.duration))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setHsFreeReview((r) => r.filter((x) => x.id !== f.id)), title: "Remove", style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 16, padding: "2px 6px" } }, "\xD7"))))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: commitHsSchedule }, "Add all ", hsReview.length, " classes"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => {
+    return /* @__PURE__ */ React.createElement("div", { key: p.id, style: { padding: "9px 10px", borderRadius: 10, border: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(ColorSelect, { value: p.color, onChange: (c) => setHsReview((r) => r.map((x, xi) => xi === i ? { ...x, color: c } : x)) }), /* @__PURE__ */ React.createElement(Input, { value: p.subjectName, onChange: (e) => setHsReview((r) => r.map((x, xi) => xi === i ? { ...x, subjectName: e.target.value } : x)), style: { flex: 1 }, disabled: p.isFree }), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setEditingHsTimeId(editingHsTimeId === p.id ? null : p.id), "aria-expanded": isEditingTime, style: { background: "none", border: "none", color: T.lime, fontSize: 12, fontFamily: T.font, cursor: "pointer", padding: 0 } }, isEditingTime ? "Close" : "Edit days & time"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+      setHsReview((r) => {
+        const next = r.filter((_, xi) => xi !== i);
+        setHsFreeReview(deriveFreePeriodsFromPeriods(next, schoolStart, schoolEnd));
+        return next;
+      });
+    }, title: "Remove " + (p.subjectName || "this period"), "aria-label": "Remove " + (p.subjectName || "this period"), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 16, padding: "0 2px" } }, "\xD7"), !isEditingTime && /* @__PURE__ */ React.createElement("div", { onDoubleClick: () => setEditingHsTimeId(p.id), title: "Double-click to edit", style: { fontSize: 11, color: T.muted, whiteSpace: "nowrap", cursor: "pointer" } }, p.days.map((d) => ROUTINE_DOW[d]).join(""), " \xB7 ", fmtClock12(p.startTime), "\u2013", fmtClock12(p.endTime)), p.timeUnconfirmed && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.amber, whiteSpace: "nowrap" } }, "Time TBD"), p.clarify && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: T.amber, fontWeight: 600, background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 6, padding: "3px 8px" } }, p.clarify)), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 8 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setHsReview((r) => r.map((x, xi) => xi === i ? { ...x, isFree: false } : x)), style: wizardChipStyle(!p.isFree) }, "Class"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setHsReview((r) => r.map((x, xi) => xi === i ? { ...x, isFree: true } : x)), style: wizardChipStyle(!!p.isFree) }, "Free Period")), isEditingTime && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10, paddingTop: 10, borderTop: `1px solid ${T.border}` } }, p.timeUnconfirmed && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.amber, marginBottom: 8 } }, "Set the real time for this period."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 } }, ROUTINE_DOW.map((d, di) => /* @__PURE__ */ React.createElement("button", { key: di, type: "button", onClick: () => toggleDay(di), style: wizardChipStyle(p.days.includes(di)) }, d))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end" } }, /* @__PURE__ */ React.createElement(TimeInput, { value: p.startTime, onChange: (t) => updateHsPeriod({ startTime: t }) }), /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, fontSize: 12 } }, "\u2013"), /* @__PURE__ */ React.createElement(TimeInput, { value: p.endTime, onChange: (t) => updateHsPeriod({ endTime: t }) }), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: confirmHsPeriodTime }, "Done"))));
+  })), hsFreeReview.length > 0 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 } }, "Free time (worked out from your school hours)"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 } }, hsFreeReview.map((f) => /* @__PURE__ */ React.createElement("div", { key: f.id, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 10, border: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: 13, color: T.text } }, f.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, whiteSpace: "nowrap" } }, f.days.map((d) => ROUTINE_DOW[d]).join(""), " \xB7 ", fmtClock12(f.startTime), "\u2013", fmtClock12(minutesToTime(timeToMinutes(f.startTime) + f.duration))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setHsFreeReview((r) => r.filter((x) => x.id !== f.id)), title: "Remove", style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 16, padding: "2px 6px" } }, "\xD7"))))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+    const id = "hs-new-" + Date.now();
+    setHsReview((r) => [...r, { id, subjectName: "", color: nextAvailableSubjectColor([...getSubjects().map((x) => x.color), ...r.map((x) => x.color)]), startTime: "08:00", endTime: "08:45", days: [0, 1, 2, 3, 4], clarify: null, timeUnconfirmed: true, isFree: false }]);
+    setEditingHsTimeId(id);
+  }, style: { background: "none", border: "none", color: T.lime, fontSize: 12.5, fontFamily: T.font, cursor: "pointer", padding: 0, marginBottom: 14 } }, "+ Add a period Studlin missed"), (() => {
+    const overlaps = findOverlappingPeriods(hsReview);
+    if (overlaps.length === 0) return null;
+    return /* @__PURE__ */ React.createElement("div", { role: "status", style: { fontSize: 12, color: T.amber, background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 8, padding: "8px 10px", marginBottom: 14, lineHeight: 1.5 } }, "These overlap, so one of them was probably misread: ", overlaps.slice(0, 3).map((o) => o[0] + " and " + o[1]).join("; "), ". Check their times.");
+  })(), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: commitHsSchedule }, "Add all ", hsReview.length, " classes"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => {
     setHsReview(null);
     setHsFreeReview([]);
     setAddMode("choose");
@@ -15599,6 +15694,19 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     const setItem = (i, patch) => setReview((r) => ({ ...r, items: r.items.map((x, xi) => xi === i ? { ...x, ...patch } : x) }));
     const addManualItem = () => setReview((r) => ({ ...r, items: [...r.items, { id: "cd-manual-" + Date.now(), title: "", date: dayKey(), kind: "assignment", include: true, noDate: false, attackBlock: true, proposeSessions: false, sessionCount: 4, detail: "", detailOpen: false, estimatedHours: null, difficulty: 500, phases: void 0, phasesLoading: false, outline: void 0, outlineLoading: false, materialFiles: [], materialLinks: [], materialOpen: false, linkDraft: "", linkLabelDraft: "", pasteMaterialMode: false, pasteMaterialText: "" }] }));
     const cancelReview = () => {
+      if (!editingPendingId && scanQueue.length > 0) {
+        const [nextClass, ...rest] = scanQueue;
+        setScanQueue(rest);
+        buildReviewFromExtraction(nextClass);
+        return;
+      }
+      setReview(null);
+      setEditingPendingId(null);
+      setReviewSub("items");
+      setAddMode(null);
+      setScanQueue([]);
+    };
+    const discardRest = () => {
       setReview(null);
       setEditingPendingId(null);
       setReviewSub("items");
@@ -15642,7 +15750,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
         placeholder: "Anything specific the syllabus said about this...",
         style: { width: "100%", background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: "7px 9px", color: T.text, fontSize: 11.5, fontFamily: T.font, outline: "none", resize: "vertical", boxSizing: "border-box" }
       }
-    ), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setItem(i, { detailOpen: false }), style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline", alignSelf: "flex-start" } }, "Collapse")) : /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setItem(i, { detailOpen: true }), style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, it.detail ? "See detail" : "+ Add detail"))))))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addManualItem, style: { marginTop: 10, width: "100%", padding: "9px", borderRadius: 8, border: `1px dashed ${T.borderHover}`, background: "transparent", color: T.muted, cursor: "pointer", fontFamily: T.font, fontSize: 12 } }, "+ Add one manually")), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: cancelReview, style: { background: "none", border: "none", color: T.muted, fontSize: 12.5, fontFamily: T.font, cursor: "pointer", padding: 0, marginBottom: 8 } }, editingPendingId ? "\u2190 Cancel" : "\u2190 Cancel, don't stage this class"));
+    ), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setItem(i, { detailOpen: false }), style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline", alignSelf: "flex-start" } }, "Collapse")) : /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setItem(i, { detailOpen: true }), style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, it.detail ? "See detail" : "+ Add detail"))))))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addManualItem, style: { marginTop: 10, width: "100%", padding: "9px", borderRadius: 8, border: `1px dashed ${T.borderHover}`, background: "transparent", color: T.muted, cursor: "pointer", fontFamily: T.font, fontSize: 12 } }, "+ Add one manually")), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: cancelReview, style: { background: "none", border: "none", color: T.muted, fontSize: 12.5, fontFamily: T.font, cursor: "pointer", padding: 0, marginBottom: 8 } }, editingPendingId ? "\u2190 Cancel" : scanQueue.length > 0 ? "Skip this class" : "\u2190 Cancel, don't stage this class"), !editingPendingId && scanQueue.length > 0 && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: discardRest, style: { background: "none", border: "none", color: T.muted, fontSize: 12.5, fontFamily: T.font, cursor: "pointer", padding: 0, marginBottom: 8, marginLeft: 14, textDecoration: "underline" } }, "Stop and discard the other ", scanQueue.length, " class", scanQueue.length !== 1 ? "es" : ""));
     if (reviewSub === "sessions") return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: "Sessions", sub: "Exams get spaced study sessions counting down to the date, built from Studlin Prep once you're ready. Assignments and projects can get an Attack Block." }), review.items.filter((it) => it.include && !it.noDate).length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, textAlign: "center", padding: "20px 0" } }, "Nothing dated to plan yet.") : review.items.map((it, i) => {
       if (!it.include || it.noDate) return null;
       return /* @__PURE__ */ React.createElement("div", { key: it.id, style: { padding: "10px 12px", borderRadius: 10, border: `1px solid ${T.border}`, marginBottom: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, marginBottom: 8 } }, it.title || "Untitled"), it.kind === "exam" ? (
