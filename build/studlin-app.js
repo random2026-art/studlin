@@ -23512,7 +23512,14 @@ function AuthGate() {
   const [user, setUser] = useState(void 0);
   useEffect(() => {
     if (shareId) return;
+    let lastSeenUid = null;
     return firebase.auth().onAuthStateChanged(async (u) => {
+      if (u && lastSeenUid && u.uid !== lastSeenUid) {
+        if (window.StudlinOwnerGuard) StudlinOwnerGuard.claim(u.uid);
+        window.location.reload();
+        return;
+      }
+      if (u) lastSeenUid = u.uid;
       if (u && window.StudlinOwnerGuard) StudlinOwnerGuard.claim(u.uid);
       if (isFreshOAuthAccount(u)) {
         setUser(null);
