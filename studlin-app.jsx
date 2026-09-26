@@ -7070,6 +7070,10 @@ syncWriteHooks["user-subjects"]=(items)=>DataStore.subjects.onLocalWrite(items);
 syncWriteHooks["schedulePrefs"]=()=>pushSettingsSync();
 syncWriteHooks["subjects-configured"]=()=>pushSettingsSync();
 syncWriteHooks["hasConfiguredRoutine"]=()=>pushSettingsSync();
+syncWriteHooks["wakeSleep"]=()=>pushSettingsSync();
+syncWriteHooks["schoolTerm"]=()=>pushSettingsSync();
+syncWriteHooks["holidays"]=()=>pushSettingsSync();
+syncWriteHooks["settings"]=()=>pushSettingsSync();
 const dayKey=(d)=>{const x=d||new Date();return x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");};
 // Dashboard's plain Checklist card (2026-08-19): checking an item used to
 // remove it from view instantly -- no visible confirmation it registered.
@@ -8581,6 +8585,10 @@ function pushSettingsSync(){
       schedulePrefs:lsGet("schedulePrefs",{}),
       subjectsConfigured:lsGet("subjects-configured",false),
       hasConfiguredRoutine:lsGet("hasConfiguredRoutine",false),
+      wakeSleep:lsGet("wakeSleep",null),
+      schoolTerm:lsGet("schoolTerm",null),
+      holidays:lsGet("holidays",[]),
+      incognito:lsGet("settings",{}).incognito===true,
       updatedAt:new Date().toISOString(),
     },{merge:true}).catch(()=>{});
   }catch(e){}
@@ -8603,6 +8611,10 @@ async function hydrateSettingsSyncOnAuth(){
       if(data.schedulePrefs&&typeof data.schedulePrefs==="object")lsSet("schedulePrefs",data.schedulePrefs);
       if(data.subjectsConfigured)lsSet("subjects-configured",true);
       if(data.hasConfiguredRoutine)lsSet("hasConfiguredRoutine",true);
+      if(data.wakeSleep&&typeof data.wakeSleep==="object")lsSet("wakeSleep",data.wakeSleep);
+      if(data.schoolTerm&&data.schoolTerm.start&&data.schoolTerm.end)lsSet("schoolTerm",data.schoolTerm);
+      if(Array.isArray(data.holidays))lsSet("holidays",data.holidays);
+      if(typeof data.incognito==="boolean")lsSet("settings",{...lsGet("settings",{}),incognito:data.incognito});
     }
   }catch(e){}
 }
@@ -24433,7 +24445,7 @@ const PrefChipRow=({label,value,onChange,options})=>(
     </div>
   </div>
 );
-function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCourseId,onPartialSync,setPricingOpen=()=>{},setActivePage=()=>{}}){
+function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCourseId,onPartialSync,termRollover=false,setPricingOpen=()=>{},setActivePage=()=>{}}){
   const [step,setStep]=useState("status"); // timezone | term | awake | status | classes | activities | calendarSync | window | finalReview
   const [status,setStatus]=useState(initialStatus||"");
   // Classes fully reviewed this session, staged -- nothing in here touches
@@ -24585,7 +24597,10 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   // 2026-09-11: Courses now runs before End of Term (see WIZARD_STEP_ORDER's
   // own comment) -- classes' own forward-nav needs to know whether term is
   // already configured to decide whether "term" is even still ahead of it.
-  const knowsTerm=(()=>{const t=getSchoolTerm();return !!(t&&t.start&&t.end);})();
+  // A term rollover ("Set up next term") must ask for the NEW dates: the saved
+  // ones are the term that just ended, so treating them as already known
+  // skipped the question and kept the old dates.
+  const knowsTerm=!termRollover&&(()=>{const t=getSchoolTerm();return !!(t&&t.start&&t.end);})();
   const effectiveWizardStepOrder=knowsStatus?WIZARD_STEP_ORDER.filter(s=>s!=="status"):WIZARD_STEP_ORDER;
   // Real Back navigation (2026-07-29 fix) -- null in quickScan mode (that
   // session intentionally starts mid-flow with no earlier step to return
@@ -24640,8 +24655,8 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     // "classes" same as before -- nothing left to ask there.
     setStep(quickScan?"classes":((term&&term.start&&term.end)?"classes":(knowsStatus?"classes":"status")));
     setTimezone(detectTz());
-    setTermStart((term&&term.start)||"");
-    setTermEnd((term&&term.end)||"");
+    setTermStart((!termRollover&&term&&term.start)||"");
+    setTermEnd((!termRollover&&term&&term.end)||"");
     const wakeSleep=getWakeSleep();
     setWakeTime((wakeSleep&&wakeSleep.wakeTime)||"07:00");
     setSleepTime((wakeSleep&&wakeSleep.sleepTime)||"23:00");
@@ -30619,6 +30634,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // onboarding; the tour (see CAL_TOUR_STEPS/calTourStep below) only fires
   // once THIS finishes, over a calendar that actually has real classes/
   // exams/assignments on it.
+  const [classSetupRollover,setClassSetupRollover]=useState(false);
   const [classSetupOpen,setClassSetupOpen]=useState(()=>!lsGet("subjects-configured",false)&&!lsGet("hasConfiguredRoutine",false));
   // Toolbar's "Scan syllabus" -- a second, independent instance of the same
   // wizard used for onboarding, opened straight into its scan step (see
@@ -30818,6 +30834,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     lsSet("subjects-configured",true);
     lsSet("hasConfiguredRoutine",true);
     lsSet("classSetupDraft",null);
+    setClassSetupRollover(false);
     setClassSetupOpen(false);
     syncClassSetupState();
     // Quick-demo tour now starts here, not on mount -- see CAL_TOUR_STEPS'
@@ -34399,7 +34416,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,padding:"10px 14px",borderRadius:8,border:`1px solid ${T.amber}44`,background:T.amber+"10",marginBottom:10}}>
           <div style={{fontSize:12.5,color:T.text}}>Your term ended {currentTerm.end} — set up next term?</div>
           <div style={{display:"flex",gap:8,flexShrink:0}}>
-            <button type="button" onClick={()=>setClassSetupOpen(true)} style={{padding:"6px 12px",borderRadius:6,border:"none",background:T.amber,color:T.ink,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Set up next term</button>
+            <button type="button" onClick={()=>{setClassSetupRollover(true);setClassSetupOpen(true);}} style={{padding:"6px 12px",borderRadius:6,border:"none",background:T.amber,color:T.ink,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Set up next term</button>
             <button type="button" onClick={()=>dismissTermRollover(currentTerm.end)} title="Dismiss" style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:14,padding:"0 4px"}}>×</button>
           </div>
         </div>
@@ -34711,7 +34728,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         <TourStep {...CAL_TOUR_STEPS[calTourStep]} step={calTourStep} total={CAL_TOUR_STEPS.length}
           isLast={calTourStep===CAL_TOUR_STEPS.length-1} onNext={advanceCalTour} onSkip={skipCalTour} />
       )}
-      <ClassSetupWizard open={classSetupOpen} initialStatus={getProfile().status} onSkip={()=>setClassSetupOpen(false)} onFinish={finishClassSetup} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
+      <ClassSetupWizard open={classSetupOpen} termRollover={classSetupRollover} initialStatus={getProfile().status} onSkip={()=>{setClassSetupOpen(false);setClassSetupRollover(false);}} onFinish={finishClassSetup} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
       <ClassSetupWizard open={quickScanOpen} quickScan targetCourseId={quickScanTargetCourseId} initialStatus={getProfile().status} onFinish={finishQuickScan} onSkip={()=>{setQuickScanOpen(false);setQuickScanTargetCourseId(null);syncClassSetupState();}} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
       <Modal open={!!weeklyContentCourseId} onClose={()=>setWeeklyContentCourseId(null)} title="Class notes" sub="A short note for each day this class meets -- lecture, lab, homework due, whatever's useful." width={460}
         footer={<><Btn variant="subtle" onClick={()=>setWeeklyContentCourseId(null)}>Cancel</Btn><Btn onClick={saveWeeklyContent}>Save</Btn></>}>

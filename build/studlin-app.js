@@ -4275,6 +4275,10 @@ syncWriteHooks["user-subjects"] = (items) => DataStore.subjects.onLocalWrite(ite
 syncWriteHooks["schedulePrefs"] = () => pushSettingsSync();
 syncWriteHooks["subjects-configured"] = () => pushSettingsSync();
 syncWriteHooks["hasConfiguredRoutine"] = () => pushSettingsSync();
+syncWriteHooks["wakeSleep"] = () => pushSettingsSync();
+syncWriteHooks["schoolTerm"] = () => pushSettingsSync();
+syncWriteHooks["holidays"] = () => pushSettingsSync();
+syncWriteHooks["settings"] = () => pushSettingsSync();
 const dayKey = (d) => {
   const x = d || /* @__PURE__ */ new Date();
   return x.getFullYear() + "-" + String(x.getMonth() + 1).padStart(2, "0") + "-" + String(x.getDate()).padStart(2, "0");
@@ -5229,6 +5233,10 @@ function pushSettingsSync() {
       schedulePrefs: lsGet("schedulePrefs", {}),
       subjectsConfigured: lsGet("subjects-configured", false),
       hasConfiguredRoutine: lsGet("hasConfiguredRoutine", false),
+      wakeSleep: lsGet("wakeSleep", null),
+      schoolTerm: lsGet("schoolTerm", null),
+      holidays: lsGet("holidays", []),
+      incognito: lsGet("settings", {}).incognito === true,
       updatedAt: (/* @__PURE__ */ new Date()).toISOString()
     }, { merge: true }).catch(() => {
     });
@@ -5245,6 +5253,10 @@ async function hydrateSettingsSyncOnAuth() {
       if (data.schedulePrefs && typeof data.schedulePrefs === "object") lsSet("schedulePrefs", data.schedulePrefs);
       if (data.subjectsConfigured) lsSet("subjects-configured", true);
       if (data.hasConfiguredRoutine) lsSet("hasConfiguredRoutine", true);
+      if (data.wakeSleep && typeof data.wakeSleep === "object") lsSet("wakeSleep", data.wakeSleep);
+      if (data.schoolTerm && data.schoolTerm.start && data.schoolTerm.end) lsSet("schoolTerm", data.schoolTerm);
+      if (Array.isArray(data.holidays)) lsSet("holidays", data.holidays);
+      if (typeof data.incognito === "boolean") lsSet("settings", { ...lsGet("settings", {}), incognito: data.incognito });
     }
   } catch (e) {
   }
@@ -14674,7 +14686,7 @@ const WizardStepper = ({ step }) => {
 };
 const TitleSub = ({ title, sub }) => /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 22 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 19, fontWeight: 700, color: T.white, letterSpacing: "-0.01em", marginBottom: 5 } }, title), sub && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, lineHeight: 1.5 } }, sub));
 const PrefChipRow = ({ label, value, onChange, options }) => /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 18 } }, /* @__PURE__ */ React.createElement("label", { style: { display: "block", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, marginBottom: 8 } }, label), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } }, options.map((opt) => /* @__PURE__ */ React.createElement("button", { key: opt.value, type: "button", onClick: () => onChange(value === opt.value ? null : opt.value), style: { ...peakChipStyle(value === opt.value), borderRadius: 10 } }, opt.label))));
-function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, targetCourseId, onPartialSync, setPricingOpen = () => {
+function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, targetCourseId, onPartialSync, termRollover = false, setPricingOpen = () => {
 }, setActivePage = () => {
 } }) {
   const [step, setStep] = useState("status");
@@ -14735,7 +14747,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     lsSet("classSetupPending", next);
   };
   const knowsStatus = !!initialStatus;
-  const knowsTerm = (() => {
+  const knowsTerm = !termRollover && (() => {
     const t = getSchoolTerm();
     return !!(t && t.start && t.end);
   })();
@@ -14762,8 +14774,8 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     const term = getSchoolTerm();
     setStep(quickScan ? "classes" : term && term.start && term.end ? "classes" : knowsStatus ? "classes" : "status");
     setTimezone(detectTz());
-    setTermStart(term && term.start || "");
-    setTermEnd(term && term.end || "");
+    setTermStart(!termRollover && term && term.start || "");
+    setTermEnd(!termRollover && term && term.end || "");
     const wakeSleep = getWakeSleep();
     setWakeTime(wakeSleep && wakeSleep.wakeTime || "07:00");
     setSleepTime(wakeSleep && wakeSleep.sleepTime || "23:00");
@@ -16405,7 +16417,7 @@ function RoutineControlCenterModal({ open, onClose, routines, fmtTime: fmtTime2,
   ), " min")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10, justifyContent: "flex-end" } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => {
     resetForm();
     setAddingRoutine(false);
-  } }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: submitAdd, disabled: !isFree && !title.trim() || isHabit && days.length === 0, style: { opacity: !isFree && !title.trim() || isHabit && days.length === 0 ? 0.45 : 1 } }, "Add"))), routines.length === 0 && !addingRoutine && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, padding: "10px 0 16px", textAlign: "center" } }, "No recurring blocks yet."), routines.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 } }, routines.map((r) => /* @__PURE__ */ React.createElement("div", { key: r.id, style: { display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.card2 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 10, height: 10, borderRadius: "50%", background: r.kind === "class" ? colorOf(r.courseId || r.subject) : r.color || T.muted, flexShrink: 0 } }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white } }, r.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, formatDays2(r.days), " \xB7 ", r.kind === "habit" ? "Anytime (" + (r.duration || 30) + " min)" : !r.startTime ? "Not scheduled yet \u2014 drag it onto your calendar" : fmtTime2(r.startTime) + " \u2013 " + fmtTime2(minutesToTime(timeToMinutes(r.startTime) + (r.duration || 30))))), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => onEditRoutine(r) }, "Edit"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "danger", onClick: () => onDeleteRoutine(r.id) }, "Delete")))), routines.length > 0 && onEditOnCalendar && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onEditOnCalendar, style: { background: "none", border: "none", color: T.lime, fontSize: 12.5, fontFamily: T.font, cursor: "pointer", padding: "0 0 16px", textDecoration: "underline" } }, "Edit directly on the calendar instead"), /* @__PURE__ */ React.createElement("div", { style: { border: `1px solid ${T.border}`, borderRadius: 10, padding: 14, marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: T.white, marginBottom: 2 } }, "Term dates"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 10 } }, "Outside these dates, summer, before the term starts, Studlin stops expecting your classes. Everything else on your routine still applies."), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } }, /* @__PURE__ */ React.createElement(DateField, { label: "School starts", value: termStart, onChange: setTermStart }), /* @__PURE__ */ React.createElement(DateField, { label: "School ends", value: termEnd, onChange: setTermEnd, min: termStart })), termWindowInvalid && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.red, marginTop: 8 } }, "School ends must be after school starts -- not saved until fixed.")), /* @__PURE__ */ React.createElement("div", { style: { border: `1px solid ${T.border}`, borderRadius: 10, padding: 14, marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: T.white, marginBottom: 2 } }, "Holidays"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 10 } }, "Spring break, a long weekend. Studlin won't plan study sessions during these."), holidays.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 } }, holidays.map((h) => {
+  } }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: submitAdd, disabled: !isFree && !title.trim() || isHabit && days.length === 0, style: { opacity: !isFree && !title.trim() || isHabit && days.length === 0 ? 0.45 : 1 } }, "Add"))), routines.length === 0 && !addingRoutine && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, padding: "10px 0 16px", textAlign: "center" } }, "No recurring blocks yet."), routines.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 } }, routines.map((r) => /* @__PURE__ */ React.createElement("div", { key: r.id, style: { display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.card2 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 10, height: 10, borderRadius: "50%", background: r.kind === "class" ? colorOf(r.courseId || r.subject) : r.color || T.muted, flexShrink: 0 } }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white } }, r.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, formatDays2(r.days), " \xB7 ", r.kind === "habit" ? "Anytime (" + (r.duration || 30) + " min)" : !r.startTime ? "Not scheduled yet \u2014 drag it onto your calendar" : fmtTime2(r.startTime) + " \u2013 " + fmtTime2(minutesToTime(timeToMinutes(r.startTime) + (r.duration || 30))))), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => onEditRoutine(r) }, "Edit"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "danger", onClick: () => onDeleteRoutine(r.id) }, "Delete")))), routines.length > 0 && onEditOnCalendar && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onEditOnCalendar, style: { background: "none", border: "none", color: T.lime, fontSize: 12.5, fontFamily: T.font, cursor: "pointer", padding: "0 0 16px", textDecoration: "underline" } }, "Edit directly on the calendar instead"), /* @__PURE__ */ React.createElement("div", { style: { border: `1px solid ${T.border}`, borderRadius: 10, padding: 14, marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: T.white, marginBottom: 2 } }, "Term dates"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 10 } }, "Outside these dates, summer, before the term starts, Studlin stops expecting your classes. Everything else on your routine still applies."), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } }, /* @__PURE__ */ React.createElement(DateField, { label: "School starts", value: termStart, onChange: setTermStart }), /* @__PURE__ */ React.createElement(DateField, { label: "School ends", value: termEnd, onChange: setTermEnd, min: termStart })), termWindowInvalid && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.red, marginTop: 8 } }, "School ends must be after school starts -- not saved until fixed.")), /* @__PURE__ */ React.createElement("div", { style: { border: `1px solid ${T.border}`, borderRadius: 10, padding: 14, marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: T.white, marginBottom: 2 } }, "Days away"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 10 } }, "Spring break, a trip, a sick week. Studlin won't plan study sessions on these days, and anything you didn't get to won't count against you."), holidays.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 } }, holidays.map((h) => {
     const isConfirming = confirmDeleteHolidayId === h.id;
     return isConfirming ? /* @__PURE__ */ React.createElement("div", { key: h.id, style: { padding: "8px 10px", borderRadius: 8, border: `1px solid ${T.red}55`, background: T.red + "12" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.text, marginBottom: 8 } }, 'Remove "', h.label || "Break", '"?'), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
       removeHoliday(h.id);
@@ -18001,6 +18013,7 @@ function CalendarTab({ setActive = () => {
   const [courseDeleteSnapshots, setCourseDeleteSnapshots] = useState(null);
   const [courseDeleteToast, setCourseDeleteToast] = useState("");
   const isFreshAccount = !lsGet("subjects-configured", false) && !lsGet("hasConfiguredRoutine", false) && !lsGet("seenCalendarTour", false);
+  const [classSetupRollover, setClassSetupRollover] = useState(false);
   const [classSetupOpen, setClassSetupOpen] = useState(() => !lsGet("subjects-configured", false) && !lsGet("hasConfiguredRoutine", false));
   const [quickScanOpen, setQuickScanOpen] = useState(false);
   const [quickScanTargetCourseId, setQuickScanTargetCourseId] = useState(null);
@@ -18102,6 +18115,7 @@ function CalendarTab({ setActive = () => {
     lsSet("subjects-configured", true);
     lsSet("hasConfiguredRoutine", true);
     lsSet("classSetupDraft", null);
+    setClassSetupRollover(false);
     setClassSetupOpen(false);
     syncClassSetupState();
     if (isFreshAccount && !lsGet("seenCalendarTour", false)) setCalTourStep(0);
@@ -20733,7 +20747,10 @@ Examples:
       style: { position: "absolute", top: 16, right: (calSidebarCollapsed ? 0 : 14) - 9, width: 18, height: 18, borderRadius: "50%", background: T.card, border: `1px solid ${T.border}`, color: T.faint, fontSize: 11, fontFamily: T.font, cursor: "pointer", padding: 0, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }
     },
     calSidebarCollapsed ? "\u203A" : "\u2039"
-  )), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0, paddingLeft: 14 } }, currentTerm && isTermRolloverDue(currentTerm, todayK) && getTermRolloverDismissedFor() !== currentTerm.end && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 14px", borderRadius: 8, border: `1px solid ${T.amber}44`, background: T.amber + "10", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text } }, "Your term ended ", currentTerm.end, " \u2014 set up next term?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexShrink: 0 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setClassSetupOpen(true), style: { padding: "6px 12px", borderRadius: 6, border: "none", background: T.amber, color: T.ink, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: T.font } }, "Set up next term"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => dismissTermRollover(currentTerm.end), title: "Dismiss", style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 14, padding: "0 4px" } }, "\xD7"))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, minHeight: 30, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 3 } }, /* @__PURE__ */ React.createElement("button", { onClick: () => calView === "monthly" ? nav(-1) : calView === "weekly" ? setWeekOffset((o) => o - 1) : stepSelDay(-1), style: { width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: `1px solid ${T.border}`, borderRadius: 4, color: T.muted, cursor: "pointer", fontSize: 11 } }, "\u2039"), /* @__PURE__ */ React.createElement("span", { onClick: () => {
+  )), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0, paddingLeft: 14 } }, currentTerm && isTermRolloverDue(currentTerm, todayK) && getTermRolloverDismissedFor() !== currentTerm.end && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 14px", borderRadius: 8, border: `1px solid ${T.amber}44`, background: T.amber + "10", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text } }, "Your term ended ", currentTerm.end, " \u2014 set up next term?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexShrink: 0 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+    setClassSetupRollover(true);
+    setClassSetupOpen(true);
+  }, style: { padding: "6px 12px", borderRadius: 6, border: "none", background: T.amber, color: T.ink, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: T.font } }, "Set up next term"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => dismissTermRollover(currentTerm.end), title: "Dismiss", style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 14, padding: "0 4px" } }, "\xD7"))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, minHeight: 30, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 3 } }, /* @__PURE__ */ React.createElement("button", { onClick: () => calView === "monthly" ? nav(-1) : calView === "weekly" ? setWeekOffset((o) => o - 1) : stepSelDay(-1), style: { width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: `1px solid ${T.border}`, borderRadius: 4, color: T.muted, cursor: "pointer", fontSize: 11 } }, "\u2039"), /* @__PURE__ */ React.createElement("span", { onClick: () => {
     if (calView === "monthly") {
       setYm({ y: now.getFullYear(), m: now.getMonth() });
       setSelDay(todayK);
@@ -21011,7 +21028,10 @@ Examples:
       onNext: advanceCalTour,
       onSkip: skipCalTour
     }
-  ), /* @__PURE__ */ React.createElement(ClassSetupWizard, { open: classSetupOpen, initialStatus: getProfile().status, onSkip: () => setClassSetupOpen(false), onFinish: finishClassSetup, onPartialSync: syncClassSetupState, setPricingOpen, setActivePage: setActive }), /* @__PURE__ */ React.createElement(ClassSetupWizard, { open: quickScanOpen, quickScan: true, targetCourseId: quickScanTargetCourseId, initialStatus: getProfile().status, onFinish: finishQuickScan, onSkip: () => {
+  ), /* @__PURE__ */ React.createElement(ClassSetupWizard, { open: classSetupOpen, termRollover: classSetupRollover, initialStatus: getProfile().status, onSkip: () => {
+    setClassSetupOpen(false);
+    setClassSetupRollover(false);
+  }, onFinish: finishClassSetup, onPartialSync: syncClassSetupState, setPricingOpen, setActivePage: setActive }), /* @__PURE__ */ React.createElement(ClassSetupWizard, { open: quickScanOpen, quickScan: true, targetCourseId: quickScanTargetCourseId, initialStatus: getProfile().status, onFinish: finishQuickScan, onSkip: () => {
     setQuickScanOpen(false);
     setQuickScanTargetCourseId(null);
     syncClassSetupState();
@@ -24064,10 +24084,19 @@ function App() {
     catchUpPlan.moves.forEach((m) => {
       const override = catchUpOverrides[m.id];
       if (override && override.skip) return;
-      if (m.droppedId) next = next.filter((e) => e.id !== m.droppedId);
+      const entry = applied.find((a) => a.id === m.id);
+      if (m.droppedId) {
+        const dropped = events.find((e) => e.id === m.droppedId);
+        if (entry && dropped) entry.droppedEvent = dropped;
+        next = next.filter((e) => e.id !== m.droppedId);
+      }
       if (m.shortenedId) {
         const shortEv = events.find((e) => e.id === m.shortenedId);
-        if (shortEv) next = next.map((e) => e.id === m.shortenedId ? { ...e, duration: Math.max(15, Math.round((shortEv.duration || 30) * 0.75 / 5) * 5) } : e);
+        if (shortEv) {
+          const newDuration = Math.max(15, Math.round((shortEv.duration || 30) * 0.75 / 5) * 5);
+          if (entry) entry.shortened = { id: m.shortenedId, from: shortEv.duration, to: newDuration };
+          next = next.map((e) => e.id === m.shortenedId ? { ...e, duration: newDuration } : e);
+        }
       }
     });
     lsSet("events", next);
@@ -24088,10 +24117,27 @@ function App() {
   const undoCatchUpRebuild = () => {
     if (!catchUpLastConfirmed || catchUpLastConfirmed.length === 0) return;
     let blockedCount = 0;
+    const restoredDropped = [];
+    const restoredShortened = [];
     catchUpLastConfirmed.forEach((m) => {
       const result = undoTier0Move(m.id);
-      if (result.blocked) blockedCount++;
+      if (result.blocked) {
+        blockedCount++;
+        return;
+      }
+      if (m.droppedEvent) restoredDropped.push(m.droppedEvent);
+      if (m.shortened) restoredShortened.push(m.shortened);
     });
+    if (restoredDropped.length > 0 || restoredShortened.length > 0) {
+      let evs = lsGet("events", []);
+      restoredDropped.forEach((d) => {
+        if (!evs.some((e) => e.id === d.id)) evs = [...evs, d];
+      });
+      restoredShortened.forEach((sh) => {
+        evs = evs.map((e) => e.id === sh.id && e.duration === sh.to ? { ...e, duration: sh.from } : e);
+      });
+      lsSet("events", evs);
+    }
     logCatchUpEvent("rebuild_undone", { count: catchUpLastConfirmed.length, blockedCount });
     setCatchUpLastConfirmed(null);
     setDashToast(blockedCount > 0 ? blockedCount + " couldn't be undone \u2014 something else is using that time now." : "Rebuild undone.");
@@ -24710,7 +24756,7 @@ function App() {
     const newlyMissed = evs.filter((ev) => isTier0Missed(ev, today) && !missedLoggedKeys.has(ev.id + "|" + ev.date));
     if (newlyMissed.length > 0) {
       newlyMissed.forEach((ev) => {
-        logCompletionOutcome("missed", ev.time, difficultyTierOf(ev), null, ev.subject);
+        if (!isHoliday(ev.date)) logCompletionOutcome("missed", ev.time, difficultyTierOf(ev), null, ev.subject);
         missedLoggedKeys.add(ev.id + "|" + ev.date);
       });
       lsSet("missedLoggedKeys", Array.from(missedLoggedKeys));
