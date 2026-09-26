@@ -473,13 +473,13 @@ const Modal = ({open, onClose, title, sub, children, footer, width=540}) => {
   // for call sites that exist today and any added later.
   return ReactDOM.createPortal((
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
-      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:width,maxHeight:"90vh",background:T.card,borderRadius:8,border:`1px solid ${T.border}`,overflow:"hidden",display:"flex",flexDirection:"column",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)",boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)"}}>
+      <div role="dialog" aria-modal="true" aria-label={typeof title==="string"?title:undefined} onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:width,maxHeight:"90vh",background:T.card,borderRadius:8,border:`1px solid ${T.border}`,overflow:"hidden",display:"flex",flexDirection:"column",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)",boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)"}}>
         <div style={{padding:"20px 22px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"flex-start",gap:12}}>
           <div style={{flex:1}}>
             <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>{title}</div>
             {sub && <div style={{fontSize:12.5,color:T.muted,marginTop:3}}>{sub}</div>}
           </div>
-          <button onClick={onClose} style={{width:30,height:30,borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,display:"grid",placeItems:"center",cursor:"pointer"}}>
+          <button type="button" aria-label="Close" onClick={onClose}style={{width:30,height:30,borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,display:"grid",placeItems:"center",cursor:"pointer"}}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
@@ -17428,10 +17428,10 @@ function panelPalette(){
 // Standalone pill switch — the real `Toggle` component (used in Settings) is
 // closure-bound to that component's own `toggles` state, so it can't be
 // reused here; this is the same 38x20 visual, taking on/onClick directly.
-const MiniToggle=({on,onClick})=>(
-  <div onClick={onClick} style={{width:38,height:20,borderRadius:10,background:on?T.lime:T.card2,border:`1px solid ${on?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
+const MiniToggle=({on,onClick,label})=>(
+  <button type="button" role="switch" aria-checked={!!on} aria-label={label||"Toggle"} onClick={onClick} style={{padding:0,boxSizing:"border-box",width:38,height:20,borderRadius:10,background:on?T.lime:T.card2,border:`1px solid ${on?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
     <div style={{width:14,height:14,borderRadius:"50%",background:on?T.bg:"#fff",position:"absolute",top:2,left:on?21:2,transition:"left 0.2s"}} />
-  </div>
+  </button>
 );
 
 // Injects the non-TBD events of the given classes into the student's real
@@ -36260,6 +36260,36 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
 // Appearance/Notifications/etc, and shadowing that with a same-named prop
 // would be a silent, easy-to-miss bug (or a hard compile error, since both
 // are declared with const in the same scope).
+// Module-level (not defined inside SettingsTab) so React keeps the same
+// component identity across renders: a component created inside another
+// remounts on every render, which drops keyboard focus from a switch the
+// moment it is toggled.
+const SettingsCtx=React.createContext({toggles:{},tog:()=>{}});
+function SettingsToggle({k,label}){
+  const {toggles,tog}=React.useContext(SettingsCtx);
+  const on=!!toggles[k];
+  return (
+    <button type="button" role="switch" aria-checked={on} aria-label={label} onClick={()=>tog(k)} style={{padding:0,boxSizing:"border-box",width:38,height:20,borderRadius:10,background:on?T.lime:T.card2,border:`1px solid ${on?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
+      <div style={{width:14,height:14,borderRadius:"50%",background:on?T.bg:"#fff",position:"absolute",top:2,left:on?21:2,transition:"left 0.2s"}} />
+    </button>
+  );
+}
+function SettingsRow({label,sub,k,right,highlight}){
+  const rowRef=useRef(null);
+  useEffect(()=>{
+    if(highlight&&rowRef.current)rowRef.current.scrollIntoView({behavior:"smooth",block:"center"});
+  },[highlight]);
+  return (
+    <div ref={rowRef} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"13px 10px",margin:"0 -10px",borderRadius:8,borderBottom:`1px solid ${T.border}`,background:highlight?T.lime+"14":"transparent",boxShadow:highlight?`0 0 0 1.5px ${T.lime}`:"none",transition:"background 0.4s ease, box-shadow 0.4s ease"}}>
+      <div style={{flex:1,marginRight:14}}>
+        <div style={{fontSize:13,color:T.text,fontWeight:500}}>{label}</div>
+        {sub && <div style={{fontSize:11.5,color:T.muted,marginTop:2,lineHeight:1.45}}>{sub}</div>}
+      </div>
+      {right || <SettingsToggle k={k} label={typeof label==="string"?label:undefined} />}
+    </div>
+  );
+}
+
 function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}, onOpenRoutineCenter=()=>{}, setScheduleSettingsOpen=()=>{}, setPricingOpen=()=>{}, setActivePage=()=>{}, pendingOpenSetting=null, onSettingOpened=()=>{}}) {
   const [active,setActive]=useState(pendingOpenSetting==="shareAvailability"?"Privacy":"General");
   // Deep-link landing from a push notification (see App's own
@@ -37252,26 +37282,8 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     {id:"Usage",icon:Icon.zap},
     {id:"Subscription",icon:Icon.layers},
   ];
-  const Toggle = ({k}) => (
-    <div onClick={()=>tog(k)} style={{width:38,height:20,borderRadius:10,background:toggles[k]?T.lime:T.card2,border:`1px solid ${toggles[k]?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
-      <div style={{width:14,height:14,borderRadius:"50%",background:toggles[k]?T.bg:"#fff",position:"absolute",top:2,left:toggles[k]?21:2,transition:"left 0.2s"}} />
-    </div>
-  );
-  const Row = ({label,sub,k,right,highlight}) => {
-    const rowRef=useRef(null);
-    useEffect(()=>{
-      if(highlight&&rowRef.current)rowRef.current.scrollIntoView({behavior:"smooth",block:"center"});
-    },[highlight]);
-    return (
-      <div ref={rowRef} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"13px 10px",margin:"0 -10px",borderRadius:8,borderBottom:`1px solid ${T.border}`,background:highlight?T.lime+"14":"transparent",boxShadow:highlight?`0 0 0 1.5px ${T.lime}`:"none",transition:"background 0.4s ease, box-shadow 0.4s ease"}}>
-        <div style={{flex:1,marginRight:14}}>
-          <div style={{fontSize:13,color:T.text,fontWeight:500}}>{label}</div>
-          {sub && <div style={{fontSize:11.5,color:T.muted,marginTop:2,lineHeight:1.45}}>{sub}</div>}
-        </div>
-        {right || <Toggle k={k} />}
-      </div>
-    );
-  };
+  const Toggle=SettingsToggle;
+  const Row=SettingsRow;
   // Theme preview card
   const ThemeCard = ({mode,label,sub}) => {
     const sel=theme===mode;
@@ -37394,6 +37406,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   };
 
   return (
+    <SettingsCtx.Provider value={{toggles,tog}}>
     <div>
       <PH title="Settings" sub="Manage your account and preferences" />
       <div style={{display:"grid",gridTemplateColumns:"200px 1fr",gap:16}}>
@@ -37572,9 +37585,9 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                   <div style={{fontSize:13,color:T.text,fontWeight:500}}>Enable Desktop Notifications</div>
                   <div style={{fontSize:11.5,color:T.muted,marginTop:2,lineHeight:1.45}}>Native desktop alerts for incoming chat messages and study session updates, even when this tab is closed or in the background.</div>
                 </div>
-                <div onClick={handleSysPushToggle} style={{width:38,height:20,borderRadius:10,background:toggles.sysPush?T.lime:T.card2,border:`1px solid ${toggles.sysPush?T.lime:T.border}`,position:"relative",cursor:sysPushStatus==="denied"?"not-allowed":"pointer",transition:"all 0.2s",flexShrink:0,opacity:sysPushStatus==="unsupported"?0.45:1}}>
+                <button type="button" role="switch" aria-checked={!!(toggles.sysPush)} aria-label="Enable Desktop Notifications" onClick={handleSysPushToggle} style={{padding:0,boxSizing:"border-box",width:38,height:20,borderRadius:10,background:toggles.sysPush?T.lime:T.card2,border:`1px solid ${toggles.sysPush?T.lime:T.border}`,position:"relative",cursor:sysPushStatus==="denied"?"not-allowed":"pointer",transition:"all 0.2s",flexShrink:0,opacity:sysPushStatus==="unsupported"?0.45:1}}>
                   <div style={{width:14,height:14,borderRadius:"50%",background:toggles.sysPush?T.bg:"#fff",position:"absolute",top:2,left:toggles.sysPush?21:2,transition:"left 0.2s"}} />
-                </div>
+                </button>
               </div>
               {sysPushStatus==="denied"&&(
                 <div style={{fontSize:11.5,color:T.amber,background:T.amber+"10",border:`1px solid ${T.amber}22`,borderRadius:6,padding:"9px 12px",lineHeight:1.5,marginTop:10}}>
@@ -37641,9 +37654,9 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                   card's own accurate description just above instead of
                   contradicting it. */}
               <Row label="Private Account / Serious Mode" sub="Hides focus minutes and tiers on Profile. Calendar stays a clean task grid either way." k="_" right={
-                <div onClick={()=>{const next=!seriousMode;setSeriousMode(next);const s=lsGet("settings",{});lsSet("settings",{...s,seriousMode:next});}} style={{width:38,height:20,borderRadius:10,background:seriousMode?T.purple:T.card2,border:`1px solid ${seriousMode?T.purple:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
+                <button type="button" role="switch" aria-checked={!!(seriousMode)} aria-label="Private Account / Serious Mode" onClick={()=>{const next=!seriousMode;setSeriousMode(next);const s=lsGet("settings",{});lsSet("settings",{...s,seriousMode:next});}} style={{padding:0,boxSizing:"border-box",width:38,height:20,borderRadius:10,background:seriousMode?T.purple:T.card2,border:`1px solid ${seriousMode?T.purple:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
                   <div style={{width:14,height:14,borderRadius:"50%",background:seriousMode?T.bg:"#fff",position:"absolute",top:2,left:seriousMode?21:2,transition:"left 0.2s"}} />
-                </div>
+                </button>
               } />
             </Card>
             <Card style={{marginBottom:12}}>
@@ -37654,7 +37667,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <Row label="Show Online Status" sub="When off, your presence dot is hidden from friends and you'll appear offline in the Studlin Network." k="onlineStatus" />
               <Row label="Incognito Mode" sub="Completely masks your live study status. You'll appear offline everywhere and won't receive Join Lock-In requests." k="incognito" />
               <Row label="Share my free/busy time" sub="Lets accepted friends' 'Find Shared Study Window' searches see your busy times too — never event titles or subjects, and only current friends. Off by default." k="shareAvailability" highlight={highlightSetting==="shareAvailability"} right={
-                <div onClick={()=>{
+                <button type="button" role="switch" aria-checked={!!(toggles.shareAvailability)} aria-label="Share my availability with friends" onClick={()=>{
                   const next=!toggles.shareAvailability;
                   // Bug fix, 2026-09-09 user report ("she already had her
                   // settings on so something's wrong"): publishBusyWindows
@@ -37693,9 +37706,9 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                   (next?publishBusyWindows():unpublishBusyWindows()).then(result=>{
                     if(result&&result.ok===false)showToast("Couldn't "+(next?"turn on":"turn off")+" sharing -- "+(result.reason||"try again")+".","error");
                   });
-                }} style={{width:38,height:20,borderRadius:10,background:toggles.shareAvailability?T.lime:T.card2,border:`1px solid ${toggles.shareAvailability?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
+                }} style={{padding:0,boxSizing:"border-box",width:38,height:20,borderRadius:10,background:toggles.shareAvailability?T.lime:T.card2,border:`1px solid ${toggles.shareAvailability?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
                   <div style={{width:14,height:14,borderRadius:"50%",background:toggles.shareAvailability?T.bg:"#fff",position:"absolute",top:2,left:toggles.shareAvailability?21:2,transition:"left 0.2s"}} />
-                </div>
+                </button>
               } />
               {/* 2026-09-13 user request: sharing used to be all-or-nothing
                   (on = every current friend). "Choose people" restricts it
@@ -37756,14 +37769,14 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Questions Studlin asks</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>These are how Studlin learns things like how long a class really takes you or how a session went — never required, always skippable, and if you keep skipping one Studlin turns it off for you automatically.</div>
               <Row label="Post-session check-ins" sub="A quick 'how did that go?' after a study session tied to an exam or assignment." k="_" right={
-                <div onClick={()=>handleAskToggle("askCheckIns")} style={{width:38,height:20,borderRadius:10,background:toggles.askCheckIns?T.lime:T.card2,border:`1px solid ${toggles.askCheckIns?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
+                <button type="button" role="switch" aria-checked={!!(toggles.askCheckIns)} aria-label="Post-session check-ins" onClick={()=>handleAskToggle("askCheckIns")} style={{padding:0,boxSizing:"border-box",width:38,height:20,borderRadius:10,background:toggles.askCheckIns?T.lime:T.card2,border:`1px solid ${toggles.askCheckIns?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
                   <div style={{width:14,height:14,borderRadius:"50%",background:toggles.askCheckIns?T.bg:"#fff",position:"absolute",top:2,left:toggles.askCheckIns?21:2,transition:"left 0.2s"}} />
-                </div>
+                </button>
               } />
               <Row label={'"How long did this really take?"'} sub="Asked only when you finish a session without using the Lock-In Timer, and only for a class Studlin doesn't have enough real data on yet." k="_" right={
-                <div onClick={()=>handleAskToggle("askDurationQuestions")} style={{width:38,height:20,borderRadius:10,background:toggles.askDurationQuestions?T.lime:T.card2,border:`1px solid ${toggles.askDurationQuestions?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
+                <button type="button" role="switch" aria-checked={!!(toggles.askDurationQuestions)} aria-label="How long did this really take question" onClick={()=>handleAskToggle("askDurationQuestions")} style={{padding:0,boxSizing:"border-box",width:38,height:20,borderRadius:10,background:toggles.askDurationQuestions?T.lime:T.card2,border:`1px solid ${toggles.askDurationQuestions?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
                   <div style={{width:14,height:14,borderRadius:"50%",background:toggles.askDurationQuestions?T.bg:"#fff",position:"absolute",top:2,left:toggles.askDurationQuestions?21:2,transition:"left 0.2s"}} />
-                </div>
+                </button>
               } />
             </Card>
             <Card style={{marginBottom:12}}>
@@ -37774,9 +37787,9 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                   says as much), so it promised a control that didn't exist.
                   Removed 2026-09-25. */}
               <Row label="Anonymous usage analytics" sub="Helps us fix bugs and prioritise features. On by default; turn it off any time." k="_" right={
-                <div onClick={toggleAnalytics} style={{width:38,height:20,borderRadius:10,background:!analyticsOptOut?T.lime:T.card2,border:`1px solid ${!analyticsOptOut?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
+                <button type="button" role="switch" aria-checked={!!(!analyticsOptOut)} aria-label="Anonymous usage analytics" onClick={toggleAnalytics} style={{padding:0,boxSizing:"border-box",width:38,height:20,borderRadius:10,background:!analyticsOptOut?T.lime:T.card2,border:`1px solid ${!analyticsOptOut?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
                   <div style={{width:14,height:14,borderRadius:"50%",background:!analyticsOptOut?T.bg:"#fff",position:"absolute",top:2,left:!analyticsOptOut?21:2,transition:"left 0.2s"}} />
-                </div>
+                </button>
               } />
               <div style={{display:"flex",gap:8,marginTop:14,flexWrap:"wrap"}}>
                 <Btn variant="subtle" onClick={exportAllData}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.copy,"Export all data")}</Btn>
@@ -38449,6 +38462,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
         </div>
       </div>
     </div>
+    </SettingsCtx.Provider>
   );
 }
 
