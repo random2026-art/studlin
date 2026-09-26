@@ -39708,7 +39708,9 @@ function AuthGate(){
     if(shareId)return;
     return firebase.auth().onAuthStateChanged(async u=>{
       if(isFreshOAuthAccount(u)){
-        try{await u.delete();}catch(e){try{await firebase.auth().signOut();}catch(e2){}}
+        // Kept signed in (not deleted): onboarding resumes an already-signed-in
+        // Google user at the Profile step, same as the sign-in page does.
+        // Deleting made a half-finished sign-up start over from nothing.
         setUser(null);
         window.location.href="/onboarding";
         return;
