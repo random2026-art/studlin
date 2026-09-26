@@ -2490,8 +2490,19 @@ const STUDLIN_HELP_ENTRIES=[
     answer:"Settings → Privacy → Visibility → Incognito Mode. It masks your live study status everywhere and turns off Join Lock-In requests."},
   {id:"online-status",keywords:["online status","presence dot","show online"],
     answer:"Settings → Privacy → Visibility → Show Online Status. Turn it off and your presence dot disappears -- you'll show as offline to friends."},
-  {id:"deadline-notifications",keywords:["stop overdue","overdue notif","overdue remind","deadline alert","deadline notif","stop reminding","turn off reminders","turn off notifications","telling me this is overdue","telling me it's overdue","telling me things are overdue","says overdue","marks overdue","keeps saying overdue","stop it from telling me","overdue"],
-    answer:"Settings → Notifications → Reminders → \"Deadline alerts\" is the real toggle for heads-up-before-due-date pings. Note: the small red dot on an overdue calendar block itself has no toggle -- it clears when you finish, reschedule, or delete that item."},
+  // Added 2026-09-25 (persona audit): "turn off notifications" used to land
+  // on the Deadline-alerts entry below, which only covers deadline/exam
+  // heads-ups. The real everything-off switch is notifMaster, which the
+  // reminder scheduler checks first (settings.notifMaster===false returns
+  // early). Listed BEFORE deadline-notifications so an exact tie resolves
+  // to this broader answer.
+  {id:"notifications-master",keywords:["turn off notifications","stop notifications","mute notifications","turn off all notifications","turn off reminders","stop reminding","stop all reminders"],
+    answer:"Settings → Notifications → \"Task & App Notifications\" is the master switch for all Studlin alerts. Desktop alerts have their own toggle, \"Enable Desktop Notifications,\" just above it."},
+  {id:"deadline-notifications",keywords:["stop overdue","overdue notif","overdue remind","deadline alert","deadline notif","telling me this is overdue","telling me it's overdue","telling me things are overdue","says overdue","marks overdue","keeps saying overdue","stop it from telling me","overdue"],
+    // Corrected 2026-09-25 (persona audit): the red dot is daysOverdue()>0,
+    // which only fires when a block is scheduled AFTER its own deadline --
+    // not "you missed it." The old answer called it an "overdue" block.
+    answer:"Settings → Notifications → Reminders → \"Deadline alerts\" is the real toggle for heads-up-before-due-date pings. The Overdue list and Catch Me Up banner have no toggle -- they clear when you finish, reschedule, or delete the items. A red dot on a calendar block means it's scheduled after its own due date; move it earlier to clear it."},
   {id:"desktop-notifications",keywords:["desktop notification","push notification","native alert","browser notification"],
     answer:"Settings → Notifications → \"Enable Desktop Notifications.\" Your browser will also ask you to allow them the first time."},
   {id:"google-calendar",keywords:["connect google calendar","sync google calendar","import google calendar","link google calendar"],
@@ -2544,7 +2555,12 @@ const STUDLIN_HELP_ENTRIES=[
   {id:"two-factor",keywords:["two factor","2fa","two-factor","active sessions"],
     answer:"Not live yet -- two-factor authentication and active-session management are marked Coming Soon in Settings → Privacy."},
   {id:"weekly-wrapped",keywords:["turn off weekly wrapped","stop weekly wrapped","disable weekly wrapped","weekly wrapped popup"],
-    answer:"Settings → Notifications → Email → \"Weekly Wrapped digest.\" One toggle controls both the email and the Sunday/Monday-evening in-app popup."},
+    // Corrected 2026-09-25 (persona audit): the popup gating is verified
+    // (isWrappedWindow reads settings.wrapped), but the old answer also
+    // claimed the toggle controls an email. Nothing in api/ sends a Weekly
+    // Wrapped email (only note/welcome/verification emails exist), so that
+    // half was never true -- it was assumed from the Settings label.
+    answer:"Settings → Notifications → Email → \"Weekly Wrapped digest\" turns off the Weekly Wrapped popup that opens Sunday/Monday evening."},
   {id:"shared-study-window",keywords:["find shared study window","study time with a friend","schedule with a friend","find time with a friend"],
     answer:"Open the quick-actions menu and choose \"Find Shared Study Window.\" Manual checks one specific time against your own calendar; Match scans for free time automatically."},
   {id:"join-lock-in",keywords:["join lock-in","join lock in","what is lock-in"],
@@ -20386,11 +20402,20 @@ async function classifyStudlinAiMessage(text,history){
   // what the student typed. Throwing here routes it to the same "Couldn't
   // reach Studlin AI" error message authFetch/res.json() failures already
   // get (see the comment above this function).
-  if(!res.ok)throw new Error(data.error||"classify-failed");
+  // 2026-09-25 persona audit: status is carried on the error so send()
+  // can tell a 402 (Free plan / out of credits -- the server gates this
+  // classifier call itself, api/chat.js isStudlinAiFormat) apart from a
+  // real connectivity failure. It used to show "Couldn't reach Studlin
+  // AI. Check your connection" to every Free student, which is false.
+  if(!res.ok){const err=new Error(data.error||"classify-failed");err.status=res.status;throw err;}
   try{
     const raw=(data.reply||"").replace(/```json?|```/g,"").trim();
     const parsed=JSON.parse(raw);
-    if(!parsed||!["question","coaching","action","multi_action","availability_match","unsupported"].includes(parsed.kind))throw new Error("bad-kind");
+    // "app_help" was missing here when it was added to the classifier
+    // prompt (2026-09-25), so every classifier-returned app_help was
+    // thrown away as "bad-kind" and downgraded to unsupported -- only the
+    // local pre-check in send() ever worked. Found by the persona audit.
+    if(!parsed||!["question","coaching","app_help","action","multi_action","availability_match","unsupported"].includes(parsed.kind))throw new Error("bad-kind");
     // Same backstop role every other intent's field checks below already
     // play -- the prompt tells the model to self-correct to "unsupported"
     // when duration is missing, this is just the hard guarantee for when
@@ -21025,7 +21050,15 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
     try{
       parsed=await classifyStudlinAiMessage(text,history);
     }catch(e){
-      setMessages(m=>[...m,{role:"ai",text:"Couldn't reach Studlin AI. Check your connection and try again.",kind:"error"}]);
+      // 402 = the server refusing this account (Free plan, or out of
+      // credits) -- not a connectivity problem. Same paywall handling the
+      // per-kind gates (askQuestion etc.) already use.
+      if(e&&e.status===402){
+        setPricingOpen(canUseStudlinAiQnaReason()==="free-tier"?"studlinAiQna":"aiUsageCap");
+        setMessages(m=>[...m,{role:"ai",text:"Studlin AI needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
+      }else{
+        setMessages(m=>[...m,{role:"ai",text:"Couldn't reach Studlin AI. Check your connection and try again.",kind:"error"}]);
+      }
       setLoading(false);
       return;
     }

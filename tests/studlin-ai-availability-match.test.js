@@ -59,7 +59,10 @@ describe("classifyStudlinAiMessage's prompt now supports availability_match (sou
 
 describe("classifyStudlinAiMessage's validation gate accepts availability_match (regression guard -- this exact class of bug, a new kind missing from the allowed-kind array, already silently bit multi_action once)", () => {
   test("the allowed-kind array includes availability_match", () => {
-    assert.match(APP_SOURCE, /\["question","coaching","action","multi_action","availability_match","unsupported"\]\.includes\(parsed\.kind\)/);
+    // 2026-09-25: app_help joined this list (and had to be added here too --
+    // the persona audit found it missing, the same bug class this guard
+    // exists for).
+    assert.match(APP_SOURCE, /\["question","coaching","app_help","action","multi_action","availability_match","unsupported"\]\.includes\(parsed\.kind\)/);
   });
 
   test("a malformed candidate list or missing/invalid duration is rejected before it can reach resolveAvailabilityMatch", () => {

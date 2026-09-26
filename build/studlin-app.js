@@ -1602,10 +1602,24 @@ const STUDLIN_HELP_ENTRIES = [
     keywords: ["online status", "presence dot", "show online"],
     answer: "Settings \u2192 Privacy \u2192 Visibility \u2192 Show Online Status. Turn it off and your presence dot disappears -- you'll show as offline to friends."
   },
+  // Added 2026-09-25 (persona audit): "turn off notifications" used to land
+  // on the Deadline-alerts entry below, which only covers deadline/exam
+  // heads-ups. The real everything-off switch is notifMaster, which the
+  // reminder scheduler checks first (settings.notifMaster===false returns
+  // early). Listed BEFORE deadline-notifications so an exact tie resolves
+  // to this broader answer.
+  {
+    id: "notifications-master",
+    keywords: ["turn off notifications", "stop notifications", "mute notifications", "turn off all notifications", "turn off reminders", "stop reminding", "stop all reminders"],
+    answer: 'Settings \u2192 Notifications \u2192 "Task & App Notifications" is the master switch for all Studlin alerts. Desktop alerts have their own toggle, "Enable Desktop Notifications," just above it.'
+  },
   {
     id: "deadline-notifications",
-    keywords: ["stop overdue", "overdue notif", "overdue remind", "deadline alert", "deadline notif", "stop reminding", "turn off reminders", "turn off notifications", "telling me this is overdue", "telling me it's overdue", "telling me things are overdue", "says overdue", "marks overdue", "keeps saying overdue", "stop it from telling me", "overdue"],
-    answer: 'Settings \u2192 Notifications \u2192 Reminders \u2192 "Deadline alerts" is the real toggle for heads-up-before-due-date pings. Note: the small red dot on an overdue calendar block itself has no toggle -- it clears when you finish, reschedule, or delete that item.'
+    keywords: ["stop overdue", "overdue notif", "overdue remind", "deadline alert", "deadline notif", "telling me this is overdue", "telling me it's overdue", "telling me things are overdue", "says overdue", "marks overdue", "keeps saying overdue", "stop it from telling me", "overdue"],
+    // Corrected 2026-09-25 (persona audit): the red dot is daysOverdue()>0,
+    // which only fires when a block is scheduled AFTER its own deadline --
+    // not "you missed it." The old answer called it an "overdue" block.
+    answer: `Settings \u2192 Notifications \u2192 Reminders \u2192 "Deadline alerts" is the real toggle for heads-up-before-due-date pings. The Overdue list and Catch Me Up banner have no toggle -- they clear when you finish, reschedule, or delete the items. A red dot on a calendar block means it's scheduled after its own due date; move it earlier to clear it.`
   },
   {
     id: "desktop-notifications",
@@ -1709,7 +1723,12 @@ const STUDLIN_HELP_ENTRIES = [
   {
     id: "weekly-wrapped",
     keywords: ["turn off weekly wrapped", "stop weekly wrapped", "disable weekly wrapped", "weekly wrapped popup"],
-    answer: 'Settings \u2192 Notifications \u2192 Email \u2192 "Weekly Wrapped digest." One toggle controls both the email and the Sunday/Monday-evening in-app popup.'
+    // Corrected 2026-09-25 (persona audit): the popup gating is verified
+    // (isWrappedWindow reads settings.wrapped), but the old answer also
+    // claimed the toggle controls an email. Nothing in api/ sends a Weekly
+    // Wrapped email (only note/welcome/verification emails exist), so that
+    // half was never true -- it was assumed from the Settings label.
+    answer: 'Settings \u2192 Notifications \u2192 Email \u2192 "Weekly Wrapped digest" turns off the Weekly Wrapped popup that opens Sunday/Monday evening.'
   },
   {
     id: "shared-study-window",
@@ -12206,11 +12225,15 @@ Examples:
 "remove meeting with z and add going hiking from 8:30 pm" (two clean, separable requests -- a clearly-named single item to delete, and a new item with a real time to add) -> {"kind":"multi_action","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null,"actions":[{"intent":"delete_task","target":"meeting with z","targetDate":"` + today + '","destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"peakHours":null,"subject":null,"duringClass":false},{"intent":"create_task","target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":"Going hiking","dueDate":"' + today + '","dueTime":"20:30","durationMin":null,"taskKind":"event","peakHours":null,"subject":null,"duringClass":false}]}\n"cancel my dentist appointment, move my chem homework to tomorrow, and add a task for my essay due friday" (THREE distinct requests, not two -- too many for multi_action) -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null,"actions":null}\n"delete my old chem homework and clear the rest of this week" (one clean single item plus a BULK intent -- clear_week is never allowed inside multi_action, even paired with something simple) -> {"kind":"unsupported","intent":null,"days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null,"title":null,"dueDate":null,"dueTime":null,"durationMin":null,"taskKind":null,"genFormat":null,"peakHours":null,"subject":null,"duringClass":false,"clarify":null,"actions":null}';
   const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [...history || [], { r: "user", t: prompt }], model: "flash", format: "studlin_ai_intent" }) });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || "classify-failed");
+  if (!res.ok) {
+    const err = new Error(data.error || "classify-failed");
+    err.status = res.status;
+    throw err;
+  }
   try {
     const raw = (data.reply || "").replace(/```json?|```/g, "").trim();
     const parsed = JSON.parse(raw);
-    if (!parsed || !["question", "coaching", "action", "multi_action", "availability_match", "unsupported"].includes(parsed.kind)) throw new Error("bad-kind");
+    if (!parsed || !["question", "coaching", "app_help", "action", "multi_action", "availability_match", "unsupported"].includes(parsed.kind)) throw new Error("bad-kind");
     if (parsed.kind === "availability_match") {
       const candidates = Array.isArray(parsed.matchCandidates) ? parsed.matchCandidates : [];
       const validCandidate = (c) => c && /^\d{4}-\d{2}-\d{2}$/.test(c.date || "") && /^\d{2}:\d{2}$/.test(c.startTime || "") && (c.endTime == null || /^\d{2}:\d{2}$/.test(c.endTime));
@@ -12607,7 +12630,12 @@ CONVERSATION:
     try {
       parsed = await classifyStudlinAiMessage(text, history);
     } catch (e) {
-      setMessages((m) => [...m, { role: "ai", text: "Couldn't reach Studlin AI. Check your connection and try again.", kind: "error" }]);
+      if (e && e.status === 402) {
+        setPricingOpen(canUseStudlinAiQnaReason() === "free-tier" ? "studlinAiQna" : "aiUsageCap");
+        setMessages((m) => [...m, { role: "ai", text: "Studlin AI needs Pro. I've opened the upgrade options.", kind: "paywall" }]);
+      } else {
+        setMessages((m) => [...m, { role: "ai", text: "Couldn't reach Studlin AI. Check your connection and try again.", kind: "error" }]);
+      }
       setLoading(false);
       return;
     }

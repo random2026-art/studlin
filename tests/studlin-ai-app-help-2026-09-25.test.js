@@ -67,12 +67,33 @@ describe("matchStudlinHelpEntry: real invocations against the verified answer ta
     assert.match(entry.answer, /Calendar or work schedule/);
   });
 
-  test("the Weekly Wrapped entry correctly states ONE toggle covers both the email and the in-app popup -- verified against the real bug fix (isWrappedWindow reads settings.wrapped directly), not assumed from the label alone", () => {
+  test("the Weekly Wrapped entry only claims what's verified: the toggle gates the in-app popup (isWrappedWindow reads settings.wrapped). It must NOT claim an email -- nothing in api/ sends a Weekly Wrapped email (persona audit, 2026-09-25)", () => {
     const m = loadStudlinModule();
     const entry = m.matchStudlinHelpEntry("turn off weekly wrapped");
     assert.ok(entry);
     assert.equal(entry.id, "weekly-wrapped");
-    assert.match(entry.answer, /both the email and the/);
+    assert.match(entry.answer, /popup/);
+    // "Email" also appears in the real Settings path (Notifications -> Email
+    // -> ...), so strip the path before checking the claim itself.
+    const claim = entry.answer.replace("Notifications → Email →", "");
+    assert.doesNotMatch(claim, /email/i, "no server code sends this email, so the answer must not promise it");
+  });
+
+  test("'turn off notifications' points at the real master switch (notifMaster), not the narrow Deadline-alerts toggle (persona audit)", () => {
+    const m = loadStudlinModule();
+    const entry = m.matchStudlinHelpEntry("how do i turn off notifications");
+    assert.ok(entry);
+    assert.equal(entry.id, "notifications-master");
+    assert.match(entry.answer, /Task & App Notifications/);
+    // ...while the overdue phrasing must still reach the Deadline-alerts answer.
+    assert.equal(m.matchStudlinHelpEntry("how do i stop studlin telling me this is overdue").id, "deadline-notifications");
+  });
+
+  test("the overdue answer describes the red dot correctly: it marks a block scheduled AFTER its own due date, not a missed one", () => {
+    const m = loadStudlinModule();
+    const entry = m.matchStudlinHelpEntry("how do i stop studlin telling me this is overdue");
+    assert.ok(entry);
+    assert.match(entry.answer, /scheduled after its own due date/);
   });
 
   test("the task-kinds entry, sourced directly from classifyStudlinAiMessage's own taskKind rules (not re-guessed)", () => {
@@ -106,6 +127,19 @@ describe("StudlinAiDrawer: app_help is wired into both the classifier and the di
 
   test("help message kind gets its own accent color in the drawer's per-kind styling map", () => {
     assert.match(SOURCE, /STUDLIN_AI_MSG_KIND_ACCENT=\{[^}]*help:T\.teal/);
+  });
+
+  test("the classifier's response validator accepts app_help -- it was missing, so every classifier-returned app_help was downgraded to unsupported (persona audit)", () => {
+    assert.ok(SOURCE.includes('["question","coaching","app_help","action","multi_action","availability_match","unsupported"].includes(parsed.kind)'), "the client-side validator must list app_help, same as the classifier prompt's own kind enum");
+  });
+
+  test("a 402 from the classifier shows the upgrade prompt, not 'Couldn't reach Studlin AI. Check your connection' (persona audit)", () => {
+    assert.match(SOURCE, /if\(!res\.ok\)\{const err=new Error\(data\.error\|\|"classify-failed"\);err\.status=res\.status;throw err;\}/);
+    const idx = SOURCE.indexOf("parsed=await classifyStudlinAiMessage(text,history);");
+    assert.notEqual(idx, -1);
+    const body = SOURCE.slice(idx, idx + 900);
+    assert.match(body, /e&&e\.status===402/);
+    assert.match(body, /kind:"paywall"/);
   });
 
   test("send() checks matchStudlinHelpEntry BEFORE calling the Pro-gated classifier, not after -- so a Free student can get app help without ever hitting the paywall", () => {
