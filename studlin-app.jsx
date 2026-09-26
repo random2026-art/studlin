@@ -39809,7 +39809,20 @@ function AuthGate(){
   const [user,setUser]=useState(undefined);
   useEffect(()=>{
     if(shareId)return;
+    // Firebase shares the signed-in account across every tab of this browser.
+    // If another tab signs in as a different account, THIS tab is still holding
+    // the previous account's calendar in memory and would write it into the new
+    // account. Reloading throws that state away; the stored data is cleared
+    // first so the reload starts clean. Kept across a sign-out (null) so
+    // "A, signed out, B" is still caught.
+    let lastSeenUid=null;
     return firebase.auth().onAuthStateChanged(async u=>{
+      if(u&&lastSeenUid&&u.uid!==lastSeenUid){
+        if(window.StudlinOwnerGuard)StudlinOwnerGuard.claim(u.uid);
+        window.location.reload();
+        return;
+      }
+      if(u)lastSeenUid=u.uid;
       // Clears a previous account's local data if a different one is signing in.
       if(u&&window.StudlinOwnerGuard)StudlinOwnerGuard.claim(u.uid);
       if(isFreshOAuthAccount(u)){

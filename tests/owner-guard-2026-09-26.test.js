@@ -65,3 +65,15 @@ describe("wiring", () => {
     assert.ok(onb.includes("StudlinOwnerGuard.claim(u.uid,") && onb.includes("StudlinOwnerGuard.clearOnSignOut()"));
   });
 });
+
+describe("a second open tab reloads when another tab switches accounts", () => {
+  test("the auth listener remembers the last uid across a sign-out and reloads on a different one", () => {
+    const app = fs.readFileSync(path.join(ROOT, "studlin-app.jsx"), "utf8");
+    const i = app.indexOf("let lastSeenUid=null;");
+    assert.ok(i > -1);
+    const body = app.slice(i, i + 700);
+    assert.match(body, /if\(u&&lastSeenUid&&u\.uid!==lastSeenUid\)\{[\s\S]*?window\.location\.reload\(\);[\s\S]*?return;/);
+    assert.match(body, /if\(u\)lastSeenUid=u\.uid;/);
+    assert.ok(body.indexOf("StudlinOwnerGuard.claim(u.uid)") < body.indexOf("window.location.reload()"), "clear first, then reload");
+  });
+});
