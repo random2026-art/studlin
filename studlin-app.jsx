@@ -36712,6 +36712,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
       const data=await res.json().catch(()=>({}));
       if(!res.ok)throw new Error(data.error||"Could not delete account.");
       Object.keys(localStorage).forEach(k=>{if(k.indexOf("studlin-")===0)localStorage.removeItem(k);});
+      if(window.StudlinOwnerGuard)StudlinOwnerGuard.clearOnSignOut();
       try{await firebase.auth().signOut();}catch(e){}
       window.location.href="/";
     }catch(e){
@@ -37507,7 +37508,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                   <div style={{fontSize:14,fontWeight:700,color:T.white}}>Sign out</div>
                   <div style={{fontSize:12,color:T.muted,marginTop:2}}>Signed in as {firebase.auth().currentUser?.email}</div>
                 </div>
-                <button onClick={()=>firebase.auth().signOut().then(()=>{window.location.href="/";})} style={{padding:"7px 16px",borderRadius:6,border:"1px solid rgba(248,113,113,0.3)",background:"rgba(248,113,113,0.08)",color:"#f87171",fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Sign out</button>
+                <button onClick={()=>{if(window.StudlinOwnerGuard)StudlinOwnerGuard.clearOnSignOut();firebase.auth().signOut().then(()=>{window.location.href="/";});}} style={{padding:"7px 16px",borderRadius:6,border:"1px solid rgba(248,113,113,0.3)",background:"rgba(248,113,113,0.08)",color:"#f87171",fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Sign out</button>
               </div>
             </Card>
             <Card style={{marginBottom:12}}>
@@ -39636,7 +39637,7 @@ function VerifyEmailScreen({user}){
           {sendStatus==="sending"?"Sending…":sendStatus==="sent"?"Sent — check your inbox":"Resend code"}
         </button>
       </div>
-      <button onClick={()=>firebase.auth().signOut()} style={{background:"none",border:"none",color:"rgba(232,239,231,0.4)",fontSize:12.5,cursor:"pointer",textDecoration:"underline"}}>Sign out</button>
+      <button onClick={()=>{if(window.StudlinOwnerGuard)StudlinOwnerGuard.clearOnSignOut();firebase.auth().signOut();}} style={{background:"none",border:"none",color:"rgba(232,239,231,0.4)",fontSize:12.5,cursor:"pointer",textDecoration:"underline"}}>Sign out</button>
     </div>
   );
 }
@@ -39707,6 +39708,8 @@ function AuthGate(){
   useEffect(()=>{
     if(shareId)return;
     return firebase.auth().onAuthStateChanged(async u=>{
+      // Clears a previous account's local data if a different one is signing in.
+      if(u&&window.StudlinOwnerGuard)StudlinOwnerGuard.claim(u.uid);
       if(isFreshOAuthAccount(u)){
         // Kept signed in (not deleted): onboarding resumes an already-signed-in
         // Google user at the Profile step, same as the sign-in page does.
