@@ -216,8 +216,16 @@ function StepSignup({ state, set, advance }) {
       }
       try {
         const token = await cred.user.getIdToken();
-        await fetch("/api/send-verification", { method: "POST", headers: { Authorization: "Bearer " + token } });
+        const sendRes = await fetch("/api/send-verification", { method: "POST", headers: { Authorization: "Bearer " + token } });
+        try {
+          localStorage.setItem("studlin-verifySent", sendRes.ok ? "ok" : "failed");
+        } catch (e) {
+        }
       } catch (e) {
+        try {
+          localStorage.setItem("studlin-verifySent", "failed");
+        } catch (e2) {
+        }
       }
       advance(true);
     } catch (err) {
@@ -286,6 +294,10 @@ function StepVerify({ advanceToProfile }) {
       const res = await fetch("/api/send-verification", { method: "POST", headers: { Authorization: "Bearer " + token } });
       const d = await res.json().catch(() => ({}));
       if (res.ok && d.ok) {
+        try {
+          localStorage.setItem("studlin-verifySent", "ok");
+        } catch (e) {
+        }
         setSendStatus("sent");
         setTimeout(() => setSendStatus("idle"), 3e4);
       } else {
@@ -296,6 +308,30 @@ function StepVerify({ advanceToProfile }) {
       setErr("Couldn't send the email. Try again shortly.");
       setSendStatus("idle");
     }
+  };
+  const autoSent = useRef(false);
+  useEffect(() => {
+    if (!user || autoSent.current) return;
+    let flag = "";
+    try {
+      flag = localStorage.getItem("studlin-verifySent") || "";
+    } catch (e) {
+    }
+    if (flag === "ok") return;
+    autoSent.current = true;
+    resend();
+  }, [user]);
+  const startOver = async () => {
+    try {
+      localStorage.removeItem("studlin-onboarding");
+      localStorage.removeItem("studlin-verifySent");
+    } catch (e) {
+    }
+    try {
+      await firebase.auth().signOut();
+    } catch (e) {
+    }
+    window.location.href = "/onboarding";
   };
   const submitCode = async () => {
     if (code.length !== 6 || checking) return;
@@ -318,7 +354,7 @@ function StepVerify({ advanceToProfile }) {
   return /* @__PURE__ */ React.createElement("div", { className: "frame" }, /* @__PURE__ */ React.createElement("div", { className: "frame-head" }, /* @__PURE__ */ React.createElement("h2", null, "Enter your ", /* @__PURE__ */ React.createElement("em", null, "code")), /* @__PURE__ */ React.createElement("p", null, "We sent a 6-digit code to ", /* @__PURE__ */ React.createElement("strong", null, user && user.email), ".")), /* @__PURE__ */ React.createElement(OtpBoxes, { value: code, onChange: (v) => {
     setCode(v);
     setErr("");
-  }, disabled: checking, autoFocus: true }), err && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: "#C4544A", marginBottom: 16, padding: "12px 14px", background: "#FCF1EF", borderRadius: 10, border: "1px solid #F5D4D0", textAlign: "center" } }, err), /* @__PURE__ */ React.createElement("button", { className: "cta lime", disabled: code.length !== 6 || checking, onClick: submitCode, style: { width: "100%", justifyContent: "center", marginBottom: 12 } }, checking ? "Verifying\u2026" : "Verify email"), /* @__PURE__ */ React.createElement("button", { className: "provider", disabled: sendStatus === "sending" || sendStatus === "sent", onClick: resend }, sendStatus === "sending" ? "Sending\u2026" : sendStatus === "sent" ? "Sent, check your inbox" : "Resend code"));
+  }, disabled: checking, autoFocus: true }), err && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: "#C4544A", marginBottom: 16, padding: "12px 14px", background: "#FCF1EF", borderRadius: 10, border: "1px solid #F5D4D0", textAlign: "center" } }, err), /* @__PURE__ */ React.createElement("button", { className: "cta lime", disabled: code.length !== 6 || checking, onClick: submitCode, style: { width: "100%", justifyContent: "center", marginBottom: 12 } }, checking ? "Verifying\u2026" : "Verify email"), /* @__PURE__ */ React.createElement("button", { className: "provider", disabled: sendStatus === "sending" || sendStatus === "sent", onClick: resend }, sendStatus === "sending" ? "Sending\u2026" : sendStatus === "sent" ? "Sent, check your inbox" : "Resend code"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: startOver, style: { display: "block", margin: "14px auto 0", background: "none", border: "none", color: "inherit", opacity: 0.7, fontSize: 13, textDecoration: "underline", cursor: "pointer" } }, "Wrong email? Start over."));
 }
 const USERNAME_RE = /^[a-z][a-z0-9_]{2,19}$/;
 const SCHOOL_NAME_STOPWORDS = /* @__PURE__ */ new Set(["the", "of", "at", "a", "an"]);

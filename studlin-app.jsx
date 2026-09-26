@@ -38395,8 +38395,8 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                 </div>
                 <div style={{textAlign:"right"}}>
                   <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.bg,opacity:0.6}}>AI CHAT MESSAGES</div>
-                  <div style={{fontSize:26,fontWeight:700,color:T.bg,letterSpacing:"-0.02em",marginTop:4}}>{getPlan()==="Pro"?"Unlimited":getCredits()+" / "+getCreditLimit()}</div>
-                  <div style={{fontSize:13,color:T.bg,opacity:0.75,marginTop:4}}>{getPlan()==="Pro"?"No monthly cap":"Resets in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")}</div>
+                  <div style={{fontSize:26,fontWeight:700,color:T.bg,letterSpacing:"-0.02em",marginTop:4}}>{getPlan()==="Pro"?"Included":getCredits()+" / "+getCreditLimit()}</div>
+                  <div style={{fontSize:13,color:T.bg,opacity:0.75,marginTop:4}}>{getPlan()==="Pro"?"Generous monthly limits":"Resets in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")}</div>
                 </div>
               </div>
               {getPlan()!=="Pro"&&<div style={{display:"flex",gap:8,marginTop:18,flexWrap:"wrap"}}>
@@ -38421,7 +38421,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             <Card style={{marginBottom:12}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
                 <div style={{fontSize:14,fontWeight:700,color:T.white}}>Payment methods</div>
-                <BtnSm variant="subtle" onClick={()=>alert("To add a new card, make any purchase — your card will be saved automatically.")}>+ Add card</BtnSm>
+                <BtnSm variant="subtle" onClick={()=>showToast("To add a new card, make any purchase. Your card is saved automatically.")}>+ Add card</BtnSm>
               </div>
               {billingInfo===null?(
                 <div style={{fontSize:12,color:T.muted,padding:"14px 0"}}>Loading…</div>
@@ -42061,8 +42061,8 @@ function App() {
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",position:"relative"}}>
             <div>
               <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",fontWeight:600,color:"rgba(8,12,40,0.6)"}}>CURRENT BALANCE</div>
-              <div style={{fontFamily:T.hand,fontSize:54,fontWeight:700,color:T.ink,lineHeight:0.9,marginTop:4}}>{getPlan()==="Pro"?"Unlimited":getCredits()+""}<span style={{fontFamily:T.font,fontSize:18,fontWeight:500,color:"rgba(8,12,40,0.55)",marginLeft:4}}>{getPlan()==="Pro"?"":"/ "+getCreditLimit()}</span></div>
-              <div style={{fontSize:12,color:"rgba(8,12,40,0.65)",marginTop:4}}>{getPlan()==="Pro"?"No monthly cap":"Resets in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")+" · "+(getCreditLimit()-getCredits())+" used this cycle"}</div>
+              <div style={{fontFamily:T.hand,fontSize:54,fontWeight:700,color:T.ink,lineHeight:0.9,marginTop:4}}>{getPlan()==="Pro"?"Included":getCredits()+""}<span style={{fontFamily:T.font,fontSize:18,fontWeight:500,color:"rgba(8,12,40,0.55)",marginLeft:4}}>{getPlan()==="Pro"?"":"/ "+getCreditLimit()}</span></div>
+              <div style={{fontSize:12,color:"rgba(8,12,40,0.65)",marginTop:4}}>{getPlan()==="Pro"?"Generous monthly limits":"Resets in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")+" · "+(getCreditLimit()-getCredits())+" used this cycle"}</div>
             </div>
             <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.16em",fontWeight:700,background:T.ink,color:T.lime,padding:"4px 8px",borderRadius:5}}>{getPlan().toUpperCase()}</span>
           </div>
@@ -42097,7 +42097,7 @@ function App() {
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:16,padding:"12px 14px",background:T.card2,borderRadius:10,border:`1px solid ${T.border}`}}>
           <div>
             <div style={{fontSize:12.5,color:T.text,fontWeight:600}}>Hit your cap often?</div>
-            <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>Pro plan gives you unlimited AI chat, no credits needed.</div>
+            <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>Pro plan gives you generous monthly AI limits, no credits needed.</div>
           </div>
           <a href="checkout.html?plan=pro&billing=monthly" style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:7,fontSize:12,fontWeight:600,background:T.ink,color:T.lime,textDecoration:"none",fontFamily:T.font}}>Upgrade to Pro</a>
         </div>
