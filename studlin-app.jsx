@@ -8205,6 +8205,11 @@ function aiGateBlockReason(usage,limit){
   return usage.count<effectiveProLimit(limit)?null:"feature-cap";
 }
 function canScanSyllabusReason(){return aiGateBlockReason(getSyllabusScanUsage(),PRO_SYLLABUS_SCAN_LIMIT);}
+// A free student who already spent their one scan should hear that, not a generic "Pro feature".
+function syllabusPaywallKey(){
+  if(canScanSyllabusReason()!=="free-tier")return "aiUsageCap";
+  return lsGet("freeSyllabusScanUsed",false)?"syllabusScanUsed":"syllabusScan";
+}
 
 // A screenshot import (Canvas weekly view, a photographed syllabus page)
 // costs meaningfully more than a text-only syllabus scan -- image tokens,
@@ -8995,6 +9000,7 @@ function dismissImportReviewNudge(){
 // still deserve the nudge, same reasoning as shouldShowWeekBalanceNudge above.
 const SYLLABUS_NUDGE_COOLDOWN_MS=3*86400000;
 function shouldShowSyllabusNudge(){
+  if(!canScanSyllabus())return false;
   const dismissedAt=lsGet("syllabusNudgeDismissedAt",0);
   return Date.now()-dismissedAt>=SYLLABUS_NUDGE_COOLDOWN_MS;
 }
@@ -20964,7 +20970,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
     }else if(isImportSyllabus){
       if(!canScanSyllabus()){
         const reason=canScanSyllabusReason();
-        setPricingOpen(reason==="free-tier"?"syllabusScan":"aiUsageCap");
+        setPricingOpen(syllabusPaywallKey());
         setMessages(m=>[...m,{role:"ai",text:"Importing several dates at once through Studlin AI needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
         return;
       }
@@ -21329,7 +21335,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
       commitStudlinAiPeakHours(getSchedulePreferences(),proposal.bucketId);
       recordSmartReschedule();
     }else if(proposal.kind==="import_syllabus_items"){
-      if(!canScanSyllabus()){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}
+      if(!canScanSyllabus()){setPricingOpen(syllabusPaywallKey());return;}
       // Same courseIdForLabelFuzzy-then-create-if-missing pattern the
       // syllabus review screen's own "Add to Calendar" button uses (see
       // its comment) -- a name typed slightly differently than an
@@ -24841,7 +24847,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";
     const ext=file.name.split(".").pop().toLowerCase();
     if(IMAGE_EXT_MEDIA_TYPES[ext]){if(!canScanScreenshot()&&!canFreeOnboardingScan("syllabus")){setPricingOpen(canScanScreenshotReason()==="free-tier"?"screenshotScan":"aiUsageCap");return;}}
-    else{if(!canScanSyllabus()&&!canFreeOnboardingScan("syllabus")){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}}
+    else{if(!canScanSyllabus()&&!canFreeOnboardingScan("syllabus")){setPricingOpen(syllabusPaywallKey());return;}}
     setScanning(true);setScanError("");
     try{
       if(IMAGE_EXT_MEDIA_TYPES[ext]){
@@ -24883,7 +24889,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
 
   const handlePasteScan=async({merge}={})=>{
     if(!pasteText.trim())return;
-    if(!canScanSyllabus()&&!canFreeOnboardingScan("syllabus")){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}
+    if(!canScanSyllabus()&&!canFreeOnboardingScan("syllabus")){setPricingOpen(syllabusPaywallKey());return;}
     setScanning(true);setScanError("");
     try{
       const result=await extractClassSyllabusText(pasteText);
@@ -25028,7 +25034,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     const allImages=exts.every(ext=>IMAGE_EXT_MEDIA_TYPES[ext]);
     if(files.length>1&&!allImages){setScanError("Select multiple photos/screenshots together, or a single PDF/Word/text file -- not a mix.");return;}
     if(allImages){stageScheduleImages(files,setCollegeStagedImages);return;}
-    if(!canScanSyllabus()&&!canFreeOnboardingScan("schedule")){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}
+    if(!canScanSyllabus()&&!canFreeOnboardingScan("schedule")){setPricingOpen(syllabusPaywallKey());return;}
     setScanning(true);setScanError("");
     try{
       const file=files[0],ext=exts[0];
@@ -25084,7 +25090,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   };
   const handleCollegeSchedulePaste=async()=>{
     if(!pasteText.trim())return;
-    if(!canScanSyllabus()&&!canFreeOnboardingScan("schedule")){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}
+    if(!canScanSyllabus()&&!canFreeOnboardingScan("schedule")){setPricingOpen(syllabusPaywallKey());return;}
     setScanning(true);setScanError("");
     try{
       const result=await extractCollegeScheduleText(pasteText);
@@ -25150,7 +25156,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     const allImages=exts.every(ext=>IMAGE_EXT_MEDIA_TYPES[ext]);
     if(files.length>1&&!allImages){setScanError("Select multiple photos/screenshots together, or a single PDF/Word/text file -- not a mix.");return;}
     if(allImages){stageScheduleImages(files,setHsStagedImages);return;}
-    if(!canScanSyllabus()&&!canFreeOnboardingScan("schedule")){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}
+    if(!canScanSyllabus()&&!canFreeOnboardingScan("schedule")){setPricingOpen(syllabusPaywallKey());return;}
     setScanning(true);setScanError("");
     try{
       const file=files[0],ext=exts[0];
@@ -25207,7 +25213,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
 
   const handleHsPasteScan=async()=>{
     if(!hsPasteText.trim())return;
-    if(!canScanSyllabus()&&!canFreeOnboardingScan("schedule")){setPricingOpen(canScanSyllabusReason()==="free-tier"?"syllabusScan":"aiUsageCap");return;}
+    if(!canScanSyllabus()&&!canFreeOnboardingScan("schedule")){setPricingOpen(syllabusPaywallKey());return;}
     setScanning(true);setScanError("");
     try{
       const result=await extractHsScheduleFromText(hsPasteText);
@@ -35654,6 +35660,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             <button type="button" onClick={bdListening?stopBdRec:startBdRec} title={bdListening?"Stop listening":"Speak instead of typing"} style={{position:"absolute",right:8,bottom:8,width:30,height:30,borderRadius:"50%",border:"none",background:bdListening?T.red:T.lime,color:bdListening?"#fff":T.ink,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{bdListening?<span style={{width:10,height:10,background:"#fff",borderRadius:2}} />:Icon.mic}</button>
           )}
         </div>
+        {!canUseBrainDump()&&<div style={{fontSize:12,color:T.muted,marginTop:8}}>{canUseBrainDumpReason()==="free-tier"?"Brain dump is a Pro feature. ":AI_USAGE_CAP_MESSAGE+" "}<span role="button" tabIndex={0} onClick={()=>setPricingOpen(canUseBrainDumpReason()==="free-tier"?"brainDump":"aiUsageCap")} onKeyDown={e=>{if(e.key==="Enter")setPricingOpen(canUseBrainDumpReason()==="free-tier"?"brainDump":"aiUsageCap");}} style={{color:T.lime,fontWeight:600,cursor:"pointer"}}>See plans</span></div>}
         {bdListening&&<div style={{fontSize:11.5,color:T.red,marginTop:6}}>Listening... tap the mic to stop</div>}
         {!bdListening&&bdMicError&&<div style={{fontSize:11.5,color:T.red,marginTop:6}}>{bdMicError}</div>}
         {brainDumpLoading&&<div style={{fontSize:11.5,color:T.muted,marginTop:6}}>Reading through everything you said...</div>}
@@ -37968,7 +37975,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                     {Icon.file}
                   </div>
                   <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:13,fontWeight:600,color:T.white}}>Scan your work schedule</div>
+                    <div style={{fontSize:13,fontWeight:600,color:T.white}}>Scan your work schedule{!canScanSyllabus()&&<span style={{marginLeft:8,fontSize:10.5,fontWeight:700,color:T.lime}}>PRO</span>}</div>
                     <div style={{fontSize:11,color:T.muted,marginTop:2}}>No calendar link? Upload a photo — for When I Work, Homebase, or any shift app</div>
                   </div>
                   <BtnSm variant="lime" onClick={openWorkScanModal} style={{flexShrink:0}}>Scan</BtnSm>
@@ -38078,7 +38085,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             </Card>
             <Modal open={importCalOpen} onClose={()=>{setImportCalOpen(false);openNextQueuedImportCal();}}
               title={importCalReview?"Review "+importCalReview.label:importCalPlatformHint?"Connect "+PLATFORM_HELP[importCalPlatformHint].label:"Connect a calendar or work schedule"}
-              sub={importCalReview?(importCalReview.classified?"Studlin sorted these into assignments, exams, and projects. Check anything that looks off before adding.":"These will be added as fixed, occupied time. Studlin will plan around them."):(
+              sub={importCalReview?(importCalReview.classified?"Studlin sorted these into assignments, exams, and projects. Check anything that looks off before adding.":"Studlin didn't sort these into assignments and exams (that's a Pro feature, or this month's limit is used up). They'll be added as fixed, occupied time and Studlin will plan around them."):(
                 importCalPlatformHint==="canvas"&&importCalMethod==="token"?"Connect with an access token to pull real assignment details and grade weights straight from Canvas.":
                 importCalPlatformHint?"Paste your personal "+PLATFORM_HELP[importCalPlatformHint].label+" calendar feed link. See how below.":
                 "Paste a calendar or work-schedule link (Google, Outlook, iCloud, or your shift-scheduling app's calendar feed)."
@@ -40914,6 +40921,7 @@ function App() {
     projectBreakdown:"AI project breakdowns are a Pro feature.",
     aiArrange:"AI scheduling is a Pro feature.",
     syllabusScan:"Syllabus & schedule scans are a Pro feature.",
+    syllabusScanUsed:"You've used your free scan. Pro scans every class.",
     screenshotScan:"Screenshot imports are a Pro feature.",
     studlinAiQna:"Studlin AI is a Pro feature.",
     studyMaterialGen:"AI flashcards & practice quizzes are a Pro feature.",
