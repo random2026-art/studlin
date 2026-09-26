@@ -918,6 +918,21 @@ const lsGet=(k,d)=>{try{const v=localStorage.getItem("studlin-"+k);return v===nu
 // transparently at this single choke point instead.
 const syncWriteHooks={};
 const lsSet=(k,v)=>{try{localStorage.setItem("studlin-"+k,JSON.stringify(v));}catch(e){}if(syncWriteHooks[k])syncWriteHooks[k](v);};
+// Settings > Privacy "Anonymous usage analytics". 2026-09-25 persona audit:
+// this toggle used to be read by nothing while PostHog and Firebase
+// Analytics started unconditionally on every page load -- and it defaulted
+// to "off", so the switch actively described the opposite of what was
+// happening. Now real: the choice lives under its own key
+// (studlin-analyticsOptOut, written ONLY when the student flips the switch
+// -- SettingsTab's tog() saves every toggle's default when any one is
+// touched, so the old settings.analytics value can't tell "chose off" from
+// "never touched") and the HTML entry points read it before starting
+// either tracker. This applies a change made while the app is already
+// open. Device-local, like every other setting today.
+function applyAnalyticsChoice(optOut){
+  try{if(window.posthog){optOut?window.posthog.opt_out_capturing():window.posthog.opt_in_capturing();}}catch(e){}
+  try{if(window.firebase&&firebase.analytics)firebase.analytics().setAnalyticsCollectionEnabled(!optOut);}catch(e){}
+}
 // A fire-and-forget write failing used to just vanish — no record anywhere,
 // for us or the student. This is the one place that decides "does a caught
 // error get reported," so a silent .catch(()=>{}) can become
@@ -2560,7 +2575,12 @@ const STUDLIN_HELP_ENTRIES=[
     // claimed the toggle controls an email. Nothing in api/ sends a Weekly
     // Wrapped email (only note/welcome/verification emails exist), so that
     // half was never true -- it was assumed from the Settings label.
-    answer:"Settings → Notifications → Email → \"Weekly Wrapped digest\" turns off the Weekly Wrapped popup that opens Sunday/Monday evening."},
+    answer:"Settings → Notifications → Reminders → \"Weekly Wrapped popup\" turns off the recap that opens Sunday and Monday evenings."},
+  // Added 2026-09-25 with the analytics opt-out becoming real (it was a
+  // do-nothing toggle before). Device-local, so the answer says "on this
+  // device" rather than promising it follows the account.
+  {id:"analytics-opt-out",keywords:["turn off analytics","opt out of analytics","stop tracking me","usage analytics","stop analytics"],
+    answer:"Settings → Privacy → Data & AI → \"Anonymous usage analytics.\" It's on by default. Turning it off stops it on this device."},
   {id:"shared-study-window",keywords:["find shared study window","study time with a friend","schedule with a friend","find time with a friend"],
     answer:"Open the quick-actions menu and choose \"Find Shared Study Window.\" Manual checks one specific time against your own calendar; Match scans for free time automatically."},
   {id:"join-lock-in",keywords:["join lock-in","join lock in","what is lock-in"],
@@ -36215,7 +36235,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     setMergeConfirm(null);
   };
   const [canvasSeeding,setCanvasSeeding]=useState(false);
-  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,classReminders:false,analytics:false,onlineStatus:true,incognito:false,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false,askCheckIns:true,askDurationQuestions:true},...lsGet("settings",{})}));
+  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,classReminders:false,onlineStatus:true,incognito:false,profile:true,share:true,twofa:false,motion:false,hand:true,wrapped:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false,askCheckIns:true,askDurationQuestions:true},...lsGet("settings",{})}));
   // 2026-09-13: "Share my free/busy time" used to be all-or-nothing (on =
   // every current accepted friend). shareAvailabilityMode lets a student
   // restrict it to specific people instead -- see the picker modal below
@@ -36267,6 +36287,17 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     const enabled=!toggles[key];
     setQuestionAskPref(key,enabled);
     setToggles(t=>({...t,[key]:enabled}));
+  };
+  // See applyAnalyticsChoice. Own state + own storage key, deliberately not
+  // part of `toggles`: that object persists every default the moment any
+  // toggle is touched, which would read as "opted out" for someone who
+  // never chose anything.
+  const [analyticsOptOut,setAnalyticsOptOut]=useState(()=>lsGet("analyticsOptOut",false)===true);
+  const toggleAnalytics=()=>{
+    const next=!analyticsOptOut;
+    setAnalyticsOptOut(next);
+    lsSet("analyticsOptOut",next);
+    applyAnalyticsChoice(next);
   };
   const tog=k=>setToggles(t=>{
     const n={...t,[k]:!t[k]};
@@ -37528,13 +37559,15 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <Row label="Class & activity reminders" sub="A heads-up 10 and 5 minutes before any class, meeting, or activity on your Weekly Routine starts." k="classReminders" />
               <Row label="Streak reminders" sub="A nudge if you haven't logged any study time by 8pm." k="streak" />
               <Row label="Focus sound alerts" sub="Audio cue when Pomodoro sessions complete." k="sound" />
-            </Card>
-            <Card>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Email</div>
-              <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Studlin will only email you when it matters.</div>
-              <Row label="Weekly Wrapped digest" sub="Your stats, every Sunday evening." k="wrapped" />
-              <Row label="Study milestones" sub="When you hit a streak milestone or level up." k="squad" />
-              <Row label="Product updates" sub="Occasional notes about new features and tips." k="emails" />
+              {/* 2026-09-25 persona audit: this used to sit in an "Email" card
+                  alongside "Study milestones" and "Product updates" -- neither
+                  of those was read anywhere, and no server code sends any of
+                  those three emails (the only emails api/ sends are note
+                  shares, the welcome message and the sign-up code). The
+                  Weekly Wrapped switch itself IS real, but what it gates is
+                  the in-app popup (see isWrappedWindow), so it lives here
+                  with an honest name instead. */}
+              <Row label="Weekly Wrapped popup" sub="A recap of your week that opens Sunday and Monday evenings." k="wrapped" />
             </Card>
           </>)}
 
@@ -37676,8 +37709,15 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Data &amp; AI</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>You own your notes, essays, and recordings.</div>
-              <Row label="Use my work to train Studlin AI" sub="Off by default. We will never share your raw content." k="collect" />
-              <Row label="Anonymous usage analytics" sub="Helps us fix bugs and prioritise features." k="analytics" />
+              {/* "Use my work to train Studlin AI" used to be here -- read by
+                  nothing, and nothing trains on student content (privacy.html
+                  says as much), so it promised a control that didn't exist.
+                  Removed 2026-09-25. */}
+              <Row label="Anonymous usage analytics" sub="Helps us fix bugs and prioritise features. On by default; turn it off any time." k="_" right={
+                <div onClick={toggleAnalytics} style={{width:38,height:20,borderRadius:10,background:!analyticsOptOut?T.lime:T.card2,border:`1px solid ${!analyticsOptOut?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
+                  <div style={{width:14,height:14,borderRadius:"50%",background:!analyticsOptOut?T.bg:"#fff",position:"absolute",top:2,left:!analyticsOptOut?21:2,transition:"left 0.2s"}} />
+                </div>
+              } />
               <div style={{display:"flex",gap:8,marginTop:14,flexWrap:"wrap"}}>
                 <Btn variant="subtle" onClick={exportAllData}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.copy,"Export all data")}</Btn>
                 <Btn variant="subtle" onClick={downloadChatHistory} disabled={chatHistoryLoading}>{chatHistoryLoading?"Preparing…":"Download chat history"}</Btn>
