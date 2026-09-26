@@ -23968,11 +23968,20 @@ function WizardCollegeBuilder({items,addItem,removeItem,updateItem,defaultTitle,
 // Reordering is cosmetic only. Caller controls the shape of a freshly-
 // added row via makeNewItem (RosterList itself only ever touches
 // title/color on existing rows).
-function RosterList({items,setItems,makeNewItem,addLabel}){
+function RosterList({items,setItems,makeNewItem,addLabel,withSchedule}){
   const [dragIdx,setDragIdx]=useState(null);
   const addRow=()=>setItems(prev=>[...prev,makeNewItem(prev.length)]);
   const updateRow=(id,patch)=>setItems(prev=>prev.map(r=>r.id===id?{...r,...patch}:r));
   const removeRow=(id)=>setItems(prev=>prev.filter(r=>r.id!==id));
+  // Picking a first day fills in a starting time and length so a day never
+  // exists without a time (a routine with days but no time can't be placed).
+  const toggleDay=(r,d)=>{
+    const days=(r.days||[]).includes(d)?(r.days||[]).filter(x=>x!==d):[...(r.days||[]),d];
+    const patch={days};
+    if(days.length>0){if(!r.startTime)patch.startTime="16:00";if(!r.duration)patch.duration=60;}
+    else{patch.startTime=null;patch.duration=null;}
+    updateRow(r.id,patch);
+  };
   const reorder=(fromIdx,toIdx)=>setItems(prev=>{
     const next=prev.slice();
     const [moved]=next.splice(fromIdx,1);
@@ -23985,11 +23994,26 @@ function RosterList({items,setItems,makeNewItem,addLabel}){
         {items.map((r,i)=>(
           <div key={r.id} draggable onDragStart={()=>setDragIdx(i)} onDragOver={e=>e.preventDefault()}
             onDrop={()=>{if(dragIdx!==null&&dragIdx!==i)reorder(dragIdx,i);setDragIdx(null);}}
-            style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2}}>
+            style={{display:"flex",flexDirection:"column",gap:8,padding:"8px 10px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
             <span title="Drag to reorder" style={{cursor:"grab",color:T.faint,fontSize:13,lineHeight:1,userSelect:"none"}}>⠿</span>
             <ColorSelect value={r.color} onChange={c=>updateRow(r.id,{color:c})} />
             <Input value={r.title} onChange={e=>updateRow(r.id,{title:e.target.value})} placeholder="Name" style={{flex:1}} />
-            <button type="button" onClick={()=>removeRow(r.id)} title="Remove" style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:16,padding:"0 2px"}}>×</button>
+            <button type="button" onClick={()=>removeRow(r.id)} title="Remove" aria-label={"Remove "+(r.title||"item")} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:16,padding:"0 2px"}}>×</button>
+            </div>
+            {withSchedule&&(
+              <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",paddingLeft:24}}>
+                {ROUTINE_DOW.map(d=>{const on=(r.days||[]).includes(d);return (
+                  <button key={d} type="button" aria-pressed={on} onClick={()=>toggleDay(r,d)} style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${on?T.lime:T.border}`,background:on?T.lime+"22":"transparent",color:on?T.text:T.muted,fontSize:11.5,fontFamily:T.font,cursor:"pointer"}}>{d}</button>
+                );})}
+                {(r.days||[]).length>0&&(<>
+                  <input type="time" aria-label={"Start time for "+(r.title||"activity")} value={r.startTime||"16:00"} onChange={e=>updateRow(r.id,{startTime:e.target.value||"16:00"})} style={{padding:"4px 6px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card,color:T.text,fontSize:12,fontFamily:T.font}} />
+                  <select aria-label={"Length of "+(r.title||"activity")} value={r.duration||60} onChange={e=>updateRow(r.id,{duration:parseInt(e.target.value,10)})} style={{padding:"4px 6px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card,color:T.text,fontSize:12,fontFamily:T.font}}>
+                    {[30,45,60,90,120,180].map(m=><option key={m} value={m}>{m>=60?(m/60)+(m===60?" hour":" hours"):m+" min"}</option>)}
+                  </select>
+                </>)}
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -24625,6 +24649,21 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     setWorkStart(prefs.workStartTime||"10:00");
     setWorkEnd(prefs.workEndTime||"18:00");
     setPeakBuckets(prefs.peakHourBuckets||[]);
+    // Pick up where a closed or refreshed first-time setup left off (the
+    // step, term dates, wake/sleep and activities; staged classes already
+    // restore above). Nothing here touches the real calendar.
+    if(!quickScan){
+      const draft=lsGet("classSetupDraft",null);
+      if(draft&&typeof draft==="object"&&Date.now()-(draft.savedAt||0)<14*86400000){
+        if(typeof draft.status==="string"&&draft.status)setStatus(draft.status);
+        if(typeof draft.termStart==="string")setTermStart(draft.termStart);
+        if(typeof draft.termEnd==="string")setTermEnd(draft.termEnd);
+        if(typeof draft.wakeTime==="string")setWakeTime(draft.wakeTime);
+        if(typeof draft.sleepTime==="string")setSleepTime(draft.sleepTime);
+        if(Array.isArray(draft.activities))setActivities(draft.activities);
+        if(WIZARD_STEP_ORDER.includes(draft.step))setStep(draft.step);
+      }
+    }
   },[open]);
 
   // What the final drill-down review actually shows -- threads one shared
@@ -24648,6 +24687,10 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   // leftover ids from an earlier one too.
   const newlyCommittedIdsRef=useRef([]);
   useEffect(()=>{if(open)newlyCommittedIdsRef.current=[];},[open]);
+  useEffect(()=>{
+    if(!open||quickScan)return;
+    lsSet("classSetupDraft",{step,status,termStart,termEnd,wakeTime,sleepTime,activities,savedAt:Date.now()});
+  },[open,step,status,termStart,termEnd,wakeTime,sleepTime,activities]);
 
   if(!open)return null;
 
@@ -25514,6 +25557,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     if(termStart&&termEnd&&termEnd>=termStart)saveSchoolTerm({start:termStart,end:termEnd});
     saveWakeSleep({wakeTime,sleepTime});
     lsSet("classSetupPending",[]);
+    lsSet("classSetupDraft",null);
     setPendingClasses([]);
     // See wizPostOnboardConnect's own comment -- queues Settings' own
     // connect-a-calendar modal (that's where openImportCalModal actually
@@ -26118,7 +26162,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
           })()}
 
           {step==="activities"&&(<>
-            <TitleSub title="Anything else that repeats every week?" sub="Work shifts, practice, clubs, routines. Set exactly when later by dragging it onto your calendar." />
+            <TitleSub title="Anything else that repeats every week?" sub="Work shifts, practice, clubs, routines. Pick the days and time now, or drag it onto your calendar later." />
             {/* 2026-07-29: WizardCollegeBuilder (configure days/time/
                 duration before it's even added) replaced with RosterList
                 -- Shovel's actual Activities screen is just a named,
@@ -26134,7 +26178,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                 {id:"act-"+Date.now()+"-5",title:"Me Time",color:SUBJECT_COLORS[4],kind:"busy",days:[],startTime:null,duration:null},
               ])} style={{width:"100%",padding:"12px",borderRadius:6,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.text,cursor:"pointer",fontFamily:T.font,fontSize:13,fontWeight:600,marginBottom:18}}>Start with default activities</button>
             )}
-            <RosterList items={activities} setItems={setActivities} addLabel="Activity"
+            <RosterList items={activities} setItems={setActivities} addLabel="Activity" withSchedule
               makeNewItem={(i)=>({id:"act-"+Date.now()+"-"+i,title:"",color:SUBJECT_COLORS[i%SUBJECT_COLORS.length],kind:"busy",days:[],startTime:null,duration:null})} />
           </>)}
 
@@ -26296,6 +26340,9 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                 out. */}
             {quickScan&&(
               <button type="button" onClick={onSkip} style={{fontSize:12.5,color:T.muted,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,padding:0}}>Cancel</button>
+            )}
+            {!quickScan&&onSkip&&(
+              <button type="button" onClick={onSkip} style={{fontSize:12.5,color:T.muted,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,padding:0}}>Save and finish later</button>
             )}
           </div>
           <div style={{display:"flex",gap:10}}>
@@ -30732,6 +30779,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const finishClassSetup=(newIds)=>{
     lsSet("subjects-configured",true);
     lsSet("hasConfiguredRoutine",true);
+    lsSet("classSetupDraft",null);
     setClassSetupOpen(false);
     syncClassSetupState();
     // Quick-demo tour now starts here, not on mount -- see CAL_TOUR_STEPS'
@@ -31063,6 +31111,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     if(!lsGet("pendingBrainDump",false))return;
     try{localStorage.removeItem("studlin-pendingBrainDump");}catch(e){}
     setBrainDumpOpen(true);
+  },[]);
+  // One-shot from Dashboard's empty "Coming up" card: lands on Calendar with
+  // the add form already open (free for everyone, unlike Brain Dump).
+  useEffect(()=>{
+    if(!lsGet("pendingAddTask",false))return;
+    try{localStorage.removeItem("studlin-pendingAddTask");}catch(e){}
+    setNewOpen(true);
   },[]);
   // Same one-shot deep-link pattern as pendingBrainDump above -- set by
   // EventDetailModal's jumpToCalendar (a manual/Attack Block session row's
@@ -34618,7 +34673,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         <TourStep {...CAL_TOUR_STEPS[calTourStep]} step={calTourStep} total={CAL_TOUR_STEPS.length}
           isLast={calTourStep===CAL_TOUR_STEPS.length-1} onNext={advanceCalTour} onSkip={skipCalTour} />
       )}
-      <ClassSetupWizard open={classSetupOpen} initialStatus={getProfile().status} onFinish={finishClassSetup} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
+      <ClassSetupWizard open={classSetupOpen} initialStatus={getProfile().status} onSkip={()=>setClassSetupOpen(false)} onFinish={finishClassSetup} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
       <ClassSetupWizard open={quickScanOpen} quickScan targetCourseId={quickScanTargetCourseId} initialStatus={getProfile().status} onFinish={finishQuickScan} onSkip={()=>{setQuickScanOpen(false);setQuickScanTargetCourseId(null);syncClassSetupState();}} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
       <Modal open={!!weeklyContentCourseId} onClose={()=>setWeeklyContentCourseId(null)} title="Class notes" sub="A short note for each day this class meets -- lecture, lab, homework due, whatever's useful." width={460}
         footer={<><Btn variant="subtle" onClick={()=>setWeeklyContentCourseId(null)}>Cancel</Btn><Btn onClick={saveWeeklyContent}>Save</Btn></>}>
@@ -39257,7 +39312,10 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
             <button onClick={()=>setActive("calendar")} style={{fontSize:12,color:T.muted,display:"inline-flex",alignItems:"center",gap:3,cursor:"pointer",background:"none",border:"none",fontFamily:T.font}}>Calendar <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
           </div>
           {upcomingEvents.length===0
-            ?<div style={{fontSize:13,color:T.muted,padding:"18px 0",textAlign:"center"}}>Nothing on the horizon. Add deadlines to your calendar.</div>
+            ?<div style={{padding:"18px 0",textAlign:"center"}}>
+              <div style={{fontSize:13,color:T.muted,marginBottom:12,lineHeight:1.5}}>Nothing on the horizon yet. Add one thing that's due this week and Studlin will plan around it.</div>
+              <button type="button" onClick={()=>{lsSet("pendingAddTask",true);setActive("calendar");}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",background:T.lime,color:T.ink,border:"none",borderRadius:6,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>+ Add something due this week</button>
+            </div>
             :upcomingEvents.map((ev,i)=>(
               // D4 in the audit: this used to just switch tabs generically
               // -- setDetailEventId is the exact prop Prep/Calendar already
