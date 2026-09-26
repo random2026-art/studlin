@@ -7070,6 +7070,10 @@ syncWriteHooks["user-subjects"]=(items)=>DataStore.subjects.onLocalWrite(items);
 syncWriteHooks["schedulePrefs"]=()=>pushSettingsSync();
 syncWriteHooks["subjects-configured"]=()=>pushSettingsSync();
 syncWriteHooks["hasConfiguredRoutine"]=()=>pushSettingsSync();
+syncWriteHooks["wakeSleep"]=()=>pushSettingsSync();
+syncWriteHooks["schoolTerm"]=()=>pushSettingsSync();
+syncWriteHooks["holidays"]=()=>pushSettingsSync();
+syncWriteHooks["settings"]=()=>pushSettingsSync();
 const dayKey=(d)=>{const x=d||new Date();return x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");};
 // Dashboard's plain Checklist card (2026-08-19): checking an item used to
 // remove it from view instantly -- no visible confirmation it registered.
@@ -8581,6 +8585,10 @@ function pushSettingsSync(){
       schedulePrefs:lsGet("schedulePrefs",{}),
       subjectsConfigured:lsGet("subjects-configured",false),
       hasConfiguredRoutine:lsGet("hasConfiguredRoutine",false),
+      wakeSleep:lsGet("wakeSleep",null),
+      schoolTerm:lsGet("schoolTerm",null),
+      holidays:lsGet("holidays",[]),
+      incognito:lsGet("settings",{}).incognito===true,
       updatedAt:new Date().toISOString(),
     },{merge:true}).catch(()=>{});
   }catch(e){}
@@ -8603,6 +8611,10 @@ async function hydrateSettingsSyncOnAuth(){
       if(data.schedulePrefs&&typeof data.schedulePrefs==="object")lsSet("schedulePrefs",data.schedulePrefs);
       if(data.subjectsConfigured)lsSet("subjects-configured",true);
       if(data.hasConfiguredRoutine)lsSet("hasConfiguredRoutine",true);
+      if(data.wakeSleep&&typeof data.wakeSleep==="object")lsSet("wakeSleep",data.wakeSleep);
+      if(data.schoolTerm&&data.schoolTerm.start&&data.schoolTerm.end)lsSet("schoolTerm",data.schoolTerm);
+      if(Array.isArray(data.holidays))lsSet("holidays",data.holidays);
+      if(typeof data.incognito==="boolean")lsSet("settings",{...lsGet("settings",{}),incognito:data.incognito});
     }
   }catch(e){}
 }
@@ -23968,11 +23980,51 @@ function WizardCollegeBuilder({items,addItem,removeItem,updateItem,defaultTitle,
 // Reordering is cosmetic only. Caller controls the shape of a freshly-
 // added row via makeNewItem (RosterList itself only ever touches
 // title/color on existing rows).
-function RosterList({items,setItems,makeNewItem,addLabel}){
+// What a syllabus scan quietly did that the student should know about: the
+// AI only ever reads the first 30,000 characters, and dates already in the
+// past start unchecked. Returns "" when there is nothing to say.
+const SCAN_TEXT_LIMIT=30000;
+function scanReviewNotice(sourceText,deadlines){
+  const parts=[];
+  if(sourceText&&sourceText.length>SCAN_TEXT_LIMIT)parts.push("This file is long, so Studlin only read the first "+SCAN_TEXT_LIMIT.toLocaleString("en-US")+" characters. Anything later in it, like dates near the end, may be missing. Scan the rest separately if you need it.");
+  const today=dayKey();
+  const past=(deadlines||[]).filter(d=>d&&d.date&&d.date<today).length;
+  if(past>0)parts.push(past+" of the "+(deadlines||[]).length+" dates found "+(past===1?"is":"are")+" already past, so "+(past===1?"it starts":"they start")+" unchecked.");
+  return parts.join(" ");
+}
+// A phone photo is often 4000+ px and several MB, which is slow to upload and
+// can be rejected outright. Shrinks anything bigger than maxDim on its long
+// side to a JPEG that is still sharp enough to read text; returns null when
+// the original is fine (or the browser can't do it), so callers just keep it.
+async function shrinkImageForScan(file,maxDim=1800){
+  try{
+    const url=URL.createObjectURL(file);
+    const img=await new Promise((resolve,reject)=>{const i=new Image();i.onload=()=>resolve(i);i.onerror=reject;i.src=url;});
+    URL.revokeObjectURL(url);
+    const long=Math.max(img.naturalWidth,img.naturalHeight);
+    if(long<=maxDim&&file.size<=1500000)return null;
+    const scale=Math.min(1,maxDim/long);
+    const canvas=document.createElement("canvas");
+    canvas.width=Math.round(img.naturalWidth*scale);canvas.height=Math.round(img.naturalHeight*scale);
+    canvas.getContext("2d").drawImage(img,0,0,canvas.width,canvas.height);
+    const out=canvas.toDataURL("image/jpeg",0.85);
+    return{base64:out.split(",")[1]||"",mediaType:"image/jpeg"};
+  }catch(e){return null;}
+}
+function RosterList({items,setItems,makeNewItem,addLabel,withSchedule}){
   const [dragIdx,setDragIdx]=useState(null);
   const addRow=()=>setItems(prev=>[...prev,makeNewItem(prev.length)]);
   const updateRow=(id,patch)=>setItems(prev=>prev.map(r=>r.id===id?{...r,...patch}:r));
   const removeRow=(id)=>setItems(prev=>prev.filter(r=>r.id!==id));
+  // Picking a first day fills in a starting time and length so a day never
+  // exists without a time (a routine with days but no time can't be placed).
+  const toggleDay=(r,d)=>{
+    const days=(r.days||[]).includes(d)?(r.days||[]).filter(x=>x!==d):[...(r.days||[]),d];
+    const patch={days};
+    if(days.length>0){if(!r.startTime)patch.startTime="16:00";if(!r.duration)patch.duration=60;}
+    else{patch.startTime=null;patch.duration=null;}
+    updateRow(r.id,patch);
+  };
   const reorder=(fromIdx,toIdx)=>setItems(prev=>{
     const next=prev.slice();
     const [moved]=next.splice(fromIdx,1);
@@ -23985,11 +24037,26 @@ function RosterList({items,setItems,makeNewItem,addLabel}){
         {items.map((r,i)=>(
           <div key={r.id} draggable onDragStart={()=>setDragIdx(i)} onDragOver={e=>e.preventDefault()}
             onDrop={()=>{if(dragIdx!==null&&dragIdx!==i)reorder(dragIdx,i);setDragIdx(null);}}
-            style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2}}>
+            style={{display:"flex",flexDirection:"column",gap:8,padding:"8px 10px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
             <span title="Drag to reorder" style={{cursor:"grab",color:T.faint,fontSize:13,lineHeight:1,userSelect:"none"}}>⠿</span>
             <ColorSelect value={r.color} onChange={c=>updateRow(r.id,{color:c})} />
             <Input value={r.title} onChange={e=>updateRow(r.id,{title:e.target.value})} placeholder="Name" style={{flex:1}} />
-            <button type="button" onClick={()=>removeRow(r.id)} title="Remove" style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:16,padding:"0 2px"}}>×</button>
+            <button type="button" onClick={()=>removeRow(r.id)} title="Remove" aria-label={"Remove "+(r.title||"item")} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:16,padding:"0 2px"}}>×</button>
+            </div>
+            {withSchedule&&(
+              <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",paddingLeft:24}}>
+                {ROUTINE_DOW.map(d=>{const on=(r.days||[]).includes(d);return (
+                  <button key={d} type="button" aria-pressed={on} onClick={()=>toggleDay(r,d)} style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${on?T.lime:T.border}`,background:on?T.lime+"22":"transparent",color:on?T.text:T.muted,fontSize:11.5,fontFamily:T.font,cursor:"pointer"}}>{d}</button>
+                );})}
+                {(r.days||[]).length>0&&(<>
+                  <input type="time" aria-label={"Start time for "+(r.title||"activity")} value={r.startTime||"16:00"} onChange={e=>updateRow(r.id,{startTime:e.target.value||"16:00"})} style={{padding:"4px 6px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card,color:T.text,fontSize:12,fontFamily:T.font}} />
+                  <select aria-label={"Length of "+(r.title||"activity")} value={r.duration||60} onChange={e=>updateRow(r.id,{duration:parseInt(e.target.value,10)})} style={{padding:"4px 6px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card,color:T.text,fontSize:12,fontFamily:T.font}}>
+                    {[30,45,60,90,120,180].map(m=><option key={m} value={m}>{m>=60?(m/60)+(m===60?" hour":" hours"):m+" min"}</option>)}
+                  </select>
+                </>)}
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -24378,7 +24445,7 @@ const PrefChipRow=({label,value,onChange,options})=>(
     </div>
   </div>
 );
-function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCourseId,onPartialSync,setPricingOpen=()=>{},setActivePage=()=>{}}){
+function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCourseId,onPartialSync,termRollover=false,setPricingOpen=()=>{},setActivePage=()=>{}}){
   const [step,setStep]=useState("status"); // timezone | term | awake | status | classes | activities | calendarSync | window | finalReview
   const [status,setStatus]=useState(initialStatus||"");
   // Classes fully reviewed this session, staged -- nothing in here touches
@@ -24530,7 +24597,10 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   // 2026-09-11: Courses now runs before End of Term (see WIZARD_STEP_ORDER's
   // own comment) -- classes' own forward-nav needs to know whether term is
   // already configured to decide whether "term" is even still ahead of it.
-  const knowsTerm=(()=>{const t=getSchoolTerm();return !!(t&&t.start&&t.end);})();
+  // A term rollover ("Set up next term") must ask for the NEW dates: the saved
+  // ones are the term that just ended, so treating them as already known
+  // skipped the question and kept the old dates.
+  const knowsTerm=!termRollover&&(()=>{const t=getSchoolTerm();return !!(t&&t.start&&t.end);})();
   const effectiveWizardStepOrder=knowsStatus?WIZARD_STEP_ORDER.filter(s=>s!=="status"):WIZARD_STEP_ORDER;
   // Real Back navigation (2026-07-29 fix) -- null in quickScan mode (that
   // session intentionally starts mid-flow with no earlier step to return
@@ -24585,8 +24655,8 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     // "classes" same as before -- nothing left to ask there.
     setStep(quickScan?"classes":((term&&term.start&&term.end)?"classes":(knowsStatus?"classes":"status")));
     setTimezone(detectTz());
-    setTermStart((term&&term.start)||"");
-    setTermEnd((term&&term.end)||"");
+    setTermStart((!termRollover&&term&&term.start)||"");
+    setTermEnd((!termRollover&&term&&term.end)||"");
     const wakeSleep=getWakeSleep();
     setWakeTime((wakeSleep&&wakeSleep.wakeTime)||"07:00");
     setSleepTime((wakeSleep&&wakeSleep.sleepTime)||"23:00");
@@ -24625,6 +24695,21 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     setWorkStart(prefs.workStartTime||"10:00");
     setWorkEnd(prefs.workEndTime||"18:00");
     setPeakBuckets(prefs.peakHourBuckets||[]);
+    // Pick up where a closed or refreshed first-time setup left off (the
+    // step, term dates, wake/sleep and activities; staged classes already
+    // restore above). Nothing here touches the real calendar.
+    if(!quickScan){
+      const draft=lsGet("classSetupDraft",null);
+      if(draft&&typeof draft==="object"&&Date.now()-(draft.savedAt||0)<14*86400000){
+        if(typeof draft.status==="string"&&draft.status)setStatus(draft.status);
+        if(typeof draft.termStart==="string")setTermStart(draft.termStart);
+        if(typeof draft.termEnd==="string")setTermEnd(draft.termEnd);
+        if(typeof draft.wakeTime==="string")setWakeTime(draft.wakeTime);
+        if(typeof draft.sleepTime==="string")setSleepTime(draft.sleepTime);
+        if(Array.isArray(draft.activities))setActivities(draft.activities);
+        if(WIZARD_STEP_ORDER.includes(draft.step))setStep(draft.step);
+      }
+    }
   },[open]);
 
   // What the final drill-down review actually shows -- threads one shared
@@ -24648,6 +24733,10 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   // leftover ids from an earlier one too.
   const newlyCommittedIdsRef=useRef([]);
   useEffect(()=>{if(open)newlyCommittedIdsRef.current=[];},[open]);
+  useEffect(()=>{
+    if(!open||quickScan)return;
+    lsSet("classSetupDraft",{step,status,termStart,termEnd,wakeTime,sleepTime,activities,savedAt:Date.now()});
+  },[open,step,status,termStart,termEnd,wakeTime,sleepTime,activities]);
 
   if(!open)return null;
 
@@ -24796,6 +24885,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
       scheduleConfidence:result.scheduleConfidence,
       meetingTimes:(result.meetingTimes||[]).map((mt,i)=>({id:"mt-"+Date.now()+"-"+i,days:Array.isArray(mt.days)?mt.days:[],startTime:mt.startTime||"09:00",duration:mt.duration||50})),
       items:mapDeadlinesToReviewItems(result.deadlines,"cd"),
+      notice:scanReviewNotice(sourceText,result.deadlines),
     });
     setEditingPendingId(null);
     setReviewSub("items");
@@ -24862,8 +24952,9 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     try{
       if(IMAGE_EXT_MEDIA_TYPES[ext]){
         const dataUrl=await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.readAsDataURL(file);});
-        const base64=(dataUrl.split(",")[1])||"";
-        const result=await extractClassSyllabusImage(base64,IMAGE_EXT_MEDIA_TYPES[ext]);
+        const shrunk=await shrinkImageForScan(file);
+        const base64=shrunk?shrunk.base64:((dataUrl.split(",")[1])||"");
+        const result=await extractClassSyllabusImage(base64,shrunk?shrunk.mediaType:IMAGE_EXT_MEDIA_TYPES[ext]);
         if(result.error){setScanError(result.error);return;}
         if(syllabusFoundNothing(result)){setScanError("Couldn't find much in that image -- try a clearer photo, or fill in the class details yourself below.");return;}
         if(!canScanScreenshot())markFreeScanUsed("syllabus");
@@ -24886,6 +24977,10 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
         return;
       }else{
         text=await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.readAsText(file);});
+      }
+      if(text.replace(/s/g,"").length<20){
+        setScanError(ext==="pdf"?"This PDF looks like a scan, so there's no text Studlin can read. Try a photo or screenshot of it instead, or paste the text.":"That file doesn't have any text Studlin can read. Try a different copy, or paste the text.");
+        return;
       }
       const result=await extractClassSyllabusText(text);
       if(result.error){setScanError(result.error);return;}
@@ -25514,6 +25609,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     if(termStart&&termEnd&&termEnd>=termStart)saveSchoolTerm({start:termStart,end:termEnd});
     saveWakeSleep({wakeTime,sleepTime});
     lsSet("classSetupPending",[]);
+    lsSet("classSetupDraft",null);
     setPendingClasses([]);
     // See wizPostOnboardConnect's own comment -- queues Settings' own
     // connect-a-calendar modal (that's where openImportCalModal actually
@@ -25977,6 +26073,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
             if(reviewSub==="items")return(<>
               <TitleSub title={editingPendingId?"Edit this class":"Review this class"}
                 sub={scanQueue.length>0?(scanQueue.length+" more class"+(scanQueue.length!==1?"es":"")+" found in your schedule, up next after this one."):"Check what Studlin found, fix anything wrong, and mark what each thing actually is."} />
+              {review.notice&&<div role="status" style={{fontSize:12,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:8,padding:"8px 10px",marginBottom:12,lineHeight:1.5}}>{review.notice}</div>}
               <Field label="Class name">
                 <div style={{display:"flex",gap:10,alignItems:"center"}}>
                   <ColorSelect value={review.color} onChange={c=>setReview(r=>({...r,color:c}))} />
@@ -26118,7 +26215,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
           })()}
 
           {step==="activities"&&(<>
-            <TitleSub title="Anything else that repeats every week?" sub="Work shifts, practice, clubs, routines. Set exactly when later by dragging it onto your calendar." />
+            <TitleSub title="Anything else that repeats every week?" sub="Work shifts, practice, clubs, routines. Pick the days and time now, or drag it onto your calendar later." />
             {/* 2026-07-29: WizardCollegeBuilder (configure days/time/
                 duration before it's even added) replaced with RosterList
                 -- Shovel's actual Activities screen is just a named,
@@ -26134,7 +26231,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                 {id:"act-"+Date.now()+"-5",title:"Me Time",color:SUBJECT_COLORS[4],kind:"busy",days:[],startTime:null,duration:null},
               ])} style={{width:"100%",padding:"12px",borderRadius:6,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.text,cursor:"pointer",fontFamily:T.font,fontSize:13,fontWeight:600,marginBottom:18}}>Start with default activities</button>
             )}
-            <RosterList items={activities} setItems={setActivities} addLabel="Activity"
+            <RosterList items={activities} setItems={setActivities} addLabel="Activity" withSchedule
               makeNewItem={(i)=>({id:"act-"+Date.now()+"-"+i,title:"",color:SUBJECT_COLORS[i%SUBJECT_COLORS.length],kind:"busy",days:[],startTime:null,duration:null})} />
           </>)}
 
@@ -26296,6 +26393,9 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                 out. */}
             {quickScan&&(
               <button type="button" onClick={onSkip} style={{fontSize:12.5,color:T.muted,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,padding:0}}>Cancel</button>
+            )}
+            {!quickScan&&onSkip&&(
+              <button type="button" onClick={onSkip} style={{fontSize:12.5,color:T.muted,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,padding:0}}>Save and finish later</button>
             )}
           </div>
           <div style={{display:"flex",gap:10}}>
@@ -27363,8 +27463,8 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
         {termWindowInvalid&&<div style={{fontSize:11.5,color:T.red,marginTop:8}}>School ends must be after school starts -- not saved until fixed.</div>}
       </div>
       <div style={{border:`1px solid ${T.border}`,borderRadius:10,padding:14,marginBottom:16}}>
-        <div style={{fontSize:12,fontWeight:700,color:T.white,marginBottom:2}}>Holidays</div>
-        <div style={{fontSize:11.5,color:T.muted,marginBottom:10}}>Spring break, a long weekend. Studlin won't plan study sessions during these.</div>
+        <div style={{fontSize:12,fontWeight:700,color:T.white,marginBottom:2}}>Days away</div>
+        <div style={{fontSize:11.5,color:T.muted,marginBottom:10}}>Spring break, a trip, a sick week. Studlin won't plan study sessions on these days, and anything you didn't get to won't count against you.</div>
         {holidays.length>0&&(
           <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:12}}>
             {holidays.map(h=>{
@@ -30534,6 +30634,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // onboarding; the tour (see CAL_TOUR_STEPS/calTourStep below) only fires
   // once THIS finishes, over a calendar that actually has real classes/
   // exams/assignments on it.
+  const [classSetupRollover,setClassSetupRollover]=useState(false);
   const [classSetupOpen,setClassSetupOpen]=useState(()=>!lsGet("subjects-configured",false)&&!lsGet("hasConfiguredRoutine",false));
   // Toolbar's "Scan syllabus" -- a second, independent instance of the same
   // wizard used for onboarding, opened straight into its scan step (see
@@ -30732,6 +30833,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const finishClassSetup=(newIds)=>{
     lsSet("subjects-configured",true);
     lsSet("hasConfiguredRoutine",true);
+    lsSet("classSetupDraft",null);
+    setClassSetupRollover(false);
     setClassSetupOpen(false);
     syncClassSetupState();
     // Quick-demo tour now starts here, not on mount -- see CAL_TOUR_STEPS'
@@ -31063,6 +31166,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     if(!lsGet("pendingBrainDump",false))return;
     try{localStorage.removeItem("studlin-pendingBrainDump");}catch(e){}
     setBrainDumpOpen(true);
+  },[]);
+  // One-shot from Dashboard's empty "Coming up" card: lands on Calendar with
+  // the add form already open (free for everyone, unlike Brain Dump).
+  useEffect(()=>{
+    if(!lsGet("pendingAddTask",false))return;
+    try{localStorage.removeItem("studlin-pendingAddTask");}catch(e){}
+    setNewOpen(true);
   },[]);
   // Same one-shot deep-link pattern as pendingBrainDump above -- set by
   // EventDetailModal's jumpToCalendar (a manual/Attack Block session row's
@@ -34306,7 +34416,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,padding:"10px 14px",borderRadius:8,border:`1px solid ${T.amber}44`,background:T.amber+"10",marginBottom:10}}>
           <div style={{fontSize:12.5,color:T.text}}>Your term ended {currentTerm.end} — set up next term?</div>
           <div style={{display:"flex",gap:8,flexShrink:0}}>
-            <button type="button" onClick={()=>setClassSetupOpen(true)} style={{padding:"6px 12px",borderRadius:6,border:"none",background:T.amber,color:T.ink,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Set up next term</button>
+            <button type="button" onClick={()=>{setClassSetupRollover(true);setClassSetupOpen(true);}} style={{padding:"6px 12px",borderRadius:6,border:"none",background:T.amber,color:T.ink,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Set up next term</button>
             <button type="button" onClick={()=>dismissTermRollover(currentTerm.end)} title="Dismiss" style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:14,padding:"0 4px"}}>×</button>
           </div>
         </div>
@@ -34618,7 +34728,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         <TourStep {...CAL_TOUR_STEPS[calTourStep]} step={calTourStep} total={CAL_TOUR_STEPS.length}
           isLast={calTourStep===CAL_TOUR_STEPS.length-1} onNext={advanceCalTour} onSkip={skipCalTour} />
       )}
-      <ClassSetupWizard open={classSetupOpen} initialStatus={getProfile().status} onFinish={finishClassSetup} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
+      <ClassSetupWizard open={classSetupOpen} termRollover={classSetupRollover} initialStatus={getProfile().status} onSkip={()=>{setClassSetupOpen(false);setClassSetupRollover(false);}} onFinish={finishClassSetup} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
       <ClassSetupWizard open={quickScanOpen} quickScan targetCourseId={quickScanTargetCourseId} initialStatus={getProfile().status} onFinish={finishQuickScan} onSkip={()=>{setQuickScanOpen(false);setQuickScanTargetCourseId(null);syncClassSetupState();}} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
       <Modal open={!!weeklyContentCourseId} onClose={()=>setWeeklyContentCourseId(null)} title="Class notes" sub="A short note for each day this class meets -- lecture, lab, homework due, whatever's useful." width={460}
         footer={<><Btn variant="subtle" onClick={()=>setWeeklyContentCourseId(null)}>Cancel</Btn><Btn onClick={saveWeeklyContent}>Save</Btn></>}>
@@ -39258,7 +39368,10 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
             <button onClick={()=>setActive("calendar")} style={{fontSize:12,color:T.muted,display:"inline-flex",alignItems:"center",gap:3,cursor:"pointer",background:"none",border:"none",fontFamily:T.font}}>Calendar <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
           </div>
           {upcomingEvents.length===0
-            ?<div style={{fontSize:13,color:T.muted,padding:"18px 0",textAlign:"center"}}>Nothing on the horizon. Add deadlines to your calendar.</div>
+            ?<div style={{padding:"18px 0",textAlign:"center"}}>
+              <div style={{fontSize:13,color:T.muted,marginBottom:12,lineHeight:1.5}}>Nothing on the horizon yet. Add one thing that's due this week and Studlin will plan around it.</div>
+              <button type="button" onClick={()=>{lsSet("pendingAddTask",true);setActive("calendar");}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",background:T.lime,color:T.ink,border:"none",borderRadius:6,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>+ Add something due this week</button>
+            </div>
             :upcomingEvents.map((ev,i)=>(
               // D4 in the audit: this used to just switch tabs generically
               // -- setDetailEventId is the exact prop Prep/Calendar already
@@ -40678,10 +40791,21 @@ function App() {
     catchUpPlan.moves.forEach(m=>{
       const override=catchUpOverrides[m.id];
       if(override&&override.skip)return;
-      if(m.droppedId)next=next.filter(e=>e.id!==m.droppedId);
+      // Remembered on the matching applied entry so Undo can bring back what
+      // this move dropped or shortened, not just move the task itself back.
+      const entry=applied.find(a=>a.id===m.id);
+      if(m.droppedId){
+        const dropped=events.find(e=>e.id===m.droppedId);
+        if(entry&&dropped)entry.droppedEvent=dropped;
+        next=next.filter(e=>e.id!==m.droppedId);
+      }
       if(m.shortenedId){
         const shortEv=events.find(e=>e.id===m.shortenedId);
-        if(shortEv)next=next.map(e=>e.id===m.shortenedId?{...e,duration:Math.max(15,Math.round((shortEv.duration||30)*0.75/5)*5)}:e);
+        if(shortEv){
+          const newDuration=Math.max(15,Math.round((shortEv.duration||30)*0.75/5)*5);
+          if(entry)entry.shortened={id:m.shortenedId,from:shortEv.duration,to:newDuration};
+          next=next.map(e=>e.id===m.shortenedId?{...e,duration:newDuration}:e);
+        }
       }
     });
     lsSet("events",next);
@@ -40702,10 +40826,22 @@ function App() {
   const undoCatchUpRebuild=()=>{
     if(!catchUpLastConfirmed||catchUpLastConfirmed.length===0)return;
     let blockedCount=0;
+    const restoredDropped=[];
+    const restoredShortened=[];
     catchUpLastConfirmed.forEach(m=>{
       const result=undoTier0Move(m.id);
-      if(result.blocked)blockedCount++;
+      if(result.blocked){blockedCount++;return;}
+      // Only put a sibling back when its move really was undone, otherwise the
+      // restored session would land on top of the task that is still there.
+      if(m.droppedEvent)restoredDropped.push(m.droppedEvent);
+      if(m.shortened)restoredShortened.push(m.shortened);
     });
+    if(restoredDropped.length>0||restoredShortened.length>0){
+      let evs=lsGet("events",[]);
+      restoredDropped.forEach(d=>{if(!evs.some(e=>e.id===d.id))evs=[...evs,d];});
+      restoredShortened.forEach(sh=>{evs=evs.map(e=>e.id===sh.id&&e.duration===sh.to?{...e,duration:sh.from}:e);});
+      lsSet("events",evs);
+    }
     logCatchUpEvent("rebuild_undone",{count:catchUpLastConfirmed.length,blockedCount});
     setCatchUpLastConfirmed(null);
     setDashToast(blockedCount>0?blockedCount+" couldn't be undone — something else is using that time now.":"Rebuild undone.");
@@ -41627,7 +41763,9 @@ function App() {
     const newlyMissed=evs.filter(ev=>isTier0Missed(ev,today)&&!missedLoggedKeys.has(ev.id+"|"+ev.date));
     if(newlyMissed.length>0){
       newlyMissed.forEach(ev=>{
-        logCompletionOutcome("missed",ev.time,difficultyTierOf(ev),null,ev.subject);
+        // A session that fell on a day the student marked as away isn't a real
+        // miss, so it must not drag their reliability numbers down.
+        if(!isHoliday(ev.date))logCompletionOutcome("missed",ev.time,difficultyTierOf(ev),null,ev.subject);
         missedLoggedKeys.add(ev.id+"|"+ev.date);
       });
       lsSet("missedLoggedKeys",Array.from(missedLoggedKeys));

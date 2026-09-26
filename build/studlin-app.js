@@ -4275,6 +4275,10 @@ syncWriteHooks["user-subjects"] = (items) => DataStore.subjects.onLocalWrite(ite
 syncWriteHooks["schedulePrefs"] = () => pushSettingsSync();
 syncWriteHooks["subjects-configured"] = () => pushSettingsSync();
 syncWriteHooks["hasConfiguredRoutine"] = () => pushSettingsSync();
+syncWriteHooks["wakeSleep"] = () => pushSettingsSync();
+syncWriteHooks["schoolTerm"] = () => pushSettingsSync();
+syncWriteHooks["holidays"] = () => pushSettingsSync();
+syncWriteHooks["settings"] = () => pushSettingsSync();
 const dayKey = (d) => {
   const x = d || /* @__PURE__ */ new Date();
   return x.getFullYear() + "-" + String(x.getMonth() + 1).padStart(2, "0") + "-" + String(x.getDate()).padStart(2, "0");
@@ -5229,6 +5233,10 @@ function pushSettingsSync() {
       schedulePrefs: lsGet("schedulePrefs", {}),
       subjectsConfigured: lsGet("subjects-configured", false),
       hasConfiguredRoutine: lsGet("hasConfiguredRoutine", false),
+      wakeSleep: lsGet("wakeSleep", null),
+      schoolTerm: lsGet("schoolTerm", null),
+      holidays: lsGet("holidays", []),
+      incognito: lsGet("settings", {}).incognito === true,
       updatedAt: (/* @__PURE__ */ new Date()).toISOString()
     }, { merge: true }).catch(() => {
     });
@@ -5245,6 +5253,10 @@ async function hydrateSettingsSyncOnAuth() {
       if (data.schedulePrefs && typeof data.schedulePrefs === "object") lsSet("schedulePrefs", data.schedulePrefs);
       if (data.subjectsConfigured) lsSet("subjects-configured", true);
       if (data.hasConfiguredRoutine) lsSet("hasConfiguredRoutine", true);
+      if (data.wakeSleep && typeof data.wakeSleep === "object") lsSet("wakeSleep", data.wakeSleep);
+      if (data.schoolTerm && data.schoolTerm.start && data.schoolTerm.end) lsSet("schoolTerm", data.schoolTerm);
+      if (Array.isArray(data.holidays)) lsSet("holidays", data.holidays);
+      if (typeof data.incognito === "boolean") lsSet("settings", { ...lsGet("settings", {}), incognito: data.incognito });
     }
   } catch (e) {
   }
@@ -14447,11 +14459,55 @@ function WizardCollegeBuilder({ items, addItem, removeItem, updateItem, defaultT
     })));
   })));
 }
-function RosterList({ items, setItems, makeNewItem, addLabel }) {
+const SCAN_TEXT_LIMIT = 3e4;
+function scanReviewNotice(sourceText, deadlines) {
+  const parts = [];
+  if (sourceText && sourceText.length > SCAN_TEXT_LIMIT) parts.push("This file is long, so Studlin only read the first " + SCAN_TEXT_LIMIT.toLocaleString("en-US") + " characters. Anything later in it, like dates near the end, may be missing. Scan the rest separately if you need it.");
+  const today = dayKey();
+  const past = (deadlines || []).filter((d) => d && d.date && d.date < today).length;
+  if (past > 0) parts.push(past + " of the " + (deadlines || []).length + " dates found " + (past === 1 ? "is" : "are") + " already past, so " + (past === 1 ? "it starts" : "they start") + " unchecked.");
+  return parts.join(" ");
+}
+async function shrinkImageForScan(file, maxDim = 1800) {
+  try {
+    const url = URL.createObjectURL(file);
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = reject;
+      i.src = url;
+    });
+    URL.revokeObjectURL(url);
+    const long = Math.max(img.naturalWidth, img.naturalHeight);
+    if (long <= maxDim && file.size <= 15e5) return null;
+    const scale = Math.min(1, maxDim / long);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(img.naturalWidth * scale);
+    canvas.height = Math.round(img.naturalHeight * scale);
+    canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+    const out = canvas.toDataURL("image/jpeg", 0.85);
+    return { base64: out.split(",")[1] || "", mediaType: "image/jpeg" };
+  } catch (e) {
+    return null;
+  }
+}
+function RosterList({ items, setItems, makeNewItem, addLabel, withSchedule }) {
   const [dragIdx, setDragIdx] = useState(null);
   const addRow = () => setItems((prev) => [...prev, makeNewItem(prev.length)]);
   const updateRow = (id, patch) => setItems((prev) => prev.map((r) => r.id === id ? { ...r, ...patch } : r));
   const removeRow = (id) => setItems((prev) => prev.filter((r) => r.id !== id));
+  const toggleDay = (r, d) => {
+    const days = (r.days || []).includes(d) ? (r.days || []).filter((x) => x !== d) : [...r.days || [], d];
+    const patch = { days };
+    if (days.length > 0) {
+      if (!r.startTime) patch.startTime = "16:00";
+      if (!r.duration) patch.duration = 60;
+    } else {
+      patch.startTime = null;
+      patch.duration = null;
+    }
+    updateRow(r.id, patch);
+  };
   const reorder = (fromIdx, toIdx) => setItems((prev) => {
     const next = prev.slice();
     const [moved] = next.splice(fromIdx, 1);
@@ -14469,12 +14525,13 @@ function RosterList({ items, setItems, makeNewItem, addLabel }) {
         if (dragIdx !== null && dragIdx !== i) reorder(dragIdx, i);
         setDragIdx(null);
       },
-      style: { display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 6, border: `1px solid ${T.border}`, background: T.card2 }
+      style: { display: "flex", flexDirection: "column", gap: 8, padding: "8px 10px", borderRadius: 6, border: `1px solid ${T.border}`, background: T.card2 }
     },
-    /* @__PURE__ */ React.createElement("span", { title: "Drag to reorder", style: { cursor: "grab", color: T.faint, fontSize: 13, lineHeight: 1, userSelect: "none" } }, "\u283F"),
-    /* @__PURE__ */ React.createElement(ColorSelect, { value: r.color, onChange: (c) => updateRow(r.id, { color: c }) }),
-    /* @__PURE__ */ React.createElement(Input, { value: r.title, onChange: (e) => updateRow(r.id, { title: e.target.value }), placeholder: "Name", style: { flex: 1 } }),
-    /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => removeRow(r.id), title: "Remove", style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 16, padding: "0 2px" } }, "\xD7")
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { title: "Drag to reorder", style: { cursor: "grab", color: T.faint, fontSize: 13, lineHeight: 1, userSelect: "none" } }, "\u283F"), /* @__PURE__ */ React.createElement(ColorSelect, { value: r.color, onChange: (c) => updateRow(r.id, { color: c }) }), /* @__PURE__ */ React.createElement(Input, { value: r.title, onChange: (e) => updateRow(r.id, { title: e.target.value }), placeholder: "Name", style: { flex: 1 } }), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => removeRow(r.id), title: "Remove", "aria-label": "Remove " + (r.title || "item"), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 16, padding: "0 2px" } }, "\xD7")),
+    withSchedule && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", paddingLeft: 24 } }, ROUTINE_DOW.map((d) => {
+      const on = (r.days || []).includes(d);
+      return /* @__PURE__ */ React.createElement("button", { key: d, type: "button", "aria-pressed": on, onClick: () => toggleDay(r, d), style: { padding: "4px 8px", borderRadius: 6, border: `1px solid ${on ? T.lime : T.border}`, background: on ? T.lime + "22" : "transparent", color: on ? T.text : T.muted, fontSize: 11.5, fontFamily: T.font, cursor: "pointer" } }, d);
+    }), (r.days || []).length > 0 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("input", { type: "time", "aria-label": "Start time for " + (r.title || "activity"), value: r.startTime || "16:00", onChange: (e) => updateRow(r.id, { startTime: e.target.value || "16:00" }), style: { padding: "4px 6px", borderRadius: 6, border: `1px solid ${T.border}`, background: T.card, color: T.text, fontSize: 12, fontFamily: T.font } }), /* @__PURE__ */ React.createElement("select", { "aria-label": "Length of " + (r.title || "activity"), value: r.duration || 60, onChange: (e) => updateRow(r.id, { duration: parseInt(e.target.value, 10) }), style: { padding: "4px 6px", borderRadius: 6, border: `1px solid ${T.border}`, background: T.card, color: T.text, fontSize: 12, fontFamily: T.font } }, [30, 45, 60, 90, 120, 180].map((m) => /* @__PURE__ */ React.createElement("option", { key: m, value: m }, m >= 60 ? m / 60 + (m === 60 ? " hour" : " hours") : m + " min")))))
   ))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addRow, style: { background: "none", border: "none", color: T.lime, fontSize: 12.5, fontFamily: T.font, cursor: "pointer", padding: 0 } }, items.length === 0 ? "+ Add" + (addLabel ? " an " + addLabel : " one") : "+ Add another" + (addLabel ? " " + addLabel : "")));
 }
 const classSetupChoiceStyle = { width: "100%", textAlign: "left", padding: "14px 16px", borderRadius: 10, border: `1.5px solid ${T.border}`, background: T.card, color: T.text, cursor: "pointer", fontFamily: T.font };
@@ -14629,7 +14686,7 @@ const WizardStepper = ({ step }) => {
 };
 const TitleSub = ({ title, sub }) => /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 22 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 19, fontWeight: 700, color: T.white, letterSpacing: "-0.01em", marginBottom: 5 } }, title), sub && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, lineHeight: 1.5 } }, sub));
 const PrefChipRow = ({ label, value, onChange, options }) => /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 18 } }, /* @__PURE__ */ React.createElement("label", { style: { display: "block", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, marginBottom: 8 } }, label), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } }, options.map((opt) => /* @__PURE__ */ React.createElement("button", { key: opt.value, type: "button", onClick: () => onChange(value === opt.value ? null : opt.value), style: { ...peakChipStyle(value === opt.value), borderRadius: 10 } }, opt.label))));
-function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, targetCourseId, onPartialSync, setPricingOpen = () => {
+function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, targetCourseId, onPartialSync, termRollover = false, setPricingOpen = () => {
 }, setActivePage = () => {
 } }) {
   const [step, setStep] = useState("status");
@@ -14690,7 +14747,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     lsSet("classSetupPending", next);
   };
   const knowsStatus = !!initialStatus;
-  const knowsTerm = (() => {
+  const knowsTerm = !termRollover && (() => {
     const t = getSchoolTerm();
     return !!(t && t.start && t.end);
   })();
@@ -14717,8 +14774,8 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     const term = getSchoolTerm();
     setStep(quickScan ? "classes" : term && term.start && term.end ? "classes" : knowsStatus ? "classes" : "status");
     setTimezone(detectTz());
-    setTermStart(term && term.start || "");
-    setTermEnd(term && term.end || "");
+    setTermStart(!termRollover && term && term.start || "");
+    setTermEnd(!termRollover && term && term.end || "");
     const wakeSleep = getWakeSleep();
     setWakeTime(wakeSleep && wakeSleep.wakeTime || "07:00");
     setSleepTime(wakeSleep && wakeSleep.sleepTime || "23:00");
@@ -14746,12 +14803,28 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     setWorkStart(prefs.workStartTime || "10:00");
     setWorkEnd(prefs.workEndTime || "18:00");
     setPeakBuckets(prefs.peakHourBuckets || []);
+    if (!quickScan) {
+      const draft = lsGet("classSetupDraft", null);
+      if (draft && typeof draft === "object" && Date.now() - (draft.savedAt || 0) < 14 * 864e5) {
+        if (typeof draft.status === "string" && draft.status) setStatus(draft.status);
+        if (typeof draft.termStart === "string") setTermStart(draft.termStart);
+        if (typeof draft.termEnd === "string") setTermEnd(draft.termEnd);
+        if (typeof draft.wakeTime === "string") setWakeTime(draft.wakeTime);
+        if (typeof draft.sleepTime === "string") setSleepTime(draft.sleepTime);
+        if (Array.isArray(draft.activities)) setActivities(draft.activities);
+        if (WIZARD_STEP_ORDER.includes(draft.step)) setStep(draft.step);
+      }
+    }
   }, [open]);
   const finalPreview = useMemo(() => buildPendingSchedulePreview(pendingClasses, getWeeklyRoutine(), getSchedulePreferences()), [pendingClasses]);
   const newlyCommittedIdsRef = useRef([]);
   useEffect(() => {
     if (open) newlyCommittedIdsRef.current = [];
   }, [open]);
+  useEffect(() => {
+    if (!open || quickScan) return;
+    lsSet("classSetupDraft", { step, status, termStart, termEnd, wakeTime, sleepTime, activities, savedAt: Date.now() });
+  }, [open, step, status, termStart, termEnd, wakeTime, sleepTime, activities]);
   if (!open) return null;
   const nextColor = () => nextAvailableSubjectColor([...getSubjects().map((s) => s.color), ...pendingClasses.map((c) => c.color)]);
   const startManual = () => {
@@ -14854,7 +14927,8 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
       // confidence read on the class name/meeting time).
       scheduleConfidence: result.scheduleConfidence,
       meetingTimes: (result.meetingTimes || []).map((mt, i) => ({ id: "mt-" + Date.now() + "-" + i, days: Array.isArray(mt.days) ? mt.days : [], startTime: mt.startTime || "09:00", duration: mt.duration || 50 })),
-      items: mapDeadlinesToReviewItems(result.deadlines, "cd")
+      items: mapDeadlinesToReviewItems(result.deadlines, "cd"),
+      notice: scanReviewNotice(sourceText, result.deadlines)
     });
     setEditingPendingId(null);
     setReviewSub("items");
@@ -14896,8 +14970,9 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
           reader.onload = () => resolve(reader.result);
           reader.readAsDataURL(file);
         });
-        const base64 = dataUrl.split(",")[1] || "";
-        const result2 = await extractClassSyllabusImage(base64, IMAGE_EXT_MEDIA_TYPES[ext]);
+        const shrunk = await shrinkImageForScan(file);
+        const base64 = shrunk ? shrunk.base64 : dataUrl.split(",")[1] || "";
+        const result2 = await extractClassSyllabusImage(base64, shrunk ? shrunk.mediaType : IMAGE_EXT_MEDIA_TYPES[ext]);
         if (result2.error) {
           setScanError(result2.error);
           return;
@@ -14937,6 +15012,10 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
           reader.onload = () => resolve(reader.result);
           reader.readAsText(file);
         });
+      }
+      if (text.replace(/s/g, "").length < 20) {
+        setScanError(ext === "pdf" ? "This PDF looks like a scan, so there's no text Studlin can read. Try a photo or screenshot of it instead, or paste the text." : "That file doesn't have any text Studlin can read. Try a different copy, or paste the text.");
+        return;
       }
       const result = await extractClassSyllabusText(text);
       if (result.error) {
@@ -15464,6 +15543,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     if (termStart && termEnd && termEnd >= termStart) saveSchoolTerm({ start: termStart, end: termEnd });
     saveWakeSleep({ wakeTime, sleepTime });
     lsSet("classSetupPending", []);
+    lsSet("classSetupDraft", null);
     setPendingClasses([]);
     if (wizPostOnboardConnect.length > 0) {
       lsSet("openImportCalQueue", wizPostOnboardConnect.map((v) => v === "workschedule" ? true : { hint: v }));
@@ -15620,7 +15700,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
         title: editingPendingId ? "Edit this class" : "Review this class",
         sub: scanQueue.length > 0 ? scanQueue.length + " more class" + (scanQueue.length !== 1 ? "es" : "") + " found in your schedule, up next after this one." : "Check what Studlin found, fix anything wrong, and mark what each thing actually is."
       }
-    ), /* @__PURE__ */ React.createElement(Field, { label: "Class name" }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10, alignItems: "center" } }, /* @__PURE__ */ React.createElement(ColorSelect, { value: review.color, onChange: (c) => setReview((r) => ({ ...r, color: c })) }), /* @__PURE__ */ React.createElement(Input, { value: review.subjectName, onChange: (e) => setReview((r) => ({ ...r, subjectName: e.target.value })), placeholder: "e.g. Biology 101", style: { flex: 1 } }), review.scheduleConfidence === "low" && /* @__PURE__ */ React.createElement("span", { title: "Studlin wasn't fully sure it read this class's name or meeting time correctly -- double-check both below.", style: { fontSize: 10.5, color: T.amber, fontWeight: 600, background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 6, padding: "3px 8px", whiteSpace: "nowrap", flexShrink: 0 } }, "Double-check"))), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 16, marginBottom: 16 } }, meetingTimeExpandedManually ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, marginBottom: 8 } }, "When does it meet?"), /* @__PURE__ */ React.createElement(WizardCollegeBuilder, { items: meetingItemsForBuilder, addItem: addMeetingTime, removeItem: removeMeetingTime, updateItem: updateMeetingTime, defaultTitle: review.subjectName || "Class", hideHeading: true })) : review.meetingTimes.length === 0 ? /* @__PURE__ */ React.createElement(
+    ), review.notice && /* @__PURE__ */ React.createElement("div", { role: "status", style: { fontSize: 12, color: T.amber, background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 8, padding: "8px 10px", marginBottom: 12, lineHeight: 1.5 } }, review.notice), /* @__PURE__ */ React.createElement(Field, { label: "Class name" }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10, alignItems: "center" } }, /* @__PURE__ */ React.createElement(ColorSelect, { value: review.color, onChange: (c) => setReview((r) => ({ ...r, color: c })) }), /* @__PURE__ */ React.createElement(Input, { value: review.subjectName, onChange: (e) => setReview((r) => ({ ...r, subjectName: e.target.value })), placeholder: "e.g. Biology 101", style: { flex: 1 } }), review.scheduleConfidence === "low" && /* @__PURE__ */ React.createElement("span", { title: "Studlin wasn't fully sure it read this class's name or meeting time correctly -- double-check both below.", style: { fontSize: 10.5, color: T.amber, fontWeight: 600, background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 6, padding: "3px 8px", whiteSpace: "nowrap", flexShrink: 0 } }, "Double-check"))), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 16, marginBottom: 16 } }, meetingTimeExpandedManually ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, marginBottom: 8 } }, "When does it meet?"), /* @__PURE__ */ React.createElement(WizardCollegeBuilder, { items: meetingItemsForBuilder, addItem: addMeetingTime, removeItem: removeMeetingTime, updateItem: updateMeetingTime, defaultTitle: review.subjectName || "Class", hideHeading: true })) : review.meetingTimes.length === 0 ? /* @__PURE__ */ React.createElement(
       "button",
       {
         type: "button",
@@ -15661,7 +15741,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
         /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted } }, "Build a study plan for this from Studlin Prep once you're ready.")
       ) : /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: T.muted, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: !!it.attackBlock, onChange: () => setItem(i, { attackBlock: !it.attackBlock }) }), "Schedule an Attack Block"));
     }), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setReviewSub("items"), style: { background: "none", border: "none", color: T.muted, fontSize: 12.5, fontFamily: T.font, cursor: "pointer", padding: 0, marginTop: 4 } }, "\u2190 Back"));
-  })(), step === "activities" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: "Anything else that repeats every week?", sub: "Work shifts, practice, clubs, routines. Set exactly when later by dragging it onto your calendar." }), activities.length === 0 && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setActivities([
+  })(), step === "activities" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: "Anything else that repeats every week?", sub: "Work shifts, practice, clubs, routines. Pick the days and time now, or drag it onto your calendar later." }), activities.length === 0 && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setActivities([
     { id: "act-" + Date.now() + "-1", title: "Morning Routine", color: SUBJECT_COLORS[0], kind: "busy", days: [], startTime: null, duration: null },
     { id: "act-" + Date.now() + "-2", title: "Lunch", color: SUBJECT_COLORS[1], kind: "busy", days: [], startTime: null, duration: null },
     { id: "act-" + Date.now() + "-3", title: "Workout", color: SUBJECT_COLORS[3], kind: "busy", days: [], startTime: null, duration: null },
@@ -15673,6 +15753,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
       items: activities,
       setItems: setActivities,
       addLabel: "Activity",
+      withSchedule: true,
       makeNewItem: (i) => ({ id: "act-" + Date.now() + "-" + i, title: "", color: SUBJECT_COLORS[i % SUBJECT_COLORS.length], kind: "busy", days: [], startTime: null, duration: null })
     }
   )), step === "calendarSync" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: "Connect a calendar", sub: "Optional. You can do this anytime from Settings." }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 8, border: `1px solid ${wizGoogleLinked ? T.teal + "44" : T.border}`, background: T.card2 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 32, height: 32, borderRadius: 8, background: "rgba(66,133,244,0.10)", border: "1px solid rgba(66,133,244,0.22)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none" }, /* @__PURE__ */ React.createElement("path", { d: "M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z", fill: "#4285F4" }), /* @__PURE__ */ React.createElement("path", { d: "M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z", fill: "#34A853" }), /* @__PURE__ */ React.createElement("path", { d: "M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z", fill: "#FBBC05" }), /* @__PURE__ */ React.createElement("path", { d: "M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z", fill: "#EA4335" }))), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text } }, "Google Calendar"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: wizGoogleLinked ? T.teal : wizGoogleSyncing ? T.amber : T.muted, marginTop: 1 } }, wizGoogleSyncing ? "Connecting\u2026" : wizGoogleLinked ? "Connected" : "Read-only \xB7 your events, no editing")), wizGoogleLinked ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, color: T.teal, fontSize: 12, fontWeight: 600, flexShrink: 0 } }, Icon.check, " Connected") : /* @__PURE__ */ React.createElement(BtnSm, { variant: "lime", style: { flexShrink: 0, opacity: wizGoogleSyncing ? 0.55 : 1 }, onClick: async () => {
@@ -15730,7 +15811,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
         }, title: "Remove", style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 14, padding: "0 2px" } }, "\xD7")), itemExpanded && /* @__PURE__ */ React.createElement("div", { style: { padding: "8px 10px", fontSize: 11.5, color: T.muted, lineHeight: 1.5 } }, it.kind === "exam" && (it.proposeSessions ? !pv || pv.sessions.length === 0 ? /* @__PURE__ */ React.createElement("div", null, "No open slot found for any session yet.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 3 } }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, color: T.text } }, "Study sessions"), pv.sessions.map((s, si) => /* @__PURE__ */ React.createElement("div", { key: si }, s.date, " \xB7 ", fmtClock12(s.time), " \xB7 ", s.duration, "min"))) : /* @__PURE__ */ React.createElement("div", null, "No study sessions scheduled for this exam.")), it.kind !== "exam" && (!it.attackBlock ? /* @__PURE__ */ React.createElement("div", null, "No Attack Block for this one.") : !pv || pv.sessions.length === 0 ? /* @__PURE__ */ React.createElement("div", null, "No open slot found before the deadline \u2014 add it manually after committing.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 3 } }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, color: T.text } }, it.kind === "project" ? "See plan" : "First session"), /* @__PURE__ */ React.createElement("div", null, pv.sessions[0].date, " \xB7 ", fmtClock12(pv.sessions[0].time), " \xB7 ", pv.sessions[0].duration, "min", it.phases && it.phases.length > 0 ? " \u2014 " + (it.phases[0] || "Phase 1") : ""), it.phases && it.phases.length > 1 && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 4 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.faint, fontStyle: "italic" } }, "Later phases schedule themselves once the one before finishes, not guessed dates up front:"), it.phases.slice(1).map((ph, pi) => /* @__PURE__ */ React.createElement("div", { key: pi, style: { marginLeft: 8 } }, "\xB7 ", ph)))))));
       })))));
     }));
-  })())), /* @__PURE__ */ React.createElement("div", { style: { padding: "18px 32px", borderTop: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 16 } }, canGoBack && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: goBack, style: { fontSize: 12.5, color: T.muted, background: "none", border: "none", cursor: "pointer", fontFamily: T.font, padding: 0 } }, "\u2190 Back"), quickScan && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onSkip, style: { fontSize: 12.5, color: T.muted, background: "none", border: "none", cursor: "pointer", fontFamily: T.font, padding: 0 } }, "Cancel")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10 } }, step === "term" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setStep("awake") }, "Skip"), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setStep("awake"), disabled: termWindowInvalid, style: { opacity: termWindowInvalid ? 0.45 : 1 } }, "Continue")), step === "awake" && /* @__PURE__ */ React.createElement(Btn, { onClick: () => setStep("personalize"), disabled: windowInvalid, style: { opacity: windowInvalid ? 0.45 : 1 } }, "Continue"), step === "personalize" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setStep("activities") }, "Skip"), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setStep("activities") }, "Continue")), step === "classes" && addMode === null && // 2026-09-11: Courses now runs before End of Term, so THIS is
+  })())), /* @__PURE__ */ React.createElement("div", { style: { padding: "18px 32px", borderTop: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 16 } }, canGoBack && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: goBack, style: { fontSize: 12.5, color: T.muted, background: "none", border: "none", cursor: "pointer", fontFamily: T.font, padding: 0 } }, "\u2190 Back"), quickScan && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onSkip, style: { fontSize: 12.5, color: T.muted, background: "none", border: "none", cursor: "pointer", fontFamily: T.font, padding: 0 } }, "Cancel"), !quickScan && onSkip && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onSkip, style: { fontSize: 12.5, color: T.muted, background: "none", border: "none", cursor: "pointer", fontFamily: T.font, padding: 0 } }, "Save and finish later")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10 } }, step === "term" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setStep("awake") }, "Skip"), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setStep("awake"), disabled: termWindowInvalid, style: { opacity: termWindowInvalid ? 0.45 : 1 } }, "Continue")), step === "awake" && /* @__PURE__ */ React.createElement(Btn, { onClick: () => setStep("personalize"), disabled: windowInvalid, style: { opacity: windowInvalid ? 0.45 : 1 } }, "Continue"), step === "personalize" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setStep("activities") }, "Skip"), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setStep("activities") }, "Continue")), step === "classes" && addMode === null && // 2026-09-11: Courses now runs before End of Term, so THIS is
   // where term comes next -- unless it's already configured
   // (knowsTerm), in which case there's nothing left to ask and
   // it skips straight to Awake time, same as the old
@@ -16336,7 +16417,7 @@ function RoutineControlCenterModal({ open, onClose, routines, fmtTime: fmtTime2,
   ), " min")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10, justifyContent: "flex-end" } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => {
     resetForm();
     setAddingRoutine(false);
-  } }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: submitAdd, disabled: !isFree && !title.trim() || isHabit && days.length === 0, style: { opacity: !isFree && !title.trim() || isHabit && days.length === 0 ? 0.45 : 1 } }, "Add"))), routines.length === 0 && !addingRoutine && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, padding: "10px 0 16px", textAlign: "center" } }, "No recurring blocks yet."), routines.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 } }, routines.map((r) => /* @__PURE__ */ React.createElement("div", { key: r.id, style: { display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.card2 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 10, height: 10, borderRadius: "50%", background: r.kind === "class" ? colorOf(r.courseId || r.subject) : r.color || T.muted, flexShrink: 0 } }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white } }, r.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, formatDays2(r.days), " \xB7 ", r.kind === "habit" ? "Anytime (" + (r.duration || 30) + " min)" : !r.startTime ? "Not scheduled yet \u2014 drag it onto your calendar" : fmtTime2(r.startTime) + " \u2013 " + fmtTime2(minutesToTime(timeToMinutes(r.startTime) + (r.duration || 30))))), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => onEditRoutine(r) }, "Edit"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "danger", onClick: () => onDeleteRoutine(r.id) }, "Delete")))), routines.length > 0 && onEditOnCalendar && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onEditOnCalendar, style: { background: "none", border: "none", color: T.lime, fontSize: 12.5, fontFamily: T.font, cursor: "pointer", padding: "0 0 16px", textDecoration: "underline" } }, "Edit directly on the calendar instead"), /* @__PURE__ */ React.createElement("div", { style: { border: `1px solid ${T.border}`, borderRadius: 10, padding: 14, marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: T.white, marginBottom: 2 } }, "Term dates"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 10 } }, "Outside these dates, summer, before the term starts, Studlin stops expecting your classes. Everything else on your routine still applies."), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } }, /* @__PURE__ */ React.createElement(DateField, { label: "School starts", value: termStart, onChange: setTermStart }), /* @__PURE__ */ React.createElement(DateField, { label: "School ends", value: termEnd, onChange: setTermEnd, min: termStart })), termWindowInvalid && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.red, marginTop: 8 } }, "School ends must be after school starts -- not saved until fixed.")), /* @__PURE__ */ React.createElement("div", { style: { border: `1px solid ${T.border}`, borderRadius: 10, padding: 14, marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: T.white, marginBottom: 2 } }, "Holidays"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 10 } }, "Spring break, a long weekend. Studlin won't plan study sessions during these."), holidays.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 } }, holidays.map((h) => {
+  } }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: submitAdd, disabled: !isFree && !title.trim() || isHabit && days.length === 0, style: { opacity: !isFree && !title.trim() || isHabit && days.length === 0 ? 0.45 : 1 } }, "Add"))), routines.length === 0 && !addingRoutine && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, padding: "10px 0 16px", textAlign: "center" } }, "No recurring blocks yet."), routines.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 } }, routines.map((r) => /* @__PURE__ */ React.createElement("div", { key: r.id, style: { display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.card2 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 10, height: 10, borderRadius: "50%", background: r.kind === "class" ? colorOf(r.courseId || r.subject) : r.color || T.muted, flexShrink: 0 } }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white } }, r.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, formatDays2(r.days), " \xB7 ", r.kind === "habit" ? "Anytime (" + (r.duration || 30) + " min)" : !r.startTime ? "Not scheduled yet \u2014 drag it onto your calendar" : fmtTime2(r.startTime) + " \u2013 " + fmtTime2(minutesToTime(timeToMinutes(r.startTime) + (r.duration || 30))))), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => onEditRoutine(r) }, "Edit"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "danger", onClick: () => onDeleteRoutine(r.id) }, "Delete")))), routines.length > 0 && onEditOnCalendar && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onEditOnCalendar, style: { background: "none", border: "none", color: T.lime, fontSize: 12.5, fontFamily: T.font, cursor: "pointer", padding: "0 0 16px", textDecoration: "underline" } }, "Edit directly on the calendar instead"), /* @__PURE__ */ React.createElement("div", { style: { border: `1px solid ${T.border}`, borderRadius: 10, padding: 14, marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: T.white, marginBottom: 2 } }, "Term dates"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 10 } }, "Outside these dates, summer, before the term starts, Studlin stops expecting your classes. Everything else on your routine still applies."), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } }, /* @__PURE__ */ React.createElement(DateField, { label: "School starts", value: termStart, onChange: setTermStart }), /* @__PURE__ */ React.createElement(DateField, { label: "School ends", value: termEnd, onChange: setTermEnd, min: termStart })), termWindowInvalid && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.red, marginTop: 8 } }, "School ends must be after school starts -- not saved until fixed.")), /* @__PURE__ */ React.createElement("div", { style: { border: `1px solid ${T.border}`, borderRadius: 10, padding: 14, marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: T.white, marginBottom: 2 } }, "Days away"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 10 } }, "Spring break, a trip, a sick week. Studlin won't plan study sessions on these days, and anything you didn't get to won't count against you."), holidays.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 } }, holidays.map((h) => {
     const isConfirming = confirmDeleteHolidayId === h.id;
     return isConfirming ? /* @__PURE__ */ React.createElement("div", { key: h.id, style: { padding: "8px 10px", borderRadius: 8, border: `1px solid ${T.red}55`, background: T.red + "12" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.text, marginBottom: 8 } }, 'Remove "', h.label || "Break", '"?'), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
       removeHoliday(h.id);
@@ -17932,6 +18013,7 @@ function CalendarTab({ setActive = () => {
   const [courseDeleteSnapshots, setCourseDeleteSnapshots] = useState(null);
   const [courseDeleteToast, setCourseDeleteToast] = useState("");
   const isFreshAccount = !lsGet("subjects-configured", false) && !lsGet("hasConfiguredRoutine", false) && !lsGet("seenCalendarTour", false);
+  const [classSetupRollover, setClassSetupRollover] = useState(false);
   const [classSetupOpen, setClassSetupOpen] = useState(() => !lsGet("subjects-configured", false) && !lsGet("hasConfiguredRoutine", false));
   const [quickScanOpen, setQuickScanOpen] = useState(false);
   const [quickScanTargetCourseId, setQuickScanTargetCourseId] = useState(null);
@@ -18032,6 +18114,8 @@ function CalendarTab({ setActive = () => {
   const finishClassSetup = (newIds) => {
     lsSet("subjects-configured", true);
     lsSet("hasConfiguredRoutine", true);
+    lsSet("classSetupDraft", null);
+    setClassSetupRollover(false);
     setClassSetupOpen(false);
     syncClassSetupState();
     if (isFreshAccount && !lsGet("seenCalendarTour", false)) setCalTourStep(0);
@@ -18247,6 +18331,14 @@ function CalendarTab({ setActive = () => {
     } catch (e) {
     }
     setBrainDumpOpen(true);
+  }, []);
+  useEffect(() => {
+    if (!lsGet("pendingAddTask", false)) return;
+    try {
+      localStorage.removeItem("studlin-pendingAddTask");
+    } catch (e) {
+    }
+    setNewOpen(true);
   }, []);
   useEffect(() => {
     const sessionId = lsGet("pendingCalendarJumpSessionId", null);
@@ -20655,7 +20747,10 @@ Examples:
       style: { position: "absolute", top: 16, right: (calSidebarCollapsed ? 0 : 14) - 9, width: 18, height: 18, borderRadius: "50%", background: T.card, border: `1px solid ${T.border}`, color: T.faint, fontSize: 11, fontFamily: T.font, cursor: "pointer", padding: 0, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }
     },
     calSidebarCollapsed ? "\u203A" : "\u2039"
-  )), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0, paddingLeft: 14 } }, currentTerm && isTermRolloverDue(currentTerm, todayK) && getTermRolloverDismissedFor() !== currentTerm.end && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 14px", borderRadius: 8, border: `1px solid ${T.amber}44`, background: T.amber + "10", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text } }, "Your term ended ", currentTerm.end, " \u2014 set up next term?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexShrink: 0 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setClassSetupOpen(true), style: { padding: "6px 12px", borderRadius: 6, border: "none", background: T.amber, color: T.ink, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: T.font } }, "Set up next term"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => dismissTermRollover(currentTerm.end), title: "Dismiss", style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 14, padding: "0 4px" } }, "\xD7"))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, minHeight: 30, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 3 } }, /* @__PURE__ */ React.createElement("button", { onClick: () => calView === "monthly" ? nav(-1) : calView === "weekly" ? setWeekOffset((o) => o - 1) : stepSelDay(-1), style: { width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: `1px solid ${T.border}`, borderRadius: 4, color: T.muted, cursor: "pointer", fontSize: 11 } }, "\u2039"), /* @__PURE__ */ React.createElement("span", { onClick: () => {
+  )), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0, paddingLeft: 14 } }, currentTerm && isTermRolloverDue(currentTerm, todayK) && getTermRolloverDismissedFor() !== currentTerm.end && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 14px", borderRadius: 8, border: `1px solid ${T.amber}44`, background: T.amber + "10", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text } }, "Your term ended ", currentTerm.end, " \u2014 set up next term?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexShrink: 0 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+    setClassSetupRollover(true);
+    setClassSetupOpen(true);
+  }, style: { padding: "6px 12px", borderRadius: 6, border: "none", background: T.amber, color: T.ink, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: T.font } }, "Set up next term"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => dismissTermRollover(currentTerm.end), title: "Dismiss", style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 14, padding: "0 4px" } }, "\xD7"))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, minHeight: 30, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 3 } }, /* @__PURE__ */ React.createElement("button", { onClick: () => calView === "monthly" ? nav(-1) : calView === "weekly" ? setWeekOffset((o) => o - 1) : stepSelDay(-1), style: { width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: `1px solid ${T.border}`, borderRadius: 4, color: T.muted, cursor: "pointer", fontSize: 11 } }, "\u2039"), /* @__PURE__ */ React.createElement("span", { onClick: () => {
     if (calView === "monthly") {
       setYm({ y: now.getFullYear(), m: now.getMonth() });
       setSelDay(todayK);
@@ -20933,7 +21028,10 @@ Examples:
       onNext: advanceCalTour,
       onSkip: skipCalTour
     }
-  ), /* @__PURE__ */ React.createElement(ClassSetupWizard, { open: classSetupOpen, initialStatus: getProfile().status, onFinish: finishClassSetup, onPartialSync: syncClassSetupState, setPricingOpen, setActivePage: setActive }), /* @__PURE__ */ React.createElement(ClassSetupWizard, { open: quickScanOpen, quickScan: true, targetCourseId: quickScanTargetCourseId, initialStatus: getProfile().status, onFinish: finishQuickScan, onSkip: () => {
+  ), /* @__PURE__ */ React.createElement(ClassSetupWizard, { open: classSetupOpen, termRollover: classSetupRollover, initialStatus: getProfile().status, onSkip: () => {
+    setClassSetupOpen(false);
+    setClassSetupRollover(false);
+  }, onFinish: finishClassSetup, onPartialSync: syncClassSetupState, setPricingOpen, setActivePage: setActive }), /* @__PURE__ */ React.createElement(ClassSetupWizard, { open: quickScanOpen, quickScan: true, targetCourseId: quickScanTargetCourseId, initialStatus: getProfile().status, onFinish: finishQuickScan, onSkip: () => {
     setQuickScanOpen(false);
     setQuickScanTargetCourseId(null);
     syncClassSetupState();
@@ -23184,7 +23282,10 @@ function Dashboard({ setActive, seriousMode = false, rescheduleTask, setReschedu
       e.stopPropagation();
       convertChecklistItemToBlock(item);
     }, title: "Turn into a calendar block you can drag onto a day", style: { flexShrink: 0, padding: "3px 7px", borderRadius: 6, border: `1px solid ${T.border}`, background: "transparent", color: T.muted, fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: T.font } }, "To calendar"))
-  ))))), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "5fr 7fr", gap: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { background: T.card, borderRadius: 8, padding: 20, border: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.hand, fontSize: 22, fontWeight: 600, color: T.text } }, "Upcoming"), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.mono, fontSize: 9.5, letterSpacing: "0.12em", padding: "3px 8px", border: `1px solid ${T.border}`, borderRadius: 5, color: T.muted } }, "NEXT 14 DAYS")), /* @__PURE__ */ React.createElement("button", { onClick: () => setActive("calendar"), style: { fontSize: 12, color: T.muted, display: "inline-flex", alignItems: "center", gap: 3, cursor: "pointer", background: "none", border: "none", fontFamily: T.font } }, "Calendar ", /* @__PURE__ */ React.createElement("svg", { width: "11", height: "11", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("polyline", { points: "9 18 15 12 9 6" })))), upcomingEvents.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, padding: "18px 0", textAlign: "center" } }, "Nothing on the horizon. Add deadlines to your calendar.") : upcomingEvents.map((ev, i) => (
+  ))))), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "5fr 7fr", gap: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { background: T.card, borderRadius: 8, padding: 20, border: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.hand, fontSize: 22, fontWeight: 600, color: T.text } }, "Upcoming"), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.mono, fontSize: 9.5, letterSpacing: "0.12em", padding: "3px 8px", border: `1px solid ${T.border}`, borderRadius: 5, color: T.muted } }, "NEXT 14 DAYS")), /* @__PURE__ */ React.createElement("button", { onClick: () => setActive("calendar"), style: { fontSize: 12, color: T.muted, display: "inline-flex", alignItems: "center", gap: 3, cursor: "pointer", background: "none", border: "none", fontFamily: T.font } }, "Calendar ", /* @__PURE__ */ React.createElement("svg", { width: "11", height: "11", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("polyline", { points: "9 18 15 12 9 6" })))), upcomingEvents.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { padding: "18px 0", textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, marginBottom: 12, lineHeight: 1.5 } }, "Nothing on the horizon yet. Add one thing that's due this week and Studlin will plan around it."), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+    lsSet("pendingAddTask", true);
+    setActive("calendar");
+  }, style: { display: "inline-flex", alignItems: "center", gap: 7, padding: "9px 18px", background: T.lime, color: T.ink, border: "none", borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: T.font } }, "+ Add something due this week")) : upcomingEvents.map((ev, i) => (
     // D4 in the audit: this used to just switch tabs generically
     // -- setDetailEventId is the exact prop Prep/Calendar already
     // use to jump straight to an event's own detail view, it was
@@ -23991,10 +24092,19 @@ function App() {
     catchUpPlan.moves.forEach((m) => {
       const override = catchUpOverrides[m.id];
       if (override && override.skip) return;
-      if (m.droppedId) next = next.filter((e) => e.id !== m.droppedId);
+      const entry = applied.find((a) => a.id === m.id);
+      if (m.droppedId) {
+        const dropped = events.find((e) => e.id === m.droppedId);
+        if (entry && dropped) entry.droppedEvent = dropped;
+        next = next.filter((e) => e.id !== m.droppedId);
+      }
       if (m.shortenedId) {
         const shortEv = events.find((e) => e.id === m.shortenedId);
-        if (shortEv) next = next.map((e) => e.id === m.shortenedId ? { ...e, duration: Math.max(15, Math.round((shortEv.duration || 30) * 0.75 / 5) * 5) } : e);
+        if (shortEv) {
+          const newDuration = Math.max(15, Math.round((shortEv.duration || 30) * 0.75 / 5) * 5);
+          if (entry) entry.shortened = { id: m.shortenedId, from: shortEv.duration, to: newDuration };
+          next = next.map((e) => e.id === m.shortenedId ? { ...e, duration: newDuration } : e);
+        }
       }
     });
     lsSet("events", next);
@@ -24015,10 +24125,27 @@ function App() {
   const undoCatchUpRebuild = () => {
     if (!catchUpLastConfirmed || catchUpLastConfirmed.length === 0) return;
     let blockedCount = 0;
+    const restoredDropped = [];
+    const restoredShortened = [];
     catchUpLastConfirmed.forEach((m) => {
       const result = undoTier0Move(m.id);
-      if (result.blocked) blockedCount++;
+      if (result.blocked) {
+        blockedCount++;
+        return;
+      }
+      if (m.droppedEvent) restoredDropped.push(m.droppedEvent);
+      if (m.shortened) restoredShortened.push(m.shortened);
     });
+    if (restoredDropped.length > 0 || restoredShortened.length > 0) {
+      let evs = lsGet("events", []);
+      restoredDropped.forEach((d) => {
+        if (!evs.some((e) => e.id === d.id)) evs = [...evs, d];
+      });
+      restoredShortened.forEach((sh) => {
+        evs = evs.map((e) => e.id === sh.id && e.duration === sh.to ? { ...e, duration: sh.from } : e);
+      });
+      lsSet("events", evs);
+    }
     logCatchUpEvent("rebuild_undone", { count: catchUpLastConfirmed.length, blockedCount });
     setCatchUpLastConfirmed(null);
     setDashToast(blockedCount > 0 ? blockedCount + " couldn't be undone \u2014 something else is using that time now." : "Rebuild undone.");
@@ -24637,7 +24764,7 @@ function App() {
     const newlyMissed = evs.filter((ev) => isTier0Missed(ev, today) && !missedLoggedKeys.has(ev.id + "|" + ev.date));
     if (newlyMissed.length > 0) {
       newlyMissed.forEach((ev) => {
-        logCompletionOutcome("missed", ev.time, difficultyTierOf(ev), null, ev.subject);
+        if (!isHoliday(ev.date)) logCompletionOutcome("missed", ev.time, difficultyTierOf(ev), null, ev.subject);
         missedLoggedKeys.add(ev.id + "|" + ev.date);
       });
       lsSet("missedLoggedKeys", Array.from(missedLoggedKeys));
