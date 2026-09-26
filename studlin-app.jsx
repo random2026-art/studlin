@@ -16863,7 +16863,11 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
     if(!myUid||targetUid===myUid)return;
     const theirs=incomingReqs.find(r=>r.senderId===targetUid);
     if(theirs){await acceptReq(theirs.id);return;}
-    try{await fsdb().collection('friendships').add({senderId:myUid,receiverId:targetUid,status:'pending',createdAt:new Date().toISOString()});if(onFriendRequestSent)onFriendRequestSent();}catch(e){}
+    // 2026-09-25 persona audit: all three friend-request writes below used
+    // to swallow their errors -- a failed send looked exactly like a
+    // successful one, and the student had no way to know their friend
+    // never got anything.
+    try{await fsdb().collection('friendships').add({senderId:myUid,receiverId:targetUid,status:'pending',createdAt:new Date().toISOString()});if(onFriendRequestSent)onFriendRequestSent();}catch(e){showNetToast("Couldn't send that request. Check your connection and try again.");}
   };
   // Referral trial grant (see api/me.js's handleReferralTrialGrant) only
   // ever fires for a friendship whose own `source` is "invite_link" (see
@@ -16880,9 +16884,9 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
       await fsdb().collection('friendships').doc(id).update({status:'accepted',updatedAt:new Date().toISOString()});
       authFetch("/api/me",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"accept-friend-referral",friendshipId:id})})
         .then(()=>fetchUserProfile()).catch(()=>{});
-    }catch(e){}
+    }catch(e){showNetToast("Couldn't accept that request. Try again.");}
   };
-  const declineReq=async(id)=>{try{await fsdb().collection('friendships').doc(id).delete();}catch(e){}};
+  const declineReq=async(id)=>{try{await fsdb().collection('friendships').doc(id).delete();}catch(e){showNetToast("Couldn't decline that request. Try again.");}};
   const [projectInviteBusyId,setProjectInviteBusyId]=useState(null);
   const acceptProjectInvite=async(proj)=>{
     if(!myUid)return;
@@ -20829,6 +20833,22 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
       return;
     }
     setMessages(m=>[...m,{role:"ai",text:(data.reply||"").trim()||"I didn't get a real answer back. Try again.",kind:"fact"}]);
+    noteCostCapDowngrade(data);
+  };
+
+  // 2026-09-25 persona audit: once a Pro account passes its monthly real-
+  // dollar AI spend cap, api/chat.js quietly answers with the cheaper model
+  // instead of blocking a paying subscriber, and returns
+  // downgradedForCostCap -- which nothing on the client ever read, so
+  // answers just got worse with no explanation. Says so once per calendar
+  // month (not per message) so it informs without nagging. Resets each
+  // billing renewal server-side, so the copy says "renews," not a date.
+  const noteCostCapDowngrade=(data)=>{
+    if(!data||!data.downgradedForCostCap)return;
+    const key="costCapNoteShown-"+dayKey().slice(0,7);
+    if(lsGet(key,false))return;
+    lsSet(key,true);
+    setMessages(m=>[...m,{role:"ai",text:"Heads up: you've used this cycle's full-power AI allowance, so answers may be shorter until your plan renews.",kind:"info"}]);
   };
 
   // "How do I do X in Studlin?" -- see STUDLIN_HELP_ENTRIES' own comment
@@ -20900,6 +20920,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
       return;
     }
     setMessages(m=>[...m,{role:"ai",text:(data.reply||"").trim()||"I didn't get a real answer back. Try again.",kind:"coaching"}]);
+    noteCostCapDowngrade(data);
   };
 
   // Builds and shows a proposal card for a classified action -- never
@@ -33604,14 +33625,29 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       "\"push things back a couple days\" -> {\"intent\":\"unsupported\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null}\n"+
       "\"cancel everything forever\" -> {\"intent\":\"unsupported\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null}\n"+
       "\"my stuff got moved around\" -> {\"intent\":\"unsupported\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null}";
+    // 2026-09-25 persona audit: this never checked res.ok, so a rate limit,
+    // out-of-credits, or outage reply (no `reply` field) fell through to
+    // JSON.parse, threw, and showed "That doesn't look like a schedule
+    // change" -- blaming the student's phrasing for a server problem --
+    // and still counted against the monthly cap. serverAnswered separates
+    // "the model answered but not with a usable intent" (phrasing message,
+    // counts) from everything else (real reason, doesn't count).
+    let serverAnswered=false;
     try{
       const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash"})});
       const data=await res.json();
-      // Recorded right after the real API round-trip completes, not after
-      // the JSON parse/validation below -- the cost is already spent at
-      // this point regardless of whether this attempt's phrasing turns
-      // out to classify cleanly, and a retry-until-it-parses loop should
-      // still count every real call against the cap.
+      if(!res.ok){
+        setPauseError((data&&data.error)||"Something went wrong on our end. Try again in a moment.");
+        setPauseLoading(false);
+        return;
+      }
+      serverAnswered=true;
+      // Recorded right after the real API round-trip SUCCEEDS, not after
+      // the JSON parse/validation below -- the cost is spent at this point
+      // regardless of whether this attempt's phrasing turns out to classify
+      // cleanly, and a retry-until-it-parses loop should still count every
+      // real call against the cap. (A refused call costs nothing, so it
+      // returned above without counting.)
       recordSmartReschedule();
       const raw=(data.reply||"").replace(/```json?|```/g,"").trim();
       const parsed=JSON.parse(raw);
@@ -33622,7 +33658,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       setPauseLastIntent(parsed);
       setPausePreview(computePausePlan(parsed));
     }catch(e){
-      setPauseError("That doesn't look like a schedule change Studlin can act on. Try phrasing it like “I'm sick, push things back 3 days,” or pick a quick action below.");
+      setPauseError(serverAnswered
+        ?"That doesn't look like a schedule change Studlin can act on. Try phrasing it like “I'm sick, push things back 3 days,” or pick a quick action below."
+        :"Couldn't reach Studlin. Check your connection and try again.");
     }
     setPauseLoading(false);
   };
@@ -36821,6 +36859,10 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
       if(!res.ok)throw new Error(data.error||"Couldn't connect to Canvas. Check your domain and token.");
       setImportCalLoading(false);
       let events=data.events;
+      // A course whose assignments failed to load used to be skipped with
+      // no trace (persona audit, 2026-09-25) -- say which ones, so a missing
+      // class isn't mistaken for "nothing due in it."
+      if(Array.isArray(data.skippedCourses)&&data.skippedCourses.length>0)showToast("Canvas: couldn't load assignments for "+data.skippedCourses.join(", ")+". Try syncing again later.","error");
       if(events.length>0){
         setImportCalClassifying(true);
         // Silent degrade, not a paywall interrupt, when Pro-only/over cap --
@@ -37016,6 +37058,9 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
           showToast(sub.label+": "+data.lastSyncError,"error");
           return;
         }
+        // Manual syncs only -- the once-a-day silent auto-resync stays quiet,
+        // a toast every morning would just be noise.
+        if(manual&&Array.isArray(data.skippedCourses)&&data.skippedCourses.length>0)showToast(sub.label+": couldn't load assignments for "+data.skippedCourses.join(", ")+".","error");
       }else{
         // Same platform hint as fetchCalendarPreview above, this time
         // sourced from the subscription's own sourceType so a Blackboard

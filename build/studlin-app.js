@@ -10257,6 +10257,7 @@ function FriendsChat({ onFriendRequestSent, onActiveChatChange, initialTarget, o
       await fsdb().collection("friendships").add({ senderId: myUid, receiverId: targetUid, status: "pending", createdAt: (/* @__PURE__ */ new Date()).toISOString() });
       if (onFriendRequestSent) onFriendRequestSent();
     } catch (e) {
+      showNetToast("Couldn't send that request. Check your connection and try again.");
     }
   };
   const acceptReq = async (id) => {
@@ -10265,12 +10266,14 @@ function FriendsChat({ onFriendRequestSent, onActiveChatChange, initialTarget, o
       authFetch("/api/me", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "accept-friend-referral", friendshipId: id }) }).then(() => fetchUserProfile()).catch(() => {
       });
     } catch (e) {
+      showNetToast("Couldn't accept that request. Try again.");
     }
   };
   const declineReq = async (id) => {
     try {
       await fsdb().collection("friendships").doc(id).delete();
     } catch (e) {
+      showNetToast("Couldn't decline that request. Try again.");
     }
   };
   const [projectInviteBusyId, setProjectInviteBusyId] = useState(null);
@@ -12499,6 +12502,14 @@ CONVERSATION:
       return;
     }
     setMessages((m) => [...m, { role: "ai", text: (data.reply || "").trim() || "I didn't get a real answer back. Try again.", kind: "fact" }]);
+    noteCostCapDowngrade(data);
+  };
+  const noteCostCapDowngrade = (data) => {
+    if (!data || !data.downgradedForCostCap) return;
+    const key = "costCapNoteShown-" + dayKey().slice(0, 7);
+    if (lsGet(key, false)) return;
+    lsSet(key, true);
+    setMessages((m) => [...m, { role: "ai", text: "Heads up: you've used this cycle's full-power AI allowance, so answers may be shorter until your plan renews.", kind: "info" }]);
   };
   const answerAppHelp = async (text) => {
     const entry = matchStudlinHelpEntry(text);
@@ -12541,6 +12552,7 @@ CONVERSATION:
       return;
     }
     setMessages((m) => [...m, { role: "ai", text: (data.reply || "").trim() || "I didn't get a real answer back. Try again.", kind: "coaching" }]);
+    noteCostCapDowngrade(data);
   };
   const runAction = async (parsed, forcedId, rawText) => {
     const isCreate = parsed.intent === "create_task";
@@ -20182,9 +20194,16 @@ Examples:
 "I'm not going to school today, use that time for studying" -> {"intent":"skip_class","days":null,"date":"` + today + '","target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null}\n"no school tomorrow" -> {"intent":"skip_class","days":null,"date":"' + tomorrow + `","target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null}
 "I won't be able to go to the gym today, make it sometime tomorrow" -> {"intent":"move_event","days":null,"date":null,"target":"gym","targetDate":"` + today + '","destDate":"' + tomorrow + `","newStart":null,"newDuration":null}
 "can't make practice, move it to tomorrow" -> {"intent":"move_event","days":null,"date":null,"target":"practice","targetDate":"` + today + '","destDate":"' + tomorrow + '","newStart":null,"newDuration":null}\n"reschedule working on my arduino project today to sometime next week" -> {"intent":"move_event","days":null,"date":null,"target":"arduino project","targetDate":"' + today + '","destDate":"' + nextWeekSameDay + '","newStart":null,"newDuration":null}\n"my track practice got moved to 7-9pm" -> {"intent":"retime_event","days":null,"date":null,"target":"track practice","targetDate":"' + today + '","destDate":null,"newStart":"19:00","newDuration":120}\n"chem class got pushed to 3pm today" -> {"intent":"retime_event","days":null,"date":null,"target":"chem class","targetDate":"' + today + '","destDate":null,"newStart":"15:00","newDuration":null}\n"push things back a couple days" -> {"intent":"unsupported","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null}\n"cancel everything forever" -> {"intent":"unsupported","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null}\n"my stuff got moved around" -> {"intent":"unsupported","days":null,"date":null,"target":null,"targetDate":null,"destDate":null,"newStart":null,"newDuration":null}';
+    let serverAnswered = false;
     try {
       const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ r: "user", t: prompt }], model: "flash" }) });
       const data = await res.json();
+      if (!res.ok) {
+        setPauseError(data && data.error || "Something went wrong on our end. Try again in a moment.");
+        setPauseLoading(false);
+        return;
+      }
+      serverAnswered = true;
       recordSmartReschedule();
       const raw = (data.reply || "").replace(/```json?|```/g, "").trim();
       const parsed = JSON.parse(raw);
@@ -20195,7 +20214,7 @@ Examples:
       setPauseLastIntent(parsed);
       setPausePreview(computePausePlan(parsed));
     } catch (e) {
-      setPauseError("That doesn't look like a schedule change Studlin can act on. Try phrasing it like \u201CI'm sick, push things back 3 days,\u201D or pick a quick action below.");
+      setPauseError(serverAnswered ? "That doesn't look like a schedule change Studlin can act on. Try phrasing it like \u201CI'm sick, push things back 3 days,\u201D or pick a quick action below." : "Couldn't reach Studlin. Check your connection and try again.");
     }
     setPauseLoading(false);
   };
@@ -22192,6 +22211,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
       if (!res.ok) throw new Error(data.error || "Couldn't connect to Canvas. Check your domain and token.");
       setImportCalLoading(false);
       let events = data.events;
+      if (Array.isArray(data.skippedCourses) && data.skippedCourses.length > 0) showToast2("Canvas: couldn't load assignments for " + data.skippedCourses.join(", ") + ". Try syncing again later.", "error");
       if (events.length > 0) {
         setImportCalClassifying(true);
         const canClassify = canClassifyCalendarImport();
@@ -22319,6 +22339,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
           showToast2(sub.label + ": " + data.lastSyncError, "error");
           return;
         }
+        if (manual && Array.isArray(data.skippedCourses) && data.skippedCourses.length > 0) showToast2(sub.label + ": couldn't load assignments for " + data.skippedCourses.join(", ") + ".", "error");
       } else {
         const platformParam = sub.sourceType === "Blackboard" ? "&platform=blackboard" : "";
         const res = await fetch("/api/cal-proxy?url=" + encodeURIComponent(sub.url) + platformParam + "&tz=" + encodeURIComponent(detectTz()));
