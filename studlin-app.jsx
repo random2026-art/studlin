@@ -27448,8 +27448,8 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
         {termWindowInvalid&&<div style={{fontSize:11.5,color:T.red,marginTop:8}}>School ends must be after school starts -- not saved until fixed.</div>}
       </div>
       <div style={{border:`1px solid ${T.border}`,borderRadius:10,padding:14,marginBottom:16}}>
-        <div style={{fontSize:12,fontWeight:700,color:T.white,marginBottom:2}}>Holidays</div>
-        <div style={{fontSize:11.5,color:T.muted,marginBottom:10}}>Spring break, a long weekend. Studlin won't plan study sessions during these.</div>
+        <div style={{fontSize:12,fontWeight:700,color:T.white,marginBottom:2}}>Days away</div>
+        <div style={{fontSize:11.5,color:T.muted,marginBottom:10}}>Spring break, a trip, a sick week. Studlin won't plan study sessions on these days, and anything you didn't get to won't count against you.</div>
         {holidays.length>0&&(
           <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:12}}>
             {holidays.map(h=>{
@@ -40771,10 +40771,21 @@ function App() {
     catchUpPlan.moves.forEach(m=>{
       const override=catchUpOverrides[m.id];
       if(override&&override.skip)return;
-      if(m.droppedId)next=next.filter(e=>e.id!==m.droppedId);
+      // Remembered on the matching applied entry so Undo can bring back what
+      // this move dropped or shortened, not just move the task itself back.
+      const entry=applied.find(a=>a.id===m.id);
+      if(m.droppedId){
+        const dropped=events.find(e=>e.id===m.droppedId);
+        if(entry&&dropped)entry.droppedEvent=dropped;
+        next=next.filter(e=>e.id!==m.droppedId);
+      }
       if(m.shortenedId){
         const shortEv=events.find(e=>e.id===m.shortenedId);
-        if(shortEv)next=next.map(e=>e.id===m.shortenedId?{...e,duration:Math.max(15,Math.round((shortEv.duration||30)*0.75/5)*5)}:e);
+        if(shortEv){
+          const newDuration=Math.max(15,Math.round((shortEv.duration||30)*0.75/5)*5);
+          if(entry)entry.shortened={id:m.shortenedId,from:shortEv.duration,to:newDuration};
+          next=next.map(e=>e.id===m.shortenedId?{...e,duration:newDuration}:e);
+        }
       }
     });
     lsSet("events",next);
@@ -40795,10 +40806,22 @@ function App() {
   const undoCatchUpRebuild=()=>{
     if(!catchUpLastConfirmed||catchUpLastConfirmed.length===0)return;
     let blockedCount=0;
+    const restoredDropped=[];
+    const restoredShortened=[];
     catchUpLastConfirmed.forEach(m=>{
       const result=undoTier0Move(m.id);
-      if(result.blocked)blockedCount++;
+      if(result.blocked){blockedCount++;return;}
+      // Only put a sibling back when its move really was undone, otherwise the
+      // restored session would land on top of the task that is still there.
+      if(m.droppedEvent)restoredDropped.push(m.droppedEvent);
+      if(m.shortened)restoredShortened.push(m.shortened);
     });
+    if(restoredDropped.length>0||restoredShortened.length>0){
+      let evs=lsGet("events",[]);
+      restoredDropped.forEach(d=>{if(!evs.some(e=>e.id===d.id))evs=[...evs,d];});
+      restoredShortened.forEach(sh=>{evs=evs.map(e=>e.id===sh.id&&e.duration===sh.to?{...e,duration:sh.from}:e);});
+      lsSet("events",evs);
+    }
     logCatchUpEvent("rebuild_undone",{count:catchUpLastConfirmed.length,blockedCount});
     setCatchUpLastConfirmed(null);
     setDashToast(blockedCount>0?blockedCount+" couldn't be undone — something else is using that time now.":"Rebuild undone.");
@@ -41720,7 +41743,9 @@ function App() {
     const newlyMissed=evs.filter(ev=>isTier0Missed(ev,today)&&!missedLoggedKeys.has(ev.id+"|"+ev.date));
     if(newlyMissed.length>0){
       newlyMissed.forEach(ev=>{
-        logCompletionOutcome("missed",ev.time,difficultyTierOf(ev),null,ev.subject);
+        // A session that fell on a day the student marked as away isn't a real
+        // miss, so it must not drag their reliability numbers down.
+        if(!isHoliday(ev.date))logCompletionOutcome("missed",ev.time,difficultyTierOf(ev),null,ev.subject);
         missedLoggedKeys.add(ev.id+"|"+ev.date);
       });
       lsSet("missedLoggedKeys",Array.from(missedLoggedKeys));
