@@ -417,6 +417,7 @@ function StepVerify({ advanceToProfile }) {
 
   const startOver = async () => {
     try { localStorage.removeItem("studlin-onboarding"); localStorage.removeItem("studlin-verifySent"); } catch(e) {}
+    if (window.StudlinOwnerGuard) StudlinOwnerGuard.clearOnSignOut();
     try { await firebase.auth().signOut(); } catch(e) {}
     window.location.href = "/onboarding";
   };
@@ -659,6 +660,7 @@ function App() {
 
   useEffect(()=>{
     return firebase.auth().onAuthStateChanged(u=>{
+      if(u&&window.StudlinOwnerGuard)StudlinOwnerGuard.claim(u.uid);
       if(u){
         const minStep = isVerifiedOrGoogle(u) ? 2 : 1;
         setStep(prev=>prev<minStep?minStep:prev);
