@@ -2762,6 +2762,31 @@ function diffNewGoogleEvents(previousGcalEvents, freshGcalEvents) {
   const previousIds = new Set((previousGcalEvents || []).map((e) => e.id));
   return (freshGcalEvents || []).filter((e) => !previousIds.has(e.id));
 }
+const IMPORT_LOG_MAX_ENTRIES = 20;
+const IMPORT_LOG_MAX_ITEMS = 60;
+function appendImportLog(log, source, items, now) {
+  const list = (items || []).filter((i) => i && i.title).map((i) => ({ title: i.title, date: i.date || null }));
+  if (list.length === 0) return log || [];
+  return [...log || [], { source, at: now, count: list.length, items: list.slice(0, IMPORT_LOG_MAX_ITEMS) }].slice(-IMPORT_LOG_MAX_ENTRIES);
+}
+function summarizeImportLog(log) {
+  const by = /* @__PURE__ */ new Map();
+  (log || []).forEach((e) => {
+    const g = by.get(e.source) || { source: e.source, count: 0, items: [] };
+    g.count += e.count || (e.items || []).length;
+    g.items = g.items.concat(e.items || []);
+    by.set(e.source, g);
+  });
+  const groups = Array.from(by.values());
+  return { total: groups.reduce((a, g) => a + g.count, 0), groups };
+}
+function recordImport(source, items) {
+  lsSet("importLog", appendImportLog(lsGet("importLog", []), source, items, Date.now()));
+  try {
+    window.dispatchEvent(new Event("studlin-import-log"));
+  } catch (e) {
+  }
+}
 function describeNewGoogleEvents(newlyAdded) {
   if (!newlyAdded || newlyAdded.length === 0) return "";
   const titles = newlyAdded.map((e) => e.title).filter(Boolean);
@@ -2802,6 +2827,7 @@ function applyGoogleEvents(gcalEvents) {
   lsSet("events", existing);
   const result = reconcileFixedEventConflicts(filtered);
   surfaceReconcileResult(result);
+  recordImport("Google Calendar", newlyAdded);
   return { ...result, newlyAdded };
 }
 function connectGoogleCalendar() {
@@ -17900,6 +17926,18 @@ function CalendarTab({ setActive = () => {
   const [courseDeleteToast, setCourseDeleteToast] = useState("");
   const isFreshAccount = !lsGet("subjects-configured", false) && !lsGet("hasConfiguredRoutine", false) && !lsGet("seenCalendarTour", false);
   const [classSetupRollover, setClassSetupRollover] = useState(false);
+  const [importLog, setImportLog] = useState(() => lsGet("importLog", []));
+  const [importLogOpen, setImportLogOpen] = useState(false);
+  useEffect(() => {
+    const refresh = () => setImportLog(lsGet("importLog", []));
+    window.addEventListener("studlin-import-log", refresh);
+    return () => window.removeEventListener("studlin-import-log", refresh);
+  }, []);
+  const acknowledgeImports = () => {
+    lsSet("importLog", []);
+    setImportLog([]);
+    setImportLogOpen(false);
+  };
   const [classSetupOpen, setClassSetupOpen] = useState(() => !lsGet("subjects-configured", false) && !lsGet("hasConfiguredRoutine", false) && Date.now() >= lsGet("classSetupDeferredUntil", 0));
   const [quickScanOpen, setQuickScanOpen] = useState(false);
   const [quickScanTargetCourseId, setQuickScanTargetCourseId] = useState(null);
@@ -20633,7 +20671,12 @@ Examples:
       style: { position: "absolute", top: 16, right: (calSidebarCollapsed ? 0 : 14) - 9, width: 18, height: 18, borderRadius: "50%", background: T.card, border: `1px solid ${T.border}`, color: T.faint, fontSize: 11, fontFamily: T.font, cursor: "pointer", padding: 0, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }
     },
     calSidebarCollapsed ? "\u203A" : "\u2039"
-  )), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0, paddingLeft: 14 } }, currentTerm && isTermRolloverDue(currentTerm, todayK) && getTermRolloverDismissedFor() !== currentTerm.end && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 14px", borderRadius: 8, border: `1px solid ${T.amber}44`, background: T.amber + "10", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text } }, "Your term ended ", currentTerm.end, " \u2014 set up next term?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexShrink: 0 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+  )), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0, paddingLeft: 14 } }, (() => {
+    const summary = summarizeImportLog(importLog);
+    if (summary.total === 0) return null;
+    const shortDate = (d) => d ? (/* @__PURE__ */ new Date(d + "T12:00:00")).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "";
+    return /* @__PURE__ */ React.createElement("div", { role: "status", style: { padding: "12px 14px", borderRadius: 8, border: `1px solid ${T.lime}55`, background: T.lime + "12", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, lineHeight: 1.5 } }, /* @__PURE__ */ React.createElement("strong", null, summary.total, " new item", summary.total !== 1 ? "s" : "", " imported"), " from ", summary.groups.map((g) => g.source).join(", "), " since you last checked."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexShrink: 0 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setImportLogOpen((o) => !o), "aria-expanded": importLogOpen, style: { padding: "6px 12px", borderRadius: 6, border: `1px solid ${T.border}`, background: "transparent", color: T.text, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: T.font } }, importLogOpen ? "Hide" : "See what"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: acknowledgeImports, style: { padding: "6px 12px", borderRadius: 6, border: "none", background: T.lime, color: T.ink, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: T.font } }, "Got it"))), importLogOpen && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10, display: "flex", flexDirection: "column", gap: 8 } }, summary.groups.map((g) => /* @__PURE__ */ React.createElement("div", { key: g.source }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 700, color: T.muted, letterSpacing: "0.04em", textTransform: "uppercase", marginBottom: 4 } }, g.source, " (", g.count, ")"), g.items.slice(0, 8).map((it, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { fontSize: 12.5, color: T.text, padding: "2px 0" } }, it.title, it.date ? /* @__PURE__ */ React.createElement("span", { style: { color: T.muted } }, " \xB7 ", shortDate(it.date)) : null)), g.count > 8 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, padding: "2px 0" } }, "and ", g.count - 8, " more")))));
+  })(), currentTerm && isTermRolloverDue(currentTerm, todayK) && getTermRolloverDismissedFor() !== currentTerm.end && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 14px", borderRadius: 8, border: `1px solid ${T.amber}44`, background: T.amber + "10", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text } }, "Your term ended ", currentTerm.end, " \u2014 set up next term?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexShrink: 0 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
     setClassSetupRollover(true);
     setClassSetupOpen(true);
   }, style: { padding: "6px 12px", borderRadius: 6, border: "none", background: T.amber, color: T.ink, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: T.font } }, "Set up next term"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => dismissTermRollover(currentTerm.end), title: "Dismiss", style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 14, padding: "0 4px" } }, "\xD7"))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, minHeight: 30, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 3 } }, /* @__PURE__ */ React.createElement("button", { onClick: () => calView === "monthly" ? nav(-1) : calView === "weekly" ? setWeekOffset((o) => o - 1) : stepSelDay(-1), style: { width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: `1px solid ${T.border}`, borderRadius: 4, color: T.muted, cursor: "pointer", fontSize: 11 } }, "\u2039"), /* @__PURE__ */ React.createElement("span", { onClick: () => {
@@ -22399,6 +22442,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
       setImportedCals(nextSubs);
       saveImportedCalendars(nextSubs);
       const newItems = merged.filter((e) => e.importSubId === sub.id && !existingUids.has(e.externalUid));
+      recordImport(sub.label, newItems);
       showToast2(sub.label + (newItems.length > 0 ? ": " + newItems.length + " new item" + (newItems.length !== 1 ? "s" : "") + " found." : " synced.") + reconcileToastSuffix(result));
       if (manual) highlightAndJumpToCalendar(newItems.map((e) => e.id));
     } catch (e) {
