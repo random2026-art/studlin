@@ -16602,8 +16602,14 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
   const mySchool=(getProfile().school||getProfile().affiliation||"").trim();
   const [classmates,setClassmates]=useState([]);
   const [classmatesLoading,setClassmatesLoading]=useState(false);
+  // Only fetched once the Classmates tab is first opened (a big school can mean
+  // hundreds of profile reads), and shown 10 at a time with a search box.
+  const [classmatesRequested,setClassmatesRequested]=useState(false);
+  const [classmatesVisible,setClassmatesVisible]=useState(10);
+  const [classmatesCapped,setClassmatesCapped]=useState(false);
   useEffect(()=>{
     if(!myUid||!mySchool){setClassmates([]);return;}
+    if(!classmatesRequested)return;
     let active=true;
     setClassmatesLoading(true);
     (async()=>{
@@ -16623,17 +16629,20 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
           if(name&&isNearDuplicateSchoolName(name,mySchool))variants.add(name);
         });
         const snaps=await Promise.all(Array.from(variants).map(name=>
-          fsdb().collection('profiles').where('schoolLower','==',name.toLowerCase()).limit(20).get()
+          fsdb().collection('profiles').where('schoolLower','==',name.toLowerCase()).limit(CLASSMATES_FETCH_LIMIT).get()
         ));
+        if(active)setClassmatesCapped(snaps.some(sn=>sn.size>=CLASSMATES_FETCH_LIMIT));
         if(!active)return;
         const seen=new Set();
         const results=[];
         snaps.forEach(snap=>snap.docs.forEach(d=>{
           if(d.id===myUid||seen.has(d.id))return;
+          if(d.data().discoverable===false)return;
           seen.add(d.id);
           results.push(profileToFriend(d.id,d.data()));
         }));
-        setClassmates(results.slice(0,20));
+        results.sort((a,b)=>(a.n||"").localeCompare(b.n||""));
+        setClassmates(results);
       }catch(e){
         if(active)setClassmates([]);
       }finally{
@@ -16641,7 +16650,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
       }
     })();
     return ()=>{active=false;};
-  },[myUid,mySchool]);
+  },[myUid,mySchool,classmatesRequested]);
 
   // Incoming pending requests — real-time via onSnapshot.
   useEffect(()=>{
@@ -16824,7 +16833,10 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
   const previewOf=(m)=>!m?null:(m.kind==="text"?m.text:m.kind==="calendar"?"Shared free time found":m.kind==="note"?"Note shared":m.kind==="deck"?"Deck shared":"New message");
   const inboxDms=myFriends.map(u=>{const room=myRooms[dmRoomId(myUid,u.uid)];const last=room&&room.lastMessage;return{kind:"dm",key:"dm:"+u.uid,user:u,lastTs:last?last.ts:0,preview:previewOf(last),unread:isRoomUnread(room,myUid)};});
   const inboxGroups=activeGroups.map(g=>{const last=g.lastMessage;return{kind:"group",key:"group:"+g.id,group:g,lastTs:last?last.ts:0,preview:previewOf(last),unread:isRoomUnread(g,myUid)};});
-  const inboxShown=(inboxTab==="Groups"?inboxGroups:[...inboxDms,...inboxGroups]).slice().sort((a,b)=>b.lastTs-a.lastTs);
+  const [inboxQuery,setInboxQuery]=useState("");
+  const inboxBase=inboxTab==="Groups"?inboxGroups:inboxTab==="Friends"?inboxDms:[...inboxDms,...inboxGroups];
+  const inboxShown=filterByQuery(inboxBase,inboxQuery,row=>row.kind==="group"?(row.group.name||""):((row.user.n||"")+" "+(row.user.h||""))).slice().sort((a,b)=>b.lastTs-a.lastTs||((a.kind==="dm"?a.user.n:a.group.name)||"").localeCompare((b.kind==="dm"?b.user.n:b.group.name)||""));
+  const classmatesFiltered=filterByQuery(classmates,inboxQuery,u=>(u.n||"")+" "+(u.h||""));
 
   // ── Live search — one-shot Firestore prefix query against `profiles` ──────
   const [searchResults,setSearchResults]=useState([]);
@@ -17132,19 +17144,65 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
       <div style={{marginBottom:24}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
           <div style={{display:"flex",gap:6}}>
-            {["All","Groups"].map(t=>(
-              <button key={t} onClick={()=>setInboxTab(t)} style={{padding:"5px 13px",borderRadius:99,fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font,border:`1px solid ${inboxTab===t?T.lime+"55":T.border}`,background:inboxTab===t?T.lime+"14":"transparent",color:inboxTab===t?T.lime:T.muted,transition:"all 0.12s"}}>{t}</button>
+            {["All","Friends","Groups","Classmates"].map(t=>(
+              <button key={t} onClick={()=>{setInboxTab(t);setInboxQuery("");if(t==="Classmates")setClassmatesRequested(true);}} aria-pressed={inboxTab===t} style={{padding:"5px 13px",borderRadius:99,fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font,border:`1px solid ${inboxTab===t?T.lime+"55":T.border}`,background:inboxTab===t?T.lime+"14":"transparent",color:inboxTab===t?T.lime:T.muted,transition:"all 0.12s"}}>{t}</button>
             ))}
           </div>
           <button onClick={()=>{resetCreateGroup();setCreateGroupOpen(true);}} style={{display:"flex",alignItems:"center",gap:5,fontSize:11,fontWeight:700,color:T.lime,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,padding:0}}>{Icon.plus} Create Group</button>
         </div>
+        <div style={{display:"flex",alignItems:"center",gap:10,padding:"9px 13px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:9,marginBottom:10}}>
+          <span style={{color:T.muted,display:"flex",flexShrink:0}}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
+          <input value={inboxQuery} onChange={e=>{setInboxQuery(e.target.value);setClassmatesVisible(10);}} aria-label={inboxTab==="Classmates"?"Search classmates":"Search your friends and groups"} placeholder={inboxTab==="Classmates"?"Search classmates by name or @handle":inboxTab==="Groups"?"Search your groups":inboxTab==="Friends"?"Search your friends":"Search your friends and groups"} style={{flex:1,background:"none",border:"none",outline:"none",color:T.text,fontSize:13,fontFamily:T.font}} />
+          {inboxQuery&&<button type="button" onClick={()=>setInboxQuery("")} aria-label="Clear search" style={{background:"none",border:"none",color:T.muted,cursor:"pointer",padding:0,display:"flex",lineHeight:1,flexShrink:0}}>{Icon.xmark}</button>}
+        </div>
+        {inboxTab==="Classmates"?(
+          <Card style={{padding:classmatesFiltered.length===0?20:0,overflow:"hidden"}}>
+            {!mySchool
+              ?<div style={{fontSize:12,color:T.muted,lineHeight:1.6}}>Add your school in Profile to find and connect with classmates automatically.</div>
+              :classmatesLoading||(!classmatesRequested)
+                ?<div style={{padding:24,textAlign:"center",fontSize:12.5,color:T.muted}}>Searching…</div>
+                :classmatesFiltered.length>0
+                  ?(<>
+                    <div style={{padding:"10px 16px",fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,borderBottom:`1px solid ${T.border}`}}>Classmates at {mySchool} · {classmatesFiltered.length}{classmatesCapped&&!inboxQuery?"+":""}</div>
+                    {classmatesFiltered.slice(0,classmatesVisible).map((u,i,arr)=>{
+                      const isFriend=friends.some(f=>f.uid===u.uid);
+                      const incomingFromThem=incomingReqs.find(r=>r.senderId===u.uid);
+                      const isPendingOut=outgoingReqIds.has(u.uid);
+                      const label=isFriend?"Following":incomingFromThem?"Accept":isPendingOut?"Pending":"Add";
+                      const onClickBtn=isFriend?undefined:isPendingOut?()=>cancelOutgoingRequest(u.uid):incomingFromThem?()=>acceptReq(incomingFromThem.id):()=>sendFriendRequest(u.uid);
+                      return (
+                        <div key={u.uid} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
+                          <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={34} picUrl={u.p||""} />
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:13,fontWeight:600,color:T.white}}>{u.n}</div>
+                            <div style={{fontSize:11,color:T.muted}}>{u.h}</div>
+                          </div>
+                          <BtnSm variant={label==="Add"||label==="Accept"?"lime":"subtle"} onClick={onClickBtn} title={isPendingOut?"Click to cancel this request":undefined} style={{flexShrink:0}}>{label}</BtnSm>
+                        </div>
+                      );
+                    })}
+                    {classmatesFiltered.length>classmatesVisible&&(
+                      <button type="button" onClick={()=>setClassmatesVisible(v=>v+10)} style={{width:"100%",padding:"12px",background:"none",border:"none",borderTop:`1px solid ${T.border}`,color:T.lime,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Show more ({classmatesFiltered.length-classmatesVisible} more)</button>
+                    )}
+                    {classmatesCapped&&!inboxQuery&&<div style={{padding:"10px 16px",fontSize:11.5,color:T.muted,borderTop:`1px solid ${T.border}`}}>Showing the first {CLASSMATES_FETCH_LIMIT} at your school. Search a name to find someone specific.</div>}
+                  </>)
+                  :inboxQuery
+                    ?<div style={{textAlign:"center",fontSize:12.5,color:T.muted}}>No classmates match "{inboxQuery}".</div>
+                    :<div>
+                      <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:4}}>Be the pioneer on your campus.</div>
+                      <div style={{fontSize:11,color:T.muted,marginBottom:14}}>Invite classmates to auto-sync routines and study together.</div>
+                      <Btn onClick={()=>setInviteOpen(true)} style={{width:"100%",justifyContent:"center"}}>{Icon.mail} Invite classmates</Btn>
+                    </div>
+            }
+          </Card>
+        ):(
         <Card style={{padding:0,overflow:"hidden"}}>
           {/* N6 in the audit: this used to be passive text with no button,
               unlike every other empty state in this component. */}
           {inboxShown.length===0
             ?<div style={{padding:20,textAlign:"center"}}>
-                <div style={{fontSize:12.5,color:T.muted,lineHeight:1.6,marginBottom:12}}>{inboxTab==="Groups"?"No groups yet. Create one to start a project chat.":"No friends or groups yet. Search below to add classmates."}</div>
-                {inboxTab==="Groups"
+                <div style={{fontSize:12.5,color:T.muted,lineHeight:1.6,marginBottom:inboxQuery?0:12}}>{inboxQuery?"Nothing matches \""+inboxQuery+"\".":inboxTab==="Groups"?"No groups yet. Create one to start a project chat.":inboxTab==="Friends"?"No friends yet. Find classmates in the Classmates tab or search below.":"No friends or groups yet. Search below to add classmates."}</div>
+                {inboxQuery?null:inboxTab==="Groups"
                   ?<BtnSm onClick={()=>{resetCreateGroup();setCreateGroupOpen(true);}}>{Icon.plus} Create Group</BtnSm>
                   :<BtnSm onClick={()=>setInviteOpen(true)}>{Icon.mail} Invite classmates</BtnSm>}
               </div>
@@ -17191,64 +17249,11 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
               })
           }
         </Card>
+        )}
       </div>
 
       {netToast&&(
         <div style={{position:"fixed",bottom:22,left:"50%",transform:"translateX(-50%)",zIndex:900,padding:"10px 18px",background:T.ink,color:T.cream,borderRadius:99,fontSize:12.5,fontWeight:600,boxShadow:"0 16px 40px -12px rgba(0,0,0,0.5)",animation:"studlinPop 0.2s cubic-bezier(.2,.85,.3,1)"}}>{netToast}</div>
-      )}
-
-      {/* ── CLASSMATES AT MY SCHOOL — real, auto-populated ── */}
-      {mySchool&&(
-        <div style={{marginBottom:24}}>
-          <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:8}}>Classmates at {mySchool}</div>
-          <Card style={{padding:classmates.length===0&&!classmatesLoading?20:0,overflow:"hidden"}}>
-            {classmatesLoading
-              ?<div style={{padding:24,textAlign:"center",fontSize:12.5,color:T.muted}}>Searching…</div>
-              :classmates.length>0
-                ?classmates.map((u,i,arr)=>{
-                    const isFriend=friends.some(f=>f.uid===u.uid);
-                    const incomingFromThem=incomingReqs.find(r=>r.senderId===u.uid);
-                    const isPendingOut=outgoingReqIds.has(u.uid);
-                    const label=isFriend?"Following":incomingFromThem?"Accept":isPendingOut?"Pending":"Add";
-                    const onClickBtn=isFriend?undefined:isPendingOut?()=>cancelOutgoingRequest(u.uid):incomingFromThem?()=>acceptReq(incomingFromThem.id):()=>sendFriendRequest(u.uid);
-                    return (
-                      <div key={u.uid} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
-                        <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={34} picUrl={u.p||""} />
-                        <div style={{flex:1,minWidth:0}}>
-                          <div style={{fontSize:13,fontWeight:600,color:T.white}}>{u.n}</div>
-                          <div style={{fontSize:11,color:T.muted}}>{u.h}</div>
-                        </div>
-                        <BtnSm variant={label==="Add"||label==="Accept"?"lime":"subtle"} onClick={onClickBtn} title={isPendingOut?"Click to cancel this request":undefined} style={{flexShrink:0,opacity:onClickBtn?1:0.7}}>{label}</BtnSm>
-                      </div>
-                    );
-                  })
-                :<div>
-                    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
-                      <div style={{width:34,height:34,borderRadius:9,background:T.lime+"18",border:`1px solid ${T.lime}30`,display:"flex",alignItems:"center",justifyContent:"center",color:T.lime,flexShrink:0}}>{Icon.zap}</div>
-                      <div>
-                        <div style={{fontSize:13,fontWeight:700,color:T.white}}>Be the pioneer on your campus.</div>
-                        {/* N3 in the audit: "conquer the leaderboard" -- no
-                            leaderboard exists anywhere in the app anymore.
-                            Matches the real value prop (see the Growth
-                            Banner right below: auto-synced routines +
-                            shared scheduling). */}
-                        <div style={{fontSize:11,color:T.muted}}>Invite classmates to auto-sync routines and study together.</div>
-                      </div>
-                    </div>
-                    <Btn onClick={()=>setInviteOpen(true)} style={{width:"100%",justifyContent:"center"}}>{Icon.mail} Invite classmates</Btn>
-                  </div>
-            }
-          </Card>
-        </div>
-      )}
-      {/* N7 in the audit: this whole section used to just not render at
-          all when Profile's school field was empty -- more likely for a
-          first-time HS student than a college one, leaving a barer page
-          right where the most inviting pitch on it would otherwise be. */}
-      {!mySchool&&(
-        <div style={{marginBottom:24,padding:"16px 18px",borderRadius:10,background:T.card,border:`1px solid ${T.border}`,fontSize:12,color:T.muted,lineHeight:1.6}}>
-          Add your school in Profile to find and connect with classmates automatically.
-        </div>
       )}
 
       {/* ── GROWTH BANNER ── */}
@@ -23999,6 +24004,13 @@ async function shrinkImageForScan(file,maxDim=1800){
     const out=canvas.toDataURL("image/jpeg",0.85);
     return{base64:out.split(",")[1]||"",mediaType:"image/jpeg"};
   }catch(e){return null;}
+}
+const CLASSMATES_FETCH_LIMIT=100;
+// Filters a list of people (or groups) by what the student typed, matching name or handle.
+function filterByQuery(list,query,textOf){
+  const q=(query||"").trim().toLowerCase();
+  if(!q)return list;
+  return list.filter(x=>textOf(x).toLowerCase().includes(q));
 }
 function RosterList({items,setItems,makeNewItem,addLabel,withSchedule}){
   const [dragIdx,setDragIdx]=useState(null);
