@@ -37,6 +37,26 @@ const BETA_TESTER_EMAILS = [
 ];
 const BETA_CODE = 'betatesters';
 const BETA_TRIAL_DAYS = 30;
+// A paying Pro subscriber gets PLAN_CREDITS.Pro credits every billing cycle
+// (api/stripe-webhook.js handleInvoicePaid). A beta trial skips Stripe, so it
+// never got any: those accounts kept the 120 every account starts with, and
+// api/chat.js refuses any call at 0 credits even on Pro, so beta testers hit
+// "AI usage limit" after roughly 40 questions. The same top-up is given here.
+const BETA_MONTHLY_CREDITS = 100000;
+// Pure: returns the fields to write when an active beta-trial account is due its
+// monthly top-up (once per calendar month), or null when nothing is due. Never
+// applies to a real paying subscriber. `force` is used at redemption.
+function betaCreditTopUp(data, now, force) {
+  if (!data || data.plan !== 'Pro' || !data.betaTrialExpiresAt || data.stripeSubscriptionId) return null;
+  if (new Date(data.betaTrialExpiresAt) <= now) return null;
+  const monthKey = now.toISOString().slice(0, 7);
+  if (!force && data.betaCreditsMonth === monthKey) return null;
+  return {
+    credits: Math.max(data.credits || 0, BETA_MONTHLY_CREDITS),
+    aiSpendCentsCycle: 0,
+    betaCreditsMonth: monthKey,
+  };
+}
 
 // Referral trial (2026-08-27) -- replaces an earlier "50 bonus AI
 // credits" promise on the growth banner that, on inspection, had no
@@ -189,6 +209,7 @@ async function handleRedeemBeta(user, req, res) {
 
     const betaTrialExpiresAt = new Date(Date.now() + BETA_TRIAL_DAYS * 86400000).toISOString();
     const update = { plan: 'Pro', betaTrialExpiresAt, updatedAt: new Date().toISOString() };
+    Object.assign(update, betaCreditTopUp({ ...data, ...update }, new Date(), true));
     await userRef.set(update, { merge: true });
     return res.status(200).json({ ...update, message: 'Pro unlocked for ' + BETA_TRIAL_DAYS + ' days.' });
   } catch (err) {
@@ -1004,6 +1025,16 @@ module.exports = withSentry(async (req, res) => {
     // in principle have redeemed a beta code before their referral trial
     // (already handled -- grantTo above never touches an active beta
     // trial) or after it expired (this is the only remaining path).
+    // Monthly credit top-up for an active beta trial (see BETA_MONTHLY_CREDITS).
+    // Runs on read like the expiry check above, so an account that ran dry gets
+    // refilled the next time the app loads, without waiting for a Stripe invoice.
+    {
+      const topUp = betaCreditTopUp({ ...data, plan }, new Date(), false);
+      if (topUp) {
+        await ref.set(topUp, { merge: true });
+        Object.assign(data, topUp);
+      }
+    }
     if (plan === 'Pro-Limited' && data.referralTrialExpiresAt && new Date(data.referralTrialExpiresAt) <= new Date()) {
       plan = 'Free';
       await ref.set({ plan: 'Free' }, { merge: true });
@@ -1063,3 +1094,6 @@ module.exports = withSentry(async (req, res) => {
     return res.status(200).json({ plan: 'Free', credits: DEFAULT_CREDITS, email: user.email || null });
   }
 });
+
+module.exports.betaCreditTopUp = betaCreditTopUp;
+module.exports.BETA_MONTHLY_CREDITS = BETA_MONTHLY_CREDITS;
