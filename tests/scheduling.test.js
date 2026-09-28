@@ -2777,10 +2777,22 @@ describe("computeBusyWindowsPayload (privacy-scoped shared free/busy for Studlin
     const m = loadStudlinModule();
     const events = [realTask({ id: "t1", date: "2026-07-21", time: "14:00", title: "Secret therapy appointment", subject: "Personal" })];
     const payload = m.computeBusyWindowsPayload(events, [], DEFAULT_PREFS, "2026-07-20");
-    const entry = payload.find((iv) => iv.date === "2026-07-21");
+    const entry = payload.find((iv) => m.dayKey(new Date(iv.sMs)) === "2026-07-21");
     assert.ok(entry, "the busy interval should exist");
     const keys = Object.keys(entry).sort();
-    assert.deepEqual(keys, ["date", "e", "s"], "must never carry title/subject/kind or any other identifying field");
+    assert.deepEqual(keys, ["eMs", "sMs"], "must never carry title/subject/kind or any other identifying field");
+  });
+
+  test("emits absolute instants (sMs/eMs) anchored to this device's own local timezone, matching computeOccupiedIntervals' own minutes-of-day exactly -- the 2026-09-28 cross-timezone overlay fix", () => {
+    const m = loadStudlinModule();
+    const events = [realTask({ id: "t1", date: "2026-07-21", time: "14:00", duration: 60 })];
+    const payload = m.computeBusyWindowsPayload(events, [], DEFAULT_PREFS, "2026-07-20");
+    const entry = payload.find((iv) => m.dayKey(new Date(iv.sMs)) === "2026-07-21");
+    const occupied = m.computeOccupiedIntervals(events, [], DEFAULT_PREFS, "2026-07-21")[0];
+    assert.ok(entry);
+    const dayStartMs = new Date("2026-07-21T00:00:00").getTime();
+    assert.equal(entry.sMs, dayStartMs + occupied.start * 60000, "sMs must be a real instant, not a bare local-minutes-of-day number reused verbatim");
+    assert.equal(entry.eMs, dayStartMs + occupied.end * 60000);
   });
 
   test("covers exactly BUSY_WINDOW_DAYS_AHEAD days starting today, matching what findSharedStudyWindow can actually search", () => {
@@ -2788,13 +2800,47 @@ describe("computeBusyWindowsPayload (privacy-scoped shared free/busy for Studlin
     const farOut = m.dayKey(new Date(Date.parse("2026-07-20") + (m.BUSY_WINDOW_DAYS_AHEAD + 2) * 86400000));
     const events = [realTask({ id: "t1", date: farOut, time: "14:00" })];
     const payload = m.computeBusyWindowsPayload(events, [], DEFAULT_PREFS, "2026-07-20");
-    assert.equal(payload.find((iv) => iv.date === farOut), undefined, "a task past the published window shouldn't appear in the payload");
+    assert.equal(payload.find((iv) => m.dayKey(new Date(iv.sMs)) === farOut), undefined, "a task past the published window shouldn't appear in the payload");
   });
 
   test("produces no intervals at all on a genuinely empty calendar", () => {
     const m = loadStudlinModule();
     const payload = m.computeBusyWindowsPayload([], [], DEFAULT_PREFS, "2026-07-20");
     assert.equal(payload.length, 0);
+  });
+});
+
+describe("expandBusyIntervalForViewer (read-side of the 2026-09-28 cross-timezone overlay fix)", () => {
+  test("decodes an sMs/eMs interval back to this device's own local day and clock position", () => {
+    const m = loadStudlinModule();
+    const sMs = new Date("2026-07-21T14:00:00").getTime();
+    const eMs = new Date("2026-07-21T15:00:00").getTime();
+    const segs = m.expandBusyIntervalForViewer({ sMs, eMs });
+    assert.equal(segs.length, 1);
+    assert.equal(segs[0].date, "2026-07-21");
+    assert.equal(segs[0].s, 14 * 60);
+    assert.equal(segs[0].e, 15 * 60);
+  });
+  test("splits an interval that crosses local midnight into two day segments instead of dropping or misplacing it", () => {
+    const m = loadStudlinModule();
+    const sMs = new Date("2026-07-21T23:00:00").getTime();
+    const eMs = new Date("2026-07-22T01:00:00").getTime();
+    const segs = m.expandBusyIntervalForViewer({ sMs, eMs });
+    assert.equal(segs.length, 2);
+    assert.equal(segs[0].date, "2026-07-21"); assert.equal(segs[0].s, 23 * 60); assert.equal(segs[0].e, 24 * 60);
+    assert.equal(segs[1].date, "2026-07-22"); assert.equal(segs[1].s, 0); assert.equal(segs[1].e, 60);
+  });
+  test("falls back to the legacy {date,s,e} shape verbatim for a friend's doc that hasn't republished yet", () => {
+    const m = loadStudlinModule();
+    const segs = m.expandBusyIntervalForViewer({ date: "2026-07-21", s: 480, e: 540 });
+    assert.equal(segs.length, 1);
+    assert.equal(segs[0].date, "2026-07-21");
+    assert.equal(segs[0].s, 480);
+    assert.equal(segs[0].e, 540);
+  });
+  test("a malformed entry with neither sMs nor date produces nothing, never throws", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.expandBusyIntervalForViewer({}).length, 0);
   });
 });
 

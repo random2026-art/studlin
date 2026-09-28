@@ -40,15 +40,15 @@ describe("computeBusyWindowsPayload covers ~2 months ahead, not 3 weeks", () => 
     const farDate = "2026-10-25"; // 45 days after 2026-09-10
     const events = [{ id: "far", date: farDate, time: "14:00", duration: 60, status: "pending" }];
     const payload = computeBusyWindowsPayload(events, [], DEFAULT_PREFS, "2026-09-10");
-    assert.ok(payload.some(iv => iv.date === farDate), "an event 45 days out must appear in the published busy-window payload");
+    assert.ok(payload.some(iv => dayKey(new Date(iv.sMs)) === farDate), "an event 45 days out must appear in the published busy-window payload");
   });
 
   test("an event 90 days out (past even the new 60-day range) is correctly excluded, staying finite on purpose", () => {
-    const { computeBusyWindowsPayload } = loadStudlinModule({ now: "2026-09-10T09:00:00" });
+    const { computeBusyWindowsPayload, dayKey } = loadStudlinModule({ now: "2026-09-10T09:00:00" });
     const tooFarDate = "2026-12-09"; // 90 days after 2026-09-10
     const events = [{ id: "toofar", date: tooFarDate, time: "14:00", duration: 60, status: "pending" }];
     const payload = computeBusyWindowsPayload(events, [], DEFAULT_PREFS, "2026-09-10");
-    assert.ok(!payload.some(iv => iv.date === tooFarDate), "the range must stay bounded, not become unbounded/indefinite again");
+    assert.ok(!payload.some(iv => dayKey(new Date(iv.sMs)) === tooFarDate), "the range must stay bounded, not become unbounded/indefinite again");
   });
 });
 
