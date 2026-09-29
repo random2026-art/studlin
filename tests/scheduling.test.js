@@ -4492,6 +4492,51 @@ describe("computeMonthHeavyDays (regression: Month grid's capacity bar used to f
   });
 });
 
+describe("computeMonthDayTiers (2026-09-29 user request: gray/green/yellow/red scale, not a single binary flag)", () => {
+  test("a day with nothing scheduled is 'none'", () => {
+    const m = loadStudlinModule();
+    const tiers = m.computeMonthDayTiers([{ key: "d1", minutes: 0 }, { key: "d2", minutes: 120 }]);
+    assert.equal(tiers.get("d1"), "none");
+  });
+
+  test("a day at or below the month's own typical load is 'typical'", () => {
+    const m = loadStudlinModule();
+    // avg of [60,60,60,300] is 120 -- 60 is well under both the warning
+    // (138) and heavy (168) bars.
+    const tiers = m.computeMonthDayTiers([
+      { key: "d1", minutes: 60 }, { key: "d2", minutes: 60 },
+      { key: "d3", minutes: 60 }, { key: "d4", minutes: 300 },
+    ]);
+    assert.equal(tiers.get("d1"), "typical");
+  });
+
+  test("a day meaningfully above average but short of the heavy bar is 'warning', not 'heavy'", () => {
+    const m = loadStudlinModule();
+    // avg of [100,100,100,130] is 107.5 -- 130 clears the warning bar
+    // (>=60 and >=1.15*107.5=123.6) but not the heavy one (>=1.4*107.5=150.5).
+    const tiers = m.computeMonthDayTiers([
+      { key: "d1", minutes: 100 }, { key: "d2", minutes: 100 },
+      { key: "d3", minutes: 100 }, { key: "d4", minutes: 130 },
+    ]);
+    assert.equal(tiers.get("d4"), "warning");
+  });
+
+  test("a day well above average is 'heavy', matching computeMonthHeavyDays' own binary flag", () => {
+    const m = loadStudlinModule();
+    const tiers = m.computeMonthDayTiers([
+      { key: "d1", minutes: 60 }, { key: "d2", minutes: 60 },
+      { key: "d3", minutes: 60 }, { key: "d4", minutes: 300 },
+    ]);
+    assert.equal(tiers.get("d4"), "heavy");
+  });
+
+  test("an empty month is a harmless no-op, not a divide-by-zero", () => {
+    const m = loadStudlinModule();
+    const tiers = m.computeMonthDayTiers([]);
+    assert.equal(tiers.size, 0);
+  });
+});
+
 describe("2026-08-19: Moodle/Course Site calendar detection", () => {
   test("detectCalendarSourceType recognizes a Moodle export URL by path, regardless of hostname", () => {
     const m = loadStudlinModule();

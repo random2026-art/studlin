@@ -8082,15 +8082,37 @@ function narrateWeekAhead(events,dueItems,todayKey){
 // minutes on it just because that's technically "above average").
 const MONTH_HEAVY_RELATIVE_RATIO=1.4;
 const MONTH_HEAVY_MIN_ABSOLUTE_MINS=90;
-function computeMonthHeavyDays(dayMinutesEntries){
+// 2026-09-29 user request: the Month grid's old capacity bar was a single
+// binary flag (a flat gray sliver that only ever appeared for a "heavy"
+// day, invisible otherwise) -- wanted a real 4-step scale instead: gray
+// (nothing scheduled), green (a typical day), yellow (meaningfully above
+// average), red (well above average, the old "heavy" flag). "warning"
+// sits at a lower bar than "heavy" -- same relative-to-this-month's-own-
+// average reasoning as the original binary flag (a fixed absolute
+// threshold trips on nearly every weekday regardless of course load),
+// just a second, gentler cutoff between "typical" and "heavy" instead of
+// jumping straight from nothing to red.
+const MONTH_WARNING_RELATIVE_RATIO=1.15;
+const MONTH_WARNING_MIN_ABSOLUTE_MINS=60;
+function computeMonthDayTiers(dayMinutesEntries){
   const entries=dayMinutesEntries||[];
   const real=entries.filter(d=>d.minutes>0);
-  const heavy=new Set();
-  if(real.length===0)return heavy;
-  const avg=real.reduce((s,d)=>s+d.minutes,0)/real.length;
+  const tiers=new Map();
+  const avg=real.length>0?real.reduce((s,d)=>s+d.minutes,0)/real.length:0;
   entries.forEach(d=>{
-    if(d.minutes>=MONTH_HEAVY_MIN_ABSOLUTE_MINS&&d.minutes>=avg*MONTH_HEAVY_RELATIVE_RATIO)heavy.add(d.key);
+    if(d.minutes<=0){tiers.set(d.key,"none");return;}
+    if(avg>0&&d.minutes>=MONTH_HEAVY_MIN_ABSOLUTE_MINS&&d.minutes>=avg*MONTH_HEAVY_RELATIVE_RATIO){tiers.set(d.key,"heavy");return;}
+    if(avg>0&&d.minutes>=MONTH_WARNING_MIN_ABSOLUTE_MINS&&d.minutes>=avg*MONTH_WARNING_RELATIVE_RATIO){tiers.set(d.key,"warning");return;}
+    tiers.set(d.key,"typical");
   });
+  return tiers;
+}
+// Kept as a thin wrapper -- existing callers (Weekly Wrapped's forward-
+// look, etc.) only ever needed the binary "heavy" flag and stay unchanged.
+function computeMonthHeavyDays(dayMinutesEntries){
+  const tiers=computeMonthDayTiers(dayMinutesEntries);
+  const heavy=new Set();
+  tiers.forEach((tier,key)=>{if(tier==="heavy")heavy.add(key);});
   return heavy;
 }
 const SPLIT_SESSION_MIN_MINUTES=10;
@@ -27042,7 +27064,14 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
       </div>
     )}
     <Card style={{padding:16}}>
-      <div style={{height:"calc(100vh - 320px)",minHeight:360}}>
+      {/* 2026-09-29 user report ("day view needs to be longer, I want to
+          see more hours"): 320px reserved here vs. WeeklyPlanner's own
+          170px (weekScrollRef) for the exact same page chrome above it --
+          Day's own header (date nav + "N scheduled items" line, plus
+          due-pills when present) justifies reserving a bit more than
+          Week's, but not 150px more. 220px actually visibly shows more of
+          the day at the default zoom without cutting it dangerously close. */}
+      <div style={{height:"calc(100vh - 220px)",minHeight:360}}>
         <div ref={scrollRef} style={{height:"100%",overflowY:"auto",position:"relative"}}>
           {/* Same thin-line-plus-grip zoom handle as WeeklyPlanner's, sticky
               so it stays reachable regardless of scroll position -- see
@@ -34905,18 +34934,19 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((d,i)=><div key={i} style={{fontSize:10,fontWeight:600,color:T.muted,textAlign:"center",padding:"6px 0",letterSpacing:"0.05em"}}>{d}</div>)}
             {(()=>{
               // Computed once per render, relative to every real (in-month)
-              // day currently visible -- see computeMonthHeavyDays' own
+              // day currently visible -- see computeMonthDayTiers' own
               // comment for why this replaced the old fixed-minutes
               // threshold. Out-of-month lead/trail days (c.out) are
               // excluded from the average itself, though a heavy one could
               // still be flagged against it -- moot in practice since
-              // they're faded/inert anyway.
-              const monthHeavyDays=computeMonthHeavyDays(cells.filter(c=>!c.out).map(c=>({key:c.key,minutes:dayWorkloadMinutes((byDay[c.key]||[]).filter(ev=>ev.kind!=="free period"))})));
+              // they're faded/inert anyway (and the bar below never
+              // renders for them regardless).
+              const monthDayTiers=computeMonthDayTiers(cells.filter(c=>!c.out).map(c=>({key:c.key,minutes:dayWorkloadMinutes((byDay[c.key]||[]).filter(ev=>ev.kind!=="free period"))})));
               return cells.map((c,i)=>{
               const evs=(byDay[c.key]||[]).filter(ev=>ev.kind!=="free period");
               const isToday=c.key===todayK;
               const isSel=c.key===selDay;
-              const isHeavyThisMonth=monthHeavyDays.has(c.key);
+              const dayTier=c.out?null:(monthDayTiers.get(c.key)||"none");
               // Same "just added/imported" marker as Week/Day (see
               // CalendarTab's own newItemHighlightIds comment) -- the
               // monthly grid never renders individual routine/class blocks
@@ -34962,22 +34992,34 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                       if(payload)commitNewTaskDrop(payload,c.key,"09:00");
                     }
                   }}
-                  title={hasNewItem?"Has something just added":isHeavyThisMonth?dayWorkloadMinutes(evs)+" minutes scheduled -- heavier than your average day this month":undefined}
-                  style={{position:"relative",minHeight:64,minWidth:0,borderRadius:9,padding:"6px 7px",cursor:"pointer",background:isSel?T.card2:"transparent",border:"1px solid "+(hasNewItem?T.lime:isSel?T.lime+"55":"transparent"),transition:"all 0.12s",opacity:c.out?0.35:1}}>
+                  title={hasNewItem?"Has something just added":dayTier==="heavy"?dayWorkloadMinutes(evs)+" minutes scheduled -- a lot more than your typical day this month":dayTier==="warning"?dayWorkloadMinutes(evs)+" minutes scheduled -- more than your typical day this month":undefined}
+                  /* border, 2026-09-29 user request: every cell now gets a
+                     real (subtle) separator line, not just selected/new-
+                     item ones -- was "transparent" so adjacent days had
+                     nothing visually splitting them apart. minHeight 64->96
+                     (same request, "dead space at the bottom") -- rows
+                     were sized to their content floor, not the grid's own
+                     available height, leaving a gap below a typical
+                     5-6-row month; taller cells actually use that room. */
+                  style={{position:"relative",minHeight:96,minWidth:0,borderRadius:9,padding:"6px 7px",cursor:"pointer",background:isSel?T.card2:"transparent",border:"1px solid "+(hasNewItem?T.lime:isSel?T.lime+"55":T.border),transition:"all 0.12s",opacity:c.out?0.35:1}}>
                   <div style={{display:"flex",justifyContent:"flex-start"}}>
                     <span style={{width:22,height:22,borderRadius:"50%",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:isToday?700:500,background:isToday?T.lime:"transparent",color:isToday?T.ink:c.out?T.faint:T.text}}>{c.d}</span>
                   </div>
                   {isSel && <button type="button" onClick={(e)=>{e.stopPropagation();openNew(c.key);}} title="Add a task on this day"
                     style={{position:"absolute",top:4,right:4,width:16,height:16,borderRadius:"50%",border:`1px solid ${T.border}`,background:T.card,color:T.muted,fontSize:11,lineHeight:1,cursor:"pointer",display:"grid",placeItems:"center",padding:0}}>+</button>}
-                  {/* Fixed-width, not a scaled fill -- this is a binary
-                      "notably heavier than your other days this month"
-                      flag now, not a percentage, so there's nothing to
-                      scale against. Deliberately rare (see
-                      computeMonthHeavyDays): a normal full course load
-                      shouldn't trip this on nearly every cell the way the
-                      old fixed-threshold version did. */}
-                  {isHeavyThisMonth&&(
-                    <div style={{position:"absolute",left:7,bottom:5,width:20,height:3,borderRadius:2,background:T.muted}} />
+                  {/* 2026-09-29 user request: a real 4-step scale instead
+                      of the old single binary flag (a bar that only ever
+                      appeared for a "heavy" day, invisible every other
+                      time) -- gray (nothing scheduled), green (typical),
+                      yellow (meaningfully above this month's own average),
+                      red (well above it, the old "heavy" flag). Fixed-
+                      width, not a scaled fill -- still a tier, not a
+                      percentage, so there's nothing to scale against.
+                      Never rendered for an out-of-month lead/trail cell
+                      (dayTier is null there) -- those are faded/inert. */}
+                  {dayTier&&(
+                    <div style={{position:"absolute",left:7,bottom:5,width:20,height:3,borderRadius:2,
+                      background:dayTier==="heavy"?T.red:dayTier==="warning"?T.amber:dayTier==="typical"?T.teal:T.faint}} />
                   )}
                   {/* Phase 10b: a single compact "N tasks due" pill instead
                       of listing individual event chips -- matches Shovel's
