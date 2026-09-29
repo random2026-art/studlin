@@ -26829,7 +26829,6 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
   const [dayDragOver,setDayDragOver]=useState(false);
   const [dayDropTime,setDayDropTime]=useState(null);
   const timelineRef=useRef(null);
-  const [dayPreviewOpen,setDayPreviewOpen]=useState(false);
   // Minimal "who's in" popover for a pending group-proposal block -- Day
   // view never had a click-for-actions menu the way Week view does (a
   // plain click here toggles done instead), so rather than bolting a full
@@ -26838,7 +26837,6 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
   // done on something nobody's confirmed yet wasn't a meaningful action
   // anyway). Every other block's click behavior is untouched.
   const [whoInAnchor,setWhoInAnchor]=useState(null); // {id,rect}|null -- id, not the event object itself, so a refresh (see refreshPendingAcceptance below) that lands while this is open is picked up live off dayEvents instead of showing a stale captured snapshot.
-  const stepDay=(n)=>{const d=new Date(selDay+"T12:00:00");d.setDate(d.getDate()+n);setSelDay(dayKey(d));};
   const niceDayLabel=(()=>{const p=selDay.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});})();
   // isDuePill items (exams/deadlines, plus a reminder with no real
   // confirmed time) never had a real clock position -- WeeklyPlanner
@@ -26849,11 +26847,18 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
   const duePills=(dayEvents||[]).filter(isDuePill);
   const visibleEvs=(dayEvents||[]).filter(ev=>ev.kind!=="free period"&&ev.time&&!isDuePill(ev));
   const workWindow=getWorkWindowMinsFor(prefs,selDay);
-  // User-driven zoom (Phase 10b's own drag handle, extended here) --
-  // shares the exact same persisted value as WeeklyPlanner's handle (see
-  // getCalZoom/saveCalZoom's own comment) so switching Week/Day keeps a
-  // consistent feel instead of needing two independent settings.
-  const [pxPerHr,setPxPerHr]=useState(()=>getCalZoom());
+  // User-driven zoom (Phase 10b's own drag handle, extended here). 2026-09-29
+  // user request: Day now always OPENS at CAL_ZOOM_MIN (the smallest an hour
+  // can render) instead of inheriting whatever WeeklyPlanner's own handle
+  // last saved, specifically so a fresh visit to Day shows as much of the
+  // day as possible by default -- "naturally the smallest zoom." Dragging
+  // still works exactly as before and still writes through saveCalZoom
+  // (the drag handler below is unchanged), so a manual adjustment sticks
+  // for the rest of this Day-view session; the next fresh mount starts
+  // smallest again either way. Intentionally decoupled from WeeklyPlanner's
+  // own WK_PX_HR initializer (a separate useState there, still reads
+  // getCalZoom() and is untouched by this) -- Week keeps its own default.
+  const [pxPerHr,setPxPerHr]=useState(CAL_ZOOM_MIN);
   const dayZoomDrag=useRef(null); // {startClientY,startPxHr}|null
   const [dayZoomDragging,setDayZoomDragging]=useState(false);
   useEffect(()=>{
@@ -27034,20 +27039,19 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
   },[gsDraftDragging,pxPerHr,onGsPreviewMove,onGsPreviewResize,selDay]);
   return (
     <>
-    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,flexWrap:"wrap",gap:8}}>
-      <div>
-        <div style={{fontSize:15,fontWeight:700,color:T.white}}>{niceDayLabel}</div>
-        <div style={{fontSize:11,color:T.muted,marginTop:1}}>{visibleEvs.length} scheduled item{visibleEvs.length!==1?"s":""}</div>
-      </div>
-      <div style={{display:"flex",gap:6,alignItems:"center"}}>
-        {/* Same ‹/› glyph-in-a-square style as the toolbar's own date-range
-            nav above -- "Prev"/"Next" text buttons read as a second,
-            differently-styled day nav competing with that one. */}
-        <button onClick={()=>stepDay(-1)} title="Previous day" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:11,fontFamily:T.font}}>‹</button>
-        <BtnSm variant="ghost" onClick={()=>setSelDay(todayK)}>Today</BtnSm>
-        <button onClick={()=>stepDay(1)} title="Next day" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:11,fontFamily:T.font}}>›</button>
-        <BtnSm variant="subtle" onClick={()=>setDayPreviewOpen(true)}>Day Preview</BtnSm>
-      </div>
+    {/* 2026-09-29 user report: this row used to duplicate the shared
+        toolbar's own ‹ [date, click to jump to today] › control (CalendarTab
+        renders that once above, for whichever calView is active, Day
+        included) with a second, Day-local ‹/Today/› plus a "Day Preview"
+        button -- removed entirely (including the now-dead stepDay helper)
+        so the grid below starts higher instead of losing space to a
+        redundant control. Day/today navigation stays available via that
+        shared toolbar. Day Preview's own dead dayPreviewOpen state/modal
+        instance were removed with it -- DayPreviewModal itself is still a
+        real, used component elsewhere (see WeeklyPlanner's own instance). */}
+    <div style={{marginBottom:10}}>
+      <div style={{fontSize:15,fontWeight:700,color:T.white}}>{niceDayLabel}</div>
+      <div style={{fontSize:11,color:T.muted,marginTop:1}}>{visibleEvs.length} scheduled item{visibleEvs.length!==1?"s":""}</div>
     </div>
     {/* Due-date facts (exams/deadlines, plus a reminder with no real
         confirmed time) never had a real clock position to render at --
@@ -27066,12 +27070,14 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
     <Card style={{padding:16}}>
       {/* 2026-09-29 user report ("day view needs to be longer, I want to
           see more hours"): 320px reserved here vs. WeeklyPlanner's own
-          170px (weekScrollRef) for the exact same page chrome above it --
-          Day's own header (date nav + "N scheduled items" line, plus
-          due-pills when present) justifies reserving a bit more than
-          Week's, but not 150px more. 220px actually visibly shows more of
-          the day at the default zoom without cutting it dangerously close. */}
-      <div style={{height:"calc(100vh - 220px)",minHeight:360}}>
+          170px (weekScrollRef) for the exact same page chrome above it.
+          First pass brought this to 220px; the redundant ‹/Today/›/Day
+          Preview row removed just above (same user report, second pass)
+          freed another ~35px of header height, so this comes down to
+          190px with it -- still a bit more than Week's 170px for Day's
+          own remaining "N scheduled items" line and due-pills row, not
+          cutting it dangerously close. */}
+      <div style={{height:"calc(100vh - 190px)",minHeight:360}}>
         <div ref={scrollRef} style={{height:"100%",overflowY:"auto",position:"relative"}}>
           {/* Same thin-line-plus-grip zoom handle as WeeklyPlanner's, sticky
               so it stays reachable regardless of scroll position -- see
@@ -27303,7 +27309,6 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
         </div>
       </div>
     </Card>
-    <DayPreviewModal open={dayPreviewOpen} onClose={()=>setDayPreviewOpen(false)} dayEvents={dayEvents} selDay={selDay} dayLabel={niceDayLabel} colorOf={colorOf} fmtTime={fmtTime} fmtTimeRange={fmtTimeRange} catchUpPending={catchUpPending} openNew={openNew} />
     {/* Minimal "who's in" popover -- see whoInAnchor's own comment above for
         why this exists separately from WeeklyPlanner's fuller popover
         instead of reusing it directly (Day view has no click-for-actions
