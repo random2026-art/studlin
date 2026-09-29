@@ -16050,10 +16050,6 @@ function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf,
   const [dayDropTime, setDayDropTime] = useState(null);
   const timelineRef = useRef(null);
   const [whoInAnchor, setWhoInAnchor] = useState(null);
-  const niceDayLabel = (() => {
-    const p = selDay.split("-");
-    return new Date(+p[0], +p[1] - 1, +p[2]).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
-  })();
   const duePills = (dayEvents || []).filter(isDuePill);
   const visibleEvs = (dayEvents || []).filter((ev) => ev.kind !== "free period" && ev.time && !isDuePill(ev));
   const workWindow = getWorkWindowMinsFor(prefs, selDay);
@@ -16256,7 +16252,7 @@ function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf,
       document.removeEventListener("mouseup", onUp);
     };
   }, [gsDraftDragging, pxPerHr, onGsPreviewMove, onGsPreviewResize, selDay]);
-  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 15, fontWeight: 700, color: T.white } }, niceDayLabel), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 1 } }, visibleEvs.length, " scheduled item", visibleEvs.length !== 1 ? "s" : "")), duePills.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 } }, duePills.map((ev) => /* @__PURE__ */ React.createElement("div", { key: ev.id, onClick: () => openEdit(ev), title: "Click to edit", style: { display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 600, color: T.amber, background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 6, padding: "4px 9px", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("span", { style: { display: "flex", color: T.amber } }, DAY_PREVIEW_ICON_BY_KIND[ev.kind] || Icon.dot), ev.title))), /* @__PURE__ */ React.createElement(Card, { style: { padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { height: "calc(100vh - 190px)", minHeight: 360 } }, /* @__PURE__ */ React.createElement("div", { ref: scrollRef, style: { height: "100%", overflowY: "auto", position: "relative" } }, /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginBottom: 10 } }, visibleEvs.length, " scheduled item", visibleEvs.length !== 1 ? "s" : ""), duePills.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 } }, duePills.map((ev) => /* @__PURE__ */ React.createElement("div", { key: ev.id, onClick: () => openEdit(ev), title: "Click to edit", style: { display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 600, color: T.amber, background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 6, padding: "4px 9px", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("span", { style: { display: "flex", color: T.amber } }, DAY_PREVIEW_ICON_BY_KIND[ev.kind] || Icon.dot), ev.title))), /* @__PURE__ */ React.createElement(Card, { style: { padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { height: "calc(100vh - 190px)", minHeight: 360 } }, /* @__PURE__ */ React.createElement("div", { ref: scrollRef, style: { height: "100%", overflowY: "auto", position: "relative" } }, /* @__PURE__ */ React.createElement(
     "div",
     {
       onMouseDown: startDayZoomDrag,

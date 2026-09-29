@@ -26837,7 +26837,6 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
   // done on something nobody's confirmed yet wasn't a meaningful action
   // anyway). Every other block's click behavior is untouched.
   const [whoInAnchor,setWhoInAnchor]=useState(null); // {id,rect}|null -- id, not the event object itself, so a refresh (see refreshPendingAcceptance below) that lands while this is open is picked up live off dayEvents instead of showing a stale captured snapshot.
-  const niceDayLabel=(()=>{const p=selDay.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});})();
   // isDuePill items (exams/deadlines, plus a reminder with no real
   // confirmed time) never had a real clock position -- WeeklyPlanner
   // already excluded them from its timed grid, but Day view never did,
@@ -27049,10 +27048,14 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
         shared toolbar. Day Preview's own dead dayPreviewOpen state/modal
         instance were removed with it -- DayPreviewModal itself is still a
         real, used component elsewhere (see WeeklyPlanner's own instance). */}
-    <div style={{marginBottom:10}}>
-      <div style={{fontSize:15,fontWeight:700,color:T.white}}>{niceDayLabel}</div>
-      <div style={{fontSize:11,color:T.muted,marginTop:1}}>{visibleEvs.length} scheduled item{visibleEvs.length!==1?"s":""}</div>
-    </div>
+    {/* 2026-09-29 user report (2nd pass): niceDayLabel here ("Tuesday,
+        September 29") was byte-for-byte the same string, same format
+        ({weekday:"long",month:"long",day:"numeric"}), as the shared
+        toolbar's own date label right above it (see CalendarTab's own
+        niceDate) -- a real duplicate, not just visually similar. Removed;
+        the item count is the only thing here that isn't shown anywhere
+        else, so it's what's left. */}
+    <div style={{fontSize:11,color:T.muted,marginBottom:10}}>{visibleEvs.length} scheduled item{visibleEvs.length!==1?"s":""}</div>
     {/* Due-date facts (exams/deadlines, plus a reminder with no real
         confirmed time) never had a real clock position to render at --
         listed here instead of silently vanishing now that visibleEvs
