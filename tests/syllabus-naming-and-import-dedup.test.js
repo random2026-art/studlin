@@ -46,8 +46,14 @@ const path = require("path");
 const SOURCE = fs.readFileSync(path.join(__dirname, "..", "studlin-app.jsx"), "utf8");
 
 describe("Fix 1: importing a syllabus for an existing course reuses its real name/color", () => {
-  test("buildReviewFromExtraction looks up the target course before falling back to the AI's own guess", () => {
-    assert.match(SOURCE, /const existingCourse=targetCourseId\?getSubjects\(\)\.find\(s=>s\.id===targetCourseId\):null;/);
+  // 2026-09-29 extension: existingCourse now also resolves via
+  // pickedCourseId (a real class chosen from scanPicker's list, the
+  // general Tools-menu "Scan schedule" entry's own per-class picker) --
+  // not just targetCourseId (a specific course's own "Import syllabus"
+  // menu item). Same lookup, same real-name/color guarantee, either way.
+  test("buildReviewFromExtraction looks up the target course (targetCourseId or pickedCourseId) before falling back to the AI's own guess", () => {
+    assert.match(SOURCE, /const effectiveCourseId=targetCourseId\|\|pickedCourseId;/);
+    assert.match(SOURCE, /const existingCourse=effectiveCourseId\?getSubjects\(\)\.find\(s=>s\.id===effectiveCourseId\):null;/);
   });
 
   test("subjectName prefers the existing course's real label, not result.subject.name, whenever targetCourseId is set", () => {

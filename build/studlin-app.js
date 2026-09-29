@@ -14806,6 +14806,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
   const [wakeTime, setWakeTime] = useState("07:00");
   const [sleepTime, setSleepTime] = useState("23:00");
   const [addMode, setAddMode] = useState(null);
+  const [pickedCourseId, setPickedCourseId] = useState(null);
   const [reviewSub, setReviewSub] = useState("items");
   const [editingPendingId, setEditingPendingId] = useState(null);
   const [scanning, setScanning] = useState(false);
@@ -14865,7 +14866,12 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     return idx > 0 ? effectiveWizardStepOrder[idx - 1] : null;
   })();
   const goBack = () => {
-    if (step === "classes" && (addMode === "scan" || addMode === "hsSchedule" || addMode === "collegeSchedule" || addMode === "googleImport")) {
+    if (step === "classes" && addMode === "scan" && pickedCourseId) {
+      setPickedCourseId(null);
+      setAddMode("scanPicker");
+      return;
+    }
+    if (step === "classes" && (addMode === "scan" || addMode === "scanPicker" || addMode === "hsSchedule" || addMode === "collegeSchedule" || addMode === "googleImport")) {
       setAddMode("choose");
       return;
     }
@@ -14875,7 +14881,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     }
     if (prevWizardStep) setStep(prevWizardStep);
   };
-  const canGoBack = step === "classes" && (addMode === "scan" || addMode === "hsSchedule" || addMode === "collegeSchedule" || addMode === "googleImport" || addMode === "choose") || !!prevWizardStep;
+  const canGoBack = step === "classes" && (addMode === "scan" || addMode === "scanPicker" || addMode === "hsSchedule" || addMode === "collegeSchedule" || addMode === "googleImport" || addMode === "choose") || !!prevWizardStep;
   useEffect(() => {
     if (!open) return;
     setStatus(initialStatus || "");
@@ -14890,6 +14896,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     const saved = lsGet("classSetupPending", []);
     setPendingClasses(Array.isArray(saved) ? saved : []);
     setAddMode(quickScan ? targetCourseId ? "scan" : "choose" : null);
+    setPickedCourseId(null);
     setReviewSub("items");
     setEditingPendingId(null);
     setScanError("");
@@ -14935,6 +14942,8 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
   }, [open, step, status, termStart, termEnd, wakeTime, sleepTime, activities]);
   if (!open) return null;
   const nextColor = () => nextAvailableSubjectColor([...getSubjects().map((s) => s.color), ...pendingClasses.map((c) => c.color)]);
+  const realSubjects = getSubjects();
+  const realNeedsSyllabus = realSubjects.filter((s) => s.needsSyllabus);
   const startManual = () => {
     setReview({ subjectName: "", color: nextColor(), meetingTimes: [], items: [], sourceText: "" });
     setEditingPendingId(null);
@@ -15023,7 +15032,8 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
   };
   const buildReviewFromExtraction = (result, sourceText) => {
     applyExtractedTermDates(result);
-    const existingCourse = targetCourseId ? getSubjects().find((s) => s.id === targetCourseId) : null;
+    const effectiveCourseId = targetCourseId || pickedCourseId;
+    const existingCourse = effectiveCourseId ? getSubjects().find((s) => s.id === effectiveCourseId) : null;
     setReview({
       subjectName: existingCourse ? existingCourse.label : result.subject && result.subject.name || "",
       color: existingCourse ? existingCourse.color : nextColor(),
@@ -15695,20 +15705,46 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
     }, style: wizardStatusChipStyle(status === "highschool") }, "High School"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
       setStatus("college");
       setStep("classes");
-    }, style: wizardStatusChipStyle(status === "college") }, "College"))), step === "classes" && addMode === null && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: "Add your classes", sub: "Scan a syllabus and Studlin reads the class, its meeting time, and its assignments, exams, and projects. Nothing goes on your calendar until you review everything and hit Add to Calendar at the end. Double-click a class to edit it." }), hsClassesCommitted > 0 && pendingClasses.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.lime, background: T.lime + "10", border: `1px solid ${T.lime}30`, borderRadius: 8, padding: "10px 12px", marginBottom: 14 } }, hsClassesCommitted, " class", hsClassesCommitted !== 1 ? "es" : "", " already added from your schedule scan. Add more below, or continue when you're done."), pendingClasses.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 18 } }, pendingClasses.map((cls) => /* @__PURE__ */ React.createElement("div", { key: cls.id, onDoubleClick: () => editPendingClass(cls), style: { ...subjectRowStyle(cls.color), cursor: "pointer", borderRadius: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: 13, fontWeight: 600, color: T.text } }, cls.name), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10, color: T.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" } }, "Staged"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => editPendingClass(cls), title: "Edit", style: { background: "none", border: "none", color: T.muted, cursor: "pointer", display: "flex", padding: "2px 6px" } }, Icon.pen), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => removePendingClass(cls.id), title: "Remove", style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 16, padding: "2px 6px" } }, "\xD7")))), justAdded && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.lime, fontWeight: 600, marginBottom: 12 } }, "Staged ", justAdded, "."), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setAddMode("choose"), style: { width: "100%", padding: "12px", borderRadius: 10, border: `1px dashed ${T.borderHover}`, background: "transparent", color: T.text, cursor: "pointer", fontFamily: T.font, fontSize: 13, fontWeight: 600, marginBottom: 20 } }, "+ Add a class")), step === "classes" && addMode === "choose" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: "How do you want to add it?" }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10 } }, status !== "highschool" ? /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+    }, style: wizardStatusChipStyle(status === "college") }, "College"))), step === "classes" && addMode === null && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: "Add your classes", sub: "Scan a syllabus and Studlin reads the class, its meeting time, and its assignments, exams, and projects. Nothing goes on your calendar until you review everything and hit Add to Calendar at the end. Double-click a class to edit it." }), hsClassesCommitted > 0 && pendingClasses.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.lime, background: T.lime + "10", border: `1px solid ${T.lime}30`, borderRadius: 8, padding: "10px 12px", marginBottom: 14 } }, hsClassesCommitted, " class", hsClassesCommitted !== 1 ? "es" : "", " already added from your schedule scan. Add more below, or continue when you're done."), pendingClasses.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 18 } }, pendingClasses.map((cls) => /* @__PURE__ */ React.createElement("div", { key: cls.id, onDoubleClick: () => editPendingClass(cls), style: { ...subjectRowStyle(cls.color), cursor: "pointer", borderRadius: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: 13, fontWeight: 600, color: T.text } }, cls.name), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10, color: T.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" } }, "Staged"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => editPendingClass(cls), title: "Edit", style: { background: "none", border: "none", color: T.muted, cursor: "pointer", display: "flex", padding: "2px 6px" } }, Icon.pen), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => removePendingClass(cls.id), title: "Remove", style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 16, padding: "2px 6px" } }, "\xD7")))), justAdded && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.lime, fontWeight: 600, marginBottom: 12 } }, "Staged ", justAdded, "."), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setAddMode("choose"), style: { width: "100%", padding: "12px", borderRadius: 10, border: `1px dashed ${T.borderHover}`, background: "transparent", color: T.text, cursor: "pointer", fontFamily: T.font, fontSize: 13, fontWeight: 600, marginBottom: 20 } }, "+ Add a class")), step === "classes" && addMode === "choose" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: "How do you want to add it?" }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10 } }, (() => {
+      const alreadyHaveClasses = realSubjects.length > 0 || pendingClasses.length > 0 || hsClassesCommitted > 0;
+      const doneBadge = alreadyHaveClasses && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10, fontWeight: 700, color: T.lime, background: T.lime + "14", border: `1px solid ${T.lime}44`, borderRadius: 5, padding: "2px 7px", flexShrink: 0 } }, "\u2713 ALREADY DONE");
+      return status !== "highschool" ? /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+        setScanError("");
+        setPasteMode(false);
+        setPasteText("");
+        setAddMode("collegeSchedule");
+      }, style: classSetupChoiceStyle }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 3 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 700, color: T.text } }, "Scan my whole schedule"), doneBadge), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Upload a screenshot, photo, or paste your full schedule \u2014 Studlin splits it into classes and finds each one's meeting time and exam dates automatically.")) : /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+        setScanError("");
+        setAddMode("hsSchedule");
+      }, style: classSetupChoiceStyle }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 3 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 700, color: T.text } }, "Upload your class schedule"), doneBadge), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "One photo of your whole schedule adds every period at once, color-coded."));
+    })(), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: startManual, style: classSetupChoiceStyle }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 700, color: T.text, marginBottom: 3 } }, "Enter manually"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Type in the class name and when it meets yourself.")), status !== "highschool" && (pendingClasses.length > 0 || hsClassesCommitted > 0 || realSubjects.length > 0) && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
       setScanError("");
       setPasteMode(false);
       setPasteText("");
-      setAddMode("collegeSchedule");
-    }, style: classSetupChoiceStyle }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 700, color: T.text, marginBottom: 3 } }, "Scan my whole schedule"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Upload a screenshot, photo, or paste your full schedule \u2014 Studlin splits it into classes and finds each one's meeting time and exam dates automatically.")) : /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
-      setScanError("");
-      setAddMode("hsSchedule");
-    }, style: classSetupChoiceStyle }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 700, color: T.text, marginBottom: 3 } }, "Upload your class schedule"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "One photo of your whole schedule adds every period at once, color-coded.")), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: startManual, style: classSetupChoiceStyle }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 700, color: T.text, marginBottom: 3 } }, "Enter manually"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Type in the class name and when it meets yourself.")), status !== "highschool" && (pendingClasses.length > 0 || hsClassesCommitted > 0) && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+      setAddMode(!targetCourseId && realNeedsSyllabus.length > 0 ? "scanPicker" : "scan");
+    }, style: classSetupChoiceStyle }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 3 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 700, color: T.text } }, "Scan a syllabus"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10, fontWeight: 700, color: realNeedsSyllabus.length > 0 ? T.amber : T.lime, background: (realNeedsSyllabus.length > 0 ? T.amber : T.lime) + "14", border: `1px solid ${realNeedsSyllabus.length > 0 ? T.amber : T.lime}44`, borderRadius: 5, padding: "2px 7px", flexShrink: 0 } }, realNeedsSyllabus.length > 0 ? realNeedsSyllabus.length + " class" + (realNeedsSyllabus.length !== 1 ? "es" : "") + " NOT DONE" : realSubjects.length > 0 ? "\u2713 ALL DONE" : "NOT DONE")), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Upload a file or photo \u2014 Studlin reads the class name, meeting time, and deadlines."))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: openGoogleImport, style: { background: "none", border: "none", color: T.muted, fontSize: 12, fontFamily: T.font, cursor: "pointer", padding: 0, marginTop: 14, textDecoration: "underline" } }, "or import from Google Calendar instead")), step === "classes" && addMode === "scanPicker" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: "Which class?", sub: "Studlin already has these from your schedule scan -- pick one to scan its syllabus." }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 } }, realNeedsSyllabus.map((s) => /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        key: s.id,
+        type: "button",
+        onClick: () => {
+          setPickedCourseId(s.id);
+          setScanError("");
+          setPasteMode(false);
+          setPasteText("");
+          setAddMode("scan");
+        },
+        style: { ...subjectRowStyle(s.color), width: "100%", textAlign: "left", cursor: "pointer", borderRadius: 10, fontFamily: T.font }
+      },
+      /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: 13, fontWeight: 600, color: T.text } }, s.label),
+      /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10, color: T.amber, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" } }, "Not done")
+    ))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+      setPickedCourseId(null);
       setScanError("");
       setPasteMode(false);
       setPasteText("");
       setAddMode("scan");
-    }, style: classSetupChoiceStyle }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 700, color: T.text, marginBottom: 3 } }, "Scan a syllabus"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Upload a file or photo \u2014 Studlin reads the class name, meeting time, and deadlines."))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: openGoogleImport, style: { background: "none", border: "none", color: T.muted, fontSize: 12, fontFamily: T.font, cursor: "pointer", padding: 0, marginTop: 14, textDecoration: "underline" } }, "or import from Google Calendar instead")), step === "classes" && addMode === "googleImport" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: "Import from Google Calendar", sub: "Studlin looked for recurring weekly events on your Google Calendar that might be classes. Pick the real ones -- anything else (a meeting, practice, work shift) is safe to leave unchecked." }), googleImportError ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.red, marginBottom: 12 } }, googleImportError), /* @__PURE__ */ React.createElement(Btn, { onClick: openGoogleImport }, "Try again")) : wizGoogleSyncing || googleImportCandidates === null ? /* @__PURE__ */ React.createElement("div", { style: { padding: "20px 0" } }, /* @__PURE__ */ React.createElement(ExtractionProgress, { fileName: "Google Calendar", stage: "analyze", analyzeLabel: wizGoogleSyncing ? "Connecting to Google Calendar..." : "Looking for recurring classes..." })) : googleImportCandidates.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, textAlign: "center", padding: "20px 0" } }, "No recurring classes found on your Google Calendar yet -- either nothing repeats weekly there, or everything that does is already added. Try scanning a syllabus or entering classes manually instead.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, googleImportCandidates.map((c) => {
+    }, style: { background: "none", border: "none", color: T.muted, fontSize: 12, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, "Something else / a new class")), step === "classes" && addMode === "googleImport" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: "Import from Google Calendar", sub: "Studlin looked for recurring weekly events on your Google Calendar that might be classes. Pick the real ones -- anything else (a meeting, practice, work shift) is safe to leave unchecked." }), googleImportError ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.red, marginBottom: 12 } }, googleImportError), /* @__PURE__ */ React.createElement(Btn, { onClick: openGoogleImport }, "Try again")) : wizGoogleSyncing || googleImportCandidates === null ? /* @__PURE__ */ React.createElement("div", { style: { padding: "20px 0" } }, /* @__PURE__ */ React.createElement(ExtractionProgress, { fileName: "Google Calendar", stage: "analyze", analyzeLabel: wizGoogleSyncing ? "Connecting to Google Calendar..." : "Looking for recurring classes..." })) : googleImportCandidates.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, textAlign: "center", padding: "20px 0" } }, "No recurring classes found on your Google Calendar yet -- either nothing repeats weekly there, or everything that does is already added. Try scanning a syllabus or entering classes manually instead.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, googleImportCandidates.map((c) => {
       const picked = googleImportSelected.has(c.recurringId);
       return /* @__PURE__ */ React.createElement("label", { key: c.recurringId, style: { display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", borderRadius: 10, border: `1px solid ${picked ? T.lime + "55" : T.border}`, background: picked ? T.lime + "0C" : T.card2, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: picked, onChange: () => toggleGoogleImportCandidate(c.recurringId), style: { marginTop: 2, cursor: "pointer" } }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text } }, c.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginTop: 1 } }, formatMeetingTimes([c]))));
     }))), step === "classes" && addMode === "collegeSchedule" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: "Scan my whole schedule", sub: "A screenshot of your schedule grid, or paste the text list \u2014 Studlin splits it into every class, with its meeting time and any exam dates it finds." }), scanning ? /* @__PURE__ */ React.createElement("div", { style: { padding: "20px 0" } }, /* @__PURE__ */ React.createElement(ExtractionProgress, { fileName: "Your schedule", stage: "analyze", analyzeLabel: "Finding your classes and exam dates..." })) : pasteMode ? /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(
@@ -20950,7 +20986,13 @@ Examples:
       resetForm();
       setBrainDumpOpen(true);
     } },
-    { icon: Icon.file, label: "Scan syllabus", sub: "Upload a doc, AI extracts dates", onClick: () => {
+    // Renamed from "Scan syllabus" (2026-09-29 user report):
+    // this opens the same "choose" screen onboarding uses
+    // (whole schedule OR one class's syllabus, now aware of
+    // which classes are real and which still needsSyllabus --
+    // see ClassSetupWizard's own scanPicker comment) --
+    // "Scan syllabus" undersold what was actually behind it.
+    { icon: Icon.file, label: "Scan schedule", sub: "Whole schedule, or one class's syllabus", onClick: () => {
       setToolsMenuOpen(false);
       setQuickScanOpen(true);
     } },
