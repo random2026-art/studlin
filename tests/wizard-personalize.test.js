@@ -51,12 +51,16 @@ describe("ClassSetupWizard's personalize step only renders the one real question
     const source = fs.readFileSync(path.join(__dirname, "..", "studlin-app.jsx"), "utf8");
     const idx = source.indexOf('label="When you sit down to study"');
     assert.notEqual(idx, -1);
-    const body = source.slice(idx, idx + 600);
+    const body = source.slice(idx, idx + 1200);
     assert.doesNotMatch(body, /Studying for a few things at once/);
     assert.doesNotMatch(body, /How far ahead you want to see your plan/);
     assert.doesNotMatch(body, /Be honest -- when do you actually start/);
     assert.doesNotMatch(body, /Two things collide on the same day/);
-    assert.match(body, /One more thing/, "the real 'Okay to ask?' question right after it must still be there");
+    // 2026-09-29 user report ("not reading all that for the 2nd
+    // question"): the "One more thing" heading + 4-sentence paragraph in
+    // front of this were condensed to one line -- the real question
+    // itself (askQuestionsPref) is still the thing to check for.
+    assert.match(body, /label="Okay to ask\?"/, "the real 'Okay to ask?' question right after it must still be there");
   });
 });
 
