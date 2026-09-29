@@ -132,7 +132,7 @@ function loadStudlinModule(options) {
     "canScanSyllabus","recordSyllabusScan","getSyllabusScanUsage","SYLLABUS_SCAN_LIMIT","PRO_SYLLABUS_SCAN_LIMIT",
     "canScanScreenshot","recordScreenshotScan","getScreenshotScanUsage","SCREENSHOT_SCAN_LIMIT","PRO_SCREENSHOT_SCAN_LIMIT",
     "canScanNote","recordNoteScan","getNoteScanUsage","NOTE_SCAN_LIMIT","PRO_NOTE_SCAN_LIMIT",
-    "dismissWeekBalanceNudge","computeBusyWindowsPayload","BUSY_WINDOW_DAYS_AHEAD",
+    "dismissWeekBalanceNudge","computeBusyWindowsPayload","BUSY_WINDOW_DAYS_AHEAD","expandBusyIntervalForViewer",
     "layoutDayEvents","computeEventBlockHeightPx","isTimerEligible",
     "logSuggestionDecision","examPrepIntervalPosition","fmtMovedReasonSuffix",
     "fmtPlacementReason","TIER0_EXAM_PREP_TOLERANCE_DAYS","computeAttackBlockStartDate",

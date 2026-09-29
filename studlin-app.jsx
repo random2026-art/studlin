@@ -2736,14 +2736,50 @@ function computeOccupiedIntervals(events,routines,prefs,dateKey){
 // the upper end of what was actually asked for ("1 or 2 months, that's
 // it" -- explicitly not indefinite).
 const BUSY_WINDOW_DAYS_AHEAD=60;
+// sMs/eMs (2026-09-28 fix, real bug report: overlay showed a friend "busy"
+// at 4am when she genuinely wasn't) are absolute epoch instants, not the
+// {date,s,e} local-minutes-of-day shape this used to emit. This function
+// always runs on the OWNER's own device, so `new Date(dk+"T00:00:00")`
+// resolves to midnight in the owner's real timezone -- an absolute instant
+// survives being read back on a friend's device in a DIFFERENT timezone.
+// The old shape didn't: minutes-of-day were reused verbatim on the
+// viewer's own local grid with no conversion, so a friend even 2-3 hours
+// off silently rendered at the wrong clock time on your calendar (see
+// expandBusyIntervalForViewer, the matching read-side fix).
 function computeBusyWindowsPayload(events,routines,prefs,todayKey){
   const intervals=[];
   for(let i=0;i<BUSY_WINDOW_DAYS_AHEAD;i++){
     const d=new Date(todayKey+"T12:00:00");d.setDate(d.getDate()+i);
     const dk=dayKey(d);
-    computeOccupiedIntervals(events,routines,prefs,dk).forEach(o=>intervals.push({date:dk,s:o.start,e:o.end}));
+    const dayStartMs=new Date(dk+"T00:00:00").getTime();
+    computeOccupiedIntervals(events,routines,prefs,dk).forEach(o=>intervals.push({sMs:dayStartMs+o.start*60000,eMs:dayStartMs+o.end*60000}));
   }
   return intervals;
+}
+// Reads one busyWindows interval entry back in THIS device's own local
+// timezone -- the read-side half of computeBusyWindowsPayload's sMs/eMs
+// fix above. new Date(sMs)'s local getters (via dayKey/T00:00:00 here)
+// automatically reflect the viewer's real offset, so a friend's interval
+// lands on the correct local day and clock position even when the two of
+// you are in different timezones. Splits at local midnight since one
+// absolute interval can span two different local calendar days for the
+// viewer even when it didn't for the owner. Falls back to the legacy
+// {date,s,e} shape verbatim (still timezone-naive, exactly the old
+// behavior) for a friend's doc that hasn't republished yet -- harmless
+// since publishBusyWindows already republishes on every boot/event edit,
+// so this self-heals with no backfill needed.
+function expandBusyIntervalForViewer(iv){
+  if(iv.sMs==null||iv.eMs==null)return iv.date?[{date:iv.date,s:iv.s,e:iv.e}]:[];
+  const out=[];
+  let cur=iv.sMs;
+  while(cur<iv.eMs){
+    const dk=dayKey(new Date(cur));
+    const dayStartMs=new Date(dk+"T00:00:00").getTime();
+    const segEnd=Math.min(iv.eMs,dayStartMs+86400000);
+    out.push({date:dk,s:Math.round((cur-dayStartMs)/60000),e:Math.round((segEnd-dayStartMs)/60000)});
+    cur=segEnd;
+  }
+  return out;
 }
 // Relocates a FIXED personal event (gym, practice, an appointment) to a new
 // day — deliberately NOT bounded by the student's work/study-hours window
@@ -6631,8 +6667,10 @@ async function fetchFriendsBusyIntervals(otherUids){
       sharedUids.add(uid);
       const data=doc.data();
       (data.intervals||[]).forEach(iv=>{
-        if(!byDate.has(iv.date))byDate.set(iv.date,[]);
-        byDate.get(iv.date).push({s:iv.s,e:iv.e});
+        expandBusyIntervalForViewer(iv).forEach(seg=>{
+          if(!byDate.has(seg.date))byDate.set(seg.date,[]);
+          byDate.get(seg.date).push({s:seg.s,e:seg.e});
+        });
       });
     }catch(e){
       // permission-denied is the expected, extremely common case (this

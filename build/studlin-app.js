@@ -1822,9 +1822,23 @@ function computeBusyWindowsPayload(events, routines, prefs, todayKey) {
     const d = /* @__PURE__ */ new Date(todayKey + "T12:00:00");
     d.setDate(d.getDate() + i);
     const dk = dayKey(d);
-    computeOccupiedIntervals(events, routines, prefs, dk).forEach((o) => intervals.push({ date: dk, s: o.start, e: o.end }));
+    const dayStartMs = (/* @__PURE__ */ new Date(dk + "T00:00:00")).getTime();
+    computeOccupiedIntervals(events, routines, prefs, dk).forEach((o) => intervals.push({ sMs: dayStartMs + o.start * 6e4, eMs: dayStartMs + o.end * 6e4 }));
   }
   return intervals;
+}
+function expandBusyIntervalForViewer(iv) {
+  if (iv.sMs == null || iv.eMs == null) return iv.date ? [{ date: iv.date, s: iv.s, e: iv.e }] : [];
+  const out = [];
+  let cur = iv.sMs;
+  while (cur < iv.eMs) {
+    const dk = dayKey(new Date(cur));
+    const dayStartMs = (/* @__PURE__ */ new Date(dk + "T00:00:00")).getTime();
+    const segEnd = Math.min(iv.eMs, dayStartMs + 864e5);
+    out.push({ date: dk, s: Math.round((cur - dayStartMs) / 6e4), e: Math.round((segEnd - dayStartMs) / 6e4) });
+    cur = segEnd;
+  }
+  return out;
 }
 const FIXED_EVENT_SEARCH_DAYS = 180;
 function findFixedEventSlot(events, routines, prefs, desiredDate, desiredTime, duration) {
@@ -4024,8 +4038,10 @@ async function fetchFriendsBusyIntervals(otherUids) {
       sharedUids.add(uid);
       const data = doc.data();
       (data.intervals || []).forEach((iv) => {
-        if (!byDate.has(iv.date)) byDate.set(iv.date, []);
-        byDate.get(iv.date).push({ s: iv.s, e: iv.e });
+        expandBusyIntervalForViewer(iv).forEach((seg) => {
+          if (!byDate.has(seg.date)) byDate.set(seg.date, []);
+          byDate.get(seg.date).push({ s: seg.s, e: seg.e });
+        });
       });
     } catch (e) {
       if (!e || e.code !== "permission-denied") reportError("fetchFriendsBusyIntervals")(e);
