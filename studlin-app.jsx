@@ -7463,10 +7463,34 @@ function computeReviewOffsets(daysUntil,desiredCount){
   }
   return offsets.reverse();
 }
-function computeReviewDates(examDateKey,todayKey,desiredCount){
+// prepLeadDays (2026-09-29 user request): a per-EXAM "start studying N
+// days before this one" override, one level above examPrepSpacingStyle
+// (an account-wide style, not per-exam) -- optional, "no preference"
+// (null/undefined) is the common case and changes nothing. Set from
+// Studlin Prep's own Build Plan screen (see buildPlanExam.prepLeadDays),
+// the one place a student already fills in everything else about a real
+// exam (material, importance, grade weight, hours target) -- same "give
+// the student a real say, don't just guess a personality trait" reasoning
+// examPrepSpacingStyle's own detection/offer pair already uses, just
+// scoped to one exam instead of the whole account. Reuses
+// computeReviewOffsets' own expanding-curve math (1,3,7,15,31... days
+// out) rather than inventing new spacing logic -- research backs
+// distributed/expanding practice over cramming regardless of how far out
+// it starts (Cepeda et al. 2006 meta-analysis), so the override only
+// needs to change the HORIZON that curve operates inside, not the shape
+// of the curve itself. "Start studying 5 days before" on an exam 40 days
+// out shouldn't produce a 31-day-out session nobody asked for; it still
+// spreads whatever session count fits inside the requested window.
+function computeReviewDates(examDateKey,todayKey,desiredCount,prepLeadDays){
   const exam=new Date(examDateKey+"T12:00:00");
   const today=new Date(todayKey+"T12:00:00");
   const daysUntil=Math.round((exam-today)/86400000);
+  if(prepLeadDays!=null&&prepLeadDays>0){
+    const horizon=Math.min(daysUntil,prepLeadDays);
+    return computeReviewOffsets(horizon,desiredCount).map(o=>{
+      const d=new Date(exam);d.setDate(d.getDate()-o);return dayKey(d);
+    }).sort();
+  }
   // The one integration point for examPrepSpacingStyle (see
   // computeExamPrepTimingStyle/computeCloseToDeadlineReviewOffsets) --
   // every real caller (buildExamSessionEvents, buildSpacedSessionPreviews)
@@ -11943,7 +11967,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
     // knowable from daysUntil alone) -- this whole probe is local/
     // synchronous, so a second cheap pass costs nothing.
     const prefs=getSchedulePreferences();
-    const probeDates=computeReviewDates(buildPlanExam.date,dayKey(),params.sessionCount);
+    const probeDates=computeReviewDates(buildPlanExam.date,dayKey(),params.sessionCount,buildPlanExam.prepLeadDays);
     const weekPressured=probeDates.length>0&&weekPrepLoad(probeDates[0],buildPlanExam,lsGet("events",[]),prefs).isPressured;
     // Pressured: drop the ceiling by one session and redistribute the
     // exact same total time across the smaller count (reusing
@@ -11956,7 +11980,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
       ?applyHoursTarget(params.sessionCount-1,params.sessionDuration,(params.sessionCount*params.sessionDuration)/60)
       :params;
     const {sessionCount,sessionDuration}=applyHoursTarget(pressureAdjusted.sessionCount,pressureAdjusted.sessionDuration,parseFloat(buildPlanHoursTarget));
-    const dates=computeReviewDates(buildPlanExam.date,dayKey(),sessionCount);
+    const dates=computeReviewDates(buildPlanExam.date,dayKey(),sessionCount,buildPlanExam.prepLeadDays);
     // computeReviewDates can return fewer dates than requested (e.g. an
     // exam that's only 2 days out can't fit a 4-session spread) -- show
     // the count the student will actually get, not the pre-clamp request,
@@ -12049,7 +12073,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
   };
   const adjustBuildPlanCount=(count)=>{
     if(!buildPlanExam)return;
-    const dates=computeReviewDates(buildPlanExam.date,dayKey(),count);
+    const dates=computeReviewDates(buildPlanExam.date,dayKey(),count,buildPlanExam.prepLeadDays);
     // Same reconciliation as generatePreview -- a manually-requested count
     // can still get clamped by computeReviewDates, so mirror dates.length
     // back into sessionCount rather than trusting the raw request.
@@ -12119,7 +12143,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
       genPE=await doGenPracticeExamForExam();
     }
     const events=removeGenericExamPrepSessions(lsGet("events",[]),buildPlanExam.id);
-    const sessions=buildExamSessionEvents(buildPlanExam.title,buildPlanExam.date,buildPlanExam.subject,buildPlanPreview.sessionCount,"prep-"+buildPlanExam.id+"-"+Date.now(),events,routines,prefs,{dueEventId:buildPlanExam.id},buildPlanPreview.difficultyValue,buildPlanPreview.sessionDuration,buildPlanExam.examWeight,buildPlanExam.confidenceLog,buildPlanExam.importanceLevel,buildPlanExam.gradeWeightPercent,resolveTimeOfDayAnchor(getAiMemory().timeOfDay,prefs));
+    const sessions=buildExamSessionEvents(buildPlanExam.title,buildPlanExam.date,buildPlanExam.subject,buildPlanPreview.sessionCount,"prep-"+buildPlanExam.id+"-"+Date.now(),events,routines,prefs,{dueEventId:buildPlanExam.id},buildPlanPreview.difficultyValue,buildPlanPreview.sessionDuration,buildPlanExam.examWeight,buildPlanExam.confidenceLog,buildPlanExam.importanceLevel,buildPlanExam.gradeWeightPercent,resolveTimeOfDayAnchor(getAiMemory().timeOfDay,prefs),buildPlanExam.prepLeadDays);
     // buildExamSessionEvents can still place fewer sessions than requested
     // (findReliableSlotFor comes back empty for a given date -- a packed
     // calendar with no legal slot before the exam) even after the preview
@@ -14294,6 +14318,24 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
               <div style={{display:"flex",alignItems:"center",gap:8}}>
                 <span style={{fontSize:12,color:T.muted}}>Hours to study for this (optional):</span>
                 <Input type="number" min={0} step={0.5} value={buildPlanHoursTarget} onChange={e=>setBuildPlanHoursTarget(e.target.value)} placeholder="0" style={{width:60}} />
+              </div>
+              {/* prepLeadDays, 2026-09-29 user request: a per-EXAM "start
+                  studying N days before" override -- see computeReviewDates'
+                  own comment for why this is the right lever (a real,
+                  optional, per-exam say, not a one-time personality
+                  question -- examPrepSpacingStyle already tried that
+                  shape and it collected 4 fields nothing ever read, see
+                  applyStudyStylePrefs). Blank/"No preference" is the
+                  common case and changes nothing -- Studlin's existing
+                  expanding-curve default (or the account-wide
+                  examPrepSpacingStyle choice) still applies exactly as
+                  before. Same Input+patchExam+blank-means-null convention
+                  the "% of grade" field right above already uses. */}
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:12,color:T.muted}}>Start studying this many days before (optional):</span>
+                <Input type="number" min={1} step={1} value={buildPlanExam.prepLeadDays??""}
+                  onChange={e=>patchExam(buildPlanExam.id,{prepLeadDays:e.target.value===""?null:parseInt(e.target.value)})}
+                  placeholder="No preference" style={{width:110}} />
               </div>
               <div>
                 <span style={{fontSize:12,color:T.muted,display:"block",marginBottom:6}}>Anything you want Studlin to know (optional)</span>
@@ -18298,9 +18340,11 @@ function restampSessionPriorities(examId){
 // durationOverride just below -- every existing caller omits it and keeps
 // today's exact prefs.workStartTime behavior. Only the Build Plan wizard
 // passes one, resolved from a saved time-of-day preference via
-// resolveTimeOfDayAnchor.
-function buildExamSessionEvents(examTitle,examDate,subject,count,idPrefix,working,routines,prefs,extraFields,difficulty,durationOverride,examWeight,confidenceLog,importanceLevel,gradeWeightPercent,desiredTimeOverride){
-  const dates=computeReviewDates(examDate,dayKey(),count);
+// resolveTimeOfDayAnchor. prepLeadDays, same convention again -- see
+// computeReviewDates' own comment; only the Build Plan wizard passes one,
+// from buildPlanExam.prepLeadDays.
+function buildExamSessionEvents(examTitle,examDate,subject,count,idPrefix,working,routines,prefs,extraFields,difficulty,durationOverride,examWeight,confidenceLog,importanceLevel,gradeWeightPercent,desiredTimeOverride,prepLeadDays){
+  const dates=computeReviewDates(examDate,dayKey(),count,prepLeadDays);
   // durationOverride lets the study-plan calibration (Prep redesign Part C)
   // scale minutes per session by confidence level -- every existing caller
   // omits it and keeps today's suggestDurationFor-or-25 behavior unchanged.
@@ -25940,9 +25984,14 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
               {value:"easy_first",label:"Warm up first"},
               {value:"no_preference",label:"No preference"},
             ]} />
+            {/* 2026-09-29 user report ("if im a user im not reading all
+                that for the 2nd question"): this used to lead with a
+                4-sentence paragraph explaining the feature before the
+                actual question. Condensed to one line -- the feature
+                itself (askCheckIns/askDurationQuestions, see Settings)
+                is real and stays, just the copy in front of it. */}
             <div style={{marginTop:18,paddingTop:16,borderTop:`1px solid ${T.border}`}}>
-              <div style={{fontSize:13,fontWeight:600,color:T.text,marginBottom:4}}>One more thing</div>
-              <div style={{fontSize:12,color:T.muted,marginBottom:10,lineHeight:1.5}}>With your permission, Studlin might ask a quick question here and there -- like how a study session went, or how long something really took when you didn't use the timer. That's how it learns real things about you, like when you're most productive or how long a class actually takes. Always skippable, and adjustable anytime in Settings.</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:10,lineHeight:1.5}}>Okay if Studlin asks the occasional quick question, like how a session went? Skippable anytime, adjustable in Settings.</div>
               <PrefChipRow label="Okay to ask?" value={askQuestionsPref} onChange={setAskQuestionsPref} options={[
                 {value:"yes",label:"Yes, ask me"},
                 {value:"no",label:"No thanks"},

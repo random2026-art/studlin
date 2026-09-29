@@ -1422,6 +1422,42 @@ describe("computeReviewOffsets / computeReviewDates", () => {
     }
     assert.ok(dates.every((d) => d < "2026-08-13"));
   });
+
+  describe("computeReviewDates prepLeadDays override (2026-09-29 user request: a per-exam 'start studying N days before' say)", () => {
+    test("no prepLeadDays (undefined/null) behaves exactly as before -- the common case", () => {
+      const { computeReviewDates } = loadStudlinModule();
+      const withoutArg = computeReviewDates("2026-08-13", "2026-07-14", 4);
+      const withNull = computeReviewDates("2026-08-13", "2026-07-14", 4, null);
+      assert.equal(JSON.stringify(withoutArg), JSON.stringify(withNull));
+    });
+
+    test("the earliest session never lands earlier than prepLeadDays before the exam", () => {
+      const { computeReviewDates } = loadStudlinModule();
+      // Exam is 30 days out; asking to start 5 days before must keep every
+      // session inside that 5-day window, not the default curve's much
+      // earlier first session.
+      const dates = computeReviewDates("2026-08-13", "2026-07-14", 4, 5);
+      assert.ok(dates.length > 0);
+      assert.ok(dates[0] >= "2026-08-08", "earliest session must be no more than 5 days before the exam");
+      assert.ok(dates.every((d) => d < "2026-08-13"));
+    });
+
+    test("a prepLeadDays past the exam's real daysUntil clamps to daysUntil -- never schedules before today", () => {
+      const { computeReviewDates } = loadStudlinModule();
+      // Exam is only 30 days out; asking for 100 days must clamp to the
+      // same result as not overriding at all (default style is spread-out).
+      const overridden = computeReviewDates("2026-08-13", "2026-07-14", 4, 100);
+      const unset = computeReviewDates("2026-08-13", "2026-07-14", 4);
+      assert.equal(JSON.stringify(overridden), JSON.stringify(unset));
+    });
+
+    test("prepLeadDays of 0 or negative is treated as unset, not a zero-day window", () => {
+      const { computeReviewDates } = loadStudlinModule();
+      const withZero = computeReviewDates("2026-08-13", "2026-07-14", 4, 0);
+      const unset = computeReviewDates("2026-08-13", "2026-07-14", 4);
+      assert.equal(JSON.stringify(withZero), JSON.stringify(unset));
+    });
+  });
 });
 
 describe("findOpenSlotFor / findLegalSlotOrNull", () => {

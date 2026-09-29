@@ -4558,10 +4558,18 @@ function computeReviewOffsets(daysUntil, desiredCount) {
   }
   return offsets.reverse();
 }
-function computeReviewDates(examDateKey, todayKey, desiredCount) {
+function computeReviewDates(examDateKey, todayKey, desiredCount, prepLeadDays) {
   const exam = /* @__PURE__ */ new Date(examDateKey + "T12:00:00");
   const today = /* @__PURE__ */ new Date(todayKey + "T12:00:00");
   const daysUntil = Math.round((exam - today) / 864e5);
+  if (prepLeadDays != null && prepLeadDays > 0) {
+    const horizon = Math.min(daysUntil, prepLeadDays);
+    return computeReviewOffsets(horizon, desiredCount).map((o) => {
+      const d = new Date(exam);
+      d.setDate(d.getDate() - o);
+      return dayKey(d);
+    }).sort();
+  }
   const offsetsFn = getSchedulePreferences().examPrepSpacingStyle === "close-to-deadline" ? computeCloseToDeadlineReviewOffsets : computeReviewOffsets;
   return offsetsFn(daysUntil, desiredCount).map((o) => {
     const d = new Date(exam);
@@ -7096,11 +7104,11 @@ function StudlinPrep({ setActive = () => {
     const daysUntilExam = Math.round((/* @__PURE__ */ new Date(buildPlanExam.date + "T12:00:00") - /* @__PURE__ */ new Date(dayKey() + "T12:00:00")) / 864e5);
     const params = computeStudyPlanParams(buildPlanExam.examWeight, baseDuration, buildPlanConfidence, buildPlanMaterialText.length, buildPlanExam.importanceLevel, daysUntilExam, buildPlanExam.gradeWeightPercent, buildPlanExam.confidenceLog);
     const prefs = getSchedulePreferences();
-    const probeDates = computeReviewDates(buildPlanExam.date, dayKey(), params.sessionCount);
+    const probeDates = computeReviewDates(buildPlanExam.date, dayKey(), params.sessionCount, buildPlanExam.prepLeadDays);
     const weekPressured = probeDates.length > 0 && weekPrepLoad(probeDates[0], buildPlanExam, lsGet("events", []), prefs).isPressured;
     const pressureAdjusted = weekPressured && params.sessionCount > 1 ? applyHoursTarget(params.sessionCount - 1, params.sessionDuration, params.sessionCount * params.sessionDuration / 60) : params;
     const { sessionCount, sessionDuration } = applyHoursTarget(pressureAdjusted.sessionCount, pressureAdjusted.sessionDuration, parseFloat(buildPlanHoursTarget));
-    const dates = computeReviewDates(buildPlanExam.date, dayKey(), sessionCount);
+    const dates = computeReviewDates(buildPlanExam.date, dayKey(), sessionCount, buildPlanExam.prepLeadDays);
     const hasTaperedLastSession = dates.length >= 3;
     const taperedLastDuration = hasTaperedLastSession ? Math.max(15, Math.round(sessionDuration * 0.6 / 5) * 5) : null;
     const minDelay = new Promise((r) => setTimeout(r, 900));
@@ -7163,7 +7171,7 @@ function StudlinPrep({ setActive = () => {
   };
   const adjustBuildPlanCount = (count) => {
     if (!buildPlanExam) return;
-    const dates = computeReviewDates(buildPlanExam.date, dayKey(), count);
+    const dates = computeReviewDates(buildPlanExam.date, dayKey(), count, buildPlanExam.prepLeadDays);
     const hoursTarget = parseFloat(buildPlanHoursTarget);
     setBuildPlanPreview((p) => {
       if (!p) return p;
@@ -7205,7 +7213,7 @@ function StudlinPrep({ setActive = () => {
       genPE = await doGenPracticeExamForExam();
     }
     const events = removeGenericExamPrepSessions(lsGet("events", []), buildPlanExam.id);
-    const sessions = buildExamSessionEvents(buildPlanExam.title, buildPlanExam.date, buildPlanExam.subject, buildPlanPreview.sessionCount, "prep-" + buildPlanExam.id + "-" + Date.now(), events, routines, prefs, { dueEventId: buildPlanExam.id }, buildPlanPreview.difficultyValue, buildPlanPreview.sessionDuration, buildPlanExam.examWeight, buildPlanExam.confidenceLog, buildPlanExam.importanceLevel, buildPlanExam.gradeWeightPercent, resolveTimeOfDayAnchor(getAiMemory().timeOfDay, prefs));
+    const sessions = buildExamSessionEvents(buildPlanExam.title, buildPlanExam.date, buildPlanExam.subject, buildPlanPreview.sessionCount, "prep-" + buildPlanExam.id + "-" + Date.now(), events, routines, prefs, { dueEventId: buildPlanExam.id }, buildPlanPreview.difficultyValue, buildPlanPreview.sessionDuration, buildPlanExam.examWeight, buildPlanExam.confidenceLog, buildPlanExam.importanceLevel, buildPlanExam.gradeWeightPercent, resolveTimeOfDayAnchor(getAiMemory().timeOfDay, prefs), buildPlanExam.prepLeadDays);
     const requestedCount = buildPlanPreview.sessionCount;
     let working = events.concat(sessions);
     const placedSessions = sessions.map((s, i) => {
@@ -8383,7 +8391,18 @@ function StudlinPrep({ setActive = () => {
           placeholder: "0",
           style: { width: 56, fontSize: 11.5, padding: "5px 8px" }
         }
-      ))), /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanGenFlashcards, onChange: (e) => setBuildPlanGenFlashcards(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, "Also generate flashcards")), buildPlanGenFlashcards && /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginLeft: 24 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanWeaveCards, onChange: (e) => setBuildPlanWeaveCards(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Review them as part of each session")), /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanGenPE, onChange: (e) => setBuildPlanGenPE(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, "Also generate a practice exam")), buildPlanGenPE && /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginLeft: 24 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanWeavePE, onChange: (e) => setBuildPlanWeavePE(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Use my last session to take it")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Hours to study for this (optional):"), /* @__PURE__ */ React.createElement(Input, { type: "number", min: 0, step: 0.5, value: buildPlanHoursTarget, onChange: (e) => setBuildPlanHoursTarget(e.target.value), placeholder: "0", style: { width: 60 } })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted, display: "block", marginBottom: 6 } }, "Anything you want Studlin to know (optional)"), /* @__PURE__ */ React.createElement(
+      ))), /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanGenFlashcards, onChange: (e) => setBuildPlanGenFlashcards(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, "Also generate flashcards")), buildPlanGenFlashcards && /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginLeft: 24 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanWeaveCards, onChange: (e) => setBuildPlanWeaveCards(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Review them as part of each session")), /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanGenPE, onChange: (e) => setBuildPlanGenPE(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, "Also generate a practice exam")), buildPlanGenPE && /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginLeft: 24 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: buildPlanWeavePE, onChange: (e) => setBuildPlanWeavePE(e.target.checked) }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Use my last session to take it")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Hours to study for this (optional):"), /* @__PURE__ */ React.createElement(Input, { type: "number", min: 0, step: 0.5, value: buildPlanHoursTarget, onChange: (e) => setBuildPlanHoursTarget(e.target.value), placeholder: "0", style: { width: 60 } })), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Start studying this many days before (optional):"), /* @__PURE__ */ React.createElement(
+        Input,
+        {
+          type: "number",
+          min: 1,
+          step: 1,
+          value: buildPlanExam.prepLeadDays ?? "",
+          onChange: (e) => patchExam(buildPlanExam.id, { prepLeadDays: e.target.value === "" ? null : parseInt(e.target.value) }),
+          placeholder: "No preference",
+          style: { width: 110 }
+        }
+      )), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted, display: "block", marginBottom: 6 } }, "Anything you want Studlin to know (optional)"), /* @__PURE__ */ React.createElement(
         Textarea,
         {
           value: buildPlanInstructions,
@@ -11025,8 +11044,8 @@ function restampSessionPriorities(examId) {
   });
   lsSet("events", next);
 }
-function buildExamSessionEvents(examTitle, examDate, subject, count, idPrefix, working, routines, prefs, extraFields, difficulty, durationOverride, examWeight, confidenceLog, importanceLevel, gradeWeightPercent, desiredTimeOverride) {
-  const dates = computeReviewDates(examDate, dayKey(), count);
+function buildExamSessionEvents(examTitle, examDate, subject, count, idPrefix, working, routines, prefs, extraFields, difficulty, durationOverride, examWeight, confidenceLog, importanceLevel, gradeWeightPercent, desiredTimeOverride, prepLeadDays) {
+  const dates = computeReviewDates(examDate, dayKey(), count, prepLeadDays);
   const duration = durationOverride || suggestDurationFor(subject, "study block") || 25;
   const nearbyExamCount = working.filter((e) => e.kind === "exam" && e.status !== "done" && e.date && !(e.date === examDate && e.title === examTitle) && Math.abs(Math.round((/* @__PURE__ */ new Date(e.date + "T12:00:00") - /* @__PURE__ */ new Date(examDate + "T12:00:00")) / 864e5)) <= EXAM_CLUSTER_WINDOW_DAYS).length;
   const sessionPriority = computeSessionPriority({ difficulty, examWeight, confidenceLog, date: examDate, importanceLevel, gradeWeightPercent }, dayKey(), nearbyExamCount);
@@ -15696,7 +15715,7 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
       { value: "hardest_first", label: "Hardest first" },
       { value: "easy_first", label: "Warm up first" },
       { value: "no_preference", label: "No preference" }
-    ] }), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 18, paddingTop: 16, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text, marginBottom: 4 } }, "One more thing"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10, lineHeight: 1.5 } }, "With your permission, Studlin might ask a quick question here and there -- like how a study session went, or how long something really took when you didn't use the timer. That's how it learns real things about you, like when you're most productive or how long a class actually takes. Always skippable, and adjustable anytime in Settings."), /* @__PURE__ */ React.createElement(PrefChipRow, { label: "Okay to ask?", value: askQuestionsPref, onChange: setAskQuestionsPref, options: [
+    ] }), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 18, paddingTop: 16, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10, lineHeight: 1.5 } }, "Okay if Studlin asks the occasional quick question, like how a session went? Skippable anytime, adjustable in Settings."), /* @__PURE__ */ React.createElement(PrefChipRow, { label: "Okay to ask?", value: askQuestionsPref, onChange: setAskQuestionsPref, options: [
       { value: "yes", label: "Yes, ask me" },
       { value: "no", label: "No thanks" }
     ] }))), step === "status" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: "What best describes you?", sub: "Studlin builds your week differently for school hours vs. a college schedule." }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
