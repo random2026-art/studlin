@@ -127,6 +127,19 @@ const ACCENTS={
   Pink:  {dk:{lime:"#E8829E",limeDk:"#C95F7C",limeLt:"#FFC9D2"}, lt:{lime:"#C23F68",limeDk:"#9E2F52",limeLt:"#FFC9D2"}},
   Slate: {dk:{lime:"#9AA5B1",limeDk:"#7A8592",limeLt:"#C9D1D9"}, lt:{lime:"#5B6672",limeDk:"#454E58",limeLt:"#C9D1D9"}},
 };
+// True only for an account that hasn't finished the Class Setup wizard on
+// THIS device yet (checked via the raw localStorage keys lsGet itself
+// reads, since lsGet isn't defined until later in this file and this needs
+// to run at boot, before React even mounts). Used to keep a brand-new
+// account's first-run wizard in light mode -- matching the still-light
+// sign-up pages (onboarding.jsx) that led into it -- instead of Studlin's
+// real default (dark, 2026-09-29 user request), which only takes over once
+// that wizard actually finishes (see finishClassSetup's own setTheme call).
+function isPreOnboardingLocalDevice(){
+  return typeof localStorage!=="undefined"
+    && !localStorage.getItem("studlin-subjects-configured")
+    && !localStorage.getItem("studlin-hasConfiguredRoutine");
+}
 function applyTheme(name, accent, density) {
   Object.assign(T, name === 'light' ? lightT : darkT);
   const acc=ACCENTS[accent]||ACCENTS.Lime;
@@ -150,7 +163,7 @@ function applyTheme(name, accent, density) {
   }
 }
 applyTheme(
-  (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-theme')) || 'light',
+  (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-theme')) || (isPreOnboardingLocalDevice() ? 'light' : 'dark'),
   (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-accent')) || 'Lime',
   (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-density')) || 'Comfortable'
 );
@@ -11277,6 +11290,17 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
   const [assignAddAttackBlock,setAssignAddAttackBlock]=useState(false);
   const [assignAttackProbeMins,setAssignAttackProbeMins]=useState(ATTACK_BLOCK_DEFAULT_PROBE_MINS);
   const [assignAttackErr,setAssignAttackErr]=useState("");
+  // Multi-option Attack Block placement (see NewSlotPickerModal/
+  // computeNewSlotCandidates) -- 2026-09-29 user report: "Schedule probe
+  // session" used to commit silently with no preview and no way to place
+  // it yourself, the one Attack Block entry point in the app that didn't
+  // already show real candidates first the way EventDetailModal's own
+  // proceedSave does. assignAttackSlotPicker holds {candidates,fields,
+  // desiredDate} while the picker's open; assignAttackManual holds
+  // {date,time} while picking a time by hand instead (NewSlotPickerModal's
+  // own "I'll pick the day and time myself" escape hatch).
+  const [assignAttackSlotPicker,setAssignAttackSlotPicker]=useState(null);
+  const [assignAttackManual,setAssignAttackManual]=useState(null);
   const [assignAddManualBlock,setAssignAddManualBlock]=useState(false);
   const [assignManualDate,setAssignManualDate]=useState("");
   const [assignManualTime,setAssignManualTime]=useState("16:00");
@@ -13056,17 +13080,59 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
         // conversion EventDetailModal's own save() already uses
         // (markerId=selectedAssignment.id turns THIS item into the real
         // marker in place, same id/position, whatever its prior kind was).
+        // commitAssignAttackBlock is the one place that actually persists
+        // it, shared by all three paths below (old single-shot fallback,
+        // picker confirm, manual confirm) instead of three near-copies.
+        const commitAssignAttackBlock=(fields,desiredDate,forcedSlot)=>{
+          const routines=getWeeklyRoutine();
+          const prefs=getSchedulePreferences();
+          const pair=buildAssignmentAttackBlockPair(selectedAssignment.id,fields,[],allEvents,routines,prefs,desiredDate,prefs.workStartTime,false,forcedSlot);
+          if(!pair){setAssignAttackErr("Couldn't find room for a probe session before the deadline -- try a later deadline, or pick a time yourself.");return;}
+          lsSet("events",allEvents.map(e=>e.id===selectedAssignment.id?pair.marker:e).concat([pair.task]));
+          setAssignAttackSlotPicker(null);
+          setAssignAttackManual(null);
+          setAssignAddAttackBlock(false);
+          refresh();
+        };
+        // Multi-option picker (see NewSlotPickerModal/computeNewSlotCandidates,
+        // same pattern EventDetailModal's own proceedSave already uses) --
+        // 2026-09-29 user report: this used to commit straight away with no
+        // preview and no way to place it yourself. Falls back to the old
+        // single-shot commit when computeNewSlotCandidates finds nothing
+        // within its bounded scan window, same fallback every other caller
+        // of this pattern already uses.
         const startAssignAttackBlock=()=>{
           const routines=getWeeklyRoutine();
           const prefs=getSchedulePreferences();
           const fields={title:selectedAssignment.title,subject:selectedAssignment.subject,courseId:selectedAssignment.courseId,notes:selectedAssignment.notes,
             deadline:selectedAssignment.deadline||selectedAssignment.date,priority:selectedAssignment.priority,difficulty:selectedAssignment.difficulty,probeMins:assignAttackProbeMins};
           const desiredDate=selectedAssignment.date&&selectedAssignment.date>=today?selectedAssignment.date:today;
-          const pair=buildAssignmentAttackBlockPair(selectedAssignment.id,fields,[],allEvents,routines,prefs,desiredDate,prefs.workStartTime,false);
-          if(!pair){setAssignAttackErr("Couldn't find room for a probe session before the deadline -- try a later deadline.");return;}
-          lsSet("events",allEvents.map(e=>e.id===selectedAssignment.id?pair.marker:e).concat([pair.task]));
-          setAssignAddAttackBlock(false);
-          refresh();
+          const candidates=computeNewSlotCandidates(allEvents,routines,prefs,desiredDate,prefs.workStartTime,assignAttackProbeMins,fields.deadline||null,fields.difficulty);
+          if(candidates.length>0){
+            setAssignAttackErr("");
+            setAssignAttackSlotPicker({candidates,fields,desiredDate});
+            return;
+          }
+          commitAssignAttackBlock(fields,desiredDate,null);
+        };
+        const confirmAssignAttackSlot=(slot)=>{
+          commitAssignAttackBlock(assignAttackSlotPicker.fields,assignAttackSlotPicker.desiredDate,slot);
+        };
+        // NewSlotPickerModal's own "I'll pick the day and time myself" link
+        // -- the previously-missing half of the user's ask ("or there's an
+        // option for me to put the attack block anywhere"). Trusted as-is,
+        // same convention as every other manual placement in this file
+        // (Add Task's hand-typed time, moveTaskLaterToday's undo-backed
+        // moves) -- no legality re-check on a deliberate manual choice.
+        const startAssignAttackManual=()=>{
+          setAssignAttackSlotPicker(null);
+          setAssignAttackManual({date:selectedAssignment.date&&selectedAssignment.date>=today?selectedAssignment.date:today,time:"16:00"});
+        };
+        const confirmAssignAttackManual=()=>{
+          if(!assignAttackManual)return;
+          const fields={title:selectedAssignment.title,subject:selectedAssignment.subject,courseId:selectedAssignment.courseId,notes:selectedAssignment.notes,
+            deadline:selectedAssignment.deadline||selectedAssignment.date,priority:selectedAssignment.priority,difficulty:selectedAssignment.difficulty,probeMins:assignAttackProbeMins};
+          commitAssignAttackBlock(fields,assignAttackManual.date,{date:assignAttackManual.date,time:assignAttackManual.time});
         };
         const proposeAssignPaceBlock=()=>{
           const slot=findReliableSlotFor(allEvents,getWeeklyRoutine(),getSchedulePreferences(),today,getSchedulePreferences().workStartTime,30,selectedAssignment.deadline||selectedAssignment.date,selectedAssignment.difficulty);
@@ -13132,9 +13198,24 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                 <AttackBlockExplainer />
                 {assignAddAttackBlock&&(
                   <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
-                    <Field label="Probe session length"><NumField min={15} max={60} fallback={ATTACK_BLOCK_DEFAULT_PROBE_MINS} value={assignAttackProbeMins} onChange={setAssignAttackProbeMins} /></Field>
-                    {assignAttackErr&&<div style={{fontSize:11.5,color:T.red,marginTop:8}}>{assignAttackErr}</div>}
-                    <div style={{marginTop:10}}><BtnSm onClick={startAssignAttackBlock}>Schedule probe session</BtnSm></div>
+                    {assignAttackManual?(<>
+                      <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:8}}>
+                        <Input type="date" value={assignAttackManual.date} onChange={e=>setAssignAttackManual(m=>({...m,date:e.target.value}))} style={{width:140}} />
+                        <TimeInput value={assignAttackManual.time} onChange={v=>setAssignAttackManual(m=>({...m,time:v}))} />
+                      </div>
+                      {assignAttackErr&&<div style={{fontSize:11.5,color:T.red,marginTop:8}}>{assignAttackErr}</div>}
+                      <div style={{marginTop:10,display:"flex",gap:8}}>
+                        <BtnSm onClick={confirmAssignAttackManual}>Schedule here</BtnSm>
+                        <BtnSm variant="ghost" onClick={()=>setAssignAttackManual(null)}>Cancel</BtnSm>
+                      </div>
+                    </>):(<>
+                      <Field label="Probe session length"><NumField min={15} max={60} fallback={ATTACK_BLOCK_DEFAULT_PROBE_MINS} value={assignAttackProbeMins} onChange={setAssignAttackProbeMins} /></Field>
+                      {assignAttackErr&&<div style={{fontSize:11.5,color:T.red,marginTop:8}}>{assignAttackErr}</div>}
+                      <div style={{marginTop:10,display:"flex",alignItems:"center",gap:12}}>
+                        <BtnSm onClick={startAssignAttackBlock}>Schedule probe session</BtnSm>
+                        <button type="button" onClick={startAssignAttackManual} style={{background:"none",border:"none",color:T.muted,fontSize:11.5,textDecoration:"underline",cursor:"pointer",fontFamily:T.font,padding:0}}>I'll pick a time myself</button>
+                      </div>
+                    </>)}
                   </div>
                 )}
               </div>
@@ -13255,6 +13336,12 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                 </div>
               )}
             </div>
+            {assignAttackSlotPicker&&(
+              <NewSlotPickerModal title="Choose when to start" sub="Studlin found a few real options for your first probe session:"
+                candidates={assignAttackSlotPicker.candidates} confirmLabel="Start here"
+                onConfirm={confirmAssignAttackSlot} onClose={()=>setAssignAttackSlotPicker(null)}
+                onManual={startAssignAttackManual} />
+            )}
           </div>
         );
       })()}
@@ -24413,14 +24500,22 @@ const WIZARD_STEPPER=[
   {key:"calendarSync",label:"Connect"},
   {key:"finalReview",label:"Review"},
 ];
-const WizardStepper=({step})=>{
+// Shared by WizardStepper (horizontal, the modal treatment) and
+// WizardRail (vertical, firstRun's own left-rail treatment below) --
+// collapses the two "Courses"-labeled entries (status+classes) into one
+// dot for progress purposes, same dedup either stepper needs.
+function wizardStepperLabels(step){
   const idx=WIZARD_STEPPER.findIndex(s=>s.key===step);
   if(idx<0)return null;
-  // Collapse the two "Courses"-labeled entries (status+classes) into one
-  // dot for progress purposes.
   const labels=[];
   WIZARD_STEPPER.forEach(s=>{if(labels[labels.length-1]?.label!==s.label)labels.push(s);});
   const activeLabelIdx=labels.findIndex(s=>s.label===WIZARD_STEPPER[idx].label);
+  return {labels,activeLabelIdx};
+}
+const WizardStepper=({step})=>{
+  const computed=wizardStepperLabels(step);
+  if(!computed)return null;
+  const {labels,activeLabelIdx}=computed;
   return (
     <div style={{padding:"20px 32px 0"}}>
       {/* "Step X of Y" text plus a real completed/current/upcoming
@@ -24444,6 +24539,47 @@ const WizardStepper=({step})=>{
           );
         })}
       </div>
+    </div>
+  );
+};
+// 2026-09-29 redesign, second pass -- user report: the firstRun full-bleed
+// page (2026-09-29, first pass) still read as a popup with the chrome
+// stripped off, since it was still one small island of centered content
+// floating in a sea of empty T.bg. The actual sign-up pages this leads
+// into (onboarding.jsx) never look like that -- they use a persistent
+// dark "rail" (logo + a vertical step list) beside a lighter content
+// pane, the literal established Studlin page template (see onboarding.css's
+// own .rail/.stepper/.step rules -- T.forest/T.cream/T.ink/T.lime are the
+// exact same values as its --forest/--cream/--ink/--lime tokens in both
+// themes, so this matches without needing new colors). Reusing that same
+// two-pane template here, instead of a single centered column, is what
+// actually makes this read as "the next page of the same flow" rather
+// than "a popup with no border." Only for firstRun -- term rollover/quick
+// scan keep the real modal (see the outer wrapper's own comment).
+const WizardRail=({step})=>{
+  const computed=wizardStepperLabels(step);
+  return (
+    <div style={{width:340,flexShrink:0,background:T.forest,color:T.cream,padding:"48px 40px",display:"flex",flexDirection:"column",overflowY:"auto"}}>
+      <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:48}}>
+        <div style={{width:34,height:34,borderRadius:8,background:T.lime,display:"grid",placeItems:"center",fontSize:17,fontWeight:800,color:T.forest,flexShrink:0}}>S</div>
+        <span style={{fontSize:20,fontWeight:700,letterSpacing:"-0.02em",color:T.cream}}>studlin</span>
+      </div>
+      {computed&&(
+        <div style={{display:"flex",flexDirection:"column",gap:4}}>
+          {computed.labels.map((lbl,i)=>{
+            const done=i<computed.activeLabelIdx,current=i===computed.activeLabelIdx;
+            return (
+              <div key={lbl.key} style={{display:"flex",alignItems:"center",gap:14,padding:"10px 0"}}>
+                <div style={{width:26,height:26,borderRadius:"50%",flexShrink:0,display:"grid",placeItems:"center",fontSize:11,fontWeight:600,fontFamily:T.mono,
+                  background:current?T.cream:done?T.lime:"transparent",
+                  border:`1.5px solid ${current?T.cream:done?T.lime:"rgba(246,241,230,0.2)"}`,
+                  color:current?T.forest:done?T.ink:"rgba(246,241,230,0.45)"}}>{done?"✓":i+1}</div>
+                <span style={{fontSize:14.5,fontWeight:current?600:500,color:current?T.cream:done?"rgba(246,241,230,0.78)":"rgba(246,241,230,0.45)"}}>{lbl.label}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 };
@@ -24484,7 +24620,7 @@ const PrefChipRow=({label,value,onChange,options})=>(
     </div>
   </div>
 );
-function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCourseId,onPartialSync,termRollover=false,setPricingOpen=()=>{},setActivePage=()=>{}}){
+function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCourseId,onPartialSync,termRollover=false,setPricingOpen=()=>{},setActivePage=()=>{},firstRun=false}){
   const [step,setStep]=useState("status"); // timezone | term | awake | status | classes | activities | calendarSync | window | finalReview
   const [status,setStatus]=useState(initialStatus||"");
   // Classes fully reviewed this session, staged -- nothing in here touches
@@ -25675,10 +25811,31 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   };
 
   return (
-    <div style={{position:"fixed",inset:0,zIndex:300,background:"rgba(8,12,10,0.97)",backdropFilter:"blur(10px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px 16px",overflowY:"auto"}}>
-      <div style={{width:"100%",maxWidth:620,maxHeight:"88vh",display:"flex",flexDirection:"column",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 48px 100px -30px rgba(0,0,0,0.7)",animation:"studlinPop 0.25s ease"}}>
-        <WizardStepper step={step} />
-        <div style={{padding:"28px 32px 0",overflowY:"auto",flex:1,minHeight:0}}>
+    // firstRun, 2026-09-29 user report ("after the user adds their name and
+    // school, that page takes to wizard where it looks like a popup -- it
+    // should be using that same white background... that's when I told you
+    // to be continuous"). First pass (colored-to-match scrim, no card) still
+    // read as a popup with the chrome stripped off -- still one small
+    // island of centered content floating in empty T.bg. Second pass:
+    // reuse the actual established Studlin page template instead --
+    // onboarding.jsx's own persistent dark rail (logo + vertical step list)
+    // beside a lighter content pane (see WizardRail's own comment). Only
+    // for a brand-new account's genuine first run (isFreshAccount, passed
+    // down as firstRun). Term rollover/quick scan (an already-configured
+    // account doing a deliberate side task while using the rest of the
+    // app) keep the real modal treatment -- that IS the right metaphor
+    // once there's an actual app underneath to pop open over.
+    <div style={firstRun
+      ?{position:"fixed",inset:0,zIndex:300,background:T.bg,display:"flex",overflow:"hidden"}
+      :{position:"fixed",inset:0,zIndex:300,background:T.mode==="light"?"rgba(250,246,236,0.92)":"rgba(8,12,10,0.97)",backdropFilter:"blur(10px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px 16px",overflowY:"auto"}}>
+      {firstRun&&<WizardRail step={step} />}
+      <div style={firstRun
+        ?{flex:1,minWidth:0,display:"flex",flexDirection:"column",overflowY:"auto"}
+        :{width:"100%",maxWidth:620,maxHeight:"88vh",display:"flex",flexDirection:"column",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 48px 100px -30px rgba(0,0,0,0.7)",animation:"studlinPop 0.25s ease"}}>
+        {!firstRun&&<WizardStepper step={step} />}
+        <div style={firstRun
+          ?{padding:"56px 56px 0",overflowY:"auto",flex:1,minHeight:0,width:"100%",maxWidth:680,marginLeft:"auto",marginRight:"auto",boxSizing:"border-box"}
+          :{padding:"28px 32px 0",overflowY:"auto",flex:1,minHeight:0}}>
           {/* A short step (e.g. "End of Term" -- just two date fields) used
               to collapse the whole modal down to its own tiny content
               height, landing the footer right up against it with almost no
@@ -26433,7 +26590,9 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
           </div>
         </div>
 
-        <div style={{padding:"18px 32px",borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+        <div style={firstRun
+          ?{padding:"18px 56px",borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0,width:"100%",maxWidth:680,marginLeft:"auto",marginRight:"auto",boxSizing:"border-box"}
+          :{padding:"18px 32px",borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
           <div style={{display:"flex",alignItems:"center",gap:16}}>
             {/* Real Back navigation (2026-07-29 fix, unified 2026-07-29
                 later the same day) -- now the single Back control for
@@ -30288,7 +30447,7 @@ function resolveCalendarHighlightFlag(flag, nowMs){
 // setPricingOpen(true)) already merged into this function's BODY cleanly,
 // so dropping this prop would leave those calls throwing on an undefined
 // setPricingOpen.
-function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRoutineCenterOpenedFromSettings,detailEventId,setDetailEventId,registerSetEvents,registerSkipSetEvents,onTaskCompleted,catchUpPending,onWizardOpenChange,jumpToSessionOnMount,onJumpSessionConsumed,highlightDraftIdOnMount,onHighlightDraftConsumed,setPricingOpen=()=>{}}={}){
+function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRoutineCenterOpenedFromSettings,detailEventId,setDetailEventId,registerSetEvents,registerSkipSetEvents,onTaskCompleted,catchUpPending,onWizardOpenChange,jumpToSessionOnMount,onJumpSessionConsumed,highlightDraftIdOnMount,onHighlightDraftConsumed,setPricingOpen=()=>{},setTheme=()=>{}}={}){
   const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
   const SUBJ=[{value:"None",label:"None",color:T.lime},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
   // Accepts either a real course id or a label, same as StudlinPrep/Notes'
@@ -30919,6 +31078,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // specific claim to feel true yet. Guarded so a later re-entry (e.g.
     // "Set up next term") never resets an already-real clock.
     if(!lsGet("onboardingFinishedAt",null))lsSet("onboardingFinishedAt",Date.now());
+    // 2026-09-29: the wizard runs in light mode for a brand-new account to
+    // match the still-light sign-up pages before it (isPreOnboardingLocalDevice)
+    // -- finishing it for real switches to Studlin's actual default (dark)
+    // for good, same as Settings' own toggle, so the populated calendar is
+    // the first dark reveal. Never fires for term rollover (isFreshAccount
+    // is already false by then) -- never overrides an established choice.
+    if(isFreshAccount)setTheme("dark");
     if(newIds&&newIds.length>0){
       setNewItemHighlightIds(newIds);
       // Bug fix, 2026-09-04 audit: "Add to Calendar" gave zero success
@@ -34826,7 +34992,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         <TourStep {...CAL_TOUR_STEPS[calTourStep]} step={calTourStep} total={CAL_TOUR_STEPS.length}
           isLast={calTourStep===CAL_TOUR_STEPS.length-1} onNext={advanceCalTour} onSkip={skipCalTour} />
       )}
-      <ClassSetupWizard open={classSetupOpen} termRollover={classSetupRollover} initialStatus={getProfile().status} onSkip={()=>{lsSet("classSetupDeferredUntil",Date.now()+86400000);setClassSetupOpen(false);setClassSetupRollover(false);}} onFinish={finishClassSetup} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
+      <ClassSetupWizard open={classSetupOpen} termRollover={classSetupRollover} firstRun={isFreshAccount} initialStatus={getProfile().status} onSkip={()=>{lsSet("classSetupDeferredUntil",Date.now()+86400000);setClassSetupOpen(false);setClassSetupRollover(false);if(isFreshAccount)setTheme("dark");}} onFinish={finishClassSetup} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
       <ClassSetupWizard open={quickScanOpen} quickScan targetCourseId={quickScanTargetCourseId} initialStatus={getProfile().status} onFinish={finishQuickScan} onSkip={()=>{setQuickScanOpen(false);setQuickScanTargetCourseId(null);syncClassSetupState();}} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
       <Modal open={!!weeklyContentCourseId} onClose={()=>setWeeklyContentCourseId(null)} title="Class notes" sub="A short note for each day this class meets -- lecture, lab, homework due, whatever's useful." width={460}
         footer={<><Btn variant="subtle" onClick={()=>setWeeklyContentCourseId(null)}>Cancel</Btn><Btn onClick={saveWeeklyContent}>Save</Btn></>}>
@@ -36148,18 +36314,28 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         // Tier 0's own missed-task sweep already uses) -- moving a real
         // exam or class "later today" isn't a thing a one-tap action
         // should pretend to do.
+        // Bug fix, 2026-09-29 user report ("I hit later for something and
+        // it just disappeared, where did it go"): both actions used to
+        // silently setEvents on success with no toast at all -- the
+        // failure path already toasted, so a WORKING move looked exactly
+        // like the item vanishing, violating this project's own "every
+        // successful async action gets a confirmation, never silence"
+        // rule. Now says exactly where it landed.
         const moveTaskLaterToday=(ev)=>{
           const nowMins=(()=>{const n=new Date();return n.getHours()*60+n.getMinutes();})();
           const slot=findLaterTodaySlot(ev,events,routines,getSchedulePreferences(),dayKey(),nowMins);
           if(!slot){setPlacementToast("No room left today for this.");setTimeout(()=>setPlacementToast(""),3200);return;}
           const next=events.map(e=>e.id===ev.id?{...e,date:slot.date,time:slot.time}:e);
           setEvents(next);lsSet("events",next);
+          setPlacementToast("Moved \""+ev.title+"\" to "+fmtTime(slot.time)+" today.");setTimeout(()=>setPlacementToast(""),3200);
         };
         const moveTaskNotToday=(ev)=>{
           const slot=findNotTodaySlot(ev,events,routines,getSchedulePreferences(),dayKey());
           if(!slot){setPlacementToast("Couldn't find room this week without missing its deadline.");setTimeout(()=>setPlacementToast(""),3200);return;}
           const next=events.map(e=>e.id===ev.id?{...e,date:slot.date,time:slot.time}:e);
           setEvents(next);lsSet("events",next);
+          const slotLabel=new Date(slot.date+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"});
+          setPlacementToast("Moved \""+ev.title+"\" to "+slotLabel+" at "+fmtTime(slot.time)+".");setTimeout(()=>setPlacementToast(""),3200);
         };
         const detailEvs = dayDetailKey
           ? (byDay[dayDetailKey] || []).filter(ev => ev.kind !== "free period")
@@ -36229,7 +36405,15 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                   // TIER0_FIXED_KINDS), so the old check let its Later/Not
                   // today reslot buttons show even though co-op sessions are
                   // documented as fixed everywhere else movability is decided.
-                  const canReslot = !isDone && !ev.checklist && ev.time && ev.duration && !isLeadInFixed(ev);
+                  // dayDetailKey===dayKey() (2026-09-29 fix, same user report
+                  // as moveTaskLaterToday's own comment above): both actions
+                  // are hardcoded to the real current day regardless of which
+                  // day's popup is open, so showing them on a day OTHER than
+                  // today could silently reschedule an item onto a date the
+                  // student isn't even looking at -- indistinguishable from
+                  // it just vanishing. "Later today"/"Not today" only mean
+                  // something when today's own popup is open anyway.
+                  const canReslot = !isDone && !ev.checklist && ev.time && ev.duration && !isLeadInFixed(ev) && dayDetailKey===dayKey();
                   return (
                     <div key={ev.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",background:T.card2,borderRadius:10,border:`1px solid ${T.border}`,opacity:isDone?0.55:1}}>
                       {/* isRoutine (a class period, Lunch, Nutrition...) is excluded --
@@ -40183,7 +40367,7 @@ function App() {
     // longer consulted as the starting point on a new load).
     return "calendar";
   });
-  const [theme,setThemeState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-theme"))||"light");
+  const [theme,setThemeState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-theme"))||(isPreOnboardingLocalDevice()?"light":"dark"));
   const [accent,setAccentState]=useState(()=>{
     if(typeof localStorage!=="undefined"){
       if(!localStorage.getItem("studlin-accent-reset5")){localStorage.setItem("studlin-accent","Lime");localStorage.setItem("studlin-accent-reset5","1");}
@@ -42132,7 +42316,7 @@ function App() {
         <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?T.bg:undefined}}>
           {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} setDetailEventId={setDetailEventId} onTaskCompleted={handleTaskCompleted} setPendingHighlightDraftId={setPendingHighlightDraftId} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineCenter={openRoutineCenterOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} setActivePage={setActive} pendingOpenSetting={pendingOpenSetting} onSettingOpened={()=>setPendingOpenSetting(null)} />:
-           active==="calendar"?<CalendarTab setActive={setActive} onTaskSaved={handleTaskSaved} openRoutineCenterOnMount={pendingRoutineCenter} onRoutineCenterOpenedFromSettings={()=>setPendingRoutineCenter(false)} detailEventId={detailEventId} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} registerSkipSetEvents={(fn)=>{calendarSkipSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} onWizardOpenChange={setCalendarWizardOpen} jumpToSessionOnMount={pendingJumpSession} onJumpSessionConsumed={()=>setPendingJumpSession(null)} highlightDraftIdOnMount={pendingHighlightDraftId} onHighlightDraftConsumed={()=>setPendingHighlightDraftId(null)} setPricingOpen={setPricingOpen} />:
+           active==="calendar"?<CalendarTab setActive={setActive} onTaskSaved={handleTaskSaved} openRoutineCenterOnMount={pendingRoutineCenter} onRoutineCenterOpenedFromSettings={()=>setPendingRoutineCenter(false)} detailEventId={detailEventId} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} registerSkipSetEvents={(fn)=>{calendarSkipSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} onWizardOpenChange={setCalendarWizardOpen} jumpToSessionOnMount={pendingJumpSession} onJumpSessionConsumed={()=>setPendingJumpSession(null)} highlightDraftIdOnMount={pendingHighlightDraftId} onHighlightDraftConsumed={()=>setPendingHighlightDraftId(null)} setPricingOpen={setPricingOpen} setTheme={setTheme} />:
            active==="notes"?<Notes setActive={setActive} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
            active==="profile"?<Profile setActive={setActive} seriousMode={seriousMode} />:
