@@ -24500,14 +24500,22 @@ const WIZARD_STEPPER=[
   {key:"calendarSync",label:"Connect"},
   {key:"finalReview",label:"Review"},
 ];
-const WizardStepper=({step})=>{
+// Shared by WizardStepper (horizontal, the modal treatment) and
+// WizardRail (vertical, firstRun's own left-rail treatment below) --
+// collapses the two "Courses"-labeled entries (status+classes) into one
+// dot for progress purposes, same dedup either stepper needs.
+function wizardStepperLabels(step){
   const idx=WIZARD_STEPPER.findIndex(s=>s.key===step);
   if(idx<0)return null;
-  // Collapse the two "Courses"-labeled entries (status+classes) into one
-  // dot for progress purposes.
   const labels=[];
   WIZARD_STEPPER.forEach(s=>{if(labels[labels.length-1]?.label!==s.label)labels.push(s);});
   const activeLabelIdx=labels.findIndex(s=>s.label===WIZARD_STEPPER[idx].label);
+  return {labels,activeLabelIdx};
+}
+const WizardStepper=({step})=>{
+  const computed=wizardStepperLabels(step);
+  if(!computed)return null;
+  const {labels,activeLabelIdx}=computed;
   return (
     <div style={{padding:"20px 32px 0"}}>
       {/* "Step X of Y" text plus a real completed/current/upcoming
@@ -24531,6 +24539,47 @@ const WizardStepper=({step})=>{
           );
         })}
       </div>
+    </div>
+  );
+};
+// 2026-09-29 redesign, second pass -- user report: the firstRun full-bleed
+// page (2026-09-29, first pass) still read as a popup with the chrome
+// stripped off, since it was still one small island of centered content
+// floating in a sea of empty T.bg. The actual sign-up pages this leads
+// into (onboarding.jsx) never look like that -- they use a persistent
+// dark "rail" (logo + a vertical step list) beside a lighter content
+// pane, the literal established Studlin page template (see onboarding.css's
+// own .rail/.stepper/.step rules -- T.forest/T.cream/T.ink/T.lime are the
+// exact same values as its --forest/--cream/--ink/--lime tokens in both
+// themes, so this matches without needing new colors). Reusing that same
+// two-pane template here, instead of a single centered column, is what
+// actually makes this read as "the next page of the same flow" rather
+// than "a popup with no border." Only for firstRun -- term rollover/quick
+// scan keep the real modal (see the outer wrapper's own comment).
+const WizardRail=({step})=>{
+  const computed=wizardStepperLabels(step);
+  return (
+    <div style={{width:340,flexShrink:0,background:T.forest,color:T.cream,padding:"48px 40px",display:"flex",flexDirection:"column",overflowY:"auto"}}>
+      <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:48}}>
+        <div style={{width:34,height:34,borderRadius:8,background:T.lime,display:"grid",placeItems:"center",fontSize:17,fontWeight:800,color:T.forest,flexShrink:0}}>S</div>
+        <span style={{fontSize:20,fontWeight:700,letterSpacing:"-0.02em",color:T.cream}}>studlin</span>
+      </div>
+      {computed&&(
+        <div style={{display:"flex",flexDirection:"column",gap:4}}>
+          {computed.labels.map((lbl,i)=>{
+            const done=i<computed.activeLabelIdx,current=i===computed.activeLabelIdx;
+            return (
+              <div key={lbl.key} style={{display:"flex",alignItems:"center",gap:14,padding:"10px 0"}}>
+                <div style={{width:26,height:26,borderRadius:"50%",flexShrink:0,display:"grid",placeItems:"center",fontSize:11,fontWeight:600,fontFamily:T.mono,
+                  background:current?T.cream:done?T.lime:"transparent",
+                  border:`1.5px solid ${current?T.cream:done?T.lime:"rgba(246,241,230,0.2)"}`,
+                  color:current?T.forest:done?T.ink:"rgba(246,241,230,0.45)"}}>{done?"✓":i+1}</div>
+                <span style={{fontSize:14.5,fontWeight:current?600:500,color:current?T.cream:done?"rgba(246,241,230,0.78)":"rgba(246,241,230,0.45)"}}>{lbl.label}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 };
@@ -25765,25 +25814,28 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     // firstRun, 2026-09-29 user report ("after the user adds their name and
     // school, that page takes to wizard where it looks like a popup -- it
     // should be using that same white background... that's when I told you
-    // to be continuous"): a colored-to-match scrim (see the T.mode branch
-    // below) still reads as a modal popping open over a page -- the actual
-    // ask was for this to feel like the NEXT PAGE in onboarding, not an
-    // overlay on top of one. Only for a brand-new account's genuine first
-    // run (isFreshAccount, passed down as firstRun -- see its own CalendarTab
-    // comment): no scrim, no floating card, no pop-in -- just T.bg filling
-    // the viewport with the same centered content column, the same way
-    // onboarding.jsx's own page is laid out. Term rollover/quick scan (an
-    // already-configured account doing a deliberate side task while using
-    // the rest of the app) keep the real popup treatment -- that IS the
-    // right metaphor once there's an actual app underneath to pop open over.
+    // to be continuous"). First pass (colored-to-match scrim, no card) still
+    // read as a popup with the chrome stripped off -- still one small
+    // island of centered content floating in empty T.bg. Second pass:
+    // reuse the actual established Studlin page template instead --
+    // onboarding.jsx's own persistent dark rail (logo + vertical step list)
+    // beside a lighter content pane (see WizardRail's own comment). Only
+    // for a brand-new account's genuine first run (isFreshAccount, passed
+    // down as firstRun). Term rollover/quick scan (an already-configured
+    // account doing a deliberate side task while using the rest of the
+    // app) keep the real modal treatment -- that IS the right metaphor
+    // once there's an actual app underneath to pop open over.
     <div style={firstRun
-      ?{position:"fixed",inset:0,zIndex:300,background:T.bg,display:"flex",justifyContent:"center",padding:"48px 16px",overflowY:"auto"}
+      ?{position:"fixed",inset:0,zIndex:300,background:T.bg,display:"flex",overflow:"hidden"}
       :{position:"fixed",inset:0,zIndex:300,background:T.mode==="light"?"rgba(250,246,236,0.92)":"rgba(8,12,10,0.97)",backdropFilter:"blur(10px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px 16px",overflowY:"auto"}}>
+      {firstRun&&<WizardRail step={step} />}
       <div style={firstRun
-        ?{width:"100%",maxWidth:620,display:"flex",flexDirection:"column"}
+        ?{flex:1,minWidth:0,display:"flex",flexDirection:"column",overflowY:"auto"}
         :{width:"100%",maxWidth:620,maxHeight:"88vh",display:"flex",flexDirection:"column",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 48px 100px -30px rgba(0,0,0,0.7)",animation:"studlinPop 0.25s ease"}}>
-        <WizardStepper step={step} />
-        <div style={{padding:"28px 32px 0",overflowY:"auto",flex:1,minHeight:0}}>
+        {!firstRun&&<WizardStepper step={step} />}
+        <div style={firstRun
+          ?{padding:"56px 56px 0",overflowY:"auto",flex:1,minHeight:0,width:"100%",maxWidth:680,marginLeft:"auto",marginRight:"auto",boxSizing:"border-box"}
+          :{padding:"28px 32px 0",overflowY:"auto",flex:1,minHeight:0}}>
           {/* A short step (e.g. "End of Term" -- just two date fields) used
               to collapse the whole modal down to its own tiny content
               height, landing the footer right up against it with almost no
@@ -26538,7 +26590,9 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
           </div>
         </div>
 
-        <div style={{padding:"18px 32px",borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+        <div style={firstRun
+          ?{padding:"18px 56px",borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0,width:"100%",maxWidth:680,marginLeft:"auto",marginRight:"auto",boxSizing:"border-box"}
+          :{padding:"18px 32px",borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
           <div style={{display:"flex",alignItems:"center",gap:16}}>
             {/* Real Back navigation (2026-07-29 fix, unified 2026-07-29
                 later the same day) -- now the single Back control for
