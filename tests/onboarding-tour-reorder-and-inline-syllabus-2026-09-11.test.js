@@ -85,7 +85,9 @@ describe("Inline per-class syllabus scan during onboarding review", () => {
     const idx = SOURCE.indexOf("const mapDeadlinesToReviewItems=(deadlines,idPrefix)=>{");
     assert.ok(idx > -1, "the shared mapper should exist");
     const buildIdx = SOURCE.indexOf("const buildReviewFromExtraction=(result,sourceText)=>{");
-    const buildBody = SOURCE.slice(buildIdx, buildIdx + 2000);
+    // 2300 (was 2000): 2026-09-29 added a pickedCourseId/effectiveCourseId
+    // lookup (scanPicker's own real-course signal) just above this.
+    const buildBody = SOURCE.slice(buildIdx, buildIdx + 2300);
     assert.ok(buildBody.includes('mapDeadlinesToReviewItems(result.deadlines,"cd")'), "a fresh review's items should still use the plain 'cd' prefix");
     const mergeIdx = SOURCE.indexOf("const mergeExtractionIntoReview=(result,sourceText)=>{");
     const mergeBody = SOURCE.slice(mergeIdx, mergeIdx + 700);

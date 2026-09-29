@@ -21,11 +21,16 @@ const path = require("path");
 const SOURCE = fs.readFileSync(path.join(__dirname, "..", "studlin-app.jsx"), "utf8");
 
 describe("Onboarding: 'Scan a syllabus' only appears once at least one class already exists", () => {
-  test("the syllabus-scan button is gated on pendingClasses/hsClassesCommitted, not shown unconditionally", () => {
+  // 2026-09-29 extension: the same gate now also fires for a RETURNING
+  // student's real, already-committed classes (realSubjects.length>0) --
+  // not just this session's own pendingClasses/hsClassesCommitted -- so
+  // the general Tools-menu "Scan schedule" quick action can offer it too,
+  // not only mid-onboarding. Still gated, never unconditional.
+  test("the syllabus-scan button is gated on pendingClasses/hsClassesCommitted/realSubjects, not shown unconditionally", () => {
     const idx = SOURCE.indexOf('title="How do you want to add it?"');
     assert.notEqual(idx, -1);
-    const body = SOURCE.slice(idx, idx + 3200);
-    assert.match(body, /\(pendingClasses\.length>0\|\|hsClassesCommitted>0\)&&\(/, "Scan a syllabus must be conditionally rendered on at least one class already existing this session");
+    const body = SOURCE.slice(idx, idx + 6000);
+    assert.match(body, /\(pendingClasses\.length>0\|\|hsClassesCommitted>0\|\|realSubjects\.length>0\)&&\(/, "Scan a syllabus must be conditionally rendered on at least one class already existing (this session, or for real)");
     assert.match(body, /Scan my whole schedule/, "Scan my whole schedule must still always be offered up front");
   });
 });

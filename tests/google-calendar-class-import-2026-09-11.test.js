@@ -123,7 +123,11 @@ describe("Source-level regression guards: the wizard's Import from Google Calend
   test("the classes chooser offers Import from Google Calendar, wired to openGoogleImport", () => {
     const idx = SOURCE.indexOf('{step==="classes"&&addMode==="choose"&&(<>');
     assert.ok(idx > -1);
-    const body = SOURCE.slice(idx, idx + 5000);
+    // 11000 (was 5000): the 2026-09-29 "Scan schedule" smart-state rework
+    // added real getSubjects()-aware badges to this same block (see
+    // ClassSetupWizard's own scanPicker/realNeedsSyllabus comments) ahead
+    // of the Google Calendar link this test checks for.
+    const body = SOURCE.slice(idx, idx + 11000);
     assert.ok(body.includes("Import from Google Calendar"));
     assert.ok(body.includes("onClick={openGoogleImport}"));
   });

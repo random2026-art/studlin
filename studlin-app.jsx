@@ -24633,7 +24633,21 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   const [termEnd,setTermEnd]=useState("");
   const [wakeTime,setWakeTime]=useState("07:00");
   const [sleepTime,setSleepTime]=useState("23:00");
-  const [addMode,setAddMode]=useState(null); // null (list) | choose | scan | review | hsSchedule | hsReview
+  const [addMode,setAddMode]=useState(null); // null (list) | choose | scanPicker | scan | review | hsSchedule | hsReview
+  // 2026-09-29 user report: the general "Scan syllabus" quick action (no
+  // targetCourseId -- opened from the Tools menu, not a specific course's
+  // own menu) landed on the "choose" screen with no way to tell it apart
+  // from a first-time onboarding session -- "Scan a syllabus" stayed
+  // hidden (gated on THIS session's own pendingClasses/hsClassesCommitted,
+  // always 0 for a fresh quickScan) even though the student's real classes
+  // (getSubjects()) already existed, some still genuinely missing a
+  // syllabus scan (needsSyllabus). scanPicker (addMode, above) lists those
+  // real classes so picking "Scan a syllabus" here means "for each class,
+  // scan its syllabus" the way it's actually supposed to -- pickedCourseId
+  // is which one the student chose, read the same way targetCourseId
+  // already is (see buildReviewFromExtraction) so the rest of the existing
+  // single-syllabus scan/review pipeline needs no changes at all.
+  const [pickedCourseId,setPickedCourseId]=useState(null);
   const [reviewSub,setReviewSub]=useState("items"); // items | sessions -- sub-steps inside addMode==="review"
   const [editingPendingId,setEditingPendingId]=useState(null); // set when the review screen is editing an already-staged class rather than building a new one
   const [scanning,setScanning]=useState(false);
@@ -24795,11 +24809,17 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   // those use their own "Cancel" action (discards a scan/entry in
   // progress), a different, higher-stakes semantic than a plain Back.
   const goBack=()=>{
-    if(step==="classes"&&(addMode==="scan"||addMode==="hsSchedule"||addMode==="collegeSchedule"||addMode==="googleImport")){setAddMode("choose");return;}
+    // scanPicker (2026-09-29): a "scan" reached by picking a real class
+    // off scanPicker's own list steps back to that list, not straight past
+    // it to "choose" -- pickedCourseId only gets set from scanPicker
+    // (targetCourseId's own single-course entry never touches it), so it's
+    // a reliable "did we come from there" signal with no extra state.
+    if(step==="classes"&&addMode==="scan"&&pickedCourseId){setPickedCourseId(null);setAddMode("scanPicker");return;}
+    if(step==="classes"&&(addMode==="scan"||addMode==="scanPicker"||addMode==="hsSchedule"||addMode==="collegeSchedule"||addMode==="googleImport")){setAddMode("choose");return;}
     if(step==="classes"&&addMode==="choose"){setAddMode(null);return;}
     if(prevWizardStep)setStep(prevWizardStep);
   };
-  const canGoBack=(step==="classes"&&(addMode==="scan"||addMode==="hsSchedule"||addMode==="collegeSchedule"||addMode==="googleImport"||addMode==="choose"))||!!prevWizardStep;
+  const canGoBack=(step==="classes"&&(addMode==="scan"||addMode==="scanPicker"||addMode==="hsSchedule"||addMode==="collegeSchedule"||addMode==="googleImport"||addMode==="choose"))||!!prevWizardStep;
 
   useEffect(()=>{
     if(!open)return;
@@ -24849,6 +24869,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     // never actually reachable from the one entry point students use
     // most, found live.
     setAddMode(quickScan?(targetCourseId?"scan":"choose"):null);
+    setPickedCourseId(null);
     setReviewSub("items");
     setEditingPendingId(null);
     setScanError("");
@@ -24922,6 +24943,13 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   // Checking both getSubjects() and this session's own already-staged
   // pendingClasses colors avoids colliding with either.
   const nextColor=()=>nextAvailableSubjectColor([...getSubjects().map(s=>s.color),...pendingClasses.map(c=>c.color)]);
+  // Real, already-persisted classes -- see scanPicker/pickedCourseId's own
+  // comment above. Deliberately re-read fresh on every render (not memoized
+  // once at mount) so committing a class mid-session via this same wizard
+  // (staging -> "Done adding classes" -> commitAllToCalendar) is reflected
+  // immediately if the student loops back into "choose" for another one.
+  const realSubjects=getSubjects();
+  const realNeedsSyllabus=realSubjects.filter(s=>s.needsSyllabus);
 
   const startManual=()=>{
     setReview({subjectName:"",color:nextColor(),meetingTimes:[],items:[],sourceText:""});
@@ -25047,7 +25075,9 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     // there silently mismatched the class's real label everywhere else in
     // the app (sidebar, calendar colors, "which class is this" matching)
     // even though the underlying courseId was already correct.
-    const existingCourse=targetCourseId?getSubjects().find(s=>s.id===targetCourseId):null;
+    // pickedCourseId: same signal, chosen from scanPicker.
+    const effectiveCourseId=targetCourseId||pickedCourseId;
+    const existingCourse=effectiveCourseId?getSubjects().find(s=>s.id===effectiveCourseId):null;
     setReview({
       subjectName:existingCourse?existingCourse.label:((result.subject&&result.subject.name)||""),
       color:existingCourse?existingCourse.color:nextColor(),
@@ -25968,17 +25998,39 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                   of the college-only syllabus-scan flow below -- a per-class
                   syllabus doesn't map to how a school day actually works
                   for them (periods, not standalone syllabi). */}
-              {status!=="highschool"?(
-                <button type="button" onClick={()=>{setScanError("");setPasteMode(false);setPasteText("");setAddMode("collegeSchedule");}} style={classSetupChoiceStyle}>
-                  <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Scan my whole schedule</div>
-                  <div style={{fontSize:12,color:T.muted}}>Upload a screenshot, photo, or paste your full schedule — Studlin splits it into classes and finds each one's meeting time and exam dates automatically.</div>
-                </button>
-              ):(
-                <button type="button" onClick={()=>{setScanError("");setAddMode("hsSchedule");}} style={classSetupChoiceStyle}>
-                  <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Upload your class schedule</div>
-                  <div style={{fontSize:12,color:T.muted}}>One photo of your whole schedule adds every period at once, color-coded.</div>
-                </button>
-              )}
+              {/* alreadyHaveClasses/doneBadge, 2026-09-29 user report: this
+                  screen used to look identical whether it was a brand-new
+                  account's first pass or an already-onboarded student
+                  reopening it from the Tools menu -- no sense of "you
+                  already did this." realSubjects (this student's REAL,
+                  already-committed classes, as opposed to pendingClasses'
+                  session-only drafts) is 0 during real onboarding until
+                  something actually commits, so this badge only ever shows
+                  once there's something real to report -- harmless no-op
+                  during a first pass. */}
+              {(()=>{
+                const alreadyHaveClasses=realSubjects.length>0||pendingClasses.length>0||hsClassesCommitted>0;
+                const doneBadge=alreadyHaveClasses&&(
+                  <span style={{fontSize:10,fontWeight:700,color:T.lime,background:T.lime+"14",border:`1px solid ${T.lime}44`,borderRadius:5,padding:"2px 7px",flexShrink:0}}>✓ ALREADY DONE</span>
+                );
+                return status!=="highschool"?(
+                  <button type="button" onClick={()=>{setScanError("");setPasteMode(false);setPasteText("");setAddMode("collegeSchedule");}} style={classSetupChoiceStyle}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:3}}>
+                      <div style={{fontSize:13.5,fontWeight:700,color:T.text}}>Scan my whole schedule</div>
+                      {doneBadge}
+                    </div>
+                    <div style={{fontSize:12,color:T.muted}}>Upload a screenshot, photo, or paste your full schedule — Studlin splits it into classes and finds each one's meeting time and exam dates automatically.</div>
+                  </button>
+                ):(
+                  <button type="button" onClick={()=>{setScanError("");setAddMode("hsSchedule");}} style={classSetupChoiceStyle}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:3}}>
+                      <div style={{fontSize:13.5,fontWeight:700,color:T.text}}>Upload your class schedule</div>
+                      {doneBadge}
+                    </div>
+                    <div style={{fontSize:12,color:T.muted}}>One photo of your whole schedule adds every period at once, color-coded.</div>
+                  </button>
+                );
+              })()}
               <button type="button" onClick={startManual} style={classSetupChoiceStyle}>
                 <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Enter manually</div>
                 <div style={{fontSize:12,color:T.muted}}>Type in the class name and when it meets yourself.</div>
@@ -25990,10 +26042,25 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                   "Scan a syllabus" now only appears once at least one
                   class already exists this session (staged or, for a
                   prior HS bell-schedule commit, already committed) --
-                  exactly the "for each class" ordering asked for. */}
-              {status!=="highschool"&&(pendingClasses.length>0||hsClassesCommitted>0)&&(
-                <button type="button" onClick={()=>{setScanError("");setPasteMode(false);setPasteText("");setAddMode("scan");}} style={classSetupChoiceStyle}>
-                  <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Scan a syllabus</div>
+                  exactly the "for each class" ordering asked for.
+                  || realSubjects.length>0 (2026-09-29): a returning student
+                  reopening this from the Tools menu already has real
+                  classes from a PAST session, not this one -- without this
+                  they'd never see this option at all outside the exact
+                  session that first created them. When any of those real
+                  classes still needsSyllabus, routes into scanPicker (a
+                  real per-class list) instead of the blank upload prompt,
+                  so this is genuinely "for each class, scan its syllabus,"
+                  not just a differently-worded version of the old blind
+                  upload. */}
+              {status!=="highschool"&&(pendingClasses.length>0||hsClassesCommitted>0||realSubjects.length>0)&&(
+                <button type="button" onClick={()=>{setScanError("");setPasteMode(false);setPasteText("");setAddMode((!targetCourseId&&realNeedsSyllabus.length>0)?"scanPicker":"scan");}} style={classSetupChoiceStyle}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:3}}>
+                    <div style={{fontSize:13.5,fontWeight:700,color:T.text}}>Scan a syllabus</div>
+                    <span style={{fontSize:10,fontWeight:700,color:realNeedsSyllabus.length>0?T.amber:T.lime,background:(realNeedsSyllabus.length>0?T.amber:T.lime)+"14",border:`1px solid ${(realNeedsSyllabus.length>0?T.amber:T.lime)}44`,borderRadius:5,padding:"2px 7px",flexShrink:0}}>
+                      {realNeedsSyllabus.length>0?(realNeedsSyllabus.length+" class"+(realNeedsSyllabus.length!==1?"es":"")+" NOT DONE"):(realSubjects.length>0?"✓ ALL DONE":"NOT DONE")}
+                    </span>
+                  </div>
                   <div style={{fontSize:12,color:T.muted}}>Upload a file or photo — Studlin reads the class name, meeting time, and deadlines.</div>
                 </button>
               )}
@@ -26008,6 +26075,35 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                 shouldn't be competing with the two paths that always
                 succeed) to a small secondary link underneath. */}
               <button type="button" onClick={openGoogleImport} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,marginTop:14,textDecoration:"underline"}}>or import from Google Calendar instead</button>
+          </>)}
+
+          {/* scanPicker, 2026-09-29: "for each class, scan its syllabus" --
+              only reachable from "choose"'s own routing above, so this is
+              always the general Tools-menu quickScan case with real
+              needsSyllabus classes on file (never onboarding -- realSubjects
+              is empty there -- and never a specific course's own "Import
+              syllabus" menu item, which already goes straight to addMode
+              "scan" via targetCourseId). Picking one sets pickedCourseId and
+              proceeds into the exact same single-syllabus scan/review
+              pipeline targetCourseId already drives (see
+              buildReviewFromExtraction's own comment) -- no separate
+              pipeline to maintain. After that class commits, the "classes"
+              list screen's own "+ Add a class" loops back to "choose",
+              which recomputes realNeedsSyllabus fresh and shows one fewer --
+              the actual "for each class" loop, one deliberate step at a
+              time rather than a forced auto-advance. */}
+          {step==="classes"&&addMode==="scanPicker"&&(<>
+            <TitleSub title="Which class?" sub="Studlin already has these from your schedule scan -- pick one to scan its syllabus." />
+            <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>
+              {realNeedsSyllabus.map(s=>(
+                <button key={s.id} type="button" onClick={()=>{setPickedCourseId(s.id);setScanError("");setPasteMode(false);setPasteText("");setAddMode("scan");}}
+                  style={{...subjectRowStyle(s.color),width:"100%",textAlign:"left",cursor:"pointer",borderRadius:10,fontFamily:T.font}}>
+                  <div style={{flex:1,fontSize:13,fontWeight:600,color:T.text}}>{s.label}</div>
+                  <span style={{fontSize:10,color:T.amber,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.04em"}}>Not done</span>
+                </button>
+              ))}
+            </div>
+            <button type="button" onClick={()=>{setPickedCourseId(null);setScanError("");setPasteMode(false);setPasteText("");setAddMode("scan");}} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>Something else / a new class</button>
           </>)}
 
           {step==="classes"&&addMode==="googleImport"&&(<>
@@ -34744,7 +34840,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                   // already on the calendar to redistribute). The more
                   // foundational, more frequently-needed action goes first.
                   {icon:Icon.sparkles,label:"Brain dump",sub:"Tell Studlin everything at once",onClick:()=>{setToolsMenuOpen(false);resetForm();setBrainDumpOpen(true);}},
-                  {icon:Icon.file,label:"Scan syllabus",sub:"Upload a doc, AI extracts dates",onClick:()=>{setToolsMenuOpen(false);setQuickScanOpen(true);}},
+                  // Renamed from "Scan syllabus" (2026-09-29 user report):
+                  // this opens the same "choose" screen onboarding uses
+                  // (whole schedule OR one class's syllabus, now aware of
+                  // which classes are real and which still needsSyllabus --
+                  // see ClassSetupWizard's own scanPicker comment) --
+                  // "Scan syllabus" undersold what was actually behind it.
+                  {icon:Icon.file,label:"Scan schedule",sub:"Whole schedule, or one class's syllabus",onClick:()=>{setToolsMenuOpen(false);setQuickScanOpen(true);}},
                   {icon:Icon.cal,label:"Routine",sub:"Manage your weekly schedule",onClick:()=>{setToolsMenuOpen(false);setRoutineCenterOpen(true);}},
                   {icon:Icon.check,label:"Can I go?",sub:"See if free time now is safe",onClick:()=>{setToolsMenuOpen(false);setTimeOffResult(null);setTimeOffOpen(true);}},
                   {icon:Icon.users,label:"Schedule with Friends",sub:"Drag a time onto the calendar, send it",onClick:()=>{setToolsMenuOpen(false);openGroupSchedule();}},
