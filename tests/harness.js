@@ -95,7 +95,6 @@ function loadStudlinModule(options) {
     "reconcileFixedEventConflicts","surfaceReconcileResult","dedupeScheduleAlerts",
     "dayWorkloadMinutes","dayWorkloadTier","DAY_WORKLOAD_MODERATE_MINS","DAY_WORKLOAD_HEAVY_MINS",
     "computeMonthHeavyDays","MONTH_HEAVY_RELATIVE_RATIO","MONTH_HEAVY_MIN_ABSOLUTE_MINS",
-    "computeMonthDayTiers","MONTH_WARNING_RELATIVE_RATIO","MONTH_WARNING_MIN_ABSOLUTE_MINS",
     "MAX_VISIBLE_DAY_COLUMNS",
     "getDayOccupiedIntervals","checkManualStudyTime","dayHasRoomFor","undoTier0Move","computeDropDuration",
     "findFreeSlotInWindow","resolveAvailabilityMatch",
