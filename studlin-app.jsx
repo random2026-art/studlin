@@ -24571,7 +24571,7 @@ const PrefChipRow=({label,value,onChange,options})=>(
     </div>
   </div>
 );
-function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCourseId,onPartialSync,termRollover=false,setPricingOpen=()=>{},setActivePage=()=>{}}){
+function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCourseId,onPartialSync,termRollover=false,setPricingOpen=()=>{},setActivePage=()=>{},firstRun=false}){
   const [step,setStep]=useState("status"); // timezone | term | awake | status | classes | activities | calendarSync | window | finalReview
   const [status,setStatus]=useState(initialStatus||"");
   // Classes fully reviewed this session, staged -- nothing in here touches
@@ -25762,18 +25762,26 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   };
 
   return (
-    // background, 2026-09-29 user report ("after the user adds their name
-    // and school, that page takes to wizard where it looks like a popup --
-    // it should be using that same white background"): this scrim was a
-    // flat, theme-blind near-black regardless of T.mode, so even during a
-    // brand-new account's light-mode first run (see
-    // isPreOnboardingLocalDevice) the sign-up pages' white/cream continuity
-    // broke the instant this wizard opened. Now follows T.mode the same way
-    // every other themed surface in this file does -- a soft cream wash in
-    // light mode, unchanged near-black in dark mode (term rollover/quick
-    // scan, both already-configured accounts with a real theme preference).
-    <div style={{position:"fixed",inset:0,zIndex:300,background:T.mode==="light"?"rgba(250,246,236,0.92)":"rgba(8,12,10,0.97)",backdropFilter:"blur(10px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px 16px",overflowY:"auto"}}>
-      <div style={{width:"100%",maxWidth:620,maxHeight:"88vh",display:"flex",flexDirection:"column",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 48px 100px -30px rgba(0,0,0,0.7)",animation:"studlinPop 0.25s ease"}}>
+    // firstRun, 2026-09-29 user report ("after the user adds their name and
+    // school, that page takes to wizard where it looks like a popup -- it
+    // should be using that same white background... that's when I told you
+    // to be continuous"): a colored-to-match scrim (see the T.mode branch
+    // below) still reads as a modal popping open over a page -- the actual
+    // ask was for this to feel like the NEXT PAGE in onboarding, not an
+    // overlay on top of one. Only for a brand-new account's genuine first
+    // run (isFreshAccount, passed down as firstRun -- see its own CalendarTab
+    // comment): no scrim, no floating card, no pop-in -- just T.bg filling
+    // the viewport with the same centered content column, the same way
+    // onboarding.jsx's own page is laid out. Term rollover/quick scan (an
+    // already-configured account doing a deliberate side task while using
+    // the rest of the app) keep the real popup treatment -- that IS the
+    // right metaphor once there's an actual app underneath to pop open over.
+    <div style={firstRun
+      ?{position:"fixed",inset:0,zIndex:300,background:T.bg,display:"flex",justifyContent:"center",padding:"48px 16px",overflowY:"auto"}
+      :{position:"fixed",inset:0,zIndex:300,background:T.mode==="light"?"rgba(250,246,236,0.92)":"rgba(8,12,10,0.97)",backdropFilter:"blur(10px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px 16px",overflowY:"auto"}}>
+      <div style={firstRun
+        ?{width:"100%",maxWidth:620,display:"flex",flexDirection:"column"}
+        :{width:"100%",maxWidth:620,maxHeight:"88vh",display:"flex",flexDirection:"column",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 48px 100px -30px rgba(0,0,0,0.7)",animation:"studlinPop 0.25s ease"}}>
         <WizardStepper step={step} />
         <div style={{padding:"28px 32px 0",overflowY:"auto",flex:1,minHeight:0}}>
           {/* A short step (e.g. "End of Term" -- just two date fields) used
@@ -34930,7 +34938,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         <TourStep {...CAL_TOUR_STEPS[calTourStep]} step={calTourStep} total={CAL_TOUR_STEPS.length}
           isLast={calTourStep===CAL_TOUR_STEPS.length-1} onNext={advanceCalTour} onSkip={skipCalTour} />
       )}
-      <ClassSetupWizard open={classSetupOpen} termRollover={classSetupRollover} initialStatus={getProfile().status} onSkip={()=>{lsSet("classSetupDeferredUntil",Date.now()+86400000);setClassSetupOpen(false);setClassSetupRollover(false);if(isFreshAccount)setTheme("dark");}} onFinish={finishClassSetup} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
+      <ClassSetupWizard open={classSetupOpen} termRollover={classSetupRollover} firstRun={isFreshAccount} initialStatus={getProfile().status} onSkip={()=>{lsSet("classSetupDeferredUntil",Date.now()+86400000);setClassSetupOpen(false);setClassSetupRollover(false);if(isFreshAccount)setTheme("dark");}} onFinish={finishClassSetup} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
       <ClassSetupWizard open={quickScanOpen} quickScan targetCourseId={quickScanTargetCourseId} initialStatus={getProfile().status} onFinish={finishQuickScan} onSkip={()=>{setQuickScanOpen(false);setQuickScanTargetCourseId(null);syncClassSetupState();}} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
       <Modal open={!!weeklyContentCourseId} onClose={()=>setWeeklyContentCourseId(null)} title="Class notes" sub="A short note for each day this class meets -- lecture, lab, homework due, whatever's useful." width={460}
         footer={<><Btn variant="subtle" onClick={()=>setWeeklyContentCourseId(null)}>Cancel</Btn><Btn onClick={saveWeeklyContent}>Save</Btn></>}>

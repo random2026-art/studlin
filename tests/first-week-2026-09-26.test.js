@@ -31,7 +31,7 @@ describe("9b: first-time setup can be paused and resumed", () => {
   test("the onboarding wizard has a Save and finish later exit that just closes it", () => {
     assert.match(SOURCE, /\{!quickScan&&onSkip&&\(/);
     assert.match(SOURCE, />Save and finish later<\/button>/);
-    assert.ok(SOURCE.includes("<ClassSetupWizard open={classSetupOpen} termRollover={classSetupRollover} initialStatus={getProfile().status} onSkip={()=>{lsSet(\"classSetupDeferredUntil\",Date.now()+86400000);setClassSetupOpen(false);setClassSetupRollover(false);if(isFreshAccount)setTheme(\"dark\");}}"));
+    assert.ok(SOURCE.includes("<ClassSetupWizard open={classSetupOpen} termRollover={classSetupRollover} firstRun={isFreshAccount} initialStatus={getProfile().status} onSkip={()=>{lsSet(\"classSetupDeferredUntil\",Date.now()+86400000);setClassSetupOpen(false);setClassSetupRollover(false);if(isFreshAccount)setTheme(\"dark\");}}"));
   });
 });
 
