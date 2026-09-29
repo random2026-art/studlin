@@ -4808,14 +4808,35 @@ function narrateWeekAhead(events, dueItems, todayKey) {
 }
 const MONTH_HEAVY_RELATIVE_RATIO = 1.4;
 const MONTH_HEAVY_MIN_ABSOLUTE_MINS = 90;
-function computeMonthHeavyDays(dayMinutesEntries) {
+const MONTH_WARNING_RELATIVE_RATIO = 1.15;
+const MONTH_WARNING_MIN_ABSOLUTE_MINS = 60;
+function computeMonthDayTiers(dayMinutesEntries) {
   const entries = dayMinutesEntries || [];
   const real = entries.filter((d) => d.minutes > 0);
-  const heavy = /* @__PURE__ */ new Set();
-  if (real.length === 0) return heavy;
-  const avg = real.reduce((s, d) => s + d.minutes, 0) / real.length;
+  const tiers = /* @__PURE__ */ new Map();
+  const avg = real.length > 0 ? real.reduce((s, d) => s + d.minutes, 0) / real.length : 0;
   entries.forEach((d) => {
-    if (d.minutes >= MONTH_HEAVY_MIN_ABSOLUTE_MINS && d.minutes >= avg * MONTH_HEAVY_RELATIVE_RATIO) heavy.add(d.key);
+    if (d.minutes <= 0) {
+      tiers.set(d.key, "none");
+      return;
+    }
+    if (avg > 0 && d.minutes >= MONTH_HEAVY_MIN_ABSOLUTE_MINS && d.minutes >= avg * MONTH_HEAVY_RELATIVE_RATIO) {
+      tiers.set(d.key, "heavy");
+      return;
+    }
+    if (avg > 0 && d.minutes >= MONTH_WARNING_MIN_ABSOLUTE_MINS && d.minutes >= avg * MONTH_WARNING_RELATIVE_RATIO) {
+      tiers.set(d.key, "warning");
+      return;
+    }
+    tiers.set(d.key, "typical");
+  });
+  return tiers;
+}
+function computeMonthHeavyDays(dayMinutesEntries) {
+  const tiers = computeMonthDayTiers(dayMinutesEntries);
+  const heavy = /* @__PURE__ */ new Set();
+  tiers.forEach((tier, key) => {
+    if (tier === "heavy") heavy.add(key);
   });
   return heavy;
 }
@@ -16047,21 +16068,11 @@ function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf,
   const [dayDragOver, setDayDragOver] = useState(false);
   const [dayDropTime, setDayDropTime] = useState(null);
   const timelineRef = useRef(null);
-  const [dayPreviewOpen, setDayPreviewOpen] = useState(false);
   const [whoInAnchor, setWhoInAnchor] = useState(null);
-  const stepDay = (n) => {
-    const d = /* @__PURE__ */ new Date(selDay + "T12:00:00");
-    d.setDate(d.getDate() + n);
-    setSelDay(dayKey(d));
-  };
-  const niceDayLabel = (() => {
-    const p = selDay.split("-");
-    return new Date(+p[0], +p[1] - 1, +p[2]).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
-  })();
   const duePills = (dayEvents || []).filter(isDuePill);
   const visibleEvs = (dayEvents || []).filter((ev) => ev.kind !== "free period" && ev.time && !isDuePill(ev));
   const workWindow = getWorkWindowMinsFor(prefs, selDay);
-  const [pxPerHr, setPxPerHr] = useState(() => getCalZoom());
+  const [pxPerHr, setPxPerHr] = useState(CAL_ZOOM_MIN);
   const dayZoomDrag = useRef(null);
   const [dayZoomDragging, setDayZoomDragging] = useState(false);
   useEffect(() => {
@@ -16260,7 +16271,7 @@ function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf,
       document.removeEventListener("mouseup", onUp);
     };
   }, [gsDraftDragging, pxPerHr, onGsPreviewMove, onGsPreviewResize, selDay]);
-  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", gap: 8 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 15, fontWeight: 700, color: T.white } }, niceDayLabel), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 1 } }, visibleEvs.length, " scheduled item", visibleEvs.length !== 1 ? "s" : "")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center" } }, /* @__PURE__ */ React.createElement("button", { onClick: () => stepDay(-1), title: "Previous day", style: { width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: `1px solid ${T.border}`, borderRadius: 4, color: T.muted, cursor: "pointer", fontSize: 11, fontFamily: T.font } }, "\u2039"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setSelDay(todayK) }, "Today"), /* @__PURE__ */ React.createElement("button", { onClick: () => stepDay(1), title: "Next day", style: { width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: `1px solid ${T.border}`, borderRadius: 4, color: T.muted, cursor: "pointer", fontSize: 11, fontFamily: T.font } }, "\u203A"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => setDayPreviewOpen(true) }, "Day Preview"))), duePills.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 } }, duePills.map((ev) => /* @__PURE__ */ React.createElement("div", { key: ev.id, onClick: () => openEdit(ev), title: "Click to edit", style: { display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 600, color: T.amber, background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 6, padding: "4px 9px", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("span", { style: { display: "flex", color: T.amber } }, DAY_PREVIEW_ICON_BY_KIND[ev.kind] || Icon.dot), ev.title))), /* @__PURE__ */ React.createElement(Card, { style: { padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { height: "calc(100vh - 320px)", minHeight: 360 } }, /* @__PURE__ */ React.createElement("div", { ref: scrollRef, style: { height: "100%", overflowY: "auto", position: "relative" } }, /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginBottom: 10 } }, visibleEvs.length, " scheduled item", visibleEvs.length !== 1 ? "s" : ""), duePills.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 } }, duePills.map((ev) => /* @__PURE__ */ React.createElement("div", { key: ev.id, onClick: () => openEdit(ev), title: "Click to edit", style: { display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 600, color: T.amber, background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 6, padding: "4px 9px", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("span", { style: { display: "flex", color: T.amber } }, DAY_PREVIEW_ICON_BY_KIND[ev.kind] || Icon.dot), ev.title))), /* @__PURE__ */ React.createElement(Card, { style: { padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { height: "calc(100vh - 190px)", minHeight: 360 } }, /* @__PURE__ */ React.createElement("div", { ref: scrollRef, style: { height: "100%", overflowY: "auto", position: "relative" } }, /* @__PURE__ */ React.createElement(
     "div",
     {
       onMouseDown: startDayZoomDrag,
@@ -16368,7 +16379,7 @@ function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf,
         }
       }, title: "Has notes -- click to view", style: { fontSize: 9.5, color: isStudy ? T.ink + "aa" : isExam ? color : T.muted, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 2 } }, "Details"))
     ), ev.commuteAfter > 0 && /* @__PURE__ */ React.createElement("div", { title: ev.commuteAfter + " min commute", style: commuteStripStyle(ev.commuteAfter, "after") }, ev.commuteAfter * (pxPerHr / 60) > 13 && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color, fontWeight: 600, whiteSpace: "nowrap" } }, ev.commuteAfter, "m commute")));
-  }))))), /* @__PURE__ */ React.createElement(DayPreviewModal, { open: dayPreviewOpen, onClose: () => setDayPreviewOpen(false), dayEvents, selDay, dayLabel: niceDayLabel, colorOf, fmtTime: fmtTime2, fmtTimeRange: fmtTimeRange2, catchUpPending, openNew }), whoInAnchor && (() => {
+  }))))), whoInAnchor && (() => {
     const ev = (dayEvents || []).find((e) => e.id === whoInAnchor.id);
     if (!ev) return null;
     const summary = ev.proposalMemberUids ? computeAcceptanceSummary(ev.proposalMemberUids, ev.proposalResponses) : null;
@@ -21051,12 +21062,12 @@ Examples:
     setEditRoutineMode(false);
     setHoveredRoutineId(null);
   } }, "Done")), manualPlacement && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "9px 14px", background: T.lime + "10", border: `1px solid ${T.lime}33`, borderRadius: 6, marginBottom: 14, fontSize: 12.5, color: T.text } }, /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, "Placing sessions for ", /* @__PURE__ */ React.createElement("strong", null, manualPlacement.title), ". Drag each one to where you want it, resize to change duration.", manualPlacementCount > 0 ? " " + manualPlacementCount + " placed so far." : ""), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: addManualPlacementSession }, "+ Add a session"), /* @__PURE__ */ React.createElement(BtnSm, { onClick: finishManualPlacement }, "Done")), calView === "monthly" && /* @__PURE__ */ React.createElement(Card, { style: { padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 3 } }, ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { fontSize: 10, fontWeight: 600, color: T.muted, textAlign: "center", padding: "6px 0", letterSpacing: "0.05em" } }, d)), (() => {
-    const monthHeavyDays = computeMonthHeavyDays(cells.filter((c) => !c.out).map((c) => ({ key: c.key, minutes: dayWorkloadMinutes((byDay[c.key] || []).filter((ev) => ev.kind !== "free period")) })));
+    const monthDayTiers = computeMonthDayTiers(cells.filter((c) => !c.out).map((c) => ({ key: c.key, minutes: dayWorkloadMinutes((byDay[c.key] || []).filter((ev) => ev.kind !== "free period")) })));
     return cells.map((c, i) => {
       const evs = (byDay[c.key] || []).filter((ev) => ev.kind !== "free period");
       const isToday = c.key === todayK;
       const isSel = c.key === selDay;
-      const isHeavyThisMonth = monthHeavyDays.has(c.key);
+      const dayTier = c.out ? null : monthDayTiers.get(c.key) || "none";
       const hasNewItem = evs.some((ev) => newItemHighlightSet.has(ev.id));
       return /* @__PURE__ */ React.createElement(
         "div",
@@ -21097,8 +21108,8 @@ Examples:
               if (payload) commitNewTaskDrop(payload, c.key, "09:00");
             }
           },
-          title: hasNewItem ? "Has something just added" : isHeavyThisMonth ? dayWorkloadMinutes(evs) + " minutes scheduled -- heavier than your average day this month" : void 0,
-          style: { position: "relative", minHeight: 64, minWidth: 0, borderRadius: 9, padding: "6px 7px", cursor: "pointer", background: isSel ? T.card2 : "transparent", border: "1px solid " + (hasNewItem ? T.lime : isSel ? T.lime + "55" : "transparent"), transition: "all 0.12s", opacity: c.out ? 0.35 : 1 }
+          title: hasNewItem ? "Has something just added" : dayTier === "heavy" ? dayWorkloadMinutes(evs) + " minutes scheduled -- a lot more than your typical day this month" : dayTier === "warning" ? dayWorkloadMinutes(evs) + " minutes scheduled -- more than your typical day this month" : void 0,
+          style: { position: "relative", minHeight: 96, minWidth: 0, borderRadius: 9, padding: "6px 7px", cursor: "pointer", background: isSel ? T.card2 : "transparent", border: "1px solid " + (hasNewItem ? T.lime : isSel ? T.lime + "55" : T.border), transition: "all 0.12s", opacity: c.out ? 0.35 : 1 }
         },
         /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "flex-start" } }, /* @__PURE__ */ React.createElement("span", { style: { width: 22, height: 22, borderRadius: "50%", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: isToday ? 700 : 500, background: isToday ? T.lime : "transparent", color: isToday ? T.ink : c.out ? T.faint : T.text } }, c.d)),
         isSel && /* @__PURE__ */ React.createElement(
@@ -21114,7 +21125,15 @@ Examples:
           },
           "+"
         ),
-        isHeavyThisMonth && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", left: 7, bottom: 5, width: 20, height: 3, borderRadius: 2, background: T.muted } }),
+        dayTier && /* @__PURE__ */ React.createElement("div", { style: {
+          position: "absolute",
+          left: 7,
+          bottom: 5,
+          width: 20,
+          height: 3,
+          borderRadius: 2,
+          background: dayTier === "heavy" ? T.red : dayTier === "warning" ? T.amber : dayTier === "typical" ? T.teal : T.faint
+        } }),
         evs.length > 0 && (() => {
           const anyOverdue = !catchUpPending && evs.some((ev) => daysOverdue(ev) > 0);
           return /* @__PURE__ */ React.createElement(
