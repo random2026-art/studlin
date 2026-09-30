@@ -6529,6 +6529,13 @@ async function fetchUserProfile(){try{const res=await authFetch("/api/me");if(!r
   // state transition instead of a click.
   const prevPlan=lsGet("plan","Free");
   if(prevPlan==="Pro-Limited"&&(d.plan||"Free")!=="Pro-Limited")lsSet("referralTrialJustExpired",true);
+  // User report, 2026-09-30: the trial STARTING was just as silent as it
+  // ending used to be -- neither the referrer (who has to go find the
+  // pending request in Friends and accept it -- see acceptReq's own
+  // comment) nor the new friend had any confirmation it actually worked.
+  // Same one-shot-flag-on-transition idiom as referralTrialJustExpired
+  // just above, mirrored for the opposite direction.
+  if(prevPlan!=="Pro-Limited"&&(d.plan||"Free")==="Pro-Limited")lsSet("referralTrialJustStarted",true);
   lsSet("credits",d.credits);lsSet("plan",d.plan||"Free");["stripeSubscriptionId","subscriptionStatus","subscriptionInterval","subscriptionCancelAtPeriodEnd","subscriptionCurrentPeriodEnd","subscriptionEndsAt","betaTrialExpiresAt","referralTrialExpiresAt"].forEach(k=>lsSet(k,d[k]===undefined?null:d[k]));
   // Onboarding's one-free-schedule-scan/one-free-syllabus-scan flags (see
   // ClassSetupWizard's canFreeOnboardingScan) -- only ever upgrades
@@ -17539,8 +17546,15 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
                 {copied?"✓ Copied!":"Copy"}
               </button>
             </div>
+            {/* User report, 2026-09-30: "joins via your link" read as
+                automatic, but the trial genuinely doesn't unlock until
+                two real steps happen -- your friend signs up for a real
+                account, then YOU go accept the friend request it creates
+                in Network (see acceptReq's own comment on why that accept
+                is the actual trigger, not just signing up). Spelling both
+                out instead of implying it just happens. */}
             <div style={{padding:"10px 14px",background:T.lime+"0A",border:`1px solid ${T.lime}22`,borderRadius:8,fontSize:12,color:T.text,marginBottom:20,lineHeight:1.6}}>
-              For every friend who joins via your link, you <strong style={{color:T.lime}}>both</strong> unlock <strong style={{color:T.lime}}>{planDisplayName("Pro-Limited")}</strong>, free.
+              Once they sign up and you <strong style={{color:T.lime}}>accept their friend request in Network</strong>, you both unlock <strong style={{color:T.lime}}>{planDisplayName("Pro-Limited")}</strong>, free.
             </div>
             <div style={{display:"flex",gap:10}}>
               <Btn onClick={()=>setInviteOpen(false)} variant="subtle" style={{flex:1,justifyContent:"center"}}>Close</Btn>
@@ -41918,6 +41932,17 @@ function App() {
     if(!lsGet("referralTrialJustExpired",false))return;
     lsSet("referralTrialJustExpired",false);
     setDashToast("Your free Pro-Limited access just ended — upgrade to Pro, or invite another friend for more.");
+    setTimeout(()=>setDashToast(""),6000);
+  },[]);
+  // Mirror of the expiry toast just above, for the opposite transition --
+  // see fetchUserProfile's own comment on referralTrialJustStarted.
+  useEffect(()=>{
+    if(!lsGet("referralTrialJustStarted",false))return;
+    lsSet("referralTrialJustStarted",false);
+    const expiresAt=lsGet("referralTrialExpiresAt",null);
+    let expiresLabel="";
+    if(expiresAt){try{expiresLabel=" until "+new Date(expiresAt).toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});}catch(e){}}
+    setDashToast("Your Referral Trial just started — free Pro-Limited access"+expiresLabel+".");
     setTimeout(()=>setDashToast(""),6000);
   },[]);
   // Same "silent surprise" gap as Google Calendar above, just via a
