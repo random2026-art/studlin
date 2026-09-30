@@ -39750,6 +39750,20 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
       {more&&<button style={{fontSize:12,color:light?"rgba(246,241,230,0.6)":T.muted,display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer",background:"none",border:"none"}}>{more} <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>}
     </div>
   );
+  // Visual-hierarchy pilot, 2026-09-30 user request: every card title below
+  // (Today's plan, Checklist, Upcoming, Pick up where you left off) used to
+  // hand-roll an identical fontSize:22 span with an inconsistent 600-vs-700
+  // weight picked with no real logic -- all four competed at equal visual
+  // weight, so nothing told a student which one to actually look at first.
+  // Eye-tracking research on visual hierarchy (people decide what's worth
+  // reading by size/weight/contrast within milliseconds, not by content) is
+  // exactly why that reads as overwhelming even though the words themselves
+  // are fine. One true focal point per screen instead: Today's plan is the
+  // one thing this dashboard exists to answer ("what do I do right now" --
+  // see ROW 2's own comment), so it alone gets the larger, bolder treatment;
+  // the other three step down to a real secondary size, not a de-emphasized
+  // muted color (still full-strength cards, just visibly not the headline).
+  const sectionTitleStyle=(primary)=>({fontFamily:T.hand,fontSize:primary?26:18,fontWeight:primary?700:600,color:T.text,letterSpacing:primary?"-0.01em":"0"});
   // Weekly Wrapped is no longer a permanent dashboard card — it now surfaces
   // once as a full-screen popup during the Sunday/Monday evening window
   // (>=6pm), gated by a per-week localStorage flag so it doesn't reappear
@@ -39799,7 +39813,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
         {/* Today's plan */}
         <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:20,display:"flex",flexDirection:"column"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8,flexWrap:"wrap"}}>
-            <span style={{fontFamily:T.hand,fontSize:22,fontWeight:700,color:T.text}}>Today's plan</span>
+            <span style={sectionTitleStyle(true)}>Today's plan</span>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
               <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.1em",padding:"4px 9px",borderRadius:5,background:T.card2,color:T.muted,fontWeight:600}}>{planDoneCount} / {planCountable.length} DONE</span>
               <button onClick={()=>setActive("calendar")} style={{fontSize:12,color:T.muted,display:"inline-flex",alignItems:"center",gap:3,cursor:"pointer",background:"none",border:"none",fontFamily:T.font,fontWeight:500}}>Calendar <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
@@ -39894,7 +39908,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
         <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:20}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <span style={{fontFamily:T.hand,fontSize:22,fontWeight:700,color:T.text}}>Checklist</span>
+              <span style={sectionTitleStyle(false)}>Checklist</span>
               <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:`1px solid ${T.border}`,borderRadius:5,color:T.muted}}>{checklistItems.length} OPEN</span>
             </div>
           </div>
@@ -39962,7 +39976,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
         <div style={{background:T.card,borderRadius:8,padding:20,border:`1px solid ${T.border}`}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <span style={{fontFamily:T.hand,fontSize:22,fontWeight:600,color:T.text}}>Upcoming</span>
+              <span style={sectionTitleStyle(false)}>Upcoming</span>
               <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:`1px solid ${T.border}`,borderRadius:5,color:T.muted}}>NEXT 14 DAYS</span>
             </div>
             <button onClick={()=>setActive("calendar")} style={{fontSize:12,color:T.muted,display:"inline-flex",alignItems:"center",gap:3,cursor:"pointer",background:"none",border:"none",fontFamily:T.font}}>Calendar <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
@@ -39998,7 +40012,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
         <div style={{background:T.card,borderRadius:8,padding:20,border:`1px solid ${T.border}`}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <span style={{fontFamily:T.hand,fontSize:22,fontWeight:600,color:T.text}}>Pick up where you left off</span>
+              <span style={sectionTitleStyle(false)}>Pick up where you left off</span>
               <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:`1px solid ${T.border}`,borderRadius:5,color:T.muted}}>RECENT</span>
             </div>
           </div>
