@@ -12268,12 +12268,12 @@ function formatStudlinAiDigestForPrompt(question, digest, flags, profile) {
   lines.push("STUDENT'S QUESTION: " + question);
   return lines.join("\n");
 }
-function gatherStudlinAiCoachingContext(text, events, routines, prefs, todayKey) {
+function gatherStudlinAiCoachingContext(text, events, routines, prefs, todayKey, materialText) {
   const subjects = getSubjects().map((s) => s.label);
   const t = (text || "").toLowerCase();
   const matchedSubject = subjects.find((s) => s && t.includes(s.toLowerCase())) || null;
   const digest = assembleStudlinAiDigest(events, routines, prefs, todayKey);
-  const context = { digest, subject: matchedSubject, subjectNudge: null, examReadiness: null, confidenceInsight: confidenceOutcomeInsight() };
+  const context = { digest, subject: matchedSubject, subjectNudge: null, examReadiness: null, confidenceInsight: confidenceOutcomeInsight(), material: materialText || null };
   if (matchedSubject) {
     const scoredCount = events.filter((e) => e.kind === "exam" && e.subject === matchedSubject && e.scoreTier).length;
     context.subjectNudge = scoredCount >= 3 ? subjectOutcomeNudge(matchedSubject) : null;
@@ -12282,8 +12282,9 @@ function gatherStudlinAiCoachingContext(text, events, routines, prefs, todayKey)
   }
   return context;
 }
+const STUDLIN_AI_COACHING_MATERIAL_EXCERPT_CHARS = 2e3;
 function formatStudlinAiCoachingPrompt(question, context) {
-  const { digest, subject, subjectNudge, examReadiness, confidenceInsight } = context;
+  const { digest, subject, subjectNudge, examReadiness, confidenceInsight, material } = context;
   const lines = ["CONTEXT (real data about this student -- ground your advice in this, never invent beyond it):"];
   lines.push("Today: " + digest.todayKey + " (" + currentClockLabel() + " right now).");
   const memLine = formatAiMemoryForPrompt();
@@ -12296,6 +12297,12 @@ function formatStudlinAiCoachingPrompt(question, context) {
     if (subjectNudge != null) lines.push(subject + " exam trend: " + (subjectNudge > 0 ? "scoring above expectation lately." : subjectNudge < 0 ? "scoring below expectation lately." : "on par with expectations lately."));
   }
   if (confidenceInsight) lines.push(confidenceInsight);
+  if (material) {
+    const excerpt = material.length > STUDLIN_AI_COACHING_MATERIAL_EXCERPT_CHARS ? material.slice(0, STUDLIN_AI_COACHING_MATERIAL_EXCERPT_CHARS) + "...(truncated)" : material;
+    lines.push(`The student attached real material for this -- an excerpt, to understand what it covers (don't quote it back at length, just use it to make the plan specific): "` + excerpt + '"');
+  }
+  lines.push("");
+  lines.push(`If you don't yet have enough to build a genuinely specific plan (you don't know the format, how much time they have before it, or what's tripped them up on this before), don't guess at a full plan -- ask 1-2 short questions first and wait for a reply. Mix in an occasional question aimed at helping the student notice their own patterns (e.g. when they actually focus best, what usually derails them), not just logistics -- but never more than a couple of questions total across the conversation, and stop asking the moment you have enough to genuinely help. Anything the student tells you about themselves here is self-reported, not measured data -- reflect it back as "since you said...", never state it as a fact the way the real usage data above is.`);
   lines.push("");
   lines.push("STUDENT'S MESSAGE: " + question);
   return lines.join("\n");
@@ -12548,6 +12555,61 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
   const [memoryToast, setMemoryToast] = useState("");
   const extractedThisSessionRef = useRef(false);
   const scrollRef = useRef(null);
+  const [aiListening, setAiListening] = useState(false);
+  const [aiMicError, setAiMicError] = useState("");
+  const aiRecRef = useRef(null);
+  const startAiRec = async () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      setAiMicError("Speech recognition isn't supported in this browser. Try Chrome or Edge.");
+      return;
+    }
+    setAiMicError("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((t) => t.stop());
+    } catch (e) {
+      setAiMicError("Microphone access denied. Please allow mic access and try again.");
+      return;
+    }
+    const base = input.trim();
+    const r = new SR();
+    r.continuous = true;
+    r.interimResults = true;
+    r.lang = "en-US";
+    r.onstart = () => setAiListening(true);
+    r.onresult = (e) => {
+      let t = "";
+      for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
+      setInput((base ? base + " " : "") + t);
+    };
+    r.onend = () => setAiListening(false);
+    r.onerror = (e) => {
+      setAiListening(false);
+      if (e.error !== "aborted") setAiMicError("Mic error: " + e.error);
+    };
+    aiRecRef.current = r;
+    r.start();
+  };
+  const stopAiRec = () => {
+    if (aiRecRef.current) aiRecRef.current.stop();
+    setAiListening(false);
+  };
+  const [aiAttaching, setAiAttaching] = useState(false);
+  const aiFileRef = useRef(null);
+  const handleAiAttachFile = async (e) => {
+    const file = (e.target.files || [])[0];
+    e.target.value = "";
+    if (!file) return;
+    setAiAttaching(true);
+    const { text, empty } = await extractFileText(file);
+    setAiAttaching(false);
+    if (empty) {
+      setMessages((m) => [...m, { role: "ai", text: `Couldn't read anything usable from "` + file.name + '" -- try a different file.', kind: "error" }]);
+      return;
+    }
+    setMessages((m) => [...m, { role: "ai", text: 'Got "' + file.name + '". What would you like to do with it?', kind: "info", material: { name: file.name, text } }]);
+  };
   useEffect(() => {
     if (!open) return;
     const onKey = (e) => {
@@ -12555,6 +12617,9 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+  useEffect(() => {
+    if (!open && aiRecRef.current) stopAiRec();
   }, [open]);
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -12659,7 +12724,7 @@ CONVERSATION:
     lines.push(free.length > 1 ? "Say which one and I'll add it." : free.length === 1 ? "Say the word and I'll add it." : "None of those actually work -- want me to find another time instead?");
     setMessages((m) => [...m, { role: "ai", text: lines.join(" "), kind: "fact" }]);
   };
-  const giveCoaching = async (text, history) => {
+  const giveCoaching = async (text, history, materialText) => {
     if (!canUseStudlinAiQna()) {
       setPricingOpen(canUseStudlinAiQnaReason() === "free-tier" ? "studlinAiQna" : "aiUsageCap");
       setMessages((m) => [...m, { role: "ai", text: "Studlin AI needs Pro. I've opened the upgrade options.", kind: "paywall" }]);
@@ -12668,7 +12733,7 @@ CONVERSATION:
     const events = lsGet("events", []);
     const routines = getWeeklyRoutine();
     const prefs = getSchedulePreferences();
-    const context = gatherStudlinAiCoachingContext(text, events, routines, prefs, dayKey());
+    const context = gatherStudlinAiCoachingContext(text, events, routines, prefs, dayKey(), materialText);
     const promptText = formatStudlinAiCoachingPrompt(text, context);
     const res = await authFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [...history || [], { r: "user", t: promptText }], model: "standard", format: "studlin_ai_coaching" }) });
     const data = await res.json();
@@ -12829,6 +12894,34 @@ CONVERSATION:
     } finally {
       setLoading(false);
     }
+  };
+  const chooseMaterialAction = async (idx, choice) => {
+    const msg = messages[idx];
+    const material = msg && msg.material;
+    if (!material || material.resolved) return;
+    setMessages((m) => m.map((mm, i) => i === idx ? { ...mm, material: { ...mm.material, resolved: true } } : mm));
+    if (choice === "plan") {
+      const label = 'Help me build a study plan around "' + material.name + '".';
+      const history = buildStudlinAiChatHistory(messages);
+      setMessages((m) => [...m, { role: "user", text: label }]);
+      setLoading(true);
+      try {
+        await giveCoaching(label, history, material.text);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+    const proposal = buildGenerateStudyMaterialProposal({ genFormat: choice }, material.text);
+    if (!proposal.ok) {
+      setMessages((m) => [...m, { role: "ai", text: proposal.label, kind: "error" }]);
+      return;
+    }
+    setMessages((m) => {
+      const next = [...m, { role: "ai", text: proposal.label, kind: "proposal", proposal }];
+      setPendingIndex(next.length - 1);
+      return next;
+    });
   };
   const confirmProposal = async (idx) => {
     const msg = messages[idx];
@@ -13065,6 +13158,27 @@ CONVERSATION:
         style: { padding: "7px 14px", borderRadius: 8, border: `1px solid ${pp.border}`, background: "transparent", color: pp.muted, fontSize: 12.5, cursor: "pointer", fontFamily: T.font }
       },
       "Cancel"
+    )), m.material && !m.material.resolved && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => chooseMaterialAction(i, "flashcards"),
+        style: { padding: "7px 12px", borderRadius: 8, border: `1px solid ${pp.border}`, background: pp.card2, color: pp.text, fontSize: 12, cursor: "pointer", fontFamily: T.font }
+      },
+      "Flashcards"
+    ), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => chooseMaterialAction(i, "quiz"),
+        style: { padding: "7px 12px", borderRadius: 8, border: `1px solid ${pp.border}`, background: pp.card2, color: pp.text, fontSize: 12, cursor: "pointer", fontFamily: T.font }
+      },
+      "Quiz"
+    ), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => chooseMaterialAction(i, "plan"),
+        style: { padding: "7px 12px", borderRadius: 8, border: `1px solid ${pp.border}`, background: pp.card2, color: pp.text, fontSize: 12, cursor: "pointer", fontFamily: T.font }
+      },
+      "Study plan help"
     )))), loading && // Three dots pulsing via the existing studlinPulse keyframe
     // (defined in App()'s global <style>, previously unused
     // anywhere in the file) instead of static "Thinking…" text --
@@ -13072,7 +13186,17 @@ CONVERSATION:
     // happening" the way a static label can't. Styled to match a
     // real AI message bubble (same lime tint/border) so it reads
     // as "a reply is forming here," not a disconnected label.
-    /* @__PURE__ */ React.createElement("div", { style: { alignSelf: "flex-start", display: "flex", gap: 5, alignItems: "center", padding: "12px 15px", borderRadius: 12, background: T.lime + "14", border: `1px solid ${T.lime}33` } }, [0, 1, 2].map((i) => /* @__PURE__ */ React.createElement("span", { key: i, style: { width: 6, height: 6, borderRadius: "50%", background: pp.muted, animation: "studlinPulse 1s ease-in-out infinite", animationDelay: i * 0.15 + "s" } })))), /* @__PURE__ */ React.createElement("div", { style: { padding: "12px 18px", borderTop: `1px solid ${pp.border}`, display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(
+    /* @__PURE__ */ React.createElement("div", { style: { alignSelf: "flex-start", display: "flex", gap: 5, alignItems: "center", padding: "12px 15px", borderRadius: 12, background: T.lime + "14", border: `1px solid ${T.lime}33` } }, [0, 1, 2].map((i) => /* @__PURE__ */ React.createElement("span", { key: i, style: { width: 6, height: 6, borderRadius: "50%", background: pp.muted, animation: "studlinPulse 1s ease-in-out infinite", animationDelay: i * 0.15 + "s" } })))), /* @__PURE__ */ React.createElement("div", { style: { padding: "12px 18px", borderTop: `1px solid ${pp.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement("input", { ref: aiFileRef, type: "file", accept: ".pdf,.docx,.txt,.md,image/*", style: { display: "none" }, onChange: handleAiAttachFile }), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        type: "button",
+        onClick: () => aiFileRef.current && aiFileRef.current.click(),
+        disabled: pendingIndex != null || aiAttaching,
+        title: "Attach material (notes, a PDF, a photo of a page)",
+        style: { width: 36, height: 36, borderRadius: "50%", border: "none", background: pp.card2, color: pp.muted, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, opacity: pendingIndex != null || aiAttaching ? 0.6 : 1 }
+      },
+      Icon.plus
+    ), /* @__PURE__ */ React.createElement(
       "input",
       {
         value: input,
@@ -13083,10 +13207,20 @@ CONVERSATION:
             send();
           }
         },
-        placeholder: pendingIndex != null ? "Confirm or cancel the proposal above first..." : pendingClarification ? "Answer above, or ask something else..." : "Ask, or tell me what to add or move...",
+        placeholder: pendingIndex != null ? "Confirm or cancel the proposal above first..." : pendingClarification ? "Answer above, or ask something else..." : aiAttaching ? "Reading your file..." : "Ask, or tell me what to add or move...",
         disabled: pendingIndex != null,
         style: { flex: 1, background: pp.card2, border: `1px solid ${pp.border}`, borderRadius: 8, padding: "9px 12px", color: pp.text, fontSize: 13, fontFamily: T.font, outline: "none", opacity: pendingIndex != null ? 0.6 : 1 }
       }
+    ), (window.SpeechRecognition || window.webkitSpeechRecognition) && /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        type: "button",
+        onClick: aiListening ? stopAiRec : startAiRec,
+        disabled: pendingIndex != null,
+        title: aiListening ? "Stop listening" : "Speak instead of typing",
+        style: { width: 36, height: 36, borderRadius: "50%", border: "none", background: aiListening ? T.red : pp.card2, color: aiListening ? "#fff" : pp.muted, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, opacity: pendingIndex != null ? 0.6 : 1 }
+      },
+      aiListening ? /* @__PURE__ */ React.createElement("span", { style: { width: 10, height: 10, background: "#fff", borderRadius: 2 } }) : Icon.mic
     ), /* @__PURE__ */ React.createElement(
       "button",
       {
@@ -13095,7 +13229,7 @@ CONVERSATION:
         style: { padding: "9px 14px", borderRadius: 8, border: "none", background: T.lime, color: T.ink, fontWeight: 600, fontSize: 13, cursor: "pointer", opacity: !input.trim() || loading || pendingIndex != null ? 0.5 : 1, flexShrink: 0 }
       },
       "Send"
-    ))), memoryToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 22, right: 22, zIndex: STUDLIN_AI_DRAWER_PANEL_Z + 1, padding: "10px 16px", background: T.ink, color: T.lime, borderRadius: 10, fontSize: 12.5, fontWeight: 600, boxShadow: "0 16px 40px -12px rgba(0,0,0,0.5)", animation: "studlinPop 0.2s cubic-bezier(.2,.85,.3,1)" } }, memoryToast)),
+    )), aiListening && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.red, marginTop: 6 } }, "Listening... tap the mic to stop"), !aiListening && aiMicError && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.red, marginTop: 6 } }, aiMicError))), memoryToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 22, right: 22, zIndex: STUDLIN_AI_DRAWER_PANEL_Z + 1, padding: "10px 16px", background: T.ink, color: T.lime, borderRadius: 10, fontSize: 12.5, fontWeight: 600, boxShadow: "0 16px 40px -12px rgba(0,0,0,0.5)", animation: "studlinPop 0.2s cubic-bezier(.2,.85,.3,1)" } }, memoryToast)),
     document.body
   );
 }

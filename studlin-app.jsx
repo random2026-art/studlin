@@ -20458,12 +20458,17 @@ function formatStudlinAiDigestForPrompt(question,digest,flags,profile){
 // the same signals already computed and trusted elsewhere in this file,
 // not new ones invented for this. Falls back gracefully (no subject
 // identified, or too little data for a signal) rather than fabricating.
-function gatherStudlinAiCoachingContext(text,events,routines,prefs,todayKey){
+// materialText (2026-09-30): real content the student attached via the
+// drawer's "+" button (see StudlinAiDrawer.chooseMaterialAction), not
+// something the model saw and echoed back -- same "the source of truth is
+// always the original text, never the model's reflection of it" rule
+// generate_study_material's materialText already follows.
+function gatherStudlinAiCoachingContext(text,events,routines,prefs,todayKey,materialText){
   const subjects=getSubjects().map(s=>s.label);
   const t=(text||"").toLowerCase();
   const matchedSubject=subjects.find(s=>s&&t.includes(s.toLowerCase()))||null;
   const digest=assembleStudlinAiDigest(events,routines,prefs,todayKey);
-  const context={digest,subject:matchedSubject,subjectNudge:null,examReadiness:null,confidenceInsight:confidenceOutcomeInsight()};
+  const context={digest,subject:matchedSubject,subjectNudge:null,examReadiness:null,confidenceInsight:confidenceOutcomeInsight(),material:materialText||null};
   if(matchedSubject){
     const scoredCount=events.filter(e=>e.kind==="exam"&&e.subject===matchedSubject&&e.scoreTier).length;
     context.subjectNudge=scoredCount>=3?subjectOutcomeNudge(matchedSubject):null;
@@ -20472,12 +20477,18 @@ function gatherStudlinAiCoachingContext(text,events,routines,prefs,todayKey){
   }
   return context;
 }
+// Coaching only needs enough of the attached material to understand what
+// it's about, not the whole thing verbatim the way flashcard/quiz
+// generation genuinely does (see MATERIAL_TEXT_CAP) -- capped separately
+// and much smaller so one attached PDF doesn't dominate the prompt's token
+// budget for a plan that's mostly about pacing/strategy, not content recall.
+const STUDLIN_AI_COACHING_MATERIAL_EXCERPT_CHARS=2000;
 // Turns the coaching context into the actual prompt text -- same
 // authored-sentence-per-signal approach formatStudlinAiDigestForPrompt
 // already uses (a model phrasing raw numbers itself reads worse and
 // risks misstating them), so the two prompts read as the same voice.
 function formatStudlinAiCoachingPrompt(question,context){
-  const{digest,subject,subjectNudge,examReadiness,confidenceInsight}=context;
+  const{digest,subject,subjectNudge,examReadiness,confidenceInsight,material}=context;
   const lines=["CONTEXT (real data about this student -- ground your advice in this, never invent beyond it):"];
   lines.push("Today: "+digest.todayKey+" ("+currentClockLabel()+" right now).");
   const memLine=formatAiMemoryForPrompt();
@@ -20490,6 +20501,20 @@ function formatStudlinAiCoachingPrompt(question,context){
     if(subjectNudge!=null)lines.push(subject+" exam trend: "+(subjectNudge>0?"scoring above expectation lately.":subjectNudge<0?"scoring below expectation lately.":"on par with expectations lately."));
   }
   if(confidenceInsight)lines.push(confidenceInsight);
+  if(material){
+    const excerpt=material.length>STUDLIN_AI_COACHING_MATERIAL_EXCERPT_CHARS?material.slice(0,STUDLIN_AI_COACHING_MATERIAL_EXCERPT_CHARS)+"...(truncated)":material;
+    lines.push("The student attached real material for this -- an excerpt, to understand what it covers (don't quote it back at length, just use it to make the plan specific): \""+excerpt+"\"");
+  }
+  lines.push("");
+  // User request, 2026-09-30: coaching used to always hand back a full plan
+  // on the first message, even when it had nowhere near enough to make one
+  // genuinely useful (no idea what format the test is, how much time the
+  // student actually has, or how they work best). Real conversation history
+  // already flows into this call (see buildStudlinAiChatHistory/send()), so
+  // "ask, then read the answer on the next turn" needs no new state -- it's
+  // the same chat, same free-text replies, the model just sees its own
+  // question and the student's reply as the next two turns.
+  lines.push("If you don't yet have enough to build a genuinely specific plan (you don't know the format, how much time they have before it, or what's tripped them up on this before), don't guess at a full plan -- ask 1-2 short questions first and wait for a reply. Mix in an occasional question aimed at helping the student notice their own patterns (e.g. when they actually focus best, what usually derails them), not just logistics -- but never more than a couple of questions total across the conversation, and stop asking the moment you have enough to genuinely help. Anything the student tells you about themselves here is self-reported, not measured data -- reflect it back as \"since you said...\", never state it as a fact the way the real usage data above is.");
   lines.push("");
   lines.push("STUDENT'S MESSAGE: "+question);
   return lines.join("\n");
@@ -20918,6 +20943,49 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
   const [memoryToast,setMemoryToast]=useState("");
   const extractedThisSessionRef=useRef(false);
   const scrollRef=useRef(null);
+  // Voice input -- same SpeechRecognition pattern as Brain Dump's mic
+  // (startBdRec), appending onto whatever's already typed instead of
+  // replacing it.
+  const [aiListening,setAiListening]=useState(false);
+  const [aiMicError,setAiMicError]=useState("");
+  const aiRecRef=useRef(null);
+  const startAiRec=async()=>{
+    const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+    if(!SR){setAiMicError("Speech recognition isn't supported in this browser. Try Chrome or Edge.");return;}
+    setAiMicError("");
+    try{const stream=await navigator.mediaDevices.getUserMedia({audio:true});stream.getTracks().forEach(t=>t.stop());}
+    catch(e){setAiMicError("Microphone access denied. Please allow mic access and try again.");return;}
+    const base=input.trim();
+    const r=new SR();r.continuous=true;r.interimResults=true;r.lang="en-US";
+    r.onstart=()=>setAiListening(true);
+    r.onresult=(e)=>{let t="";for(let i=0;i<e.results.length;i++)t+=e.results[i][0].transcript;setInput((base?base+" ":"")+t);};
+    r.onend=()=>setAiListening(false);
+    r.onerror=(e)=>{setAiListening(false);if(e.error!=="aborted")setAiMicError("Mic error: "+e.error);};
+    aiRecRef.current=r;r.start();
+  };
+  const stopAiRec=()=>{if(aiRecRef.current)aiRecRef.current.stop();setAiListening(false);};
+
+  // Attach material ("+" button) -- reuses the same extractFileText engine
+  // Notes/Flashcards/Prep's uploads already use, so PDF/docx/image/text all
+  // just work here too. The choice of what to DO with it (flashcards, quiz,
+  // or study-plan help) is asked as an explicit button row rather than
+  // guessed from the next thing the student types -- see
+  // chooseMaterialAction below.
+  const [aiAttaching,setAiAttaching]=useState(false);
+  const aiFileRef=useRef(null);
+  const handleAiAttachFile=async(e)=>{
+    const file=(e.target.files||[])[0];
+    e.target.value="";
+    if(!file)return;
+    setAiAttaching(true);
+    const{text,empty}=await extractFileText(file);
+    setAiAttaching(false);
+    if(empty){
+      setMessages(m=>[...m,{role:"ai",text:"Couldn't read anything usable from \""+file.name+"\" -- try a different file.",kind:"error"}]);
+      return;
+    }
+    setMessages(m=>[...m,{role:"ai",text:"Got \""+file.name+"\". What would you like to do with it?",kind:"info",material:{name:file.name,text}}]);
+  };
 
   useEffect(()=>{
     if(!open)return;
@@ -20925,6 +20993,11 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
     window.addEventListener("keydown",onKey);
     return ()=>window.removeEventListener("keydown",onKey);
   },[open]);
+
+  // Drawer stays mounted and only slides away (see the panel's own
+  // transform:open?...:"translateX(100%)") -- without this, closing while
+  // mid-dictation leaves the mic listening in the background.
+  useEffect(()=>{ if(!open&&aiRecRef.current)stopAiRec(); },[open]);
 
   useEffect(()=>{
     if(scrollRef.current)scrollRef.current.scrollTop=scrollRef.current.scrollHeight;
@@ -21108,7 +21181,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
   // askQuestion (both are "talking to Studlin AI," not a separate
   // capability worth its own gate) -- see gatherStudlinAiCoachingContext/
   // formatStudlinAiCoachingPrompt for what actually grounds the answer.
-  const giveCoaching=async(text,history)=>{
+  const giveCoaching=async(text,history,materialText)=>{
     if(!canUseStudlinAiQna()){
       setPricingOpen(canUseStudlinAiQnaReason()==="free-tier"?"studlinAiQna":"aiUsageCap");
       setMessages(m=>[...m,{role:"ai",text:"Studlin AI needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
@@ -21117,7 +21190,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
     const events=lsGet("events",[]);
     const routines=getWeeklyRoutine();
     const prefs=getSchedulePreferences();
-    const context=gatherStudlinAiCoachingContext(text,events,routines,prefs,dayKey());
+    const context=gatherStudlinAiCoachingContext(text,events,routines,prefs,dayKey(),materialText);
     const promptText=formatStudlinAiCoachingPrompt(text,context);
     const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[...(history||[]),{r:"user",t:promptText}],model:"standard",format:"studlin_ai_coaching"})});
     const data=await res.json();
@@ -21344,6 +21417,44 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
     }finally{
       setLoading(false);
     }
+  };
+
+  // What to do with attached material (see the "+" button below) -- picked
+  // explicitly by the student instead of routed through
+  // classifyStudlinAiMessage, since the classifier only ever sees the
+  // student's own typed words and there usually aren't any here (the real
+  // content came in as a file, not a pasted message). Flashcards/quiz reuse
+  // buildGenerateStudyMaterialProposal exactly as generate_study_material
+  // already does, just with the attached text as materialText instead of
+  // the raw chat message; "plan" reuses giveCoaching the same way, with the
+  // material folded into its context instead of the question text.
+  const chooseMaterialAction=async(idx,choice)=>{
+    const msg=messages[idx];
+    const material=msg&&msg.material;
+    if(!material||material.resolved)return;
+    setMessages(m=>m.map((mm,i)=>i===idx?{...mm,material:{...mm.material,resolved:true}}:mm));
+    if(choice==="plan"){
+      const label="Help me build a study plan around \""+material.name+"\".";
+      const history=buildStudlinAiChatHistory(messages);
+      setMessages(m=>[...m,{role:"user",text:label}]);
+      setLoading(true);
+      try{
+        await giveCoaching(label,history,material.text);
+      }finally{
+        setLoading(false);
+      }
+      return;
+    }
+    const proposal=buildGenerateStudyMaterialProposal({genFormat:choice},material.text);
+    if(!proposal.ok){
+      setMessages(m=>[...m,{role:"ai",text:proposal.label,kind:"error"}]);
+      return;
+    }
+    setMessages(m=>{
+      const next=[...m,{role:"ai",text:proposal.label,kind:"proposal",proposal}];
+      setPendingIndex(next.length-1);
+      return next;
+    });
   };
 
   // The actual write -- everything before this point (classify, build,
@@ -21633,6 +21744,16 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
                     style={{padding:"7px 14px",borderRadius:8,border:`1px solid ${pp.border}`,background:"transparent",color:pp.muted,fontSize:12.5,cursor:"pointer",fontFamily:T.font}}>Cancel</button>
                 </div>
               )}
+              {m.material&&!m.material.resolved&&(
+                <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                  <button onClick={()=>chooseMaterialAction(i,"flashcards")}
+                    style={{padding:"7px 12px",borderRadius:8,border:`1px solid ${pp.border}`,background:pp.card2,color:pp.text,fontSize:12,cursor:"pointer",fontFamily:T.font}}>Flashcards</button>
+                  <button onClick={()=>chooseMaterialAction(i,"quiz")}
+                    style={{padding:"7px 12px",borderRadius:8,border:`1px solid ${pp.border}`,background:pp.card2,color:pp.text,fontSize:12,cursor:"pointer",fontFamily:T.font}}>Quiz</button>
+                  <button onClick={()=>chooseMaterialAction(i,"plan")}
+                    style={{padding:"7px 12px",borderRadius:8,border:`1px solid ${pp.border}`,background:pp.card2,color:pp.text,fontSize:12,cursor:"pointer",fontFamily:T.font}}>Study plan help</button>
+                </div>
+              )}
             </div>
           ))}
           {loading&&(
@@ -21650,14 +21771,25 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
             </div>
           )}
         </div>
-        <div style={{padding:"12px 18px",borderTop:`1px solid ${pp.border}`,display:"flex",gap:8}}>
-          <input value={input} onChange={e=>setInput(e.target.value)}
-            onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}}
-            placeholder={pendingIndex!=null?"Confirm or cancel the proposal above first...":pendingClarification?"Answer above, or ask something else...":"Ask, or tell me what to add or move..."}
-            disabled={pendingIndex!=null}
-            style={{flex:1,background:pp.card2,border:`1px solid ${pp.border}`,borderRadius:8,padding:"9px 12px",color:pp.text,fontSize:13,fontFamily:T.font,outline:"none",opacity:pendingIndex!=null?0.6:1}} />
-          <button onClick={send} disabled={!input.trim()||loading||pendingIndex!=null}
-            style={{padding:"9px 14px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontWeight:600,fontSize:13,cursor:"pointer",opacity:(!input.trim()||loading||pendingIndex!=null)?0.5:1,flexShrink:0}}>Send</button>
+        <div style={{padding:"12px 18px",borderTop:`1px solid ${pp.border}`}}>
+          <div style={{display:"flex",gap:8}}>
+            <input ref={aiFileRef} type="file" accept=".pdf,.docx,.txt,.md,image/*" style={{display:"none"}} onChange={handleAiAttachFile} />
+            <button type="button" onClick={()=>aiFileRef.current&&aiFileRef.current.click()} disabled={pendingIndex!=null||aiAttaching} title="Attach material (notes, a PDF, a photo of a page)"
+              style={{width:36,height:36,borderRadius:"50%",border:"none",background:pp.card2,color:pp.muted,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0,opacity:(pendingIndex!=null||aiAttaching)?0.6:1}}>{Icon.plus}</button>
+            <input value={input} onChange={e=>setInput(e.target.value)}
+              onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}}
+              placeholder={pendingIndex!=null?"Confirm or cancel the proposal above first...":pendingClarification?"Answer above, or ask something else...":aiAttaching?"Reading your file...":"Ask, or tell me what to add or move..."}
+              disabled={pendingIndex!=null}
+              style={{flex:1,background:pp.card2,border:`1px solid ${pp.border}`,borderRadius:8,padding:"9px 12px",color:pp.text,fontSize:13,fontFamily:T.font,outline:"none",opacity:pendingIndex!=null?0.6:1}} />
+            {(window.SpeechRecognition||window.webkitSpeechRecognition)&&(
+              <button type="button" onClick={aiListening?stopAiRec:startAiRec} disabled={pendingIndex!=null} title={aiListening?"Stop listening":"Speak instead of typing"}
+                style={{width:36,height:36,borderRadius:"50%",border:"none",background:aiListening?T.red:pp.card2,color:aiListening?"#fff":pp.muted,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0,opacity:pendingIndex!=null?0.6:1}}>{aiListening?<span style={{width:10,height:10,background:"#fff",borderRadius:2}} />:Icon.mic}</button>
+            )}
+            <button onClick={send} disabled={!input.trim()||loading||pendingIndex!=null}
+              style={{padding:"9px 14px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontWeight:600,fontSize:13,cursor:"pointer",opacity:(!input.trim()||loading||pendingIndex!=null)?0.5:1,flexShrink:0}}>Send</button>
+          </div>
+          {aiListening&&<div style={{fontSize:11,color:T.red,marginTop:6}}>Listening... tap the mic to stop</div>}
+          {!aiListening&&aiMicError&&<div style={{fontSize:11,color:T.red,marginTop:6}}>{aiMicError}</div>}
         </div>
       </div>
       {/* Bug fix, 2026-09-04: this drawer stays mounted at all times (see
