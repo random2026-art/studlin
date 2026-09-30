@@ -12797,6 +12797,14 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
         </div>
         {showTabToolbar&&(
           <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+            {/* User report, 2026-09-30: unlike Exams (which routes through
+                Calendar's own Add Task flow from its empty state, see that
+                Card's own comment below), Assignments and Projects had no
+                way to add a new item at all, empty or not. Same routing
+                convention, not a duplicated form -- just reachable from the
+                toolbar too, not only when the list happens to be empty. */}
+            {tab==="assignments"&&<BtnSm onClick={()=>{lsSet("pendingAddTask",{kind:"assignment"});setActive("calendar");}}>{Icon.plus} Add assignment</BtnSm>}
+            {tab==="projects"&&<BtnSm onClick={()=>{lsSet("pendingAddTask",{kind:"project"});setActive("calendar");}}>{Icon.plus} Add project</BtnSm>}
             <CustomSelect boxed fontSize={11.5} value={tt.group} onChange={tt.setGroup} minWidth={92}
               options={GROUP_BY_OPTIONS} />
             {tt.classes.length>1&&(
@@ -12964,7 +12972,10 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
         return (
           <div>
             {assignments.length===0
-          ?<Card style={{padding:"32px 20px",textAlign:"center"}}><div style={{fontSize:13,color:T.muted}}>{allAssignments.length===0?"No upcoming assignments.":"No assignments match your search."}</div></Card>
+          ?<Card style={{padding:"32px 20px",textAlign:"center"}}>
+            <div style={{fontSize:13,color:T.muted,marginBottom:allAssignments.length===0?14:0}}>{allAssignments.length===0?"No upcoming assignments yet — add one to start tracking it.":"No assignments match your search."}</div>
+            {allAssignments.length===0&&<BtnSm onClick={()=>{lsSet("pendingAddTask",{kind:"assignment"});setActive("calendar");}}>{Icon.plus} Add assignment</BtnSm>}
+          </Card>
           :(
             <div style={{overflowX:"auto",border:`1px solid ${T.border}`,borderRadius:8}}>
               <div style={{minWidth:700}}>
@@ -13399,7 +13410,10 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
         return (
           <div>
             {projects.length===0
-          ?<Card style={{padding:"32px 20px",textAlign:"center"}}><div style={{fontSize:13,color:T.muted}}>{allProjects.length===0?"No upcoming projects.":"No projects match your search."}</div></Card>
+          ?<Card style={{padding:"32px 20px",textAlign:"center"}}>
+            <div style={{fontSize:13,color:T.muted,marginBottom:allProjects.length===0?14:0}}>{allProjects.length===0?"No upcoming projects yet — add one to start tracking it.":"No projects match your search."}</div>
+            {allProjects.length===0&&<BtnSm onClick={()=>{lsSet("pendingAddTask",{kind:"project"});setActive("calendar");}}>{Icon.plus} Add project</BtnSm>}
+          </Card>
           :(
             <div style={{overflowX:"auto",border:`1px solid ${T.border}`,borderRadius:8}}>
               <div style={{minWidth:700}}>
@@ -31708,11 +31722,18 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     try{localStorage.removeItem("studlin-pendingBrainDump");}catch(e){}
     setBrainDumpOpen(true);
   },[]);
-  // One-shot from Dashboard's empty "Coming up" card: lands on Calendar with
-  // the add form already open (free for everyone, unlike Brain Dump).
+  // One-shot from Dashboard's empty "Coming up" card (and Prep's Assignments/
+  // Projects "+ Add" entry points, 2026-09-30 user report: neither tab had
+  // any way to add a new item): lands on Calendar with the add form already
+  // open (free for everyone, unlike Brain Dump). A plain `true` opens with
+  // evKind's own default ("assignment"), same as always; an object payload
+  // with `kind` preselects the Type picker instead of leaving it on that
+  // default -- Prep's Projects button needs this, Dashboard's don't.
   useEffect(()=>{
-    if(!lsGet("pendingAddTask",false))return;
+    const pending=lsGet("pendingAddTask",false);
+    if(!pending)return;
     try{localStorage.removeItem("studlin-pendingAddTask");}catch(e){}
+    if(pending&&typeof pending==="object"&&pending.kind)setEvKind(pending.kind);
     setNewOpen(true);
   },[]);
   // Same one-shot deep-link pattern as pendingBrainDump above -- set by
