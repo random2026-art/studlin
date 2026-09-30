@@ -17974,8 +17974,12 @@ function NewEventModal({ open, initialTitle, initialDate, initialStartTime, init
 }
 function QuickCreateTaskPopover({ draft, anchorX, anchorY, onCreate, onMoreOptions, onClose }) {
   const [title, setTitle] = useState("");
+  const [color, setColor] = useState(T.lime);
   useEffect(() => {
-    if (draft) setTitle("");
+    if (draft) {
+      setTitle("");
+      setColor(T.lime);
+    }
   }, [draft && draft.dateKey, draft && draft.startTime, draft && draft.endTime]);
   if (!draft) return null;
   const POPOVER_WIDTH = 280;
@@ -17989,14 +17993,14 @@ function QuickCreateTaskPopover({ draft, anchorX, anchorY, onCreate, onMoreOptio
     const p = draft.dateKey.split("-");
     return new Date(+p[0], +p[1] - 1, +p[2]).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
   })();
-  const submit = () => onCreate(title);
-  return ReactDOM.createPortal(/* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: onClose, style: { position: "fixed", inset: 0, zIndex: 998 } }), /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { position: "fixed", top, left, width: POPOVER_WIDTH, background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)", zIndex: 999, animation: "studlinPop 0.15s cubic-bezier(.2,.85,.3,1)", padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement(
+  const submit = () => onCreate(title, color);
+  return ReactDOM.createPortal(/* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: onClose, style: { position: "fixed", inset: 0, zIndex: 998 } }), /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { position: "fixed", top, left, width: POPOVER_WIDTH, background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)", zIndex: 999, animation: "studlinPop 0.15s cubic-bezier(.2,.85,.3,1)", padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement(ColorSelect, { value: color, onChange: setColor }), /* @__PURE__ */ React.createElement(
     Input,
     {
       value: title,
       onChange: (e) => setTitle(e.target.value),
       placeholder: "Add a title",
-      style: { fontSize: 13, fontWeight: 600, padding: "7px 10px" },
+      style: { flex: 1, fontSize: 13, fontWeight: 600, padding: "7px 10px" },
       autoFocus: true,
       onKeyDown: (e) => {
         if (e.key === "Enter") {
@@ -18008,7 +18012,7 @@ function QuickCreateTaskPopover({ draft, anchorX, anchorY, onCreate, onMoreOptio
         }
       }
     }
-  ), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted } }, niceDate, " \xB7 ", fmtTimeRange(draft.startTime, Math.max(15, timeToMinutes(draft.endTime) - timeToMinutes(draft.startTime)))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 2 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => onMoreOptions(draft), style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 11, fontFamily: T.font, padding: 0, textDecoration: "underline" } }, "More options"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: onClose, style: { padding: "6px 13px", fontSize: 12 } }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: submit, style: { padding: "6px 13px", fontSize: 12 } }, "Add task"))))), document.body);
+  )), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted } }, niceDate, " \xB7 ", fmtTimeRange(draft.startTime, Math.max(15, timeToMinutes(draft.endTime) - timeToMinutes(draft.startTime)))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 2 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => onMoreOptions(draft), style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 11, fontFamily: T.font, padding: 0, textDecoration: "underline" } }, "More options"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: onClose, style: { padding: "6px 13px", fontSize: 12 } }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: submit, style: { padding: "6px 13px", fontSize: 12 } }, "Add task"))))), document.body);
 }
 const CALENDAR_HIGHLIGHT_MAX_AGE_MS = 5 * 60 * 1e3;
 function resolveCalendarHighlightFlag(flag, nowMs) {
@@ -18140,7 +18144,7 @@ function CalendarTab({ setActive = () => {
     setQuickCreateDraft(null);
     setQuickCreatePopover(null);
   };
-  const commitQuickCreateTask = (title) => {
+  const commitQuickCreateTask = (title, color) => {
     if (!quickCreatePopover) return;
     const { dateKey, startTime, endTime } = quickCreatePopover;
     const duration = Math.max(15, timeToMinutes(endTime) - timeToMinutes(startTime));
@@ -18161,7 +18165,8 @@ function CalendarTab({ setActive = () => {
       timeSpent: 0,
       completedAt: null,
       isGeneralTask: true,
-      userPinned: true
+      userPinned: true,
+      ...color && color !== T.lime ? { color } : {}
     };
     const next = events.concat([task]);
     setEvents2(next);
@@ -23375,6 +23380,10 @@ function Dashboard({ setActive, seriousMode = false, rescheduleTask, setReschedu
   });
   const checklistItems = allEvents.filter((ev) => ev.checklist && !ev.subject && checklistItemVisible(ev)).sort((a, b) => (a.date || "9999").localeCompare(b.date || "9999"));
   const [checklistDraft, setChecklistDraft] = useState("");
+  const [checklistMenuOpenId, setChecklistMenuOpenId] = useState(null);
+  const [checklistEditId, setChecklistEditId] = useState(null);
+  const [checklistEditDraft, setChecklistEditDraft] = useState("");
+  const [checklistDeleteConfirmId, setChecklistDeleteConfirmId] = useState(null);
   const toggleChecklistItem = (id) => {
     const all = lsGet("events", []);
     const target = all.find((ev) => ev.id === id);
@@ -23399,6 +23408,26 @@ function Dashboard({ setActive, seriousMode = false, rescheduleTask, setReschedu
     lsSet("events", all.filter((ev) => ev.id !== item.id));
     setActive("calendar");
     setPendingHighlightDraftId(draft.id);
+  };
+  const startEditChecklistItem = (item) => {
+    setChecklistMenuOpenId(null);
+    setChecklistEditId(item.id);
+    setChecklistEditDraft(item.title);
+  };
+  const commitEditChecklistItem = (item) => {
+    const title = checklistEditDraft.trim();
+    if (title && title !== item.title) {
+      const all = lsGet("events", []);
+      lsSet("events", all.map((ev) => ev.id === item.id ? { ...ev, title } : ev));
+      forcePlan((x) => x + 1);
+    }
+    setChecklistEditId(null);
+  };
+  const deleteChecklistItem = (id) => {
+    const all = lsGet("events", []);
+    lsSet("events", all.filter((ev) => ev.id !== id));
+    setChecklistDeleteConfirmId(null);
+    forcePlan((x) => x + 1);
   };
   const weeklyFocusMin = realStats.weekMin;
   const cardsMasteredTotal = rawDecks.reduce((a, d) => a + (d.done || 0), 0);
@@ -23492,16 +23521,40 @@ function Dashboard({ setActive, seriousMode = false, rescheduleTask, setReschedu
       placeholder: "e.g. Send AP scores",
       style: { flex: 1, minWidth: 0, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 10, padding: "9px 10px", color: T.text, fontSize: 12.5, fontFamily: T.font, outline: "none" }
     }
-  ), /* @__PURE__ */ React.createElement("button", { onClick: addChecklistItem, disabled: !checklistDraft.trim(), style: { padding: "9px 12px", background: T.lime, color: T.ink, border: "none", borderRadius: 10, fontSize: 12.5, fontWeight: 600, cursor: checklistDraft.trim() ? "pointer" : "default", fontFamily: T.font, opacity: checklistDraft.trim() ? 1 : 0.45, flexShrink: 0 } }, "Add")), checklistItems.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, padding: "6px 0 4px", textAlign: "center" } }, "Nothing on your checklist.") : /* @__PURE__ */ React.createElement("div", { style: { maxHeight: 300, overflowY: "auto" } }, checklistItems.map((item) => (
-    // Checked items now stay visible for the rest of the day
-    // (see checklistItems' own comment) instead of vanishing
-    // instantly -- needs a real checked look, or a lingering
-    // done item would be indistinguishable from a pending one.
-    /* @__PURE__ */ React.createElement("div", { key: item.id, onClick: () => toggleChecklistItem(item.id), style: { display: "flex", alignItems: "flex-start", gap: 10, padding: "9px 12px", borderRadius: 12, border: `1px solid ${T.border}`, marginBottom: 8, cursor: "pointer", opacity: item.status === "done" ? 0.55 : 1 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 18, height: 18, borderRadius: "50%", border: `1.5px solid ${item.status === "done" ? T.lime : T.faint}`, background: item.status === "done" ? T.lime : "transparent", flex: "none", marginTop: 1, display: "grid", placeItems: "center", color: T.ink, fontSize: 11 } }, item.status === "done" && Icon.check), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0, fontSize: 12.5, color: T.text, fontWeight: 500, lineHeight: 1.4, overflowWrap: "break-word", textDecoration: item.status === "done" ? "line-through" : "none" } }, item.title), item.status !== "done" && /* @__PURE__ */ React.createElement("button", { onClick: (e) => {
+  ), /* @__PURE__ */ React.createElement("button", { onClick: addChecklistItem, disabled: !checklistDraft.trim(), style: { padding: "9px 12px", background: T.lime, color: T.ink, border: "none", borderRadius: 10, fontSize: 12.5, fontWeight: 600, cursor: checklistDraft.trim() ? "pointer" : "default", fontFamily: T.font, opacity: checklistDraft.trim() ? 1 : 0.45, flexShrink: 0 } }, "Add")), checklistItems.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, padding: "6px 0 4px", textAlign: "center" } }, "Nothing on your checklist.") : /* @__PURE__ */ React.createElement("div", { style: { maxHeight: 300, overflowY: "auto" } }, checklistItems.map((item) => {
+    const isEditing = checklistEditId === item.id;
+    const isConfirmingDelete = checklistDeleteConfirmId === item.id;
+    if (isConfirmingDelete) return /* @__PURE__ */ React.createElement("div", { key: item.id, style: { padding: "8px 10px", borderRadius: 12, border: `1px solid ${T.red}55`, background: T.red + "12", marginBottom: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.text, marginBottom: 8, lineHeight: 1.4 } }, 'Delete "', item.title, '"?'), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6 } }, /* @__PURE__ */ React.createElement("button", { onClick: () => deleteChecklistItem(item.id), style: { fontSize: 10.5, fontWeight: 600, padding: "4px 9px", borderRadius: 5, background: T.red, color: "#fff", border: "none", cursor: "pointer", fontFamily: T.font } }, "Delete"), /* @__PURE__ */ React.createElement("button", { onClick: () => setChecklistDeleteConfirmId(null), style: { fontSize: 10.5, padding: "4px 9px", borderRadius: 5, background: "transparent", color: T.muted, border: `1px solid ${T.border}`, cursor: "pointer", fontFamily: T.font } }, "Cancel")));
+    if (isEditing) return /* @__PURE__ */ React.createElement("div", { key: item.id, style: { padding: "9px 12px", borderRadius: 12, border: `1px solid ${T.border}`, marginBottom: 8 } }, /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        autoFocus: true,
+        value: checklistEditDraft,
+        onChange: (e) => setChecklistEditDraft(e.target.value),
+        onKeyDown: (e) => {
+          if (e.key === "Enter") commitEditChecklistItem(item);
+          if (e.key === "Escape") setChecklistEditId(null);
+        },
+        onBlur: () => commitEditChecklistItem(item),
+        style: { width: "100%", boxSizing: "border-box", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "5px 8px", color: T.text, fontSize: 12.5, fontFamily: T.font, outline: "none" }
+      }
+    ));
+    return /* @__PURE__ */ React.createElement("div", { key: item.id, style: { position: "relative" } }, /* @__PURE__ */ React.createElement("div", { onClick: () => toggleChecklistItem(item.id), style: { display: "flex", alignItems: "flex-start", gap: 10, padding: "9px 12px", borderRadius: 12, border: `1px solid ${T.border}`, marginBottom: 8, cursor: "pointer", opacity: item.status === "done" ? 0.55 : 1 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 18, height: 18, borderRadius: "50%", border: `1.5px solid ${item.status === "done" ? T.lime : T.faint}`, background: item.status === "done" ? T.lime : "transparent", flex: "none", marginTop: 1, display: "grid", placeItems: "center", color: T.ink, fontSize: 11 } }, item.status === "done" && Icon.check), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0, fontSize: 12.5, color: T.text, fontWeight: 500, lineHeight: 1.4, overflowWrap: "break-word", textDecoration: item.status === "done" ? "line-through" : "none" } }, item.title), /* @__PURE__ */ React.createElement("button", { onClick: (e) => {
       e.stopPropagation();
+      setChecklistMenuOpenId(checklistMenuOpenId === item.id ? null : item.id);
+    }, style: { flexShrink: 0, background: "none", border: "none", color: T.muted, cursor: "pointer", padding: "0 0 0 6px", fontSize: 14, lineHeight: 1, marginTop: -2 } }, "\u22EF")), checklistMenuOpenId === item.id && /* @__PURE__ */ React.createElement("div", { onMouseLeave: () => setChecklistMenuOpenId(null), style: { position: "absolute", top: 36, right: 0, zIndex: 40, background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: "0 12px 28px -12px rgba(0,0,0,0.5)", overflow: "hidden", minWidth: 150 } }, item.status !== "done" && /* @__PURE__ */ React.createElement("button", { onClick: (e) => {
+      e.stopPropagation();
+      setChecklistMenuOpenId(null);
       convertChecklistItemToBlock(item);
-    }, title: "Turn into a calendar block you can drag onto a day", style: { flexShrink: 0, padding: "3px 7px", borderRadius: 6, border: `1px solid ${T.border}`, background: "transparent", color: T.muted, fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: T.font } }, "To calendar"))
-  ))))), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "5fr 7fr", gap: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { background: T.card, borderRadius: 8, padding: 20, border: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.hand, fontSize: 22, fontWeight: 600, color: T.text } }, "Upcoming"), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.mono, fontSize: 9.5, letterSpacing: "0.12em", padding: "3px 8px", border: `1px solid ${T.border}`, borderRadius: 5, color: T.muted } }, "NEXT 14 DAYS")), /* @__PURE__ */ React.createElement("button", { onClick: () => setActive("calendar"), style: { fontSize: 12, color: T.muted, display: "inline-flex", alignItems: "center", gap: 3, cursor: "pointer", background: "none", border: "none", fontFamily: T.font } }, "Calendar ", /* @__PURE__ */ React.createElement("svg", { width: "11", height: "11", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("polyline", { points: "9 18 15 12 9 6" })))), upcomingEvents.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { padding: "18px 0", textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, marginBottom: 12, lineHeight: 1.5 } }, "Nothing on the horizon yet. Add one thing that's due this week and Studlin will plan around it."), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+    }, title: "Turn into a calendar block you can drag onto a day", style: { display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "none", border: "none", color: T.text, fontSize: 12, fontFamily: T.font, cursor: "pointer" } }, "Add to calendar"), /* @__PURE__ */ React.createElement("button", { onClick: (e) => {
+      e.stopPropagation();
+      startEditChecklistItem(item);
+    }, style: { display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "none", border: "none", color: T.text, fontSize: 12, fontFamily: T.font, cursor: "pointer" } }, "Edit"), /* @__PURE__ */ React.createElement("button", { onClick: (e) => {
+      e.stopPropagation();
+      setChecklistMenuOpenId(null);
+      setChecklistDeleteConfirmId(item.id);
+    }, style: { display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "none", border: "none", color: T.red, fontSize: 12, fontFamily: T.font, cursor: "pointer" } }, "Delete")));
+  })))), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "5fr 7fr", gap: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { background: T.card, borderRadius: 8, padding: 20, border: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.hand, fontSize: 22, fontWeight: 600, color: T.text } }, "Upcoming"), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.mono, fontSize: 9.5, letterSpacing: "0.12em", padding: "3px 8px", border: `1px solid ${T.border}`, borderRadius: 5, color: T.muted } }, "NEXT 14 DAYS")), /* @__PURE__ */ React.createElement("button", { onClick: () => setActive("calendar"), style: { fontSize: 12, color: T.muted, display: "inline-flex", alignItems: "center", gap: 3, cursor: "pointer", background: "none", border: "none", fontFamily: T.font } }, "Calendar ", /* @__PURE__ */ React.createElement("svg", { width: "11", height: "11", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("polyline", { points: "9 18 15 12 9 6" })))), upcomingEvents.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { padding: "18px 0", textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, marginBottom: 12, lineHeight: 1.5 } }, "Nothing on the horizon yet. Add one thing that's due this week and Studlin will plan around it."), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
     lsSet("pendingAddTask", true);
     setActive("calendar");
   }, style: { display: "inline-flex", alignItems: "center", gap: 7, padding: "9px 18px", background: T.lime, color: T.ink, border: "none", borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: T.font } }, "+ Add something due this week")) : upcomingEvents.map((ev, i) => (
