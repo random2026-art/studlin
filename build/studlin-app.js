@@ -7652,7 +7652,13 @@ function StudlinPrep({ setActive = () => {
     setSelectedExamId(null);
     setSelectedAssignmentId(null);
     setExamTimeEditOpen(false);
-  }, style: { padding: "5px 12px", borderRadius: 4, fontSize: 12, fontWeight: tab === v.id ? 600 : 400, cursor: "pointer", background: tab === v.id ? T.card : "transparent", color: tab === v.id ? T.text : T.muted, border: "none", fontFamily: T.font, transition: "all 0.15s", whiteSpace: "nowrap" } }, v.label))), showTabToolbar && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(
+  }, style: { padding: "5px 12px", borderRadius: 4, fontSize: 12, fontWeight: tab === v.id ? 600 : 400, cursor: "pointer", background: tab === v.id ? T.card : "transparent", color: tab === v.id ? T.text : T.muted, border: "none", fontFamily: T.font, transition: "all 0.15s", whiteSpace: "nowrap" } }, v.label))), showTabToolbar && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } }, tab === "assignments" && /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
+    lsSet("pendingAddTask", { kind: "assignment" });
+    setActive("calendar");
+  } }, Icon.plus, " Add assignment"), tab === "projects" && /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
+    lsSet("pendingAddTask", { kind: "project" });
+    setActive("calendar");
+  } }, Icon.plus, " Add project"), /* @__PURE__ */ React.createElement(
     CustomSelect,
     {
       boxed: true,
@@ -7753,7 +7759,10 @@ function StudlinPrep({ setActive = () => {
     });
     const gridCols = "minmax(140px,1.8fr) 100px 120px 70px 80px 80px 150px";
     const cellSelStyle = { width: "100%", background: "transparent", border: "none", color: T.text, fontSize: 10.5, fontFamily: T.font, outline: "none", cursor: "pointer", padding: "2px 0" };
-    return /* @__PURE__ */ React.createElement("div", null, assignments.length === 0 ? /* @__PURE__ */ React.createElement(Card, { style: { padding: "32px 20px", textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted } }, allAssignments.length === 0 ? "No upcoming assignments." : "No assignments match your search.")) : /* @__PURE__ */ React.createElement("div", { style: { overflowX: "auto", border: `1px solid ${T.border}`, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 700 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, padding: "7px 10px", borderBottom: `1px solid ${T.border}`, background: T.card2 } }, ["Name", "Class", "Due", "Days", "Urgency", "Difficulty", "Attack Blocks"].map((h) => /* @__PURE__ */ React.createElement("div", { key: h, style: { fontSize: 9, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, h))), assignments.map((a) => {
+    return /* @__PURE__ */ React.createElement("div", null, assignments.length === 0 ? /* @__PURE__ */ React.createElement(Card, { style: { padding: "32px 20px", textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, marginBottom: allAssignments.length === 0 ? 14 : 0 } }, allAssignments.length === 0 ? "No upcoming assignments yet \u2014 add one to start tracking it." : "No assignments match your search."), allAssignments.length === 0 && /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
+      lsSet("pendingAddTask", { kind: "assignment" });
+      setActive("calendar");
+    } }, Icon.plus, " Add assignment")) : /* @__PURE__ */ React.createElement("div", { style: { overflowX: "auto", border: `1px solid ${T.border}`, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 700 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, padding: "7px 10px", borderBottom: `1px solid ${T.border}`, background: T.card2 } }, ["Name", "Class", "Due", "Days", "Urgency", "Difficulty", "Attack Blocks"].map((h) => /* @__PURE__ */ React.createElement("div", { key: h, style: { fontSize: 9, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, h))), assignments.map((a) => {
       const today2 = dayKey();
       const daysUntil = a.date ? Math.round((/* @__PURE__ */ new Date(a.date + "T12:00:00") - /* @__PURE__ */ new Date(today2 + "T12:00:00")) / 864e5) : null;
       const daysLabel = daysUntil == null ? "No date" : daysUntil <= 0 ? "Today" : daysUntil + "d";
@@ -7991,7 +8000,10 @@ function StudlinPrep({ setActive = () => {
     });
     const gridCols = "minmax(140px,1.8fr) 100px 120px 70px 80px 80px 150px";
     const cellSelStyle = { width: "100%", background: "transparent", border: "none", color: T.text, fontSize: 10.5, fontFamily: T.font, outline: "none", cursor: "pointer", padding: "2px 0" };
-    return /* @__PURE__ */ React.createElement("div", null, projects.length === 0 ? /* @__PURE__ */ React.createElement(Card, { style: { padding: "32px 20px", textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted } }, allProjects.length === 0 ? "No upcoming projects." : "No projects match your search.")) : /* @__PURE__ */ React.createElement("div", { style: { overflowX: "auto", border: `1px solid ${T.border}`, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 700 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, padding: "7px 10px", borderBottom: `1px solid ${T.border}`, background: T.card2 } }, ["Name", "Class", "Due", "Days", "Urgency", "Difficulty", "Checklist"].map((h) => /* @__PURE__ */ React.createElement("div", { key: h, style: { fontSize: 9, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, h))), projects.map((p) => {
+    return /* @__PURE__ */ React.createElement("div", null, projects.length === 0 ? /* @__PURE__ */ React.createElement(Card, { style: { padding: "32px 20px", textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, marginBottom: allProjects.length === 0 ? 14 : 0 } }, allProjects.length === 0 ? "No upcoming projects yet \u2014 add one to start tracking it." : "No projects match your search."), allProjects.length === 0 && /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
+      lsSet("pendingAddTask", { kind: "project" });
+      setActive("calendar");
+    } }, Icon.plus, " Add project")) : /* @__PURE__ */ React.createElement("div", { style: { overflowX: "auto", border: `1px solid ${T.border}`, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 700 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, padding: "7px 10px", borderBottom: `1px solid ${T.border}`, background: T.card2 } }, ["Name", "Class", "Due", "Days", "Urgency", "Difficulty", "Checklist"].map((h) => /* @__PURE__ */ React.createElement("div", { key: h, style: { fontSize: 9, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, h))), projects.map((p) => {
       const today2 = dayKey();
       const daysUntil = p.date ? Math.round((/* @__PURE__ */ new Date(p.date + "T12:00:00") - /* @__PURE__ */ new Date(today2 + "T12:00:00")) / 864e5) : null;
       const daysLabel = daysUntil == null ? "No date" : daysUntil <= 0 ? "Today" : daysUntil + "d";
@@ -18682,11 +18694,13 @@ function CalendarTab({ setActive = () => {
     setBrainDumpOpen(true);
   }, []);
   useEffect(() => {
-    if (!lsGet("pendingAddTask", false)) return;
+    const pending = lsGet("pendingAddTask", false);
+    if (!pending) return;
     try {
       localStorage.removeItem("studlin-pendingAddTask");
     } catch (e) {
     }
+    if (pending && typeof pending === "object" && pending.kind) setEvKind(pending.kind);
     setNewOpen(true);
   }, []);
   useEffect(() => {

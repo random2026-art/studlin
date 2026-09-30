@@ -38,6 +38,10 @@ describe("9b: first-time setup can be paused and resumed", () => {
 describe("9d: an empty Coming up card offers a free way to add something", () => {
   test("Dashboard sets a one-shot flag that Calendar turns into an open add form", () => {
     assert.match(SOURCE, /lsSet\("pendingAddTask",true\);setActive\("calendar"\);/);
-    assert.match(SOURCE, /if\(!lsGet\("pendingAddTask",false\)\)return;[\s\S]{0,140}setNewOpen\(true\);/);
+    // 2026-09-30: Prep's Assignments/Projects "+ Add" buttons (user report --
+    // neither tab had any way to add a new item) reuse this same one-shot
+    // flag, extended to optionally carry a `kind` so the Type picker can be
+    // preselected instead of always opening on evKind's plain default.
+    assert.match(SOURCE, /const pending=lsGet\("pendingAddTask",false\);[\s\S]{0,300}setNewOpen\(true\);/);
   });
 });
