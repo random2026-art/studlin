@@ -30561,7 +30561,8 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
 // typed here is lost.
 function QuickCreateTaskPopover({draft,anchorX,anchorY,onCreate,onMoreOptions,onClose}){
   const [title,setTitle]=useState("");
-  useEffect(()=>{ if(draft)setTitle(""); },[draft&&draft.dateKey,draft&&draft.startTime,draft&&draft.endTime]);
+  const [color,setColor]=useState(T.lime);
+  useEffect(()=>{ if(draft){setTitle("");setColor(T.lime);} },[draft&&draft.dateKey,draft&&draft.startTime,draft&&draft.endTime]);
   if(!draft)return null;
   const POPOVER_WIDTH=280;
   const ESTIMATED_HEIGHT=150;
@@ -30571,13 +30572,16 @@ function QuickCreateTaskPopover({draft,anchorX,anchorY,onCreate,onMoreOptions,on
   const left=fitsRight?Math.max(8,x+10):Math.max(8,x-10-POPOVER_WIDTH);
   const top=Math.min(Math.max(8,y-24),Math.max(8,window.innerHeight-ESTIMATED_HEIGHT-8));
   const niceDate=(()=>{const p=draft.dateKey.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"});})();
-  const submit=()=>onCreate(title);
+  const submit=()=>onCreate(title,color);
   return ReactDOM.createPortal((
     <>
       <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:998}} />
       <div onClick={e=>e.stopPropagation()} style={{position:"fixed",top,left,width:POPOVER_WIDTH,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:999,animation:"studlinPop 0.15s cubic-bezier(.2,.85,.3,1)",padding:"10px 12px",display:"flex",flexDirection:"column",gap:8}}>
-        <Input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Add a title" style={{fontSize:13,fontWeight:600,padding:"7px 10px"}} autoFocus
-          onKeyDown={e=>{ if(e.key==="Enter"){e.preventDefault();submit();} else if(e.key==="Escape"){e.preventDefault();onClose();} }} />
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <ColorSelect value={color} onChange={setColor} />
+          <Input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Add a title" style={{flex:1,fontSize:13,fontWeight:600,padding:"7px 10px"}} autoFocus
+            onKeyDown={e=>{ if(e.key==="Enter"){e.preventDefault();submit();} else if(e.key==="Escape"){e.preventDefault();onClose();} }} />
+        </div>
         <div style={{fontSize:11.5,color:T.muted}}>{niceDate} · {fmtTimeRange(draft.startTime,Math.max(15,timeToMinutes(draft.endTime)-timeToMinutes(draft.startTime)))}</div>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:2}}>
           <button type="button" onClick={()=>onMoreOptions(draft)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:11,fontFamily:T.font,padding:0,textDecoration:"underline"}}>More options</button>
@@ -30818,14 +30822,15 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     setQuickCreatePopover({dateKey,startTime,endTime,anchorX:anchor&&anchor.x,anchorY:anchor&&anchor.y});
   };
   const cancelQuickCreate=()=>{setQuickCreateDraft(null);setQuickCreatePopover(null);};
-  const commitQuickCreateTask=(title)=>{
+  const commitQuickCreateTask=(title,color)=>{
     if(!quickCreatePopover)return;
     const {dateKey,startTime,endTime}=quickCreatePopover;
     const duration=Math.max(15,timeToMinutes(endTime)-timeToMinutes(startTime));
     const cleanTitle=(title||"").trim()||"New task";
     const task={id:"quickcreate-"+Date.now(),title:cleanTitle,date:dateKey,time:startTime,
       subject:"",kind:"study block",notes:"",priority:5,difficulty:5,deadline:null,
-      duration,status:"pending",timeSpent:0,completedAt:null,isGeneralTask:true,userPinned:true};
+      duration,status:"pending",timeSpent:0,completedAt:null,isGeneralTask:true,userPinned:true,
+      ...(color&&color!==T.lime?{color}:{})};
     const next=events.concat([task]);
     setEvents(next);lsSet("events",next);
     setPlacementToast((cleanTitle.length>28?cleanTitle.slice(0,28)+"…":cleanTitle)+" added — "+fmtTimeRange(startTime,duration)+".");
@@ -39477,6 +39482,10 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   // instant it's checked.
   const checklistItems=allEvents.filter(ev=>ev.checklist&&!ev.subject&&checklistItemVisible(ev)).sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
   const [checklistDraft,setChecklistDraft]=useState("");
+  const [checklistMenuOpenId,setChecklistMenuOpenId]=useState(null);
+  const [checklistEditId,setChecklistEditId]=useState(null);
+  const [checklistEditDraft,setChecklistEditDraft]=useState("");
+  const [checklistDeleteConfirmId,setChecklistDeleteConfirmId]=useState(null);
   const toggleChecklistItem=(id)=>{
     const all=lsGet("events",[]);
     const target=all.find(ev=>ev.id===id);
@@ -39523,6 +39532,22 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
     lsSet("events",all.filter(ev=>ev.id!==item.id));
     setActive("calendar");
     setPendingHighlightDraftId(draft.id);
+  };
+  const startEditChecklistItem=(item)=>{setChecklistMenuOpenId(null);setChecklistEditId(item.id);setChecklistEditDraft(item.title);};
+  const commitEditChecklistItem=(item)=>{
+    const title=checklistEditDraft.trim();
+    if(title&&title!==item.title){
+      const all=lsGet("events",[]);
+      lsSet("events",all.map(ev=>ev.id===item.id?{...ev,title}:ev));
+      forcePlan(x=>x+1);
+    }
+    setChecklistEditId(null);
+  };
+  const deleteChecklistItem=(id)=>{
+    const all=lsGet("events",[]);
+    lsSet("events",all.filter(ev=>ev.id!==id));
+    setChecklistDeleteConfirmId(null);
+    forcePlan(x=>x+1);
   };
   // Real weekly wrapped stats
   const weeklyFocusMin=realStats.weekMin;
@@ -39753,19 +39778,49 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
               maxHeight/overflowY pattern the other lists already use. */}
           {checklistItems.length===0
             ? <div style={{fontSize:12.5,color:T.muted,padding:"6px 0 4px",textAlign:"center"}}>Nothing on your checklist.</div>
-            : <div style={{maxHeight:300,overflowY:"auto"}}>{checklistItems.map(item=>(
+            : <div style={{maxHeight:300,overflowY:"auto"}}>{checklistItems.map(item=>{
+              const isEditing=checklistEditId===item.id;
+              const isConfirmingDelete=checklistDeleteConfirmId===item.id;
+              if(isConfirmingDelete)return(
+                <div key={item.id} style={{padding:"8px 10px",borderRadius:12,border:`1px solid ${T.red}55`,background:T.red+"12",marginBottom:8}}>
+                  <div style={{fontSize:11.5,color:T.text,marginBottom:8,lineHeight:1.4}}>Delete "{item.title}"?</div>
+                  <div style={{display:"flex",gap:6}}>
+                    <button onClick={()=>deleteChecklistItem(item.id)} style={{fontSize:10.5,fontWeight:600,padding:"4px 9px",borderRadius:5,background:T.red,color:"#fff",border:"none",cursor:"pointer",fontFamily:T.font}}>Delete</button>
+                    <button onClick={()=>setChecklistDeleteConfirmId(null)} style={{fontSize:10.5,padding:"4px 9px",borderRadius:5,background:"transparent",color:T.muted,border:`1px solid ${T.border}`,cursor:"pointer",fontFamily:T.font}}>Cancel</button>
+                  </div>
+                </div>
+              );
+              if(isEditing)return(
+                <div key={item.id} style={{padding:"9px 12px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8}}>
+                  <input autoFocus value={checklistEditDraft} onChange={e=>setChecklistEditDraft(e.target.value)}
+                    onKeyDown={e=>{if(e.key==="Enter")commitEditChecklistItem(item);if(e.key==="Escape")setChecklistEditId(null);}}
+                    onBlur={()=>commitEditChecklistItem(item)}
+                    style={{width:"100%",boxSizing:"border-box",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"5px 8px",color:T.text,fontSize:12.5,fontFamily:T.font,outline:"none"}} />
+                </div>
+              );
               // Checked items now stay visible for the rest of the day
               // (see checklistItems' own comment) instead of vanishing
               // instantly -- needs a real checked look, or a lingering
               // done item would be indistinguishable from a pending one.
-              <div key={item.id} onClick={()=>toggleChecklistItem(item.id)} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"9px 12px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer",opacity:item.status==="done"?0.55:1}}>
-                <div style={{width:18,height:18,borderRadius:"50%",border:`1.5px solid ${item.status==="done"?T.lime:T.faint}`,background:item.status==="done"?T.lime:"transparent",flex:"none",marginTop:1,display:"grid",placeItems:"center",color:T.ink,fontSize:11}}>{item.status==="done"&&Icon.check}</div>
-                <div style={{flex:1,minWidth:0,fontSize:12.5,color:T.text,fontWeight:500,lineHeight:1.4,overflowWrap:"break-word",textDecoration:item.status==="done"?"line-through":"none"}}>{item.title}</div>
-                {item.status!=="done"&&(
-                  <button onClick={(e)=>{e.stopPropagation();convertChecklistItemToBlock(item);}} title="Turn into a calendar block you can drag onto a day" style={{flexShrink:0,padding:"3px 7px",borderRadius:6,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>To calendar</button>
+              return (
+              <div key={item.id} style={{position:"relative"}}>
+                <div onClick={()=>toggleChecklistItem(item.id)} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"9px 12px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer",opacity:item.status==="done"?0.55:1}}>
+                  <div style={{width:18,height:18,borderRadius:"50%",border:`1.5px solid ${item.status==="done"?T.lime:T.faint}`,background:item.status==="done"?T.lime:"transparent",flex:"none",marginTop:1,display:"grid",placeItems:"center",color:T.ink,fontSize:11}}>{item.status==="done"&&Icon.check}</div>
+                  <div style={{flex:1,minWidth:0,fontSize:12.5,color:T.text,fontWeight:500,lineHeight:1.4,overflowWrap:"break-word",textDecoration:item.status==="done"?"line-through":"none"}}>{item.title}</div>
+                  <button onClick={(e)=>{e.stopPropagation();setChecklistMenuOpenId(checklistMenuOpenId===item.id?null:item.id);}} style={{flexShrink:0,background:"none",border:"none",color:T.muted,cursor:"pointer",padding:"0 0 0 6px",fontSize:14,lineHeight:1,marginTop:-2}}>⋯</button>
+                </div>
+                {checklistMenuOpenId===item.id&&(
+                  <div onMouseLeave={()=>setChecklistMenuOpenId(null)} style={{position:"absolute",top:36,right:0,zIndex:40,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 12px 28px -12px rgba(0,0,0,0.5)",overflow:"hidden",minWidth:150}}>
+                    {item.status!=="done"&&(
+                      <button onClick={(e)=>{e.stopPropagation();setChecklistMenuOpenId(null);convertChecklistItemToBlock(item);}} title="Turn into a calendar block you can drag onto a day" style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.text,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Add to calendar</button>
+                    )}
+                    <button onClick={(e)=>{e.stopPropagation();startEditChecklistItem(item);}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.text,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Edit</button>
+                    <button onClick={(e)=>{e.stopPropagation();setChecklistMenuOpenId(null);setChecklistDeleteConfirmId(item.id);}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.red,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Delete</button>
+                  </div>
                 )}
               </div>
-            ))}</div>}
+              );
+            })}</div>}
         </div>
 
       </div>
