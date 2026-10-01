@@ -112,9 +112,14 @@ describe("Inline per-class syllabus scan during onboarding review", () => {
     assert.ok(idx > -1, "the new addMode should be checked somewhere");
     const blockIdx = SOURCE.indexOf('{step==="classes"&&(addMode==="scan"||addMode==="scanForThisClass")&&(()=>{');
     assert.ok(blockIdx > -1, "the scan step block must be shared between both addModes, not duplicated");
-    const body = SOURCE.slice(blockIdx, blockIdx + 4000);
+    // 2026-09-30: window widened (4000->6000) -- the Cancel button now
+    // branches on a real targetCourse too (Import-syllabus-on-an-existing-
+    // course no longer shares scanForThisClass's "back to review" Cancel,
+    // since there's no in-progress review to go back to on that path), which
+    // pushed these same literal strings further into the block.
+    const body = SOURCE.slice(blockIdx, blockIdx + 6000);
     assert.ok(body.includes("handleScanFile(e,{merge:forThisClass})"));
     assert.ok(body.includes("handlePasteScan({merge:forThisClass})"));
-    assert.ok(body.includes('setAddMode("review");setReviewSub("items");'), "Cancel must return to the in-progress review, not the wizard's normal choose/back flow");
+    assert.ok(body.includes('setAddMode("review");setReviewSub("items");'), "Cancel must still return to the in-progress review for scanForThisClass");
   });
 });

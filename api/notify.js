@@ -21,8 +21,79 @@ module.exports = withSentry(async (req, res) => {
   if (type === 'welcome') return sendWelcome(user, req, res);
   if (type === 'shareAvailabilityRequest') return sendShareAvailabilityRequest(user, req, res);
   if (type === 'calendarViewRequest') return sendCalendarViewRequest(user, req, res);
+  if (type === 'feedback') return sendFeedback(user, req, res);
   return sendNote(user, req, res);
 });
+
+// User report, 2026-09-30: the in-app Feedback page's copy promises "every
+// message goes straight to the founders," but its own client call
+// (studlin-app.jsx FeedbackPage.submit) sent {type:"note", subject, body} --
+// this router falls through anything that isn't push/welcome/share/
+// calendarView straight to sendNote, which requires recipientEmail and
+// noteTitle (neither of which "subject"/"body" ever supplied). Every real
+// feedback submission has been 400ing here silently since the client's own
+// fetch call ends in .catch(()=>{}) -- nothing ever reached an inbox, it
+// only ever reached localStorage's "feedback-log" cap. Its own dedicated
+// type instead of overloading sendNote's shape: feedback always goes to the
+// same fixed address, never a client-supplied recipientEmail, same
+// never-trust-the-client-for-who-receives-this reasoning sendWelcome's own
+// comment documents for its recipient.
+const FEEDBACK_EMAIL = 'shenouday7@gmail.com';
+async function sendFeedback(user, req, res) {
+  const { category, body } = req.body || {};
+  const msg = (body || '').trim();
+  if (!msg) return res.status(400).json({ error: 'body is required' });
+
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    console.error('[notify:feedback] RESEND_API_KEY is not set');
+    return res.status(503).json({ error: 'Email service not configured' });
+  }
+
+  const deliverTo = process.env.RESEND_TEST_EMAIL || FEEDBACK_EMAIL;
+  const fromName = user.name || user.email || 'A Studlin user';
+  const catLabel = { love: 'I love something', bug: 'Bug report', feature: 'Feature request', other: 'Other' }[category] || 'Feedback';
+
+  const resend = new Resend(apiKey);
+  try {
+    const { data, error } = await resend.emails.send({
+      from: 'Studlin <onboarding@resend.dev>',
+      to: [deliverTo],
+      subject: `[Studlin Feedback] ${catLabel} — ${fromName}`,
+      html: `
+<!DOCTYPE html>
+<html lang="en">
+<body style="margin:0;padding:0;background:#F4F0E6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#F4F0E6;padding:48px 16px;">
+    <tr><td align="center">
+      <table width="520" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(14,31,24,0.08);">
+        <tr><td style="background:#0D120F;padding:28px 36px;">
+          <span style="font-size:18px;font-weight:700;color:#ffffff;letter-spacing:-0.02em;">Studlin Feedback</span>
+        </td></tr>
+        <tr><td style="padding:36px 36px 28px;">
+          <p style="margin:0 0 6px;font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#999;">${htmlEscape(catLabel)}</p>
+          <p style="margin:0 0 20px;font-size:13px;color:#666;">From ${htmlEscape(fromName)} (${htmlEscape(user.email || 'no email on file')}, uid ${htmlEscape(user.uid)})</p>
+          <div style="background:#F8F5EE;border:1px solid #E8E3D8;border-left:4px solid #AECE5E;border-radius:10px;padding:20px 22px;">
+            <p style="margin:0;font-size:14px;color:#333;line-height:1.75;white-space:pre-wrap;">${htmlEscape(msg)}</p>
+          </div>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>
+      `,
+    });
+    if (error) {
+      console.error('[notify:feedback] Resend API error:', JSON.stringify(error));
+      return res.status(500).json({ error: 'Failed to send email' });
+    }
+    return res.json({ ok: true, id: data?.id });
+  } catch (e) {
+    console.error('[notify:feedback] Unexpected error:', e.message, e.stack);
+    return res.status(500).json({ error: 'Server error' });
+  }
+}
 
 async function sendNote(user, req, res) {
   const { recipientEmail, noteTitle, noteBody, noteTag } = req.body || {};

@@ -15934,11 +15934,13 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
       setPasteMode((m) => !m);
       setScanError("");
     }, style: { marginTop: 12, background: "none", border: "none", color: T.muted, fontSize: 12, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, pasteMode ? "Upload a file instead" : "File didn't work? Paste the text instead")), step === "classes" && (addMode === "scan" || addMode === "scanForThisClass") && (() => {
-      const forThisClass = addMode === "scanForThisClass";
+      const targetCourse = targetCourseId ? getSubjects().find((s) => s.id === targetCourseId) : null;
+      const forThisClass = addMode === "scanForThisClass" || !!targetCourse;
+      const className = targetCourse ? targetCourse.label : review.subjectName || "this class";
       return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(
         TitleSub,
         {
-          title: forThisClass ? "Add syllabus for " + (review.subjectName || "this class") : status === "highschool" ? "Scan assignments" : "Scan a syllabus",
+          title: forThisClass ? "Add syllabus for " + className : status === "highschool" ? "Scan assignments" : "Scan a syllabus",
           sub: forThisClass ? "PDF, Word doc, text, or a photo/screenshot \u2014 Studlin reads it and adds what it finds to this class's assignments, exams & projects below." : status === "highschool" ? "A unit calendar, worksheet, handout, whatever your teacher gave you -- PDF, Word doc, text, or a photo. Studlin reads it and fills in the review below." : "PDF, Word doc, text, or a photo/screenshot \u2014 Studlin reads it and fills in the review below."
         }
       ), scanning ? /* @__PURE__ */ React.createElement("div", { style: { padding: "20px 0" } }, /* @__PURE__ */ React.createElement(ExtractionProgress, { fileName: "Your syllabus", stage: "analyze", analyzeLabel: "Finding assignments and exam dates..." })) : pasteMode ? /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(
@@ -15953,12 +15955,21 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
       ), /* @__PURE__ */ React.createElement(Btn, { onClick: () => handlePasteScan({ merge: forThisClass }), disabled: !pasteText.trim(), style: { marginTop: 10, width: "100%", justifyContent: "center", opacity: pasteText.trim() ? 1 : 0.45 } }, "Scan this text")) : /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => fileInputRef.current && fileInputRef.current.click(), style: { width: "100%", padding: "32px", borderRadius: 12, border: `1.5px dashed ${T.borderHover}`, background: T.card2, color: T.muted, cursor: "pointer", fontFamily: T.font, fontSize: 13, textAlign: "center" } }, "Tap to choose a file"), /* @__PURE__ */ React.createElement("input", { ref: fileInputRef, type: "file", accept: ".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,.gif", style: { display: "none" }, onChange: (e) => handleScanFile(e, { merge: forThisClass }) }), scanError && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: 10 } }, scanError), !scanning && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
         setPasteMode((m) => !m);
         setScanError("");
-      }, style: { marginTop: 12, background: "none", border: "none", color: T.muted, fontSize: 12, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, pasteMode ? "Upload a file instead" : "File didn't work? Paste the text instead"), forThisClass && !scanning && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+      }, style: { marginTop: 12, background: "none", border: "none", color: T.muted, fontSize: 12, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, pasteMode ? "Upload a file instead" : "File didn't work? Paste the text instead"), forThisClass && !scanning && // targetCourse means there's no in-progress multi-class review
+      // to fall back to (this is a standalone single-course quick
+      // scan, review is still empty) -- Cancel closes the whole
+      // quick-scan wizard instead, same as its own X button.
+      // scanForThisClass (the sibling flow, reached mid-review) keeps
+      // its original "back to the review" behavior.
+      /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
         setScanError("");
         setPasteMode(false);
         setPasteText("");
-        setAddMode("review");
-        setReviewSub("items");
+        if (targetCourse) onSkip();
+        else {
+          setAddMode("review");
+          setReviewSub("items");
+        }
       }, style: { background: "none", border: "none", color: T.muted, fontSize: 12.5, fontFamily: T.font, cursor: "pointer", padding: 0, marginTop: 16 } }, "\u2190 Cancel"));
     })(), step === "classes" && addMode === "hsSchedule" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(TitleSub, { title: "Upload your class schedule", sub: "A file or photo, or paste the text, of your period-by-period schedule. Studlin turns each period into a class, color-coded by time -- and works out your free periods from your school hours below." }), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 } }, /* @__PURE__ */ React.createElement(TimeField, { label: "School starts", value: schoolStart, onChange: setSchoolStart }), /* @__PURE__ */ React.createElement(TimeField, { label: "School ends", value: schoolEnd, onChange: setSchoolEnd })), scanning ? /* @__PURE__ */ React.createElement("div", { style: { padding: "20px 0" } }, /* @__PURE__ */ React.createElement(ExtractionProgress, { fileName: "Your schedule", stage: "analyze", analyzeLabel: "Finding your classes and exam dates..." })) : hsPasteMode ? /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(
       "textarea",
@@ -23767,7 +23778,7 @@ function FeedbackPage() {
     try {
       const tok = firebase.auth().currentUser ? await firebase.auth().currentUser.getIdToken() : null;
       if (tok) {
-        await fetch("/api/notify", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": "Bearer " + tok }, body: JSON.stringify({ type: "note", subject: "App Feedback: " + category, body: msg.trim() }) }).catch(() => {
+        await fetch("/api/notify", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": "Bearer " + tok }, body: JSON.stringify({ type: "feedback", category, body: msg.trim() }) }).catch(() => {
         });
       }
     } catch (e) {
