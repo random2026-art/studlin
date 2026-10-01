@@ -26393,9 +26393,24 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
           </>)}
 
           {step==="classes"&&(addMode==="scan"||addMode==="scanForThisClass")&&(()=>{
-            const forThisClass=addMode==="scanForThisClass";
+            // User report, 2026-09-30: "Import syllabus" from an existing
+            // course's own "⋯" menu (targetCourseId set, addMode="scan")
+            // landed on this exact screen too, but forThisClass only ever
+            // checked addMode==="scanForThisClass" -- so it showed the bare
+            // generic "Scan a syllabus" title with no mention of which
+            // class, even though the student just told it exactly which
+            // one. Read as two disconnected actions ("picked the class,
+            // then got asked to scan a syllabus" instead of "import syllabus
+            // for THIS class"). targetCourse's real label (not
+            // review.subjectName, which isn't populated yet on this path --
+            // see buildReviewFromExtraction's own comment on why the real
+            // course record is the source of truth here) fixes the copy;
+            // also restores the Cancel button this path never had.
+            const targetCourse=targetCourseId?getSubjects().find(s=>s.id===targetCourseId):null;
+            const forThisClass=addMode==="scanForThisClass"||!!targetCourse;
+            const className=targetCourse?targetCourse.label:(review.subjectName||"this class");
             return (<>
-            <TitleSub title={forThisClass?"Add syllabus for "+(review.subjectName||"this class"):(status==="highschool"?"Scan assignments":"Scan a syllabus")}
+            <TitleSub title={forThisClass?"Add syllabus for "+className:(status==="highschool"?"Scan assignments":"Scan a syllabus")}
               sub={forThisClass?"PDF, Word doc, text, or a photo/screenshot — Studlin reads it and adds what it finds to this class's assignments, exams & projects below.":(status==="highschool"?"A unit calendar, worksheet, handout, whatever your teacher gave you -- PDF, Word doc, text, or a photo. Studlin reads it and fills in the review below.":"PDF, Word doc, text, or a photo/screenshot — Studlin reads it and fills in the review below.")} />
             {/* Bug fix, 2026-09-07 user report: this was the one syllabus-
                 scan entry point still showing the old plain "Reading your
@@ -26425,7 +26440,13 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
               </button>
             )}
             {forThisClass&&!scanning&&(
-              <button type="button" onClick={()=>{setScanError("");setPasteMode(false);setPasteText("");setAddMode("review");setReviewSub("items");}} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0,marginTop:16}}>← Cancel</button>
+              // targetCourse means there's no in-progress multi-class review
+              // to fall back to (this is a standalone single-course quick
+              // scan, review is still empty) -- Cancel closes the whole
+              // quick-scan wizard instead, same as its own X button.
+              // scanForThisClass (the sibling flow, reached mid-review) keeps
+              // its original "back to the review" behavior.
+              <button type="button" onClick={()=>{setScanError("");setPasteMode(false);setPasteText("");if(targetCourse)onSkip();else{setAddMode("review");setReviewSub("items");}}} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0,marginTop:16}}>← Cancel</button>
             )}
             </>);
           })()}
@@ -40222,7 +40243,15 @@ function FeedbackPage() {
     try{
       const tok=firebase.auth().currentUser?await firebase.auth().currentUser.getIdToken():null;
       if(tok){
-        await fetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+tok},body:JSON.stringify({type:"note",subject:"App Feedback: "+category,body:msg.trim()})}).catch(()=>{});
+        // Bug fix, 2026-09-30 user report ("where does feedback go to"):
+        // this used to send {type:"note",subject,body} -- api/notify.js's
+        // router falls anything that isn't push/welcome/share/calendarView
+        // through to sendNote, which requires recipientEmail+noteTitle,
+        // neither of which this ever sent. Every submission 400'd silently
+        // (this fetch's own .catch swallows it) -- nothing ever reached an
+        // inbox despite the copy above promising it goes to the team. Now
+        // uses the real, dedicated feedback type api/notify.js handles.
+        await fetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+tok},body:JSON.stringify({type:"feedback",category,body:msg.trim()})}).catch(()=>{});
       }
     }catch(e){}
     setSending(false);
