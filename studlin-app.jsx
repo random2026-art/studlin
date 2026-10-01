@@ -9127,11 +9127,23 @@ function classNeedsSyllabus(items){
 function liveClassItems(subject,events){
   return (events||[]).filter(e=>e.courseId===subject.id||e.subject===subject.label);
 }
-function computeSetupChecklist(subjects,events,canvasConnected,googleConnected,skippedCourseIds){
+// Deliberately NOT classNeedsSyllabus (which excludes exam-only on purpose
+// -- a bare schedule-grid scan, not a real syllabus, can produce exam
+// placeholders, so exam presence alone doesn't prove a syllabus was
+// actually read; see that function's own comment). This checklist is
+// asking a different question -- "does this class reflect the student's
+// real workload" -- and a class genuinely graded on exams alone (no
+// homework at all) has real data and shouldn't be nagged forever just
+// because it has no assignment/project item. User report, 2026-09-30:
+// "it's not just assignments, it's also exams and projects."
+function classHasRealWorkItems(items){
+  return (items||[]).some(it=>it.kind==="assignment"||it.kind==="project"||it.kind==="exam");
+}
+function computeSetupChecklist(subjects,events,lmsConnected,googleConnected,skippedCourseIds){
   const skipped=new Set(skippedCourseIds||[]);
   const all=subjects||[];
   const tracked=all.filter(s=>!skipped.has(s.id));
-  const classesNeedingSyllabus=tracked.filter(s=>classNeedsSyllabus(liveClassItems(s,events)));
+  const classesNeedingSyllabus=tracked.filter(s=>!classHasRealWorkItems(liveClassItems(s,events)));
   const hasClasses=all.length>0;
   return {
     hasClasses,
@@ -9139,7 +9151,12 @@ function computeSetupChecklist(subjects,events,canvasConnected,googleConnected,s
     trackedClasses:tracked.length,
     classesNeedingSyllabus,
     classesWithSyllabus:tracked.length-classesNeedingSyllabus.length,
-    canvasConnected:!!canvasConnected,
+    // Any of Canvas/Schoology/Blackboard/Moodle counts -- a student only
+    // ever has ONE real school LMS, singling out Canvas by name would be
+    // wrong (and unhelpful) for every Schoology/Blackboard/Moodle school.
+    // Same isAcademicCalendarSource helper SettingsTab's own Integrations
+    // list is keyed on.
+    lmsConnected:!!lmsConnected,
     googleConnected:!!googleConnected,
     // Only "done" once every TRACKED class (one the student hasn't
     // explicitly skipped -- e.g. a pass/fail class with no real
@@ -31506,6 +31523,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       setNewItemHighlightIds(newIds);
       showToast("Added "+newIds.length+" item"+(newIds.length!==1?"s":"")+" to your calendar.");
     }
+    returnToChecklistIfNeeded();
   };
   // One-shot "here's what was just imported" signal for the calendar-import
   // flow (Moodle/Canvas/Schoology/Blackboard/generic .ics/work schedule,
@@ -31820,13 +31838,26 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // targetCourseId null opens the general "how do you want to add it"
   // chooser (Scan my whole schedule included); a real id skips straight to
   // that class's own syllabus scan, same as its "⋯" menu entry point.
+  // fromChecklist tracked in a ref (not state -- nothing needs to render
+  // off it) so finishing or cancelling this specific scan can return the
+  // student straight to the checklist instead of stranding them on
+  // Calendar with no obvious next step -- see finishQuickScan/onSkip below.
+  // Same "a user shouldn't finish one step of several with no idea where
+  // to go next" reasoning the checklist's own UX review called for.
+  const quickScanFromChecklistRef=useRef(false);
   useEffect(()=>{
     const pending=lsGet("pendingQuickScan",false);
     if(!pending)return;
     try{localStorage.removeItem("studlin-pendingQuickScan");}catch(e){}
+    quickScanFromChecklistRef.current=!!(pending&&pending.fromChecklist);
     setQuickScanTargetCourseId((pending&&pending.targetCourseId)||null);
     setQuickScanOpen(true);
   },[]);
+  const returnToChecklistIfNeeded=()=>{
+    if(!quickScanFromChecklistRef.current)return;
+    quickScanFromChecklistRef.current=false;
+    setActive("dashboard");
+  };
   // Same one-shot deep-link pattern as pendingBrainDump above -- set by
   // EventDetailModal's jumpToCalendar (a manual/Attack Block session row's
   // "Jump to calendar" click) from anywhere in the app, consumed here so
@@ -35429,7 +35460,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           isLast={calTourStep===CAL_TOUR_STEPS.length-1} onNext={advanceCalTour} onSkip={skipCalTour} />
       )}
       <ClassSetupWizard open={classSetupOpen} termRollover={classSetupRollover} firstRun={isFreshAccount} initialStatus={getProfile().status} onSkip={()=>{lsSet("classSetupDeferredUntil",Date.now()+86400000);setClassSetupOpen(false);setClassSetupRollover(false);if(isFreshAccount)setTheme("dark");}} onFinish={finishClassSetup} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
-      <ClassSetupWizard open={quickScanOpen} quickScan targetCourseId={quickScanTargetCourseId} initialStatus={getProfile().status} onFinish={finishQuickScan} onSkip={()=>{setQuickScanOpen(false);setQuickScanTargetCourseId(null);syncClassSetupState();}} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
+      <ClassSetupWizard open={quickScanOpen} quickScan targetCourseId={quickScanTargetCourseId} initialStatus={getProfile().status} onFinish={finishQuickScan} onSkip={()=>{setQuickScanOpen(false);setQuickScanTargetCourseId(null);syncClassSetupState();returnToChecklistIfNeeded();}} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
       <Modal open={!!weeklyContentCourseId} onClose={()=>setWeeklyContentCourseId(null)} title="Class notes" sub="A short note for each day this class meets -- lecture, lab, homework due, whatever's useful." width={460}
         footer={<><Btn variant="subtle" onClick={()=>setWeeklyContentCourseId(null)}>Cancel</Btn><Btn onClick={saveWeeklyContent}>Save</Btn></>}>
         {(()=>{
@@ -37129,8 +37160,8 @@ function SettingsRow({label,sub,k,right,highlight}){
 }
 
 function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}, onOpenRoutineCenter=()=>{}, setScheduleSettingsOpen=()=>{}, setPricingOpen=()=>{}, setActivePage=()=>{}, pendingOpenSetting=null, onSettingOpened=()=>{}}) {
-  // "integrations": the setup checklist's Connect Canvas/Google Calendar
-  // buttons (Dashboard, 2026-09-30) -- lands directly on this tab instead
+  // "integrations": the setup checklist's Connect your school's LMS/Google
+  // Calendar buttons (Dashboard, 2026-09-30) -- lands directly on this tab instead
   // of the generic General one a new student would otherwise have to hunt
   // through, same reasoning shareAvailability's own deep-link already has.
   const [active,setActive]=useState(pendingOpenSetting==="shareAvailability"?"Privacy":pendingOpenSetting==="integrations"?"Integrations":"General");
@@ -39925,7 +39956,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   const [checklistCompletedDismiss,setChecklistCompletedDismiss]=useState(()=>lsGet("setupChecklistCompletedDismiss",false));
   const [checklistSkippedAt,setChecklistSkippedAt]=useState(()=>lsGet("setupChecklistSkippedAt",0));
   const [skippedCourseIds,setSkippedCourseIds]=useState(()=>lsGet("syllabusSkippedCourseIds",[]));
-  const canvasConnectedFlag=getImportedCalendars().some(c=>c.sourceType==="Canvas");
+  const lmsConnectedFlag=getImportedCalendars().some(c=>isAcademicCalendarSource(c.sourceType));
   const googleConnectedFlag=lsGet("cal-google",false);
   // Same current-term filter the Courses sidebar's own missing-syllabus
   // nudge already applies (currentTermSubjects, CalendarTab) -- without it,
@@ -39934,7 +39965,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   // ever going to change.
   const currentTermForChecklist=getSchoolTerm();
   const currentTermSubjectsForChecklist=getSubjects().filter(s=>!s.termEnd||!currentTermForChecklist||s.termEnd===currentTermForChecklist.end);
-  const setupChecklist=computeSetupChecklist(currentTermSubjectsForChecklist,allEvents,canvasConnectedFlag,googleConnectedFlag,skippedCourseIds);
+  const setupChecklist=computeSetupChecklist(currentTermSubjectsForChecklist,allEvents,lmsConnectedFlag,googleConnectedFlag,skippedCourseIds);
   const checklistSkipped=Date.now()-checklistSkippedAt<SETUP_CHECKLIST_SKIP_COOLDOWN_MS;
   const showSetupChecklist=!checklistCompletedDismiss&&!checklistSkipped;
   useEffect(()=>{
@@ -39946,7 +39977,11 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   },[setupChecklist.overallDone,checklistCompletedDismiss]);
   const skipChecklistForNow=()=>{lsSet("setupChecklistSkippedAt",Date.now());setChecklistSkippedAt(Date.now());};
   const skipClassSyllabus=(id)=>{const next=[...skippedCourseIds,id];setSkippedCourseIds(next);lsSet("syllabusSkippedCourseIds",next);};
-  const openQuickScan=(targetCourseId)=>{lsSet("pendingQuickScan",{targetCourseId:targetCourseId||null});setActive("calendar");};
+  // fromChecklist:true so CalendarTab's own finishQuickScan/onSkip return
+  // here when done -- without it, finishing (or cancelling) just one class
+  // of several still needing a syllabus stranded the student on Calendar
+  // with no obvious way back to see what's left.
+  const openQuickScan=(targetCourseId)=>{lsSet("pendingQuickScan",{targetCourseId:targetCourseId||null,fromChecklist:true});setActive("calendar");};
   return (
     <>
     <div style={{display:"flex",flexDirection:"column",gap:16,paddingBottom:40}}>
@@ -39978,7 +40013,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
               <span style={{fontSize:16}}>🧭</span>
               <span style={sectionTitleStyle(false)}>
                 {!setupChecklist.hasClasses?"Let's set up your calendar":
-                  setupChecklist.classesNeedingSyllabus.length+" of "+setupChecklist.trackedClasses+" classes still need their assignments in"}
+                  setupChecklist.classesNeedingSyllabus.length+" of "+setupChecklist.trackedClasses+" classes still need their syllabus imported"}
               </span>
             </div>
             <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
@@ -39986,6 +40021,14 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
               <button type="button" onClick={skipChecklistForNow} title="Skip for now" style={{background:"none",border:"none",color:T.faint,fontSize:14,lineHeight:1,cursor:"pointer",padding:0}}>×</button>
             </div>
           </div>
+          {/* Visual "how far am I" progress, same lime-fill bar Today's
+              plan's own progress indicator already uses -- a text count
+              alone still makes a student do the math themselves. */}
+          {setupChecklist.hasClasses&&setupChecklist.trackedClasses>0&&(
+            <div style={{height:3,background:T.card2,borderRadius:99,marginTop:12,overflow:"hidden"}}>
+              <div style={{height:"100%",width:Math.round(setupChecklist.classesWithSyllabus/setupChecklist.trackedClasses*100)+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.5s ease"}} />
+            </div>
+          )}
           {checklistExpanded&&(<>
             <div style={{marginTop:16,display:"flex",flexDirection:"column",gap:12}}>
               <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
@@ -40004,13 +40047,20 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                 <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
                   <div style={{width:20,height:20,borderRadius:"50%",border:`1.5px solid ${setupChecklist.assignmentsStepDone?T.lime:T.faint}`,background:setupChecklist.assignmentsStepDone?T.lime:"transparent",flex:"none",marginTop:1,display:"grid",placeItems:"center",color:T.ink,fontSize:11}}>{setupChecklist.assignmentsStepDone&&Icon.check}</div>
                   <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Get assignments & exams in for every class</div>
+                    <div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Get assignments, exams & projects in for every class</div>
                     {!setupChecklist.assignmentsStepDone&&(<>
                       <div style={{fontSize:11.5,color:T.muted,marginTop:2,lineHeight:1.5}}>
-                        Connecting Canvas or Google Calendar is the fastest way, but sync can miss a class here and there -- importing that class's syllabus directly always catches it.
+                        Connecting your school's LMS or Google Calendar is the fastest way, but sync can miss a class here and there -- importing that class's syllabus directly always catches it.
                       </div>
                       <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
-                        {!setupChecklist.canvasConnected&&<button type="button" onClick={()=>{setPendingOpenSetting("integrations");setActive("settings");}} style={{padding:"6px 12px",background:"transparent",color:T.text,border:`1px solid ${T.border}`,borderRadius:6,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Connect Canvas</button>}
+                        {/* Canvas/Schoology/Blackboard/Moodle are all real
+                            options (Settings' own Integrations list), and a
+                            student only ever has the one their school
+                            actually uses -- naming one by name here would be
+                            wrong (and unhelpful) for every school on a
+                            different platform, so this stays generic and
+                            lets them pick the right one in Integrations. */}
+                        {!setupChecklist.lmsConnected&&<button type="button" onClick={()=>{setPendingOpenSetting("integrations");setActive("settings");}} style={{padding:"6px 12px",background:"transparent",color:T.text,border:`1px solid ${T.border}`,borderRadius:6,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Connect your school's LMS</button>}
                         {!setupChecklist.googleConnected&&<button type="button" onClick={()=>{setPendingOpenSetting("integrations");setActive("settings");}} style={{padding:"6px 12px",background:"transparent",color:T.text,border:`1px solid ${T.border}`,borderRadius:6,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Connect Google Calendar</button>}
                       </div>
                       <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:10}}>

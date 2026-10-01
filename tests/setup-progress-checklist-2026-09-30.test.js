@@ -69,26 +69,45 @@ describe("computeSetupChecklist: accurate regardless of flow, never fooled by a 
     assert.equal(r.classesNeedingSyllabus.length, 0);
   });
 
+  // User report, 2026-09-30: "it's not just assignments, it's also exams
+  // and projects." A class graded purely on exams (no homework at all) has
+  // real data about the student's actual workload and shouldn't be nagged
+  // forever -- this is the whole reason computeSetupChecklist uses
+  // classHasRealWorkItems instead of reusing classNeedsSyllabus verbatim
+  // (that one deliberately excludes exam-only, for a different question --
+  // see its own comment).
+  test("a class with ONLY exam items (no assignment or project at all) also counts as satisfied", () => {
+    const m = loadStudlinModule();
+    const subjects = [{ id: "s1", label: "Organic Chem" }];
+    const events = [
+      { id: "e1", courseId: "s1", kind: "exam", title: "Midterm 1" },
+      { id: "e2", courseId: "s1", kind: "exam", title: "Final" },
+    ];
+    const r = m.computeSetupChecklist(subjects, events, false, false, []);
+    assert.equal(r.classesNeedingSyllabus.length, 0, "real exam dates are real workload data, not a reason to keep nagging");
+    assert.equal(r.overallDone, true);
+  });
+
   test("mixed classes report an accurate partial count, not an all-or-nothing boolean", () => {
     const m = loadStudlinModule();
     const subjects = [{ id: "s1", label: "Calc II" }, { id: "s2", label: "Bio" }, { id: "s3", label: "Art" }];
     const events = [
       { id: "e1", courseId: "s1", kind: "assignment" },
-      { id: "e2", courseId: "s2", kind: "exam" }, // exam-only, still needs syllabus per classNeedsSyllabus
+      { id: "e2", courseId: "s2", kind: "exam" }, // exam-only -- satisfied (classHasRealWorkItems), s3 has nothing at all
     ];
     const r = m.computeSetupChecklist(subjects, events, false, false, []);
     assert.equal(r.totalClasses, 3);
-    assert.equal(r.classesWithSyllabus, 1);
-    assert.equal(r.classesNeedingSyllabus.map(s => s.id).sort().join(","), "s2,s3");
+    assert.equal(r.classesWithSyllabus, 2);
+    assert.equal(r.classesNeedingSyllabus.map(s => s.id).sort().join(","), "s3");
     assert.equal(r.assignmentsStepDone, false);
   });
 
-  test("Canvas/Google connected alone never marks a class done -- only real items do (the exact gap reported live)", () => {
+  test("LMS/Google connected alone never marks a class done -- only real items do (the exact gap reported live)", () => {
     const m = loadStudlinModule();
     const subjects = [{ id: "s1", label: "Chem" }];
-    const events = []; // Canvas "connected" but this class's sync came back empty
+    const events = []; // LMS "connected" but this class's sync came back empty
     const r = m.computeSetupChecklist(subjects, events, true, true, []);
-    assert.equal(r.canvasConnected, true);
+    assert.equal(r.lmsConnected, true);
     assert.equal(r.googleConnected, true);
     assert.equal(r.classesNeedingSyllabus.length, 1, "a connected integration must not paper over a class with zero real items");
     assert.equal(r.overallDone, false);
@@ -114,5 +133,32 @@ describe("computeSetupChecklist: accurate regardless of flow, never fooled by a 
     const r = m.computeSetupChecklist(subjects, events, false, false, []);
     assert.equal(r.assignmentsStepDone, true);
     assert.equal(r.overallDone, true);
+  });
+});
+
+// Regression guard, 2026-09-30 (caught live): the Dashboard detection line
+// originally checked only sourceType==="Canvas", which would wrongly tell a
+// Schoology/Blackboard/Moodle school's student that nothing was connected
+// even after they connected their actual (non-Canvas) LMS. Source-pattern,
+// not functional -- this is about which REAL function Dashboard calls, not
+// computeSetupChecklist's own logic (already covered above).
+describe("Dashboard's LMS-connected detection recognizes every real LMS, not just Canvas", () => {
+  test("uses isAcademicCalendarSource (Canvas/Schoology/Blackboard/Moodle), not a Canvas-only check", () => {
+    const fs = require("fs");
+    const path = require("path");
+    const SOURCE = fs.readFileSync(path.join(__dirname, "..", "studlin-app.jsx"), "utf8");
+    const idx = SOURCE.indexOf("const lmsConnectedFlag=");
+    assert.notEqual(idx, -1, "Dashboard must compute a generic lmsConnectedFlag, not a Canvas-specific one");
+    const line = SOURCE.slice(idx, idx + 200);
+    assert.match(line, /isAcademicCalendarSource\(c\.sourceType\)/);
+    assert.doesNotMatch(line, /sourceType===["']Canvas["']/, "must not regress to checking only Canvas");
+  });
+  test("isAcademicCalendarSource itself still covers all four real LMS platforms", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.isAcademicCalendarSource("Canvas"), true);
+    assert.equal(m.isAcademicCalendarSource("Schoology"), true);
+    assert.equal(m.isAcademicCalendarSource("Blackboard"), true);
+    assert.equal(m.isAcademicCalendarSource("Moodle"), true);
+    assert.equal(m.isAcademicCalendarSource("SomeRandomThing"), false);
   });
 });
