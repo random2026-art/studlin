@@ -36,7 +36,7 @@ const BETA_TESTER_EMAILS = [
   'habibmh936@gmail.com',
 ];
 const BETA_CODE = 'betatesters';
-const BETA_TRIAL_DAYS = 30;
+const BETA_TRIAL_DAYS = 60;
 // A paying Pro subscriber gets PLAN_CREDITS.Pro credits every billing cycle
 // (api/stripe-webhook.js handleInvoicePaid). A beta trial skips Stripe, so it
 // never got any: those accounts kept the 120 every account starts with, and
