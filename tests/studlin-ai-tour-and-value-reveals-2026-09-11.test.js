@@ -146,7 +146,11 @@ describe("Source-level regression guards: Dashboard's one-time 'Studlin is learn
   test("Dashboard renders the reveal card gated on shouldShowLearnsYouReveal, with a real dismiss action", () => {
     const idx = SOURCE.indexOf("function Dashboard(");
     assert.ok(idx > -1);
-    const body = SOURCE.slice(idx, idx + 18000);
+    // Window widened (18000->24000), 2026-09-30: the new setup-progress
+    // checklist's state block sits between this reveal card's own state and
+    // its JSX, pushing the JSX (and this string) further from the function
+    // start.
+    const body = SOURCE.slice(idx, idx + 24000);
     assert.ok(body.includes("useState(()=>shouldShowLearnsYouReveal())"));
     assert.ok(body.includes("Studlin's been paying attention"));
     assert.ok(body.includes("closeLearnsYouReveal"));

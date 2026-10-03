@@ -201,6 +201,7 @@ function loadStudlinModule(options) {
     "isNearDuplicateCourseLabel","findDuplicateCourseGroups",
     "ensureSubjectsForClassRoutines","shouldShowSyllabusNudge","dismissSyllabusNudge",
     "SYLLABUS_NUDGE_COOLDOWN_MS","classNeedsSyllabus","isNearDuplicateSchoolName",
+    "liveClassItems","computeSetupChecklist","classHasRealWorkItems",
     "resolveCalendarHighlightFlag","CALENDAR_HIGHLIGHT_MAX_AGE_MS",
     "computeNewSlotCandidates","NEW_PLACEMENT_SCAN_DAYS","NEW_PLACEMENT_MAX_CANDIDATES",
     "computeRescheduleCandidates","RESCHEDULE_SCAN_DAYS","RESCHEDULE_MAX_CANDIDATES",

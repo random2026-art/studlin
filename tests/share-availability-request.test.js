@@ -67,7 +67,11 @@ describe("Client: notification deep-link lands on Settings > Privacy and highlig
   });
 
   test("SettingsTab jumps straight to the Privacy sub-tab when the deep link names shareAvailability", () => {
-    assert.match(APP_SOURCE, /const \[active,setActive\]=useState\(pendingOpenSetting==="shareAvailability"\?"Privacy":"General"\);/);
+    // 2026-09-30: extended with an "integrations" branch (the setup
+    // checklist's Connect Canvas/Google Calendar buttons) -- shareAvailability
+    // still resolves to Privacy exactly as before, just no longer the only
+    // named case in the ternary.
+    assert.match(APP_SOURCE, /const \[active,setActive\]=useState\(pendingOpenSetting==="shareAvailability"\?"Privacy":pendingOpenSetting==="integrations"\?"Integrations":"General"\);/);
   });
 
   test("the Share my free/busy time Row actually receives the highlight prop tied to the deep-link flag", () => {
