@@ -23715,7 +23715,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   const qStart=timeToMinutes(quickCreateDraft.startTime);
                   const qDur=Math.max(15,timeToMinutes(quickCreateDraft.endTime)-qStart);
                   return (
-                    <div style={{position:"absolute",top:qStart*(WK_PX_HR/60),left:2,right:2,height:Math.max(15,qDur)*(WK_PX_HR/60),borderRadius:5,background:T.lime+"22",border:`1.5px dashed ${T.lime}`,zIndex:7,pointerEvents:"none",boxSizing:"border-box"}} />
+                    <div style={{position:"absolute",top:qStart*(WK_PX_HR/60),left:2,right:2,height:Math.max(15,qDur)*(WK_PX_HR/60),borderRadius:5,background:quickCreateDraft.color?quickCreateDraft.color+"B3":T.lime+"22",border:`1.5px dashed ${quickCreateDraft.color||T.lime}`,zIndex:7,pointerEvents:"none",boxSizing:"border-box"}} />
                   );
                 })()}
                 {isPastDeadline && (
@@ -27379,7 +27379,7 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
               const qStart=timeToMinutes(quickCreateDraft.startTime);
               const qDur=Math.max(15,timeToMinutes(quickCreateDraft.endTime)-qStart);
               return (
-                <div style={{position:"absolute",top:(qStart-spanStart)*(pxPerHr/60),left:2,right:2,height:qDur*(pxPerHr/60),borderRadius:5,background:T.lime+"22",border:`1.5px dashed ${T.lime}`,zIndex:7,pointerEvents:"none",boxSizing:"border-box"}} />
+                <div style={{position:"absolute",top:(qStart-spanStart)*(pxPerHr/60),left:2,right:2,height:qDur*(pxPerHr/60),borderRadius:5,background:quickCreateDraft.color?quickCreateDraft.color+"B3":T.lime+"22",border:`1.5px dashed ${quickCreateDraft.color||T.lime}`,zIndex:7,pointerEvents:"none",boxSizing:"border-box"}} />
               );
             })()}
             {isToday&&nowMins>=spanStart&&nowMins<=spanEnd&&(
@@ -30800,10 +30800,11 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
 // the full Add Task flow (openNew) for anything needing AI arrange,
 // subject, Attack Block, etc., pre-seeded with the same date/time so nothing
 // typed here is lost.
-function QuickCreateTaskPopover({draft,anchorX,anchorY,onCreate,onMoreOptions,onClose}){
+function QuickCreateTaskPopover({draft,anchorX,anchorY,onCreate,onMoreOptions,onClose,onColorChange}){
   const [title,setTitle]=useState("");
-  const [color,setColor]=useState(T.lime);
-  useEffect(()=>{ if(draft){setTitle("");setColor(T.lime);} },[draft&&draft.dateKey,draft&&draft.startTime,draft&&draft.endTime]);
+  const [color,setColorState]=useState(T.lime);
+  const setColor=(c)=>{setColorState(c);if(onColorChange)onColorChange(c);};
+  useEffect(()=>{ if(draft){setTitle("");setColorState(T.lime);} },[draft&&draft.dateKey,draft&&draft.startTime,draft&&draft.endTime]);
   if(!draft)return null;
   const POPOVER_WIDTH=280;
   const ESTIMATED_HEIGHT=150;
@@ -31062,6 +31063,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     setQuickCreateDraft({dateKey,startTime,endTime});
     setQuickCreatePopover({dateKey,startTime,endTime,anchorX:anchor&&anchor.x,anchorY:anchor&&anchor.y});
   };
+  // The popover's color pick is mirrored onto the ghost block so the whole
+  // preview fills with it, not just the popover's small swatch.
+  const handleQuickCreateColor=(color)=>setQuickCreateDraft(d=>d?{...d,color}:d);
   const cancelQuickCreate=()=>{setQuickCreateDraft(null);setQuickCreatePopover(null);};
   const commitQuickCreateTask=(title,color)=>{
     if(!quickCreatePopover)return;
@@ -35401,7 +35405,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           gsDraft={gsOpen&&gsStep==="place"?gsDraft:null} onGsPreviewMove={gsOpen&&gsStep==="place"?gsPreviewMove:undefined} onGsPreviewResize={gsOpen&&gsStep==="place"?gsPreviewResize:undefined} />
       )}
       <QuickCreateTaskPopover draft={quickCreatePopover} anchorX={quickCreatePopover&&quickCreatePopover.anchorX} anchorY={quickCreatePopover&&quickCreatePopover.anchorY}
-        onCreate={commitQuickCreateTask} onMoreOptions={quickCreateMoreOptions} onClose={cancelQuickCreate} />
+        onColorChange={handleQuickCreateColor} onCreate={commitQuickCreateTask} onMoreOptions={quickCreateMoreOptions} onClose={cancelQuickCreate} />
     </div>
       {/* Right-hand column (Phase 5e) -- upcoming across everything by
           default, re-filtered to the selected course's items on a chip
