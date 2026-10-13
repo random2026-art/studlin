@@ -143,6 +143,158 @@ const STEPS = [
   { name: "Sign up" },{ name: "Verify" },{ name: "Profile" },
 ];
 
+// ===== STU MASCOT: the Studlin logo square come to life. SHARED COPY, keep identical in studlin-app.jsx and onboarding.jsx (a test checks). =====
+// Props: mood, color (body fill), outline (face ink), edge (body/limb outline, defaults to outline), size (px height), walking, facing, speaking, ariaLabel.
+const stuH = React.createElement;
+const STU_CSS = [
+  '.stu-root{display:inline-block;line-height:0;overflow:visible}',
+  '.stu-root svg{overflow:visible;display:block}',
+  '.stu-breathe{transform-origin:60px 80px;animation:stu-breathe 4s ease-in-out infinite}',
+  '.stu-bob{animation:stu-bob .56s ease-in-out infinite}',
+  '.stu-blink{transform-origin:60px 44px;animation:stu-blink 4.2s infinite}',
+  '.stu-legA{transform-origin:47px 82px;animation:stu-swingA .56s ease-in-out infinite}',
+  '.stu-legB{transform-origin:73px 82px;animation:stu-swingB .56s ease-in-out infinite}',
+  '.stu-talk{transform-origin:60px 58px;animation:stu-talk .34s ease-in-out infinite}',
+  '.stu-conf{animation:stu-conf 1.6s ease-in-out infinite}',
+  '.stu-spark{transform-origin:100px 22px;animation:stu-spark 1.8s ease-in-out infinite}',
+  '@keyframes stu-breathe{0%,100%{transform:scale(1,1)}50%{transform:scale(1.015,.985)}}',
+  '@keyframes stu-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-2.5px)}}',
+  '@keyframes stu-blink{0%,93%,100%{transform:scaleY(1)}96%{transform:scaleY(.08)}}',
+  '@keyframes stu-swingA{0%,100%{transform:rotate(-22deg)}50%{transform:rotate(22deg)}}',
+  '@keyframes stu-swingB{0%,100%{transform:rotate(22deg)}50%{transform:rotate(-22deg)}}',
+  '@keyframes stu-talk{0%,100%{transform:scaleY(1)}50%{transform:scaleY(.55)}}',
+  '@keyframes stu-conf{0%,100%{transform:translateY(0);opacity:1}50%{transform:translateY(-3px);opacity:.7}}',
+  '@keyframes stu-spark{0%,100%{transform:scale(1) rotate(0)}50%{transform:scale(1.25) rotate(20deg)}}',
+  '@media (prefers-reduced-motion:reduce){.stu-root *{animation:none!important}}'
+].join('');
+
+function stuRgb(c) { c = String(c).replace('#', ''); if (c.length === 3) c = c.replace(/(.)/g, '$1$1'); var n = parseInt(c, 16); return isNaN(n) ? [158, 200, 61] : [n >> 16 & 255, n >> 8 & 255, n & 255]; }
+function stuMix(a, b, t) { var A = stuRgb(a), B = stuRgb(b); return 'rgb(' + A.map(function (v, i) { return Math.round(v + (B[i] - v) * t); }).join(',') + ')'; }
+
+// Hand-made wonky body, flat bottom, clipped top-right corner like the drawing.
+const STU_BODY = 'M31 24 Q30 20 36 19.5 L77 18 Q82 17.5 85 21 L90 27 Q91.5 29 91.5 33 L91.5 74 Q92 79 87 79.5 L38 82 Q31 82.5 31 77 Z';
+
+// arms: per side [elbowX, elbowY, handX, handY]
+const STU_ARMS = {
+  out: [[22, 62, 14, 50], [98, 62, 106, 50]],
+  up: [[20, 52, 18, 36], [100, 52, 102, 36]],
+  droop: [[22, 70, 18, 82], [98, 70, 102, 82]],
+  hips: [[20, 64, 30, 72], [100, 64, 90, 72]],
+  wave: [[22, 62, 14, 50], [100, 50, 110, 34]],
+  think: [[22, 66, 14, 74], [92, 62, 80, 54]],
+  hurray: [[18, 48, 12, 30], [102, 48, 108, 30]],
+  sleepy: [[22, 68, 16, 78], [98, 68, 104, 78]],
+  proud: [[24, 66, 18, 56], [96, 66, 102, 56]]
+};
+
+const STU_MOODS = {
+  neutral: { l: 'dot', r: 'ring', mouth: 'M50 62 Q60 65 70 62', arms: 'out' },
+  happy: { l: 'dot', r: 'ring', mouth: 'M47 59 Q60 71 73 59', arms: 'out', blush: 1 },
+  excited: { l: 'big', r: 'ring', mouth: 'open', arms: 'up', blush: 1, brow: 'up' },
+  wink: { l: 'dot', r: 'arcUp', mouth: 'M47 59 Q58 70 73 58', arms: 'wave', blush: 1 },
+  sad: { l: 'dot', r: 'ring', mouth: 'M50 66 Q60 58 70 66', arms: 'droop', brow: 'sad', tear: 1 },
+  worried: { l: 'dot', r: 'ring', mouth: 'M49 65 Q54 61 59 65 Q64 69 71 64', arms: 'hips', brow: 'sad', sweat: 1 },
+  sleepy: { l: 'line', r: 'line', mouth: 'M55 62 Q60 66 65 62', arms: 'sleepy', zz: 1 },
+  proud: { l: 'arcUp', r: 'arcUp', mouth: 'M48 60 Q60 70 72 60', arms: 'proud', blush: 1, sparkle: 1, chest: 1 },
+  thinking: { l: 'dotUp', r: 'ringUp', mouth: 'M52 63 Q58 61 68 64', arms: 'think', brow: 'think', dots: 1 },
+  waving: { l: 'dot', r: 'ring', mouth: 'M47 59 Q60 70 73 59', arms: 'wave', blush: 1 },
+  celebrating: { l: 'arcUp', r: 'arcUp', mouth: 'open', arms: 'hurray', blush: 1, confetti: 1 }
+};
+
+function stuEye(kind, x, ink, hi) {
+  var y = 44, s = { stroke: ink, strokeWidth: 3, fill: 'none', strokeLinecap: 'round' };
+  switch (kind) {
+    case 'dot': return stuH('ellipse', { cx: x, cy: y, rx: 3.6, ry: 4.2, fill: ink });
+    case 'dotUp': return stuH('ellipse', { cx: x + 1.5, cy: y - 2, rx: 3.6, ry: 4.2, fill: ink });
+    case 'big': return stuH('g', null, stuH('circle', { cx: x, cy: y, r: 6, fill: ink }), stuH('circle', { cx: x + 1.8, cy: y - 2, r: 1.8, fill: hi }));
+    case 'ring': return stuH('g', null, stuH('circle', { cx: x, cy: y, r: 5.4, fill: hi, stroke: ink, strokeWidth: 2.6 }), stuH('circle', { cx: x, cy: y, r: 2.4, fill: ink }));
+    case 'ringUp': return stuH('g', null, stuH('circle', { cx: x, cy: y - 1, r: 5.4, fill: hi, stroke: ink, strokeWidth: 2.6 }), stuH('circle', { cx: x + 1.5, cy: y - 3, r: 2.4, fill: ink }));
+    case 'arcUp': return stuH('path', Object.assign({ d: 'M' + (x - 5) + ' ' + (y + 2) + ' Q' + x + ' ' + (y - 6) + ' ' + (x + 5) + ' ' + (y + 2) }, s));
+    case 'line': return stuH('path', Object.assign({ d: 'M' + (x - 5) + ' ' + (y + 1) + ' Q' + x + ' ' + (y + 4) + ' ' + (x + 5) + ' ' + (y + 1) }, s));
+  }
+}
+
+function StudMascot(p) {
+  var mood = STU_MOODS[p.mood] ? p.mood : 'happy', m = STU_MOODS[mood];
+  var color = p.color || '#9EC83D', ink = p.outline || '#0E1F18', edge = p.edge || ink, size = p.size || 96;
+  var hi = stuMix(color, '#ffffff', 0.82), shine = stuMix(color, '#ffffff', 0.45), blush = stuMix(color, '#ff4d7a', 0.55), shade = stuMix(color, '#000000', 0.12);
+  var walking = !!p.walking, arms = STU_ARMS[m.arms];
+  var line = { stroke: ink, strokeWidth: 3.4, fill: 'none', strokeLinecap: 'round', strokeLinejoin: 'round' };
+  var eline = Object.assign({}, line, { stroke: edge });
+  var ky = m.chest ? -2 : 0;
+
+  if (typeof document !== 'undefined' && !document.getElementById('stu-style')) {
+    var st = document.createElement('style'); st.id = 'stu-style'; st.textContent = STU_CSS; document.head.appendChild(st);
+  }
+
+  function arm(a, side) {
+    var sx = side ? 91 : 31, sy = m.chest ? 62 : 60;
+    return stuH('path', Object.assign({ key: 'arm' + side, d: 'M' + sx + ' ' + sy + ' L' + a[0] + ' ' + a[1] + ' L' + a[2] + ' ' + a[3] }, eline));
+  }
+  function leg(x, cls) {
+    return stuH('g', { key: 'leg' + x, className: walking ? cls : undefined },
+      stuH('path', Object.assign({ d: 'M' + x + ' 81 L' + x + ' 104' }, eline)),
+      stuH('path', Object.assign({ d: 'M' + (x - 6) + ' 106 Q' + (x - 6) + ' 102 ' + (x - 1) + ' 102.5 L' + (x + 6) + ' 103 Q' + (x + 8) + ' 108 ' + (x + 3) + ' 109 L' + (x - 4) + ' 109 Q' + (x - 6) + ' 109 ' + (x - 6) + ' 106 Z', fill: color }, eline, { strokeWidth: 3 })));
+  }
+  var mouth;
+  if (p.speaking) {
+    mouth = stuH('g', { className: 'stu-talk' }, stuH('path', { d: 'M51 60 Q60 62 69 60 Q68 70 60 70 Q52 70 51 60 Z', fill: ink, stroke: ink, strokeWidth: 2.4, strokeLinejoin: 'round' }));
+  } else if (m.mouth === 'open') {
+    mouth = [stuH('path', { key: 'o', d: 'M49 58 Q60 60 71 58 Q70 72 60 72 Q50 72 49 58 Z', fill: ink, stroke: ink, strokeWidth: 2.4, strokeLinejoin: 'round' }),
+      stuH('path', { key: 't', d: 'M54 69 Q60 64 66 69 Q60 72 54 69 Z', fill: blush })];
+  } else {
+    mouth = stuH('path', Object.assign({ d: m.mouth }, line, { strokeWidth: 3 }));
+  }
+
+  var bs = { stroke: ink, strokeWidth: 2.6, fill: 'none', strokeLinecap: 'round' }, brows = null;
+  if (m.brow === 'sad') brows = [stuH('path', Object.assign({ key: 1, d: 'M40 38 L53 33' }, bs)), stuH('path', Object.assign({ key: 2, d: 'M80 38 L67 33' }, bs))];
+  if (m.brow === 'up') brows = [stuH('path', Object.assign({ key: 1, d: 'M42 33 Q48 29 54 33' }, bs)), stuH('path', Object.assign({ key: 2, d: 'M66 33 Q72 29 78 33' }, bs))];
+  if (m.brow === 'think') brows = stuH('path', Object.assign({ d: 'M66 32 Q72 29 78 33' }, bs));
+
+  var extras = [];
+  if (m.blush) extras.push(stuH('ellipse', { key: 'b1', cx: 40, cy: 55, rx: 5, ry: 3, fill: blush, opacity: 0.5 }), stuH('ellipse', { key: 'b2', cx: 80, cy: 55, rx: 5, ry: 3, fill: blush, opacity: 0.5 }));
+  if (m.tear) extras.push(stuH('path', { key: 'tr', d: 'M72 52 Q75 57 72 60 Q69 57 72 52 Z', fill: '#7cc4ff', stroke: ink, strokeWidth: 1.6 }));
+  if (m.sweat) extras.push(stuH('path', { key: 'sw', d: 'M85 28 Q88 33 85 36 Q82 33 85 28 Z', fill: '#7cc4ff', stroke: ink, strokeWidth: 1.6 }));
+  var star = function (cx, cy, r, k) { return stuH('path', { key: k, d: 'M' + cx + ' ' + (cy - r) + ' Q' + cx + ' ' + cy + ' ' + (cx + r) + ' ' + cy + ' Q' + cx + ' ' + cy + ' ' + cx + ' ' + (cy + r) + ' Q' + cx + ' ' + cy + ' ' + (cx - r) + ' ' + cy + ' Q' + cx + ' ' + cy + ' ' + cx + ' ' + (cy - r) + ' Z', fill: ink }); };
+  if (m.sparkle) extras.push(stuH('g', { key: 'sp', className: 'stu-spark' }, star(100, 22, 8, 's1')), star(22, 14, 4, 's2'));
+  if (m.zz) extras.push(stuH('text', { key: 'zz', x: 92, y: 20, fontSize: 14, fontWeight: 800, fontFamily: 'system-ui,sans-serif', fill: ink, className: 'stu-conf' }, 'z'), stuH('text', { key: 'zz2', x: 101, y: 8, fontSize: 10, fontWeight: 800, fontFamily: 'system-ui,sans-serif', fill: ink, className: 'stu-conf' }, 'z'));
+  if (m.dots) extras.push(stuH('circle', { key: 'd1', cx: 96, cy: 24, r: 2, fill: ink }), stuH('circle', { key: 'd2', cx: 102, cy: 16, r: 3, fill: ink }), stuH('circle', { key: 'd3', cx: 110, cy: 6, r: 4.2, fill: 'none', stroke: ink, strokeWidth: 2 }));
+  if (m.confetti) [[12, 14, '#F27BAA'], [28, 4, '#FFC93C'], [96, 6, '#5BC0EB'], [108, 18, '#F27BAA'], [60, 2, '#FFC93C'], [116, 40, '#5BC0EB'], [4, 36, '#5BC0EB']].forEach(function (c, i) {
+    extras.push(stuH('rect', { key: 'c' + i, x: c[0], y: c[1], width: 5, height: 5, rx: 1.4, fill: c[2], className: 'stu-conf', style: { animationDelay: (i * 0.17) + 's' }, transform: 'rotate(' + (i * 27) + ' ' + c[0] + ' ' + c[1] + ')' }));
+  });
+
+  var face = stuH('g', null, stuH('g', { className: 'stu-blink' }, stuEye(m.l, 48, ink, hi), stuEye(m.r, 72, ink, hi)), brows, mouth);
+  var body = stuH('g', { className: walking ? 'stu-bob' : undefined },
+    stuH('g', { className: 'stu-breathe' },
+      arms.map(function (a, i) { return arm(a, i); }),
+      stuH('path', { d: STU_BODY, fill: color, stroke: edge, strokeWidth: 4, strokeLinejoin: 'round' }),
+      stuH('path', { d: 'M37 27 L37 40', stroke: shine, strokeWidth: 3.4, strokeLinecap: 'round', opacity: 0.9 }),
+      stuH('path', { d: 'M38 77 L89 75', stroke: shade, strokeWidth: 3, strokeLinecap: 'round', opacity: 0.6 }),
+      stuH('g', { transform: 'translate(0 ' + ky + ')' }, face), extras));
+  var aria = p.ariaLabel ? { role: 'img', 'aria-label': p.ariaLabel } : { 'aria-hidden': true };
+  return stuH('span', { className: 'stu-root ' + (p.className || ''), style: Object.assign({ transform: p.facing === 'left' ? 'scaleX(-1)' : undefined, filter: p.onDark ? 'drop-shadow(0 0 1.2px rgba(255,255,255,.95))' : undefined }, p.style) },
+    stuH('svg', Object.assign({ viewBox: '-2 -4 124 120', height: size, width: size * 124 / 120, xmlns: 'http://www.w3.org/2000/svg' }, aria),
+      stuH('g', null, leg(47, 'stu-legA'), leg(73, 'stu-legB'), body)));
+}
+// ===== END STU MASCOT =====
+
+// Stu says hi in the left panel (2026-10-13). Always the brand lime here:
+// there is no theme before sign-up. Mood and line change per step.
+const STU_RAIL_LINES = [
+  ["waving", "Hi, I'm Stu! I'll help you stay on top of school."],
+  ["thinking", "Check your email. I'll wait right here."],
+  ["excited", "Almost there! Tell me a bit about you."],
+];
+function StuGreeting({ step }) {
+  const [mood, line] = STU_RAIL_LINES[Math.min(step, STU_RAIL_LINES.length - 1)];
+  return (
+    <div className="stu-greet">
+      <StudMascot mood={mood} size={84} color="#9EC83D" outline="#0E1F18" edge="#E6ECE7" ariaLabel="Stu, the Studlin mascot" />
+      <div className="stu-say">{line}</div>
+    </div>
+  );
+}
+
 // One product preview per step in the left panel (2026-10-13). The files are
 // light WebP exports of the hero mockups; the rail is hidden under 980px, so
 // no mobile variant is needed. Mockups, not live screenshots.
@@ -168,7 +320,7 @@ function LeftRail({ step, state }) {
           <div style={{width:34,height:34,borderRadius:8,background:"#9EC83D",display:"grid",placeItems:"center",fontSize:17,fontWeight:800,color:"#14342A"}}>S</div>
           <span className="name">studlin</span>
         </div>
-        <div className="rail-icon">{Ic.userPlus}</div>
+        <StuGreeting step={step} />
         <h1>Sign up and lock in.</h1>
         <p className="lead">Sign up is simple, free and fast. One workspace for everything you study, write, and remember.</p>
         <RailShot step={step} />
@@ -182,7 +334,7 @@ function LeftRail({ step, state }) {
         <div style={{width:34,height:34,borderRadius:8,background:"#9EC83D",display:"grid",placeItems:"center",fontSize:17,fontWeight:800,color:"#14342A"}}>S</div>
         <span className="name">studlin</span>
       </div>
-      <div className="rail-icon">{Ic.userPlus}</div>
+      <StuGreeting step={step} />
       <h1 style={{fontSize:28}}>Create your account in a few clicks.</h1>
       <div className="stepper" style={{marginTop:36}}>
         {groups.map((g,i)=>{
