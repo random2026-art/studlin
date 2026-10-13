@@ -36253,7 +36253,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             actually repeat weekly like a real one. Removed; a real class
             only comes out right through Courses' own "+ Add new" wizard. */}
         <Field label="Type" hint={isFixedKind?"Won't be moved or rescheduled.":isRepeatingTask?"Repeats on the days you pick below.":isChecklistMode?"Just a due date -- no calendar time yet.":evKind==="studySession"?"A focused block of study time at the exact time you pick.":evKind==="task"?(taskMode==="manual"?"Happens at this exact time.":"Studlin finds the time before it's due."):evKind==="assignment"?(taskMode==="manual"?"You pick when you'll work on it -- due date is optional.":"Studlin finds the time before it's due."):undefined}>
-          <SelectChip options={[{value:"assignment",label:"Assignment"},{value:"studySession",label:"Study Session"},{value:"task",label:"Task"},{value:"project",label:"Project"},"exam",{value:"busy block",label:"Activity"},"reminder"]} value={evKind} onChange={onEvKindChange} />
+          <CustomSelect boxed options={[{value:"assignment",label:"Assignment"},{value:"studySession",label:"Study Session"},{value:"task",label:"Task"},{value:"project",label:"Project"},{value:"exam",label:"Exam"},{value:"busy block",label:"Activity"},{value:"reminder",label:"Reminder"}]} value={evKind} onChange={onEvKindChange} minWidth={220} />
         </Field>
         {/* Same fix as EventDetailModal's identical Subject field
             (2026-09-04) -- a SelectChip wall wrapping across several rows
@@ -36602,15 +36602,6 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             Attack Block/Split below (nothing to configure for a session
             that isn't being scheduled yet) -- see aiArrange's own early
             return for what this actually commits. */}
-        {evKind==="assignment"&&!isChecklistMode&&taskMode==="ai"&&(
-          <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:14}}>
-            <div onClick={()=>setEvScheduleLater(s=>{if(!s)setEvAttackBlock(false);return !s;})} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
-              <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Just track the due date for now</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Skip scheduling time for it today -- add it, or start an Attack Block, anytime from Studlin Prep.</div></div>
-              <div style={{width:36,height:20,borderRadius:10,background:evScheduleLater?T.lime:T.faint,position:"relative",transition:"background 0.2s",cursor:"pointer",flexShrink:0}}><div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:evScheduleLater?18:2,transition:"left 0.2s"}} /></div>
-            </div>
-          </div>
-        )}
-
         {isTaskKind&&!isChecklistMode&&taskRepeatDays.length===0&&!evAttackBlock&&!evScheduleLater&&(
           <Field label="Duration (minutes)" hint="How long you plan to spend">
             <NumField min={5} max={480} fallback={5} value={evDuration} onChange={v=>{setEvDuration(v);setEvDurationTouched(true);}} />
@@ -36618,6 +36609,31 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
               <div style={{fontSize:11.5,color:T.muted,marginTop:6}}>Similar tasks usually take you ~{s}m — <button type="button" onClick={()=>{setEvDuration(s);setEvDurationTouched(true);}} style={{background:"none",border:"none",color:T.lime,cursor:"pointer",fontSize:11.5,fontFamily:T.font,padding:0,textDecoration:"underline"}}>use this</button></div>
             );})()}
           </Field>
+        )}
+
+        {/* One collapsed "More options" section (2026-10-13 user request: the
+            form felt overwhelming). Just-track-due-date, Attack Block, impact &
+            difficulty, Split into sessions and Notes all live in here; every
+            block keeps its own applicability condition, so nothing that was
+            hidden before is newly shown. Stays open once anything inside is in
+            use, so a turned-on setting is never tucked out of sight. */}
+        {(()=>{
+          const showImpact=isTaskKind&&!isChecklistMode&&taskRepeatDays.length===0&&taskMode==="ai";
+          const hasMore=(evKind==="assignment"&&!isChecklistMode&&taskMode==="ai")
+            ||(isTaskKind&&!isChecklistMode&&!evScheduleLater&&evKind!=="task"&&evKind!=="studySession")
+            ||showImpact||(isTaskKind&&!isChecklistMode&&!evScheduleLater)||!isProjectKind;
+          if(!hasMore)return null;
+          if(!(evMoreOpen||evScheduleLater||evAttackBlock||evSplitEnabled||(evNotes||"").trim()))return (
+            <button type="button" onClick={()=>setEvMoreOpen(true)} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:"4px 0",marginBottom:14,textDecoration:"underline"}}>+ More options</button>
+          );
+          return (<>
+        {evKind==="assignment"&&!isChecklistMode&&taskMode==="ai"&&(
+          <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:14}}>
+            <div onClick={()=>setEvScheduleLater(s=>{if(!s)setEvAttackBlock(false);return !s;})} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+              <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Just track the due date for now</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Skip scheduling time for it today -- add it, or start an Attack Block, anytime from Studlin Prep.</div></div>
+              <div style={{width:36,height:20,borderRadius:10,background:evScheduleLater?T.lime:T.faint,position:"relative",transition:"background 0.2s",cursor:"pointer",flexShrink:0}}><div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:evScheduleLater?18:2,transition:"left 0.2s"}} /></div>
+            </div>
+          </div>
         )}
 
         {/* Attack Block and Split into sessions used to just silently vanish
@@ -36651,8 +36667,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           </div>
         </>))}
 
-        {isTaskKind&&!isChecklistMode&&taskRepeatDays.length===0&&taskMode==="ai"&&(
-          evMoreOpen ? (
+          {showImpact&&(
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
               <Field label={`Impact: ${Math.round(evPriority/10)}%`} hint="Higher-impact tasks get scheduled earlier.">
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -36673,11 +36688,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                 </div>
               </Field>
             </div>
-          ) : (
-            <button type="button" onClick={()=>setEvMoreOpen(true)} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:"4px 0",marginBottom:14,textDecoration:"underline"}}>+ More details (impact &amp; difficulty)</button>
-          )
-        )}
-
+          )}
         {isTaskKind&&!isChecklistMode&&!evScheduleLater&&(evAttackBlock?(
           <div style={{fontSize:11,color:T.faint,marginBottom:14}}>Split into sessions isn't available while "I don't know how long this takes" is on — turn that off above to use Split instead.</div>
         ):(
@@ -36698,6 +36709,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         {!isProjectKind&&(
           <Field label="Notes (optional)"><Textarea placeholder="e.g. Bring calculator, covers chapters 4 to 6." value={evNotes} onChange={ev=>setEvNotes(ev.target.value)} /></Field>
         )}
+          </>);
+        })()}
       </Modal>
 
       {/* ── LINK STUDY SESSION TO AN EXAM — same picker-modal pattern as

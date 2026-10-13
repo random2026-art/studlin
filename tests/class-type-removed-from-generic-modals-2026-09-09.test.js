@@ -37,8 +37,8 @@ describe("'class' is no longer a selectable Type in either general-purpose task 
   });
 
   test("the New Task modal's Type row no longer offers 'class'", () => {
-    const idx = SOURCE.indexOf('<SelectChip options={[{value:"assignment",label:"Assignment"},{value:"studySession",label:"Study Session"}');
-    assert.notEqual(idx, -1, "New Task modal's Type SelectChip should still exist");
+    const idx = SOURCE.indexOf('<CustomSelect boxed options={[{value:"assignment",label:"Assignment"},{value:"studySession",label:"Study Session"}');
+    assert.notEqual(idx, -1, "New Task modal's Type picker (now a CustomSelect dropdown) should still exist");
     const body = SOURCE.slice(idx, idx + 300);
     assert.doesNotMatch(body, /"class"/, "class must not be a pickable Type here -- its own Repeat field is hard-scoped to Type Task only, so a class made here could never actually repeat weekly");
     assert.match(body, /"exam"/, "other real one-off kinds must still be selectable");
