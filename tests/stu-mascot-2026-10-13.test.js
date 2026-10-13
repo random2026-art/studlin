@@ -132,3 +132,23 @@ describe("source-level wiring guards", () => {
     assert.ok(!ONB.slice(o, o + 400).includes("—"));
   });
 });
+
+describe("review fixes (2026-10-13)", () => {
+  test("Settings toggles merge over the saved object, so 'Stop showing suggestions' is not undone by a stale snapshot", () => {
+    assert.ok(APP.includes('const cur={...t,...lsGet("settings",{})};'));
+    assert.ok(APP.includes('window.addEventListener("studlin-settings-changed",sync)'));
+    assert.ok(APP.includes('window.dispatchEvent(new Event("studlin-settings-changed"))'));
+  });
+  test("a cheer only shows if it is fresh, and untitled tasks get a plain 'Nice work!'", () => {
+    assert.ok(APP.includes("Date.now()-stuCheer.at<10000"));
+    assert.ok(APP.includes('line=title?"Nice work on "+short+"!":"Nice work!";'));
+  });
+  test("starting a timer clears any pending reminder", () => {
+    assert.ok(APP.includes("useEffect(()=>{if(timerTask)setHeadsUpEvent(null);},[timerTask]);"));
+  });
+  test("Stu honors the in-app Reduce motion setting and stacks above same-tier cards", () => {
+    assert.ok(APP.includes('document.body.getAttribute("data-motion")==="reduce"'));
+    assert.ok(APP.includes('body[data-motion="reduce"] .stu-root'));
+    assert.ok(APP.includes("left,zIndex:999,display:\"flex\",alignItems:\"flex-end\""));
+  });
+});

@@ -22468,7 +22468,8 @@ const STU_CSS = [
   "@keyframes stu-talk{0%,100%{transform:scaleY(1)}50%{transform:scaleY(.55)}}",
   "@keyframes stu-conf{0%,100%{transform:translateY(0);opacity:1}50%{transform:translateY(-3px);opacity:.7}}",
   "@keyframes stu-spark{0%,100%{transform:scale(1) rotate(0)}50%{transform:scale(1.25) rotate(20deg)}}",
-  "@media (prefers-reduced-motion:reduce){.stu-root *{animation:none!important}}"
+  "@media (prefers-reduced-motion:reduce){.stu-root *{animation:none!important}}",
+  'body[data-motion="reduce"] .stu-root *{animation:none!important}'
 ].join("");
 function stuRgb(c) {
   c = String(c).replace("#", "");
@@ -22653,7 +22654,7 @@ function StudCompanion({ mode, title, clock, navExpanded, onYes, onDone }) {
     mood = "happy";
   } else if (phase === "talk" && mode === "cheer") {
     mood = "celebrating";
-    line = "Nice work on " + short + "!";
+    line = title ? "Nice work on " + short + "!" : "Nice work!";
   } else if (phase === "talk") {
     mood = declinesBefore >= 2 ? "worried" : "waving";
     line = declinesBefore >= 2 ? "Last nudge, I promise. Ready for " + short + "?" : "Time to start " + short + "?";
@@ -22674,7 +22675,8 @@ function StudCompanion({ mode, title, clock, navExpanded, onYes, onDone }) {
   const pal = stuPalette();
   const left = (navExpanded ? 230 : 48) + 16;
   const showBubble = !walking;
-  return /* @__PURE__ */ React.createElement("div", { className: "stu-wrap-anim", role: "status", "aria-live": "polite", style: { position: "fixed", bottom: 14, left, zIndex: 998, display: "flex", alignItems: "flex-end", gap: 6, pointerEvents: "none", animation: phase === "in" ? "stuWalkIn 1.5s ease-out both" : phase === "out" ? "stuWalkOut 1.3s ease-in both" : "none" } }, /* @__PURE__ */ React.createElement("style", null, "@keyframes stuWalkIn{from{transform:translateX(-340px)}to{transform:translateX(0)}}@keyframes stuWalkOut{from{transform:translateX(0)}to{transform:translateX(-340px)}}@keyframes stuBubbleIn{from{opacity:0;transform:translateY(6px) scale(.96)}to{opacity:1;transform:none}}@media (prefers-reduced-motion:reduce){.stu-wrap-anim{animation:none!important}}"), /* @__PURE__ */ React.createElement("span", { style: { pointerEvents: "auto" } }, /* @__PURE__ */ React.createElement(StudMascot, { mood, size: 88, walking, facing: phase === "out" ? "left" : "right", speaking: phase === "talk" && mode === "cheer", ariaLabel: STU_NAME, ...pal })), showBubble && /* @__PURE__ */ React.createElement("div", { style: { pointerEvents: "auto", marginBottom: 46, maxWidth: 270, padding: "12px 14px", borderRadius: 14, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 10px 30px rgba(0,0,0,0.22)", animation: "stuBubbleIn .22s ease both" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text, lineHeight: 1.45 } }, line), sub && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginTop: 3 } }, sub), phase === "talk" && mode === "ask" && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
+  const reduce = typeof document !== "undefined" && !!document.body && document.body.getAttribute("data-motion") === "reduce";
+  return /* @__PURE__ */ React.createElement("div", { className: "stu-wrap-anim", role: "status", "aria-live": "polite", style: { position: "fixed", bottom: 14, left, zIndex: 999, display: "flex", alignItems: "flex-end", gap: 6, pointerEvents: "none", animation: reduce ? "none" : phase === "in" ? "stuWalkIn 1.5s ease-out both" : phase === "out" ? "stuWalkOut 1.3s ease-in both" : "none" } }, /* @__PURE__ */ React.createElement("style", null, "@keyframes stuWalkIn{from{transform:translateX(-340px)}to{transform:translateX(0)}}@keyframes stuWalkOut{from{transform:translateX(0)}to{transform:translateX(-340px)}}@keyframes stuBubbleIn{from{opacity:0;transform:translateY(6px) scale(.96)}to{opacity:1;transform:none}}@media (prefers-reduced-motion:reduce){.stu-wrap-anim,.stu-wrap-anim *{animation:none!important}}"), /* @__PURE__ */ React.createElement("span", { style: { pointerEvents: "auto" } }, /* @__PURE__ */ React.createElement(StudMascot, { mood, size: 88, walking, facing: phase === "out" ? "left" : "right", speaking: phase === "talk" && mode === "cheer", ariaLabel: STU_NAME, ...pal })), showBubble && /* @__PURE__ */ React.createElement("div", { style: { pointerEvents: "auto", marginBottom: 46, maxWidth: 270, padding: "12px 14px", borderRadius: 14, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 10px 30px rgba(0,0,0,0.22)", animation: reduce ? "none" : "stuBubbleIn .22s ease both" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text, lineHeight: 1.45 } }, line), sub && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginTop: 3 } }, sub), phase === "talk" && mode === "ask" && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
     howRef.current = "yes";
     setPhase("yes");
   }, style: { padding: "6px 12px", fontSize: 11.5 } }, "Yes, let's go"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => {
@@ -22725,6 +22727,11 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     setMergeConfirm(null);
   };
   const [canvasSeeding, setCanvasSeeding] = useState(false);
+  useEffect(() => {
+    const sync = () => setToggles((t) => ({ ...t, ...lsGet("settings", {}) }));
+    window.addEventListener("studlin-settings-changed", sync);
+    return () => window.removeEventListener("studlin-settings-changed", sync);
+  }, []);
   const [toggles, setToggles] = useState(() => ({ ...{ push: true, sound: true, deadline: true, classReminders: false, onlineStatus: true, incognito: false, twofa: false, motion: false, hand: true, wrapped: true, autoSession: false, block: false, notifMaster: true, sysPush: false, chatChimes: true, shareAvailability: false, askCheckIns: true, askDurationQuestions: true, nudgesMaster: true, mascotReminders: true, mascotCheers: true }, ...lsGet("settings", {}) }));
   const [shareModePickerOpen, setShareModePickerOpen] = useState(false);
   const [shareCandidates, setShareCandidates] = useState([]);
@@ -22787,7 +22794,8 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     applyAnalyticsChoice(next);
   };
   const tog = (k) => setToggles((t) => {
-    const n = { ...t, [k]: !t[k] };
+    const cur = { ...t, ...lsGet("settings", {}) };
+    const n = { ...cur, [k]: !cur[k] };
     lsSet("settings", n);
     if (k === "motion" && typeof document !== "undefined" && document.body) document.body.setAttribute("data-motion", n.motion ? "reduce" : "");
     if (k === "incognito") upsertProfile();
@@ -24825,7 +24833,7 @@ function App() {
     const events = lsGet("events", []);
     const task = events.find((e) => e.id === taskId);
     if (!task) return;
-    if (stuSettingOn("mascotCheers")) setStuCheer({ id: taskId + "-" + Date.now(), title: task.title || "" });
+    if (stuSettingOn("mascotCheers")) setStuCheer({ id: taskId + "-" + Date.now(), at: Date.now(), title: task.title || "" });
     if (shouldOfferProjectCheckIn(task, events)) setProjectCheckInTaskId(taskId);
     else if (task.kind === "study block" && !task.routineId && task.dueEventId) {
       const examEvent = task.dueEventId ? events.find((e) => e.id === task.dueEventId) : null;
@@ -25185,6 +25193,10 @@ function App() {
   const [nudgeOffToast, setNudgeOffToast] = useState("");
   const turnOffNudges = () => {
     lsSet("settings", { ...lsGet("settings", {}), nudgesMaster: false });
+    try {
+      window.dispatchEvent(new Event("studlin-settings-changed"));
+    } catch (e) {
+    }
     setStrugglingBucketOffer(null);
     setPeakInsightOffer(null);
     setExamPrepSpacingOffer(null);
@@ -25193,6 +25205,9 @@ function App() {
     setTimeout(() => setNudgeOffToast(""), 4500);
   };
   const notifiedHeadsUpRef = useRef(/* @__PURE__ */ new Set());
+  useEffect(() => {
+    if (timerTask) setHeadsUpEvent(null);
+  }, [timerTask]);
   useEffect(() => {
     const HEADS_UP_MINS = 10;
     const check = () => {
@@ -26185,10 +26200,10 @@ function App() {
       },
       onDone: () => setHeadsUpEvent(null)
     }
-  ), !headsUpEvent && stuCheer && !timerTask && /* @__PURE__ */ React.createElement(StudCompanion, { key: stuCheer.id, mode: "cheer", title: stuCheer.title, navExpanded, onDone: () => setStuCheer(null) }), nudgeOffToast && /* @__PURE__ */ React.createElement("div", { role: "status", style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 1001, background: T.ink, color: T.cream, padding: "10px 18px", borderRadius: 99, fontSize: 12.5, fontWeight: 600, boxShadow: "0 8px 24px rgba(0,0,0,0.3)" } }, nudgeOffToast), headsUpEvent && !timerTask && !stuSettingOn("mascotReminders") && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "12px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 300, display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, /* @__PURE__ */ React.createElement("strong", null, headsUpEvent.title), " starts soon \u2014 ", fmtRolloverClock(headsUpEvent.time), "."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
+  ), !headsUpEvent && stuCheer && !timerTask && Date.now() - stuCheer.at < 1e4 && /* @__PURE__ */ React.createElement(StudCompanion, { key: stuCheer.id, mode: "cheer", title: stuCheer.title, navExpanded, onDone: () => setStuCheer(null) }), nudgeOffToast && /* @__PURE__ */ React.createElement("div", { role: "status", style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 1001, background: T.ink, color: T.cream, padding: "10px 18px", borderRadius: 99, fontSize: 12.5, fontWeight: 600, boxShadow: "0 8px 24px rgba(0,0,0,0.3)" } }, nudgeOffToast), headsUpEvent && !timerTask && !stuSettingOn("mascotReminders") && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "12px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 300, display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, /* @__PURE__ */ React.createElement("strong", null, headsUpEvent.title), " starts soon \u2014 ", fmtRolloverClock(headsUpEvent.time), "."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
     setTimerTask(headsUpEvent);
     setHeadsUpEvent(null);
-  }, style: { padding: "6px 12px", fontSize: 11 } }, "Begin now"), /* @__PURE__ */ React.createElement("button", { onClick: () => setHeadsUpEvent(null), style: { background: "none", border: "none", color: T.faint, fontSize: 11, cursor: "pointer", fontFamily: T.font } }, "Dismiss"))), liveInvite && !timerTask && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: headsUpEvent ? 110 : 20, left: 20, zIndex: 999, padding: "12px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.teal}55`, boxShadow: `0 8px 24px rgba(0,0,0,0.35), 0 0 0 1px ${T.teal}22`, animation: "studlinPop 0.2s ease", maxWidth: 300, display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, /* @__PURE__ */ React.createElement("strong", null, liveInvite.title), " is locking in right now \u2014 join?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: joinLiveInvite, style: { padding: "6px 12px", fontSize: 11, background: T.teal } }, "Join now"), /* @__PURE__ */ React.createElement("button", { onClick: () => setLiveInvite(null), style: { background: "none", border: "none", color: T.faint, fontSize: 11, cursor: "pointer", fontFamily: T.font } }, "Dismiss"))), /* @__PURE__ */ React.createElement(ScheduleSettingsPanel, { open: scheduleSettingsOpen, onClose: () => setScheduleSettingsOpen(false), onSave: () => {
+  }, style: { padding: "6px 12px", fontSize: 11 } }, "Begin now"), /* @__PURE__ */ React.createElement("button", { onClick: () => setHeadsUpEvent(null), style: { background: "none", border: "none", color: T.faint, fontSize: 11, cursor: "pointer", fontFamily: T.font } }, "Dismiss"))), liveInvite && !timerTask && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: headsUpEvent ? stuSettingOn("mascotReminders") ? 200 : 110 : 20, left: 20, zIndex: 999, padding: "12px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.teal}55`, boxShadow: `0 8px 24px rgba(0,0,0,0.35), 0 0 0 1px ${T.teal}22`, animation: "studlinPop 0.2s ease", maxWidth: 300, display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, /* @__PURE__ */ React.createElement("strong", null, liveInvite.title), " is locking in right now \u2014 join?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: joinLiveInvite, style: { padding: "6px 12px", fontSize: 11, background: T.teal } }, "Join now"), /* @__PURE__ */ React.createElement("button", { onClick: () => setLiveInvite(null), style: { background: "none", border: "none", color: T.faint, fontSize: 11, cursor: "pointer", fontFamily: T.font } }, "Dismiss"))), /* @__PURE__ */ React.createElement(ScheduleSettingsPanel, { open: scheduleSettingsOpen, onClose: () => setScheduleSettingsOpen(false), onSave: () => {
   } }), /* @__PURE__ */ React.createElement("style", null, `
         @keyframes studlinPulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.7)} }
         @keyframes studlinGlow { 0%,100%{box-shadow:0 0 0 0 var(--glow)} 50%{box-shadow:0 0 32px 8px var(--glow)} }

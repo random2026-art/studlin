@@ -37411,7 +37411,8 @@ const STU_CSS = [
   '@keyframes stu-talk{0%,100%{transform:scaleY(1)}50%{transform:scaleY(.55)}}',
   '@keyframes stu-conf{0%,100%{transform:translateY(0);opacity:1}50%{transform:translateY(-3px);opacity:.7}}',
   '@keyframes stu-spark{0%,100%{transform:scale(1) rotate(0)}50%{transform:scale(1.25) rotate(20deg)}}',
-  '@media (prefers-reduced-motion:reduce){.stu-root *{animation:none!important}}'
+  '@media (prefers-reduced-motion:reduce){.stu-root *{animation:none!important}}',
+  'body[data-motion="reduce"] .stu-root *{animation:none!important}'
 ].join('');
 
 function stuRgb(c) { c = String(c).replace('#', ''); if (c.length === 3) c = c.replace(/(.)/g, '$1$1'); var n = parseInt(c, 16); return isNaN(n) ? [158, 200, 61] : [n >> 16 & 255, n >> 8 & 255, n & 255]; }
@@ -37561,7 +37562,7 @@ function StudCompanion({mode,title,clock,navExpanded,onYes,onDone}){
   const short=(title||"your next task").length>38?(title||"").slice(0,37)+"...":(title||"your next task");
   let mood="happy",line="",sub="";
   if(phase==="in"){mood="happy";}
-  else if(phase==="talk"&&mode==="cheer"){mood="celebrating";line="Nice work on "+short+"!";}
+  else if(phase==="talk"&&mode==="cheer"){mood="celebrating";line=title?"Nice work on "+short+"!":"Nice work!";}
   else if(phase==="talk"){mood=declinesBefore>=2?"worried":"waving";line=declinesBefore>=2?"Last nudge, I promise. Ready for "+short+"?":"Time to start "+short+"?";sub=clock?"It's on your plan for "+clock+".":"";}
   else if(phase==="yes"){mood="celebrating";line="Let's do it!";}
   else if(phase==="no"){mood="sad";line=declinesBefore>=1?"Okay. I'll give you some space.":"Aw, okay. I'll be around.";}
@@ -37571,12 +37572,13 @@ function StudCompanion({mode,title,clock,navExpanded,onYes,onDone}){
   const pal=stuPalette();
   const left=(navExpanded?230:48)+16;
   const showBubble=!walking;
+  const reduce=typeof document!=="undefined"&&!!document.body&&document.body.getAttribute("data-motion")==="reduce";
   return (
-    <div className="stu-wrap-anim" role="status" aria-live="polite" style={{position:"fixed",bottom:14,left,zIndex:998,display:"flex",alignItems:"flex-end",gap:6,pointerEvents:"none",animation:phase==="in"?"stuWalkIn 1.5s ease-out both":phase==="out"?"stuWalkOut 1.3s ease-in both":"none"}}>
-      <style>{"@keyframes stuWalkIn{from{transform:translateX(-340px)}to{transform:translateX(0)}}@keyframes stuWalkOut{from{transform:translateX(0)}to{transform:translateX(-340px)}}@keyframes stuBubbleIn{from{opacity:0;transform:translateY(6px) scale(.96)}to{opacity:1;transform:none}}@media (prefers-reduced-motion:reduce){.stu-wrap-anim{animation:none!important}}"}</style>
+    <div className="stu-wrap-anim" role="status" aria-live="polite" style={{position:"fixed",bottom:14,left,zIndex:999,display:"flex",alignItems:"flex-end",gap:6,pointerEvents:"none",animation:reduce?"none":phase==="in"?"stuWalkIn 1.5s ease-out both":phase==="out"?"stuWalkOut 1.3s ease-in both":"none"}}>
+      <style>{"@keyframes stuWalkIn{from{transform:translateX(-340px)}to{transform:translateX(0)}}@keyframes stuWalkOut{from{transform:translateX(0)}to{transform:translateX(-340px)}}@keyframes stuBubbleIn{from{opacity:0;transform:translateY(6px) scale(.96)}to{opacity:1;transform:none}}@media (prefers-reduced-motion:reduce){.stu-wrap-anim,.stu-wrap-anim *{animation:none!important}}"}</style>
       <span style={{pointerEvents:"auto"}}><StudMascot mood={mood} size={88} walking={walking} facing={phase==="out"?"left":"right"} speaking={phase==="talk"&&mode==="cheer"} ariaLabel={STU_NAME} {...pal} /></span>
       {showBubble&&(
-        <div style={{pointerEvents:"auto",marginBottom:46,maxWidth:270,padding:"12px 14px",borderRadius:14,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 10px 30px rgba(0,0,0,0.22)",animation:"stuBubbleIn .22s ease both"}}>
+        <div style={{pointerEvents:"auto",marginBottom:46,maxWidth:270,padding:"12px 14px",borderRadius:14,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 10px 30px rgba(0,0,0,0.22)",animation:reduce?"none":"stuBubbleIn .22s ease both"}}>
           <div style={{fontSize:13,fontWeight:600,color:T.text,lineHeight:1.45}}>{line}</div>
           {sub&&<div style={{fontSize:11.5,color:T.muted,marginTop:3}}>{sub}</div>}
           {phase==="talk"&&mode==="ask"&&(
@@ -37650,6 +37652,11 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     setMergeConfirm(null);
   };
   const [canvasSeeding,setCanvasSeeding]=useState(false);
+  useEffect(()=>{
+    const sync=()=>setToggles(t=>({...t,...lsGet("settings",{})}));
+    window.addEventListener("studlin-settings-changed",sync);
+    return ()=>window.removeEventListener("studlin-settings-changed",sync);
+  },[]);
   const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,deadline:true,classReminders:false,onlineStatus:true,incognito:false,twofa:false,motion:false,hand:true,wrapped:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false,askCheckIns:true,askDurationQuestions:true,nudgesMaster:true,mascotReminders:true,mascotCheers:true},...lsGet("settings",{})}));
   // 2026-09-13: "Share my free/busy time" used to be all-or-nothing (on =
   // every current accepted friend). shareAvailabilityMode lets a student
@@ -37722,7 +37729,11 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     applyAnalyticsChoice(next);
   };
   const tog=k=>setToggles(t=>{
-    const n={...t,[k]:!t[k]};
+    // Merge over what is saved right now, not just this tab's snapshot: the
+    // "Stop showing suggestions" link on the Calendar cards writes the same
+    // object while Settings may be open, and a stale snapshot would undo it.
+    const cur={...t,...lsGet("settings",{})};
+    const n={...cur,[k]:!cur[k]};
     lsSet("settings",n);
     // Instant feedback for "Reduce motion" -- App()'s own mount effect
     // applies the same attribute on load, this just makes flipping the
@@ -41841,7 +41852,7 @@ function App() {
     const events=lsGet("events",[]);
     const task=events.find(e=>e.id===taskId);
     if(!task)return;
-    if(stuSettingOn("mascotCheers"))setStuCheer({id:taskId+"-"+Date.now(),title:task.title||""});
+    if(stuSettingOn("mascotCheers"))setStuCheer({id:taskId+"-"+Date.now(),at:Date.now(),title:task.title||""});
     if(shouldOfferProjectCheckIn(task,events))setProjectCheckInTaskId(taskId);
     // Bug fix, 2026-09-18 user report: "why is this question on every
     // task, shouldn't it be for exams or assignments not for tasks" --
@@ -42337,11 +42348,15 @@ function App() {
   const [nudgeOffToast,setNudgeOffToast]=useState("");
   const turnOffNudges=()=>{
     lsSet("settings",{...lsGet("settings",{}),nudgesMaster:false});
+    try{window.dispatchEvent(new Event("studlin-settings-changed"));}catch(e){}
     setStrugglingBucketOffer(null);setPeakInsightOffer(null);setExamPrepSpacingOffer(null);setUnscheduledDueSoonOffer(null);
     setNudgeOffToast("Okay, no more suggestions. You can turn them back on in Settings, Privacy.");
     setTimeout(()=>setNudgeOffToast(""),4500);
   };
   const notifiedHeadsUpRef=useRef(new Set());
+  // A session started some other way (not via Stu) clears a pending reminder, so
+  // it cannot walk back in for a block the student is already doing.
+  useEffect(()=>{if(timerTask)setHeadsUpEvent(null);},[timerTask]);
   useEffect(()=>{
     const HEADS_UP_MINS=10;
     const check=()=>{
@@ -44230,7 +44245,7 @@ function App() {
         <StudCompanion key={headsUpEvent.id} mode="ask" title={headsUpEvent.title} clock={fmtRolloverClock(headsUpEvent.time)} navExpanded={navExpanded}
           onYes={()=>{setTimerTask(headsUpEvent);setHeadsUpEvent(null);}} onDone={()=>setHeadsUpEvent(null)} />
       )}
-      {!headsUpEvent&&stuCheer&&!timerTask&&(
+      {!headsUpEvent&&stuCheer&&!timerTask&&Date.now()-stuCheer.at<10000&&(
         <StudCompanion key={stuCheer.id} mode="cheer" title={stuCheer.title} navExpanded={navExpanded} onDone={()=>setStuCheer(null)} />
       )}
       {nudgeOffToast&&(
@@ -44249,7 +44264,7 @@ function App() {
       )}
 
       {liveInvite&&!timerTask&&(
-        <div style={{position:"fixed",bottom:headsUpEvent?110:20,left:20,zIndex:999,padding:"12px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.teal}55`,boxShadow:`0 8px 24px rgba(0,0,0,0.35), 0 0 0 1px ${T.teal}22`,animation:"studlinPop 0.2s ease",maxWidth:300,display:"flex",alignItems:"center",gap:12}}>
+        <div style={{position:"fixed",bottom:headsUpEvent?(stuSettingOn("mascotReminders")?200:110):20,left:20,zIndex:999,padding:"12px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.teal}55`,boxShadow:`0 8px 24px rgba(0,0,0,0.35), 0 0 0 1px ${T.teal}22`,animation:"studlinPop 0.2s ease",maxWidth:300,display:"flex",alignItems:"center",gap:12}}>
           <div style={{fontSize:12.5,color:T.text,flex:1}}>
             <strong>{liveInvite.title}</strong> is locking in right now — join?
           </div>

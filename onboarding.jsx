@@ -165,7 +165,8 @@ const STU_CSS = [
   '@keyframes stu-talk{0%,100%{transform:scaleY(1)}50%{transform:scaleY(.55)}}',
   '@keyframes stu-conf{0%,100%{transform:translateY(0);opacity:1}50%{transform:translateY(-3px);opacity:.7}}',
   '@keyframes stu-spark{0%,100%{transform:scale(1) rotate(0)}50%{transform:scale(1.25) rotate(20deg)}}',
-  '@media (prefers-reduced-motion:reduce){.stu-root *{animation:none!important}}'
+  '@media (prefers-reduced-motion:reduce){.stu-root *{animation:none!important}}',
+  'body[data-motion="reduce"] .stu-root *{animation:none!important}'
 ].join('');
 
 function stuRgb(c) { c = String(c).replace('#', ''); if (c.length === 3) c = c.replace(/(.)/g, '$1$1'); var n = parseInt(c, 16); return isNaN(n) ? [158, 200, 61] : [n >> 16 & 255, n >> 8 & 255, n & 255]; }
