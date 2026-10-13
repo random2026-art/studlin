@@ -14467,7 +14467,7 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
           const isStudy = ev.kind === "study block";
           const isExam = ev.kind === "exam";
           const isWarningKind = isExam || ev.kind === "deadline";
-          const kindStyle = isReminderMarker ? { background: "transparent", color: subjectColor } : isStudy ? { background: tokens.color.accent, color: T.ink } : isWarningKind ? { background: blendOverBg(T.amber, 0.12, T.card), border: `1px solid ${tokens.color.warning}`, color: tokens.color.warning } : { background: blendOverBg(subjectColor, 0.1176, T.card), color: subjectColor };
+          const kindStyle = isReminderMarker ? { background: "transparent", color: subjectColor } : isStudy ? { background: ev.color || tokens.color.accent, color: T.ink } : isWarningKind ? { background: blendOverBg(T.amber, 0.12, T.card), border: `1px solid ${tokens.color.warning}`, color: tokens.color.warning } : { background: blendOverBg(subjectColor, 0.1176, T.card), color: subjectColor };
           const dimmedByRoutineMode = editRoutineMode && !isRoutine;
           const highlightedByRoutineMode = editRoutineMode && isRoutine;
           const acceptanceSummary = ev.proposalMemberUids ? computeAcceptanceSummary(ev.proposalMemberUids, ev.proposalResponses) : null;

@@ -23831,7 +23831,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   const kindStyle = isReminderMarker
                     ? {background:"transparent",color:subjectColor}
                     : isStudy
-                      ? {background:tokens.color.accent,color:T.ink}
+                      ? {background:ev.color||tokens.color.accent,color:T.ink}
                       : isWarningKind
                         ? {background:blendOverBg(T.amber,0.12,T.card),border:`1px solid ${tokens.color.warning}`,color:tokens.color.warning}
                         : {background:blendOverBg(subjectColor,0.1176,T.card),color:subjectColor};
