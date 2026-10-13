@@ -143,6 +143,23 @@ const STEPS = [
   { name: "Sign up" },{ name: "Verify" },{ name: "Profile" },
 ];
 
+// One product preview per step in the left panel (2026-10-13). The files are
+// light WebP exports of the hero mockups; the rail is hidden under 980px, so
+// no mobile variant is needed. Mockups, not live screenshots.
+const RAIL_SHOTS = [
+  { name: "hero-calendar", alt: "Studlin calendar with color-coded courses and a study session planned from your syllabus." },
+  { name: "hero-deadlines", alt: "Studlin deadlines list with a scanned syllabus and a connected Canvas account." },
+  { name: "hero-dashboard", alt: "Studlin dashboard with today, a checklist, upcoming deadlines and a Catch Me Up card." },
+];
+function RailShot({ step }) {
+  const shot = RAIL_SHOTS[Math.min(step, RAIL_SHOTS.length - 1)];
+  return (
+    <div className="rail-shot">
+      <img src={"/assets/images/" + shot.name + "-1600.webp"} srcSet={"/assets/images/" + shot.name + "-800.webp 800w, /assets/images/" + shot.name + "-1600.webp 1600w"} sizes="600px" width="1600" height="1000" alt={shot.alt} decoding="async" />
+    </div>
+  );
+}
+
 function LeftRail({ step, state }) {
   if (step === 0) {
     return (
@@ -154,11 +171,7 @@ function LeftRail({ step, state }) {
         <div className="rail-icon">{Ic.userPlus}</div>
         <h1>Sign up and lock in.</h1>
         <p className="lead">Sign up is simple, free and fast. One workspace for everything you study, write, and remember.</p>
-        <div className="rail-tiles">
-          <div className="rail-tile"><div className="ic">{Ic.spark}</div><div className="t">AI study plans, built for you</div><div className="s">Sessions, flashcards, and a practice exam</div></div>
-          <div className="rail-tile"><div className="ic">{Ic.star}</div><div className="t">Weekly Wrapped</div><div className="s">A recap of your week, every Sunday</div></div>
-          <div className="rail-tile"><div className="ic">{Ic.zap}</div><div className="t">A calendar that gets you</div><div className="s">Learns your habits, plans your week</div></div>
-        </div>
+        <RailShot step={step} />
       </aside>
     );
   }
@@ -177,6 +190,7 @@ function LeftRail({ step, state }) {
           return <div key={i} className={"step"+(done?" is-done":"")+(current?" is-current":"")}><span className="dot">{done?Ic.check:i+1}</span><span className="name">{g.name}</span></div>;
         })}
       </div>
+      <RailShot step={step} />
       <div className="rail-meta">
         <div className="row" style={{color:"rgba(246,241,230,0.85)"}}>{firebase.auth().currentUser?.email || state.email || "you@studlin.app"}</div>
       </div>
