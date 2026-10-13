@@ -125,7 +125,7 @@ describe("NewEventModal: Assignment's manual-mode due-date field doesn't double 
 
 describe("NewEventModal's Type picker offers Assignment and Study Session as two real, always-correctly-labeled, coexisting options", () => {
   test("Type SelectChip has separate assignment and studySession entries, neither relabeled by mode", () => {
-    const idx = SOURCE.indexOf('<SelectChip options={[{value:"assignment",label:"Assignment"},{value:"studySession",label:"Study Session"}');
+    const idx = SOURCE.indexOf('<CustomSelect boxed options={[{value:"assignment",label:"Assignment"},{value:"studySession",label:"Study Session"}');
     assert.notEqual(idx, -1, "the Type picker must offer both as distinct, statically-labeled options -- not one relabeling the other by taskMode");
   });
 
