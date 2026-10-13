@@ -2835,6 +2835,132 @@ function detectGoogleClassCandidates(events, existingLabels) {
     };
   }).filter((c) => c.occurrenceCount >= 2 && !existingNorm.has(normalizeCourseLabel(c.title)));
 }
+const GOOGLE_NOT_CLASS_WORDS = /\b(gym|workout|work\s?out|shift|work|standup|stand-up|practice|rehearsal|lunch|dinner|breakfast|sleep|commute|appointment|therapy|church|game|match|call|errand|chores|club|office hours|study group|meal|nap|run|yoga)\b/i;
+const GOOGLE_CLASS_WORDS = /\b(lecture|lab|recitation|seminar|section|class|discussion|studio|tutorial)\b/i;
+const GOOGLE_COURSE_CODE = /\b[A-Za-z]{2,5}[\s-]?\d{2,4}[A-Za-z]?\b/;
+function looksLikeGoogleClass(c) {
+  if (GOOGLE_NOT_CLASS_WORDS.test(c.title || "")) return false;
+  let score = 0;
+  if (GOOGLE_COURSE_CODE.test(c.title || "")) score += 2;
+  if (GOOGLE_CLASS_WORDS.test(c.title || "")) score += 2;
+  if (c.duration >= 40 && c.duration <= 200) score += 1;
+  else if (c.duration < 30 || c.duration > 240) score -= 2;
+  if ((c.days || []).every((d) => d < 5)) score += 1;
+  else score -= 1;
+  if (c.occurrenceCount >= 3) score += 1;
+  return score >= 2;
+}
+function groupGoogleClassCandidates(candidates) {
+  const byTitle = {};
+  (candidates || []).forEach((c) => {
+    const key = normalizeCourseLabel(c.title);
+    if (!key) return;
+    (byTitle[key] = byTitle[key] || []).push(c);
+  });
+  return Object.keys(byTitle).map((key) => {
+    const series = byTitle[key];
+    const slots = {};
+    series.forEach((c) => {
+      const k = c.startTime + "|" + c.duration;
+      slots[k] = slots[k] || { days: [], startTime: c.startTime, duration: c.duration };
+      c.days.forEach((d) => {
+        if (!slots[k].days.includes(d)) slots[k].days.push(d);
+      });
+    });
+    const meetingTimes = Object.keys(slots).map((k) => ({ ...slots[k], days: slots[k].days.slice().sort((a, b) => a - b) }));
+    return {
+      key,
+      title: series[0].title,
+      meetingTimes,
+      recurringIds: series.map((c) => c.recurringId),
+      likely: series.some(looksLikeGoogleClass),
+      occurrenceCount: series.reduce((a, c) => a + c.occurrenceCount, 0)
+    };
+  }).sort((a, b) => (b.likely ? 1 : 0) - (a.likely ? 1 : 0) || b.occurrenceCount - a.occurrenceCount);
+}
+function getGoogleClassGroups() {
+  const existingLabels = getSubjects().map((s) => s.label);
+  return groupGoogleClassCandidates(detectGoogleClassCandidates(lsGet("events", []), existingLabels));
+}
+function importGoogleClassGroups(chosen) {
+  if (!chosen || chosen.length === 0) return [];
+  let subjects = getSubjects();
+  let routine = getWeeklyRoutine();
+  const term = getSchoolTerm();
+  const created = [];
+  chosen.forEach((g, i) => {
+    const norm = normalizeCourseLabel(g.title);
+    const existing = subjects.find((s) => normalizeCourseLabel(s.label) === norm);
+    const color = g.color || nextAvailableSubjectColor(subjects.map((s) => s.color));
+    const subjId = existing ? existing.id : "subj-" + Date.now() + "-" + i + "-" + Math.round(Math.random() * 1e3);
+    if (!existing) {
+      subjects = [...subjects, { id: subjId, label: g.title, color, termEnd: term && term.end ? term.end : null, needsSyllabus: true }];
+      created.push({ id: subjId, label: g.title, color });
+    }
+    const fresh = existing ? newMeetingTimesForCourse(subjId, g.title, g.meetingTimes, routine) : g.meetingTimes;
+    routine = [...routine, ...fresh.filter((mt) => mt.days.length > 0).map((mt, j) => ({ id: "rt-" + Date.now() + "-" + i + "-" + j + "-" + Math.round(Math.random() * 1e3), title: g.title, kind: "class", subject: g.title, courseId: subjId, days: mt.days, startTime: mt.startTime, duration: mt.duration }))];
+  });
+  const recurIds = new Set(chosen.flatMap((g) => g.recurringIds));
+  lsSet("importedGoogleRecurringIds", [.../* @__PURE__ */ new Set([...lsGet("importedGoogleRecurringIds", []), ...recurIds])]);
+  lsSet("events", lsGet("events", []).filter((e) => !(e.id.startsWith("gcal-") && e.googleRecurringId && recurIds.has(e.googleRecurringId))));
+  saveSubjects(subjects);
+  saveWeeklyRoutine(routine);
+  return created;
+}
+function describeGoogleClassMeeting(mt) {
+  const fmt12 = (mins) => {
+    const h24 = Math.floor(mins / 60) % 24, m = mins % 60;
+    const ap = h24 >= 12 ? "PM" : "AM";
+    return (h24 % 12 || 12) + ":" + String(m).padStart(2, "0") + " " + ap;
+  };
+  const start = timeToMinutes(mt.startTime);
+  return mt.days.map((d) => ROUTINE_DOW[d]).join(" ") + " \xB7 " + fmt12(start) + " - " + fmt12(start + (mt.duration || 50));
+}
+function GoogleClassReview({ groups, onConfirm, onClose, inline = false }) {
+  const [picked, setPicked] = useState(() => new Set(groups.filter((g) => g.likely).map((g) => g.key)));
+  const [colors, setColors] = useState(() => {
+    const used = getSubjects().map((s) => s.color);
+    const out = {};
+    groups.forEach((g) => {
+      const c = nextAvailableSubjectColor(used);
+      out[g.key] = c;
+      used.push(c);
+    });
+    return out;
+  });
+  const [saving, setSaving] = useState(false);
+  const toggle = (key) => setPicked((p) => {
+    const n = new Set(p);
+    if (n.has(key)) n.delete(key);
+    else n.add(key);
+    return n;
+  });
+  const confirm = () => {
+    if (saving || picked.size === 0) return;
+    setSaving(true);
+    onConfirm(groups.filter((g) => picked.has(g.key)).map((g) => ({ ...g, color: colors[g.key] })));
+  };
+  const renderRow = (g) => {
+    const on = picked.has(g.key);
+    return /* @__PURE__ */ React.createElement("div", { key: g.key, style: { padding: "12px 14px", borderRadius: 12, border: `1.5px solid ${on ? colors[g.key] : T.border}`, background: on ? colors[g.key] + "14" : T.card2, transition: "border-color .15s, background .15s" } }, /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: on, onChange: () => toggle(g.key), style: { marginTop: 3, cursor: "pointer", accentColor: colors[g.key] } }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: T.text } }, g.title), g.meetingTimes.map((mt, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { fontSize: 12, color: T.muted, marginTop: 2 } }, describeGoogleClassMeeting(mt))))), on && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10, paddingLeft: 24 } }, SUBJECT_COLORS.map((c) => /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        key: c,
+        type: "button",
+        "aria-label": "Use color " + c,
+        onClick: () => setColors((cs) => ({ ...cs, [g.key]: c })),
+        style: { width: 22, height: 22, borderRadius: "50%", background: c, cursor: "pointer", padding: 0, border: colors[g.key] === c ? `2px solid ${T.text}` : `2px solid transparent`, boxShadow: colors[g.key] === c ? `0 0 0 2px ${T.card}` : "none" }
+      }
+    ))));
+  };
+  const likely = groups.filter((g) => g.likely);
+  const other = groups.filter((g) => !g.likely);
+  const body = /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 20, fontWeight: 700, color: T.text, letterSpacing: "-0.01em" } }, "Are these your classes?"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, marginTop: 6, lineHeight: 1.5 } }, "Studlin guessed from the weekly events on your Google Calendar. Check the real ones and pick a color for each."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginTop: 16, maxHeight: inline ? "none" : "52vh", overflowY: inline ? "visible" : "auto" } }, likely.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 700, color: T.muted, letterSpacing: "0.05em", textTransform: "uppercase" } }, "Might be classes"), likely.map(renderRow), other.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 700, color: T.muted, letterSpacing: "0.05em", textTransform: "uppercase", marginTop: likely.length > 0 ? 10 : 0 } }, likely.length > 0 ? "Probably not classes" : "Other weekly events"), other.map(renderRow)), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 18, justifyContent: "flex-end" } }, onClose && /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: onClose, disabled: saving }, inline ? "Skip" : "Not now"), /* @__PURE__ */ React.createElement(Btn, { onClick: confirm, disabled: saving || picked.size === 0, style: { opacity: saving || picked.size === 0 ? 0.5 : 1 } }, saving ? "Adding..." : picked.size === 0 ? "Pick at least one" : "Add " + picked.size + " class" + (picked.size !== 1 ? "es" : ""))));
+  if (inline) return body;
+  return /* @__PURE__ */ React.createElement("div", { role: "dialog", "aria-modal": "true", onClick: (e) => {
+    if (e.target === e.currentTarget && !saving && onClose) onClose();
+  }, style: { position: "fixed", inset: 0, zIndex: 1200, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { width: "100%", maxWidth: 520, maxHeight: "90vh", overflowY: "auto", background: T.surface, borderRadius: 16, border: `1px solid ${T.border}`, boxShadow: "0 24px 60px -20px rgba(0,0,0,0.5)", padding: 24, boxSizing: "border-box" } }, body));
+}
 function applyGoogleEvents(gcalEvents) {
   const importedRecurringIds = new Set(lsGet("importedGoogleRecurringIds", []));
   const filtered = importedRecurringIds.size === 0 ? gcalEvents : gcalEvents.filter((e) => !e.googleRecurringId || !importedRecurringIds.has(e.googleRecurringId));
@@ -15426,7 +15552,10 @@ function ClassSetupWizard({ open, initialStatus, onFinish, onSkip, quickScan, ta
       setWizGoogleLinked(true);
     }
     const existingLabels = [...pendingClasses.map((c) => c.name), ...getSubjects().map((s) => s.label)];
-    setGoogleImportCandidates(detectGoogleClassCandidates(lsGet("events", []), existingLabels));
+    const cands = detectGoogleClassCandidates(lsGet("events", []), existingLabels);
+    cands.sort((a, b) => (looksLikeGoogleClass(b) ? 1 : 0) - (looksLikeGoogleClass(a) ? 1 : 0));
+    setGoogleImportCandidates(cands);
+    setGoogleImportSelected(new Set(cands.filter(looksLikeGoogleClass).map((c) => c.recurringId)));
   };
   const toggleGoogleImportCandidate = (recurringId) => {
     setGoogleImportSelected((s) => {
@@ -18426,6 +18555,37 @@ function CalendarTab({ setActive = () => {
     setImportLog([]);
     setImportLogOpen(false);
   };
+  const googleClassSig = (gs) => gs.map((g) => g.key).sort().join("|");
+  const [googleClassGroups, setGoogleClassGroups] = useState(() => lsGet("cal-google", false) ? getGoogleClassGroups() : []);
+  const [googleClassReviewOpen, setGoogleClassReviewOpen] = useState(false);
+  const [googleClassDismissedSig, setGoogleClassDismissedSig] = useState(() => lsGet("googleClassBannerDismissedSig", ""));
+  useEffect(() => {
+    const refresh = () => setGoogleClassGroups(lsGet("cal-google", false) ? getGoogleClassGroups() : []);
+    window.addEventListener("studlin-import-log", refresh);
+    return () => window.removeEventListener("studlin-import-log", refresh);
+  }, []);
+  useEffect(() => {
+    const onImported = () => {
+      syncClassSetupState();
+      setGoogleClassGroups(getGoogleClassGroups());
+    };
+    window.addEventListener("studlin-classes-imported", onImported);
+    return () => window.removeEventListener("studlin-classes-imported", onImported);
+  }, []);
+  const dismissGoogleClassBanner = () => {
+    const sig = googleClassSig(googleClassGroups);
+    lsSet("googleClassBannerDismissedSig", sig);
+    setGoogleClassDismissedSig(sig);
+    setGoogleClassReviewOpen(false);
+  };
+  const confirmGoogleClassReview = (chosen) => {
+    importGoogleClassGroups(chosen);
+    syncClassSetupState();
+    setGoogleClassGroups(getGoogleClassGroups());
+    setGoogleClassReviewOpen(false);
+    setPlacementToast(chosen.length + " class" + (chosen.length !== 1 ? "es" : "") + " added from Google Calendar.");
+    setTimeout(() => setPlacementToast(""), 3200);
+  };
   const [classSetupOpen, setClassSetupOpen] = useState(() => !lsGet("subjects-configured", false) && !lsGet("hasConfiguredRoutine", false) && Date.now() >= lsGet("classSetupDeferredUntil", 0));
   const [quickScanOpen, setQuickScanOpen] = useState(false);
   const [quickScanTargetCourseId, setQuickScanTargetCourseId] = useState(null);
@@ -21180,7 +21340,7 @@ Examples:
       style: { position: "absolute", top: 16, right: (calSidebarCollapsed ? 0 : 14) - 9, width: 18, height: 18, borderRadius: "50%", background: T.card, border: `1px solid ${T.border}`, color: T.faint, fontSize: 11, fontFamily: T.font, cursor: "pointer", padding: 0, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }
     },
     calSidebarCollapsed ? "\u203A" : "\u2039"
-  )), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0, paddingLeft: 14 } }, (() => {
+  )), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0, paddingLeft: 14 } }, googleClassGroups.length > 0 && googleClassSig(googleClassGroups) !== googleClassDismissedSig && !classSetupOpen && !quickScanOpen && /* @__PURE__ */ React.createElement("div", { role: "status", style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", padding: "14px 16px", borderRadius: 12, border: `1px solid ${T.lime}55`, background: T.lime + "12", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, lineHeight: 1.5 } }, /* @__PURE__ */ React.createElement("strong", null, "Found ", googleClassGroups.length, " weekly event", googleClassGroups.length !== 1 ? "s" : "", " that could be classes."), " Confirm which are yours and they become real courses."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexShrink: 0 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: dismissGoogleClassBanner, style: { padding: "8px 14px", borderRadius: 8, border: `1px solid ${T.border}`, background: "transparent", color: T.text, fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: T.font } }, "Not now"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setGoogleClassReviewOpen(true), style: { padding: "8px 14px", borderRadius: 8, border: "none", background: T.lime, color: T.ink, fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: T.font } }, "Review classes"))), googleClassReviewOpen && googleClassGroups.length > 0 && /* @__PURE__ */ React.createElement(GoogleClassReview, { groups: googleClassGroups, onConfirm: confirmGoogleClassReview, onClose: () => setGoogleClassReviewOpen(false) }), (() => {
     const summary = summarizeImportLog(importLog);
     if (summary.total === 0) return null;
     const shortDate = (d) => d ? (/* @__PURE__ */ new Date(d + "T12:00:00")).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "";
@@ -25037,6 +25197,7 @@ function App() {
   });
   const [calOnboardGoogleSyncing, setCalOnboardGoogleSyncing] = useState(false);
   const [obGoogleLinked, setObGoogleLinked] = useState(() => !!lsGet("cal-google", false));
+  const [obClassGroups, setObClassGroups] = useState(null);
   const [worksJob, setWorksJob] = useState(null);
   const [notifPermModal, setNotifPermModal] = useState(false);
   const handleNotifAllow = () => {
@@ -25813,11 +25974,30 @@ function App() {
         body[data-theme="light"] [data-card]:hover {
           box-shadow: 0 8px 24px -10px rgba(14,31,24,0.14);
         }
-      `), notifPermModal && /* @__PURE__ */ React.createElement(NotifPermModal, { onAllow: handleNotifAllow, onDeny: handleNotifDeny }), !calOnboardDone && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", inset: 0, zIndex: 200, background: "rgba(8,12,10,0.82)", backdropFilter: "blur(10px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px 16px" } }, /* @__PURE__ */ React.createElement("div", { style: { width: "100%", maxWidth: 480, background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, padding: "32px 32px 26px", boxShadow: "0 48px 100px -30px rgba(0,0,0,0.7)", animation: "studlinPop 0.25s ease" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, marginBottom: 6 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 44, height: 44, borderRadius: 12, background: T.lime + "18", border: `1px solid ${T.lime}33`, display: "flex", alignItems: "center", justifyContent: "center", color: T.lime, fontSize: 20 } }, Icon.cal), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 19, fontWeight: 700, color: T.white, letterSpacing: "-0.02em" } }, "Connect your calendar"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Pull existing events into Studlin \xB7 takes 10 seconds"))), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 13, color: T.muted, lineHeight: 1.7, margin: "18px 0 20px" } }, "Studlin can read your upcoming events so you never double book a study block. Your calendar data is cached locally and never stored on our servers."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10, marginBottom: 24 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 14, padding: "13px 16px", borderRadius: 10, background: T.card2, border: `1px solid ${obGoogleLinked ? T.teal + "44" : T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { width: 36, height: 36, borderRadius: 9, background: "rgba(66,133,244,0.10)", border: "1px solid rgba(66,133,244,0.22)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("svg", { width: "18", height: "18", viewBox: "0 0 24 24", fill: "none" }, /* @__PURE__ */ React.createElement("path", { d: "M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z", fill: "#4285F4" }), /* @__PURE__ */ React.createElement("path", { d: "M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z", fill: "#34A853" }), /* @__PURE__ */ React.createElement("path", { d: "M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z", fill: "#FBBC05" }), /* @__PURE__ */ React.createElement("path", { d: "M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z", fill: "#EA4335" }))), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white } }, "Google Calendar"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: obGoogleLinked ? T.teal : calOnboardGoogleSyncing ? T.amber : T.muted, marginTop: 1 } }, calOnboardGoogleSyncing ? "Importing events\u2026" : obGoogleLinked ? "Connected \xB7 events imported" : "Read-only \xB7 your events, no editing")), obGoogleLinked ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, color: T.teal, fontSize: 12, fontWeight: 600 } }, Icon.check, " Connected") : /* @__PURE__ */ React.createElement(BtnSm, { variant: "lime", style: { flexShrink: 0, opacity: calOnboardGoogleSyncing ? 0.55 : 1 }, onClick: async () => {
+      `), notifPermModal && /* @__PURE__ */ React.createElement(NotifPermModal, { onAllow: handleNotifAllow, onDeny: handleNotifDeny }), !calOnboardDone && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", inset: 0, zIndex: 200, background: "rgba(8,12,10,0.82)", backdropFilter: "blur(10px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px 16px" } }, /* @__PURE__ */ React.createElement("div", { style: { width: "100%", maxWidth: 480, maxHeight: "90vh", overflowY: "auto", background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, padding: "32px 32px 26px", boxShadow: "0 48px 100px -30px rgba(0,0,0,0.7)", animation: "studlinPop 0.25s ease" } }, obClassGroups ? /* @__PURE__ */ React.createElement(
+    GoogleClassReview,
+    {
+      inline: true,
+      groups: obClassGroups,
+      onConfirm: (chosen) => {
+        importGoogleClassGroups(chosen);
+        setObClassGroups(null);
+        try {
+          window.dispatchEvent(new Event("studlin-classes-imported"));
+        } catch (e) {
+        }
+      },
+      onClose: () => setObClassGroups(null)
+    }
+  ) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, marginBottom: 6 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 44, height: 44, borderRadius: 12, background: T.lime + "18", border: `1px solid ${T.lime}33`, display: "flex", alignItems: "center", justifyContent: "center", color: T.lime, fontSize: 20 } }, Icon.cal), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 19, fontWeight: 700, color: T.white, letterSpacing: "-0.02em" } }, "Connect your calendar"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Pull existing events into Studlin \xB7 takes 10 seconds"))), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 13, color: T.muted, lineHeight: 1.7, margin: "18px 0 20px" } }, "Studlin can read your upcoming events so you never double book a study block. Your calendar data is cached locally and never stored on our servers."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10, marginBottom: 24 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 14, padding: "13px 16px", borderRadius: 10, background: T.card2, border: `1px solid ${obGoogleLinked ? T.teal + "44" : T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { width: 36, height: 36, borderRadius: 9, background: "rgba(66,133,244,0.10)", border: "1px solid rgba(66,133,244,0.22)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("svg", { width: "18", height: "18", viewBox: "0 0 24 24", fill: "none" }, /* @__PURE__ */ React.createElement("path", { d: "M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z", fill: "#4285F4" }), /* @__PURE__ */ React.createElement("path", { d: "M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z", fill: "#34A853" }), /* @__PURE__ */ React.createElement("path", { d: "M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z", fill: "#FBBC05" }), /* @__PURE__ */ React.createElement("path", { d: "M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z", fill: "#EA4335" }))), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white } }, "Google Calendar"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: obGoogleLinked ? T.teal : calOnboardGoogleSyncing ? T.amber : T.muted, marginTop: 1 } }, calOnboardGoogleSyncing ? "Importing events\u2026" : obGoogleLinked ? "Connected \xB7 events imported" : "Read-only \xB7 your events, no editing")), obGoogleLinked ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, color: T.teal, fontSize: 12, fontWeight: 600 } }, Icon.check, " Connected") : /* @__PURE__ */ React.createElement(BtnSm, { variant: "lime", style: { flexShrink: 0, opacity: calOnboardGoogleSyncing ? 0.55 : 1 }, onClick: async () => {
     setCalOnboardGoogleSyncing(true);
     const result = await connectGoogleCalendar();
     setCalOnboardGoogleSyncing(false);
-    if (result.success) setObGoogleLinked(true);
+    if (result.success) {
+      setObGoogleLinked(true);
+      const found = getGoogleClassGroups();
+      if (found.length > 0) setObClassGroups(found);
+    }
   } }, calOnboardGoogleSyncing ? "Syncing\u2026" : "Connect")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 14, padding: "13px 16px", borderRadius: 10, background: T.card2, border: `1px solid ${T.border}`, opacity: 0.5 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 36, height: 36, borderRadius: 9, background: T.faint, border: `1px solid ${T.border}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("svg", { width: "18", height: "18", viewBox: "0 0 24 24", fill: T.text }, /* @__PURE__ */ React.createElement("path", { d: "M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z" }))), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white } }, "Apple Calendar", /* @__PURE__ */ React.createElement("span", { style: { marginLeft: 8, fontSize: 10.5, fontWeight: 600, color: T.faint } }, "(Coming Soon)")), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 1 } }, "Import iCloud events")), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: true, style: { flexShrink: 0, cursor: "not-allowed" } }, "Connect")))), /* @__PURE__ */ React.createElement("div", { style: { borderTop: `1px solid ${T.border}`, paddingTop: 18, marginBottom: 20 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white, marginBottom: 2 } }, "Do you work a job?"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 10 } }, "So Studlin knows not to schedule study time over your shifts."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setWorksJob(true), style: { flex: 1, padding: "9px 0", borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: "pointer", border: `1.5px solid ${worksJob === true ? T.lime : T.border}`, background: worksJob === true ? T.lime + "18" : "transparent", color: worksJob === true ? T.lime : T.muted, fontFamily: T.font } }, "Yes"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setWorksJob(false), style: { flex: 1, padding: "9px 0", borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: "pointer", border: `1.5px solid ${worksJob === false ? T.lime : T.border}`, background: worksJob === false ? T.lime + "18" : "transparent", color: worksJob === false ? T.lime : T.muted, fontFamily: T.font } }, "No")), worksJob === true && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginTop: 8 } }, "Add your shifts in the next step, with your classes.")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10 } }, /* @__PURE__ */ React.createElement(Btn, { style: { flex: 1, justifyContent: "center" }, onClick: () => {
     lsSet("cal-onboard-done", true);
     if (worksJob !== null) lsSet("has-job", worksJob);
@@ -25826,7 +26006,7 @@ function App() {
     lsSet("cal-onboard-done", true);
     if (worksJob !== null) lsSet("has-job", worksJob);
     setCalOnboardDone(true);
-  } }, "Skip for now")), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, textAlign: "center", marginTop: 14, lineHeight: 1.5 } }, "You can connect or disconnect calendars anytime in Settings \u2192 Integrations."))), googleSyncToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: STUDLIN_AI_BUBBLE_CLEARANCE, right: 20, zIndex: 999, padding: "11px 18px", borderRadius: 10, background: T.teal, color: "#fff", fontSize: 13, fontWeight: 600, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 360 } }, googleSyncToast), importReviewSummary && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 20, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10, lineHeight: 1.5 } }, importReviewSummary.totalCount, " item", importReviewSummary.totalCount !== 1 ? "s" : "", " from ", importReviewSummary.labels.join(", "), " ", importReviewSummary.totalCount !== 1 ? "are" : "is", " ready to review before they go on your calendar."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: () => {
+  } }, "Skip for now")), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, textAlign: "center", marginTop: 14, lineHeight: 1.5 } }, "You can connect or disconnect calendars anytime in Settings \u2192 Integrations.")))), googleSyncToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: STUDLIN_AI_BUBBLE_CLEARANCE, right: 20, zIndex: 999, padding: "11px 18px", borderRadius: 10, background: T.teal, color: "#fff", fontSize: 13, fontWeight: 600, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 360 } }, googleSyncToast), importReviewSummary && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 20, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10, lineHeight: 1.5 } }, importReviewSummary.totalCount, " item", importReviewSummary.totalCount !== 1 ? "s" : "", " from ", importReviewSummary.labels.join(", "), " ", importReviewSummary.totalCount !== 1 ? "are" : "is", " ready to review before they go on your calendar."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: () => {
     setImportReviewSummary(null);
     setActive("settings");
   }, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Review"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: () => {
