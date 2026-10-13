@@ -129,7 +129,7 @@ function applyTheme(name, accent, density) {
   }
 }
 applyTheme(
-  typeof localStorage !== "undefined" && localStorage.getItem("studlin-theme") || (isPreOnboardingLocalDevice() ? "light" : "dark"),
+  typeof localStorage !== "undefined" && localStorage.getItem("studlin-theme") || "light",
   typeof localStorage !== "undefined" && localStorage.getItem("studlin-accent") || "Lime",
   typeof localStorage !== "undefined" && localStorage.getItem("studlin-density") || "Comfortable"
 );
@@ -24223,7 +24223,7 @@ function App() {
     }
     return "calendar";
   });
-  const [theme, setThemeState] = useState(() => typeof localStorage !== "undefined" && localStorage.getItem("studlin-theme") || (isPreOnboardingLocalDevice() ? "light" : "dark"));
+  const [theme, setThemeState] = useState(() => typeof localStorage !== "undefined" && localStorage.getItem("studlin-theme") || "light");
   const [accent, setAccentState] = useState(() => {
     if (typeof localStorage !== "undefined") {
       if (!localStorage.getItem("studlin-accent-reset5")) {
