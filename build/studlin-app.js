@@ -14437,7 +14437,7 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
       quickCreateDraft && quickCreateDraft.dateKey === dk && (() => {
         const qStart = timeToMinutes(quickCreateDraft.startTime);
         const qDur = Math.max(15, timeToMinutes(quickCreateDraft.endTime) - qStart);
-        return /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: qStart * (WK_PX_HR / 60), left: 2, right: 2, height: Math.max(15, qDur) * (WK_PX_HR / 60), borderRadius: 5, background: T.lime + "22", border: `1.5px dashed ${T.lime}`, zIndex: 7, pointerEvents: "none", boxSizing: "border-box" } });
+        return /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: qStart * (WK_PX_HR / 60), left: 2, right: 2, height: Math.max(15, qDur) * (WK_PX_HR / 60), borderRadius: 5, background: quickCreateDraft.color ? quickCreateDraft.color + "B3" : T.lime + "22", border: `1.5px dashed ${quickCreateDraft.color || T.lime}`, zIndex: 7, pointerEvents: "none", boxSizing: "border-box" } });
       })(),
       isPastDeadline && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", inset: 0, background: "rgba(217,128,107,0.07)", borderLeft: "2px solid rgba(217,128,107,0.35)", zIndex: 5, pointerEvents: "none" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "sticky", top: 6, textAlign: "center", fontSize: 8, fontWeight: 800, letterSpacing: "0.08em", color: "rgba(217,128,107,0.65)", padding: 3 } }, "PAST DUE")),
       dk === todayK && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: nowMins * (WK_PX_HR / 60), left: 0, right: 0, zIndex: 6, pointerEvents: "none" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", left: -4, top: -4, width: 8, height: 8, borderRadius: "50%", background: "#E5484D" } }), /* @__PURE__ */ React.createElement("div", { style: { borderTop: "2px solid #E5484D" } })),
@@ -16454,7 +16454,7 @@ function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf,
   ), /* @__PURE__ */ React.createElement("div", { ref: timelineRef, "data-gridbg": "1", "data-daykey": selDay, onDragOver: handleDayDragOver, onDrop: handleDayDrop, onDragLeave: () => setDayDragOver(false), onMouseDown: startCreateDrag, style: { position: "relative", height: totalHeightPx, marginLeft: 54 } }, Array.from({ length: Math.max(1, hourEnd - hourStart) }, (_, i) => hourStart + i).map((h) => /* @__PURE__ */ React.createElement("div", { key: h, "data-gridbg": "1", style: { position: "absolute", top: (h * 60 - spanStart) * (pxPerHr / 60), left: 0, right: 0, borderTop: `1px solid ${T.borderHover}`, boxSizing: "border-box" } }, /* @__PURE__ */ React.createElement("span", { style: { position: "absolute", left: -54, top: -7, width: 46, textAlign: "right", fontSize: 10, color: T.faint, fontFamily: T.mono, pointerEvents: "none" } }, fmtHourLabel(h * 60)))), quickCreateDraft && quickCreateDraft.dateKey === selDay && (() => {
     const qStart = timeToMinutes(quickCreateDraft.startTime);
     const qDur = Math.max(15, timeToMinutes(quickCreateDraft.endTime) - qStart);
-    return /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: (qStart - spanStart) * (pxPerHr / 60), left: 2, right: 2, height: qDur * (pxPerHr / 60), borderRadius: 5, background: T.lime + "22", border: `1.5px dashed ${T.lime}`, zIndex: 7, pointerEvents: "none", boxSizing: "border-box" } });
+    return /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: (qStart - spanStart) * (pxPerHr / 60), left: 2, right: 2, height: qDur * (pxPerHr / 60), borderRadius: 5, background: quickCreateDraft.color ? quickCreateDraft.color + "B3" : T.lime + "22", border: `1.5px dashed ${quickCreateDraft.color || T.lime}`, zIndex: 7, pointerEvents: "none", boxSizing: "border-box" } });
   })(), isToday && nowMins >= spanStart && nowMins <= spanEnd && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: (nowMins - spanStart) * (pxPerHr / 60), left: 0, right: 0, zIndex: 6, pointerEvents: "none" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", left: -4, top: -4, width: 8, height: 8, borderRadius: "50%", background: "#E5484D" } }), /* @__PURE__ */ React.createElement("div", { style: { borderTop: "2px solid #E5484D" } })), gsBusyByDate && (gsBusyByDate[selDay] || []).concat(getDayOccupiedIntervals(selDay)).map((iv, ii) => /* @__PURE__ */ React.createElement("div", { key: "gsb" + ii, style: { position: "absolute", top: (iv.s - spanStart) * (pxPerHr / 60), left: 0, right: 0, height: Math.max(4, (iv.e - iv.s) * (pxPerHr / 60)), background: mutedAlpha("CC"), zIndex: 2, pointerEvents: "none" } })), gsRecommended && gsRecommended.date === selDay && (() => {
     const rStart = timeToMinutes(gsRecommended.time);
     const rDur = gsRecommended.duration || 60;
@@ -18165,13 +18165,17 @@ function NewEventModal({ open, initialTitle, initialDate, initialStartTime, init
     }
   ), " min")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.faint, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Scheduling"), /* @__PURE__ */ React.createElement(SelectChip, { size: "sm", options: [{ value: false, label: "Fixed (won't move)" }, { value: true, label: "Free (can move)" }], value: movable, onChange: setMovable }))), (!editRoutineDate || activeTab === "edit") && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, justifyContent: editRoutine ? "space-between" : "flex-end", alignItems: "center", padding: "9px 12px", borderTop: `1px solid ${T.border}` } }, editRoutine && (confirmDeleteRoutine ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.muted } }, "Delete this?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: onDelete, style: { padding: "6px 13px", fontSize: 12 } }, "Yes, delete"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmDeleteRoutine(false), style: { padding: "6px 13px", fontSize: 12 } }, "Cancel")) : /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => setConfirmDeleteRoutine(true), style: { padding: "6px 13px", fontSize: 12 } }, "Delete")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: onClose, style: { padding: "6px 13px", fontSize: 12 } }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: submit, disabled: invalid, style: { padding: "6px 13px", fontSize: 12 } }, editRoutine ? "Save changes" : "Create"))))), document.body);
 }
-function QuickCreateTaskPopover({ draft, anchorX, anchorY, onCreate, onMoreOptions, onClose }) {
+function QuickCreateTaskPopover({ draft, anchorX, anchorY, onCreate, onMoreOptions, onClose, onColorChange }) {
   const [title, setTitle] = useState("");
-  const [color, setColor] = useState(T.lime);
+  const [color, setColorState] = useState(T.lime);
+  const setColor = (c) => {
+    setColorState(c);
+    if (onColorChange) onColorChange(c);
+  };
   useEffect(() => {
     if (draft) {
       setTitle("");
-      setColor(T.lime);
+      setColorState(T.lime);
     }
   }, [draft && draft.dateKey, draft && draft.startTime, draft && draft.endTime]);
   if (!draft) return null;
@@ -18333,6 +18337,7 @@ function CalendarTab({ setActive = () => {
     setQuickCreateDraft({ dateKey, startTime, endTime });
     setQuickCreatePopover({ dateKey, startTime, endTime, anchorX: anchor && anchor.x, anchorY: anchor && anchor.y });
   };
+  const handleQuickCreateColor = (color) => setQuickCreateDraft((d) => d ? { ...d, color } : d);
   const cancelQuickCreate = () => {
     setQuickCreateDraft(null);
     setQuickCreatePopover(null);
@@ -21444,6 +21449,7 @@ Examples:
       draft: quickCreatePopover,
       anchorX: quickCreatePopover && quickCreatePopover.anchorX,
       anchorY: quickCreatePopover && quickCreatePopover.anchorY,
+      onColorChange: handleQuickCreateColor,
       onCreate: commitQuickCreateTask,
       onMoreOptions: quickCreateMoreOptions,
       onClose: cancelQuickCreate
