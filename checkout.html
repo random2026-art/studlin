@@ -25,7 +25,7 @@ firebase.initializeApp({
 });
 </script>
 <style>
-:root{--ink:#0E1F18;--forest:#14342A;--cream:#F6F1E6;--paper:#FBF7EE;--lime:#9EC83D;--lime-dk:#7FA82A;--line:rgba(14,31,24,0.10);--muted:rgba(14,31,24,0.55)}
+:root{--ink:#0E1F18;--forest:#14342A;--cream:#FFFFFF;--paper:#FFFFFF;--lime:#9EC83D;--lime-dk:#7FA82A;--line:rgba(14,31,24,0.10);--muted:rgba(14,31,24,0.55)}
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Geist',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;background:var(--paper);color:var(--ink);-webkit-font-smoothing:antialiased;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:40px 20px}
 .checkout{display:grid;grid-template-columns:1fr 1fr;gap:0;max-width:920px;width:100%;background:white;border-radius:24px;border:1px solid var(--line);overflow:hidden;box-shadow:0 30px 60px -30px rgba(11,32,26,0.2)}
@@ -34,23 +34,23 @@ body{font-family:'Geist',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;b
 .summary .brand .glyph{width:28px;height:28px;background:var(--lime);border-radius:8px;display:grid;place-items:center;font-size:18px;font-weight:700;color:var(--ink);font-family:'Geist',sans-serif;font-style:normal}
 .summary h2{font-size:28px;font-weight:600;letter-spacing:-0.02em;margin-bottom:8px}
 .summary h2 em{font-family:'Instrument Serif',serif;font-style:italic;color:var(--lime);font-weight:400}
-.summary .sub{font-size:14.5px;color:rgba(246,241,230,0.65);line-height:1.5;margin-bottom:32px}
-.plan-card{background:rgba(246,241,230,0.06);border:1px solid rgba(246,241,230,0.12);border-radius:16px;padding:20px;margin-bottom:20px}
+.summary .sub{font-size:14.5px;color:rgba(255,255,255,0.65);line-height:1.5;margin-bottom:32px}
+.plan-card{background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:16px;padding:20px;margin-bottom:20px}
 .plan-card .plan-name{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--lime);margin-bottom:8px}
 .plan-card .plan-price{font-size:36px;font-weight:700;letter-spacing:-0.03em}
-.plan-card .plan-price .per{font-size:14px;font-weight:400;color:rgba(246,241,230,0.55)}
-.plan-card .plan-note{font-size:12.5px;color:rgba(246,241,230,0.5);margin-top:4px}
+.plan-card .plan-price .per{font-size:14px;font-weight:400;color:rgba(255,255,255,0.55)}
+.plan-card .plan-note{font-size:12.5px;color:rgba(255,255,255,0.5);margin-top:4px}
 .plan-features{display:flex;flex-direction:column;gap:10px;margin-top:16px}
-.plan-features li{display:flex;align-items:center;gap:10px;font-size:13.5px;color:rgba(246,241,230,0.8);list-style:none}
+.plan-features li{display:flex;align-items:center;gap:10px;font-size:13.5px;color:rgba(255,255,255,0.8);list-style:none}
 .plan-features .ck{width:16px;height:16px;border-radius:50%;background:var(--lime);color:var(--ink);display:grid;place-items:center;font-size:10px;flex:none}
-.trial-timeline{margin-top:auto;padding-top:28px;border-top:1px solid rgba(246,241,230,0.10)}
-.trial-timeline h4{font-size:13px;font-weight:600;margin-bottom:16px;color:rgba(246,241,230,0.7)}
+.trial-timeline{margin-top:auto;padding-top:28px;border-top:1px solid rgba(255,255,255,0.10)}
+.trial-timeline h4{font-size:13px;font-weight:600;margin-bottom:16px;color:rgba(255,255,255,0.7)}
 .tl-step{display:flex;gap:14px;padding-bottom:18px;position:relative}
-.tl-step:not(:last-child)::before{content:"";position:absolute;left:5px;top:14px;bottom:0;width:1.5px;background:rgba(246,241,230,0.12)}
+.tl-step:not(:last-child)::before{content:"";position:absolute;left:5px;top:14px;bottom:0;width:1.5px;background:rgba(255,255,255,0.12)}
 .tl-dot{width:11px;height:11px;border-radius:50%;background:var(--lime);flex:none;margin-top:3px}
-.tl-step:last-child .tl-dot{background:rgba(246,241,230,0.3)}
+.tl-step:last-child .tl-dot{background:rgba(255,255,255,0.3)}
 .tl-text strong{font-size:13px;display:block;margin-bottom:2px}
-.tl-text span{font-size:12px;color:rgba(246,241,230,0.5)}
+.tl-text span{font-size:12px;color:rgba(255,255,255,0.5)}
 .form-side{padding:44px 40px;display:flex;flex-direction:column}
 .form-side h3{font-size:22px;font-weight:600;letter-spacing:-0.02em;margin-bottom:6px}
 .form-side .form-sub{font-size:14px;color:var(--muted);margin-bottom:28px}
@@ -244,7 +244,7 @@ async function handlePayment(){
 
     btn.innerHTML='✓ Success!';
     btn.style.background='#0E1F18';
-    btn.style.color='#F6F1E6';
+    btn.style.color='#FFFFFF';
     setTimeout(()=>{window.location.href='/app';},1500);
   }catch(err){
     errEl.textContent=err.message||'Something went wrong.';

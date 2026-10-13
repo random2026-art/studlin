@@ -68,9 +68,9 @@
   // mockups -- that blue was an artifact of the tool the mockups were
   // drawn in, not a rebrand.
   var DEFAULT_COLOR = {
-    surfacePage:   "#FAF8F3",
+    surfacePage:   "#FFFFFF",
     surfaceCard:   "#FFFFFF",
-    surfaceSunken: "#F1EEE6",
+    surfaceSunken: "#F5F6F5",
     textPrimary:   "#14140F",
     textSecondary: "#6B6A61",
     textTertiary:  "#9B9A90",
