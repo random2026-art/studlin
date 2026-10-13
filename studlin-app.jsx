@@ -29,7 +29,7 @@ const darkT = {
   rose:   "#FFC9D2",
   forest: "#14342A",
   ink:    "#0E1F18",
-  cream:  "#F6F1E6",
+  cream:  "#FFFFFF",
   font:   `"Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`,
   hand:   `"Bricolage Grotesque", "Geist", sans-serif`,
   serif:  `"Instrument Serif", serif`,
@@ -37,10 +37,10 @@ const darkT = {
   mode:   "dark",
 };
 const lightT = {
-  bg:     "#FAF6EC",
+  bg:     "#FFFFFF",
   surface:"#14342A",
   card:   "#ffffff",
-  card2:  "#F0EBE0",
+  card2:  "#F5F6F5",
   border: "rgba(14,31,24,0.18)",
   borderHover: "rgba(14,31,24,0.32)",
   lime:   "#9EC83D",
@@ -64,7 +64,7 @@ const lightT = {
   rose:   "#FFC9D2",
   forest: "#14342A",
   ink:    "#0E1F18",
-  cream:  "#F6F1E6",
+  cream:  "#FFFFFF",
   font:   `"Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`,
   hand:   `"Bricolage Grotesque", "Geist", sans-serif`,
   serif:  `"Instrument Serif", serif`,
@@ -648,7 +648,7 @@ function PlanCards({ billing, onSelect }) {
             <span style={{fontFamily:T.hand,fontSize:50,fontWeight:700,lineHeight:0.9,color:plan.featured?T.lime:T.text,letterSpacing:"-0.02em"}}>{plan.price}</span>
             <span style={{fontSize:13,color:T.muted}}>{plan.per}</span>
           </div>
-          <div style={{fontSize:13,color:plan.featured?"rgba(246,241,230,0.7)":T.muted,marginBottom:18,lineHeight:1.5}}>{plan.desc}</div>
+          <div style={{fontSize:13,color:plan.featured?"rgba(255,255,255,0.7)":T.muted,marginBottom:18,lineHeight:1.5}}>{plan.desc}</div>
           <ul style={{listStyle:"none",padding:0,margin:"0 0 20px",display:"flex",flexDirection:"column",gap:9,flex:1}}>
             {plan.features.map((f,j)=>(
               <li key={j} style={{display:"flex",gap:9,fontSize:13,color:plan.featured?T.cream:T.text,lineHeight:1.45,alignItems:"flex-start"}}>
@@ -17856,11 +17856,11 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
 function panelPalette(){
   const isLight=T.mode==="light";
   return {
-    text:  isLight?"#F6F1E6":T.text,
-    muted: isLight?"rgba(246,241,230,0.55)":T.muted,
-    faint: isLight?"rgba(246,241,230,0.35)":T.faint,
-    border:isLight?"rgba(246,241,230,0.14)":T.border,
-    card2: isLight?"rgba(246,241,230,0.08)":T.card2,
+    text:  isLight?"#FFFFFF":T.text,
+    muted: isLight?"rgba(255,255,255,0.55)":T.muted,
+    faint: isLight?"rgba(255,255,255,0.35)":T.faint,
+    border:isLight?"rgba(255,255,255,0.14)":T.border,
+    card2: isLight?"rgba(255,255,255,0.08)":T.card2,
   };
 }
 
@@ -24640,7 +24640,7 @@ function RosterList({items,setItems,makeNewItem,addLabel,withSchedule}){
 // without touching a shared component's default.
 // Bug fix, 2026-09-09 user request (screenshot showed cream bubbles inside
 // a white modal): background was T.card2, the light theme's cream/off-white
-// card tone (#F0EBE0) -- reads fine against a page background but reads as
+// card tone (#F5F6F5) -- reads fine against a page background but reads as
 // dirty/off against this wizard's own white modal (T.card). Plain white +
 // the existing border is enough to read as a distinct, clickable card here.
 const classSetupChoiceStyle={width:"100%",textAlign:"left",padding:"14px 16px",borderRadius:10,border:`1.5px solid ${T.border}`,background:T.card,color:T.text,cursor:"pointer",fontFamily:T.font};
@@ -25005,9 +25005,9 @@ const WizardRail=({step})=>{
               <div key={lbl.key} style={{display:"flex",alignItems:"center",gap:14,padding:"10px 0"}}>
                 <div style={{width:26,height:26,borderRadius:"50%",flexShrink:0,display:"grid",placeItems:"center",fontSize:11,fontWeight:600,fontFamily:T.mono,
                   background:current?T.cream:done?T.lime:"transparent",
-                  border:`1.5px solid ${current?T.cream:done?T.lime:"rgba(246,241,230,0.2)"}`,
-                  color:current?T.forest:done?T.ink:"rgba(246,241,230,0.45)"}}>{done?"✓":i+1}</div>
-                <span style={{fontSize:14.5,fontWeight:current?600:500,color:current?T.cream:done?"rgba(246,241,230,0.78)":"rgba(246,241,230,0.45)"}}>{lbl.label}</span>
+                  border:`1.5px solid ${current?T.cream:done?T.lime:"rgba(255,255,255,0.2)"}`,
+                  color:current?T.forest:done?T.ink:"rgba(255,255,255,0.45)"}}>{done?"✓":i+1}</div>
+                <span style={{fontSize:14.5,fontWeight:current?600:500,color:current?T.cream:done?"rgba(255,255,255,0.78)":"rgba(255,255,255,0.45)"}}>{lbl.label}</span>
               </div>
             );
           })}
@@ -26295,7 +26295,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     // once there's an actual app underneath to pop open over.
     <div style={firstRun
       ?{position:"fixed",inset:0,zIndex:300,background:T.bg,display:"flex",overflow:"hidden"}
-      :{position:"fixed",inset:0,zIndex:300,background:T.mode==="light"?"rgba(250,246,236,0.92)":"rgba(8,12,10,0.97)",backdropFilter:"blur(10px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px 16px",overflowY:"auto"}}>
+      :{position:"fixed",inset:0,zIndex:300,background:T.mode==="light"?"rgba(255,255,255,0.92)":"rgba(8,12,10,0.97)",backdropFilter:"blur(10px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px 16px",overflowY:"auto"}}>
       {firstRun&&<WizardRail step={step} />}
       <div style={firstRun
         ?{flex:1,minWidth:0,display:"flex",flexDirection:"column",overflowY:"auto"}
@@ -38404,7 +38404,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     const isLight=mode==="light";
     return (
       <div onClick={()=>setTheme(mode)} style={{flex:1,cursor:"pointer",borderRadius:12,padding:16,border:`2px solid ${sel?T.lime:T.border}`,background:sel?T.lime+"08":T.card2,transition:"all 0.15s"}}>
-        <div style={{height:90,borderRadius:8,overflow:"hidden",background:isLight?"#FAF6EC":"#0D120F",border:`1px solid ${isLight?"rgba(14,31,24,0.08)":"rgba(255,255,255,0.06)"}`,marginBottom:12,display:"flex"}}>
+        <div style={{height:90,borderRadius:8,overflow:"hidden",background:isLight?"#FFFFFF":"#0D120F",border:`1px solid ${isLight?"rgba(14,31,24,0.08)":"rgba(255,255,255,0.06)"}`,marginBottom:12,display:"flex"}}>
           <div style={{width:24,background:"#14342A",display:"flex",flexDirection:"column",alignItems:"center",padding:"6px 0",gap:4}}>
             <div style={{width:10,height:10,background:"#AECE5E",borderRadius:2}} />
             <div style={{width:14,height:3,background:"rgba(255,255,255,0.2)",borderRadius:1,marginTop:4}} />
@@ -40124,9 +40124,9 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:12}}>
       <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
         <Hand style={light?{color:T.cream}:{}}>{title}</Hand>
-        {label&&<Eye style={light?{color:"rgba(246,241,230,0.6)",borderColor:"rgba(246,241,230,0.18)"}:{}}>{label}</Eye>}
+        {label&&<Eye style={light?{color:"rgba(255,255,255,0.6)",borderColor:"rgba(255,255,255,0.18)"}:{}}>{label}</Eye>}
       </div>
-      {more&&<button style={{fontSize:12,color:light?"rgba(246,241,230,0.6)":T.muted,display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer",background:"none",border:"none"}}>{more} <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>}
+      {more&&<button style={{fontSize:12,color:light?"rgba(255,255,255,0.6)":T.muted,display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer",background:"none",border:"none"}}>{more} <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>}
     </div>
   );
   // Visual-hierarchy pilot, 2026-09-30 user request: every card title below
@@ -40581,11 +40581,11 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                     <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
                       <div style={{width:"100%",display:"flex",flexDirection:"column",justifyContent:"flex-end",height:40}}>
                         {d.mins>0
-                          ?<div style={{width:"100%",height:h,background:d.isToday?T.lime:"rgba(246,241,230,0.25)",borderRadius:"3px 3px 0 0"}} />
-                          :<div style={{width:"100%",height:3,background:"rgba(246,241,230,0.10)",borderRadius:2}} />
+                          ?<div style={{width:"100%",height:h,background:d.isToday?T.lime:"rgba(255,255,255,0.25)",borderRadius:"3px 3px 0 0"}} />
+                          :<div style={{width:"100%",height:3,background:"rgba(255,255,255,0.10)",borderRadius:2}} />
                         }
                       </div>
-                      <span style={{fontSize:9,fontFamily:T.mono,color:d.isToday?T.lime:"rgba(246,241,230,0.4)",fontWeight:d.isToday?700:400}}>{d.lab}</span>
+                      <span style={{fontSize:9,fontFamily:T.mono,color:d.isToday?T.lime:"rgba(255,255,255,0.4)",fontWeight:d.isToday?700:400}}>{d.lab}</span>
                     </div>
                   );
                 })}
@@ -40598,8 +40598,8 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
               encouraging line instead, in the same spot the real stats
               would occupy once there's something to show. */}
           {weeklyFocusMin===0&&cardsMasteredTotal===0&&tasksCompletedTotal===0?(
-            <div style={{background:"rgba(246,241,230,0.05)",borderRadius:10,padding:"16px 14px",textAlign:"center",marginTop:14}}>
-              <div style={{fontSize:12.5,color:"rgba(246,241,230,0.75)",lineHeight:1.5}}>Nothing tracked yet this week. Add a task and next week's recap will actually mean something.</div>
+            <div style={{background:"rgba(255,255,255,0.05)",borderRadius:10,padding:"16px 14px",textAlign:"center",marginTop:14}}>
+              <div style={{fontSize:12.5,color:"rgba(255,255,255,0.75)",lineHeight:1.5}}>Nothing tracked yet this week. Add a task and next week's recap will actually mean something.</div>
             </div>
           ):(
             <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:14}}>
@@ -40608,8 +40608,8 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                 {ln:"Top subject",vn:topSubjectThisWeek||"—"},
                 {ln:"Tasks completed",vn:tasksCompletedTotal},
               ].map((ins,i)=>(
-                <div key={i} style={{background:"rgba(246,241,230,0.05)",borderRadius:10,padding:"9px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                  <span style={{fontSize:11,color:"rgba(246,241,230,0.55)",fontFamily:T.mono,letterSpacing:"0.04em",textTransform:"uppercase"}}>{ins.ln}</span>
+                <div key={i} style={{background:"rgba(255,255,255,0.05)",borderRadius:10,padding:"9px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span style={{fontSize:11,color:"rgba(255,255,255,0.55)",fontFamily:T.mono,letterSpacing:"0.04em",textTransform:"uppercase"}}>{ins.ln}</span>
                   <span style={{fontFamily:T.hand,fontSize:20,fontWeight:600,color:T.lime}}>{ins.vn}</span>
                 </div>
               ))}
@@ -40627,10 +40627,10 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
               exactly where prep already stands ("you're already 2 sessions
               deep" / "nothing started yet"), so it reads like a real
               heads-up instead of a bare due-date table. */}
-          <div style={{borderTop:"1px solid rgba(246,241,230,0.12)",paddingTop:16,marginTop:-8,marginBottom:20}}>
-            <div style={{fontSize:11,fontFamily:T.mono,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)",marginBottom:10}}>Your Week Ahead</div>
+          <div style={{borderTop:"1px solid rgba(255,255,255,0.12)",paddingTop:16,marginTop:-8,marginBottom:20}}>
+            <div style={{fontSize:11,fontFamily:T.mono,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(255,255,255,0.55)",marginBottom:10}}>Your Week Ahead</div>
             {weekAheadSummary.isChillWeek?(
-              <div style={{background:"rgba(246,241,230,0.05)",borderRadius:10,padding:"14px",fontSize:12.5,color:"rgba(246,241,230,0.8)",lineHeight:1.5}}>Nothing major on the calendar next week -- a good one to get ahead, or just breathe.</div>
+              <div style={{background:"rgba(255,255,255,0.05)",borderRadius:10,padding:"14px",fontSize:12.5,color:"rgba(255,255,255,0.8)",lineHeight:1.5}}>Nothing major on the calendar next week -- a good one to get ahead, or just breathe.</div>
             ):(<>
               <div style={{fontSize:12.5,color:T.cream,lineHeight:1.5,marginBottom:12}}>
                 {weekAheadSummary.busiestDay.minutes>0?new Date(weekAheadSummary.busiestDay.date+"T12:00:00").toLocaleDateString("en-US",{weekday:"long"})+" is your busiest day -- "+fmtH(weekAheadSummary.busiestDay.minutes)+" already scheduled.":"Nothing due next week."}
@@ -40639,17 +40639,17 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                 {weekAheadSummary.days.map((d,i)=>{
                   const maxMins=Math.max.apply(null,weekAheadSummary.days.map(x=>x.minutes).concat([1]));
                   const h=d.minutes>0?Math.max(4,Math.round(d.minutes/maxMins*32)):0;
-                  const barColor=d.tier==="heavy"?T.amber:d.tier==="moderate"?"rgba(246,241,230,0.4)":"rgba(246,241,230,0.18)";
+                  const barColor=d.tier==="heavy"?T.amber:d.tier==="moderate"?"rgba(255,255,255,0.4)":"rgba(255,255,255,0.18)";
                   const lab=new Date(d.date+"T12:00:00").toLocaleDateString("en-US",{weekday:"short"}).slice(0,1).toUpperCase();
                   return(
                     <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
                       <div style={{width:"100%",display:"flex",flexDirection:"column",justifyContent:"flex-end",height:32}}>
                         {d.minutes>0
                           ?<div style={{width:"100%",height:h,background:barColor,borderRadius:"3px 3px 0 0"}} />
-                          :<div style={{width:"100%",height:3,background:"rgba(246,241,230,0.10)",borderRadius:2}} />
+                          :<div style={{width:"100%",height:3,background:"rgba(255,255,255,0.10)",borderRadius:2}} />
                         }
                       </div>
-                      <span style={{fontSize:9,fontFamily:T.mono,color:"rgba(246,241,230,0.4)"}}>{lab}</span>
+                      <span style={{fontSize:9,fontFamily:T.mono,color:"rgba(255,255,255,0.4)"}}>{lab}</span>
                     </div>
                   );
                 })}
@@ -40657,13 +40657,13 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
               {weekAheadNarration.length>0&&(
                 <div style={{display:"flex",flexDirection:"column",gap:6}}>
                   {weekAheadNarration.slice(0,4).map(n=>(
-                    <div key={n.id} style={{display:"flex",gap:8,alignItems:"flex-start",background:n.urgent?"rgba(216,155,60,0.14)":"rgba(246,241,230,0.05)",border:n.urgent?`1px solid ${T.amber}44`:"1px solid transparent",borderRadius:8,padding:"8px 10px",fontSize:12,lineHeight:1.45}}>
-                      <span style={{color:n.urgent?T.amber:"rgba(246,241,230,0.4)",fontFamily:T.mono,fontSize:10,fontWeight:700,flexShrink:0,marginTop:2,minWidth:20}}>{n.daysUntil<=0?"NOW":n.daysUntil+"D"}</span>
-                      <span style={{color:n.urgent?T.cream:"rgba(246,241,230,0.85)"}}>{n.text}</span>
+                    <div key={n.id} style={{display:"flex",gap:8,alignItems:"flex-start",background:n.urgent?"rgba(216,155,60,0.14)":"rgba(255,255,255,0.05)",border:n.urgent?`1px solid ${T.amber}44`:"1px solid transparent",borderRadius:8,padding:"8px 10px",fontSize:12,lineHeight:1.45}}>
+                      <span style={{color:n.urgent?T.amber:"rgba(255,255,255,0.4)",fontFamily:T.mono,fontSize:10,fontWeight:700,flexShrink:0,marginTop:2,minWidth:20}}>{n.daysUntil<=0?"NOW":n.daysUntil+"D"}</span>
+                      <span style={{color:n.urgent?T.cream:"rgba(255,255,255,0.85)"}}>{n.text}</span>
                     </div>
                   ))}
                   {weekAheadNarration.length>4&&(
-                    <div style={{fontSize:11,color:"rgba(246,241,230,0.4)",textAlign:"center",marginTop:2}}>+{weekAheadNarration.length-4} more next week</div>
+                    <div style={{fontSize:11,color:"rgba(255,255,255,0.4)",textAlign:"center",marginTop:2}}>+{weekAheadNarration.length-4} more next week</div>
                   )}
                 </div>
               )}
@@ -43079,15 +43079,15 @@ function App() {
   const pages={prep:StudlinPrep,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,profile:Profile,feedback:FeedbackPage};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
-  const sidebarText=isLight?"#F6F1E6":T.text;
-  const sidebarMuted=isLight?"rgba(246,241,230,0.55)":T.muted;
-  const sidebarFaint=isLight?"rgba(246,241,230,0.35)":T.faint;
-  const sidebarBorder=isLight?"rgba(246,241,230,0.10)":T.border;
-  const sidebarCardBg=isLight?"rgba(246,241,230,0.06)":T.card;
+  const sidebarText=isLight?"#FFFFFF":T.text;
+  const sidebarMuted=isLight?"rgba(255,255,255,0.55)":T.muted;
+  const sidebarFaint=isLight?"rgba(255,255,255,0.35)":T.faint;
+  const sidebarBorder=isLight?"rgba(255,255,255,0.10)":T.border;
+  const sidebarCardBg=isLight?"rgba(255,255,255,0.06)":T.card;
   const NavItem=({item})=>{
     const act=active===item.id;
     return (
-      <div onClick={()=>setActive(item.id)} title={navExpanded?undefined:(item.badge?item.label+" ("+item.badge+")":item.label)} style={{display:"flex",alignItems:"center",gap:10,padding:navExpanded?"9px 11px":"9px 0",justifyContent:navExpanded?"flex-start":"center",borderRadius:9,cursor:"pointer",fontSize:12.5,background:act?(isLight?"rgba(246,241,230,0.95)":`linear-gradient(100deg, ${T.lime}1c, ${T.lime}08)`):"transparent",color:act?(isLight?T.ink:T.lime):sidebarMuted,fontWeight:act?600:400,marginBottom:2,border:`1px solid ${act?(isLight?"transparent":T.lime+"30"):"transparent"}`,boxShadow:act&&!isLight?`0 4px 14px -8px ${T.lime}70`:"none",transition:"all 0.18s cubic-bezier(.2,.8,.2,1)"}}>
+      <div onClick={()=>setActive(item.id)} title={navExpanded?undefined:(item.badge?item.label+" ("+item.badge+")":item.label)} style={{display:"flex",alignItems:"center",gap:10,padding:navExpanded?"9px 11px":"9px 0",justifyContent:navExpanded?"flex-start":"center",borderRadius:9,cursor:"pointer",fontSize:12.5,background:act?(isLight?"rgba(255,255,255,0.95)":`linear-gradient(100deg, ${T.lime}1c, ${T.lime}08)`):"transparent",color:act?(isLight?T.ink:T.lime):sidebarMuted,fontWeight:act?600:400,marginBottom:2,border:`1px solid ${act?(isLight?"transparent":T.lime+"30"):"transparent"}`,boxShadow:act&&!isLight?`0 4px 14px -8px ${T.lime}70`:"none",transition:"all 0.18s cubic-bezier(.2,.8,.2,1)"}}>
         <span style={{width:16,height:16,position:"relative",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:act?(isLight?T.ink:T.lime):sidebarFaint}}>
           {navIcon[item.id]}
           {/* Collapsed rail has no room for the label-row pill below --

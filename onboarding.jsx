@@ -192,7 +192,7 @@ function LeftRail({ step, state }) {
       </div>
       <RailShot step={step} />
       <div className="rail-meta">
-        <div className="row" style={{color:"rgba(246,241,230,0.85)"}}>{firebase.auth().currentUser?.email || state.email || "you@studlin.app"}</div>
+        <div className="row" style={{color:"rgba(255,255,255,0.85)"}}>{firebase.auth().currentUser?.email || state.email || "you@studlin.app"}</div>
       </div>
     </aside>
   );

@@ -4,9 +4,9 @@
   --forest: #14342A;
   --forest-deep: #0B201A;
   --forest-mid: #1B4536;
-  --cream: #F6F1E6;
-  --cream-2: #EDE6D4;
-  --paper: #FBF7EE;
+  --cream: #FFFFFF;
+  --cream-2: #ECEEEC;
+  --paper: #FFFFFF;
   --lime: #C8FF5A;
   --lime-deep: #9FE235;
   --peach: #FFD7B5;
@@ -16,7 +16,7 @@
   --lilac: #E2D0FF;
   --rose: #FFC9D2;
   --line: rgba(14,31,24,0.12);
-  --line-dark: rgba(246,241,230,0.14);
+  --line-dark: rgba(255,255,255,0.14);
   --shadow-card: 0 1px 0 rgba(255,255,255,0.6) inset, 0 30px 60px -30px rgba(11,32,26,0.35), 0 8px 20px -10px rgba(11,32,26,0.18);
   --shadow-soft: 0 18px 40px -20px rgba(11,32,26,0.25);
   --radius: 18px;
@@ -152,7 +152,7 @@ nav.nav .row {
 .hero-inner { position: relative; text-align: center; z-index: 2; }
 .eyebrow {
   display: inline-flex; align-items: center; gap: 8px;
-  background: rgba(246,241,230,0.06);
+  background: rgba(255,255,255,0.06);
   border: 1px solid var(--line-dark);
   padding: 7px 14px;
   border-radius: 999px;
@@ -194,14 +194,14 @@ nav.nav .row {
   margin: 28px auto 36px;
   font-size: 19px;
   line-height: 1.5;
-  color: rgba(246,241,230,0.78);
+  color: rgba(255,255,255,0.78);
 }
 .hero-ctas { display: inline-flex; gap: 14px; flex-wrap: wrap; justify-content: center; }
 .hero-meta {
   margin-top: 40px;
   display: flex; gap: 24px; align-items: center; justify-content: center;
   font-size: 13px;
-  color: rgba(246,241,230,0.6);
+  color: rgba(255,255,255,0.6);
 }
 .hero-meta .stack { display: flex; }
 .hero-meta .stack .av {
@@ -379,9 +379,9 @@ p.lead {
 .feat.col-8 { grid-column: span 8; }
 .feat.col-12 { grid-column: span 12; }
 .feat.dark { background: var(--forest); color: var(--cream); }
-.feat.dark .label { color: rgba(246,241,230,0.5); }
+.feat.dark .label { color: rgba(255,255,255,0.5); }
 .feat.dark h3 { color: var(--cream); }
-.feat.dark p { color: rgba(246,241,230,0.75); }
+.feat.dark p { color: rgba(255,255,255,0.75); }
 .feat.lime { background: var(--lime); }
 .feat.lime h3 { color: var(--ink); }
 .feat.peach { background: var(--peach); }
