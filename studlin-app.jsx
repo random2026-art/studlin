@@ -163,7 +163,7 @@ function applyTheme(name, accent, density) {
   }
 }
 applyTheme(
-  (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-theme')) || (isPreOnboardingLocalDevice() ? 'light' : 'dark'),
+  (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-theme')) || 'light',
   (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-accent')) || 'Lime',
   (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-density')) || 'Comfortable'
 );
@@ -4774,6 +4774,166 @@ function detectGoogleClassCandidates(events,existingLabels){
     // recurring ones (a real one-off never carries googleRecurringId at
     // all, see googleItemToEvent -- it's already excluded above).
     .filter(c=>c.occurrenceCount>=2&&!existingNorm.has(normalizeCourseLabel(c.title)));
+}
+// 2026-10-13 user request: a student who connects Google Calendar (from
+// anywhere, including skipping onboarding entirely) should be asked "are
+// these your classes?" instead of getting a wall of same-colored blocks and
+// an empty Courses panel. Everything below only ever GUESSES -- the student
+// confirms every class, nothing is created until they do (see the
+// GoogleClassReview component and importGoogleClassGroups).
+//
+// "Looks like a class" is a heuristic, not a fact: a weekly gym session,
+// club meeting or work shift has the same shape as a lecture. The signals
+// are deliberately simple and only decide what starts PRE-CHECKED and
+// where it sorts; every candidate is still shown and can be toggled.
+const GOOGLE_NOT_CLASS_WORDS=/\b(gym|workout|work\s?out|shift|work|standup|stand-up|practice|rehearsal|lunch|dinner|breakfast|sleep|commute|appointment|therapy|church|game|match|call|errand|chores|club|office hours|study group|meal|nap|run|yoga)\b/i;
+const GOOGLE_CLASS_WORDS=/\b(lecture|lab|recitation|seminar|section|class|discussion|studio|tutorial)\b/i;
+const GOOGLE_COURSE_CODE=/\b[A-Za-z]{2,5}[\s-]?\d{2,4}[A-Za-z]?\b/;
+function looksLikeGoogleClass(c){
+  if(GOOGLE_NOT_CLASS_WORDS.test(c.title||""))return false;
+  let score=0;
+  if(GOOGLE_COURSE_CODE.test(c.title||""))score+=2;
+  if(GOOGLE_CLASS_WORDS.test(c.title||""))score+=2;
+  if(c.duration>=40&&c.duration<=200)score+=1;else if(c.duration<30||c.duration>240)score-=2;
+  if((c.days||[]).every(d=>d<5))score+=1;else score-=1;
+  if(c.occurrenceCount>=3)score+=1;
+  return score>=2;
+}
+// One class often shows up as several Google series (MW at 10:00 and a
+// separate Friday series, or a lecture and its lab under the same title),
+// so candidates sharing a title collapse into ONE course with several
+// meeting times, which is how a real Studlin course stores them.
+function groupGoogleClassCandidates(candidates){
+  const byTitle={};
+  (candidates||[]).forEach(c=>{
+    const key=normalizeCourseLabel(c.title);
+    if(!key)return;
+    (byTitle[key]=byTitle[key]||[]).push(c);
+  });
+  return Object.keys(byTitle).map(key=>{
+    const series=byTitle[key];
+    const slots={};
+    series.forEach(c=>{
+      const k=c.startTime+"|"+c.duration;
+      slots[k]=slots[k]||{days:[],startTime:c.startTime,duration:c.duration};
+      c.days.forEach(d=>{if(!slots[k].days.includes(d))slots[k].days.push(d);});
+    });
+    const meetingTimes=Object.keys(slots).map(k=>({...slots[k],days:slots[k].days.slice().sort((a,b)=>a-b)}));
+    return{
+      key,
+      title:series[0].title,
+      meetingTimes,
+      recurringIds:series.map(c=>c.recurringId),
+      likely:series.some(looksLikeGoogleClass),
+      occurrenceCount:series.reduce((a,c)=>a+c.occurrenceCount,0),
+    };
+  }).sort((a,b)=>(b.likely?1:0)-(a.likely?1:0)||b.occurrenceCount-a.occurrenceCount);
+}
+// Pending class groups for the current Google events, minus anything that
+// is already a real course or that the student previously dismissed.
+function getGoogleClassGroups(){
+  const existingLabels=getSubjects().map(s=>s.label);
+  return groupGoogleClassCandidates(detectGoogleClassCandidates(lsGet("events",[]),existingLabels));
+}
+// Creates real courses + weekly class meetings from confirmed groups, then
+// retires the matching generic gcal- blocks so nothing shows twice (same
+// one-time-copy design as the wizard's confirmGoogleImport, see
+// applyGoogleEvents' importedGoogleRecurringIds filter). chosen entries are
+// {title, meetingTimes, recurringIds, color}. Returns the courses created.
+function importGoogleClassGroups(chosen){
+  if(!chosen||chosen.length===0)return [];
+  let subjects=getSubjects();
+  let routine=getWeeklyRoutine();
+  const term=getSchoolTerm();
+  const created=[];
+  chosen.forEach((g,i)=>{
+    const norm=normalizeCourseLabel(g.title);
+    const existing=subjects.find(s=>normalizeCourseLabel(s.label)===norm);
+    const color=g.color||nextAvailableSubjectColor(subjects.map(s=>s.color));
+    const subjId=existing?existing.id:("subj-"+Date.now()+"-"+i+"-"+Math.round(Math.random()*1000));
+    if(!existing){
+      subjects=[...subjects,{id:subjId,label:g.title,color,termEnd:term&&term.end?term.end:null,needsSyllabus:true}];
+      created.push({id:subjId,label:g.title,color});
+    }
+    const fresh=existing?newMeetingTimesForCourse(subjId,g.title,g.meetingTimes,routine):g.meetingTimes;
+    routine=[...routine,...fresh.filter(mt=>mt.days.length>0).map((mt,j)=>({id:"rt-"+Date.now()+"-"+i+"-"+j+"-"+Math.round(Math.random()*1000),title:g.title,kind:"class",subject:g.title,courseId:subjId,days:mt.days,startTime:mt.startTime,duration:mt.duration}))];
+  });
+  const recurIds=new Set(chosen.flatMap(g=>g.recurringIds));
+  lsSet("importedGoogleRecurringIds",[...new Set([...lsGet("importedGoogleRecurringIds",[]),...recurIds])]);
+  lsSet("events",lsGet("events",[]).filter(e=>!(e.id.startsWith("gcal-")&&e.googleRecurringId&&recurIds.has(e.googleRecurringId))));
+  saveSubjects(subjects);
+  saveWeeklyRoutine(routine);
+  return created;
+}
+function describeGoogleClassMeeting(mt){
+  const fmt12=(mins)=>{const h24=Math.floor(mins/60)%24,m=mins%60;const ap=h24>=12?"PM":"AM";return (h24%12||12)+":"+String(m).padStart(2,"0")+" "+ap;};
+  const start=timeToMinutes(mt.startTime);
+  return mt.days.map(d=>ROUTINE_DOW[d]).join(" ")+" · "+fmt12(start)+" - "+fmt12(start+(mt.duration||50));
+}
+// "Are these your classes?" review. Used as a modal by the Calendar banner
+// and inline by onboarding (inline). Nothing is created until the student
+// confirms; every guess can be unchecked and every class gets its own color.
+function GoogleClassReview({groups,onConfirm,onClose,inline=false}){
+  const [picked,setPicked]=useState(()=>new Set(groups.filter(g=>g.likely).map(g=>g.key)));
+  const [colors,setColors]=useState(()=>{
+    const used=getSubjects().map(s=>s.color);
+    const out={};
+    groups.forEach(g=>{const c=nextAvailableSubjectColor(used);out[g.key]=c;used.push(c);});
+    return out;
+  });
+  const [saving,setSaving]=useState(false);
+  const toggle=(key)=>setPicked(p=>{const n=new Set(p);if(n.has(key))n.delete(key);else n.add(key);return n;});
+  const confirm=()=>{
+    if(saving||picked.size===0)return;
+    setSaving(true);
+    onConfirm(groups.filter(g=>picked.has(g.key)).map(g=>({...g,color:colors[g.key]})));
+  };
+  const renderRow=(g)=>{
+    const on=picked.has(g.key);
+    return (
+      <div key={g.key} style={{padding:"12px 14px",borderRadius:12,border:`1.5px solid ${on?colors[g.key]:T.border}`,background:on?colors[g.key]+"14":T.card2,transition:"border-color .15s, background .15s"}}>
+        <label style={{display:"flex",alignItems:"flex-start",gap:10,cursor:"pointer"}}>
+          <input type="checkbox" checked={on} onChange={()=>toggle(g.key)} style={{marginTop:3,cursor:"pointer",accentColor:colors[g.key]}} />
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:14,fontWeight:600,color:T.text}}>{g.title}</div>
+            {g.meetingTimes.map((mt,i)=>(<div key={i} style={{fontSize:12,color:T.muted,marginTop:2}}>{describeGoogleClassMeeting(mt)}</div>))}
+          </div>
+        </label>
+        {on&&(
+          <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:10,paddingLeft:24}}>
+            {SUBJECT_COLORS.map(c=>(
+              <button key={c} type="button" aria-label={"Use color "+c} onClick={()=>setColors(cs=>({...cs,[g.key]:c}))}
+                style={{width:22,height:22,borderRadius:"50%",background:c,cursor:"pointer",padding:0,border:colors[g.key]===c?`2px solid ${T.text}`:`2px solid transparent`,boxShadow:colors[g.key]===c?`0 0 0 2px ${T.card}`:"none"}} />
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+  const likely=groups.filter(g=>g.likely);
+  const other=groups.filter(g=>!g.likely);
+  const body=(
+    <div>
+      <div style={{fontSize:20,fontWeight:700,color:T.text,letterSpacing:"-0.01em"}}>Are these your classes?</div>
+      <div style={{fontSize:13,color:T.muted,marginTop:6,lineHeight:1.5}}>Studlin guessed from the weekly events on your Google Calendar. Check the real ones and pick a color for each.</div>
+      <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:16,maxHeight:inline?"none":"52vh",overflowY:inline?"visible":"auto"}}>
+        {likely.length>0&&<div style={{fontSize:11,fontWeight:700,color:T.muted,letterSpacing:"0.05em",textTransform:"uppercase"}}>Might be classes</div>}
+        {likely.map(renderRow)}
+        {other.length>0&&<div style={{fontSize:11,fontWeight:700,color:T.muted,letterSpacing:"0.05em",textTransform:"uppercase",marginTop:likely.length>0?10:0}}>{likely.length>0?"Probably not classes":"Other weekly events"}</div>}
+        {other.map(renderRow)}
+      </div>
+      <div style={{display:"flex",gap:10,marginTop:18,justifyContent:"flex-end"}}>
+        {onClose&&<Btn variant="ghost" onClick={onClose} disabled={saving}>{inline?"Skip":"Not now"}</Btn>}
+        <Btn onClick={confirm} disabled={saving||picked.size===0} style={{opacity:saving||picked.size===0?0.5:1}}>{saving?"Adding...":picked.size===0?"Pick at least one":"Add "+picked.size+" class"+(picked.size!==1?"es":"")}</Btn>
+      </div>
+    </div>
+  );
+  if(inline)return body;
+  return (
+    <div role="dialog" aria-modal="true" onClick={e=>{if(e.target===e.currentTarget&&!saving&&onClose)onClose();}} style={{position:"fixed",inset:0,zIndex:1200,background:"rgba(0,0,0,0.45)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{width:"100%",maxWidth:520,maxHeight:"90vh",overflowY:"auto",background:T.surface,borderRadius:16,border:`1px solid ${T.border}`,boxShadow:"0 24px 60px -20px rgba(0,0,0,0.5)",padding:24,boxSizing:"border-box"}}>{body}</div>
+    </div>
+  );
 }
 function applyGoogleEvents(gcalEvents){
   // A series already imported as a real Studlin course (see
@@ -25549,7 +25709,12 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
       setWizGoogleLinked(true);
     }
     const existingLabels=[...pendingClasses.map(c=>c.name),...getSubjects().map(s=>s.label)];
-    setGoogleImportCandidates(detectGoogleClassCandidates(lsGet("events",[]),existingLabels));
+    const cands=detectGoogleClassCandidates(lsGet("events",[]),existingLabels);
+    // Likely classes first and pre-checked (see looksLikeGoogleClass -- a
+    // guess, so everything stays visible and toggleable).
+    cands.sort((a,b)=>(looksLikeGoogleClass(b)?1:0)-(looksLikeGoogleClass(a)?1:0));
+    setGoogleImportCandidates(cands);
+    setGoogleImportSelected(new Set(cands.filter(looksLikeGoogleClass).map(c=>c.recurringId)));
   };
   const toggleGoogleImportCandidate=(recurringId)=>{
     setGoogleImportSelected(s=>{const next=new Set(s);if(next.has(recurringId))next.delete(recurringId);else next.add(recurringId);return next;});
@@ -31280,6 +31445,42 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     return ()=>window.removeEventListener("studlin-import-log",refresh);
   },[]);
   const acknowledgeImports=()=>{lsSet("importLog",[]);setImportLog([]);setImportLogOpen(false);};
+  // "Are these your classes?" banner (2026-10-13): re-detects whenever a
+  // Google sync lands (same studlin-import-log signal as above), so it
+  // appears no matter where Google Calendar was connected from. Dismissal is
+  // remembered per set of found classes, so "Not now" sticks until Google
+  // surfaces something new.
+  const googleClassSig=(gs)=>gs.map(g=>g.key).sort().join("|");
+  const [googleClassGroups,setGoogleClassGroups]=useState(()=>lsGet("cal-google",false)?getGoogleClassGroups():[]);
+  const [googleClassReviewOpen,setGoogleClassReviewOpen]=useState(false);
+  const [googleClassDismissedSig,setGoogleClassDismissedSig]=useState(()=>lsGet("googleClassBannerDismissedSig",""));
+  useEffect(()=>{
+    const refresh=()=>setGoogleClassGroups(lsGet("cal-google",false)?getGoogleClassGroups():[]);
+    window.addEventListener("studlin-import-log",refresh);
+    return ()=>window.removeEventListener("studlin-import-log",refresh);
+  },[]);
+  // Classes confirmed from onboarding's own review (App-level, outside this
+  // component) -- re-read subjects/routines so the Courses panel and grid
+  // show them without a reload.
+  useEffect(()=>{
+    const onImported=()=>{syncClassSetupState();setGoogleClassGroups(getGoogleClassGroups());};
+    window.addEventListener("studlin-classes-imported",onImported);
+    return ()=>window.removeEventListener("studlin-classes-imported",onImported);
+  },[]);
+  const dismissGoogleClassBanner=()=>{
+    const sig=googleClassSig(googleClassGroups);
+    lsSet("googleClassBannerDismissedSig",sig);
+    setGoogleClassDismissedSig(sig);
+    setGoogleClassReviewOpen(false);
+  };
+  const confirmGoogleClassReview=(chosen)=>{
+    importGoogleClassGroups(chosen);
+    syncClassSetupState();
+    setGoogleClassGroups(getGoogleClassGroups());
+    setGoogleClassReviewOpen(false);
+    setPlacementToast(chosen.length+" class"+(chosen.length!==1?"es":"")+" added from Google Calendar.");
+    setTimeout(()=>setPlacementToast(""),3200);
+  };
   // "Save and finish later" pauses the auto-open for a day; without this the
   // wizard came straight back on every visit to Calendar.
   const [classSetupOpen,setClassSetupOpen]=useState(()=>!lsGet("subjects-configured",false)&&!lsGet("hasConfiguredRoutine",false)&&Date.now()>=lsGet("classSetupDeferredUntil",0));
@@ -35100,6 +35301,20 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           shows (only Courses gets a "copy from previous" option there).
           Reopens the same wizard used for initial setup rather than a
           separate rollover-specific flow. */}
+      {googleClassGroups.length>0&&googleClassSig(googleClassGroups)!==googleClassDismissedSig&&!classSetupOpen&&!quickScanOpen&&(
+        <div role="status" style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap",padding:"14px 16px",borderRadius:12,border:`1px solid ${T.lime}55`,background:T.lime+"12",marginBottom:10}}>
+          <div style={{fontSize:13,color:T.text,lineHeight:1.5}}>
+            <strong>Found {googleClassGroups.length} weekly event{googleClassGroups.length!==1?"s":""} that could be classes.</strong> Confirm which are yours and they become real courses.
+          </div>
+          <div style={{display:"flex",gap:8,flexShrink:0}}>
+            <button type="button" onClick={dismissGoogleClassBanner} style={{padding:"8px 14px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.text,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Not now</button>
+            <button type="button" onClick={()=>setGoogleClassReviewOpen(true)} style={{padding:"8px 14px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Review classes</button>
+          </div>
+        </div>
+      )}
+      {googleClassReviewOpen&&googleClassGroups.length>0&&(
+        <GoogleClassReview groups={googleClassGroups} onConfirm={confirmGoogleClassReview} onClose={()=>setGoogleClassReviewOpen(false)} />
+      )}
       {(()=>{
         const summary=summarizeImportLog(importLog);
         if(summary.total===0)return null;
@@ -41048,7 +41263,7 @@ function App() {
     // longer consulted as the starting point on a new load).
     return "calendar";
   });
-  const [theme,setThemeState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-theme"))||(isPreOnboardingLocalDevice()?"light":"dark"));
+  const [theme,setThemeState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-theme"))||"light");
   const [accent,setAccentState]=useState(()=>{
     if(typeof localStorage!=="undefined"){
       if(!localStorage.getItem("studlin-accent-reset5")){localStorage.setItem("studlin-accent","Lime");localStorage.setItem("studlin-accent-reset5","1");}
@@ -42250,6 +42465,11 @@ function App() {
   });
   const [calOnboardGoogleSyncing,setCalOnboardGoogleSyncing]=useState(false);
   const [obGoogleLinked,setObGoogleLinked]=useState(()=>!!lsGet("cal-google",false));
+  // After Google connects during onboarding, the likely classes found on it
+  // are shown for confirmation right here (see GoogleClassReview) so the
+  // student lands in Studlin with real, colored courses instead of an
+  // empty Courses panel. null = not showing.
+  const [obClassGroups,setObClassGroups]=useState(null);
   // Folded into this same screen instead of a separate onboarding step --
   // one skippable ask, not two. No time picker here on purpose: actual
   // shift times get entered later in the class/routine setup wizard's
@@ -43838,7 +44058,12 @@ function App() {
       {notifPermModal && <NotifPermModal onAllow={handleNotifAllow} onDeny={handleNotifDeny} />}
       {!calOnboardDone&&(
         <div style={{position:"fixed",inset:0,zIndex:200,background:"rgba(8,12,10,0.82)",backdropFilter:"blur(10px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px 16px"}}>
-          <div style={{width:"100%",maxWidth:480,background:T.card,border:`1px solid ${T.border}`,borderRadius:10,padding:"32px 32px 26px",boxShadow:"0 48px 100px -30px rgba(0,0,0,0.7)",animation:"studlinPop 0.25s ease"}}>
+          <div style={{width:"100%",maxWidth:480,maxHeight:"90vh",overflowY:"auto",background:T.card,border:`1px solid ${T.border}`,borderRadius:10,padding:"32px 32px 26px",boxShadow:"0 48px 100px -30px rgba(0,0,0,0.7)",animation:"studlinPop 0.25s ease"}}>
+            {obClassGroups?(
+              <GoogleClassReview inline groups={obClassGroups}
+                onConfirm={(chosen)=>{importGoogleClassGroups(chosen);setObClassGroups(null);try{window.dispatchEvent(new Event("studlin-classes-imported"));}catch(e){}}}
+                onClose={()=>setObClassGroups(null)} />
+            ):(<>
             <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:6}}>
               <div style={{width:44,height:44,borderRadius:12,background:T.lime+"18",border:`1px solid ${T.lime}33`,display:"flex",alignItems:"center",justifyContent:"center",color:T.lime,fontSize:20}}>{Icon.cal}</div>
               <div>
@@ -43871,7 +44096,11 @@ function App() {
                     setCalOnboardGoogleSyncing(true);
                     const result=await connectGoogleCalendar();
                     setCalOnboardGoogleSyncing(false);
-                    if(result.success)setObGoogleLinked(true);
+                    if(result.success){
+                      setObGoogleLinked(true);
+                      const found=getGoogleClassGroups();
+                      if(found.length>0)setObClassGroups(found);
+                    }
                   }}>{calOnboardGoogleSyncing?"Syncing…":"Connect"}</BtnSm>
                 }
               </div>
@@ -43908,6 +44137,7 @@ function App() {
               <Btn variant="subtle" style={{flex:1,justifyContent:"center"}} onClick={()=>{lsSet("cal-onboard-done",true);if(worksJob!==null)lsSet("has-job",worksJob);setCalOnboardDone(true);}}>Skip for now</Btn>
             </div>
             <div style={{fontSize:11,color:T.faint,textAlign:"center",marginTop:14,lineHeight:1.5}}>You can connect or disconnect calendars anytime in Settings → Integrations.</div>
+            </>)}
           </div>
         </div>
       )}
