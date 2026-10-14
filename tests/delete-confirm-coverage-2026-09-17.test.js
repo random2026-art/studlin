@@ -68,19 +68,22 @@ describe("[MED] deleteSession (StudlinPrep exam session) now requires an inline 
   });
 });
 
-describe("[LOW] removeAiTimeOfDay (Settings AI memory) now requires an inline Forget/Cancel step", () => {
-  test("the Remove button is gated behind confirmRemoveTimeOfDay, matching the sibling confirmRemoveFactIdx/confirmClearMemory convention", () => {
-    const idx = SOURCE.indexOf("const [confirmRemoveTimeOfDay,setConfirmRemoveTimeOfDay]=useState(false);");
+// 2026-10-14: the Settings memory block moved into the shared StuMemoryPanel;
+// the confirm step guard now points at the panel (confirmTod), same behavior.
+describe("[LOW] removing the time-of-day preference (StuMemoryPanel) requires an inline Forget/Cancel step", () => {
+  test("the Forget button is gated behind confirmTod, matching the fact rows and Clear all", () => {
+    const idx = SOURCE.indexOf("const [confirmTod,setConfirmTod]=useState(false);");
     assert.notEqual(idx, -1);
   });
 
-  test("removeAiTimeOfDay is no longer called directly from a bare onClick with no gate", () => {
-    assert.doesNotMatch(SOURCE, /onClick=\{removeAiTimeOfDay\}/, "the old ungated call must be gone");
-    const idx = SOURCE.indexOf("{confirmRemoveTimeOfDay?(<>");
+  test("the first Forget tap only asks; the second one clears timeOfDay", () => {
+    const idx = SOURCE.indexOf("{confirmTod?(<>");
     assert.notEqual(idx, -1);
-    const body = SOURCE.slice(idx, idx + 500);
-    assert.match(body, />Forget<\/Btn>/);
-    assert.match(body, />Cancel<\/Btn>/);
-    assert.match(body, /removeAiTimeOfDay\(\);setConfirmRemoveTimeOfDay\(false\);/);
+    const body = SOURCE.slice(idx, idx + 700);
+    assert.ok(body.includes(">Forget</Btn>"));
+    assert.ok(body.includes(">Cancel</Btn>"));
+    assert.match(body, /timeOfDay:null/);
+    assert.ok(body.includes("setConfirmTod(false)"));
+    assert.ok(body.includes("onClick={()=>setConfirmTod(true)}"));
   });
 });
