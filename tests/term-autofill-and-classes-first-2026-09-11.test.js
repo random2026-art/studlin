@@ -120,7 +120,7 @@ describe("applyExtractedTermDates: first real value wins, stays editable, skippe
 
 describe("Courses now runs before End of Term in the wizard's actual step order", () => {
   test("WIZARD_STEP_ORDER has status/classes ahead of term", () => {
-    assert.match(SOURCE, /const WIZARD_STEP_ORDER=\["status","classes","term","awake","personalize","activities","calendarSync","finalReview"\];/);
+    assert.match(SOURCE, /const WIZARD_STEP_ORDER=\["status","classes","term","awake","personalize","permissions","activities","calendarSync","finalReview"\];/);
   });
 
   test("WIZARD_STEPPER (the visible progress labels) matches the new order", () => {
@@ -167,6 +167,6 @@ describe("Courses now runs before End of Term in the wizard's actual step order"
     const idx = SOURCE.indexOf('{step==="personalize"&&(<>', firstIdx + 1);
     assert.ok(idx > -1, "the personalize footer block should still exist");
     const body = SOURCE.slice(idx, idx + 200);
-    assert.ok(body.includes('setStep("activities")'));
+    assert.ok(body.includes('setStep(brandNew?"permissions":"activities")'), "personalize leads to permissions (new accounts) then activities");
   });
 });
