@@ -49,8 +49,8 @@ describe("Stu rename copy", () => {
   test("student-facing strings say Stu", () => {
     for (const s of [
       "Stu needs Pro. I've opened the upgrade options.",
-      "Couldn't reach Stu. Check your connection and try again.",
-      "Stu remembered something new",
+      "Stu can't reach the server. Try again.",
+      "Remembered: ",
       "Stu noticed new course events",
       "Ask Stu anything",
       "Stu answers from your real schedule, not a guess.",

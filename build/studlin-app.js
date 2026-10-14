@@ -7404,7 +7404,7 @@ function clearAiMemoryFacts(mem) {
   return { facts: [], timeOfDay: null, deleted: [...m.deleted, ...m.facts.map((f) => ({ id: f.id, at: now }))].slice(-AI_MEMORY_TOMBSTONE_CAP), updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
 }
 const CRISIS_PATTERNS = [
-  /\b(kill(ing)?|hurt(ing)?|harm(ing)?|cut(ting)?|injur(e|ing)|starv(e|ing)|punish(ing)?|end(ing)?)\s+(my\s?self|myself)\b/,
+  /\b(kill(ing)?|hurt(ing)?|harm(ing)?|cut(ting)?|injur(e|ing)|starv(e|ing)|punish(ing)?|end(ing)?)\s+(my\s?self|myself)\b(?!\s+(off|out|from|loose))/,
   /\bself[\s-]?harm/,
   /\bsuicidal\b/,
   /\bkms\b/,
@@ -7412,11 +7412,11 @@ const CRISIS_PATTERNS = [
   /\bsuicide\b[^.!?\n]{0,15}\b(plan|note|hotline|lifeline)\b/,
   /\b(want(ed|s)?|wanna|going|need|hope|wish)\s+(to\s+)?(die|be dead|disappear forever)\b(?!\s+(of|from|laughing|inside a little))/,
   /\b(don'?t|do not|no longer|dont)\s+(want|wanna)\s+to\s+(live|be alive|be here|exist|wake up)\b/,
-  /\bend\s+(it\s+all|my\s+life|everything)\b/,
+  /\bend\s+(it\s+all|my\s+life|everything)\b(?!\s+(with|by|at|on|before|after))/,
   /\b(take|taking)\s+my\s+own\s+life\b/,
   /\b(better off|be better off)\s+(dead|without me)\b/,
   /\b(no (reason|point) (to|in) (live|living|going on)|not worth living|life (isn'?t|is not) worth)/,
-  /\b(can'?t|cannot)\s+go on\b/,
+  /\b(can'?t|cannot)\s+go on(\s+(anymore|any more|like this|much longer|any longer|living))?\s*([.!?]|$)/,
   /\b(overdos(e|ed|ing) on purpose|swallow(ed)? (a bunch of|all my) pills)\b/,
   /\b(is|are|being|been|keeps?)\s+(abus(ed|ing)|hitting me|beating me)\b|\b(he|she|they|someone|somebody|my [a-z]+)\s+(hits|beats|abuses|molests|molested|raped|assaulted)\s+me\b|\bi\s*(was|am|got|been)\s+(sexually\s+)?(abused|assaulted|raped|molested)\b/
 ];
@@ -13832,6 +13832,12 @@ function openStuCalendarTool(tool, setActive) {
     window.dispatchEvent(new CustomEvent("studlin:open-tool", { detail: tool }));
   } catch (e) {
   }
+  setTimeout(() => {
+    try {
+      if (lsGet("pendingCalendarTool", null)) lsSet("pendingCalendarTool", null);
+    } catch (e) {
+    }
+  }, 2500);
 }
 function studlinAiChipsFor(catchUpBanner) {
   const chips = [{ id: "brainDump", label: "Brain dump", kind: "tool" }];
@@ -13852,6 +13858,9 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
   const pp = panelPalette();
   const [chipBusy, setChipBusy] = useState(false);
   const [bdMode, setBdMode] = useState(false);
+  useEffect(() => {
+    if (!open) setBdMode(false);
+  }, [open]);
   const inputRef = useRef(null);
   const brainDumpPaywall = () => {
     setPricingOpen(canUseBrainDumpReason() === "free-tier" ? "brainDump" : "aiUsageCap");
@@ -13901,8 +13910,7 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
     setBdMode(false);
     setMessages((m) => [...m, { role: "user", text }, { role: "ai", text: "Opening Brain Dump with that. Check it, then tap Sort it out.", kind: "info" }]);
     setInput("");
-    setMemoryToast("Opening Brain Dump");
-    setTimeout(() => setMemoryToast(""), 3500);
+    showMemoryToast("Opening Brain Dump", []);
     openStuCalendarTool({ kind: "brainDump", text }, setActive);
     onClose();
   };
@@ -14229,14 +14237,15 @@ WHAT THE STUDENT SAID:
   const send = async () => {
     const text = input.trim();
     if (!text || loading || pendingIndex != null) return;
-    if (bdMode) {
-      sendBrainDump(text);
-      return;
-    }
     if (detectCrisis(text)) {
+      setBdMode(false);
       setMessages((m) => [...m, { role: "user", text, crisis: true }, { role: "ai", text: STU_CRISIS_MESSAGE, kind: "crisis" }]);
       setInput("");
       setPendingClarification(false);
+      return;
+    }
+    if (bdMode) {
+      sendBrainDump(text);
       return;
     }
     const history = buildStudlinAiChatHistory(messages);
@@ -21700,7 +21709,7 @@ function CalendarTab({ setActive = () => {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         const local = fallbackSplitBrainDump(text);
-        const why = data.error || "Couldn't reach Studlin AI.";
+        const why = data.error || "Couldn't reach Stu.";
         return local.length > 0 ? { items: local, error: why + " Here's a basic breakdown instead. Check each item." } : { items: [], error: why + " Please try again." };
       }
       recordBrainDump();
@@ -21717,7 +21726,7 @@ function CalendarTab({ setActive = () => {
       return { items: fallbackSplitBrainDump(text), error: "Couldn't fully understand that \u2014 here's a basic breakdown. Edit anything that's off." };
     } catch (e) {
       const local = fallbackSplitBrainDump(text);
-      return local.length > 0 ? { items: local, error: "Couldn't reach Studlin AI. Here's a basic breakdown instead. Check each item." } : { items: [], error: "Something went wrong reaching Studlin AI. Check your connection and try again." };
+      return local.length > 0 ? { items: local, error: "Couldn't reach Stu. Here's a basic breakdown instead. Check each item." } : { items: [], error: "Something went wrong reaching Stu. Check your connection and try again." };
     }
   };
   const [bdError, setBdError] = useState("");
