@@ -7,7 +7,7 @@ const fs = require("fs");
 const path = require("path");
 const { loadStudlinModule } = require("./harness.js");
 
-const SOURCE = fs.readFileSync(path.join(__dirname, "..", "studlin-app.jsx"), "utf8");
+const SOURCE = fs.readFileSync(path.join(__dirname, "..", "studlin-app.jsx"), "utf8").replace(/\r\n/g, "\n");
 const TODAY = "2026-10-14";
 
 describe("parseBrainDumpLine", () => {
@@ -185,7 +185,8 @@ describe("source guards", () => {
   });
 
   test("New Task: date defaults to the selected day, Save is not blocked by an empty date, Type dropdown and More options remain", () => {
-    assert.match(SOURCE, /setEvDate\(dateK\|\|selDay\|\|dayKey\(\)\)/);
+    assert.match(SOURCE, /setEvDate\(smartFeaturesOn\(\)\?"":\(dateK\|\|selDay\|\|dayKey\(\)\)\)/);
+    assert.match(SOURCE, /taskMode==="manual"&&!evDate\)setEvDate\(evPrefillDate\|\|dayKey\(\)\)/);
     assert.ok(!/disabled=\{!evTitle\.trim\(\)\|\|!evDate\.trim\(\)/.test(SOURCE));
     assert.ok(!/disabled=\{!\(evTitle\.trim\(\)&&evDate\.trim\(\)/.test(SOURCE));
     assert.match(SOURCE, /<QuickDateField value=\{evDate\}/);

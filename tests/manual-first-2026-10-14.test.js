@@ -86,3 +86,14 @@ describe("source guards", () => {
     }
   });
 });
+
+describe("review fixes", () => {
+  const SRC = require("fs").readFileSync(require("path").join(__dirname, "..", "studlin-app.jsx"), "utf8").replace(/\r\n/g, "\n");
+  test("a skipped wizard keeps the question for next time (marker), and manual mode never claims learned durations", () => {
+    assert.ok(SRC.includes("st.smartFeaturesSkipDefault===true") || SRC.includes("smartFeaturesSkipDefault===true"));
+    assert.ok(SRC.includes("const data=smartFeaturesOn()?suggestDurationFor(subject,kind):null;"));
+  });
+  test("long drags do not become the quick-create seed", () => {
+    assert.ok(SRC.includes('if(duration<=90)rememberLastDuration("quickCreate",duration);'));
+  });
+});

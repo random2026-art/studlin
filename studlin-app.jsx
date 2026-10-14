@@ -910,7 +910,7 @@ function rememberLastDuration(kind,minutes){
 // the per-type table. source says which won so the UI only claims "usually"
 // for the data-backed case.
 function getDefaultDurationInfo(kind,subject){
-  const data=suggestDurationFor(subject,kind);
+  const data=smartFeaturesOn()?suggestDurationFor(subject,kind):null;
   if(typeof data==="number"&&data>0)return {minutes:data,source:"data"};
   const last=getLastDuration(kind);
   if(last!=null)return {minutes:last,source:"last"};
@@ -4253,7 +4253,10 @@ const nudgesAllowed=()=>smartFeaturesOn()&&lsGet("settings",{}).nudgesMaster!==f
 // nothing on the account yet. Existing users (or anyone re-running setup)
 // are never flipped to manual by accident.
 function isBrandNewAccountForManualFirst(){
-  if(lsGet("settings",{}).smartFeatures!==undefined)return false;
+  const st=lsGet("settings",{});
+  // A skipped wizard writes smartFeatures:false plus this marker, so the question
+  // is still asked when setup comes back (the student never actually answered).
+  if(st.smartFeatures!==undefined&&!(st.smartFeatures===false&&st.smartFeaturesSkipDefault===true))return false;
   if((lsGet("events",[])||[]).length>0)return false;
   if(lsGet("subjects-configured",false)||lsGet("hasConfiguredRoutine",false))return false;
   return true;
@@ -26801,8 +26804,9 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     // Manual-first: only a brand-new account's first run decides smartFeatures.
     // Re-running setup on an existing account never touches it.
     // (brandNew was computed when the wizard opened, before classes were committed above.)
-    if(brandNew&&lsGet("settings",{}).smartFeatures===undefined){
+    if(brandNew&&(lsGet("settings",{}).smartFeatures===undefined||lsGet("settings",{}).smartFeaturesSkipDefault===true)){
       const learn=learnPref==="yes";
+      lsSet("settings",{...lsGet("settings",{}),smartFeaturesSkipDefault:false});
       setQuestionAskPref("smartFeatures",learn);
       setQuestionAskPref("askCheckIns",learn);
       setQuestionAskPref("askDurationQuestions",learn);
@@ -26984,8 +26988,8 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
             <TitleSub title="What can Studlin do?" sub="Pick what you want. Change any of it later in Settings." />
             <div style={{display:"flex",flexDirection:"column",gap:10}}>
               {[
-                {key:"notif",title:"Notifications",sub:"Reminders before study blocks and deadlines.",onAllow:()=>permNotif(true),onNo:()=>permNotif(false)},
-                {key:"stu",title:"Stu reminders",sub:"Stu pops in before things start and cheers when you finish.",onAllow:()=>permStu(true),onNo:()=>permStu(false)},
+                {key:"notif",title:"Notifications",sub:"Alerts for deadlines and reminders.",onAllow:()=>permNotif(true),onNo:()=>permNotif(false)},
+                {key:"stu",title:"Stu reminders",sub:learnPref==="yes"?"Stu pops in before things start and cheers when you finish.":"Stu says hi and cheers when you finish.",onAllow:()=>permStu(true),onNo:()=>permStu(false)},
                 {key:"google",title:"Google Calendar",sub:"Bring in your events. Next screens will connect it.",onAllow:()=>permGoogle(true),onNo:()=>permGoogle(false)},
                 {key:"bedtime",title:"Bedtime reminder",sub:"A nudge 30 minutes before the bedtime you set.",onAllow:()=>permBedtime(true),onNo:()=>permBedtime(false)},
               ].map(c=>(
@@ -31878,7 +31882,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       ...(color&&color!==T.lime?{color}:{})};
     const next=events.concat([task]);
     setEvents(next);lsSet("events",next);
-    rememberLastDuration("quickCreate",duration);
+    if(duration<=90)rememberLastDuration("quickCreate",duration); // a long drag must not become every future click's default
     setPlacementToast((cleanTitle.length>28?cleanTitle.slice(0,28)+"…":cleanTitle)+" added — "+fmtTimeRange(startTime,duration)+".");
     setTimeout(()=>setPlacementToast(""),3200);
     cancelQuickCreate();
@@ -34135,7 +34139,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // "let AI schedule this". The clicked day is remembered so fixed-time kinds
   // (exam/class/reminder), which always need a real date, can still default
   // to it once the user picks one of those types.
-  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("09:00");setEvSubject("None");setEvCustomColor(T.lime);setEvDate(dateK||selDay||dayKey());setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setEvScheduleLater(false);setEvCommuteBefore("");setEvCommuteAfter("");setAsChecklist(false);setTaskRepeatDays([]);resetTypeExtras();setNewOpen(true);};
+  // AI mode keeps the date blank (a pre-filled date would read as a chosen target
+  // date); manual mode always has a date so Save is never blocked.
+  useEffect(()=>{if(newOpen&&taskMode==="manual"&&!evDate)setEvDate(evPrefillDate||dayKey());},[newOpen,taskMode]);
+  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("09:00");setEvSubject("None");setEvCustomColor(T.lime);setEvDate(smartFeaturesOn()?"":(dateK||selDay||dayKey()));setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setEvScheduleLater(false);setEvCommuteBefore("");setEvCommuteAfter("");setAsChecklist(false);setTaskRepeatDays([]);resetTypeExtras();setNewOpen(true);};
   // Same form as openNew, just arriving with the scheduling mode already
   // decided by which "Add task" menu option was tapped -- the in-modal
   // manual/AI toggle stays visible so it's correctable, not a dead end.
@@ -36332,7 +36339,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         <TourStep {...CAL_TOUR_STEPS[calTourStep]} step={calTourStep} total={CAL_TOUR_STEPS.length}
           isLast={calTourStep===CAL_TOUR_STEPS.length-1} onNext={advanceCalTour} onSkip={skipCalTour} />
       )}
-      <ClassSetupWizard open={classSetupOpen} termRollover={classSetupRollover} firstRun={isFreshAccount} initialStatus={getProfile().status} onSkip={()=>{lsSet("classSetupDeferredUntil",Date.now()+86400000);setClassSetupOpen(false);setClassSetupRollover(false);if(isFreshAccount){setTheme("dark");if(isBrandNewAccountForManualFirst())setQuestionAskPref("smartFeatures",false);}}} onFinish={finishClassSetup} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
+      <ClassSetupWizard open={classSetupOpen} termRollover={classSetupRollover} firstRun={isFreshAccount} initialStatus={getProfile().status} onSkip={()=>{lsSet("classSetupDeferredUntil",Date.now()+86400000);setClassSetupOpen(false);setClassSetupRollover(false);if(isFreshAccount){setTheme("dark");if(isBrandNewAccountForManualFirst()){setQuestionAskPref("smartFeatures",false);lsSet("settings",{...lsGet("settings",{}),smartFeaturesSkipDefault:true});}}}} onFinish={finishClassSetup} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
       <ClassSetupWizard open={quickScanOpen} quickScan targetCourseId={quickScanTargetCourseId} initialStatus={getProfile().status} onFinish={finishQuickScan} onSkip={()=>{setQuickScanOpen(false);setQuickScanTargetCourseId(null);syncClassSetupState();returnToChecklistIfNeeded();}} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
       <Modal open={!!weeklyContentCourseId} onClose={()=>setWeeklyContentCourseId(null)} title="Class notes" sub="A short note for each day this class meets -- lecture, lab, homework due, whatever's useful." width={460}
         footer={<><Btn variant="subtle" onClick={()=>setWeeklyContentCourseId(null)}>Cancel</Btn><Btn onClick={saveWeeklyContent}>Save</Btn></>}>
@@ -37259,7 +37266,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         {isTaskKind&&!isChecklistMode&&taskRepeatDays.length===0&&!evAttackBlock&&!evScheduleLater&&(
           <Field label="Duration" hint="How long you plan to spend">
             <DurationChips value={evDuration} onChange={v=>{setEvDuration(v);setEvDurationTouched(true);}} />
-            {(()=>{const s=suggestDurationFor(evSubject,resolveAssignmentKind());return s&&s!==evDuration&&(
+            {(()=>{const s=smartFeaturesOn()?suggestDurationFor(evSubject,resolveAssignmentKind()):null;return s&&s!==evDuration&&(
               <div style={{fontSize:11.5,color:T.muted,marginTop:6}}>Similar tasks usually take you ~{s}m — <button type="button" onClick={()=>{setEvDuration(s);setEvDurationTouched(true);}} style={{background:"none",border:"none",color:T.lime,cursor:"pointer",fontSize:11.5,fontFamily:T.font,padding:0,textDecoration:"underline"}}>use this</button></div>
             );})()}
           </Field>
