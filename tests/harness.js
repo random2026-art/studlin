@@ -227,6 +227,7 @@ function loadStudlinModule(options) {
     "hourBucket","timeToMinutes","minutesToTime","snapToQuarterHour","computeQuickCreateRange",
     "getAiMemory","saveAiMemory","mergeAiMemoryFacts","removeAiMemoryFact","AI_MEMORY_FACT_CAP",
     "currentClockLabel","formatAiMemoryForPrompt",
+    "detectCrisis","STU_CRISIS_MESSAGE","STU_CRISIS_RESOURCES","getStuKnown","mergeAiMemoryDocs","removeAiMemoryFactById","editAiMemoryFact","clearAiMemoryFacts","parseRememberRequest","filterExtractedFacts","memoryAgeLabel","normalizeAiMemory","buildStudlinAiChatHistory",
     "buildImportSyllabusItemsProposal","extractSyllabusItemsFromChatText",
     "getRoutineOccurrenceNote","saveRoutineOccurrenceNote","blendOverBg",
     "diffNewGoogleEvents","describeNewGoogleEvents","summarizeImportReviewQueue",
