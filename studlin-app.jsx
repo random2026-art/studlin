@@ -1112,6 +1112,201 @@ const COLOR_PRESET_TIERS={
 // Users add their own as they go.
 const DEFAULT_SUBJECTS=[];
 const getSubjects=()=>lsGet("user-subjects",DEFAULT_SUBJECTS);
+// ===== LOOKS (calendar palettes + customize panel, Phase 1) =====
+// Device-local only (localStorage "look"); no Firestore key, rules untouched.
+// "classic" reproduces today's colors and block styling exactly: it is the
+// default and every render site falls back to the legacy values for it.
+// Palette surfaces are white/neutral only (no cream), guarded by a test.
+const LOOK_PALETTES=[
+  {id:"classic",name:"Classic",swatches:SUBJECT_COLORS.slice(0,8),swatchesDark:SUBJECT_COLORS.slice(0,8),headerTint:null},
+  {id:"pastel",name:"Soft Pastel",
+    swatches:["#E89AA8","#8FB8E8","#B7A2E6","#86D1B4","#E8BC72","#9AA6D8","#7FCB9A","#E8A38E"],
+    swatchesDark:["#F0B3BE","#A9CBF0","#CBBBF0","#A3DEC7","#F0CE95","#B4BEE6","#9CDDB4","#F0BCAB"],
+    headerTint:"#B7A2E6"},
+  {id:"mono",name:"Minimal Mono",
+    swatches:["#111827","#374151","#4B5563","#6B7280","#7C8594","#8A94A3","#2B3340","#5A6270"],
+    swatchesDark:["#F3F4F6","#D1D5DB","#B4BAC4","#9CA3AF","#E5E7EB","#C7CCD4","#AEB5C0","#8B93A0"],
+    headerTint:"#6B7280"},
+  {id:"sunset",name:"Sunset",
+    swatches:["#E4572E","#F28C28","#D1495B","#EDAE49","#B5446E","#F2723B","#C0392B","#E8A25A"],
+    swatchesDark:["#FF8A65","#FFB74D","#F06292","#FFD54F","#CE6A9A","#FF9E6B","#EF7A6B","#FFC27A"],
+    headerTint:"#F28C28"},
+  {id:"forest",name:"Forest",
+    swatches:["#2E7D5B","#4F9D69","#6B8E4E","#1F6F6B","#7FA650","#3C8D7A","#5E8C3A","#2F6F4F"],
+    swatchesDark:["#6FC1A0","#8AD29A","#A3C97B","#5FBDB8","#B4D87F","#7DCBB6","#9CCB6A","#7CC0A0"],
+    headerTint:"#4F9D69"},
+  {id:"ocean",name:"Ocean",
+    swatches:["#2D74BC","#3AA0C8","#5B7FD6","#1F8FA6","#4E9AE0","#6A8FD0","#2A64A8","#4DB3C9"],
+    swatchesDark:["#84BBEA","#7FD0EA","#9DB4F0","#6FCADB","#8FC4F5","#A4BEEA","#7AAEE6","#8FDAEA"],
+    headerTint:"#3AA0C8"},
+];
+const LOOK_BLOCK_STYLES=["soft","flat","outlined"];
+const LOOK_DEFAULT={v:1,palette:"classic",blockStyle:"soft"};
+const lookPaletteById=(id)=>LOOK_PALETTES.find(p=>p.id===id)||LOOK_PALETTES[0];
+const lookIsClassic=(look)=>lookPaletteById(look&&look.palette).id==="classic";
+const lookNormalize=(raw)=>{
+  if(!raw||typeof raw!=="object")return {...LOOK_DEFAULT};
+  const palette=LOOK_PALETTES.some(p=>p.id===raw.palette)?raw.palette:"classic";
+  const blockStyle=LOOK_BLOCK_STYLES.includes(raw.blockStyle)?raw.blockStyle:"soft";
+  return {v:1,palette,blockStyle};
+};
+const readLook=()=>{try{return lookNormalize(lsGet("look",null));}catch(e){return {...LOOK_DEFAULT};}};
+const saveLook=(look)=>{const n=lookNormalize(look);lsSet("look",n);return n;};
+// Module-level current look + subscribers, so every calendar view re-renders
+// the instant a palette is picked, without threading props through App.
+let lookCache=null;
+const lookListeners=new Set();
+const getLook=()=>{if(!lookCache)lookCache=readLook();return lookCache;};
+const setLook=(next)=>{lookCache=saveLook({...getLook(),...next});lookListeners.forEach(fn=>{try{fn();}catch(e){}});return lookCache;};
+function useLook(){
+  const [,bump]=useState(0);
+  useEffect(()=>{const fn=()=>bump(n=>n+1);lookListeners.add(fn);return()=>{lookListeners.delete(fn);};},[]);
+  return getLook();
+}
+const lookMode=()=>T.mode==="dark"?"dark":"light";
+// WCAG 2.x contrast
+const lookLuminance=(hex)=>{
+  const h=hex.replace("#","");
+  const ch=[0,2,4].map(i=>{const c=parseInt(h.slice(i,i+2),16)/255;return c<=0.03928?c/12.92:Math.pow((c+0.055)/1.055,2.4);});
+  return 0.2126*ch[0]+0.7152*ch[1]+0.0722*ch[2];
+};
+const contrastRatio=(a,b)=>{
+  const la=lookLuminance(a),lb=lookLuminance(b);
+  return (Math.max(la,lb)+0.05)/(Math.min(la,lb)+0.05);
+};
+const LOOK_INK="#0E1F18";
+// Text that is readable on bg: the color itself when it already passes 4.5:1,
+// otherwise the color pulled toward ink (light) or white (dark) until it does.
+const lookReadableText=(color,bg,mode)=>{
+  if(contrastRatio(color,bg)>=4.5)return color;
+  const target=mode==="dark"?"#FFFFFF":LOOK_INK;
+  for(let i=1;i<=10;i++){const c=blendOverBg(target,i/10,color);if(contrastRatio(c,bg)>=4.5)return c;}
+  return target;
+};
+// Ink, else white, else pure black on a solid fill (the last always clears 4.5:1 for any fill).
+const lookTextOnFill=(fill)=>{if(contrastRatio(fill,LOOK_INK)>=4.5)return LOOK_INK;if(contrastRatio(fill,"#FFFFFF")>=4.5)return "#FFFFFF";return "#000000";};
+const lookCardBg=(mode)=>mode==="dark"?darkT.card:lightT.card;
+// A subject's color under a look. idOrIndex is a subject id/label (resolved
+// against `subjects`) or a plain number (palette slot; wraps around).
+// Classic returns the subject's own saved color, exactly as before.
+function lookColorFor(idOrIndex,look,mode,subjects){
+  const pal=lookPaletteById(look&&look.palette);
+  const list=Array.isArray(subjects)?subjects:[];
+  let idx=-1,subj=null;
+  if(typeof idOrIndex==="number"){idx=idOrIndex;}
+  else{idx=list.findIndex(s=>s.id===idOrIndex||s.label===idOrIndex);subj=idx>=0?list[idx]:null;}
+  if(idx<0)return null;
+  if(pal.id==="classic"&&subj)return subj.color;
+  const arr=mode==="dark"?pal.swatchesDark:pal.swatches;
+  return arr[((idx%arr.length)+arr.length)%arr.length];
+}
+// id and label -> color, computed once per render by the caller (useMemo).
+function lookSubjectColorMap(subjects,look,mode){
+  const map={};
+  (subjects||[]).forEach((s,i)=>{
+    const v=lookColorFor(i,look,mode,subjects);
+    const c=lookIsClassic(look)?s.color:v;
+    if(s.id!==undefined)map[s.id]=c;
+    if(s.label!==undefined&&map[s.label]===undefined)map[s.label]=c;
+  });
+  return map;
+}
+// The one place block fill/edge/text is decided. kind: "subject" (class and
+// other fixed blocks), "study" (solid focus block), "reminder" (text only),
+// "preview" (translucent chip in the day-preview modal). Classic reproduces
+// the legacy values byte-for-byte; exam/deadline rules stay at the call sites.
+function lookBlockStyle(color,look,mode,kind){
+  const k=kind||"subject";
+  const classic=lookIsClassic(look);
+  const style=(look&&look.blockStyle)||"soft";
+  const cardBg=lookCardBg(mode);
+  if(k==="reminder")return {fill:"transparent",border:color,text:classic?color:lookReadableText(color,cardBg,mode),outline:null};
+  if(classic||(style==="soft"&&k!=="study")){
+    if(k==="study")return {fill:color,border:"none",text:T.ink,outline:null};
+    if(k==="preview")return {fill:color+"22",border:color+"55",text:T.text,outline:`1px solid ${color}55`};
+    const fill=blendOverBg(color,0.1176,cardBg);
+    return {fill,border:color,text:classic?color:lookReadableText(color,fill,mode),outline:null};
+  }
+  if(style==="flat"||k==="study"){
+    return {fill:color,border:blendOverBg("#000000",0.18,color),text:lookTextOnFill(color),outline:null};
+  }
+  // outlined
+  return {fill:cardBg,border:color,text:lookReadableText(color,cardBg,mode),outline:`1.5px solid ${color}`};
+}
+// Sample data for the live preview: 5 weekdays, same helper as the real grid.
+const LOOK_PREVIEW_BLOCKS=[
+  {day:0,top:6,h:34,label:"Biology",slot:0,kind:"subject"},
+  {day:0,top:52,h:26,label:"Study",slot:1,kind:"study"},
+  {day:1,top:16,h:30,label:"Calculus",slot:1,kind:"subject"},
+  {day:2,top:6,h:30,label:"History",slot:2,kind:"subject"},
+  {day:2,top:48,h:34,label:"Chemistry",slot:3,kind:"subject"},
+  {day:3,top:20,h:34,label:"Biology",slot:0,kind:"subject"},
+  {day:4,top:8,h:26,label:"Study",slot:4,kind:"study"},
+  {day:4,top:44,h:30,label:"Calculus",slot:1,kind:"subject"},
+];
+function LookPreview({look,mode}){
+  const pal=lookPaletteById(look.palette);
+  const days=["M","T","W","T","F"];
+  return (
+    <div data-look-preview style={{border:`1px solid ${T.border}`,borderRadius:10,overflow:"hidden",background:T.card}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",background:pal.headerTint?hexA(pal.headerTint,0.12):T.card2}}>
+        {days.map((d,i)=>(<div key={i} style={{textAlign:"center",fontSize:10.5,fontWeight:700,color:T.muted,padding:"6px 0"}}>{d}</div>))}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",height:92,position:"relative"}}>
+        {days.map((d,i)=>(
+          <div key={i} style={{position:"relative",borderLeft:i?`1px solid ${T.border}`:"none"}}>
+            {LOOK_PREVIEW_BLOCKS.filter(b=>b.day===i).map((b,j)=>{
+              const c=lookColorFor(b.slot,look,mode)||LOOK_PALETTES[0].swatches[b.slot];
+              const s=lookBlockStyle(c,look,mode,b.kind);
+              return (
+                <div key={j} style={{position:"absolute",top:b.top,left:3,right:3,height:b.h,borderRadius:5,padding:"2px 4px",boxSizing:"border-box",overflow:"hidden",background:s.fill,color:s.text,...(s.outline?{border:s.outline}:{}),borderLeft:b.kind==="study"?(s.outline?s.outline:"none"):`3px solid ${s.border}`,fontSize:9.5,fontWeight:700,whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{b.label}</div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+function LookCustomizePanel({open,onClose}){
+  const look=useLook();
+  const [saved,setSaved]=useState(false);
+  useEffect(()=>{if(!saved)return;const t=setTimeout(()=>setSaved(false),1800);return()=>clearTimeout(t);},[saved]);
+  if(!open)return null;
+  const mode=lookMode();
+  const pick=(patch)=>{setLook(patch);setSaved(true);};
+  return (
+    <Modal open={open} onClose={onClose} title="Customize your calendar" sub="Pick a look. It applies right away." width={520}
+      footer={<button type="button" onClick={onClose} style={{padding:"9px 22px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:T.font}}>Done</button>}>
+      <LookPreview look={look} mode={mode} />
+      <div style={{fontSize:12,fontWeight:700,color:T.muted,margin:"18px 0 8px"}}>Palette</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))",gap:10}}>
+        {LOOK_PALETTES.map(p=>{
+          const on=look.palette===p.id;
+          const sw=mode==="dark"?p.swatchesDark:p.swatches;
+          return (
+            <button key={p.id} type="button" onClick={()=>pick({palette:p.id})} aria-pressed={on}
+              style={{textAlign:"left",padding:"10px 12px",borderRadius:10,border:`1.5px solid ${on?T.lime:T.border}`,background:on?T.lime+"15":T.card2,cursor:"pointer",fontFamily:T.font}}>
+              <div style={{display:"flex",gap:3,marginBottom:8}}>
+                {sw.map((c,i)=>(<span key={i} style={{width:12,height:12,borderRadius:"50%",background:c,flexShrink:0}} />))}
+              </div>
+              <div style={{fontSize:12.5,fontWeight:700,color:T.text}}>{p.name}{on?" ✓":""}</div>
+            </button>
+          );
+        })}
+      </div>
+      <div style={{fontSize:12,fontWeight:700,color:T.muted,margin:"18px 0 8px"}}>Block style</div>
+      <div role="group" aria-label="Block style" style={{display:"flex",gap:2,background:T.card2,padding:2,borderRadius:8}}>
+        {LOOK_BLOCK_STYLES.map(s=>(
+          <button key={s} type="button" onClick={()=>pick({blockStyle:s})} aria-pressed={look.blockStyle===s}
+            style={{flex:1,padding:"8px 0",borderRadius:6,border:"none",cursor:"pointer",fontFamily:T.font,fontSize:12.5,fontWeight:look.blockStyle===s?700:500,background:look.blockStyle===s?T.card:"transparent",color:look.blockStyle===s?T.text:T.muted,textTransform:"capitalize"}}>{s}</button>
+        ))}
+      </div>
+      <div style={{fontSize:11.5,color:T.muted,marginTop:12,minHeight:16}}>{saved?"Saved on this device.":"Colors you set on a single event always stay as you set them."}</div>
+    </Modal>
+  );
+}
+// ===== END LOOKS =====
 const saveSubjects=(s)=>lsSet("user-subjects",s);
 // Every "assign a new subject/course a default color" site used to just
 // index SUBJECT_COLORS by a local count (subjects.length%..., i%..., a
@@ -21290,7 +21485,7 @@ function StudlinAiMiniDayPreview({dateKey,proposedBlock}){
   const subjects=getSubjects();
   const colorFor=(ev)=>{
     const match=subjects.find(s=>s.id===ev.courseId||s.label===ev.subject);
-    return match&&match.color?match.color:T.muted;
+    return match&&match.color?(lookIsClassic(getLook())?match.color:(lookColorFor(subjects.indexOf(match),getLook(),lookMode(),subjects)||match.color)):T.muted;
   };
   const real=[...events,...routineOccs].map(ev=>({...ev,__proposed:false}));
   const proposed=proposedBlock?[{id:"__proposed__",...proposedBlock,__proposed:true}]:[];
@@ -23484,6 +23679,7 @@ function AcceptanceRoster({memberUids, memberNames, responses}) {
 }
 
 function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropManualBlockRequest, onDropNewTaskRequest, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent, selectedRoutineKey, onSelectRoutineOccurrence, blockRefs, flipOldRectsRef, flipSeq, newItemHighlightIds, gsBusyByDate, gsRecommended, quickCreateDraft, onQuickCreateDrag, onQuickCreateDragEnd}) {
+  const lookNow=getLook(),lookModeNow=lookMode();
   // "Watch it happen" FLIP playback (see CalendarTab's captureFlip) --
   // flipSeq changing means flipOldRectsRef.current now holds a snapshot
   // of every block's on-screen position from right before events just
@@ -24284,12 +24480,12 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   // real background (T.card), so the lines underneath can
                   // no longer show through at all.
                   const kindStyle = isReminderMarker
-                    ? {background:"transparent",color:subjectColor}
+                    ? {background:"transparent",color:lookBlockStyle(subjectColor,lookNow,lookModeNow,"reminder").text}
                     : isStudy
-                      ? {background:ev.color||tokens.color.accent,color:T.ink}
+                      ? (()=>{const ls=lookBlockStyle(ev.color||tokens.color.accent,lookNow,lookModeNow,"study");return {background:ls.fill,color:ls.text};})()
                       : isWarningKind
                         ? {background:blendOverBg(T.amber,0.12,T.card),border:`1px solid ${tokens.color.warning}`,color:tokens.color.warning}
-                        : {background:blendOverBg(subjectColor,0.1176,T.card),color:subjectColor};
+                        : (()=>{const ls=lookBlockStyle(subjectColor,lookNow,lookModeNow,"subject");return {background:ls.fill,color:ls.text,...(ls.outline?{border:ls.outline}:{})};})();
                   const dimmedByRoutineMode = editRoutineMode && !isRoutine;
                   const highlightedByRoutineMode = editRoutineMode && isRoutine;
                   // Schedule with Friends / Find Shared Study Window: a
@@ -24414,7 +24610,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                         <div style={{display:"flex",alignItems:"center",gap:5,height:"100%"}}>
                           <span style={{width:6,height:6,borderRadius:"50%",background:subjectColor,flexShrink:0,boxShadow:`0 0 0 2px ${subjectColor}2a`}} />
                           <span style={{flex:"0 1 auto",minWidth:8,height:2,background:subjectColor+"77",borderRadius:1}} />
-                          <span style={{fontSize:9,fontWeight:700,color:subjectColor,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ev.title}</span>
+                          <span style={{fontSize:9,fontWeight:700,color:kindStyle.color,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ev.title}</span>
                         </div>
                       ) : (<>
                       {/* Subject marker -- see comment above kindStyle */}
@@ -27569,6 +27765,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
 // one). The container just scrolls, same as any normal calendar, landing
 // near the current time or the first real event on open.
 function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending, openNew, newItemHighlightIds, onEditRoutine, moveEvent, sidebarDragChip, onDropSidebarChip, onDropManualBlockRequest, onDropNewTaskRequest, onDropRoutineOccurrence, onRoutineDragStateChange, quickCreateDraft, onQuickCreateDrag, onQuickCreateDragEnd, gsBusyByDate, gsRecommended, gsDraft, onGsPreviewMove, onGsPreviewResize}) {
+  const lookNow=getLook(),lookModeNow=lookMode();
   const scrollRef=useRef(null);
   // User report, 2026-09-10: dragging an unscheduled item ("Don't know
   // exactly when? Drag onto the calendar", the sidebar's own unscheduled
@@ -27981,12 +28178,12 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
               // perceived tint, but flattened to one solid hex so the lines
               // underneath stop showing through.
               const kindStyle=isReminderMarker
-                ?{background:"transparent",borderLeft:"none",color}
+                ?{background:"transparent",borderLeft:"none",color:lookBlockStyle(color,lookNow,lookModeNow,"reminder").text}
                 :isStudy
-                  ?{background:color,borderLeft:"none",color:T.ink}
+                  ?(()=>{const ls=lookBlockStyle(color,lookNow,lookModeNow,"study");return {background:ls.fill,borderLeft:"none",color:ls.text,...(ls.outline?{border:ls.outline}:{})};})()
                   :isExam
                     ?{background:T.ink,border:`2px solid ${color}`,borderLeft:`2px solid ${color}`,boxShadow:`0 0 10px -1px ${color}, inset 0 0 10px ${color}22`,color:T.cream}
-                    :{background:blendOverBg(color,0.1176,T.card),borderLeft:`3px solid ${color}`,color};
+                    :(()=>{const ls=lookBlockStyle(color,lookNow,lookModeNow,"subject");return {...(ls.outline?{border:ls.outline}:{}),background:ls.fill,borderLeft:`3px solid ${ls.border}`,color:ls.text};})();
               const leftPct=(displayCol/displayTotalCols)*100;
               const widthPct=100/displayTotalCols;
               // Same "just added/imported" marker as WeeklyPlanner's own
@@ -28039,7 +28236,7 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
                     <div style={{display:"flex",alignItems:"center",gap:5,height:"100%"}}>
                       <span style={{width:6,height:6,borderRadius:"50%",background:color,flexShrink:0,boxShadow:`0 0 0 2px ${color}2a`}} />
                       <span style={{flex:"0 1 auto",minWidth:8,height:2,background:color+"77",borderRadius:1}} />
-                      <span style={{fontSize:10,fontWeight:700,color,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",textDecoration:isDone?"line-through":"none"}}>{ev.title}</span>
+                      <span style={{fontSize:10,fontWeight:700,color:kindStyle.color,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",textDecoration:isDone?"line-through":"none"}}>{ev.title}</span>
                     </div>
                   ) : (<>
                   {!catchUpPending&&over>0&&<span title={"Scheduled "+over+(over===1?" day":" days")+" after its due date"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:`0 0 0 1.5px ${isExam?T.ink:"#fff"}`,zIndex:1}} />}
@@ -28194,6 +28391,7 @@ function ClassDayNotesFields({routineId,date}){
 const DAY_PREVIEW_ICON_BY_KIND={"class":Icon.cal,"study block":Icon.brain,"exam":Icon.zap,"deadline":Icon.file,"reminder":Icon.clock};
 function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime,fmtTimeRange,catchUpPending,openNew}){
   if(!open)return null;
+  const pvStyle=(c)=>lookBlockStyle(c,getLook(),lookMode(),"preview");
   // Same isDuePill exclusion as DayPlanner's own timeline (see its
   // comment) -- an exam/deadline/unconfirmed-time reminder never had a
   // real clock position, so this modal shouldn't lay one out here either.
@@ -28291,11 +28489,11 @@ function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime
                 );
               }
               return(
-                <div key={ev.id} style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:8,padding:"6px 10px",overflow:"hidden",zIndex:3,boxSizing:"border-box",background:color+"22",border:`1px solid ${color}55`,display:"flex",flexDirection:"column",justifyContent:"center"}}>
+                <div key={ev.id} style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:8,padding:"6px 10px",overflow:"hidden",zIndex:3,boxSizing:"border-box",background:pvStyle(color).fill,border:pvStyle(color).outline,display:"flex",flexDirection:"column",justifyContent:"center"}}>
                   {conflictTitles.length>0&&<span title={"Overlaps with "+conflictTitles.join(", ")} style={{position:"absolute",top:2,right:2,fontSize:9,lineHeight:1,zIndex:1,filter:"drop-shadow(0 1px 1px rgba(0,0,0,0.35))"}}>⚠️</span>}
                   <div style={{display:"flex",alignItems:"center",gap:6}}>
                     <span style={{color,display:"flex",flexShrink:0}}>{iconFor(ev.kind)}</span>
-                    <span style={{fontSize:12,fontWeight:700,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.title}</span>
+                    <span style={{fontSize:12,fontWeight:700,color:pvStyle(color).text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.title}</span>
                   </div>
                   {heightPx>30&&<div style={{fontSize:10,color:T.muted,marginTop:2,marginLeft:19}}>{fmtTimeRange(ev.time,dur)}</div>}
                   {overflowCount>0&&<div style={{fontSize:9.5,fontWeight:700,color,marginTop:1,marginLeft:19}}>+{overflowCount} more at this time</div>}
@@ -31359,7 +31557,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // is picked) both fall through to the same lime default as every other
   // colorOf in the file -- gray used to mean "no subject," which read as a
   // dead/disabled task on the calendar instead of just an untagged one.
-  const colorOf=(sub)=>{const x=userSubjects.find(s=>s.id===sub||s.label===sub);return x?x.color:T.lime;};
+  // LOOKS: subject colors come from the chosen palette (computed once per render, not per event); classic leaves each subject's own color untouched.
+  const calLook=useLook();
+  const [lookPanelOpen,setLookPanelOpen]=useState(false);
+  const lookColorMap=useMemo(()=>lookSubjectColorMap(userSubjects,calLook,lookMode()),[userSubjects,calLook.palette,T.mode]);
+  const colorOf=(sub)=>{const x=userSubjects.find(s=>s.id===sub||s.label===sub);if(!x)return T.lime;const m=lookColorMap[x.id!==undefined?x.id:x.label];return m||x.color;};
   // ── Phase 5: Courses/Activities sidebar (Shovel-inspired) ──
   // Own collapse state, independent of the global icon rail's.
   const [calSidebarCollapsed,setCalSidebarCollapsedState]=useState(()=>lsGet("calSidebarCollapsed",false));
@@ -35741,6 +35943,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           </button>
         )}
         <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:6}}>
+          <button type="button" onClick={()=>setLookPanelOpen(true)} title="Change your calendar colors and block style" style={{height:22,padding:"0 8px",display:"flex",alignItems:"center",gap:4,background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:11,fontWeight:600,fontFamily:T.font}}>Customize</button>
+          <LookCustomizePanel open={lookPanelOpen} onClose={()=>setLookPanelOpen(false)} />
           <div style={{display:"flex",gap:2,background:T.card2,padding:2,borderRadius:4}}>
             {[{id:"daily",label:"Day"},{id:"weekly",label:"Week"},{id:"monthly",label:"Month"}].map(v=>(
               <button key={v.id} onClick={()=>setCalView(v.id)} style={{padding:"3px 9px",borderRadius:4,fontSize:11.5,fontWeight:calView===v.id?500:400,cursor:"pointer",background:calView===v.id?T.card:"transparent",color:calView===v.id?T.text:T.muted,border:"none",fontFamily:T.font,transition:"all 0.15s"}}>{v.label}</button>
@@ -37982,6 +38186,8 @@ function SettingsRow({label,sub,k,right,highlight}){
 }
 
 function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}, onOpenRoutineCenter=()=>{}, setScheduleSettingsOpen=()=>{}, setPricingOpen=()=>{}, setActivePage=()=>{}, pendingOpenSetting=null, onSettingOpened=()=>{}}) {
+  const [lookPanelOpen,setLookPanelOpen]=useState(false);
+  const settingsLook=useLook();
   // "integrations": the setup checklist's Connect your school's LMS/Google
   // Calendar buttons (Dashboard, 2026-09-30) -- lands directly on this tab instead
   // of the generic General one a new student would otherwise have to hunt
@@ -39267,6 +39473,16 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                 <ThemeCard mode="light" label="Light" sub="Bone white · muted slate" />
                 <ThemeCard mode="dark"  label="Dark"  sub="Midnight matte · slate blue" />
               </div>
+            </Card>
+            <Card style={{marginBottom:12}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+                <div>
+                  <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:3}}>Calendar look</div>
+                  <div style={{fontSize:12,color:T.muted}}>Palette: {lookPaletteById(settingsLook.palette).name}. Pick colors and block style for your calendar.</div>
+                </div>
+                <button type="button" onClick={()=>setLookPanelOpen(true)} style={{padding:"8px 16px",borderRadius:8,border:`1.5px solid ${T.lime}`,background:T.lime+"15",color:T.lime,fontWeight:700,fontSize:12.5,cursor:"pointer",fontFamily:T.font}}>Customize</button>
+              </div>
+              <LookCustomizePanel open={lookPanelOpen} onClose={()=>setLookPanelOpen(false)} />
             </Card>
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:16}}>Accent color</div>
