@@ -13573,13 +13573,87 @@ function StudlinAiBubble({ onClick, hasProactive }) {
     )
   );
 }
+function openStuCalendarTool(tool, setActive) {
+  lsSet("pendingCalendarTool", tool);
+  setActive("calendar");
+  try {
+    window.dispatchEvent(new CustomEvent("studlin:open-tool", { detail: tool }));
+  } catch (e) {
+  }
+}
+function studlinAiChipsFor(catchUpBanner) {
+  const chips = [{ id: "brainDump", label: "Brain dump", kind: "tool" }];
+  if (catchUpBanner) chips.push({ id: "catchUp", label: catchUpBanner.count === 1 ? "Reschedule it" : "Rebuild my week", kind: "catchup" });
+  chips.push({ id: "move", label: "Move things around", kind: "prefill", prefill: "Push everything back " });
+  chips.push({ id: "free", label: "Am I free?", kind: "prefill", prefill: "Which of these times work for me: " });
+  chips.push({ id: "findTime", label: "Find me a time", kind: "prefill", prefill: "Find me time for " });
+  return chips;
+}
 function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
 }, onEventsCommitted = () => {
 }, onDeleteEvent = () => {
 }, proactiveSignal = null, onAcceptProactive = () => {
 }, onDeclineProactive = () => {
+}, setActive = () => {
+}, catchUpBanner = null, onOpenCatchUp = () => {
 } }) {
   const pp = panelPalette();
+  const [chipBusy, setChipBusy] = useState(false);
+  const [bdMode, setBdMode] = useState(false);
+  const inputRef = useRef(null);
+  const brainDumpPaywall = () => {
+    setPricingOpen(canUseBrainDumpReason() === "free-tier" ? "brainDump" : "aiUsageCap");
+    setMessages((m) => [...m, { role: "ai", text: "Brain dump through Stu needs Pro. I've opened the upgrade options.", kind: "paywall" }]);
+  };
+  const tapChip = (chip) => {
+    if (chipBusy) return;
+    setChipBusy(true);
+    setTimeout(() => setChipBusy(false), 600);
+    if (chip.kind === "prefill") {
+      setInput(chip.prefill);
+      setBdMode(false);
+      setTimeout(() => {
+        const el = inputRef.current;
+        if (el) {
+          el.focus();
+          try {
+            el.setSelectionRange(chip.prefill.length, chip.prefill.length);
+          } catch (e) {
+          }
+        }
+      }, 0);
+      return;
+    }
+    if (chip.kind === "catchup") {
+      onClose();
+      onOpenCatchUp();
+      return;
+    }
+    if (!canUseBrainDump()) {
+      brainDumpPaywall();
+      return;
+    }
+    setBdMode(true);
+    setMessages((m) => [...m, { role: "ai", text: "Tell me everything on your plate. Type it or tap the mic.", kind: "info" }]);
+    setTimeout(() => {
+      if (inputRef.current) inputRef.current.focus();
+    }, 0);
+  };
+  const sendBrainDump = (text) => {
+    if (!canUseBrainDump()) {
+      setBdMode(false);
+      brainDumpPaywall();
+      return;
+    }
+    if (aiListening) stopAiRec();
+    setBdMode(false);
+    setMessages((m) => [...m, { role: "user", text }, { role: "ai", text: "Opening Brain Dump with that. Check it, then tap Sort it out.", kind: "info" }]);
+    setInput("");
+    setMemoryToast("Opening Brain Dump");
+    setTimeout(() => setMemoryToast(""), 3500);
+    openStuCalendarTool({ kind: "brainDump", text }, setActive);
+    onClose();
+  };
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -13872,6 +13946,10 @@ CONVERSATION:
   const send = async () => {
     const text = input.trim();
     if (!text || loading || pendingIndex != null) return;
+    if (bdMode) {
+      sendBrainDump(text);
+      return;
+    }
     const history = buildStudlinAiChatHistory(messages);
     setMessages((m) => [...m, { role: "user", text }]);
     setInput("");
@@ -14162,8 +14240,34 @@ CONVERSATION:
     });
     setPendingIndex(null);
   };
+  const renderStuChips = () => {
+    if (loading || pendingIndex != null) return null;
+    return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 8 } }, /* @__PURE__ */ React.createElement("style", null, `.stu-chip:focus-visible{outline:2px solid ${T.lime};outline-offset:2px}`), studlinAiChipsFor(catchUpBanner).map((c) => /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        key: c.id,
+        type: "button",
+        className: "stu-chip",
+        "aria-label": c.label,
+        disabled: chipBusy,
+        onClick: () => tapChip(c),
+        style: { minHeight: 36, padding: "7px 14px", borderRadius: 18, border: `1px solid ${pp.border}`, background: pp.card2, color: pp.text, fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: T.font, opacity: chipBusy ? 0.6 : 1 }
+      },
+      c.label
+    )), bdMode && /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        type: "button",
+        className: "stu-chip",
+        "aria-label": "Cancel brain dump",
+        onClick: () => setBdMode(false),
+        style: { minHeight: 36, padding: "7px 14px", borderRadius: 18, border: "none", background: "transparent", color: pp.muted, fontSize: 12.5, cursor: "pointer", fontFamily: T.font }
+      },
+      "Cancel brain dump"
+    ));
+  };
   return ReactDOM.createPortal(
-    /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: onClose, style: { position: "fixed", inset: 0, background: "rgba(8,12,10,0.5)", zIndex: STUDLIN_AI_DRAWER_BACKDROP_Z, opacity: open ? 1 : 0, pointerEvents: open ? "auto" : "none", transition: "opacity 0.25s" } }), /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 0, right: 0, height: "100vh", width: 400, maxWidth: "92vw", background: T.surface, borderLeft: `1px solid ${pp.border}`, boxShadow: "-24px 0 60px -20px rgba(0,0,0,0.5)", zIndex: STUDLIN_AI_DRAWER_PANEL_Z, display: "flex", flexDirection: "column", transform: open ? "translateX(0)" : "translateX(100%)", transition: "transform 0.28s cubic-bezier(.2,.85,.3,1)", pointerEvents: open ? "auto" : "none" } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "18px 18px 14px", borderBottom: `1px solid ${pp.border}`, display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: pp.text } }, "Studlin AI"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: pp.muted } }, "Ask, or tell me to add or move something")), /* @__PURE__ */ React.createElement("button", { onClick: onClose, style: { width: 30, height: 30, borderRadius: 8, border: `1px solid ${pp.border}`, background: pp.card2, color: pp.muted, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0 } }, Icon.xmark)), /* @__PURE__ */ React.createElement("div", { ref: scrollRef, style: { flex: 1, overflowY: "auto", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10 } }, messages.length === 0 && !loading && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: pp.muted, lineHeight: 1.6, marginTop: 10 } }, 'Try "which day next week is busiest?" or "how do I turn on dark mode."'), messages.map((m, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "85%", display: "flex", flexDirection: "column", gap: 6 } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "9px 13px", borderRadius: 12, fontSize: 13, lineHeight: 1.5, background: m.role === "user" ? pp.card2 : T.lime + "14", color: pp.text, border: m.role === "user" ? `1px solid ${pp.border}` : `1px solid ${T.lime}33`, borderLeft: m.role === "ai" ? `3px solid ${studlinAiKindAccents()[m.kind] || T.lime}` : void 0, whiteSpace: m.role === "user" ? "pre-wrap" : void 0 } }, m.role === "ai" ? renderStudlinAiMarkdown(m.text) : m.text), m.proposal && m.proposal.disambiguate && !m.proposal.resolved && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, m.proposal.disambiguate.map((c) => /* @__PURE__ */ React.createElement(
+    /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: onClose, style: { position: "fixed", inset: 0, background: "rgba(8,12,10,0.5)", zIndex: STUDLIN_AI_DRAWER_BACKDROP_Z, opacity: open ? 1 : 0, pointerEvents: open ? "auto" : "none", transition: "opacity 0.25s" } }), /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 0, right: 0, height: "100vh", width: 400, maxWidth: "92vw", background: T.surface, borderLeft: `1px solid ${pp.border}`, boxShadow: "-24px 0 60px -20px rgba(0,0,0,0.5)", zIndex: STUDLIN_AI_DRAWER_PANEL_Z, display: "flex", flexDirection: "column", transform: open ? "translateX(0)" : "translateX(100%)", transition: "transform 0.28s cubic-bezier(.2,.85,.3,1)", pointerEvents: open ? "auto" : "none" } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "18px 18px 14px", borderBottom: `1px solid ${pp.border}`, display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: pp.text } }, "Studlin AI"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: pp.muted } }, "Ask, or tell me to add or move something")), /* @__PURE__ */ React.createElement("button", { onClick: onClose, style: { width: 30, height: 30, borderRadius: 8, border: `1px solid ${pp.border}`, background: pp.card2, color: pp.muted, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0 } }, Icon.xmark)), /* @__PURE__ */ React.createElement("div", { ref: scrollRef, style: { flex: 1, overflowY: "auto", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10 } }, messages.length === 0 && !loading && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 12, marginTop: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: pp.muted, lineHeight: 1.6 } }, 'Try "which day next week is busiest?" or "how do I turn on dark mode." Or start with one of these.'), renderStuChips()), messages.map((m, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "85%", display: "flex", flexDirection: "column", gap: 6 } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "9px 13px", borderRadius: 12, fontSize: 13, lineHeight: 1.5, background: m.role === "user" ? pp.card2 : T.lime + "14", color: pp.text, border: m.role === "user" ? `1px solid ${pp.border}` : `1px solid ${T.lime}33`, borderLeft: m.role === "ai" ? `3px solid ${studlinAiKindAccents()[m.kind] || T.lime}` : void 0, whiteSpace: m.role === "user" ? "pre-wrap" : void 0 } }, m.role === "ai" ? renderStudlinAiMarkdown(m.text) : m.text), m.proposal && m.proposal.disambiguate && !m.proposal.resolved && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, m.proposal.disambiguate.map((c) => /* @__PURE__ */ React.createElement(
       "button",
       {
         key: c.id,
@@ -14220,7 +14324,7 @@ CONVERSATION:
     // happening" the way a static label can't. Styled to match a
     // real AI message bubble (same lime tint/border) so it reads
     // as "a reply is forming here," not a disconnected label.
-    /* @__PURE__ */ React.createElement("div", { style: { alignSelf: "flex-start", display: "flex", gap: 5, alignItems: "center", padding: "12px 15px", borderRadius: 12, background: T.lime + "14", border: `1px solid ${T.lime}33` } }, [0, 1, 2].map((i) => /* @__PURE__ */ React.createElement("span", { key: i, style: { width: 6, height: 6, borderRadius: "50%", background: pp.muted, animation: "studlinPulse 1s ease-in-out infinite", animationDelay: i * 0.15 + "s" } })))), /* @__PURE__ */ React.createElement("div", { style: { padding: "12px 18px", borderTop: `1px solid ${pp.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement("input", { ref: aiFileRef, type: "file", accept: ".pdf,.docx,.txt,.md,image/*", style: { display: "none" }, onChange: handleAiAttachFile }), /* @__PURE__ */ React.createElement(
+    /* @__PURE__ */ React.createElement("div", { style: { alignSelf: "flex-start", display: "flex", gap: 5, alignItems: "center", padding: "12px 15px", borderRadius: 12, background: T.lime + "14", border: `1px solid ${T.lime}33` } }, [0, 1, 2].map((i) => /* @__PURE__ */ React.createElement("span", { key: i, style: { width: 6, height: 6, borderRadius: "50%", background: pp.muted, animation: "studlinPulse 1s ease-in-out infinite", animationDelay: i * 0.15 + "s" } })))), /* @__PURE__ */ React.createElement("div", { style: { padding: "12px 18px", borderTop: `1px solid ${pp.border}` } }, messages.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 10 } }, renderStuChips()), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement("input", { ref: aiFileRef, type: "file", accept: ".pdf,.docx,.txt,.md,image/*", style: { display: "none" }, onChange: handleAiAttachFile }), /* @__PURE__ */ React.createElement(
       "button",
       {
         type: "button",
@@ -14233,6 +14337,7 @@ CONVERSATION:
     ), /* @__PURE__ */ React.createElement(
       "input",
       {
+        ref: inputRef,
         value: input,
         onChange: (e) => setInput(e.target.value),
         onKeyDown: (e) => {
@@ -14241,7 +14346,7 @@ CONVERSATION:
             send();
           }
         },
-        placeholder: pendingIndex != null ? "Confirm or cancel the proposal above first..." : pendingClarification ? "Answer above, or ask something else..." : aiAttaching ? "Reading your file..." : "Ask, or tell me what to add or move...",
+        placeholder: bdMode ? "Everything you need to do..." : pendingIndex != null ? "Confirm or cancel the proposal above first..." : pendingClarification ? "Answer above, or ask something else..." : aiAttaching ? "Reading your file..." : "Ask, or tell me what to add or move...",
         disabled: pendingIndex != null,
         style: { flex: 1, background: pp.card2, border: `1px solid ${pp.border}`, borderRadius: 8, padding: "9px 12px", color: pp.text, fontSize: 13, fontFamily: T.font, outline: "none", opacity: pendingIndex != null ? 0.6 : 1 }
       }
@@ -21050,6 +21155,23 @@ function CalendarTab({ setActive = () => {
     setTaskRepeatDays([]);
     resetTypeExtras();
   };
+  const consumeStuCalendarTool = (tool) => {
+    try {
+      localStorage.removeItem("studlin-pendingCalendarTool");
+    } catch (e) {
+    }
+    if (!tool || tool.kind !== "brainDump") return;
+    resetForm();
+    setBrainDumpText(typeof tool.text === "string" ? tool.text : "");
+    setBdError("");
+    setBrainDumpOpen(true);
+  };
+  useEffect(() => {
+    consumeStuCalendarTool(lsGet("pendingCalendarTool", null));
+    const onTool = (e) => consumeStuCalendarTool(e && e.detail || lsGet("pendingCalendarTool", null));
+    window.addEventListener("studlin:open-tool", onTool);
+    return () => window.removeEventListener("studlin:open-tool", onTool);
+  }, []);
   const onEvKindChange = (k) => {
     setEvKind(k);
     const willBeFixed = k === "exam" || k === "class" || k === "reminder" || k === "busy block";
@@ -27407,6 +27529,9 @@ function App() {
       open: studlinAiOpen,
       onClose: () => setStudlinAiOpen(false),
       setPricingOpen,
+      setActive,
+      catchUpBanner,
+      onOpenCatchUp: openCatchUpPreview,
       onEventsCommitted: (next) => {
         if (calendarSetEventsRef.current) calendarSetEventsRef.current(next);
       },

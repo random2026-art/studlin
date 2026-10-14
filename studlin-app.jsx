@@ -21930,8 +21930,72 @@ function StudlinAiBubble({onClick,hasProactive}){
   );
 }
 
-function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=()=>{},onDeleteEvent=()=>{},proactiveSignal=null,onAcceptProactive=()=>{},onDeclineProactive=()=>{}}){
+// Stu chat bridge (2026-10-14): hands a CalendarTab-local tool (Brain Dump)
+// to the Calendar tab. Both the one-shot localStorage flag (CalendarTab not
+// mounted yet) and the window event (already mounted) are used; CalendarTab's
+// consumeStuCalendarTool clears the flag so only one path ever opens it.
+function openStuCalendarTool(tool,setActive){
+  lsSet("pendingCalendarTool",tool);
+  setActive("calendar");
+  try{window.dispatchEvent(new CustomEvent("studlin:open-tool",{detail:tool}));}catch(e){}
+}
+// Quick-action chips shown in the chat drawer. kind "prefill" fills the input
+// (never auto-sends); "tool" and "catchup" navigate.
+function studlinAiChipsFor(catchUpBanner){
+  const chips=[{id:"brainDump",label:"Brain dump",kind:"tool"}];
+  if(catchUpBanner)chips.push({id:"catchUp",label:catchUpBanner.count===1?"Reschedule it":"Rebuild my week",kind:"catchup"});
+  chips.push({id:"move",label:"Move things around",kind:"prefill",prefill:"Push everything back "});
+  chips.push({id:"free",label:"Am I free?",kind:"prefill",prefill:"Which of these times work for me: "});
+  chips.push({id:"findTime",label:"Find me a time",kind:"prefill",prefill:"Find me time for "});
+  return chips;
+}
+function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=()=>{},onDeleteEvent=()=>{},proactiveSignal=null,onAcceptProactive=()=>{},onDeclineProactive=()=>{},setActive=()=>{},catchUpBanner=null,onOpenCatchUp=()=>{}}){
   const pp=panelPalette();
+  // Quick-action chips: chipBusy guards double taps; bdMode means the next
+  // send() is a brain dump (skips the classifier entirely, see send()).
+  const [chipBusy,setChipBusy]=useState(false);
+  const [bdMode,setBdMode]=useState(false);
+  const inputRef=useRef(null);
+  const brainDumpPaywall=()=>{
+    setPricingOpen(canUseBrainDumpReason()==="free-tier"?"brainDump":"aiUsageCap");
+    setMessages(m=>[...m,{role:"ai",text:"Brain dump through Stu needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
+  };
+  const tapChip=(chip)=>{
+    if(chipBusy)return;
+    setChipBusy(true);
+    setTimeout(()=>setChipBusy(false),600);
+    if(chip.kind==="prefill"){
+      setInput(chip.prefill);
+      setBdMode(false);
+      setTimeout(()=>{const el=inputRef.current;if(el){el.focus();try{el.setSelectionRange(chip.prefill.length,chip.prefill.length);}catch(e){}}},0);
+      return;
+    }
+    if(chip.kind==="catchup"){
+      onClose();
+      onOpenCatchUp();
+      return;
+    }
+    // Brain dump: gate BEFORE anything else so a free user sees the paywall
+    // in the chat (plus the upgrade modal) instead of being navigated away.
+    if(!canUseBrainDump()){brainDumpPaywall();return;}
+    setBdMode(true);
+    setMessages(m=>[...m,{role:"ai",text:"Tell me everything on your plate. Type it or tap the mic.",kind:"info"}]);
+    setTimeout(()=>{if(inputRef.current)inputRef.current.focus();},0);
+  };
+  // Brain dump mode send: hands the text to the existing Brain Dump modal
+  // (its own parser, usage recording and Review screen), so nothing here
+  // parses, charges, or writes anything.
+  const sendBrainDump=(text)=>{
+    if(!canUseBrainDump()){setBdMode(false);brainDumpPaywall();return;}
+    if(aiListening)stopAiRec();
+    setBdMode(false);
+    setMessages(m=>[...m,{role:"user",text},{role:"ai",text:"Opening Brain Dump with that. Check it, then tap Sort it out.",kind:"info"}]);
+    setInput("");
+    setMemoryToast("Opening Brain Dump");
+    setTimeout(()=>setMemoryToast(""),3500);
+    openStuCalendarTool({kind:"brainDump",text},setActive);
+    onClose();
+  };
   const [messages,setMessages]=useState([]); // {role:"user"|"ai",text,proposal?}
   const [input,setInput]=useState("");
   const [loading,setLoading]=useState(false);
@@ -22356,6 +22420,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
     // to decide on the one already showing before asking for anything
     // else.
     if(!text||loading||pendingIndex!=null)return;
+    if(bdMode){sendBrainDump(text);return;}
     // Built from `messages` before the setMessages call below commits --
     // React keeps this closure's `messages` as whatever it was for this
     // render regardless of when the setter is called within the same
@@ -22716,6 +22781,22 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
     setPendingIndex(null);
   };
 
+  // Chips hide while a reply is loading or a proposal awaits Confirm/Cancel.
+  const renderStuChips=()=>{
+    if(loading||pendingIndex!=null)return null;
+    return(
+      <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+        <style>{`.stu-chip:focus-visible{outline:2px solid ${T.lime};outline-offset:2px}`}</style>
+        {studlinAiChipsFor(catchUpBanner).map(c=>(
+          <button key={c.id} type="button" className="stu-chip" aria-label={c.label} disabled={chipBusy} onClick={()=>tapChip(c)}
+            style={{minHeight:36,padding:"7px 14px",borderRadius:18,border:`1px solid ${pp.border}`,background:pp.card2,color:pp.text,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,opacity:chipBusy?0.6:1}}>{c.label}</button>
+        ))}
+        {bdMode&&<button type="button" className="stu-chip" aria-label="Cancel brain dump" onClick={()=>setBdMode(false)}
+          style={{minHeight:36,padding:"7px 14px",borderRadius:18,border:"none",background:"transparent",color:pp.muted,fontSize:12.5,cursor:"pointer",fontFamily:T.font}}>Cancel brain dump</button>}
+      </div>
+    );
+  };
+
   return ReactDOM.createPortal(
     <>
       <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(8,12,10,0.5)",zIndex:STUDLIN_AI_DRAWER_BACKDROP_Z,opacity:open?1:0,pointerEvents:open?"auto":"none",transition:"opacity 0.25s"}} />
@@ -22729,7 +22810,10 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
         </div>
         <div ref={scrollRef} style={{flex:1,overflowY:"auto",padding:"14px 18px",display:"flex",flexDirection:"column",gap:10}}>
           {messages.length===0&&!loading&&(
-            <div style={{fontSize:12.5,color:pp.muted,lineHeight:1.6,marginTop:10}}>Try "which day next week is busiest?" or "how do I turn on dark mode."</div>
+            <div style={{display:"flex",flexDirection:"column",gap:12,marginTop:10}}>
+              <div style={{fontSize:12.5,color:pp.muted,lineHeight:1.6}}>Try "which day next week is busiest?" or "how do I turn on dark mode." Or start with one of these.</div>
+              {renderStuChips()}
+            </div>
           )}
           {messages.map((m,i)=>(
             <div key={i} style={{alignSelf:m.role==="user"?"flex-end":"flex-start",maxWidth:"85%",display:"flex",flexDirection:"column",gap:6}}>
@@ -22790,13 +22874,14 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
           )}
         </div>
         <div style={{padding:"12px 18px",borderTop:`1px solid ${pp.border}`}}>
+          {messages.length>0&&<div style={{marginBottom:10}}>{renderStuChips()}</div>}
           <div style={{display:"flex",gap:8}}>
             <input ref={aiFileRef} type="file" accept=".pdf,.docx,.txt,.md,image/*" style={{display:"none"}} onChange={handleAiAttachFile} />
             <button type="button" onClick={()=>aiFileRef.current&&aiFileRef.current.click()} disabled={pendingIndex!=null||aiAttaching} title="Attach material (notes, a PDF, a photo of a page)"
               style={{width:36,height:36,borderRadius:"50%",border:"none",background:pp.card2,color:pp.muted,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0,opacity:(pendingIndex!=null||aiAttaching)?0.6:1}}>{Icon.plus}</button>
-            <input value={input} onChange={e=>setInput(e.target.value)}
+            <input ref={inputRef} value={input} onChange={e=>setInput(e.target.value)}
               onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}}
-              placeholder={pendingIndex!=null?"Confirm or cancel the proposal above first...":pendingClarification?"Answer above, or ask something else...":aiAttaching?"Reading your file...":"Ask, or tell me what to add or move..."}
+              placeholder={bdMode?"Everything you need to do...":pendingIndex!=null?"Confirm or cancel the proposal above first...":pendingClarification?"Answer above, or ask something else...":aiAttaching?"Reading your file...":"Ask, or tell me what to add or move..."}
               disabled={pendingIndex!=null}
               style={{flex:1,background:pp.card2,border:`1px solid ${pp.border}`,borderRadius:8,padding:"9px 12px",color:pp.text,fontSize:13,fontFamily:T.font,outline:"none",opacity:pendingIndex!=null?0.6:1}} />
             {(window.SpeechRecognition||window.webkitSpeechRecognition)&&(
@@ -34467,6 +34552,26 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     if(params.sessionCount!==evExamPlan.sessionCount)setEvExamPlan(m=>({...m,sessionCount:params.sessionCount}));
   },[newOpen,evKind,evExamPlan.proposeSessions,evExamPlan.materialFiles,evConfidence,evSessionCountTouched]);
   const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvTitleError("");setEvNotes("");setEvCustom("");setEvCustomColor(T.lime);setEvDate("");setEvTime("09:00");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode(smartFeaturesOn()?"ai":"manual");setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setEvScheduleLater(false);setEvCommuteBefore("");setEvCommuteAfter("");setAiLoading(false);setAsChecklist(false);setTaskRepeatDays([]);resetTypeExtras();};
+  // Stu chat bridge (2026-10-14): the chat drawer is App-level while Brain Dump
+  // is CalendarTab-local state, so the drawer writes lsSet("pendingCalendarTool")
+  // (read on mount, same one-shot pattern as pendingBrainDump above) AND fires a
+  // window "studlin:open-tool" event (for when this tab is already mounted).
+  // Either path ends in consumeStuCalendarTool; the stored flag is cleared first
+  // so the two paths can never both open it.
+  const consumeStuCalendarTool=(tool)=>{
+    try{localStorage.removeItem("studlin-pendingCalendarTool");}catch(e){}
+    if(!tool||tool.kind!=="brainDump")return;
+    resetForm();
+    setBrainDumpText(typeof tool.text==="string"?tool.text:"");
+    setBdError("");
+    setBrainDumpOpen(true);
+  };
+  useEffect(()=>{
+    consumeStuCalendarTool(lsGet("pendingCalendarTool",null));
+    const onTool=(e)=>consumeStuCalendarTool((e&&e.detail)||lsGet("pendingCalendarTool",null));
+    window.addEventListener("studlin:open-tool",onTool);
+    return ()=>window.removeEventListener("studlin:open-tool",onTool);
+  },[]);
   const onEvKindChange=(k)=>{
     setEvKind(k);
     const willBeFixed=(k==="exam"||k==="class"||k==="reminder"||k==="busy block");
@@ -45456,6 +45561,7 @@ function App() {
           signal.kind here. */}
       <StudlinAiBubble onClick={()=>setStudlinAiOpen(true)} hasProactive={!!studlinAiProactive} />
       <StudlinAiDrawer open={studlinAiOpen} onClose={()=>setStudlinAiOpen(false)} setPricingOpen={setPricingOpen}
+        setActive={setActive} catchUpBanner={catchUpBanner} onOpenCatchUp={openCatchUpPreview}
         onEventsCommitted={(next)=>{if(calendarSetEventsRef.current)calendarSetEventsRef.current(next);}}
         onDeleteEvent={deleteEventFromDetail}
         proactiveSignal={studlinAiProactive}
