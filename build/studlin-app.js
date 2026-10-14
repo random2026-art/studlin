@@ -24159,7 +24159,12 @@ function Dashboard({ setActive, seriousMode = false, rescheduleTask, setReschedu
     setLearnsYouReveal(false);
   };
   const SETUP_CHECKLIST_SKIP_COOLDOWN_MS = 7 * 864e5;
-  const [checklistExpanded, setChecklistExpanded] = useState(true);
+  const [checklistExpanded, setChecklistExpandedRaw] = useState(() => !lsGet("setupChecklistCollapsed", false));
+  const setChecklistExpanded = (fn) => setChecklistExpandedRaw((prev) => {
+    const next = typeof fn === "function" ? fn(prev) : fn;
+    lsSet("setupChecklistCollapsed", !next);
+    return next;
+  });
   const [checklistCompletedDismiss, setChecklistCompletedDismiss] = useState(() => lsGet("setupChecklistCompletedDismiss", false));
   const [checklistSkippedAt, setChecklistSkippedAt] = useState(() => lsGet("setupChecklistSkippedAt", 0));
   const [skippedCourseIds, setSkippedCourseIds] = useState(() => lsGet("syllabusSkippedCourseIds", []));
