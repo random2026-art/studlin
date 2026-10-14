@@ -36,7 +36,7 @@ describe("looks surfaces: primitives", () => {
 });
 
 describe("looks surfaces: Dashboard", () => {
-  const dash = () => slice("function Dashboard(", "// ─── FEEDBACK");
+  const dash = () => slice("function Dashboard(", "// ─── INIT WIZARD");
   test("cards, chips, buttons and rows read tokens", () => {
     const d = dash();
     for (const t of ["T.tint", "T.borderTint", "T.chipBg", "T.accentInk", "T.accentSoft", "T.lookOn"]) assert.ok(d.includes(t), t);
