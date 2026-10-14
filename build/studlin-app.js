@@ -13707,7 +13707,7 @@ CONVERSATION:
       setMessages((m) => [...m, { role: "ai", text: entry.answer, kind: "help" }]);
       return;
     }
-    setMessages((m) => [...m, { role: "ai", text: "I don't have a specific answer for that one. Check Settings, or use Feedback in the sidebar to ask a real person.", kind: "info" }]);
+    setMessages((m) => [...m, { role: "ai", text: "I don't have a specific answer for that one. Try rewording it, or check Settings.", kind: "info" }]);
   };
   const answerAvailabilityMatch = async (parsed) => {
     if (!canUseStudlinAiQna()) {
@@ -20121,6 +20121,8 @@ function CalendarTab({ setActive = () => {
       if (ev.status === "done" || !ev.time) return ev;
       if (isLeadInFixed(ev)) return ev;
       if (ev.userPinned) return ev;
+      if (isDuePill(ev)) return ev;
+      if (ev.source === "import" || String(ev.id || "").startsWith("gcal-")) return ev;
       if (ev.date > horizonEnd) return ev;
       const duration = ev.duration || 30;
       const tMins = timeToMinutes(ev.time);
@@ -24862,7 +24864,8 @@ function resizeImageForAvatar(file) {
     reader.readAsDataURL(file);
   });
 }
-function Profile({ setActive, seriousMode = false } = {}) {
+function Profile({ setActive, seriousMode: seriousModeProp = false } = {}) {
+  const seriousMode = seriousModeProp || !smartFeaturesOn();
   const [prof, setProfState] = useState(() => getProfile());
   const [picUrl, setPicUrl] = useState(() => getUserPicUrl());
   const [status, setStatus] = useState(prof.status || "");
@@ -25288,7 +25291,7 @@ function Dashboard({ setActive, seriousMode = false, rescheduleTask, setReschedu
         setActive("notes");
       }
     }, style: { background: bgColors[i % 4], borderRadius: 8, padding: 14, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 9.5, fontWeight: 700, letterSpacing: "0.06em", color: "rgba(8,12,40,0.65)", marginBottom: 8 } }, it.subj), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: "#0D120F", marginBottom: 10, lineHeight: 1.3 } }, it.title), /* @__PURE__ */ React.createElement("div", { style: { height: 4, background: "rgba(8,12,40,0.15)", borderRadius: 99, marginBottom: 8, overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { height: "100%", width: it.pct + "%", background: "#0D120F", borderRadius: 99 } })), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: "rgba(8,12,40,0.6)", display: "flex", justifyContent: "space-between" } }, /* @__PURE__ */ React.createElement("span", null, it.a), /* @__PURE__ */ React.createElement("span", null, it.b)));
-  }))))), wrappedOpen && !seriousMode && /* @__PURE__ */ React.createElement("div", { onClick: dismissWrapped, style: { position: "fixed", inset: 0, background: "rgba(8,12,10,0.72)", zIndex: 1e3, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, animation: "studlinFade 0.18s ease-out" } }, /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { width: "100%", maxWidth: 420, background: T.forest, color: T.cream, borderRadius: 10, padding: 26, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)", animation: "studlinPop 0.22s cubic-bezier(.2,.85,.3,1)" } }, /* @__PURE__ */ React.createElement(CardHead, { title: "Weekly Wrapped", label: "WEEK " + weekNo(), light: true }), (() => {
+  }))))), wrappedOpen && !seriousMode && /* @__PURE__ */ React.createElement("div", { onClick: dismissWrapped, style: { position: "fixed", inset: 0, background: "rgba(8,12,10,0.72)", zIndex: 1e3, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, animation: "studlinFade 0.18s ease-out" } }, /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { width: "100%", maxWidth: 420, background: T.forest, color: T.cream, borderRadius: 10, padding: 26, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)", animation: "studlinPop 0.22s cubic-bezier(.2,.85,.3,1)" } }, /* @__PURE__ */ React.createElement(CardHead, { title: "Weekly Wrapped", label: "WEEK " + weekNo(), light: true }), smartFeaturesOn() && (() => {
     const barData = weekDays7.map((d) => {
       const key = dayKey(d);
       const mins = minsByDay[key] || 0;
@@ -25301,8 +25304,8 @@ function Dashboard({ setActive, seriousMode = false, rescheduleTask, setReschedu
       const h = d.mins > 0 ? Math.max(4, Math.round(d.mins / maxMins * 40)) : 0;
       return /* @__PURE__ */ React.createElement("div", { key: i, style: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 } }, /* @__PURE__ */ React.createElement("div", { style: { width: "100%", display: "flex", flexDirection: "column", justifyContent: "flex-end", height: 40 } }, d.mins > 0 ? /* @__PURE__ */ React.createElement("div", { style: { width: "100%", height: h, background: d.isToday ? T.lime : wkBarTint(0.25), borderRadius: "3px 3px 0 0" } }) : /* @__PURE__ */ React.createElement("div", { style: { width: "100%", height: 3, background: wkBarTint(0.1), borderRadius: 2 } })), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, fontFamily: T.mono, color: d.isToday ? T.lime : wkBarTint(0.4), fontWeight: d.isToday ? 700 : 400 } }, d.lab));
     }));
-  })(), weeklyFocusMin === 0 && cardsMasteredTotal === 0 && tasksCompletedTotal === 0 ? /* @__PURE__ */ React.createElement("div", { style: { background: "rgba(255,255,255,0.05)", borderRadius: 10, padding: "16px 14px", textAlign: "center", marginTop: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: "rgba(255,255,255,0.75)", lineHeight: 1.5 } }, "Nothing tracked yet this week. Add a task and next week's recap will actually mean something.")) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginTop: 14 } }, [
-    { ln: "Focus hours", vn: fmtH(weeklyFocusMin) || "0m" },
+  })(), (smartFeaturesOn() ? weeklyFocusMin === 0 : true) && cardsMasteredTotal === 0 && tasksCompletedTotal === 0 ? /* @__PURE__ */ React.createElement("div", { style: { background: "rgba(255,255,255,0.05)", borderRadius: 10, padding: "16px 14px", textAlign: "center", marginTop: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: "rgba(255,255,255,0.75)", lineHeight: 1.5 } }, "Nothing tracked yet this week. Add a task and next week's recap will actually mean something.")) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginTop: 14 } }, [
+    ...smartFeaturesOn() ? [{ ln: "Focus hours", vn: fmtH(weeklyFocusMin) || "0m" }] : [],
     { ln: "Top subject", vn: topSubjectThisWeek || "\u2014" },
     { ln: "Tasks completed", vn: tasksCompletedTotal }
   ].map((ins, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { background: "rgba(255,255,255,0.05)", borderRadius: 10, padding: "9px 12px", display: "flex", justifyContent: "space-between", alignItems: "center" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: "rgba(255,255,255,0.55)", fontFamily: T.mono, letterSpacing: "0.04em", textTransform: "uppercase" } }, ins.ln), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.hand, fontSize: 20, fontWeight: 600, color: T.lime } }, ins.vn)))), /* @__PURE__ */ React.createElement("div", { style: { borderTop: "1px solid rgba(255,255,255,0.12)", paddingTop: 16, marginTop: -8, marginBottom: 20 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontFamily: T.mono, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(255,255,255,0.55)", marginBottom: 10 } }, "Your Week Ahead"), weekAheadSummary.isChillWeek ? /* @__PURE__ */ React.createElement("div", { style: { background: "rgba(255,255,255,0.05)", borderRadius: 10, padding: "14px", fontSize: 12.5, color: "rgba(255,255,255,0.8)", lineHeight: 1.5 } }, "Nothing major on the calendar next week -- a good one to get ahead, or just breathe.") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.cream, lineHeight: 1.5, marginBottom: 12 } }, weekAheadSummary.busiestDay.minutes > 0 ? (/* @__PURE__ */ new Date(weekAheadSummary.busiestDay.date + "T12:00:00")).toLocaleDateString("en-US", { weekday: "long" }) + " is your busiest day -- " + fmtH(weekAheadSummary.busiestDay.minutes) + " already scheduled." : "Nothing due next week."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "flex-end", gap: 6, height: 44, marginBottom: 14 } }, weekAheadSummary.days.map((d, i) => {
@@ -26888,13 +26891,12 @@ function App() {
       { id: "friends", label: "Studlin Network", badge: String(unreadCount + pendingFriendRequestCount || "") }
     ] },
     { label: "Account", items: [
-      { id: "feedback", label: "Feedback" },
       { id: "settings", label: "Settings" },
       { id: "profile", label: "Profile" }
     ] }
   ];
   const bottomItems = [];
-  const pages = { prep: StudlinPrep, flashcards: Flashcards, notes: Notes, calendar: CalendarTab, friends: FriendsChat, profile: Profile, feedback: FeedbackPage };
+  const pages = { prep: StudlinPrep, flashcards: Flashcards, notes: Notes, calendar: CalendarTab, friends: FriendsChat, profile: Profile };
   const ActivePage = pages[active];
   const isLight = T.mode === "light";
   const sidebarText = isLight ? "#FFFFFF" : T.text;

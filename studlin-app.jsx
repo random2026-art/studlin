@@ -22123,7 +22123,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
       setMessages(m=>[...m,{role:"ai",text:entry.answer,kind:"help"}]);
       return;
     }
-    setMessages(m=>[...m,{role:"ai",text:"I don't have a specific answer for that one. Check Settings, or use Feedback in the sidebar to ask a real person.",kind:"info"}]);
+    setMessages(m=>[...m,{role:"ai",text:"I don't have a specific answer for that one. Try rewording it, or check Settings.",kind:"info"}]);
   };
 
   // availability_match (2026-09-15): the student pasted/described specific
@@ -33339,6 +33339,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       // task the moment it overlapped a class/work block. The overlap still
       // shows as a conflict on the calendar; the student decides what to do.
       if(ev.userPinned)return ev;
+      // Due-date markers (no duration, e.g. a Canvas "E3 is due") don't
+      // occupy time, so there is nothing to conflict with. And anything
+      // synced from Google/Canvas is overwritten with the source's own
+      // date/time on the next sync, so a move here never sticks: it was
+      // re-detected and re-moved on every app open, with a toast each time.
+      if(isDuePill(ev))return ev;
+      if(ev.source==="import"||String(ev.id||"").startsWith("gcal-"))return ev;
       if(ev.date>horizonEnd)return ev;
       const duration=ev.duration||30;
       const tMins=timeToMinutes(ev.time);
@@ -40823,7 +40830,11 @@ function resizeImageForAvatar(file){
   });
 }
 // ─── PROFILE ──────────────────────────────────────────────────────────────────
-function Profile({setActive,seriousMode=false}={}) {
+function Profile({setActive,seriousMode:seriousModeProp=false}={}) {
+  // Levels, focus minutes and the weekly focus chart all come from the
+  // Begin timer, so a student who isn't using it (smart features off) sees
+  // none of them, same as Private Account mode.
+  const seriousMode=seriousModeProp||!smartFeaturesOn();
   const [prof,setProfState]=useState(()=>getProfile());
   const [picUrl,setPicUrl]=useState(()=>getUserPicUrl());
   const [status,setStatus]=useState(prof.status||"");
@@ -41787,7 +41798,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
           {/* Day-by-day breakdown — used to be its own permanent "This
               week's focus" dashboard card; folded in here instead since
               this is the one place a week-in-review actually belongs. */}
-          {(()=>{
+          {smartFeaturesOn()&&(()=>{
             const barData=weekDays7.map((d)=>{const key=dayKey(d);const mins=minsByDay[key]||0;const isToday=key===dayKey(new Date());const lab=d.toLocaleDateString("en-US",{weekday:"short"}).slice(0,1).toUpperCase();return {mins,isToday,lab};});
             const maxMins=Math.max.apply(null,barData.map((d)=>d.mins).concat([1]));
             return(
@@ -41814,14 +41825,14 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
               recap that's supposed to feel like a celebration. One
               encouraging line instead, in the same spot the real stats
               would occupy once there's something to show. */}
-          {weeklyFocusMin===0&&cardsMasteredTotal===0&&tasksCompletedTotal===0?(
+          {(smartFeaturesOn()?weeklyFocusMin===0:true)&&cardsMasteredTotal===0&&tasksCompletedTotal===0?(
             <div style={{background:"rgba(255,255,255,0.05)",borderRadius:10,padding:"16px 14px",textAlign:"center",marginTop:14}}>
               <div style={{fontSize:12.5,color:"rgba(255,255,255,0.75)",lineHeight:1.5}}>Nothing tracked yet this week. Add a task and next week's recap will actually mean something.</div>
             </div>
           ):(
             <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:14}}>
               {[
-                {ln:"Focus hours",vn:fmtH(weeklyFocusMin)||"0m"},
+                ...(smartFeaturesOn()?[{ln:"Focus hours",vn:fmtH(weeklyFocusMin)||"0m"}]:[]),
                 {ln:"Top subject",vn:topSubjectThisWeek||"—"},
                 {ln:"Tasks completed",vn:tasksCompletedTotal},
               ].map((ins,i)=>(
@@ -44325,13 +44336,12 @@ function App() {
       {id:"friends",label:"Studlin Network",badge:String((unreadCount+pendingFriendRequestCount)||"")},
     ]},
     {label:"Account",items:[
-      {id:"feedback",label:"Feedback"},
       {id:"settings",label:"Settings"},
       {id:"profile",label:"Profile"},
     ]},
   ];
   const bottomItems=[];
-  const pages={prep:StudlinPrep,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,profile:Profile,feedback:FeedbackPage};
+  const pages={prep:StudlinPrep,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,profile:Profile};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
   const sidebarText=isLight?"#FFFFFF":T.text;
