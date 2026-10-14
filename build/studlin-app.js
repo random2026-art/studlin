@@ -23322,15 +23322,16 @@ function stuBedtimeDue(now) {
   const last = lsGet("stuBedtimeShown", 0);
   return !(last && d.getTime() - last < 6 * 3600 * 1e3);
 }
+const reduceMotionOn = () => typeof document !== "undefined" && !!document.body && document.body.getAttribute("data-motion") === "reduce";
 const STU_EXIT_MOOD = { yes: "happy", cheer: "proud", no: "sad", late: "worried" };
-function StudCompanion({ mode, title, clock, navExpanded, onYes, onDone }) {
+function StudCompanion({ mode, title, clock, navExpanded, onYes, onDone, sub: subProp }) {
   const [phase, setPhase] = useState("in");
   const declinesBefore = useRef(stuDeclinesToday()).current;
   const howRef = useRef(mode === "cheer" ? "cheer" : "late");
   useEffect(() => {
     const t = [];
     if (phase === "in") t.push(setTimeout(() => setPhase("talk"), 1500));
-    if (phase === "talk" && (mode === "ask" || mode === "bedtime")) t.push(setTimeout(() => {
+    if (phase === "talk" && (mode === "ask" || mode === "bedtime" || mode === "catchup")) t.push(setTimeout(() => {
       howRef.current = "late";
       setPhase("late");
     }, 32e3));
@@ -23352,6 +23353,19 @@ function StudCompanion({ mode, title, clock, navExpanded, onYes, onDone }) {
   } else if (phase === "talk" && mode === "cheer") {
     mood = "celebrating";
     line = title ? "Nice work on " + short + "!" : "Nice work!";
+  } else if (phase === "talk" && mode === "catchup") {
+    mood = "thinking";
+    line = title;
+    sub = subProp || "";
+  } else if (phase === "yes" && mode === "catchup") {
+    mood = "happy";
+    line = "On it. Let's look.";
+  } else if (phase === "no" && mode === "catchup") {
+    mood = "thinking";
+    line = "No problem. I'll leave it for now.";
+  } else if (phase === "late" && mode === "catchup") {
+    mood = "thinking";
+    line = "It will keep. Find it on your Dashboard.";
   } else if (phase === "talk" && mode === "bedtime") {
     mood = "sleepy";
     line = "Getting late. Want to wrap up for tonight?";
@@ -23379,14 +23393,25 @@ function StudCompanion({ mode, title, clock, navExpanded, onYes, onDone }) {
     mood = "worried";
     line = "No rush. It's on your calendar.";
   } else if (phase === "out") {
-    mood = mode === "bedtime" ? "sleepy" : STU_EXIT_MOOD[howRef.current] || "happy";
+    mood = mode === "bedtime" ? "sleepy" : mode === "catchup" ? "thinking" : STU_EXIT_MOOD[howRef.current] || "happy";
   }
   const walking = phase === "in" || phase === "out";
   const pal = stuPalette();
   const left = (navExpanded ? 230 : 48) + 16;
   const showBubble = !walking;
+  const [poked, setPoked] = useState(0);
+  const poke = () => {
+    setPoked((n) => n + 1);
+  };
+  const physAnim = reduceMotionOn() ? "none" : poked > 0 && phase === "talk" ? "stuPoke .45s ease-out" : phase === "in" ? "stuHop .3s ease-in-out 5" : phase === "out" ? "stuHop .3s ease-in-out infinite" : phase === "talk" && mode === "cheer" ? "stuJump .75s ease-in-out infinite" : phase === "yes" ? "stuJump .75s ease-in-out 2" : phase === "no" && mode === "ask" ? "stuSlump 1s ease-out forwards" : phase === "talk" ? "stuLand .55s ease-out" : "none";
   const reduce = typeof document !== "undefined" && !!document.body && document.body.getAttribute("data-motion") === "reduce";
-  return /* @__PURE__ */ React.createElement("div", { className: "stu-wrap-anim", role: "status", "aria-live": "polite", style: { position: "fixed", bottom: 14, left, zIndex: 999, display: "flex", alignItems: "flex-end", gap: 6, pointerEvents: "none", animation: reduce ? "none" : phase === "in" ? "stuWalkIn 1.5s ease-out both" : phase === "out" ? "stuWalkOut 1.3s ease-in both" : "none" } }, /* @__PURE__ */ React.createElement("style", null, "@keyframes stuWalkIn{from{transform:translateX(-340px)}to{transform:translateX(0)}}@keyframes stuWalkOut{from{transform:translateX(0)}to{transform:translateX(-340px)}}@keyframes stuBubbleIn{from{opacity:0;transform:translateY(6px) scale(.96)}to{opacity:1;transform:none}}@media (prefers-reduced-motion:reduce){.stu-wrap-anim,.stu-wrap-anim *{animation:none!important}}"), /* @__PURE__ */ React.createElement("span", { style: { pointerEvents: "auto" } }, /* @__PURE__ */ React.createElement(StudMascot, { mood, size: 88, walking, facing: phase === "out" ? "left" : "right", speaking: phase === "talk" && mode === "cheer", ariaLabel: STU_NAME, ...pal })), showBubble && /* @__PURE__ */ React.createElement("div", { style: { pointerEvents: "auto", marginBottom: 46, maxWidth: 270, padding: "12px 14px", borderRadius: 14, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 10px 30px rgba(0,0,0,0.22)", animation: reduce ? "none" : "stuBubbleIn .22s ease both" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text, lineHeight: 1.45 } }, line), sub && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginTop: 3 } }, sub), phase === "talk" && mode === "bedtime" && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
+  return /* @__PURE__ */ React.createElement("div", { className: "stu-wrap-anim", role: "status", "aria-live": "polite", style: { position: "fixed", bottom: 14, left, zIndex: 999, display: "flex", alignItems: "flex-end", gap: 6, pointerEvents: "none", animation: reduce ? "none" : phase === "in" ? "stuWalkIn 1.6s ease-out both" : phase === "out" ? "stuWalkOut 1.3s ease-in both" : "none" } }, /* @__PURE__ */ React.createElement("style", null, "@keyframes stuWalkIn{0%{transform:translateX(-340px)}72%{transform:translateX(9px)}86%{transform:translateX(-3px)}100%{transform:translateX(0)}}@keyframes stuWalkOut{0%{transform:translateX(0)}14%{transform:translateX(10px)}100%{transform:translateX(-340px)}}@keyframes stuBubbleIn{0%{opacity:0;transform:translateY(10px) scale(.6)}55%{opacity:1;transform:translateY(-2px) scale(1.06)}78%{transform:scale(.98)}100%{opacity:1;transform:none}}@keyframes stuHop{0%{transform:translateY(0) scale(1.08,.92)}25%{transform:translateY(-12px) scale(.94,1.08)}50%{transform:translateY(0) scale(1.08,.92)}62%,100%{transform:translateY(0) scale(1,1)}}@keyframes stuLand{0%{transform:scale(1.18,.82)}35%{transform:scale(.92,1.1)}65%{transform:scale(1.04,.97)}100%{transform:scale(1,1)}}@keyframes stuJump{0%,100%{transform:translateY(0) scale(1.12,.88)}20%{transform:translateY(-4px) scale(.93,1.1)}50%{transform:translateY(-26px) scale(.95,1.07)}80%{transform:translateY(0) scale(1.1,.9)}}@keyframes stuSlump{0%{transform:scale(1,1)}60%{transform:translateY(4px) scale(1.06,.9)}100%{transform:translateY(3px) scale(1.04,.93)}}@keyframes stuPoke{0%{transform:scale(1,1)}30%{transform:scale(1.2,.8)}60%{transform:translateY(-8px) scale(.9,1.14)}100%{transform:scale(1,1)}}@media (prefers-reduced-motion:reduce){.stu-wrap-anim,.stu-wrap-anim *{animation:none!important}}"), /* @__PURE__ */ React.createElement("span", { key: "phys-" + phase + "-" + poked, onClick: poke, style: { pointerEvents: "auto", display: "inline-block", transformOrigin: "50% 100%", cursor: "pointer", animation: physAnim } }, /* @__PURE__ */ React.createElement(StudMascot, { mood, size: 88, walking, facing: phase === "out" ? "left" : "right", speaking: phase === "talk" && mode === "cheer", ariaLabel: STU_NAME, ...pal })), showBubble && /* @__PURE__ */ React.createElement("div", { style: { pointerEvents: "auto", marginBottom: 46, maxWidth: 270, padding: "12px 14px", borderRadius: 14, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 10px 30px rgba(0,0,0,0.22)", animation: reduce ? "none" : "stuBubbleIn .22s ease both" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text, lineHeight: 1.45 } }, line), sub && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginTop: 3 } }, sub), phase === "talk" && mode === "catchup" && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
+    howRef.current = "yes";
+    setPhase("yes");
+  }, style: { padding: "6px 12px", fontSize: 11.5 } }, "Show me"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => {
+    howRef.current = "no";
+    setPhase("no");
+  }, style: { padding: "6px 12px", fontSize: 11.5 } }, "Not now")), phase === "talk" && mode === "bedtime" && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
     howRef.current = "yes";
     setPhase("yes");
   }, style: { padding: "6px 12px", fontSize: 11.5 } }, "Wrapping up"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => {
@@ -25425,6 +25450,7 @@ function App() {
     setRecoveredSession(null);
   };
   const [catchUpBanner, setCatchUpBanner] = useState(null);
+  const [stuCatchUpDone, setStuCatchUpDone] = useState(false);
   const [catchUpPlan, setCatchUpPlan] = useState(null);
   const [catchUpPreviewOpen, setCatchUpPreviewOpen] = useState(false);
   const [catchUpOverrides, setCatchUpOverrides] = useState({});
@@ -26826,7 +26852,23 @@ function App() {
         }
       }
     }
-  ), recoveredSession && !timerTask && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 76, right: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 320 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, "Looks like you were ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, recoveredSession.elapsedMins, "min"), ' into "', recoveredSession.task.title, '" \u2014 what happened?'), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: recoverMarkDone }, "Mark as done"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: recoverResume }, "Resume"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: recoverDiscard }, "Discard"))), catchUpBanner && (() => {
+  ), recoveredSession && !timerTask && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 76, right: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 320 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, "Looks like you were ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, recoveredSession.elapsedMins, "min"), ' into "', recoveredSession.task.title, '" \u2014 what happened?'), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: recoverMarkDone }, "Mark as done"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: recoverResume }, "Resume"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: recoverDiscard }, "Discard"))), catchUpBanner && !headsUpEvent && !stuCheer && !stuBedtime && !timerTask && !stuCatchUpDone && stuSettingOn("mascotReminders") && /* @__PURE__ */ React.createElement(
+    StudCompanion,
+    {
+      key: "stu-catchup",
+      mode: "catchup",
+      navExpanded,
+      title: catchUpBanner.count === 1 && catchUpBanner.title ? '"' + catchUpBanner.title + '" from ' + catchUpStalenessLabel(catchUpBanner.staleDays || 1) + " didn't get done." : catchUpBanner.count + " thing" + (catchUpBanner.count !== 1 ? "s" : "") + " from " + catchUpStalenessLabel(catchUpBanner.staleDays || 1) + " didn't get done.",
+      sub: catchUpBanner.count === 1 ? "Want me to find a new spot for it?" : "Want me to line them back up?",
+      onYes: () => {
+        openCatchUpPreview();
+      },
+      onDone: (how) => {
+        setStuCatchUpDone(true);
+        if (how === "no") dismissCatchUpBanner();
+      }
+    }
+  ), catchUpBanner && !stuSettingOn("mascotReminders") && (() => {
     const tokens = StudlinTokens(T);
     return /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 76, left: "50%", transform: "translateX(-50%)", zIndex: 999, width: "min(480px, calc(100vw - 40px))", padding: "16px 20px", borderRadius: tokens.radius.card, background: tokens.color.accentSubtle, border: `1px solid ${tokens.color.accent}55`, boxShadow: "0 8px 24px rgba(0,0,0,0.25)", animation: "studlinPop 0.2s ease", display: "flex", alignItems: "center", gap: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: tokens.type.size.itemTitle, color: tokens.color.textPrimary } }, catchUpBanner.count === 1 && catchUpBanner.title ? '"' + catchUpBanner.title + '" from ' + catchUpStalenessLabel(catchUpBanner.staleDays || 1) + " didn't get done." : catchUpBanner.count + " thing" + (catchUpBanner.count !== 1 ? "s" : "") + " from " + catchUpStalenessLabel(catchUpBanner.staleDays || 1) + " didn't get done."), /* @__PURE__ */ React.createElement(Btn, { onClick: openCatchUpPreview, style: { flexShrink: 0 } }, catchUpBanner.count === 1 ? "Reschedule" : "Rebuild my week"), /* @__PURE__ */ React.createElement("button", { onClick: dismissCatchUpBanner, title: "Dismiss for today", "aria-label": "Dismiss", style: { flexShrink: 0, width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", borderRadius: 6, color: tokens.color.textPrimary, opacity: 0.55, cursor: "pointer" } }, Icon.xmark));
   })(), /* @__PURE__ */ React.createElement(

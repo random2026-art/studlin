@@ -38209,15 +38209,16 @@ function stuBedtimeDue(now){
   const last=lsGet("stuBedtimeShown",0);
   return !(last&&d.getTime()-last<6*3600*1000);
 }
+const reduceMotionOn=()=>typeof document!=="undefined"&&!!document.body&&document.body.getAttribute("data-motion")==="reduce";
 const STU_EXIT_MOOD={yes:"happy",cheer:"proud",no:"sad",late:"worried"};
-function StudCompanion({mode,title,clock,navExpanded,onYes,onDone}){
+function StudCompanion({mode,title,clock,navExpanded,onYes,onDone,sub:subProp}){
   const [phase,setPhase]=useState("in"); // in > talk > yes|no|late > out
   const declinesBefore=useRef(stuDeclinesToday()).current;
   const howRef=useRef(mode==="cheer"?"cheer":"late");
   useEffect(()=>{
     const t=[];
     if(phase==="in")t.push(setTimeout(()=>setPhase("talk"),1500));
-    if(phase==="talk"&&(mode==="ask"||mode==="bedtime"))t.push(setTimeout(()=>{howRef.current="late";setPhase("late");},32000));
+    if(phase==="talk"&&(mode==="ask"||mode==="bedtime"||mode==="catchup"))t.push(setTimeout(()=>{howRef.current="late";setPhase("late");},32000));
     if(phase==="talk"&&mode==="cheer")t.push(setTimeout(()=>setPhase("out"),4200));
     if(phase==="yes")t.push(setTimeout(()=>{if(onYes)onYes();setPhase("out");},800));
     if(phase==="no"||phase==="late")t.push(setTimeout(()=>setPhase("out"),phase==="no"?2000:2800));
@@ -38228,6 +38229,10 @@ function StudCompanion({mode,title,clock,navExpanded,onYes,onDone}){
   let mood="happy",line="",sub="";
   if(phase==="in"){mood="happy";}
   else if(phase==="talk"&&mode==="cheer"){mood="celebrating";line=title?"Nice work on "+short+"!":"Nice work!";}
+  else if(phase==="talk"&&mode==="catchup"){mood="thinking";line=title;sub=subProp||"";}
+  else if(phase==="yes"&&mode==="catchup"){mood="happy";line="On it. Let's look.";}
+  else if(phase==="no"&&mode==="catchup"){mood="thinking";line="No problem. I'll leave it for now.";}
+  else if(phase==="late"&&mode==="catchup"){mood="thinking";line="It will keep. Find it on your Dashboard.";}
   else if(phase==="talk"&&mode==="bedtime"){mood="sleepy";line="Getting late. Want to wrap up for tonight?";sub="Bedtime is "+(clock||"soon")+".";}
   else if(phase==="talk"){mood=declinesBefore>=2?"worried":"waving";line=declinesBefore>=2?"Last nudge, I promise. Ready for "+short+"?":"Time to start "+short+"?";sub=clock?"It's on your plan for "+clock+".":"";}
   else if(phase==="yes"&&mode==="bedtime"){mood="sleepy";line="Goodnight! Sleep well.";}
@@ -38236,20 +38241,31 @@ function StudCompanion({mode,title,clock,navExpanded,onYes,onDone}){
   else if(phase==="no"){mood="sad";line=declinesBefore>=1?"Okay. I'll give you some space.":"Aw, okay. I'll be around.";}
   else if(phase==="late"&&mode==="bedtime"){mood="sleepy";line="Sleep well whenever you're ready.";}
   else if(phase==="late"){mood="worried";line="No rush. It's on your calendar.";}
-  else if(phase==="out"){mood=mode==="bedtime"?"sleepy":(STU_EXIT_MOOD[howRef.current]||"happy");}
+  else if(phase==="out"){mood=mode==="bedtime"?"sleepy":mode==="catchup"?"thinking":(STU_EXIT_MOOD[howRef.current]||"happy");}
   const walking=phase==="in"||phase==="out";
   const pal=stuPalette();
   const left=(navExpanded?230:48)+16;
   const showBubble=!walking;
+  // Springy physics: squash and stretch hops while walking, a landing boing, jumps
+  // when celebrating, a slump when sad, and a poke boing when clicked.
+  const [poked,setPoked]=useState(0);
+  const poke=()=>{setPoked(n=>n+1);};
+  const physAnim=reduceMotionOn()?"none":poked>0&&phase==="talk"?"stuPoke .45s ease-out":phase==="in"?"stuHop .3s ease-in-out 5":phase==="out"?"stuHop .3s ease-in-out infinite":phase==="talk"&&mode==="cheer"?"stuJump .75s ease-in-out infinite":phase==="yes"?"stuJump .75s ease-in-out 2":phase==="no"&&mode==="ask"?"stuSlump 1s ease-out forwards":phase==="talk"?"stuLand .55s ease-out":"none";
   const reduce=typeof document!=="undefined"&&!!document.body&&document.body.getAttribute("data-motion")==="reduce";
   return (
-    <div className="stu-wrap-anim" role="status" aria-live="polite" style={{position:"fixed",bottom:14,left,zIndex:999,display:"flex",alignItems:"flex-end",gap:6,pointerEvents:"none",animation:reduce?"none":phase==="in"?"stuWalkIn 1.5s ease-out both":phase==="out"?"stuWalkOut 1.3s ease-in both":"none"}}>
-      <style>{"@keyframes stuWalkIn{from{transform:translateX(-340px)}to{transform:translateX(0)}}@keyframes stuWalkOut{from{transform:translateX(0)}to{transform:translateX(-340px)}}@keyframes stuBubbleIn{from{opacity:0;transform:translateY(6px) scale(.96)}to{opacity:1;transform:none}}@media (prefers-reduced-motion:reduce){.stu-wrap-anim,.stu-wrap-anim *{animation:none!important}}"}</style>
-      <span style={{pointerEvents:"auto"}}><StudMascot mood={mood} size={88} walking={walking} facing={phase==="out"?"left":"right"} speaking={phase==="talk"&&mode==="cheer"} ariaLabel={STU_NAME} {...pal} /></span>
+    <div className="stu-wrap-anim" role="status" aria-live="polite" style={{position:"fixed",bottom:14,left,zIndex:999,display:"flex",alignItems:"flex-end",gap:6,pointerEvents:"none",animation:reduce?"none":phase==="in"?"stuWalkIn 1.6s ease-out both":phase==="out"?"stuWalkOut 1.3s ease-in both":"none"}}>
+      <style>{"@keyframes stuWalkIn{0%{transform:translateX(-340px)}72%{transform:translateX(9px)}86%{transform:translateX(-3px)}100%{transform:translateX(0)}}@keyframes stuWalkOut{0%{transform:translateX(0)}14%{transform:translateX(10px)}100%{transform:translateX(-340px)}}@keyframes stuBubbleIn{0%{opacity:0;transform:translateY(10px) scale(.6)}55%{opacity:1;transform:translateY(-2px) scale(1.06)}78%{transform:scale(.98)}100%{opacity:1;transform:none}}@keyframes stuHop{0%{transform:translateY(0) scale(1.08,.92)}25%{transform:translateY(-12px) scale(.94,1.08)}50%{transform:translateY(0) scale(1.08,.92)}62%,100%{transform:translateY(0) scale(1,1)}}@keyframes stuLand{0%{transform:scale(1.18,.82)}35%{transform:scale(.92,1.1)}65%{transform:scale(1.04,.97)}100%{transform:scale(1,1)}}@keyframes stuJump{0%,100%{transform:translateY(0) scale(1.12,.88)}20%{transform:translateY(-4px) scale(.93,1.1)}50%{transform:translateY(-26px) scale(.95,1.07)}80%{transform:translateY(0) scale(1.1,.9)}}@keyframes stuSlump{0%{transform:scale(1,1)}60%{transform:translateY(4px) scale(1.06,.9)}100%{transform:translateY(3px) scale(1.04,.93)}}@keyframes stuPoke{0%{transform:scale(1,1)}30%{transform:scale(1.2,.8)}60%{transform:translateY(-8px) scale(.9,1.14)}100%{transform:scale(1,1)}}@media (prefers-reduced-motion:reduce){.stu-wrap-anim,.stu-wrap-anim *{animation:none!important}}"}</style>
+      <span key={"phys-"+phase+"-"+poked} onClick={poke} style={{pointerEvents:"auto",display:"inline-block",transformOrigin:"50% 100%",cursor:"pointer",animation:physAnim}}><StudMascot mood={mood} size={88} walking={walking} facing={phase==="out"?"left":"right"} speaking={phase==="talk"&&mode==="cheer"} ariaLabel={STU_NAME} {...pal} /></span>
       {showBubble&&(
         <div style={{pointerEvents:"auto",marginBottom:46,maxWidth:270,padding:"12px 14px",borderRadius:14,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 10px 30px rgba(0,0,0,0.22)",animation:reduce?"none":"stuBubbleIn .22s ease both"}}>
           <div style={{fontSize:13,fontWeight:600,color:T.text,lineHeight:1.45}}>{line}</div>
           {sub&&<div style={{fontSize:11.5,color:T.muted,marginTop:3}}>{sub}</div>}
+          {phase==="talk"&&mode==="catchup"&&(
+            <div style={{display:"flex",gap:8,marginTop:10}}>
+              <BtnSm onClick={()=>{howRef.current="yes";setPhase("yes");}} style={{padding:"6px 12px",fontSize:11.5}}>Show me</BtnSm>
+              <BtnSm variant="ghost" onClick={()=>{howRef.current="no";setPhase("no");}} style={{padding:"6px 12px",fontSize:11.5}}>Not now</BtnSm>
+            </div>
+          )}
           {phase==="talk"&&mode==="bedtime"&&(
             <div style={{display:"flex",gap:8,marginTop:10}}>
               <BtnSm onClick={()=>{howRef.current="yes";setPhase("yes");}} style={{padding:"6px 12px",fontSize:11.5}}>Wrapping up</BtnSm>
@@ -42275,6 +42291,7 @@ function App() {
   // tapped; the actual proposal is computed lazily then, not on every
   // mount, via computeCatchUpPlan.
   const [catchUpBanner,setCatchUpBanner]=useState(null); // {count} | null
+  const [stuCatchUpDone,setStuCatchUpDone]=useState(false); // Stu has had his turn this session
   const [catchUpPlan,setCatchUpPlan]=useState(null); // {moves,unplaceable} | null
   const [catchUpPreviewOpen,setCatchUpPreviewOpen]=useState(false);
   // Per-item edits made in the preview before confirming, keyed by event
@@ -44594,7 +44611,14 @@ function App() {
           all potentially firing on the same app-open. Shown for any missed
           item, one or many -- nothing is relocated until the student
           accepts the preview this opens. */}
-      {catchUpBanner&&(()=>{
+      {catchUpBanner&&!headsUpEvent&&!stuCheer&&!stuBedtime&&!timerTask&&!stuCatchUpDone&&stuSettingOn("mascotReminders")&&(
+        <StudCompanion key="stu-catchup" mode="catchup" navExpanded={navExpanded}
+          title={catchUpBanner.count===1&&catchUpBanner.title?"\""+catchUpBanner.title+"\" from "+catchUpStalenessLabel(catchUpBanner.staleDays||1)+" didn't get done.":catchUpBanner.count+" thing"+(catchUpBanner.count!==1?"s":"")+" from "+catchUpStalenessLabel(catchUpBanner.staleDays||1)+" didn't get done."}
+          sub={catchUpBanner.count===1?"Want me to find a new spot for it?":"Want me to line them back up?"}
+          onYes={()=>{openCatchUpPreview();}}
+          onDone={how=>{setStuCatchUpDone(true);if(how==="no")dismissCatchUpBanner();}} />
+      )}
+      {catchUpBanner&&!stuSettingOn("mascotReminders")&&(()=>{
         const tokens=StudlinTokens(T);
         return (
           <div style={{position:"fixed",top:76,left:"50%",transform:"translateX(-50%)",zIndex:999,width:"min(480px, calc(100vw - 40px))",padding:"16px 20px",borderRadius:tokens.radius.card,background:tokens.color.accentSubtle,border:`1px solid ${tokens.color.accent}55`,boxShadow:"0 8px 24px rgba(0,0,0,0.25)",animation:"studlinPop 0.2s ease",display:"flex",alignItems:"center",gap:16}}>

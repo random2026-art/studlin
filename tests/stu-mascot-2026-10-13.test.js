@@ -199,3 +199,22 @@ describe("setup checklist Hide stays hidden (2026-10-13)", () => {
     assert.ok(!APP.includes("const [checklistExpanded,setChecklistExpanded]=useState(true);"));
   });
 });
+
+describe("Stu delivers the catch-up message and moves with physics (2026-10-14)", () => {
+  test("the 'didn't get done' message comes from Stu, with the old banner only as the opt-out fallback", () => {
+    assert.ok(APP.includes('mode="catchup"'));
+    assert.ok(APP.includes('{catchUpBanner&&!stuSettingOn("mascotReminders")&&(()=>{'));
+    assert.ok(APP.includes('if(how==="no")dismissCatchUpBanner();'));
+  });
+  test("catch-up Stu never overlaps other Stu moments", () => {
+    assert.ok(APP.includes("catchUpBanner&&!headsUpEvent&&!stuCheer&&!stuBedtime&&!timerTask&&!stuCatchUpDone"));
+  });
+  test("physics: hop, land, jump, slump, poke, springy bubble, and reduce motion respected", () => {
+    for (const k of ["stuHop", "stuLand", "stuJump", "stuSlump", "stuPoke"]) assert.ok(APP.includes("@keyframes " + k), k);
+    assert.ok(APP.includes("const physAnim=reduceMotionOn()?\"none\""));
+  });
+  test("no em dash in the catch-up copy", () => {
+    const i = APP.indexOf('mode="catchup" navExpanded');
+    assert.ok(i > 0 && !APP.slice(i, i + 900).includes("—"));
+  });
+});

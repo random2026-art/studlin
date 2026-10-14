@@ -29,7 +29,8 @@ describe("catchUpBanner now has a real dismiss control", () => {
   });
 
   test("the banner renders a visible close button wired to dismissCatchUpBanner, not just the Rebuild action", () => {
-    const idx = SOURCE.indexOf('{catchUpBanner&&(()=>{');
+    // 2026-10-14: Stu delivers this by default; the banner remains as the fallback when Stu is off.
+    const idx = SOURCE.indexOf('{catchUpBanner&&!stuSettingOn("mascotReminders")&&(()=>{');
     assert.notEqual(idx, -1);
     const body = SOURCE.slice(idx, idx + 1200);
     assert.match(body, /<Btn onClick=\{openCatchUpPreview\}/, "the existing Rebuild my week action must still be there");
