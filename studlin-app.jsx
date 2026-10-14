@@ -1159,6 +1159,13 @@ const LOOK_PALETTES=[
     theme:{
       light:{accent:"#2A6DB4",accentDk:"#225A98",accentSoft:"#E4EFFA",accentInk:"#1D5A9C",hdrBg:"#CBDFF4",hdrText:"#174A82",tint:"#EEF5FB",borderTint:"#C0D6EC",todayBg:"#2A6DB4",todayText:"#FFFFFF",chipBg:"#DBE8F6"},
       dark:{accent:"#84BBEA",accentDk:"#709FC7",accentSoft:"#2D3740",accentInk:"#84BBEA",hdrBg:"#354450",hdrText:"#84BBEA",tint:"#23292E",borderTint:"#394A59",todayBg:"#84BBEA",todayText:"#0E1F18",chipBg:"#313C45"}}},
+  {id:"pink",name:"Blush Pink",
+    swatches:["#D9487F","#C75B8E","#A5559F","#E0708F","#B8447C","#8E69BD","#D4668F","#9A4F86"],
+    swatchesDark:["#F48FB8","#F2A0B8","#D59BD0","#F7B3C4","#E57BAA","#BFA0E3","#F5A3BC","#D083B3"],
+    headerTint:"#E0708F",
+    theme:{
+      light:{accent:"#C2417A",accentDk:"#A83568",accentSoft:"#FAE6F3",accentInk:"#8E2A5B",hdrBg:"#F1C9DE",hdrText:"#7A2150",tint:"#FDF2F7",borderTint:"#F0CCDD",todayBg:"#C2417A",todayText:"#FFFFFF",chipBg:"#F6DDEE"},
+      dark:{accent:"#F48FB8",accentDk:"#D47A9E",accentSoft:"#40303A",accentInk:"#F48FB8",hdrBg:"#523A47",hdrText:"#F7A8C8",tint:"#2C2529",borderTint:"#5C3E4C",todayBg:"#F48FB8",todayText:"#0E1F18",chipBg:"#43343C"}}},
 ];
 const LOOK_BLOCK_STYLES=["soft","flat","outlined"];
 const LOOK_DEFAULT={v:1,palette:"classic",blockStyle:"soft",perClass:{},seed:0,accentFollows:true};
@@ -1368,18 +1375,48 @@ function lookBlockStyle(color,look,mode,kind){
   const classic=lookIsClassic(look);
   const style=(look&&look.blockStyle)||"soft";
   const cardBg=lookCardBg(mode);
-  if(k==="reminder")return {fill:"transparent",border:color,text:classic?color:lookReadableText(color,cardBg,mode),outline:null};
-  if(classic||(style==="soft"&&k!=="study")){
-    if(k==="study")return {fill:color,border:"none",text:T.ink,outline:null};
-    if(k==="preview")return {fill:color+"22",border:color+"55",text:T.text,outline:`1px solid ${color}55`};
-    const fill=blendOverBg(color,0.1176,cardBg);
-    return {fill,border:color,text:classic?color:lookReadableText(color,fill,mode),outline:null};
+  if(k==="reminder")return {fill:"transparent",border:color,text:classic?color:lookReadableText(color,cardBg,mode),outline:null,solid:false};
+  // Classic keeps its legacy treatment exactly (study = solid focus block).
+  if(classic){
+    if(k==="study")return {fill:color,border:"none",text:T.ink,outline:null,solid:true};
+    if(k==="preview")return {fill:color+"22",border:color+"55",text:T.text,outline:`1px solid ${color}55`,solid:false};
+    return {fill:blendOverBg(color,0.1176,cardBg),border:color,text:color,outline:null,solid:false};
   }
-  if(style==="flat"||k==="study"){
-    return {fill:color,border:blendOverBg("#000000",0.18,color),text:lookTextOnFill(color),outline:null};
+  // Non-Classic: EVERY kind (class, study, task, event, preview) follows the chosen block style,
+  // so a plain task never renders filled next to hollow classes.
+  if(style==="flat"){
+    return {fill:color,border:blendOverBg("#000000",0.18,color),text:lookTextOnFill(color),outline:null,solid:true};
   }
-  // outlined
-  return {fill:cardBg,border:color,text:lookReadableText(color,cardBg,mode),outline:`1.5px solid ${color}`};
+  if(style==="outlined"){
+    return {fill:cardBg,border:color,text:lookReadableText(color,cardBg,mode),outline:`1.5px solid ${color}`,solid:false};
+  }
+  if(k==="preview")return {fill:color+"22",border:color+"55",text:T.text,outline:`1px solid ${color}55`,solid:false};
+  const fill=blendOverBg(color,0.1176,cardBg);
+  return {fill,border:color,text:lookReadableText(color,fill,mode),outline:null,solid:false};
+}
+// Fill + label color for dashed "draft" ghosts (drag-to-create, previews). legacyFill is what Classic always used.
+function lookDraftStyle(color,look,mode,legacyFill){
+  if(lookIsClassic(look))return {fill:legacyFill,text:color};
+  const style=(look&&look.blockStyle)||"soft";
+  const cardBg=lookCardBg(mode);
+  if(style==="flat")return {fill:color+"B3",text:lookTextOnFill(blendOverBg(color,0.7,cardBg))};
+  if(style==="outlined")return {fill:"transparent",text:lookReadableText(color,cardBg,mode)};
+  return {fill:color+"22",text:lookReadableText(color,blendOverBg(color,0.13,cardBg),mode)};
+}
+// Event/activity colors saved before a palette was chosen (a copy of the class color, or one of the
+// default swatches) must follow the palette too, or they stay stuck on the old color. A color the
+// student picked outside the default swatches is custom and is kept as is. Classic never remaps.
+function lookEventColor(evColor,subjectKey,fallback,subjects){
+  if(!evColor)return fallback;
+  const look=getLook();
+  if(lookIsClassic(look))return evColor;
+  const same=(a,b)=>String(a).toLowerCase()===String(b).toLowerCase();
+  const list=Array.isArray(subjects)?subjects:getSubjects();
+  const subj=subjectKey?list.find(x=>x.id===subjectKey||x.label===subjectKey):null;
+  if(subj&&subj.color&&same(subj.color,evColor))return subjectColor(subjectKey,evColor,list);
+  const i=SUBJECT_COLORS.findIndex(c=>same(c,evColor));
+  if(i>=0)return lookColorFor(i,look,lookMode())||evColor;
+  return evColor;
 }
 // Sample data for the live preview: 5 weekdays, same helper as the real grid.
 const LOOK_PREVIEW_BLOCKS=[
@@ -11812,7 +11849,7 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
               <button key={opt.key} type="button" onClick={()=>{setExamPrepSpacingStyle(opt.key);setExamPrepSpacingTouched(true);}}
                 style={{flex:1,fontSize:12,fontWeight:600,padding:"9px 10px",borderRadius:7,cursor:"pointer",fontFamily:T.font,
                   background:examPrepSpacingStyle===opt.key?T.lime:T.card2,
-                  color:examPrepSpacingStyle===opt.key?T.ink:T.text,
+                  color:examPrepSpacingStyle===opt.key?T.onLime:T.text,
                   border:"1px solid "+(examPrepSpacingStyle===opt.key?T.lime:T.border)}}>
                 {opt.label}
               </button>
@@ -16313,7 +16350,7 @@ function Flashcards({setActive=()=>{}}={}) {
         {dSource==="record"&&(
           <Field label="Record lecture" hint="Speak or play audio — AI generates flashcards from what it hears.">
             <div style={{border:"1px solid "+(recOn?T.red+"55":T.border),borderRadius:10,padding:18,textAlign:"center",background:recOn?T.red+"0a":T.card2}}>
-              <button type="button" onClick={recOn?stopRec:startRec} style={{width:48,height:48,borderRadius:"50%",border:"none",background:recOn?T.red:T.lime,color:recOn?"#fff":T.ink,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",marginBottom:8}}>{recOn?<span style={{width:14,height:14,background:"#fff",borderRadius:3}} />:MicIcon}</button>
+              <button type="button" onClick={recOn?stopRec:startRec} style={{width:48,height:48,borderRadius:"50%",border:"none",background:recOn?T.red:T.lime,color:recOn?"#fff":T.onLime,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",marginBottom:8}}>{recOn?<span style={{width:14,height:14,background:"#fff",borderRadius:3}} />:MicIcon}</button>
               <div style={{fontSize:14,fontWeight:700,color:recOn?T.red:T.white}}>{fmtRec(recSecs)}</div>
               <div style={{fontSize:11,color:T.muted,marginTop:2}}>{recOn?"Recording... tap to stop":"Tap to start"}</div>
               {recText&&<div style={{fontSize:11,color:T.text,marginTop:10,padding:"8px 10px",background:T.card,borderRadius:6,textAlign:"left",maxHeight:80,overflowY:"auto"}}>{recText}</div>}
@@ -16447,7 +16484,7 @@ function Notes({setActive=()=>{}}){
 
   // Dynamic class sync from user subjects
   const userSubjects=getSubjects();
-  const tagOptions=[...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
+  const tagOptions=[...userSubjects.map(s=>({value:s.label,label:s.label,color:subjectColor(s.id,s.color,userSubjects)})),{value:"Other",label:"Other",color:T.lime}];
   // Accepts either a real course id or a label -- callers with a courseId
   // handy (post-migration data) get an id match; everything else still
   // resolves the same way it always has via label.
@@ -18494,7 +18531,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
             </div>
             <div style={{padding:"11px 14px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,marginBottom:14,display:"flex",alignItems:"center",gap:10}}>
               <div style={{flex:1,fontSize:12,color:T.text,fontFamily:T.mono,wordBreak:"break-all"}}>{inviteLink}</div>
-              <button onClick={copyLink} style={{flexShrink:0,padding:"7px 13px",borderRadius:7,background:copied?T.teal:T.lime,color:T.ink,border:"none",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:T.font,transition:"background 0.2s",whiteSpace:"nowrap"}}>
+              <button onClick={copyLink} style={{flexShrink:0,padding:"7px 13px",borderRadius:7,background:copied?T.teal:T.lime,color:copied?T.ink:T.onLime,border:"none",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:T.font,transition:"background 0.2s",whiteSpace:"nowrap"}}>
                 {copied?"✓ Copied!":"Copy"}
               </button>
             </div>
@@ -21761,8 +21798,8 @@ function StudlinAiMiniDayPreview({dateKey,proposedBlock}){
           const leftPct=(displayCol/displayTotalCols)*100;
           const widthPct=100/displayTotalCols;
           return (
-            <div key={ev.id} style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 1px)`,width:`calc(${widthPct}% - 2px)`,height:heightPx,borderRadius:5,padding:"2px 6px",overflow:"hidden",boxSizing:"border-box",background:color+"22",border:ev.__proposed?`1.5px dashed ${color}`:`1px solid ${color}55`,display:"flex",flexDirection:"column",justifyContent:"center"}}>
-              <span style={{fontSize:9.5,fontWeight:700,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+            <div key={ev.id} style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 1px)`,width:`calc(${widthPct}% - 2px)`,height:heightPx,borderRadius:5,padding:"2px 6px",overflow:"hidden",boxSizing:"border-box",background:lookBlockStyle(color,getLook(),lookMode(),"preview").fill,border:ev.__proposed?`1.5px dashed ${color}`:(lookBlockStyle(color,getLook(),lookMode(),"preview").outline||`1px solid ${color}55`),display:"flex",flexDirection:"column",justifyContent:"center"}}>
+              <span style={{fontSize:9.5,fontWeight:700,color:lookBlockStyle(color,getLook(),lookMode(),"preview").text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
                 {/* Bug fix, 2026-09-04 user report: real event and
                     proposed-new event rendered with only a subtle dashed-
                     vs-solid border to tell them apart -- easy to miss, and
@@ -24521,8 +24558,8 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                 document.body.style.cursor="ns-resize";document.body.style.userSelect="none";
               };
               previewEl = (
-                <div onMouseDown={startMove} style={{position:"absolute",top:pStart*(WK_PX_HR/60),left:2,right:2,height:Math.max(22,pDur*(WK_PX_HR/60)),borderRadius:5,padding:"2px 5px 2px 8px",background:previewEvent.color+"22",border:`1.5px dashed ${previewEvent.color}`,zIndex:6,pointerEvents:draggable?"auto":"none",cursor:draggable?"grab":"default",boxSizing:"border-box",overflow:"hidden"}}>
-                  <div style={{fontSize:9.5,fontWeight:700,color:previewEvent.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{previewEvent.title||"New event"}</div>
+                <div onMouseDown={startMove} style={{position:"absolute",top:pStart*(WK_PX_HR/60),left:2,right:2,height:Math.max(22,pDur*(WK_PX_HR/60)),borderRadius:5,padding:"2px 5px 2px 8px",background:lookDraftStyle(previewEvent.color,getLook(),lookMode(),previewEvent.color+"22").fill,border:`1.5px dashed ${previewEvent.color}`,zIndex:6,pointerEvents:draggable?"auto":"none",cursor:draggable?"grab":"default",boxSizing:"border-box",overflow:"hidden"}}>
+                  <div style={{fontSize:9.5,fontWeight:700,color:lookDraftStyle(previewEvent.color,getLook(),lookMode(),previewEvent.color+"22").text,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{previewEvent.title||"New event"}</div>
                   {/* Bottom-edge grab strip to change duration without
                       moving the start time -- separate handler from the
                       block body above so a plain drag always means "move"
@@ -24611,7 +24648,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   const qDur=Math.max(15,timeToMinutes(quickCreateDraft.endTime)-qStart);
                   return (
                     <>
-                      <div style={{position:"absolute",top:qStart*(WK_PX_HR/60),left:2,right:2,height:Math.max(15,qDur)*(WK_PX_HR/60),borderRadius:5,background:quickCreateDraft.color?quickCreateDraft.color+"B3":T.lime+"22",border:`1.5px dashed ${quickCreateDraft.color||T.lime}`,zIndex:7,pointerEvents:"none",boxSizing:"border-box"}} />
+                      <div style={{position:"absolute",top:qStart*(WK_PX_HR/60),left:2,right:2,height:Math.max(15,qDur)*(WK_PX_HR/60),borderRadius:5,background:quickCreateDraft.color?lookDraftStyle(quickCreateDraft.color,getLook(),lookMode(),quickCreateDraft.color+"B3").fill:lookDraftStyle(T.lime,getLook(),lookMode(),T.lime+"22").fill,border:`1.5px dashed ${quickCreateDraft.color||T.lime}`,zIndex:7,pointerEvents:"none",boxSizing:"border-box"}} />
                       {creatingDragging&&<LiveRangePill startMin={qStart} durMin={qDur} style={{top:Math.max(2,qStart*(WK_PX_HR/60)-24)}} />}
                     </>
                   );
@@ -24705,7 +24742,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   const heightPx = isReminderMarker ? 13 : (isResizing||pendingForThis) ? Math.max(22, effDuration * (WK_PX_HR / 60)) : computeEventBlockHeightPx(dur, nextInCol ? nextInCol.start - start : null, WK_PX_HR);
                   const isDone = ev.status === "done";
                   const over = daysOverdue(ev);
-                  const subjectColor = ev.color||colorOf(ev.courseId||ev.subject);
+                  const subjectColor = lookEventColor(ev.color,ev.courseId||ev.subject,colorOf(ev.courseId||ev.subject));
                   const isStudy = ev.kind === "study block";
                   const isExam = ev.kind === "exam";
                   const isWarningKind = isExam || ev.kind === "deadline";
@@ -24729,13 +24766,21 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   // but flattens it to one solid hex against this Card's
                   // real background (T.card), so the lines underneath can
                   // no longer show through at all.
+                  // Every kind goes through lookBlockStyle, so tasks/study blocks/events follow the
+                  // chosen block style the same way classes do. Exams/deadlines keep the amber accent
+                  // under Classic and follow the style (in amber) under a palette.
+                  const lookClassicNow = lookIsClassic(lookNow);
+                  const warnLegacy = isWarningKind && lookClassicNow;
                   const kindStyle = isReminderMarker
                     ? {background:"transparent",color:lookBlockStyle(subjectColor,lookNow,lookModeNow,"reminder").text}
                     : isStudy
-                      ? (()=>{const ls=lookBlockStyle(ev.color||tokens.color.accent,lookNow,lookModeNow,"study");return {background:ls.fill,color:ls.text};})()
-                      : isWarningKind
+                      ? (()=>{const ls=lookBlockStyle(lookEventColor(ev.color,ev.courseId||ev.subject,tokens.color.accent),lookNow,lookModeNow,"study");return {background:ls.fill,color:ls.text,...(ls.outline?{border:ls.outline}:{})};})()
+                      : warnLegacy
                         ? {background:blendOverBg(T.amber,0.12,T.card),border:`1px solid ${tokens.color.warning}`,color:tokens.color.warning}
-                        : (()=>{const ls=lookBlockStyle(subjectColor,lookNow,lookModeNow,"subject");return {background:ls.fill,color:ls.text,...(ls.outline?{border:ls.outline}:{})};})();
+                        : (()=>{const ls=lookBlockStyle(isWarningKind?T.amber:subjectColor,lookNow,lookModeNow,"subject");return {background:ls.fill,color:ls.text,...(ls.outline?{border:ls.outline}:{})};})();
+                  // Secondary line (time/location) color: readable on whatever fill the style gave the block.
+                  const lookFlatNow = !lookClassicNow && lookNow.blockStyle==="flat";
+                  const subTxt = isStudy ? (lookClassicNow ? T.ink+"aa" : kindStyle.color) : (lookFlatNow ? kindStyle.color : tokens.color.textSecondary);
                   const dimmedByRoutineMode = editRoutineMode && !isRoutine;
                   const highlightedByRoutineMode = editRoutineMode && isRoutine;
                   // Schedule with Friends / Find Shared Study Window: a
@@ -24885,7 +24930,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                           collides with the overdue dot above. */}
                       {isRoutine&&(ev.dayNote||(ev.dayTodo&&ev.dayTodo.length>0))&&<span title="This class has notes saved" style={{position:"absolute",top:3,right:3,width:6,height:6,borderRadius:"50%",background:T.lime,boxShadow:"0 0 0 1.5px rgba(255,255,255,0.9)",zIndex:1}} />}
                       <div style={{fontSize:9.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isExam?"EXAM · ":""}{ev.title}</div>
-                      {heightPx > 34 && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isWarningKind?tokens.color.warning:tokens.color.textSecondary,marginTop:1}}>{fmtTimeRange(String(Math.floor(effStartMin/60)).padStart(2,"0")+":"+String(effStartMin%60).padStart(2,"0"),effDuration)}</div>}
+                      {heightPx > 34 && <div style={{fontSize:8.5,color:isStudy?subTxt:warnLegacy?tokens.color.warning:subTxt,marginTop:1}}>{fmtTimeRange(String(Math.floor(effStartMin/60)).padStart(2,"0")+":"+String(effStartMin%60).padStart(2,"0"),effDuration)}</div>}
                       {/* Third line, only once there's real room for it (same
                           progressive-disclosure rule as the time range just
                           above) -- a short block never gets crowded just
@@ -24901,7 +24946,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                           actually reflects real class durations at default
                           zoom; still hides on very short blocks where three
                           lines would genuinely crowd. */}
-                      {heightPx > 40 && ev.location && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isWarningKind?tokens.color.warning:tokens.color.textSecondary,marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.location}</div>}
+                      {heightPx > 40 && ev.location && <div style={{fontSize:8.5,color:isStudy?subTxt:warnLegacy?tokens.color.warning:subTxt,marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.location}</div>}
                       {/* New feature, 2026-09-06 user request: same idea as
                           the location line above -- a small indicator only
                           when a real note actually exists (isRoutine reads
@@ -24914,7 +24959,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                           doesn't also trigger the block's own single-click
                           select/popover underneath it. */}
                       {heightPx > 40 && (isRoutine?ev.dayNote:ev.notes) && (
-                        <div onClick={(e)=>{e.stopPropagation();if(isRoutine){if(onEditRoutine)onEditRoutine(ev.routineId,ev.date);}else{openEdit(ev);}}} title="Has notes -- click to view" style={{fontSize:8.5,color:isStudy?T.ink+"aa":isWarningKind?tokens.color.warning:tokens.color.textSecondary,marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",cursor:"pointer",textDecoration:"underline",textUnderlineOffset:2}}>
+                        <div onClick={(e)=>{e.stopPropagation();if(isRoutine){if(onEditRoutine)onEditRoutine(ev.routineId,ev.date);}else{openEdit(ev);}}} title="Has notes -- click to view" style={{fontSize:8.5,color:isStudy?subTxt:warnLegacy?tokens.color.warning:subTxt,marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",cursor:"pointer",textDecoration:"underline",textUnderlineOffset:2}}>
                           Details
                         </div>
                       )}
@@ -28394,7 +28439,7 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
               const qDur=Math.max(15,timeToMinutes(quickCreateDraft.endTime)-qStart);
               return (
                 <>
-                  <div style={{position:"absolute",top:(qStart-spanStart)*(pxPerHr/60),left:2,right:2,height:qDur*(pxPerHr/60),borderRadius:5,background:quickCreateDraft.color?quickCreateDraft.color+"B3":T.lime+"22",border:`1.5px dashed ${quickCreateDraft.color||T.lime}`,zIndex:7,pointerEvents:"none",boxSizing:"border-box"}} />
+                  <div style={{position:"absolute",top:(qStart-spanStart)*(pxPerHr/60),left:2,right:2,height:qDur*(pxPerHr/60),borderRadius:5,background:quickCreateDraft.color?lookDraftStyle(quickCreateDraft.color,getLook(),lookMode(),quickCreateDraft.color+"B3").fill:lookDraftStyle(T.lime,getLook(),lookMode(),T.lime+"22").fill,border:`1.5px dashed ${quickCreateDraft.color||T.lime}`,zIndex:7,pointerEvents:"none",boxSizing:"border-box"}} />
                   {creatingDragging&&<LiveRangePill startMin={qStart} durMin={qDur} style={{top:Math.max(2,(qStart-spanStart)*(pxPerHr/60)-24)}} />}
                 </>
               );
@@ -28451,8 +28496,8 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
                 document.body.style.cursor="ns-resize";document.body.style.userSelect="none";
               };
               return (
-                <div onMouseDown={startMove} style={{position:"absolute",top:(gStart-spanStart)*(pxPerHr/60),left:2,right:2,height:Math.max(22,gDur*(pxPerHr/60)),borderRadius:5,padding:"2px 5px 2px 8px",background:gsDraft.color+"22",border:`1.5px dashed ${gsDraft.color}`,zIndex:6,pointerEvents:draggable?"auto":"none",cursor:draggable?"grab":"default",boxSizing:"border-box",overflow:"hidden"}}>
-                  <div style={{fontSize:9.5,fontWeight:700,color:gsDraft.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{gsDraft.title||"New event"}</div>
+                <div onMouseDown={startMove} style={{position:"absolute",top:(gStart-spanStart)*(pxPerHr/60),left:2,right:2,height:Math.max(22,gDur*(pxPerHr/60)),borderRadius:5,padding:"2px 5px 2px 8px",background:lookDraftStyle(gsDraft.color,getLook(),lookMode(),gsDraft.color+"22").fill,border:`1.5px dashed ${gsDraft.color}`,zIndex:6,pointerEvents:draggable?"auto":"none",cursor:draggable?"grab":"default",boxSizing:"border-box",overflow:"hidden"}}>
+                  <div style={{fontSize:9.5,fontWeight:700,color:lookDraftStyle(gsDraft.color,getLook(),lookMode(),gsDraft.color+"22").text,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{gsDraft.title||"New event"}</div>
                   {onGsPreviewResize&&(
                     <div onMouseDown={startResize} title="Drag to change duration" style={{position:"absolute",bottom:0,left:0,right:0,height:9,cursor:"ns-resize",display:"flex",alignItems:"center",justifyContent:"center"}}>
                       <div style={{width:26,height:3,borderRadius:99,background:gsDraft.color,opacity:0.65}} />
@@ -28505,9 +28550,11 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
               const isDeclined=!!acceptanceSummary&&acceptanceSummary.declined>0;
               // Subject color always wins now -- see the matching comment in
               // WeeklyPlanner. Overdue is a small red dot, not a full recolor.
-              const color=ev.color||colorOf(ev.courseId||ev.subject);
+              const color=lookEventColor(ev.color,ev.courseId||ev.subject,colorOf(ev.courseId||ev.subject));
               const isStudy=ev.kind==="study block";
               const isExam=ev.kind==="exam";
+              const lookClassicNow=lookIsClassic(lookNow);
+              const examLegacy=isExam&&lookClassicNow;
               // Bug fix, 2026-09-04 user report: this else-branch background
               // used to be real alpha transparency (color+"1E") directly
               // over this grid's own hour-line borders -- see WeeklyPlanner's
@@ -28518,9 +28565,11 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
                 ?{background:"transparent",borderLeft:"none",color:lookBlockStyle(color,lookNow,lookModeNow,"reminder").text}
                 :isStudy
                   ?(()=>{const ls=lookBlockStyle(color,lookNow,lookModeNow,"study");return {background:ls.fill,borderLeft:"none",color:ls.text,...(ls.outline?{border:ls.outline}:{})};})()
-                  :isExam
+                  :examLegacy
                     ?{background:T.ink,border:`2px solid ${color}`,borderLeft:`2px solid ${color}`,boxShadow:`0 0 10px -1px ${color}, inset 0 0 10px ${color}22`,color:T.cream}
                     :(()=>{const ls=lookBlockStyle(color,lookNow,lookModeNow,"subject");return {...(ls.outline?{border:ls.outline}:{}),background:ls.fill,borderLeft:`3px solid ${ls.border}`,color:ls.text};})();
+              const lookFlatNow=!lookClassicNow&&lookNow.blockStyle==="flat";
+              const subTxt=isStudy?(lookClassicNow?T.ink+"aa":kindStyle.color):(lookFlatNow?kindStyle.color:T.muted);
               const leftPct=(displayCol/displayTotalCols)*100;
               const widthPct=100/displayTotalCols;
               // Same "just added/imported" marker as WeeklyPlanner's own
@@ -28581,14 +28630,14 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
                   {isPendingAcceptance&&<span title={isDeclined?"Declined":acceptanceSummary.accepted+"/"+acceptanceSummary.total+" accepted"} style={{position:"absolute",bottom:2,left:2,fontSize:8,fontWeight:800,color:isDeclined?"#fff":kindStyle.color,background:isDeclined?T.red+"cc":"rgba(0,0,0,0.18)",borderRadius:8,padding:"1px 4px",lineHeight:1.3,zIndex:1}}>{isDeclined?"Declined":acceptanceSummary.accepted+"/"+acceptanceSummary.total}</span>}
                   {conflictTitles.length>0&&<span title={"Overlaps with "+conflictTitles.join(", ")} style={{position:"absolute",top:2,left:2,fontSize:9,lineHeight:1,zIndex:1,filter:"drop-shadow(0 1px 1px rgba(0,0,0,0.35))"}}>⚠️</span>}
                   <div style={{fontSize:11.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textDecoration:isDone?"line-through":"none"}}>{isExam?"EXAM · ":""}{ev.title}</div>
-                  {heightPx>34&&<div style={{fontSize:9.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:2}}>{fmtTimeRange(ev.time,dur)}</div>}
+                  {heightPx>34&&<div style={{fontSize:9.5,color:isStudy?subTxt:examLegacy?color:subTxt,marginTop:2}}>{fmtTimeRange(ev.time,dur)}</div>}
                   {/* Same progressive-disclosure location line as WeeklyPlanner's own -- see its comment (threshold lowered from 48 to 40, same fix). */}
-                  {heightPx>40&&ev.location&&<div style={{fontSize:9.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.location}</div>}
+                  {heightPx>40&&ev.location&&<div style={{fontSize:9.5,color:isStudy?subTxt:examLegacy?color:subTxt,marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.location}</div>}
                   {/* New feature, 2026-09-06 user request -- see
                       WeeklyPlanner's matching comment for the full
                       reasoning. */}
                   {heightPx>40&&(ev.isRoutine?ev.dayNote:ev.notes)&&(
-                    <div onClick={(e)=>{e.stopPropagation();if(ev.isRoutine){if(onEditRoutine)onEditRoutine(ev.routineId,ev.date);}else{openEdit(ev);}}} title="Has notes -- click to view" style={{fontSize:9.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",cursor:"pointer",textDecoration:"underline",textUnderlineOffset:2}}>
+                    <div onClick={(e)=>{e.stopPropagation();if(ev.isRoutine){if(onEditRoutine)onEditRoutine(ev.routineId,ev.date);}else{openEdit(ev);}}} title="Has notes -- click to view" style={{fontSize:9.5,color:isStudy?subTxt:examLegacy?color:subTxt,marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",cursor:"pointer",textDecoration:"underline",textUnderlineOffset:2}}>
                       Details
                     </div>
                   )}
@@ -28816,7 +28865,7 @@ function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime
               // Same reminder-marker treatment as WeeklyPlanner/DayPlanner.
               const isReminderMarker=isZeroDurationTimedReminder(ev);
               const heightPx=isReminderMarker?13:computeEventBlockHeightPx(dur,nextInCol?nextInCol.start-start:null,pxPerHr);
-              const color=ev.color||colorOf(ev.courseId||ev.subject);
+              const color=lookEventColor(ev.color,ev.courseId||ev.subject,colorOf(ev.courseId||ev.subject));
               const leftPct=(displayCol/displayTotalCols)*100;
               const widthPct=100/displayTotalCols;
               if(isReminderMarker){
@@ -28832,11 +28881,11 @@ function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime
                 <div key={ev.id} style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:8,padding:"6px 10px",overflow:"hidden",zIndex:3,boxSizing:"border-box",background:pvStyle(color).fill,border:pvStyle(color).outline,display:"flex",flexDirection:"column",justifyContent:"center"}}>
                   {conflictTitles.length>0&&<span title={"Overlaps with "+conflictTitles.join(", ")} style={{position:"absolute",top:2,right:2,fontSize:9,lineHeight:1,zIndex:1,filter:"drop-shadow(0 1px 1px rgba(0,0,0,0.35))"}}>⚠️</span>}
                   <div style={{display:"flex",alignItems:"center",gap:6}}>
-                    <span style={{color,display:"flex",flexShrink:0}}>{iconFor(ev.kind)}</span>
+                    <span style={{color:lookIsClassic(getLook())||getLook().blockStyle!=="flat"?color:pvStyle(color).text,display:"flex",flexShrink:0}}>{iconFor(ev.kind)}</span>
                     <span style={{fontSize:12,fontWeight:700,color:pvStyle(color).text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.title}</span>
                   </div>
-                  {heightPx>30&&<div style={{fontSize:10,color:T.muted,marginTop:2,marginLeft:19}}>{fmtTimeRange(ev.time,dur)}</div>}
-                  {overflowCount>0&&<div style={{fontSize:9.5,fontWeight:700,color,marginTop:1,marginLeft:19}}>+{overflowCount} more at this time</div>}
+                  {heightPx>30&&<div style={{fontSize:10,color:!lookIsClassic(getLook())&&getLook().blockStyle==="flat"?pvStyle(color).text:T.muted,marginTop:2,marginLeft:19}}>{fmtTimeRange(ev.time,dur)}</div>}
+                  {overflowCount>0&&<div style={{fontSize:9.5,fontWeight:700,color:!lookIsClassic(getLook())&&getLook().blockStyle==="flat"?pvStyle(color).text:color,marginTop:1,marginLeft:19}}>+{overflowCount} more at this time</div>}
                 </div>
               );
             })}
@@ -29647,7 +29696,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   const fmtClockTime=(t)=>{if(!t)return "";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+" "+ap;};
   const routines=getWeeklyRoutine();
   const userSubjects=getSubjects();
-  const SUBJ=[{value:"None",label:"None",color:T.lime},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
+  const SUBJ=[{value:"None",label:"None",color:T.lime},...userSubjects.map(s=>({value:s.label,label:s.label,color:subjectColor(s.id,s.color,userSubjects)})),{value:"Other",label:"Other",color:T.lime}];
   const toSliderVal=(v,def)=>{const n=v!=null?v:def;return n>10?n:n*100;};
 
   const [title,setTitle]=useState("");
@@ -31893,7 +31942,7 @@ function resolveCalendarHighlightFlag(flag, nowMs){
 function calTbSoft(){return T.lookOn?{background:T.accentSoft,border:`1px solid ${T.borderTint}`,color:T.accentInk}:null;}
 function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRoutineCenterOpenedFromSettings,detailEventId,setDetailEventId,registerSetEvents,registerSkipSetEvents,onTaskCompleted,catchUpPending,onWizardOpenChange,jumpToSessionOnMount,onJumpSessionConsumed,highlightDraftIdOnMount,onHighlightDraftConsumed,setPricingOpen=()=>{},setTheme=()=>{}}={}){
   const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
-  const SUBJ=[{value:"None",label:"None",color:T.lime},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
+  const SUBJ=[{value:"None",label:"None",color:T.lime},...userSubjects.map(s=>({value:s.label,label:s.label,color:subjectColor(s.id,s.color,userSubjects)})),{value:"Other",label:"Other",color:T.lime}];
   // Accepts either a real course id or a label, same as StudlinPrep/Notes'
   // colorOf -- id match preferred when the caller has one, label fallback
   // otherwise. Untagged (None) and unmatched (Other, before a custom color
@@ -35830,6 +35879,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     const isConfirmingDelete=confirmDeleteCourseId===sub.id;
     const linkedCount=isConfirmingDelete?countLinkedForCourse(sub):0;
     const isUnscheduled=!routines.some(r=>r.kind==="class"&&r.courseId===sub.id&&r.days&&r.days.length>0);
+    // Palette-aware color (live, via CalendarTab's useLook subscription), never the saved Classic color.
+    const subColor=colorOf(sub.id)||sub.color;
     return (
       <div key={sub.id} style={{position:"relative"}}>
         {isConfirmingDelete?(
@@ -35844,11 +35895,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           <input autoFocus value={renameDraft} onChange={e=>setRenameDraft(e.target.value)}
             onKeyDown={e=>{if(e.key==="Enter")commitRenameCourse(sub);if(e.key==="Escape")setRenamingCourseId(null);}}
             onBlur={()=>commitRenameCourse(sub)}
-            style={{width:"100%",boxSizing:"border-box",...subjectRowStyle(sub.color),border:`1px solid ${sub.color}66`,color:T.text,fontSize:12,fontFamily:T.font,outline:"none"}} />
+            style={{width:"100%",boxSizing:"border-box",...subjectRowStyle(subColor),border:`1px solid ${subColor}66`,color:T.text,fontSize:12,fontFamily:T.font,outline:"none"}} />
         ):(
           <div onClick={()=>setSelectedCourseId(isSelected?null:sub.id)}
-            draggable onDragStart={()=>setSidebarDragChip({title:sub.label,color:sub.color,movable:false,kind:"course",courseId:sub.id})} onDragEnd={()=>setSidebarDragChip(null)}
-            style={{...subjectRowStyle(sub.color),cursor:"pointer",justifyContent:"space-between",outline:isSelected?`2px solid ${sub.color}`:"none",outlineOffset:1,...(isUnscheduled?{border:`1px dashed ${sub.color}66`}:{})}}>
+            draggable onDragStart={()=>setSidebarDragChip({title:sub.label,color:subColor,movable:false,kind:"course",courseId:sub.id})} onDragEnd={()=>setSidebarDragChip(null)}
+            style={{...subjectRowStyle(subColor),cursor:"pointer",justifyContent:"space-between",outline:isSelected?`2px solid ${subColor}`:"none",outlineOffset:1,...(isUnscheduled?{border:`1px dashed ${subColor}66`}:{})}}>
             <span style={{fontSize:12,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{sub.label}</span>
             {isUnscheduled&&<span title="Drag onto the calendar to set when it meets" style={{fontSize:9,color:T.faint,flexShrink:0,marginRight:4}}>not scheduled</span>}
             <button type="button" onClick={(e)=>{e.stopPropagation();setCourseMenuOpenId(courseMenuOpenId===sub.id?null:sub.id);}}
@@ -35906,7 +35957,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     setTimeout(()=>setHighlightedSessionId(id=>id===s.id?null:id),3000);
   };
   const renderSidebarItem=(item)=>{
-    const tagColor=item.color||colorOf(item.courseId||item.subject);
+    const tagColor=lookEventColor(item.color,item.courseId||item.subject,colorOf(item.courseId||item.subject));
     const isExpanded=expandedSidebarItemId===item.id;
     const isExam=item.kind==="exam";
     const isProject=!isExam&&isProjectMarker(item);
@@ -36068,6 +36119,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                 const isUnscheduled=!isMulti&&(!primary.days||primary.days.length===0);
                 const isConfirmingGroupDelete=confirmDeleteGroupId===gid;
                 const isExpanded=expandedActivityGroupId===gid;
+                const actColor=lookEventColor(primary.color,null,T.muted);
                 return (
                   <div key={gid} style={{position:"relative"}}>
                     {isConfirmingGroupDelete?(
@@ -36080,8 +36132,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                       </div>
                     ):(
                       <div onClick={()=>isMulti?setExpandedActivityGroupId(x=>x===gid?null:gid):openRoutineEdit(primary)}
-                        draggable onDragStart={()=>setSidebarDragChip({title:primary.title,color:primary.color||T.muted,movable:false,kind:"activity",routineId:primary.id})} onDragEnd={()=>setSidebarDragChip(null)}
-                        style={{...subjectRowStyle(primary.color||T.muted),cursor:"pointer",justifyContent:"space-between",...(isUnscheduled?{border:`1px dashed ${(primary.color||T.muted)}66`}:{})}}>
+                        draggable onDragStart={()=>setSidebarDragChip({title:primary.title,color:actColor,movable:false,kind:"activity",routineId:primary.id})} onDragEnd={()=>setSidebarDragChip(null)}
+                        style={{...subjectRowStyle(actColor),cursor:"pointer",justifyContent:"space-between",...(isUnscheduled?{border:`1px dashed ${actColor}66`}:{})}}>
                         <span style={{fontSize:12,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{primary.title}</span>
                         {isMulti&&<span title="This activity has multiple placements -- click to see each one" style={{fontSize:9,color:T.faint,flexShrink:0,marginRight:4}}>{group.length} placements {isExpanded?"▾":"▸"}</span>}
                         {isUnscheduled&&<span title="Drag onto the calendar to set when it repeats" style={{fontSize:9,color:T.faint,flexShrink:0,marginRight:4}}>not scheduled</span>}
@@ -36100,7 +36152,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                       </div>
                     )}
                     {isMulti&&isExpanded&&(
-                      <div style={{display:"flex",flexDirection:"column",gap:4,marginTop:4,paddingLeft:10,borderLeft:`2px solid ${(primary.color||T.muted)}33`}}>
+                      <div style={{display:"flex",flexDirection:"column",gap:4,marginTop:4,paddingLeft:10,borderLeft:`2px solid ${actColor}33`}}>
                         {group.map(r=>{
                           const isConfirmingPlacementDelete=confirmDeleteActivityId===r.id;
                           return isConfirmingPlacementDelete?(
@@ -36984,7 +37036,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           <div style={{display:"flex",flexWrap:"wrap",gap:5,marginTop:7}}>
             {currentTermSubjects.filter(s=>s.needsSyllabus).map(s=>(
               <button key={s.id} type="button" onClick={()=>{dismissSyllabusNudge();setSyllabusNudgeDismissed(true);setQuickScanTargetCourseId(s.id);setQuickScanOpen(true);}}
-                style={{fontSize:10.5,fontWeight:600,padding:"4px 8px",borderRadius:6,border:`1px solid ${s.color}55`,background:s.color+"18",color:T.text,cursor:"pointer",fontFamily:T.font}}>{s.label}</button>
+                style={{fontSize:10.5,fontWeight:600,padding:"4px 8px",borderRadius:6,border:`1px solid ${subjectColor(s.id,s.color)}55`,background:subjectColor(s.id,s.color)+"18",color:T.text,cursor:"pointer",fontFamily:T.font}}>{s.label}</button>
             ))}
           </div>
         </div>
@@ -37290,7 +37342,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
               </span>
             </div>
             <label className="checkbox" onClick={()=>setEvSaveToRoutine(s=>!s)} style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginBottom:14,fontSize:12.5,color:T.text}}>
-              <span style={{width:16,height:16,borderRadius:4,border:`1.5px solid ${evSaveToRoutine?T.lime:T.border}`,background:evSaveToRoutine?T.lime:"transparent",display:"grid",placeItems:"center",flexShrink:0,color:T.ink}}>{evSaveToRoutine&&Icon.check}</span>
+              <span style={{width:16,height:16,borderRadius:4,border:`1.5px solid ${evSaveToRoutine?T.lime:T.border}`,background:evSaveToRoutine?T.lime:"transparent",display:"grid",placeItems:"center",flexShrink:0,color:T.onLime}}>{evSaveToRoutine&&Icon.check}</span>
               Save to my Weekly Routine
               <span style={{color:T.muted,fontWeight:400}}>(repeats every week on this day instead of just once)</span>
             </label>
@@ -37644,7 +37696,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         <div style={{position:"relative"}}>
           <Textarea placeholder="e.g. I have chem homework, need to email my counselor about my schedule, and my bio project is due Friday..." value={brainDumpText} onChange={e=>setBrainDumpText(e.target.value)} onKeyDown={e=>{if((e.ctrlKey||e.metaKey)&&e.key==="Enter"){e.preventDefault();submitBrainDump();}}} style={{minHeight:140,paddingRight:44}} autoFocus />
           {(window.SpeechRecognition||window.webkitSpeechRecognition)&&(
-            <button type="button" onClick={bdListening?stopBdRec:startBdRec} title={bdListening?"Stop listening":"Speak instead of typing"} style={{position:"absolute",right:8,bottom:8,width:30,height:30,borderRadius:"50%",border:"none",background:bdListening?T.red:T.lime,color:bdListening?"#fff":T.ink,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{bdListening?<span style={{width:10,height:10,background:"#fff",borderRadius:2}} />:Icon.mic}</button>
+            <button type="button" onClick={bdListening?stopBdRec:startBdRec} title={bdListening?"Stop listening":"Speak instead of typing"} style={{position:"absolute",right:8,bottom:8,width:30,height:30,borderRadius:"50%",border:"none",background:bdListening?T.red:T.lime,color:bdListening?"#fff":T.onLime,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{bdListening?<span style={{width:10,height:10,background:"#fff",borderRadius:2}} />:Icon.mic}</button>
           )}
         </div>
         {!canUseBrainDump()&&<div style={{fontSize:12,color:T.muted,marginTop:8}}>{canUseBrainDumpReason()==="free-tier"?"Brain dump is a Pro feature. ":AI_USAGE_CAP_MESSAGE+" "}<span role="button" tabIndex={0} onClick={()=>setPricingOpen(canUseBrainDumpReason()==="free-tier"?"brainDump":"aiUsageCap")} onKeyDown={e=>{if(e.key==="Enter")setPricingOpen(canUseBrainDumpReason()==="free-tier"?"brainDump":"aiUsageCap");}} style={{color:T.lime,fontWeight:600,cursor:"pointer"}}>See plans</span></div>}
@@ -37804,7 +37856,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                     )}
                     {it.kind==="study"&&it.needsDuration&&(
                       <button type="button" onClick={()=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,attackBlock:!x.attackBlock}:x)}))}
-                        style={{fontSize:10.5,fontWeight:600,color:it.attackBlock?T.ink:T.amber,background:it.attackBlock?T.lime:T.amber+"14",border:`1px solid ${it.attackBlock?T.lime:T.amber+"33"}`,borderRadius:6,padding:"3px 8px",cursor:"pointer",fontFamily:T.font}}>
+                        style={{fontSize:10.5,fontWeight:600,color:it.attackBlock?T.onLime:T.amber,background:it.attackBlock?T.lime:T.amber+"14",border:`1px solid ${it.attackBlock?T.lime:T.amber+"33"}`,borderRadius:6,padding:"3px 8px",cursor:"pointer",fontFamily:T.font}}>
                         {it.attackBlock?"✓ Attack Block — probe session first":"Wasn't sure how long — start an Attack Block instead"}
                       </button>
                     )}
@@ -38012,7 +38064,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                 {detailEvs.map(ev => {
                   const isDone = ev.status === "done";
                   const over = daysOverdue(ev);
-                  const color = ev.color||colorOf(ev.courseId||ev.subject);
+                  const color = lookEventColor(ev.color,ev.courseId||ev.subject,colorOf(ev.courseId||ev.subject));
                   const isExam = ev.kind === "exam";
                   const canBegin = !isDone && isTimerEligible(ev);
                   // Routed through isLeadInFixed (Phase 7b) instead of a bare
@@ -40032,7 +40084,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                       <button key={opt.key} type="button" onClick={()=>setShareAvailabilityMode(opt.key)}
                         style={{flex:1,fontSize:12,fontWeight:600,padding:"7px 10px",borderRadius:7,cursor:"pointer",fontFamily:T.font,
                           background:(toggles.shareAvailabilityMode||"everyone")===opt.key?T.lime:T.card2,
-                          color:(toggles.shareAvailabilityMode||"everyone")===opt.key?T.ink:T.text,
+                          color:(toggles.shareAvailabilityMode||"everyone")===opt.key?T.onLime:T.text,
                           border:`1px solid ${(toggles.shareAvailabilityMode||"everyone")===opt.key?T.lime:T.border}`}}>
                         {opt.label}
                       </button>
@@ -41087,7 +41139,7 @@ function LevelRoadmapModal({open,onClose,currentMinutes}){
             return(
               <div key={tier.title} style={{display:"flex",gap:14,position:"relative",paddingBottom:i<PROF_TIERS.length-1?8:0}}>
                 {i<PROF_TIERS.length-1&&<div style={{position:"absolute",left:19,top:40,width:2,height:"calc(100% - 12px)",background:unlocked?T.lime+"66":T.card2,zIndex:0}}/>}
-                <div style={{width:40,height:40,borderRadius:"50%",background:isCurrent?T.lime:unlocked?T.lime+"22":T.card2,border:`2px solid ${isCurrent?T.lime:unlocked?T.lime+"55":T.faint}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,zIndex:1,fontSize:15,fontWeight:700,color:isCurrent?T.ink:unlocked?T.lime:T.faint}}>
+                <div style={{width:40,height:40,borderRadius:"50%",background:isCurrent?T.lime:unlocked?T.lime+"22":T.card2,border:`2px solid ${isCurrent?T.lime:unlocked?T.lime+"55":T.faint}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,zIndex:1,fontSize:15,fontWeight:700,color:isCurrent?T.onLime:unlocked?T.lime:T.faint}}>
                   {isCurrent?"★":unlocked?"✓":""}
                 </div>
                 <div style={{flex:1,paddingBottom:i<PROF_TIERS.length-1?18:0,minWidth:0}}>
@@ -41492,7 +41544,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
           {checklistExpanded&&(<>
             <div style={{marginTop:16,display:"flex",flexDirection:"column",gap:12}}>
               <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
-                <div style={{width:20,height:20,borderRadius:"50%",border:`1.5px solid ${setupChecklist.hasClasses?T.lime:T.faint}`,background:setupChecklist.hasClasses?T.lime:"transparent",flex:"none",marginTop:1,display:"grid",placeItems:"center",color:T.ink,fontSize:11}}>{setupChecklist.hasClasses&&Icon.check}</div>
+                <div style={{width:20,height:20,borderRadius:"50%",border:`1.5px solid ${setupChecklist.hasClasses?T.lime:T.faint}`,background:setupChecklist.hasClasses?T.lime:"transparent",flex:"none",marginTop:1,display:"grid",placeItems:"center",color:T.onLime,fontSize:11}}>{setupChecklist.hasClasses&&Icon.check}</div>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Add your classes</div>
                   {!setupChecklist.hasClasses&&(
@@ -41505,7 +41557,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
               </div>
               {setupChecklist.hasClasses&&(
                 <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
-                  <div style={{width:20,height:20,borderRadius:"50%",border:`1.5px solid ${setupChecklist.assignmentsStepDone?T.lime:T.faint}`,background:setupChecklist.assignmentsStepDone?T.lime:"transparent",flex:"none",marginTop:1,display:"grid",placeItems:"center",color:T.ink,fontSize:11}}>{setupChecklist.assignmentsStepDone&&Icon.check}</div>
+                  <div style={{width:20,height:20,borderRadius:"50%",border:`1.5px solid ${setupChecklist.assignmentsStepDone?T.lime:T.faint}`,background:setupChecklist.assignmentsStepDone?T.lime:"transparent",flex:"none",marginTop:1,display:"grid",placeItems:"center",color:T.onLime,fontSize:11}}>{setupChecklist.assignmentsStepDone&&Icon.check}</div>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Get assignments, exams & projects in for every class</div>
                     {!setupChecklist.assignmentsStepDone&&(<>
@@ -44248,15 +44300,18 @@ function App() {
   const pages={prep:StudlinPrep,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,profile:Profile};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
-  const sidebarText=isLight?"#FFFFFF":T.text;
-  const sidebarMuted=isLight?"rgba(255,255,255,0.55)":T.muted;
-  const sidebarFaint=isLight?"rgba(255,255,255,0.35)":T.faint;
-  const sidebarBorder=isLight?"rgba(255,255,255,0.10)":T.border;
-  const sidebarCardBg=isLight?"rgba(255,255,255,0.06)":T.card;
+  // Palette + light mode: a calm, softly tinted sidebar (dark ink on the palette tint) instead of
+  // a deep saturated slab. Classic light keeps its own dark sidebar, dark mode is unchanged.
+  const softSide=isLight&&T.lookOn;
+  const sidebarText=softSide?T.hdrText:isLight?"#FFFFFF":T.text;
+  const sidebarMuted=softSide?blendOverBg(T.hdrText,0.78,T.tint):isLight?"rgba(255,255,255,0.55)":T.muted;
+  const sidebarFaint=softSide?blendOverBg(T.hdrText,0.62,T.tint):isLight?"rgba(255,255,255,0.35)":T.faint;
+  const sidebarBorder=softSide?T.borderTint:isLight?"rgba(255,255,255,0.10)":T.border;
+  const sidebarCardBg=softSide?T.accentSoft:isLight?"rgba(255,255,255,0.06)":T.card;
   const NavItem=({item})=>{
     const act=active===item.id;
     return (
-      <div onClick={()=>setActive(item.id)} title={navExpanded?undefined:(item.badge?item.label+" ("+item.badge+")":item.label)} style={{display:"flex",alignItems:"center",gap:10,padding:navExpanded?"9px 11px":"9px 0",justifyContent:navExpanded?"flex-start":"center",borderRadius:9,cursor:"pointer",fontSize:12.5,background:act?(T.lookOn?T.accentSoft:isLight?"rgba(255,255,255,0.95)":`linear-gradient(100deg, ${T.lime}1c, ${T.lime}08)`):(navHover===item.id&&T.lookOn?hexA(T.tint,0.14):"transparent"),color:act?(T.lookOn?T.accentInk:isLight?T.ink:T.lime):sidebarMuted,fontWeight:act?600:400,marginBottom:2,border:`1px solid ${act?(isLight||T.lookOn?"transparent":T.lime+"30"):"transparent"}`,boxShadow:act&&T.lookOn?`inset 3px 0 0 ${T.lime}`:act&&!isLight?`0 4px 14px -8px ${T.lime}70`:"none",transition:"all 0.18s cubic-bezier(.2,.8,.2,1)"}} onMouseEnter={()=>setNavHover(item.id)} onMouseLeave={()=>setNavHover(h=>h===item.id?null:h)}>
+      <div onClick={()=>setActive(item.id)} title={navExpanded?undefined:(item.badge?item.label+" ("+item.badge+")":item.label)} style={{display:"flex",alignItems:"center",gap:10,padding:navExpanded?"9px 11px":"9px 0",justifyContent:navExpanded?"flex-start":"center",borderRadius:9,cursor:"pointer",fontSize:12.5,background:act?(T.lookOn?(softSide?T.hdrBg:T.accentSoft):isLight?"rgba(255,255,255,0.95)":`linear-gradient(100deg, ${T.lime}1c, ${T.lime}08)`):(navHover===item.id&&T.lookOn?(softSide?T.accentSoft:hexA(T.tint,0.14)):"transparent"),color:act?(T.lookOn?T.accentInk:isLight?T.ink:T.lime):sidebarMuted,fontWeight:act?600:400,marginBottom:2,border:`1px solid ${act?(isLight||T.lookOn?"transparent":T.lime+"30"):"transparent"}`,boxShadow:act&&T.lookOn?`inset 3px 0 0 ${T.lime}`:act&&!isLight?`0 4px 14px -8px ${T.lime}70`:"none",transition:"all 0.18s cubic-bezier(.2,.8,.2,1)"}} onMouseEnter={()=>setNavHover(item.id)} onMouseLeave={()=>setNavHover(h=>h===item.id?null:h)}>
         <span style={{width:16,height:16,position:"relative",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:act?(T.lookOn?T.accentInk:isLight?T.ink:T.lime):sidebarFaint}}>
           {navIcon[item.id]}
           {/* Collapsed rail has no room for the label-row pill below --
@@ -44268,7 +44323,7 @@ function App() {
           {!navExpanded&&item.badge&&<span style={{position:"absolute",top:-5,right:-7,background:T.lime,color:T.onLime,borderRadius:8,padding:"1px 4px",fontSize:8,fontWeight:700,lineHeight:1,minWidth:12,textAlign:"center"}}>{item.badge}</span>}
         </span>
         {navExpanded&&<span style={{flex:1,letterSpacing:"0.01em",whiteSpace:"nowrap"}}>{item.label}</span>}
-        {navExpanded&&item.badge&&<span style={{background:T.lime+(act?"":"18"),color:act?T.ink:T.lime,fontSize:9,fontWeight:700,padding:"2px 6px",borderRadius:4,letterSpacing:"0.03em"}}>{item.badge}</span>}
+        {navExpanded&&item.badge&&<span style={{background:T.lime+(act?"":"18"),color:act?T.onLime:T.lime,fontSize:9,fontWeight:700,padding:"2px 6px",borderRadius:4,letterSpacing:"0.03em"}}>{item.badge}</span>}
       </div>
     );
   };
@@ -44282,12 +44337,12 @@ function App() {
           pinned open/closed only by the toggle button below (Phase 5:
           hover-to-expand removed -- icon-only regardless of pointer
           position; a real second panel now lives in Calendar instead). */}
-      <div style={{width:navExpanded?230:48,flexShrink:0,background:isLight?T.surface:"linear-gradient(180deg, #18241D 0%, #0D120F00 60%)",backgroundColor:isLight&&T.lookOn?T.hdrText:T.surface,display:"flex",flexDirection:"column",padding:navExpanded?"20px 12px":"16px 6px",borderRight:`1px solid ${isLight?"transparent":T.border}`,overflowY:"auto",overflowX:"hidden",transition:"width 0.22s cubic-bezier(.2,.8,.2,1), padding 0.22s cubic-bezier(.2,.8,.2,1)"}}>
+      <div style={{width:navExpanded?230:48,flexShrink:0,background:isLight?T.surface:"linear-gradient(180deg, #18241D 0%, #0D120F00 60%)",backgroundColor:softSide?T.tint:T.surface,display:"flex",flexDirection:"column",padding:navExpanded?"20px 12px":"16px 6px",borderRight:`1px solid ${softSide?T.borderTint:isLight?"transparent":T.border}`,overflowY:"auto",overflowX:"hidden",transition:"width 0.22s cubic-bezier(.2,.8,.2,1), padding 0.22s cubic-bezier(.2,.8,.2,1)"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,padding:"0 6px",marginBottom:20,justifyContent:navExpanded?"space-between":"center"}}>
           {navExpanded&&(
             <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
               <div style={{width:28,height:28,background:T.lime,borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                <span style={{fontSize:15,fontWeight:800,color:T.ink,fontFamily:T.font}}>S</span>
+                <span style={{fontSize:15,fontWeight:800,color:T.onLime,fontFamily:T.font}}>S</span>
               </div>
               <span style={{fontSize:16,fontWeight:700,color:sidebarText,letterSpacing:"-0.02em",fontFamily:T.font,whiteSpace:"nowrap"}}>Studlin</span>
             </div>

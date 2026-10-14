@@ -187,7 +187,7 @@ describe("looks theme: per-class assignment", () => {
     assert.equal(m.subjectColor(subs[0].id), "#112233", "switching back is lossless");
   });
   test("ev.color precedence is still applied by call sites", () => {
-    assert.ok((SRC.match(/ev\.color\|\|colorOf\(ev\.courseId\|\|ev\.subject\)/g) || []).length >= 4);
+    assert.ok((SRC.match(/lookEventColor\(ev\.color,ev\.courseId\|\|ev\.subject,/g) || []).length >= 4);
     assert.equal((SRC.match(/const colorOf=\(tg\)=>\{const s=userSubjects/g) || []).length, 0, "no local colorOf copies ignore the look");
   });
   test("assign UI copy is present and has no em dashes", () => {

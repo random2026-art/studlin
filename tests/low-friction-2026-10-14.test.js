@@ -174,7 +174,7 @@ describe("source guards", () => {
   test("quick-create duration change resizes the draft live and keeps the colour fill", () => {
     assert.match(SOURCE, /const handleQuickCreateDuration=/);
     assert.match(SOURCE, /const handleQuickCreateColor=\(color\)=>setQuickCreateDraft\(d=>d\?\{\.\.\.d,color\}:d\);/);
-    assert.match(SOURCE, /quickCreateDraft\.color\?quickCreateDraft\.color\+"B3"/);
+    assert.match(SOURCE, /quickCreateDraft\.color\?lookDraftStyle\(quickCreateDraft\.color,getLook\(\),lookMode\(\),quickCreateDraft\.color\+"B3"\)/);
     assert.match(SOURCE, /const ESTIMATED_HEIGHT=230;/);
     assert.match(SOURCE, /onKeyDown=\{e=>\{ if\(e\.key==="Enter"\)\{e\.preventDefault\(\);submit\(\);\}/);
   });
