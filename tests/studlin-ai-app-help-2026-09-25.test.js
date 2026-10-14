@@ -126,7 +126,7 @@ describe("StudlinAiDrawer: app_help is wired into both the classifier and the di
   });
 
   test("help message kind gets its own accent color in the drawer's per-kind styling map", () => {
-    assert.match(SOURCE, /STUDLIN_AI_MSG_KIND_ACCENT=\{[^}]*help:T\.teal/);
+    assert.match(SOURCE, /studlinAiKindAccents=\(\)=>\(\{[^}]*help:T\.teal/);
   });
 
   test("the classifier's response validator accepts app_help -- it was missing, so every classifier-returned app_help was downgraded to unsupported (persona audit)", () => {

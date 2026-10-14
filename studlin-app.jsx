@@ -646,7 +646,7 @@ function PlanCards({ billing, onSelect }) {
           boxShadow:plan.featured?`0 24px 48px -20px ${T.lime}30`:"none",
         }}>
           {plan.tag && (
-            <div style={{position:"absolute",top:-11,left:18,background:T.lime,color:T.ink,fontFamily:T.mono,fontSize:10,fontWeight:700,letterSpacing:"0.14em",padding:"4px 10px",borderRadius:5}}>{plan.tag}</div>
+            <div style={{position:"absolute",top:-11,left:18,background:T.lime,color:T.onLime,fontFamily:T.mono,fontSize:10,fontWeight:700,letterSpacing:"0.14em",padding:"4px 10px",borderRadius:5}}>{plan.tag}</div>
           )}
           <div style={{fontSize:18,fontWeight:700,color:plan.featured?T.cream:T.text,letterSpacing:"-0.02em",marginBottom:4}}>{plan.name}</div>
           <div style={{display:"flex",alignItems:"baseline",gap:5,margin:"8px 0 6px"}}>
@@ -657,7 +657,7 @@ function PlanCards({ billing, onSelect }) {
           <ul style={{listStyle:"none",padding:0,margin:"0 0 20px",display:"flex",flexDirection:"column",gap:9,flex:1}}>
             {plan.features.map((f,j)=>(
               <li key={j} style={{display:"flex",gap:9,fontSize:13,color:plan.featured?T.cream:T.text,lineHeight:1.45,alignItems:"flex-start"}}>
-                <span style={{width:16,height:16,borderRadius:"50%",background:T.lime,color:T.ink,display:"grid",placeItems:"center",flex:"none",marginTop:1}}>
+                <span style={{width:16,height:16,borderRadius:"50%",background:T.lime,color:T.onLime,display:"grid",placeItems:"center",flex:"none",marginTop:1}}>
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                 </span>
                 {f}
@@ -1314,11 +1314,11 @@ function lookPersistMissing(subjects){
   if(!list.length)return false;
   const pc=look.perClass||{};
   const ids={};list.forEach(s=>{ids[lookKeyOf(s)]=true;});
-  const stale=Object.keys(pc).some(k=>!ids[k]);
   const missing=list.some(s=>pc[lookKeyOf(s)]===undefined);
-  if(!stale&&!missing)return false;
-  const kept={};Object.keys(pc).forEach(k=>{if(ids[k])kept[k]=pc[k];});
-  setLook({perClass:lookAutoAssign(list,lookMode(),look.seed||0,look.palette,kept)});
+  // Only ever fills in missing classes. Never prunes: subjects can load late from sync,
+  // and dropping unknown ids here would permanently wipe a student's manual picks.
+  if(!missing)return false;
+  setLook({perClass:lookAutoAssign(list,lookMode(),look.seed||0,look.palette,pc)});
   return true;
 }
 // Auto-assign: back to the default deterministic assignment (seed 0), replacing manual picks.
@@ -1345,6 +1345,7 @@ function applyLookTheme(look,mode){
     T.lookOn=false;
     T.hdrBg=T.card;T.hdrText=T.muted;T.accentSoft=T.card2;T.accentInk=T.text;T.tint=T.card;
     T.borderTint=T.border;T.todayBg=T.lime;T.todayText=T.ink;T.chipBg=T.card2;
+    T.onLime=T.ink; // label color on a T.lime fill (Classic: unchanged)
     return;
   }
   T.lookOn=true;
@@ -1355,6 +1356,8 @@ function applyLookTheme(look,mode){
     T.limeLt=blendOverBg(th.accent,m==="dark"?0.75:0.35,"#FFFFFF");
     T.glow=hexA(th.accent,m==="dark"?0.22:0.18);
   }
+  // Palette accents are dark in light mode, so near-black labels on T.lime fail contrast.
+  T.onLime=lookTextOnFill(T.lime);
 }
 // The one place block fill/edge/text is decided. kind: "subject" (class and
 // other fixed blocks), "study" (solid focus block), "reminder" (text only),
@@ -1453,7 +1456,7 @@ function LookCustomizePanel({open,onClose}){
     setOpenId(null);
   };
   const runAction=(fn,msg)=>{if(busy)return;setBusy(true);fn(subjects,mode);setSaved(true);setNote(msg);setOpenId(null);};
-  const setClassColor=(id,i)=>{pick({perClass:{...idxMap,[id]:i}});setOpenId(null);};
+  const setClassColor=(id,i)=>{pick({perClass:{...(look.perClass||{}),[id]:i}});setOpenId(null);};
   const btn={padding:"7px 14px",borderRadius:8,fontFamily:T.font,fontSize:12.5,fontWeight:700,cursor:busy?"not-allowed":"pointer",border:`1px solid ${T.borderTint}`,background:T.accentSoft,color:T.accentInk,opacity:busy?0.6:1};
   return (
     <Modal open={open} onClose={onClose} title="Customize your look" sub="Pick a palette. It themes the whole app right away." width={520}
@@ -1956,7 +1959,7 @@ const SchoolSelect=({value,onChange,placeholder,theme,statusFilter,onCommit})=>{
         <div style={{marginTop:6,padding:"8px 10px",borderRadius:8,border:`1px solid ${T.lime}44`,background:T.lime+"0f",fontSize:11.5,color:th.text,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}>
           <span>Did you mean <strong>{suggestion}</strong>?</span>
           <span style={{display:"flex",gap:8,flexShrink:0}}>
-            <button type="button" onMouseDown={e=>e.preventDefault()} onClick={()=>{const s=suggestion;pick(s);if(onCommit)onCommit(s);}} style={{background:T.lime,color:T.ink,border:"none",borderRadius:5,padding:"4px 9px",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Use this</button>
+            <button type="button" onMouseDown={e=>e.preventDefault()} onClick={()=>{const s=suggestion;pick(s);if(onCommit)onCommit(s);}} style={{background:T.lime,color:T.onLime,border:"none",borderRadius:5,padding:"4px 9px",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Use this</button>
             <button type="button" onMouseDown={e=>e.preventDefault()} onClick={()=>{if(onCommit&&q.trim())onCommit(q.trim());setSuggestion(null);}} style={{background:"none",border:`1px solid ${th.border}`,color:th.muted,borderRadius:5,padding:"4px 9px",fontSize:11,cursor:"pointer",fontFamily:T.font}}>No, keep mine</button>
           </span>
         </div>
@@ -11825,7 +11828,7 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
         
         <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
           <button onClick={onClose} style={{padding:"10px 18px",borderRadius:8,border:"1px solid "+T.border,background:"transparent",color:T.muted,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Cancel</button>
-          <button onClick={handleSave} disabled={!canSave} style={{padding:"10px 18px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,cursor:canSave?"pointer":"not-allowed",fontFamily:T.font,opacity:canSave?1:0.45}}>Save Preferences</button>
+          <button onClick={handleSave} disabled={!canSave} style={{padding:"10px 18px",borderRadius:8,border:"none",background:T.lime,color:T.onLime,fontSize:12.5,fontWeight:600,cursor:canSave?"pointer":"not-allowed",fontFamily:T.font,opacity:canSave?1:0.45}}>Save Preferences</button>
         </div>
       </div>
     </div>
@@ -11874,7 +11877,7 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
             {["monthly","annual"].map(b=>(
               <button key={b} type="button" onClick={()=>setBilling(b)} style={{padding:"6px 12px",border:"none",borderRadius:99,background:billing===b?T.ink:"transparent",color:billing===b?T.cream:T.muted,fontFamily:T.font,fontSize:12,fontWeight:500,cursor:"pointer",display:"flex",alignItems:"center",gap:5}}>
                 {b==="monthly"?"Monthly":"Annual"}
-                {b==="annual"&&<span style={{fontFamily:T.mono,fontSize:8.5,fontWeight:700,background:T.lime,color:T.ink,padding:"1.5px 5px",borderRadius:99}}>Save 29%</span>}
+                {b==="annual"&&<span style={{fontFamily:T.mono,fontSize:8.5,fontWeight:700,background:T.lime,color:T.onLime,padding:"1.5px 5px",borderRadius:99}}>Save 29%</span>}
               </button>
             ))}
           </div>
@@ -11887,7 +11890,7 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
               <div key={i} style={{display:"flex",gap:7,alignItems:"center",fontSize:11.5,color:T.text,padding:"3px 0"}}><span style={{color:tier.color,display:"inline-flex"}}>{Icon.check}</span>{p}</div>
             ))}
           </div>
-          <Btn onClick={choose} style={{width:"100%",justifyContent:"center",background:T.lime,color:T.ink}}>Upgrade to Pro</Btn>
+          <Btn onClick={choose} style={{width:"100%",justifyContent:"center",background:T.lime,color:T.onLime}}>Upgrade to Pro</Btn>
         </div>
         <div onClick={onClose} style={{textAlign:"center",fontSize:12,color:T.muted,cursor:"pointer",padding:6}}>Maybe later</div>
       </div>
@@ -18214,7 +18217,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
                   <div style={{fontSize:11,color:T.muted}}>{req.h} · <span style={{color:T.blue}}>{req.s}</span></div>
                 </div>
                 <div style={{display:"flex",gap:7,flexShrink:0}}>
-                  <button onClick={()=>acceptReq(req.id)} style={{padding:"6px 14px",borderRadius:7,background:T.lime,color:T.ink,border:"none",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Accept</button>
+                  <button onClick={()=>acceptReq(req.id)} style={{padding:"6px 14px",borderRadius:7,background:T.lime,color:T.onLime,border:"none",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Accept</button>
                   <button onClick={()=>declineReq(req.id)} style={{padding:"6px 13px",borderRadius:7,background:"transparent",color:T.muted,border:`1px solid ${T.border}`,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Decline</button>
                 </div>
               </div>
@@ -18244,7 +18247,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
                   <div style={{fontSize:11,color:T.muted}}>From {(proj.participants&&proj.participants[proj.ownerUid]&&proj.participants[proj.ownerUid].name)||"a friend"}{proj.deadline?" · due "+proj.deadline:""}</div>
                 </div>
                 <div style={{display:"flex",gap:7,flexShrink:0}}>
-                  <button disabled={projectInviteBusyId===proj.id} onClick={()=>acceptProjectInvite(proj)} style={{padding:"6px 14px",borderRadius:7,background:T.lime,color:T.ink,border:"none",fontSize:11.5,fontWeight:700,cursor:projectInviteBusyId===proj.id?"default":"pointer",fontFamily:T.font,opacity:projectInviteBusyId===proj.id?0.6:1}}>{projectInviteBusyId===proj.id?"…":"Accept"}</button>
+                  <button disabled={projectInviteBusyId===proj.id} onClick={()=>acceptProjectInvite(proj)} style={{padding:"6px 14px",borderRadius:7,background:T.lime,color:T.onLime,border:"none",fontSize:11.5,fontWeight:700,cursor:projectInviteBusyId===proj.id?"default":"pointer",fontFamily:T.font,opacity:projectInviteBusyId===proj.id?0.6:1}}>{projectInviteBusyId===proj.id?"…":"Accept"}</button>
                   <button disabled={projectInviteBusyId===proj.id} onClick={()=>declineProjectInvite(proj)} style={{padding:"6px 13px",borderRadius:7,background:"transparent",color:T.muted,border:`1px solid ${T.border}`,fontSize:11.5,fontWeight:600,cursor:projectInviteBusyId===proj.id?"default":"pointer",fontFamily:T.font,opacity:projectInviteBusyId===proj.id?0.6:1}}>Decline</button>
                 </div>
               </div>
@@ -18275,7 +18278,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
                     <div style={{fontSize:11,color:T.muted}}>Wants to see your calendar this once, to help schedule something</div>
                   </div>
                   <div style={{display:"flex",gap:7,flexShrink:0}}>
-                    <button disabled={calendarViewRequestBusyId===req.id} onClick={()=>approveCalendarViewRequest(req)} style={{padding:"6px 14px",borderRadius:7,background:T.lime,color:T.ink,border:"none",fontSize:11.5,fontWeight:700,cursor:calendarViewRequestBusyId===req.id?"default":"pointer",fontFamily:T.font,opacity:calendarViewRequestBusyId===req.id?0.6:1}}>{calendarViewRequestBusyId===req.id?"…":"Approve"}</button>
+                    <button disabled={calendarViewRequestBusyId===req.id} onClick={()=>approveCalendarViewRequest(req)} style={{padding:"6px 14px",borderRadius:7,background:T.lime,color:T.onLime,border:"none",fontSize:11.5,fontWeight:700,cursor:calendarViewRequestBusyId===req.id?"default":"pointer",fontFamily:T.font,opacity:calendarViewRequestBusyId===req.id?0.6:1}}>{calendarViewRequestBusyId===req.id?"…":"Approve"}</button>
                     <button disabled={calendarViewRequestBusyId===req.id} onClick={()=>denyCalendarViewRequest(req)} style={{padding:"6px 13px",borderRadius:7,background:"transparent",color:T.muted,border:`1px solid ${T.border}`,fontSize:11.5,fontWeight:600,cursor:calendarViewRequestBusyId===req.id?"default":"pointer",fontFamily:T.font,opacity:calendarViewRequestBusyId===req.id?0.6:1}}>Deny</button>
                   </div>
                 </div>
@@ -18414,7 +18417,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
               planLabel), since that's account status, not a pitch. */}
           <span style={{color:T.text,fontWeight:600}}>Invite classmates to unlock collective scheduling.</span>{" "}For every friend who joins, you <strong style={{color:T.lime}}>both</strong> get <span style={{color:T.lime,fontWeight:600}}>{planDisplayName("Pro-Limited")}</span>, free.
         </div>
-        <button onClick={()=>setInviteOpen(true)} style={{flexShrink:0,padding:"7px 16px",borderRadius:7,background:T.lime,color:T.ink,border:"none",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:T.font,whiteSpace:"nowrap"}}>
+        <button onClick={()=>setInviteOpen(true)} style={{flexShrink:0,padding:"7px 16px",borderRadius:7,background:T.lime,color:T.onLime,border:"none",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:T.font,whiteSpace:"nowrap"}}>
           Invite friends
         </button>
       </div>
@@ -20201,7 +20204,7 @@ function ExploreClassesCard({school,classes,setActive}){
       </Modal>
 
       {toast&&(
-        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,padding:"10px 18px",borderRadius:99,fontSize:12.5,fontWeight:600,boxShadow:"0 12px 28px -10px rgba(0,0,0,0.4)"}}>{toast}</div>
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.onLime,padding:"10px 18px",borderRadius:99,fontSize:12.5,fontWeight:600,boxShadow:"0 12px 28px -10px rgba(0,0,0,0.4)"}}>{toast}</div>
       )}
     </Card>
   );
@@ -21723,7 +21726,7 @@ function deriveStudlinAiProactiveSignal(strugglingBucketOffer,unscheduledDueSoon
 // read at a glance instead of as one undifferentiated stream of text.
 // Kept as its own small map, not inline per call site, so every message
 // push in this drawer stays consistent with the same small vocabulary.
-const STUDLIN_AI_MSG_KIND_ACCENT={proposal:T.lime,done:T.lime,fact:T.teal,coaching:T.purple,clarify:T.amber,paywall:T.amber,error:T.red,info:T.faint,help:T.teal};
+const studlinAiKindAccents=()=>({proposal:T.lime,done:T.lime,fact:T.teal,coaching:T.purple,clarify:T.amber,paywall:T.amber,error:T.red,info:T.faint,help:T.teal}); // a function so it follows palette/theme changes
 function StudlinAiMiniDayPreview({dateKey,proposedBlock}){
   const pp=panelPalette();
   if(!dateKey)return null;
@@ -21881,7 +21884,7 @@ function StudlinAiBubble({onClick,hasProactive}){
     // stable id via document.getElementById instead (see TourStep's own
     // targetSelector support).
     <button id="studlin-ai-bubble" type="button" onClick={onClick} title="Ask Studlin AI about your schedule"
-      style={{position:"fixed",bottom:20,right:20,width:52,height:52,borderRadius:"50%",background:T.lime,color:T.ink,border:"none",cursor:"pointer",display:"grid",placeItems:"center",boxShadow:"0 8px 24px -6px rgba(0,0,0,0.4)",zIndex:STUDLIN_AI_BUBBLE_Z}}>
+      style={{position:"fixed",bottom:20,right:20,width:52,height:52,borderRadius:"50%",background:T.lime,color:T.onLime,border:"none",cursor:"pointer",display:"grid",placeItems:"center",boxShadow:"0 8px 24px -6px rgba(0,0,0,0.4)",zIndex:STUDLIN_AI_BUBBLE_Z}}>
       {Icon.sparkles}
       {hasProactive&&(
         <span style={{position:"absolute",top:-2,right:-2,width:14,height:14,borderRadius:"50%",background:T.amber,border:`2px solid ${T.bg}`}} />
@@ -22693,7 +22696,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
           )}
           {messages.map((m,i)=>(
             <div key={i} style={{alignSelf:m.role==="user"?"flex-end":"flex-start",maxWidth:"85%",display:"flex",flexDirection:"column",gap:6}}>
-              <div style={{padding:"9px 13px",borderRadius:12,fontSize:13,lineHeight:1.5,background:m.role==="user"?pp.card2:T.lime+"14",color:pp.text,border:m.role==="user"?`1px solid ${pp.border}`:`1px solid ${T.lime}33`,borderLeft:m.role==="ai"?`3px solid ${STUDLIN_AI_MSG_KIND_ACCENT[m.kind]||T.lime}`:undefined,whiteSpace:m.role==="user"?"pre-wrap":undefined}}>
+              <div style={{padding:"9px 13px",borderRadius:12,fontSize:13,lineHeight:1.5,background:m.role==="user"?pp.card2:T.lime+"14",color:pp.text,border:m.role==="user"?`1px solid ${pp.border}`:`1px solid ${T.lime}33`,borderLeft:m.role==="ai"?`3px solid ${studlinAiKindAccents()[m.kind]||T.lime}`:undefined,whiteSpace:m.role==="user"?"pre-wrap":undefined}}>
                 {m.role==="ai"?renderStudlinAiMarkdown(m.text):m.text}
               </div>
               {m.proposal&&m.proposal.disambiguate&&!m.proposal.resolved&&(
@@ -22717,7 +22720,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
               {m.proposal&&m.proposal.ok&&!m.proposal.resolved&&(
                 <div style={{display:"flex",gap:8}}>
                   <button onClick={()=>confirmProposal(i)}
-                    style={{padding:"7px 14px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontWeight:600,fontSize:12.5,cursor:"pointer",fontFamily:T.font}}>Confirm</button>
+                    style={{padding:"7px 14px",borderRadius:8,border:"none",background:T.lime,color:T.onLime,fontWeight:600,fontSize:12.5,cursor:"pointer",fontFamily:T.font}}>Confirm</button>
                   <button onClick={()=>cancelProposal(i)}
                     style={{padding:"7px 14px",borderRadius:8,border:`1px solid ${pp.border}`,background:"transparent",color:pp.muted,fontSize:12.5,cursor:"pointer",fontFamily:T.font}}>Cancel</button>
                 </div>
@@ -22764,7 +22767,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
                 style={{width:36,height:36,borderRadius:"50%",border:"none",background:aiListening?T.red:pp.card2,color:aiListening?"#fff":pp.muted,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0,opacity:pendingIndex!=null?0.6:1}}>{aiListening?<span style={{width:10,height:10,background:"#fff",borderRadius:2}} />:Icon.mic}</button>
             )}
             <button onClick={send} disabled={!input.trim()||loading||pendingIndex!=null}
-              style={{padding:"9px 14px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontWeight:600,fontSize:13,cursor:"pointer",opacity:(!input.trim()||loading||pendingIndex!=null)?0.5:1,flexShrink:0}}>Send</button>
+              style={{padding:"9px 14px",borderRadius:8,border:"none",background:T.lime,color:T.onLime,fontWeight:600,fontSize:13,cursor:"pointer",opacity:(!input.trim()||loading||pendingIndex!=null)?0.5:1,flexShrink:0}}>Send</button>
           </div>
           {aiListening&&<div style={{fontSize:11,color:T.red,marginTop:6}}>Listening... tap the mic to stop</div>}
           {!aiListening&&aiMicError&&<div style={{fontSize:11,color:T.red,marginTop:6}}>{aiMicError}</div>}
@@ -25057,7 +25060,7 @@ const wizardChipStyle=(sel)=>({padding:"7px 12px",borderRadius:8,fontSize:12,fon
 // white background, the existing border still reads as a distinct card.
 const wizardStatusChipStyle=(sel)=>({flex:1,padding:"16px",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",border:`1.5px solid ${sel?T.lime:T.border}`,background:sel?T.lime+"14":T.card,color:sel?T.lime:T.muted,fontFamily:T.font,textAlign:"center"});
 const wizardSelectStyle={padding:"10px 8px",borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,fontSize:13,color:T.text,fontFamily:T.font,outline:"none"};
-const wizardAddBtnStyle={padding:"10px 16px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontSize:13,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"};
+const wizardAddBtnStyle={padding:"10px 16px",borderRadius:8,border:"none",background:T.lime,color:T.onLime,fontSize:13,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"};
 
 function WizardRoutineList({items,onRemove}){
   if(items.length===0)return null;
@@ -36200,7 +36203,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           </div>
           <div style={{display:"flex",gap:8,flexShrink:0}}>
             <button type="button" onClick={dismissGoogleClassBanner} style={{padding:"8px 14px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.text,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Not now</button>
-            <button type="button" onClick={()=>setGoogleClassReviewOpen(true)} style={{padding:"8px 14px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Review classes</button>
+            <button type="button" onClick={()=>setGoogleClassReviewOpen(true)} style={{padding:"8px 14px",borderRadius:8,border:"none",background:T.lime,color:T.onLime,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Review classes</button>
           </div>
         </div>
       )}
@@ -36219,7 +36222,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
               </div>
               <div style={{display:"flex",gap:8,flexShrink:0}}>
                 <button type="button" onClick={()=>setImportLogOpen(o=>!o)} aria-expanded={importLogOpen} style={{padding:"6px 12px",borderRadius:6,border:`1px solid ${T.border}`,background:"transparent",color:T.text,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>{importLogOpen?"Hide":"See what"}</button>
-                <button type="button" onClick={acknowledgeImports} style={{padding:"6px 12px",borderRadius:6,border:"none",background:T.lime,color:T.ink,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Got it</button>
+                <button type="button" onClick={acknowledgeImports} style={{padding:"6px 12px",borderRadius:6,border:"none",background:T.lime,color:T.onLime,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Got it</button>
               </div>
             </div>
             {importLogOpen&&(
@@ -36938,10 +36941,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         </>)}
       </Modal>
       {toast&&(
-        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} Task added</div>
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.onLime,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} Task added</div>
       )}
       {placementToast&&(
-        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {placementToast}</div>
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.onLime,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {placementToast}</div>
       )}
       {/* Live-crash hotfix, 2026-09-16: this floating drag-ghost was
           accidentally placed in App()'s own render instead of here in
@@ -36980,13 +36983,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         </div>
       )}
       {rescheduleToast&&(
-        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {rescheduleToast}</div>
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.onLime,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {rescheduleToast}</div>
       )}
       {reconcileToast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.amber,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {reconcileToast}</div>
       )}
       {calClipToast&&(
-        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {calClipToast}</div>
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.onLime,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {calClipToast}</div>
       )}
       {deleteUndoToast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.card,border:`1px solid ${T.border}`,color:T.white,fontSize:12.5,fontWeight:600,padding:"10px 16px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:12}}>
@@ -41711,7 +41714,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
           {upcomingEvents.length===0
             ?<div style={{padding:"18px 0",textAlign:"center"}}>
               <div style={{fontSize:13,color:T.muted,marginBottom:12,lineHeight:1.5}}>Nothing on the horizon yet. Add one thing that's due this week and Studlin will plan around it.</div>
-              <button type="button" onClick={()=>{lsSet("pendingAddTask",true);setActive("calendar");}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",background:T.lime,color:T.ink,border:"none",borderRadius:6,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>+ Add something due this week</button>
+              <button type="button" onClick={()=>{lsSet("pendingAddTask",true);setActive("calendar");}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",background:T.lime,color:T.onLime,border:"none",borderRadius:6,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>+ Add something due this week</button>
             </div>
             :upcomingEvents.map((ev,i)=>(
               // D4 in the audit: this used to just switch tabs generically
@@ -41883,7 +41886,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
               )}
             </>)}
           </div>
-          <button onClick={dismissWrapped} style={{width:"100%",padding:"11px 0",borderRadius:6,background:T.lime,color:T.ink,border:"none",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Done</button>
+          <button onClick={dismissWrapped} style={{width:"100%",padding:"11px 0",borderRadius:6,background:T.lime,color:T.onLime,border:"none",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Done</button>
         </div>
       </div>
     )}
@@ -41936,7 +41939,7 @@ function FeedbackPage() {
       </div>
       <div style={{fontFamily:T.hand,fontSize:36,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>Thanks for the feedback.</div>
       <div style={{fontSize:14,color:T.text,maxWidth:360,lineHeight:1.6}}>Every note goes straight to the team. We read them all and use them to build what matters to you.</div>
-      <button onClick={()=>{setSent(false);setCategory(null);setMsg("");}} style={{marginTop:8,padding:"10px 22px",background:T.lime,color:T.ink,border:"none",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Send another</button>
+      <button onClick={()=>{setSent(false);setCategory(null);setMsg("");}} style={{marginTop:8,padding:"10px 22px",background:T.lime,color:T.onLime,border:"none",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Send another</button>
     </div>
   );
 
@@ -42273,7 +42276,7 @@ function NotifPermModal({onAllow=()=>{},onDeny=()=>{}}) {
         <div style={{fontFamily:T.sans,fontSize:14,color:T.muted,lineHeight:1.6,marginBottom:28}}>
           Allow Studlin to send you smart alerts before study blocks begin — so you never miss a lock-in session.
         </div>
-        <button onClick={onAllow} style={{width:"100%",padding:"13px 0",borderRadius:12,background:T.lime,color:T.ink,border:"none",fontFamily:T.sans,fontWeight:700,fontSize:15,cursor:"pointer",marginBottom:10,letterSpacing:"-0.2px"}}>Allow notifications</button>
+        <button onClick={onAllow} style={{width:"100%",padding:"13px 0",borderRadius:12,background:T.lime,color:T.onLime,border:"none",fontFamily:T.sans,fontWeight:700,fontSize:15,cursor:"pointer",marginBottom:10,letterSpacing:"-0.2px"}}>Allow notifications</button>
         <button onClick={onDeny} style={{width:"100%",padding:"11px 0",borderRadius:12,background:"transparent",color:T.muted,border:`1px solid ${T.border}`,fontFamily:T.sans,fontWeight:500,fontSize:14,cursor:"pointer"}}>Not now</button>
       </div>
     </div>
@@ -44348,7 +44351,7 @@ function App() {
               badge) was invisible unless the sidebar happened to already be
               expanded. Same small-corner-pill language as the streak badge
               on the profile avatar elsewhere in this sidebar. */}
-          {!navExpanded&&item.badge&&<span style={{position:"absolute",top:-5,right:-7,background:T.lime,color:T.ink,borderRadius:8,padding:"1px 4px",fontSize:8,fontWeight:700,lineHeight:1,minWidth:12,textAlign:"center"}}>{item.badge}</span>}
+          {!navExpanded&&item.badge&&<span style={{position:"absolute",top:-5,right:-7,background:T.lime,color:T.onLime,borderRadius:8,padding:"1px 4px",fontSize:8,fontWeight:700,lineHeight:1,minWidth:12,textAlign:"center"}}>{item.badge}</span>}
         </span>
         {navExpanded&&<span style={{flex:1,letterSpacing:"0.01em",whiteSpace:"nowrap"}}>{item.label}</span>}
         {navExpanded&&item.badge&&<span style={{background:T.lime+(act?"":"18"),color:act?T.ink:T.lime,fontSize:9,fontWeight:700,padding:"2px 6px",borderRadius:4,letterSpacing:"0.03em"}}>{item.badge}</span>}
@@ -44548,7 +44551,7 @@ function App() {
             {["monthly","annual"].map(b=>(
               <button key={b} type="button" onClick={()=>setPricingBilling(b)} style={{padding:"9px 16px",border:"none",borderRadius:99,background:pricingBilling===b?T.ink:"transparent",color:pricingBilling===b?T.cream:T.muted,fontFamily:T.font,fontSize:13.5,fontWeight:500,cursor:"pointer",display:"flex",alignItems:"center",gap:7}}>
                 {b==="monthly"?"Monthly":"Annual"}
-                {b==="annual"&&<span style={{fontFamily:T.mono,fontSize:9.5,fontWeight:700,background:T.lime,color:T.ink,padding:"2px 7px",borderRadius:99}}>Save 29%</span>}
+                {b==="annual"&&<span style={{fontFamily:T.mono,fontSize:9.5,fontWeight:700,background:T.lime,color:T.onLime,padding:"2px 7px",borderRadius:99}}>Save 29%</span>}
               </button>
             ))}
           </div>
@@ -44578,7 +44581,7 @@ function App() {
                 ?<>Used your free trial already? <strong style={{color:T.lime}}>Invite another friend</strong> and you'll both get {planDisplayName("Pro-Limited")} again, free.</>
                 :<>Not ready to pay? <strong style={{color:T.lime}}>Invite a friend</strong> instead — you'll both get {planDisplayName("Pro-Limited")}, free.</>}
             </div>
-            <button type="button" onClick={()=>{lsSet("pendingOpenInvite",true);setPricingOpen(false);setActive("friends");}} style={{flexShrink:0,padding:"8px 16px",borderRadius:8,background:T.lime,color:T.ink,border:"none",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:T.font,whiteSpace:"nowrap"}}>Invite a friend</button>
+            <button type="button" onClick={()=>{lsSet("pendingOpenInvite",true);setPricingOpen(false);setActive("friends");}} style={{flexShrink:0,padding:"8px 16px",borderRadius:8,background:T.lime,color:T.onLime,border:"none",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:T.font,whiteSpace:"nowrap"}}>Invite a friend</button>
           </div>
         )}
         <PlanCards billing={pricingBilling} onSelect={(key)=>{

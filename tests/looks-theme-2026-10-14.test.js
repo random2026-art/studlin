@@ -155,7 +155,7 @@ describe("looks theme: per-class assignment", () => {
     assert.equal(m.getLook().seed, 0);
     assert.equal(JSON.stringify(m.getLook().perClass), a);
   });
-  test("a class added later gets an index persisted; stale ids pruned; classic is a no-op", () => {
+  test("a class added later gets an index persisted; ids never pruned; classic is a no-op", () => {
     const subs = mkSubjects(3);
     assert.equal(m.lookPersistMissing(subs), false, "classic never writes");
     assert.equal(Object.keys(m.getLook().perClass).length, 0);
@@ -169,7 +169,7 @@ describe("looks theme: per-class assignment", () => {
     assert.ok(![subs[0].id, subs[1].id, subs[2].id].some((id) => pc[id] === pc["subj-new"]), "uses an unused swatch");
     assert.equal(m.lookPersistMissing(more), false, "second call is a no-op");
     m.lookPersistMissing(subs);
-    assert.equal(pc["subj-new"] !== undefined && m.getLook().perClass["subj-new"] === undefined, true, "deleted class pruned");
+    assert.ok(m.getLook().perClass["subj-new"] !== undefined, "never pruned: late-loading subjects must not wipe manual picks");
   });
   test("subjectColor precedence: perClass over auto, classic ignores perClass and never writes subject.color", () => {
     const subs = mkSubjects(3);
@@ -196,5 +196,27 @@ describe("looks theme: per-class assignment", () => {
     assert.match(SRC, /Buttons and highlights use \$\{pal\.name\}\. Change in Settings\./);
     const a = SRC.indexOf("// ===== LOOKS"), b = SRC.indexOf("// ===== END LOOKS");
     assert.equal(SRC.slice(a, b).includes("—"), false);
+  });
+});
+
+describe("review fixes: readable primary buttons, no pick wipes, live chat accent", () => {
+  const SRC2 = require("fs").readFileSync(require("path").join(__dirname, "..", "studlin-app.jsx"), "utf8").replace(/\r\n/g, "\n");
+  test("T.onLime exists: Classic keeps ink, palettes pick a readable label color, and primary buttons use it", () => {
+    assert.ok(SRC2.includes("T.onLime=T.ink;"));
+    assert.ok(SRC2.includes("T.onLime=lookTextOnFill(T.lime);"));
+    assert.ok(!SRC2.includes("background:T.lime,color:T.ink"), "no primary fill may keep the fixed ink label");
+  });
+  test("lookPersistMissing only fills missing classes and never prunes manual picks", () => {
+    const i = SRC2.indexOf("function lookPersistMissing");
+    const body = SRC2.slice(i, i + 900);
+    assert.ok(!body.includes("stale"));
+    assert.ok(body.includes("if(!missing)return false;"));
+  });
+  test("picking one class color keeps the rest of the auto assignment unpinned", () => {
+    assert.ok(SRC2.includes("perClass:{...(look.perClass||{}),[id]:i}"));
+  });
+  test("chat message accents are computed at render, not captured at load", () => {
+    assert.ok(SRC2.includes("const studlinAiKindAccents=()=>({"));
+    assert.ok(!SRC2.includes("const STUDLIN_AI_MSG_KIND_ACCENT="));
   });
 });
