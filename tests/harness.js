@@ -177,7 +177,7 @@ function loadStudlinModule(options) {
     "buildCreateTaskProposal","buildMoveFixedProposal","buildMoveFlexTaskProposal","buildStudlinAiActionProposal",
     "describeCreateProposal","commitStudlinAiTasks","commitStudlinAiFixedMove","commitStudlinAiFlexMove",
     "buildDeleteProposal","buildSetPeakHoursProposal","commitStudlinAiPeakHours","deriveStudlinAiProactiveSignal",
-    "buildStudlinAiChatHistory","STUDLIN_AI_HISTORY_MAX_MESSAGES","studlinAiProposalPreviewSpec",
+    "buildStudlinAiChatHistory","studlinAiChipsFor","STUDLIN_AI_HISTORY_MAX_MESSAGES","studlinAiProposalPreviewSpec",
     "gatherStudlinAiCoachingContext","formatStudlinAiCoachingPrompt",
     "describeExamSessionPlan","studlinAiSessionTimelineSpec",
     "buildGenerateStudyMaterialProposal","matchSubjectInMaterialText","STUDLIN_AI_MATERIAL_MIN_LENGTH",
