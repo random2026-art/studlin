@@ -152,3 +152,42 @@ describe("review fixes (2026-10-13)", () => {
     assert.ok(APP.includes("left,zIndex:999,display:\"flex\",alignItems:\"flex-end\""));
   });
 });
+
+describe("Stu bedtime reminder", () => {
+  const at = (h, m) => new Date(2026, 9, 13, h, m, 0);
+  test("never due when no sleep time was saved", () => {
+    const { stuBedtimeDue } = loadStudlinModule({ now: "2026-10-13T22:40:00" });
+    assert.equal(stuBedtimeDue(at(22, 40)), false);
+  });
+  test("due from 30 minutes before bedtime to an hour after, not earlier", () => {
+    const { stuBedtimeDue, lsSet } = loadStudlinModule({ now: "2026-10-13T22:40:00" });
+    lsSet("wakeSleep", { wakeTime: "07:00", sleepTime: "23:00" });
+    assert.equal(stuBedtimeDue(at(22, 20)), false);
+    assert.equal(stuBedtimeDue(at(22, 40)), true);
+    assert.equal(stuBedtimeDue(at(23, 30)), true);
+    assert.equal(stuBedtimeDue(at(0, 30)), false);
+  });
+  test("handles a bedtime after midnight", () => {
+    const { stuBedtimeDue, lsSet } = loadStudlinModule({ now: "2026-10-13T00:40:00" });
+    lsSet("wakeSleep", { wakeTime: "09:00", sleepTime: "01:00" });
+    assert.equal(stuBedtimeDue(at(0, 40)), true);
+    assert.equal(stuBedtimeDue(at(23, 0)), false);
+  });
+  test("once per night, and off when Stu's bedtime switch or suggestions are off", () => {
+    const { stuBedtimeDue, lsSet } = loadStudlinModule({ now: "2026-10-13T22:40:00" });
+    lsSet("wakeSleep", { wakeTime: "07:00", sleepTime: "23:00" });
+    lsSet("stuBedtimeShown", at(22, 31).getTime());
+    assert.equal(stuBedtimeDue(at(22, 40)), false);
+    lsSet("stuBedtimeShown", 0);
+    lsSet("settings", { mascotBedtime: false });
+    assert.equal(stuBedtimeDue(at(22, 40)), false);
+    lsSet("settings", { nudgesMaster: false });
+    assert.equal(stuBedtimeDue(at(22, 40)), false);
+  });
+  test("Settings row exists, defaults on, and copy has no em dash", () => {
+    assert.ok(APP.includes('k="mascotBedtime"'));
+    assert.ok(APP.includes("mascotBedtime:true"));
+    const i = APP.indexOf("Getting late. Want to wrap up");
+    assert.ok(i > 0 && !APP.slice(i - 200, i + 600).includes("—"));
+  });
+});

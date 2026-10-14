@@ -168,7 +168,7 @@ function loadStudlinModule(options) {
     "nextAvailableSubjectColor","SUBJECT_COLORS",
     "deleteCourseWithCascade","undoCourseDelete",
     "routineMeetingsOverlap","newMeetingTimesForCourse","dedupCourseClassRoutines","mergeCourses","courseIdForLabelFuzzy","normalizeCourseLabel","findDuplicateCourseGroups",
-    "detectGoogleClassCandidates","applyGoogleEvents","nudgesAllowed","stuSettingOn","stuDeclinesToday","stuRecordDecline","stuPalette","deriveStudlinAiProactiveSignal","looksLikeGoogleClass","groupGoogleClassCandidates","importGoogleClassGroups","getGoogleClassGroups",
+    "detectGoogleClassCandidates","applyGoogleEvents","nudgesAllowed","stuSettingOn","stuDeclinesToday","stuRecordDecline","stuPalette","stuBedtimeDue","deriveStudlinAiProactiveSignal","looksLikeGoogleClass","groupGoogleClassCandidates","importGoogleClassGroups","getGoogleClassGroups",
     "deriveFreePeriodsFromPeriods","getHsSchoolHours","saveHsSchoolHours",
     "subtractIntervals","effectiveLeadIn","effectiveTrailOut","effectiveLeadInForManualPlacement","effectiveTrailOutForManualPlacement","isLeadInFixed","isDuePill","isZeroDurationTimedReminder","isExpectedInClassOverlap","formatRealWorldScheduleForDate","findNowConflict",
     "assembleStudlinAiDigest","routeStudlinAiQuestion","STUDLIN_AI_DIGEST_DAYS",
