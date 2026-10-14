@@ -423,9 +423,13 @@ const Btn = ({children,onClick,style={},variant="lime",disabled=false,title}) =>
 };
 const BtnSm = ({children,onClick,style={},variant="lime",disabled=false}) => <Btn onClick={onClick} disabled={disabled} style={{padding:"5px 12px",fontSize:11,...style}} variant={variant}>{children}</Btn>;
 
-const Badge = ({children,color=T.lime}) => <span style={{display:"inline-flex",alignItems:"center",padding:"3px 9px",borderRadius:4,fontSize:11,fontWeight:600,letterSpacing:"0.03em",background:color+"18",color,border:`1px solid ${color}22`}}>{children}</span>;
+const Badge = ({children,color=T.lime}) => {
+  // Palette looks: the default (accent) badge reads as a themed chip; explicit colors stay as passed.
+  const themed = T.lookOn && color===T.lime;
+  return <span style={{display:"inline-flex",alignItems:"center",padding:"3px 9px",borderRadius:4,fontSize:11,fontWeight:600,letterSpacing:"0.03em",background:themed?T.chipBg:color+"18",color:themed?T.accentInk:color,border:`1px solid ${themed?T.borderTint:color+"22"}`}}>{children}</span>;
+};
 
-const Prog = ({pct,color=T.lime,height=4}) => <div style={{height,background:T.card2,borderRadius:height,overflow:"hidden"}}><div style={{height:"100%",width:`${pct}%`,background:color,borderRadius:height,transition:"width 0.5s ease"}}/></div>;
+const Prog = ({pct,color=T.lime,height=4}) => <div style={{height,background:T.lookOn?T.accentSoft:T.card2,borderRadius:height,overflow:"hidden"}}><div style={{height:"100%",width:`${pct}%`,background:color,borderRadius:height,transition:"width 0.5s ease"}}/></div>;
 
 const Divider = ({style={}}) => <div style={{height:"1px",background:T.border,...style}} />;
 
@@ -465,7 +469,7 @@ const Av = ({initials,color=T.lime,size=36,picUrl}) => {
 };
 
 const Card = ({children,style={},onClick}) => (
-  <div data-card onClick={onClick} style={{background:T.card,borderRadius:6,padding:20,border:`1px solid ${T.border}`,cursor:onClick?"pointer":"default",...style}}>{children}</div>
+  <div data-card onClick={onClick} style={{background:T.lookOn?T.tint:T.card,borderRadius:6,padding:20,border:`1px solid ${T.lookOn?T.borderTint:T.border}`,boxShadow:T.lookOn?"0 1px 2px rgba(0,0,0,0.04), 0 6px 18px -10px rgba(0,0,0,0.12)":undefined,cursor:onClick?"pointer":"default",...style}}>{children}</div>
 );
 
 // ─── MODAL ────────────────────────────────────────────────────────────────────
@@ -488,10 +492,10 @@ const Modal = ({open, onClose, title, sub, children, footer, width=540}) => {
   return ReactDOM.createPortal((
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
       <div role="dialog" aria-modal="true" aria-label={typeof title==="string"?title:undefined} onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:width,maxHeight:"90vh",background:T.card,borderRadius:8,border:`1px solid ${T.border}`,overflow:"hidden",display:"flex",flexDirection:"column",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)",boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)"}}>
-        <div style={{padding:"20px 22px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"flex-start",gap:12}}>
+        <div style={{padding:"20px 22px 14px",borderBottom:`1px solid ${T.lookOn?T.borderTint:T.border}`,background:T.lookOn?T.hdrBg:undefined,display:"flex",alignItems:"flex-start",gap:12}}>
           <div style={{flex:1}}>
-            <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>{title}</div>
-            {sub && <div style={{fontSize:12.5,color:T.muted,marginTop:3}}>{sub}</div>}
+            <div style={{fontSize:16,fontWeight:700,color:T.lookOn?T.hdrText:T.white,letterSpacing:"-0.01em"}}>{title}</div>
+            {sub && <div style={{fontSize:12.5,color:T.lookOn?T.hdrText:T.muted,opacity:T.lookOn?0.8:1,marginTop:3}}>{sub}</div>}
           </div>
           <button type="button" aria-label="Close" onClick={onClose}style={{width:30,height:30,borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,display:"grid",placeItems:"center",cursor:"pointer"}}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -39690,7 +39694,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
 
           {active==="General" && (<>
             <Card style={{marginBottom:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Profile basics</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Profile basics</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:16}}>How you appear across Studlin.</div>
               <Field label="Display name"><Input value={profile.name} onChange={e=>updProfile({name:e.target.value})} /></Field>
               {/* Was bound to profile.email -- a cosmetic field in the
@@ -39724,7 +39728,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             </Card>
             {dupGroups.length>0&&(
               <Card style={{marginBottom:12,border:`1px solid ${T.amber}44`}}>
-                <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Possible duplicate classes</div>
+                <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Possible duplicate classes</div>
                 <div style={{fontSize:12,color:T.muted,marginBottom:16}}>These look like the same class under slightly different names -- pick which one to keep, and everything from the others moves over to it.</div>
                 {dupGroups.map((group,gi)=>{
                   const withCounts=group.map(s=>({...s,count:courseItemCount(s)})).sort((a,b)=>b.count-a.count);
@@ -39762,7 +39766,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               </div>
             </Card>
             <Card style={{marginBottom:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Connected accounts</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Connected accounts</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Sync your calendar and cloud notes.</div>
               {/* This used to be a hardcoded, always-"Synced" duplicate of the
                   real Integrations tab (fake state for Apple Calendar/Notion/
@@ -39782,7 +39786,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             <Card style={{border:"1px solid rgba(224,90,71,0.22)"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:18}}>
                 <div>
-                  <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Delete account</div>
+                  <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Delete account</div>
                   <div style={{fontSize:12,color:T.muted,lineHeight:1.55}}>Permanently delete your account and study data. You'll be removed from groups, and old shared messages may remain as Deleted user.</div>
                 </div>
                 <Btn variant="danger" onClick={()=>{setDeleteConfirmText("");setDeleteAccountError("");setDeleteAccountOpen(true);}} style={{flexShrink:0}}>Delete my account</Btn>
@@ -39856,7 +39860,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
 
           {active==="Notifications" && (<>
             <Card style={{marginBottom:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Notification Preferences</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Notification Preferences</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Control how incoming chat messages reach you: a soft chime, a native desktop alert, or both, depending on what you're doing.</div>
               <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:14,padding:"13px 0",borderBottom:`1px solid ${T.border}`}}>
                 <div style={{flex:1,marginRight:14}}>
@@ -39891,12 +39895,12 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <Row label="Enable Message Audio Chimes" sub="A soft chime when a message arrives while you're elsewhere in Studlin. Muted automatically during a lock-in session." k="chatChimes" />
             </Card>
             <Card style={{marginBottom:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Task &amp; App Notifications</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Task &amp; App Notifications</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Master switch for all Studlin alerts. Smart reminders fire before study blocks begin.</div>
               <Row label="Task & App Notifications" sub="Smart alerts before study blocks and deadline reminders." k="notifMaster" />
             </Card>
             <Card style={{marginBottom:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Reminders</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Reminders</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Choose what wakes you up.</div>
               {/* "Push notifications" used to sit here too, describing the
                   exact same scope as "Task & App Notifications" above --
@@ -39923,7 +39927,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
 
           {active==="Privacy" && (<>
             <Card style={{marginBottom:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Private Account · Serious Mode</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Private Account · Serious Mode</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Strip gamification and go heads-down. Focus minutes, levels, and Weekly Wrapped are hidden. Chat, calendar sharing, and notes stay fully accessible.</div>
               {/* N3 in the audit: no leaderboard exists anywhere in the
                   app, and this toggle doesn't affect Dashboard at all
@@ -39937,7 +39941,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               } />
             </Card>
             <Card style={{marginBottom:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Visibility</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Visibility</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Control what others can see.</div>
               <Row label="Public profile" sub="Let other students find you by name, handle or school. Off by default for high school accounts." k="_" right={
                 <button type="button" role="switch" aria-checked={discoverableNow} aria-label="Public profile" onClick={toggleDiscoverable} style={{padding:0,boxSizing:"border-box",width:38,height:20,borderRadius:10,background:discoverableNow?T.lime:T.card2,border:`1px solid ${discoverableNow?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
@@ -40046,7 +40050,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               </>)}
             </Modal>
             <Card style={{marginBottom:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Suggestions and Stu</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Suggestions and Stu</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Control how much Studlin speaks up. Everything here is optional.</div>
               <Row label="Learn how I work (timers, predictions, suggestions)" sub="Begin buttons and timers, duration questions, best-hours ideas, and study spacing tips. Off means you plan and finish everything by hand." k="smartFeatures" />
               <Row label="Suggestions and tips" sub={"Occasional ideas like \"default new tasks to midday?\" and the questions below. Off means none of them pop up."} k="nudgesMaster" />
@@ -40055,7 +40059,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <Row label="Stu cheers when I finish" sub="A quick celebration after you complete a task." k="mascotCheers" />
             </Card>
             <Card style={{marginBottom:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Questions Studlin asks</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Questions Studlin asks</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>These are how Studlin learns things like how long a class really takes you or how a session went — never required, always skippable, and if you keep skipping one Studlin turns it off for you automatically.</div>
               <Row label="Post-session check-ins" sub="A quick 'how did that go?' after a study session tied to an exam or assignment." k="_" right={
                 <button type="button" role="switch" aria-checked={!!(toggles.askCheckIns)} aria-label="Post-session check-ins" onClick={()=>handleAskToggle("askCheckIns")} style={{padding:0,boxSizing:"border-box",width:38,height:20,borderRadius:10,background:toggles.askCheckIns?T.lime:T.card2,border:`1px solid ${toggles.askCheckIns?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
@@ -40069,7 +40073,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               } />
             </Card>
             <Card style={{marginBottom:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Data &amp; AI</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Data &amp; AI</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>You own your notes, essays, and recordings.</div>
               {/* "Use my work to train Studlin AI" used to be here -- read by
                   nothing, and nothing trains on student content (privacy.html
@@ -40087,7 +40091,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               </div>
             </Card>
             <Card style={{marginBottom:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>What Studlin AI remembers</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>What Studlin AI remembers</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Standing preferences it's picked up from your chats — not one-off requests, just things worth not re-explaining every time.</div>
               {aiTimeOfDay&&(
                 <div style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,marginBottom:8}}>
@@ -40230,7 +40234,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               </div>
             )}
             <Card style={{marginBottom:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Calendar Integrations</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Calendar Integrations</div>
               <div style={{fontSize:12,color:T.text,marginBottom:16,lineHeight:1.6}}>Pull your existing events into Studlin. A pasted calendar link is never stored on our servers. Google Calendar syncs automatically in the background instead, which means your sync credential and a copy of your synced events are kept securely server-side — never readable by anyone but you.</div>
               <div style={{display:"flex",flexDirection:"column",gap:10}}>
                 <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${calGoogleLinked?T.teal+"44":T.border}`,transition:"border-color 0.2s"}}>
@@ -40382,7 +40386,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               )}
             </Card>
             <Card>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Coming soon</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Coming soon</div>
               <div style={{fontSize:12,color:T.muted,lineHeight:1.6}}>Notion integration is in development. It'll appear here when ready.</div>
             </Card>
             <Modal open={importCalOpen} onClose={()=>{setImportCalOpen(false);openNextQueuedImportCal();}}
@@ -40676,7 +40680,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <Card style={{marginBottom:12}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:16}}>
                   <div>
-                    <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Manage subscription</div>
+                    <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Manage subscription</div>
                     <div style={{fontSize:12,color:T.muted,lineHeight:1.55}}>
                       {account.subscriptionCancelAtPeriodEnd?"Your subscription is canceled. You'll keep "+(account.plan||getPlan())+" perks until "+fmtBillingDate(account.subscriptionCurrentPeriodEnd||account.subscriptionEndsAt)+".":"Cancel future payments and keep "+(account.plan||getPlan())+" through "+fmtBillingDate(account.subscriptionCurrentPeriodEnd||account.subscriptionEndsAt)+"."}
                     </div>
@@ -40925,7 +40929,7 @@ function Profile({setActive,seriousMode=false}={}) {
           meant two controls silently wrote the same field under different
           labels. */}
       <Card style={{marginBottom:16}}>
-        <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Your profile</div>
+        <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Your profile</div>
         <div style={{fontSize:12,color:T.muted,marginBottom:18}}>Update your school info anytime.</div>
 
         <Field label="Status">
@@ -41315,7 +41319,25 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   // see ROW 2's own comment), so it alone gets the larger, bolder treatment;
   // the other three step down to a real secondary size, not a de-emphasized
   // muted color (still full-strength cards, just visibly not the headline).
-  const sectionTitleStyle=(primary)=>({fontFamily:T.hand,fontSize:primary?26:18,fontWeight:primary?700:600,color:T.text,letterSpacing:primary?"-0.01em":"0"});
+  const sectionTitleStyle=(primary)=>({fontFamily:T.hand,fontSize:primary?26:18,fontWeight:primary?700:600,color:T.lookOn?T.accentInk:T.text,letterSpacing:primary?"-0.01em":"0"});
+  // Palette looks (non-Classic): themed Dashboard surfaces. Every helper returns today's exact
+  // values when T.lookOn is false, so Classic is unchanged.
+  const dashCardStyle=(extra)=>T.lookOn
+    ?{background:T.tint,border:`1px solid ${T.borderTint}`,borderTop:`3px solid ${T.lime}`,borderRadius:8,boxShadow:"0 1px 2px rgba(0,0,0,0.04), 0 8px 22px -12px rgba(0,0,0,0.14)",...extra}
+    :{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,...extra};
+  const dashChipStyle=(extra)=>T.lookOn
+    ?{background:T.chipBg,color:T.accentInk,border:`1px solid ${T.borderTint}`,...extra}
+    :extra;
+  // Rows: white body on the tinted card, accent-soft on hover. Direct DOM style writes (no state).
+  const dashRowBase=T.lookOn?T.card:null;
+  const dashRowHover=T.lookOn?{onMouseEnter:e=>{e.currentTarget.style.background=T.accentSoft;},onMouseLeave:e=>{e.currentTarget.style.background=T.card;}}:{};
+  const dashBtnOutline=(extra)=>T.lookOn
+    ?{background:T.accentSoft,color:T.accentInk,border:`1px solid ${T.borderTint}`,...extra}
+    :{background:"transparent",color:T.text,border:`1px solid ${T.border}`,...extra};
+  const dashBtnPrimaryFg=T.lookOn?lookTextOnFill(T.lime):T.ink;
+  // Weekly Wrapped bars sit on a dark panel: Classic keeps its white-alpha fills, palettes
+  // use the accent at the same strength so bars read as themed, not grey.
+  const wkBarTint=(a)=>T.lookOn?hexA(T.lime,Math.min(1,a*1.6)):`rgba(255,255,255,${a})`;
   // Weekly Wrapped is no longer a permanent dashboard card — it now surfaces
   // once as a full-screen popup during the Sunday/Monday evening window
   // (>=6pm), gated by a per-week localStorage flag so it doesn't reappear
@@ -41397,7 +41419,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
       {/* One-time "Studlin is learning you" reveal -- see
           shouldShowLearnsYouReveal's own comment. */}
       {learnsYouReveal&&(
-        <div style={{background:T.card,border:`1px solid ${T.lime}44`,borderRadius:8,padding:"18px 20px",display:"flex",alignItems:"flex-start",gap:16}}>
+        <div style={dashCardStyle({border:`1px solid ${T.lime}44`,padding:"18px 20px",display:"flex",alignItems:"flex-start",gap:16})}>
           <div style={{flexShrink:0,width:38,height:38,borderRadius:8,background:T.lime+"1A",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🧠</div>
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Studlin's been paying attention</div>
@@ -41415,7 +41437,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
           non-primary Dashboard card title uses) so it guides a new student
           without competing with Today's plan as the actual focal point. */}
       {showSetupChecklist&&(
-        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:checklistExpanded?20:"12px 16px"}}>
+        <div style={dashCardStyle({padding:checklistExpanded?20:"12px 16px"})}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
             <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
               <span style={{fontSize:16}}>🧭</span>
@@ -41425,7 +41447,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
               </span>
             </div>
             <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
-              <button type="button" onClick={()=>setChecklistExpanded(e=>!e)} style={{background:"none",border:"none",color:T.muted,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>{checklistExpanded?"Hide":"Show"}</button>
+              <button type="button" onClick={()=>setChecklistExpanded(e=>!e)} style={{background:"none",border:"none",color:T.lookOn?T.accentInk:T.muted,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>{checklistExpanded?"Hide":"Show"}</button>
               <button type="button" onClick={skipChecklistForNow} title="Skip for now" style={{background:"none",border:"none",color:T.faint,fontSize:14,lineHeight:1,cursor:"pointer",padding:0}}>×</button>
             </div>
           </div>
@@ -41433,7 +41455,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
               plan's own progress indicator already uses -- a text count
               alone still makes a student do the math themselves. */}
           {setupChecklist.hasClasses&&setupChecklist.trackedClasses>0&&(
-            <div style={{height:3,background:T.card2,borderRadius:99,marginTop:12,overflow:"hidden"}}>
+            <div style={{height:3,background:T.lookOn?T.accentSoft:T.card2,borderRadius:99,marginTop:12,overflow:"hidden"}}>
               <div style={{height:"100%",width:Math.round(setupChecklist.classesWithSyllabus/setupChecklist.trackedClasses*100)+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.5s ease"}} />
             </div>
           )}
@@ -41445,8 +41467,8 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                   <div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Add your classes</div>
                   {!setupChecklist.hasClasses&&(
                     <div style={{marginTop:6,display:"flex",gap:8,flexWrap:"wrap"}}>
-                      <button type="button" onClick={()=>openQuickScan(null)} style={{padding:"7px 13px",background:T.lime,color:T.ink,border:"none",borderRadius:6,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Scan your whole schedule</button>
-                      <button type="button" onClick={()=>openQuickScan(null)} style={{padding:"7px 13px",background:"transparent",color:T.muted,border:`1px solid ${T.border}`,borderRadius:6,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Add a class manually</button>
+                      <button type="button" onClick={()=>openQuickScan(null)} style={{padding:"7px 13px",background:T.lime,color:dashBtnPrimaryFg,border:"none",borderRadius:6,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Scan your whole schedule</button>
+                      <button type="button" onClick={()=>openQuickScan(null)} style={{padding:"7px 13px",...dashBtnOutline({color:T.lookOn?T.accentInk:T.muted}),borderRadius:6,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Add a class manually</button>
                     </div>
                   )}
                 </div>
@@ -41468,15 +41490,15 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                             wrong (and unhelpful) for every school on a
                             different platform, so this stays generic and
                             lets them pick the right one in Integrations. */}
-                        {!setupChecklist.lmsConnected&&<button type="button" onClick={()=>{setPendingOpenSetting("integrations");setActive("settings");}} style={{padding:"6px 12px",background:"transparent",color:T.text,border:`1px solid ${T.border}`,borderRadius:6,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Connect your school's LMS</button>}
-                        {!setupChecklist.googleConnected&&<button type="button" onClick={()=>{setPendingOpenSetting("integrations");setActive("settings");}} style={{padding:"6px 12px",background:"transparent",color:T.text,border:`1px solid ${T.border}`,borderRadius:6,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Connect Google Calendar</button>}
+                        {!setupChecklist.lmsConnected&&<button type="button" onClick={()=>{setPendingOpenSetting("integrations");setActive("settings");}} style={{padding:"6px 12px",...dashBtnOutline({}),borderRadius:6,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Connect your school's LMS</button>}
+                        {!setupChecklist.googleConnected&&<button type="button" onClick={()=>{setPendingOpenSetting("integrations");setActive("settings");}} style={{padding:"6px 12px",...dashBtnOutline({}),borderRadius:6,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Connect Google Calendar</button>}
                       </div>
                       <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:10}}>
                         {setupChecklist.classesNeedingSyllabus.slice(0,4).map(s=>(
-                          <div key={s.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",borderRadius:8,border:`1px solid ${T.border}`,background:T.card2}}>
-                            <span style={{width:8,height:8,borderRadius:"50%",background:s.color||T.lime,flexShrink:0}} />
+                          <div key={s.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",borderRadius:8,border:`1px solid ${T.lookOn?T.borderTint:T.border}`,background:T.lookOn?T.card:T.card2}}>
+                            <span style={{width:8,height:8,borderRadius:"50%",background:(T.lookOn?subjectColor(s.id,s.color):s.color)||T.lime,flexShrink:0}} />
                             <span style={{flex:1,minWidth:0,fontSize:12,color:T.text,fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.label}</span>
-                            <button type="button" onClick={()=>openQuickScan(s.id)} style={{flexShrink:0,padding:"4px 9px",borderRadius:6,border:"none",background:T.lime,color:T.ink,fontSize:10.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Import syllabus</button>
+                            <button type="button" onClick={()=>openQuickScan(s.id)} style={{flexShrink:0,padding:"4px 9px",borderRadius:6,border:"none",background:T.lime,color:dashBtnPrimaryFg,fontSize:10.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Import syllabus</button>
                             <button type="button" onClick={()=>skipClassSyllabus(s.id)} title="This class doesn't need one" style={{flexShrink:0,background:"none",border:"none",color:T.faint,fontSize:13,lineHeight:1,cursor:"pointer",padding:0}}>×</button>
                           </div>
                         ))}
@@ -41500,21 +41522,21 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
           everything-assigned reference comes after. */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
         {/* Today's plan */}
-        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:20,display:"flex",flexDirection:"column"}}>
+        <div style={dashCardStyle({padding:20,display:"flex",flexDirection:"column"})}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8,flexWrap:"wrap"}}>
             <span style={sectionTitleStyle(true)}>Today's plan</span>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.1em",padding:"4px 9px",borderRadius:5,background:T.card2,color:T.muted,fontWeight:600}}>{planDoneCount} / {planCountable.length} DONE</span>
-              <button onClick={()=>setActive("calendar")} style={{fontSize:12,color:T.muted,display:"inline-flex",alignItems:"center",gap:3,cursor:"pointer",background:"none",border:"none",fontFamily:T.font,fontWeight:500}}>Calendar <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
+              <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.1em",padding:"4px 9px",borderRadius:5,background:T.card2,color:T.muted,fontWeight:600,...dashChipStyle({})}}>{planDoneCount} / {planCountable.length} DONE</span>
+              <button onClick={()=>setActive("calendar")} style={{fontSize:12,color:T.lookOn?T.accentInk:T.muted,display:"inline-flex",alignItems:"center",gap:3,cursor:"pointer",background:"none",border:"none",fontFamily:T.font,fontWeight:T.lookOn?600:500}}>Calendar <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
             </div>
           </div>
-          {plan.length>0&&<div style={{height:3,background:T.card2,borderRadius:99,marginBottom:14,overflow:"hidden"}}><div style={{height:"100%",width:Math.round(planDoneCount/Math.max(planCountable.length,1)*100)+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.5s ease"}} /></div>}
+          {plan.length>0&&<div style={{height:3,background:T.lookOn?T.accentSoft:T.card2,borderRadius:99,marginBottom:14,overflow:"hidden"}}><div style={{height:"100%",width:Math.round(planDoneCount/Math.max(planCountable.length,1)*100)+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.5s ease"}} /></div>}
           {plan.length===0
             ?<div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px 8px",textAlign:"center"}}>
               <div style={{fontSize:13,color:T.muted,marginBottom:18,lineHeight:1.6}}>Nothing scheduled for today. Add events to your calendar and they appear here automatically.</div>
               <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
-                <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",background:T.lime,color:T.ink,border:"none",borderRadius:6,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Add a task</button>
-                <button onClick={()=>{lsSet("pendingBrainDump",true);setActive("calendar");}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",background:"transparent",color:T.text,border:`1px solid ${T.border}`,borderRadius:6,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Brain dump everything</button>
+                <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",background:T.lime,color:dashBtnPrimaryFg,border:"none",borderRadius:6,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Add a task</button>
+                <button onClick={()=>{lsSet("pendingBrainDump",true);setActive("calendar");}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",...dashBtnOutline({}),borderRadius:6,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Brain dump everything</button>
               </div>
             </div>
             :plan.map((t)=>{
@@ -41526,7 +41548,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
               // since there's no real events[] entry behind it to mark.
               if(t.isRoutine){
                 return(
-                  <div key={t.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,background:T.card}}>
+                  <div key={t.id} {...dashRowHover} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.lookOn?T.borderTint:T.border}`,borderLeft:T.lookOn&&subjectColor(t.subject,null)?`4px solid ${subjectColor(t.subject,null)}`:undefined,marginBottom:8,background:T.card}}>
                     <div style={{flex:1,minWidth:0}}>
                       <span style={{fontSize:13.5,color:T.text,fontWeight:500}}>{t.title}</span>
                       <div style={{fontSize:11,color:T.muted,marginTop:1}}>{t.subject}{t.subject?" · ":""}{t.kind==="class"?"Class":"Recurring"}</div>
@@ -41555,9 +41577,9 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                 );
               }
               return(
-                <div key={t.id} onClick={()=>{if(t.done)uncrossEventDone(t.id);else{markEventDone(t.id);onTaskCompleted&&onTaskCompleted(t.id);}forcePlan(x=>x+1);}} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer",background:T.card2}}>
-                  <div style={{width:20,height:20,borderRadius:"50%",border:`1.5px solid ${t.done?T.text:T.border}`,background:t.done?T.text:"transparent",flex:"none",display:"grid",placeItems:"center"}}>
-                    {t.done&&<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={T.lime} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                <div key={t.id} onClick={()=>{if(t.done)uncrossEventDone(t.id);else{markEventDone(t.id);onTaskCompleted&&onTaskCompleted(t.id);}forcePlan(x=>x+1);}} {...dashRowHover} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.lookOn?T.borderTint:T.border}`,borderLeft:T.lookOn&&subjectColor(t.subject,null)?`4px solid ${subjectColor(t.subject,null)}`:undefined,marginBottom:8,cursor:"pointer",background:T.lookOn?T.card:T.card2}}>
+                  <div style={{width:20,height:20,borderRadius:"50%",border:`1.5px solid ${t.done?(T.lookOn?T.lime:T.text):(T.lookOn?T.borderTint:T.border)}`,background:t.done?(T.lookOn?T.lime:T.text):"transparent",flex:"none",display:"grid",placeItems:"center"}}>
+                    {t.done&&<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={T.lookOn?lookTextOnFill(T.lime):T.lime} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
                   </div>
                   <div style={{flex:1,minWidth:0}}>
                     <span style={{fontSize:13.5,color:t.done?T.faint:T.text,textDecoration:t.done?"line-through":"none",fontWeight:500}}>{t.title}</span>
@@ -41579,10 +41601,10 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                       ("5 - 5 PM"). */}
                   <span style={{fontFamily:T.mono,fontSize:10,color:T.faint}}>{t.duration>0?fmtTimeRange(t.time,t.duration):fmtClock(t.time)}</span>
                   {!t.done&&isTimerEligible(t)&&(
-                    <button onClick={(e)=>{e.stopPropagation();if(window._setTimerTask)window._setTimerTask(t.isChunk?{...t,duration:t.fullDuration}:t);}} style={{flexShrink:0,padding:"3px 9px",borderRadius:6,border:`1px solid ${T.lime}`,background:T.lime,color:T.ink,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Begin</button>
+                    <button onClick={(e)=>{e.stopPropagation();if(window._setTimerTask)window._setTimerTask(t.isChunk?{...t,duration:t.fullDuration}:t);}} style={{flexShrink:0,padding:"3px 9px",borderRadius:6,border:`1px solid ${T.lime}`,background:T.lime,color:dashBtnPrimaryFg,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Begin</button>
                   )}
                   {!t.done&&t.duration&&(t.kind==="study block"||t.kind==="deadline")&&(
-                    <button onClick={(e)=>{e.stopPropagation();setRescheduleTask(t.isChunk?{...t,duration:t.fullDuration}:t);}} style={{flexShrink:0,padding:"3px 7px",borderRadius:6,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Reschedule</button>
+                    <button onClick={(e)=>{e.stopPropagation();setRescheduleTask(t.isChunk?{...t,duration:t.fullDuration}:t);}} style={{flexShrink:0,padding:"3px 7px",borderRadius:6,...dashBtnOutline({color:T.lookOn?T.accentInk:T.muted}),fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Reschedule</button>
                   )}
                 </div>
               );
@@ -41594,17 +41616,17 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
             calendar/Today's-plan entirely; this is the only place they live.
             Restored here after briefly being removed — replaces "Jump back
             in", which just duplicated what the sidebar nav already does. */}
-        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:20}}>
+        <div style={dashCardStyle({padding:20})}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
               <span style={sectionTitleStyle(false)}>Checklist</span>
-              <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:`1px solid ${T.border}`,borderRadius:5,color:T.muted}}>{checklistItems.length} OPEN</span>
+              <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:`1px solid ${T.border}`,borderRadius:5,color:T.muted,...dashChipStyle({})}}>{checklistItems.length} OPEN</span>
             </div>
           </div>
           <div style={{display:"flex",gap:8,marginBottom:14}}>
             <input value={checklistDraft} onChange={e=>setChecklistDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addChecklistItem();}}
               placeholder="e.g. Send AP scores" style={{flex:1,minWidth:0,background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"9px 10px",color:T.text,fontSize:12.5,fontFamily:T.font,outline:"none"}} />
-            <button onClick={addChecklistItem} disabled={!checklistDraft.trim()} style={{padding:"9px 12px",background:T.lime,color:T.ink,border:"none",borderRadius:10,fontSize:12.5,fontWeight:600,cursor:checklistDraft.trim()?"pointer":"default",fontFamily:T.font,opacity:checklistDraft.trim()?1:0.45,flexShrink:0}}>Add</button>
+            <button onClick={addChecklistItem} disabled={!checklistDraft.trim()} style={{padding:"9px 12px",background:T.lime,color:dashBtnPrimaryFg,border:"none",borderRadius:10,fontSize:12.5,fontWeight:600,cursor:checklistDraft.trim()?"pointer":"default",fontFamily:T.font,opacity:checklistDraft.trim()?1:0.45,flexShrink:0}}>Add</button>
           </div>
           {/* D3 in the audit: this used to have no cap and no scroll
               container at all -- every other Dashboard list caps at 4-5
@@ -41639,8 +41661,8 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
               // done item would be indistinguishable from a pending one.
               return (
               <div key={item.id} style={{position:"relative"}}>
-                <div onClick={()=>toggleChecklistItem(item.id)} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"9px 12px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer",opacity:item.status==="done"?0.55:1}}>
-                  <div style={{width:18,height:18,borderRadius:"50%",border:`1.5px solid ${item.status==="done"?T.lime:T.faint}`,background:item.status==="done"?T.lime:"transparent",flex:"none",marginTop:1,display:"grid",placeItems:"center",color:T.ink,fontSize:11}}>{item.status==="done"&&Icon.check}</div>
+                <div onClick={()=>toggleChecklistItem(item.id)} {...dashRowHover} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"9px 12px",borderRadius:12,border:`1px solid ${T.lookOn?T.borderTint:T.border}`,marginBottom:8,cursor:"pointer",opacity:item.status==="done"?0.55:1,background:T.lookOn?T.card:undefined}}>
+                  <div style={{width:18,height:18,borderRadius:"50%",border:`1.5px solid ${item.status==="done"?T.lime:T.faint}`,background:item.status==="done"?T.lime:"transparent",flex:"none",marginTop:1,display:"grid",placeItems:"center",color:dashBtnPrimaryFg,fontSize:11}}>{item.status==="done"&&Icon.check}</div>
                   <div style={{flex:1,minWidth:0,fontSize:12.5,color:T.text,fontWeight:500,lineHeight:1.4,overflowWrap:"break-word",textDecoration:item.status==="done"?"line-through":"none"}}>{item.title}</div>
                   <button onClick={(e)=>{e.stopPropagation();setChecklistMenuOpenId(checklistMenuOpenId===item.id?null:item.id);}} style={{flexShrink:0,background:"none",border:"none",color:T.muted,cursor:"pointer",padding:"0 0 0 6px",fontSize:14,lineHeight:1,marginTop:-2}}>⋯</button>
                 </div>
@@ -41662,11 +41684,11 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
 
       {/* ROW 5: Upcoming + Pick up where you left off */}
       <div style={{display:"grid",gridTemplateColumns:"5fr 7fr",gap:16}}>
-        <div style={{background:T.card,borderRadius:8,padding:20,border:`1px solid ${T.border}`}}>
+        <div style={dashCardStyle({padding:20})}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
               <span style={sectionTitleStyle(false)}>Upcoming</span>
-              <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:`1px solid ${T.border}`,borderRadius:5,color:T.muted}}>NEXT 14 DAYS</span>
+              <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:`1px solid ${T.border}`,borderRadius:5,color:T.muted,...dashChipStyle({})}}>NEXT 14 DAYS</span>
             </div>
             <button onClick={()=>setActive("calendar")} style={{fontSize:12,color:T.muted,display:"inline-flex",alignItems:"center",gap:3,cursor:"pointer",background:"none",border:"none",fontFamily:T.font}}>Calendar <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
           </div>
@@ -41681,7 +41703,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
               // use to jump straight to an event's own detail view, it was
               // just never called here.
               <div key={ev.id} onClick={()=>setDetailEventId(ev.id)} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 0",borderBottom:i<upcomingEvents.length-1?`1px solid ${T.border}`:"none",cursor:"pointer"}}>
-                <div style={{width:44,height:44,borderRadius:10,background:ev.urgent?T.lime:T.card2,color:ev.urgent?T.ink:T.text,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                <div style={{width:44,height:44,borderRadius:10,background:ev.urgent?T.lime:(T.lookOn?T.accentSoft:T.card2),color:ev.urgent?dashBtnPrimaryFg:(T.lookOn?T.accentInk:T.text),display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                   <span style={{fontSize:15,fontWeight:800,lineHeight:1}}>{ev.d}</span>
                   <span style={{fontSize:8.5,fontWeight:700,letterSpacing:"0.04em"}}>{ev.mo}</span>
                 </div>
@@ -41698,11 +41720,11 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
             </button>
           )}
         </div>
-        <div style={{background:T.card,borderRadius:8,padding:20,border:`1px solid ${T.border}`}}>
+        <div style={dashCardStyle({padding:20})}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
               <span style={sectionTitleStyle(false)}>Pick up where you left off</span>
-              <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:`1px solid ${T.border}`,borderRadius:5,color:T.muted}}>RECENT</span>
+              <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:`1px solid ${T.border}`,borderRadius:5,color:T.muted,...dashChipStyle({})}}>RECENT</span>
             </div>
           </div>
           {pickUpItems.length===0
@@ -41757,11 +41779,11 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                     <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
                       <div style={{width:"100%",display:"flex",flexDirection:"column",justifyContent:"flex-end",height:40}}>
                         {d.mins>0
-                          ?<div style={{width:"100%",height:h,background:d.isToday?T.lime:"rgba(255,255,255,0.25)",borderRadius:"3px 3px 0 0"}} />
-                          :<div style={{width:"100%",height:3,background:"rgba(255,255,255,0.10)",borderRadius:2}} />
+                          ?<div style={{width:"100%",height:h,background:d.isToday?T.lime:wkBarTint(0.25),borderRadius:"3px 3px 0 0"}} />
+                          :<div style={{width:"100%",height:3,background:wkBarTint(0.10),borderRadius:2}} />
                         }
                       </div>
-                      <span style={{fontSize:9,fontFamily:T.mono,color:d.isToday?T.lime:"rgba(255,255,255,0.4)",fontWeight:d.isToday?700:400}}>{d.lab}</span>
+                      <span style={{fontSize:9,fontFamily:T.mono,color:d.isToday?T.lime:wkBarTint(0.4),fontWeight:d.isToday?700:400}}>{d.lab}</span>
                     </div>
                   );
                 })}
@@ -41815,7 +41837,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                 {weekAheadSummary.days.map((d,i)=>{
                   const maxMins=Math.max.apply(null,weekAheadSummary.days.map(x=>x.minutes).concat([1]));
                   const h=d.minutes>0?Math.max(4,Math.round(d.minutes/maxMins*32)):0;
-                  const barColor=d.tier==="heavy"?T.amber:d.tier==="moderate"?"rgba(255,255,255,0.4)":"rgba(255,255,255,0.18)";
+                  const barColor=d.tier==="heavy"?T.amber:d.tier==="moderate"?wkBarTint(0.4):wkBarTint(0.18);
                   const lab=new Date(d.date+"T12:00:00").toLocaleDateString("en-US",{weekday:"short"}).slice(0,1).toUpperCase();
                   return(
                     <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
