@@ -161,6 +161,7 @@ function applyTheme(name, accent, density) {
     // keeps that whole class of control in sync with the actual theme.
     document.documentElement.style.colorScheme = name==='light'?'light':'dark';
   }
+  applyLookTheme(null,name); // whole-app Look tokens; must stay last (see LOOKS block)
 }
 applyTheme(
   (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-theme')) || 'light',
@@ -413,18 +414,22 @@ async function createGoogleDoc(essay) {
 const Btn = ({children,onClick,style={},variant="lime",disabled=false,title}) => {
   const base = {display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",borderRadius:6,fontSize:12,fontWeight:600,cursor:disabled?"not-allowed":"pointer",border:"none",fontFamily:T.font,letterSpacing:"0.01em",transition:"opacity 0.15s"};
   const variants = {
-    lime:{background:T.lime,color:T.bg},
-    ghost:{background:"transparent",color:T.muted,border:`1px solid ${T.border}`},
-    subtle:{background:T.card2,color:T.text,border:`1px solid ${T.border}`},
+    lime:{background:T.lime,color:T.lookOn?lookTextOnFill(T.lime):T.bg},
+    ghost:T.lookOn?{background:T.accentSoft,color:T.accentInk,border:`1px solid ${T.borderTint}`}:{background:"transparent",color:T.muted,border:`1px solid ${T.border}`},
+    subtle:T.lookOn?{background:T.accentSoft,color:T.accentInk,border:`1px solid ${T.borderTint}`}:{background:T.card2,color:T.text,border:`1px solid ${T.border}`},
     danger:{background:"rgba(224,90,71,0.1)",color:T.red,border:"1px solid rgba(224,90,71,0.2)"},
   };
   return <button onClick={onClick} disabled={disabled} title={title} style={{...base,...variants[variant],...style}}>{children}</button>;
 };
 const BtnSm = ({children,onClick,style={},variant="lime",disabled=false}) => <Btn onClick={onClick} disabled={disabled} style={{padding:"5px 12px",fontSize:11,...style}} variant={variant}>{children}</Btn>;
 
-const Badge = ({children,color=T.lime}) => <span style={{display:"inline-flex",alignItems:"center",padding:"3px 9px",borderRadius:4,fontSize:11,fontWeight:600,letterSpacing:"0.03em",background:color+"18",color,border:`1px solid ${color}22`}}>{children}</span>;
+const Badge = ({children,color=T.lime}) => {
+  // Palette looks: the default (accent) badge reads as a themed chip; explicit colors stay as passed.
+  const themed = T.lookOn && color===T.lime;
+  return <span style={{display:"inline-flex",alignItems:"center",padding:"3px 9px",borderRadius:4,fontSize:11,fontWeight:600,letterSpacing:"0.03em",background:themed?T.chipBg:color+"18",color:themed?T.accentInk:color,border:`1px solid ${themed?T.borderTint:color+"22"}`}}>{children}</span>;
+};
 
-const Prog = ({pct,color=T.lime,height=4}) => <div style={{height,background:T.card2,borderRadius:height,overflow:"hidden"}}><div style={{height:"100%",width:`${pct}%`,background:color,borderRadius:height,transition:"width 0.5s ease"}}/></div>;
+const Prog = ({pct,color=T.lime,height=4}) => <div style={{height,background:T.lookOn?T.accentSoft:T.card2,borderRadius:height,overflow:"hidden"}}><div style={{height:"100%",width:`${pct}%`,background:color,borderRadius:height,transition:"width 0.5s ease"}}/></div>;
 
 const Divider = ({style={}}) => <div style={{height:"1px",background:T.border,...style}} />;
 
@@ -464,7 +469,7 @@ const Av = ({initials,color=T.lime,size=36,picUrl}) => {
 };
 
 const Card = ({children,style={},onClick}) => (
-  <div data-card onClick={onClick} style={{background:T.card,borderRadius:6,padding:20,border:`1px solid ${T.border}`,cursor:onClick?"pointer":"default",...style}}>{children}</div>
+  <div data-card onClick={onClick} style={{background:T.lookOn?T.tint:T.card,borderRadius:6,padding:20,border:`1px solid ${T.lookOn?T.borderTint:T.border}`,boxShadow:T.lookOn?"0 1px 2px rgba(0,0,0,0.04), 0 6px 18px -10px rgba(0,0,0,0.12)":undefined,cursor:onClick?"pointer":"default",...style}}>{children}</div>
 );
 
 // ─── MODAL ────────────────────────────────────────────────────────────────────
@@ -487,10 +492,10 @@ const Modal = ({open, onClose, title, sub, children, footer, width=540}) => {
   return ReactDOM.createPortal((
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
       <div role="dialog" aria-modal="true" aria-label={typeof title==="string"?title:undefined} onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:width,maxHeight:"90vh",background:T.card,borderRadius:8,border:`1px solid ${T.border}`,overflow:"hidden",display:"flex",flexDirection:"column",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)",boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)"}}>
-        <div style={{padding:"20px 22px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"flex-start",gap:12}}>
+        <div style={{padding:"20px 22px 14px",borderBottom:`1px solid ${T.lookOn?T.borderTint:T.border}`,background:T.lookOn?T.hdrBg:undefined,display:"flex",alignItems:"flex-start",gap:12}}>
           <div style={{flex:1}}>
-            <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>{title}</div>
-            {sub && <div style={{fontSize:12.5,color:T.muted,marginTop:3}}>{sub}</div>}
+            <div style={{fontSize:16,fontWeight:700,color:T.lookOn?T.hdrText:T.white,letterSpacing:"-0.01em"}}>{title}</div>
+            {sub && <div style={{fontSize:12.5,color:T.lookOn?T.hdrText:T.muted,opacity:T.lookOn?0.8:1,marginTop:3}}>{sub}</div>}
           </div>
           <button type="button" aria-label="Close" onClick={onClose}style={{width:30,height:30,borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,display:"grid",placeItems:"center",cursor:"pointer"}}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -641,7 +646,7 @@ function PlanCards({ billing, onSelect }) {
           boxShadow:plan.featured?`0 24px 48px -20px ${T.lime}30`:"none",
         }}>
           {plan.tag && (
-            <div style={{position:"absolute",top:-11,left:18,background:T.lime,color:T.ink,fontFamily:T.mono,fontSize:10,fontWeight:700,letterSpacing:"0.14em",padding:"4px 10px",borderRadius:5}}>{plan.tag}</div>
+            <div style={{position:"absolute",top:-11,left:18,background:T.lime,color:T.onLime,fontFamily:T.mono,fontSize:10,fontWeight:700,letterSpacing:"0.14em",padding:"4px 10px",borderRadius:5}}>{plan.tag}</div>
           )}
           <div style={{fontSize:18,fontWeight:700,color:plan.featured?T.cream:T.text,letterSpacing:"-0.02em",marginBottom:4}}>{plan.name}</div>
           <div style={{display:"flex",alignItems:"baseline",gap:5,margin:"8px 0 6px"}}>
@@ -652,7 +657,7 @@ function PlanCards({ billing, onSelect }) {
           <ul style={{listStyle:"none",padding:0,margin:"0 0 20px",display:"flex",flexDirection:"column",gap:9,flex:1}}>
             {plan.features.map((f,j)=>(
               <li key={j} style={{display:"flex",gap:9,fontSize:13,color:plan.featured?T.cream:T.text,lineHeight:1.45,alignItems:"flex-start"}}>
-                <span style={{width:16,height:16,borderRadius:"50%",background:T.lime,color:T.ink,display:"grid",placeItems:"center",flex:"none",marginTop:1}}>
+                <span style={{width:16,height:16,borderRadius:"50%",background:T.lime,color:T.onLime,display:"grid",placeItems:"center",flex:"none",marginTop:1}}>
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                 </span>
                 {f}
@@ -1122,33 +1127,57 @@ const LOOK_PALETTES=[
   {id:"pastel",name:"Soft Pastel",
     swatches:["#E89AA8","#8FB8E8","#B7A2E6","#86D1B4","#E8BC72","#9AA6D8","#7FCB9A","#E8A38E"],
     swatchesDark:["#F0B3BE","#A9CBF0","#CBBBF0","#A3DEC7","#F0CE95","#B4BEE6","#9CDDB4","#F0BCAB"],
-    headerTint:"#B7A2E6"},
+    headerTint:"#B7A2E6",
+    theme:{
+      light:{accent:"#6F4FB8",accentDk:"#6347A6",accentSoft:"#EEE9FA",accentInk:"#4F3A8C",hdrBg:"#DCD2F5",hdrText:"#3F2E7A",tint:"#F5F2FC",borderTint:"#D5CBEF",todayBg:"#6F4FB8",todayText:"#FFFFFF",chipBg:"#E8E1F7"},
+      dark:{accent:"#B9A2F0",accentDk:"#9D8ACC",accentSoft:"#353341",accentInk:"#B9A2F0",hdrBg:"#423E52",hdrText:"#B9A2F0",tint:"#27272F",borderTint:"#48435A",todayBg:"#B9A2F0",todayText:"#0E1F18",chipBg:"#393846"}}},
   {id:"mono",name:"Minimal Mono",
     swatches:["#111827","#374151","#4B5563","#6B7280","#7C8594","#8A94A3","#2B3340","#5A6270"],
     swatchesDark:["#F3F4F6","#D1D5DB","#B4BAC4","#9CA3AF","#E5E7EB","#C7CCD4","#AEB5C0","#8B93A0"],
-    headerTint:"#6B7280"},
+    headerTint:"#6B7280",
+    theme:{
+      light:{accent:"#374151",accentDk:"#1F2937",accentSoft:"#EEF0F3",accentInk:"#1F2937",hdrBg:"#E1E4E9",hdrText:"#1F2937",tint:"#F5F6F8",borderTint:"#D5D9DF",todayBg:"#374151",todayText:"#FFFFFF",chipBg:"#E7EAEE"},
+      dark:{accent:"#D1D5DB",accentDk:"#B2B5BA",accentSoft:"#393B3E",accentInk:"#D1D5DB",hdrBg:"#474A4D",hdrText:"#D1D5DB",tint:"#292B2D",borderTint:"#4F5154",todayBg:"#D1D5DB",todayText:"#0E1F18",chipBg:"#3C3F43"}}},
   {id:"sunset",name:"Sunset",
     swatches:["#E4572E","#F28C28","#D1495B","#EDAE49","#B5446E","#F2723B","#C0392B","#E8A25A"],
     swatchesDark:["#FF8A65","#FFB74D","#F06292","#FFD54F","#CE6A9A","#FF9E6B","#EF7A6B","#FFC27A"],
-    headerTint:"#F28C28"},
+    headerTint:"#F28C28",
+    theme:{
+      light:{accent:"#BC4116",accentDk:"#A23813",accentSoft:"#F6E6EE",accentInk:"#8A2C0E",hdrBg:"#EFC6D8",hdrText:"#6E1F0A",tint:"#F9EEF3",borderTint:"#E6C3D3",todayBg:"#BC4116",todayText:"#FFFFFF",chipBg:"#F0DCEA"},
+      dark:{accent:"#FF9068",accentDk:"#D97A58",accentSoft:"#40302C",accentInk:"#FF9068",hdrBg:"#523931",hdrText:"#FF9068",tint:"#2C2625",borderTint:"#5C3E34",todayBg:"#FF9068",todayText:"#0E1F18",chipBg:"#433633"}}},
   {id:"forest",name:"Forest",
     swatches:["#2E7D5B","#4F9D69","#6B8E4E","#1F6F6B","#7FA650","#3C8D7A","#5E8C3A","#2F6F4F"],
     swatchesDark:["#6FC1A0","#8AD29A","#A3C97B","#5FBDB8","#B4D87F","#7DCBB6","#9CCB6A","#7CC0A0"],
-    headerTint:"#4F9D69"},
+    headerTint:"#4F9D69",
+    theme:{
+      light:{accent:"#2A7553",accentDk:"#236247",accentSoft:"#E3F3EB",accentInk:"#1C5A40",hdrBg:"#C8E6D6",hdrText:"#16503A",tint:"#EEF7F2",borderTint:"#BFDCCD",todayBg:"#2A7553",todayText:"#FFFFFF",chipBg:"#DAEEE3"},
+      dark:{accent:"#6FC1A0",accentDk:"#5EA488",accentSoft:"#293834",accentInk:"#6FC1A0",hdrBg:"#30453F",hdrText:"#6FC1A0",tint:"#222929",borderTint:"#334C44",todayBg:"#6FC1A0",todayText:"#0E1F18",chipBg:"#2F3D3B"}}},
   {id:"ocean",name:"Ocean",
     swatches:["#2D74BC","#3AA0C8","#5B7FD6","#1F8FA6","#4E9AE0","#6A8FD0","#2A64A8","#4DB3C9"],
     swatchesDark:["#84BBEA","#7FD0EA","#9DB4F0","#6FCADB","#8FC4F5","#A4BEEA","#7AAEE6","#8FDAEA"],
-    headerTint:"#3AA0C8"},
+    headerTint:"#3AA0C8",
+    theme:{
+      light:{accent:"#2A6DB4",accentDk:"#225A98",accentSoft:"#E4EFFA",accentInk:"#1D5A9C",hdrBg:"#CBDFF4",hdrText:"#174A82",tint:"#EEF5FB",borderTint:"#C0D6EC",todayBg:"#2A6DB4",todayText:"#FFFFFF",chipBg:"#DBE8F6"},
+      dark:{accent:"#84BBEA",accentDk:"#709FC7",accentSoft:"#2D3740",accentInk:"#84BBEA",hdrBg:"#354450",hdrText:"#84BBEA",tint:"#23292E",borderTint:"#394A59",todayBg:"#84BBEA",todayText:"#0E1F18",chipBg:"#313C45"}}},
 ];
 const LOOK_BLOCK_STYLES=["soft","flat","outlined"];
-const LOOK_DEFAULT={v:1,palette:"classic",blockStyle:"soft"};
+const LOOK_DEFAULT={v:1,palette:"classic",blockStyle:"soft",perClass:{},seed:0,accentFollows:true};
 const lookPaletteById=(id)=>LOOK_PALETTES.find(p=>p.id===id)||LOOK_PALETTES[0];
 const lookIsClassic=(look)=>lookPaletteById(look&&look.palette).id==="classic";
+// perClass: {subjectId: swatchIndex 0-7}. Garbage keys/values are dropped here;
+// ids of classes that no longer exist are pruned by lookPersistMissing (it knows the subjects).
+const lookCleanPerClass=(raw)=>{
+  const out={};
+  if(!raw||typeof raw!=="object"||Array.isArray(raw))return out;
+  Object.keys(raw).forEach(k=>{const v=raw[k];if(k&&k.length<=80&&Number.isInteger(v)&&v>=0&&v<=7)out[k]=v;});
+  return out;
+};
 const lookNormalize=(raw)=>{
-  if(!raw||typeof raw!=="object")return {...LOOK_DEFAULT};
+  if(!raw||typeof raw!=="object")return {...LOOK_DEFAULT,perClass:{}};
   const palette=LOOK_PALETTES.some(p=>p.id===raw.palette)?raw.palette:"classic";
   const blockStyle=LOOK_BLOCK_STYLES.includes(raw.blockStyle)?raw.blockStyle:"soft";
-  return {v:1,palette,blockStyle};
+  const seed=Number.isInteger(raw.seed)&&raw.seed>=0&&raw.seed<=1000000000?raw.seed:0;
+  return {v:1,palette,blockStyle,perClass:lookCleanPerClass(raw.perClass),seed,accentFollows:raw.accentFollows!==false};
 };
 const readLook=()=>{try{return lookNormalize(lsGet("look",null));}catch(e){return {...LOOK_DEFAULT};}};
 const saveLook=(look)=>{const n=lookNormalize(look);lsSet("look",n);return n;};
@@ -1186,30 +1215,149 @@ const lookReadableText=(color,bg,mode)=>{
 // Ink, else white, else pure black on a solid fill (the last always clears 4.5:1 for any fill).
 const lookTextOnFill=(fill)=>{if(contrastRatio(fill,LOOK_INK)>=4.5)return LOOK_INK;if(contrastRatio(fill,"#FFFFFF")>=4.5)return "#FFFFFF";return "#000000";};
 const lookCardBg=(mode)=>mode==="dark"?darkT.card:lightT.card;
+const lookSwatches=(pal,mode)=>mode==="dark"?pal.swatchesDark:pal.swatches;
+const lookKeyOf=(s)=>s.id!==undefined?s.id:s.label;
+const lookRgb=(hex)=>{const h=hex.replace("#","");return [0,2,4].map(i=>parseInt(h.slice(i,i+2),16));};
+const lookDist=(a,b)=>{const x=lookRgb(a),y=lookRgb(b);return Math.sqrt((x[0]-y[0])*(x[0]-y[0])+(x[1]-y[1])*(x[1]-y[1])+(x[2]-y[2])*(x[2]-y[2]));};
+// Seeded permutation of the 8 swatch slots (mulberry32 + Fisher-Yates). Seed 0 is the identity order. Never Math.random: same seed, same result.
+const lookSeededOrder=(seed)=>{
+  const order=[0,1,2,3,4,5,6,7];
+  if(!seed)return order;
+  let a=(seed*2654435761)>>>0;
+  const rnd=()=>{a=(a+0x6D2B79F5)>>>0;let t=a;t=Math.imul(t^(t>>>15),t|1);t^=t+Math.imul(t^(t>>>7),t|61);return((t^(t>>>14))>>>0)/4294967296;};
+  for(let i=order.length-1;i>0;i--){const j=Math.floor(rnd()*(i+1));const x=order[i];order[i]=order[j];order[j]=x;}
+  return order;
+};
+// Deterministic assignment: subjects sorted by id; each unassigned class takes the least-used swatch
+// (so all 8 are used before any repeats) and, among those, the one farthest in RGB from the previous
+// class, so neighbors never look alike. `fixed` ({id: index}) are kept as-is (user picks).
+function lookAutoAssign(subjects,mode,seed,paletteId,fixed){
+  const pal=lookPaletteById(paletteId!==undefined?paletteId:getLook().palette);
+  const sw=lookSwatches(pal,mode);
+  const order=lookSeededOrder(seed||0);
+  const fx=fixed||{};
+  const list=(Array.isArray(subjects)?subjects:[]).filter(s=>s&&lookKeyOf(s)!==undefined)
+    .slice().sort((a,b)=>{const x=String(lookKeyOf(a)),y=String(lookKeyOf(b));return x<y?-1:x>y?1:0;});
+  const out={};const uses=[0,0,0,0,0,0,0,0];
+  list.forEach(s=>{const k=lookKeyOf(s);const v=fx[k];if(Number.isInteger(v)&&v>=0&&v<8){out[k]=v;uses[v]++;}});
+  let prev=null;
+  list.forEach(s=>{
+    const k=lookKeyOf(s);
+    if(out[k]!==undefined){prev=out[k];return;}
+    const minUse=Math.min.apply(null,uses);
+    const cands=order.filter(i=>uses[i]===minUse);
+    let best=cands[0],bestD=-1;
+    if(prev!==null)cands.forEach(i=>{const d=lookDist(sw[i],sw[prev]);if(d>bestD+1e-9){bestD=d;best=i;}});
+    out[k]=best;uses[best]++;prev=best;
+  });
+  return out;
+}
+// One-entry cache so per-event lookups don't recompute the assignment.
+let lookIdxCache={key:"",val:{}};
+function lookResolveIndexMap(subjects,look,mode){
+  const pal=lookPaletteById(look&&look.palette);
+  const list=Array.isArray(subjects)?subjects:[];
+  const pc=(look&&look.perClass)||{};
+  const key=[pal.id,mode,(look&&look.seed)||0,JSON.stringify(pc),list.map(lookKeyOf).join("|")].join("#");
+  if(lookIdxCache.key===key)return lookIdxCache.val;
+  const val=lookAutoAssign(list,mode,(look&&look.seed)||0,pal.id,pc);
+  lookIdxCache={key,val};
+  return val;
+}
 // A subject's color under a look. idOrIndex is a subject id/label (resolved
 // against `subjects`) or a plain number (palette slot; wraps around).
-// Classic returns the subject's own saved color, exactly as before.
+// Classic returns the subject's own saved color, exactly as before and ignores perClass.
+// Non-classic: perClass pick, else the deterministic auto assignment.
 function lookColorFor(idOrIndex,look,mode,subjects){
   const pal=lookPaletteById(look&&look.palette);
   const list=Array.isArray(subjects)?subjects:[];
-  let idx=-1,subj=null;
-  if(typeof idOrIndex==="number"){idx=idOrIndex;}
-  else{idx=list.findIndex(s=>s.id===idOrIndex||s.label===idOrIndex);subj=idx>=0?list[idx]:null;}
-  if(idx<0)return null;
-  if(pal.id==="classic"&&subj)return subj.color;
-  const arr=mode==="dark"?pal.swatchesDark:pal.swatches;
-  return arr[((idx%arr.length)+arr.length)%arr.length];
+  const arr=lookSwatches(pal,mode);
+  if(typeof idOrIndex==="number"){
+    if(idOrIndex<0)return null;
+    return arr[((idOrIndex%arr.length)+arr.length)%arr.length];
+  }
+  const subj=list.find(s=>s.id===idOrIndex||s.label===idOrIndex);
+  if(!subj)return null;
+  if(pal.id==="classic")return subj.color;
+  const map=lookResolveIndexMap(list,look,mode);
+  const i=map[lookKeyOf(subj)];
+  return arr[i!==undefined?i:0];
 }
 // id and label -> color, computed once per render by the caller (useMemo).
 function lookSubjectColorMap(subjects,look,mode){
   const map={};
-  (subjects||[]).forEach((s,i)=>{
-    const v=lookColorFor(i,look,mode,subjects);
-    const c=lookIsClassic(look)?s.color:v;
+  const classic=lookIsClassic(look);
+  (subjects||[]).forEach(s=>{
+    const c=classic?s.color:lookColorFor(lookKeyOf(s),look,mode,subjects);
     if(s.id!==undefined)map[s.id]=c;
     if(s.label!==undefined&&map[s.label]===undefined)map[s.label]=c;
   });
   return map;
+}
+// THE single resolver for "what color is this class". Precedence: ev.color (callers handle it
+// themselves) > look.perClass > auto index > Classic subject.color. Classic never reads perClass.
+// `fallback` is what the caller used before for an unknown class (T.lime, T.muted...).
+function subjectColor(idOrLabel,fallback,subjects){
+  const list=Array.isArray(subjects)?subjects:getSubjects();
+  const s=list.find(x=>x.id===idOrLabel||x.label===idOrLabel);
+  if(!s)return fallback!==undefined?fallback:T.lime;
+  const look=getLook();
+  if(lookIsClassic(look))return s.color;
+  return lookColorFor(lookKeyOf(s),look,lookMode(),list)||s.color;
+}
+// Writes missing assignments (a class added after the palette was chosen gets the
+// first least-used swatch) and prunes ids of deleted classes. No-op under Classic or with no classes.
+function lookPersistMissing(subjects){
+  const look=getLook();
+  if(lookIsClassic(look))return false;
+  const list=(Array.isArray(subjects)?subjects:[]).filter(s=>s&&lookKeyOf(s)!==undefined);
+  if(!list.length)return false;
+  const pc=look.perClass||{};
+  const ids={};list.forEach(s=>{ids[lookKeyOf(s)]=true;});
+  const missing=list.some(s=>pc[lookKeyOf(s)]===undefined);
+  // Only ever fills in missing classes. Never prunes: subjects can load late from sync,
+  // and dropping unknown ids here would permanently wipe a student's manual picks.
+  if(!missing)return false;
+  setLook({perClass:lookAutoAssign(list,lookMode(),look.seed||0,look.palette,pc)});
+  return true;
+}
+// Auto-assign: back to the default deterministic assignment (seed 0), replacing manual picks.
+function lookResetAssign(subjects,mode){
+  const look=getLook();
+  return setLook({seed:0,perClass:lookAutoAssign(subjects,mode||lookMode(),0,look.palette,{})});
+}
+// Shuffle: next seed, new seeded permutation, persisted so it survives reloads.
+function lookShuffle(subjects,mode){
+  const look=getLook();
+  const seed=(look.seed||0)+1;
+  return setLook({seed,perClass:lookAutoAssign(subjects,mode||lookMode(),seed,look.palette,{})});
+}
+// Whole-app theme tokens. Called at the end of applyTheme (every App render and at module
+// load), after T was reset from lightT/darkT, so it is idempotent and never touches
+// lightT/darkT. Classic gets safe defaults that look exactly like today's UI. At module
+// load the LOOKS consts are not initialised yet: the try/catch then falls back to Classic.
+function applyLookTheme(look,mode){
+  const m=mode==="dark"?"dark":"light";
+  let pal=null,lk=null;
+  try{lk=look||getLook();pal=lookPaletteById(lk.palette);}catch(e){pal=null;}
+  const th=pal&&pal.theme?pal.theme[m]:null;
+  if(!th){
+    T.lookOn=false;
+    T.hdrBg=T.card;T.hdrText=T.muted;T.accentSoft=T.card2;T.accentInk=T.text;T.tint=T.card;
+    T.borderTint=T.border;T.todayBg=T.lime;T.todayText=T.ink;T.chipBg=T.card2;
+    T.onLime=T.ink; // label color on a T.lime fill (Classic: unchanged)
+    return;
+  }
+  T.lookOn=true;
+  T.hdrBg=th.hdrBg;T.hdrText=th.hdrText;T.accentSoft=th.accentSoft;T.accentInk=th.accentInk;T.tint=th.tint;
+  T.borderTint=th.borderTint;T.todayBg=th.todayBg;T.todayText=th.todayText;T.chipBg=th.chipBg;
+  if(lk.accentFollows!==false){
+    T.lime=th.accent;T.limeDk=th.accentDk;
+    T.limeLt=blendOverBg(th.accent,m==="dark"?0.75:0.35,"#FFFFFF");
+    T.glow=hexA(th.accent,m==="dark"?0.22:0.18);
+  }
+  // Palette accents are dark in light mode, so near-black labels on T.lime fail contrast.
+  T.onLime=lookTextOnFill(T.lime);
 }
 // The one place block fill/edge/text is decided. kind: "subject" (class and
 // other fixed blocks), "study" (solid focus block), "reminder" (text only),
@@ -1244,26 +1392,39 @@ const LOOK_PREVIEW_BLOCKS=[
   {day:4,top:8,h:26,label:"Study",slot:4,kind:"study"},
   {day:4,top:44,h:30,label:"Calculus",slot:1,kind:"subject"},
 ];
-function LookPreview({look,mode}){
+function LookPreview({look,mode,subjects}){
   const pal=lookPaletteById(look.palette);
+  const classic=pal.id==="classic";
+  const th=classic?null:pal.theme[mode==="dark"?"dark":"light"];
+  const list=Array.isArray(subjects)?subjects:[];
   const days=["M","T","W","T","F"];
+  const hdrBg=th?th.hdrBg:T.card2,hdrText=th?th.hdrText:T.muted;
+  const slotColor=(slot)=>{
+    if(list.length)return {color:lookColorFor(lookKeyOf(list[slot%list.length]),look,mode,list),label:list[slot%list.length].label};
+    return {color:lookColorFor(slot,look,mode)||LOOK_PALETTES[0].swatches[slot],label:null};
+  };
   return (
-    <div data-look-preview style={{border:`1px solid ${T.border}`,borderRadius:10,overflow:"hidden",background:T.card}}>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",background:pal.headerTint?hexA(pal.headerTint,0.12):T.card2}}>
-        {days.map((d,i)=>(<div key={i} style={{textAlign:"center",fontSize:10.5,fontWeight:700,color:T.muted,padding:"6px 0"}}>{d}</div>))}
+    <div data-look-preview style={{border:`1px solid ${th?th.borderTint:T.border}`,borderRadius:10,overflow:"hidden",background:th?th.tint:T.card}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",background:hdrBg}}>
+        {days.map((d,i)=>(<div key={i} style={{textAlign:"center",fontSize:10.5,fontWeight:700,color:hdrText,padding:"6px 0"}}><span style={i===2&&th?{background:th.todayBg,color:th.todayText,borderRadius:8,padding:"1px 7px"}:undefined}>{d}</span></div>))}
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",height:92,position:"relative"}}>
         {days.map((d,i)=>(
-          <div key={i} style={{position:"relative",borderLeft:i?`1px solid ${T.border}`:"none"}}>
+          <div key={i} style={{position:"relative",borderLeft:i?`1px solid ${th?th.borderTint:T.border}`:"none"}}>
             {LOOK_PREVIEW_BLOCKS.filter(b=>b.day===i).map((b,j)=>{
-              const c=lookColorFor(b.slot,look,mode)||LOOK_PALETTES[0].swatches[b.slot];
+              const sc=slotColor(b.slot);
+              const c=sc.color;
               const s=lookBlockStyle(c,look,mode,b.kind);
               return (
-                <div key={j} style={{position:"absolute",top:b.top,left:3,right:3,height:b.h,borderRadius:5,padding:"2px 4px",boxSizing:"border-box",overflow:"hidden",background:s.fill,color:s.text,...(s.outline?{border:s.outline}:{}),borderLeft:b.kind==="study"?(s.outline?s.outline:"none"):`3px solid ${s.border}`,fontSize:9.5,fontWeight:700,whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{b.label}</div>
+                <div key={j} style={{position:"absolute",top:b.top,left:3,right:3,height:b.h,borderRadius:5,padding:"2px 4px",boxSizing:"border-box",overflow:"hidden",background:s.fill,color:s.text,...(s.outline?{border:s.outline}:{}),borderLeft:b.kind==="study"?(s.outline?s.outline:"none"):`3px solid ${s.border}`,fontSize:9.5,fontWeight:700,whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{b.kind==="study"?b.label:(sc.label||b.label)}</div>
               );
             })}
           </div>
         ))}
+      </div>
+      <div style={{display:"flex",gap:8,padding:"8px 10px",borderTop:`1px solid ${th?th.borderTint:T.border}`,background:th?th.tint:T.card}}>
+        <span style={{padding:"4px 12px",borderRadius:6,fontSize:10.5,fontWeight:700,background:th?th.accent:T.lime,color:th?lookTextOnFill(th.accent):T.bg}}>Add task</span>
+        <span style={{padding:"4px 12px",borderRadius:6,fontSize:10.5,fontWeight:700,background:th?th.accentSoft:T.card2,color:th?th.accentInk:T.text,border:`1px solid ${th?th.borderTint:T.border}`}}>Filter</span>
       </div>
     </div>
   );
@@ -1271,38 +1432,107 @@ function LookPreview({look,mode}){
 function LookCustomizePanel({open,onClose}){
   const look=useLook();
   const [saved,setSaved]=useState(false);
+  const [note,setNote]=useState("");
+  const [openId,setOpenId]=useState(null);
+  const [busy,setBusy]=useState(false);
   useEffect(()=>{if(!saved)return;const t=setTimeout(()=>setSaved(false),1800);return()=>clearTimeout(t);},[saved]);
+  useEffect(()=>{if(!busy)return;const t=setTimeout(()=>setBusy(false),350);return()=>clearTimeout(t);},[busy]);
   if(!open)return null;
   const mode=lookMode();
+  const pal=lookPaletteById(look.palette);
+  const classic=pal.id==="classic";
+  const subjects=getSubjects();
+  const sw=lookSwatches(pal,mode);
+  const idxMap=classic?{}:lookResolveIndexMap(subjects,look,mode);
   const pick=(patch)=>{setLook(patch);setSaved(true);};
+  const pickPalette=(p)=>{
+    if(p.id===look.palette)return;
+    if(p.id==="classic"){pick({palette:"classic"});setNote("");setOpenId(null);return;}
+    // Coming from Classic (or with nothing assigned yet): hand out colors right away. Between
+    // two non-Classic palettes the existing picks carry over so manual choices are not lost.
+    const keep=lookIsClassic(look)||!Object.keys(look.perClass||{}).length?{}:look.perClass;
+    pick({palette:p.id,accentFollows:true,seed:look.seed||0,perClass:lookAutoAssign(subjects,mode,look.seed||0,p.id,keep)});
+    setNote(subjects.length?`Your classes got colors from ${p.name}. Change any below.`:"");
+    setOpenId(null);
+  };
+  const runAction=(fn,msg)=>{if(busy)return;setBusy(true);fn(subjects,mode);setSaved(true);setNote(msg);setOpenId(null);};
+  const setClassColor=(id,i)=>{pick({perClass:{...(look.perClass||{}),[id]:i}});setOpenId(null);};
+  const btn={padding:"7px 14px",borderRadius:8,fontFamily:T.font,fontSize:12.5,fontWeight:700,cursor:busy?"not-allowed":"pointer",border:`1px solid ${T.borderTint}`,background:T.accentSoft,color:T.accentInk,opacity:busy?0.6:1};
   return (
-    <Modal open={open} onClose={onClose} title="Customize your calendar" sub="Pick a look. It applies right away." width={520}
-      footer={<button type="button" onClick={onClose} style={{padding:"9px 22px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:T.font}}>Done</button>}>
-      <LookPreview look={look} mode={mode} />
+    <Modal open={open} onClose={onClose} title="Customize your look" sub="Pick a palette. It themes the whole app right away." width={520}
+      footer={<button type="button" className="look-focus" onClick={onClose} style={{padding:"9px 22px",borderRadius:8,border:"none",background:T.lime,color:classic?T.ink:lookTextOnFill(T.lime),fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:T.font}}>Done</button>}>
+      <style>{`.look-focus:focus-visible{outline:2px solid ${T.lime};outline-offset:2px}`}</style>
+      <LookPreview look={look} mode={mode} subjects={subjects} />
       <div style={{fontSize:12,fontWeight:700,color:T.muted,margin:"18px 0 8px"}}>Palette</div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))",gap:10}}>
         {LOOK_PALETTES.map(p=>{
           const on=look.palette===p.id;
-          const sw=mode==="dark"?p.swatchesDark:p.swatches;
+          const psw=lookSwatches(p,mode);
           return (
-            <button key={p.id} type="button" onClick={()=>pick({palette:p.id})} aria-pressed={on}
+            <button key={p.id} type="button" className="look-focus" onClick={()=>pickPalette(p)} aria-pressed={on}
               style={{textAlign:"left",padding:"10px 12px",borderRadius:10,border:`1.5px solid ${on?T.lime:T.border}`,background:on?T.lime+"15":T.card2,cursor:"pointer",fontFamily:T.font}}>
               <div style={{display:"flex",gap:3,marginBottom:8}}>
-                {sw.map((c,i)=>(<span key={i} style={{width:12,height:12,borderRadius:"50%",background:c,flexShrink:0}} />))}
+                {psw.map((c,i)=>(<span key={i} style={{width:12,height:12,borderRadius:"50%",background:c,flexShrink:0}} />))}
               </div>
               <div style={{fontSize:12.5,fontWeight:700,color:T.text}}>{p.name}{on?" ✓":""}</div>
             </button>
           );
         })}
       </div>
+      {!classic&&(
+        <div data-look-classes>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,margin:"18px 0 6px"}}>
+            <div style={{fontSize:12,fontWeight:700,color:T.muted}}>Your classes</div>
+            {subjects.length>0&&(<div style={{display:"flex",gap:6}}>
+              <button type="button" className="look-focus" disabled={busy} onClick={()=>runAction(lookResetAssign,"Colors reset to the automatic assignment.")} style={btn}>Auto-assign</button>
+              <button type="button" className="look-focus" disabled={busy} onClick={()=>runAction(lookShuffle,`Shuffled. Your classes got new colors from ${pal.name}.`)} style={btn}>Shuffle</button>
+            </div>)}
+          </div>
+          {note&&(<div role="status" style={{fontSize:12.5,color:T.accentInk,background:T.accentSoft,border:`1px solid ${T.borderTint}`,borderRadius:8,padding:"8px 10px",marginBottom:8}}>{note}</div>)}
+          {subjects.length===0?(
+            <div style={{fontSize:12.5,color:T.muted,padding:"12px 0"}}>No classes yet. Add one and it gets a {pal.name} color automatically.</div>
+          ):(
+            <div style={{display:"flex",flexDirection:"column",gap:4}}>
+              {subjects.map(s=>{
+                const k=lookKeyOf(s);
+                const cur=idxMap[k]!==undefined?idxMap[k]:0;
+                const isOpen=openId===k;
+                return (
+                  <div key={k} style={{border:`1px solid ${isOpen?T.lime:T.border}`,borderRadius:8,background:T.card}}>
+                    <button type="button" className="look-focus" aria-expanded={isOpen} aria-label={`Change color for ${s.label}`} onClick={()=>setOpenId(isOpen?null:k)}
+                      style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"8px 10px",background:"transparent",border:"none",cursor:"pointer",fontFamily:T.font,color:T.text,fontSize:13,fontWeight:600,textAlign:"left"}}>
+                      <span style={{width:16,height:16,borderRadius:"50%",background:sw[cur],flexShrink:0,border:`1px solid ${T.border}`}} />
+                      <span style={{flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.label}</span>
+                      <span style={{fontSize:11.5,color:T.muted,fontWeight:500}}>{isOpen?"Close":"Change"}</span>
+                    </button>
+                    {isOpen&&(
+                      <div style={{display:"grid",gridTemplateColumns:"repeat(8,1fr)",gap:6,padding:"4px 10px 10px"}}>
+                        {sw.map((c,i)=>(
+                          <button key={i} type="button" className="look-focus" aria-label={`${pal.name} color ${i+1}`} aria-pressed={cur===i} onClick={()=>setClassColor(k,i)}
+                            style={{height:28,borderRadius:6,background:c,cursor:"pointer",border:cur===i?`2px solid ${T.text}`:`1px solid ${T.border}`}} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div style={{fontSize:11.5,color:T.muted,marginTop:8}}>Colors you set on a single event stay as you set them.</div>
+          <div style={{fontSize:11.5,color:T.muted,marginTop:4,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+            <span>{look.accentFollows!==false?`Buttons and highlights use ${pal.name}. Change in Settings.`:"Buttons and highlights use your Settings accent."}</span>
+            {look.accentFollows===false&&(<button type="button" className="look-focus" onClick={()=>pick({accentFollows:true})} style={{...btn,padding:"4px 10px",fontSize:11.5}}>Match palette</button>)}
+          </div>
+        </div>
+      )}
       <div style={{fontSize:12,fontWeight:700,color:T.muted,margin:"18px 0 8px"}}>Block style</div>
       <div role="group" aria-label="Block style" style={{display:"flex",gap:2,background:T.card2,padding:2,borderRadius:8}}>
         {LOOK_BLOCK_STYLES.map(s=>(
-          <button key={s} type="button" onClick={()=>pick({blockStyle:s})} aria-pressed={look.blockStyle===s}
+          <button key={s} type="button" className="look-focus" onClick={()=>pick({blockStyle:s})} aria-pressed={look.blockStyle===s}
             style={{flex:1,padding:"8px 0",borderRadius:6,border:"none",cursor:"pointer",fontFamily:T.font,fontSize:12.5,fontWeight:look.blockStyle===s?700:500,background:look.blockStyle===s?T.card:"transparent",color:look.blockStyle===s?T.text:T.muted,textTransform:"capitalize"}}>{s}</button>
         ))}
       </div>
-      <div style={{fontSize:11.5,color:T.muted,marginTop:12,minHeight:16}}>{saved?"Saved on this device.":"Colors you set on a single event always stay as you set them."}</div>
+      <div style={{fontSize:11.5,color:T.muted,marginTop:12,minHeight:16}}>{saved?"Saved on this device.":(classic?"Colors you set on a single event always stay as you set them.":"")}</div>
     </Modal>
   );
 }
@@ -1729,7 +1959,7 @@ const SchoolSelect=({value,onChange,placeholder,theme,statusFilter,onCommit})=>{
         <div style={{marginTop:6,padding:"8px 10px",borderRadius:8,border:`1px solid ${T.lime}44`,background:T.lime+"0f",fontSize:11.5,color:th.text,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}>
           <span>Did you mean <strong>{suggestion}</strong>?</span>
           <span style={{display:"flex",gap:8,flexShrink:0}}>
-            <button type="button" onMouseDown={e=>e.preventDefault()} onClick={()=>{const s=suggestion;pick(s);if(onCommit)onCommit(s);}} style={{background:T.lime,color:T.ink,border:"none",borderRadius:5,padding:"4px 9px",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Use this</button>
+            <button type="button" onMouseDown={e=>e.preventDefault()} onClick={()=>{const s=suggestion;pick(s);if(onCommit)onCommit(s);}} style={{background:T.lime,color:T.onLime,border:"none",borderRadius:5,padding:"4px 9px",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Use this</button>
             <button type="button" onMouseDown={e=>e.preventDefault()} onClick={()=>{if(onCommit&&q.trim())onCommit(q.trim());setSuggestion(null);}} style={{background:"none",border:`1px solid ${th.border}`,color:th.muted,borderRadius:5,padding:"4px 9px",fontSize:11,cursor:"pointer",fontFamily:T.font}}>No, keep mine</button>
           </span>
         </div>
@@ -11598,7 +11828,7 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
         
         <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
           <button onClick={onClose} style={{padding:"10px 18px",borderRadius:8,border:"1px solid "+T.border,background:"transparent",color:T.muted,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Cancel</button>
-          <button onClick={handleSave} disabled={!canSave} style={{padding:"10px 18px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,cursor:canSave?"pointer":"not-allowed",fontFamily:T.font,opacity:canSave?1:0.45}}>Save Preferences</button>
+          <button onClick={handleSave} disabled={!canSave} style={{padding:"10px 18px",borderRadius:8,border:"none",background:T.lime,color:T.onLime,fontSize:12.5,fontWeight:600,cursor:canSave?"pointer":"not-allowed",fontFamily:T.font,opacity:canSave?1:0.45}}>Save Preferences</button>
         </div>
       </div>
     </div>
@@ -11647,7 +11877,7 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
             {["monthly","annual"].map(b=>(
               <button key={b} type="button" onClick={()=>setBilling(b)} style={{padding:"6px 12px",border:"none",borderRadius:99,background:billing===b?T.ink:"transparent",color:billing===b?T.cream:T.muted,fontFamily:T.font,fontSize:12,fontWeight:500,cursor:"pointer",display:"flex",alignItems:"center",gap:5}}>
                 {b==="monthly"?"Monthly":"Annual"}
-                {b==="annual"&&<span style={{fontFamily:T.mono,fontSize:8.5,fontWeight:700,background:T.lime,color:T.ink,padding:"1.5px 5px",borderRadius:99}}>Save 29%</span>}
+                {b==="annual"&&<span style={{fontFamily:T.mono,fontSize:8.5,fontWeight:700,background:T.lime,color:T.onLime,padding:"1.5px 5px",borderRadius:99}}>Save 29%</span>}
               </button>
             ))}
           </div>
@@ -11660,7 +11890,7 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
               <div key={i} style={{display:"flex",gap:7,alignItems:"center",fontSize:11.5,color:T.text,padding:"3px 0"}}><span style={{color:tier.color,display:"inline-flex"}}>{Icon.check}</span>{p}</div>
             ))}
           </div>
-          <Btn onClick={choose} style={{width:"100%",justifyContent:"center",background:T.lime,color:T.ink}}>Upgrade to Pro</Btn>
+          <Btn onClick={choose} style={{width:"100%",justifyContent:"center",background:T.lime,color:T.onLime}}>Upgrade to Pro</Btn>
         </div>
         <div onClick={onClose} style={{textAlign:"center",fontSize:12,color:T.muted,cursor:"pointer",padding:6}}>Maybe later</div>
       </div>
@@ -12404,7 +12634,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
   // Accepts either a real course id or a label -- callers with a courseId
   // handy (post-migration data) get an id match; everything else still
   // resolves the same way it always has via label.
-  const colorOf=(tg)=>{const s=userSubjects.find(x=>x.id===tg||x.label===tg);return s?s.color:T.lime;};
+  const colorOf=(tg)=>subjectColor(tg,T.lime,userSubjects);
   // Same component-local convention as colorOf above -- CalendarTab has its
   // own niceDate too. Short month (vs CalendarTab's long form) since this
   // feeds a single-line meta row that's already tight on space.
@@ -13517,9 +13747,9 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
           feedback (didn't like being able to have Exams+Assignments both
           up at once). */}
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,marginBottom:20,flexWrap:"wrap"}}>
-        <div style={{display:"flex",gap:2,background:T.card2,padding:2,borderRadius:4,width:"fit-content",flexWrap:"wrap"}}>
+        <div style={{display:"flex",gap:2,background:T.lookOn?T.tint:T.card2,padding:2,borderRadius:4,width:"fit-content",flexWrap:"wrap"}}>
           {[{id:"exams",label:"Exams"},{id:"assignments",label:"Assignments"},{id:"projects",label:"Projects"},{id:"flashcards",label:"Flashcards"},{id:"practiceExams",label:"Practice Exams"},{id:"insights",label:"Insights"}].map(v=>(
-            <button key={v.id} onClick={()=>{setTab(v.id);setSelectedExamId(null);setSelectedAssignmentId(null);setExamTimeEditOpen(false);}} style={{padding:"5px 12px",borderRadius:4,fontSize:12,fontWeight:tab===v.id?600:400,cursor:"pointer",background:tab===v.id?T.card:"transparent",color:tab===v.id?T.text:T.muted,border:"none",fontFamily:T.font,transition:"all 0.15s",whiteSpace:"nowrap"}}>{v.label}</button>
+            <button key={v.id} onClick={()=>{setTab(v.id);setSelectedExamId(null);setSelectedAssignmentId(null);setExamTimeEditOpen(false);}} style={{padding:"5px 12px",borderRadius:4,fontSize:12,fontWeight:tab===v.id?600:400,cursor:"pointer",background:tab===v.id?(T.lookOn?T.hdrBg:T.card):"transparent",color:tab===v.id?(T.lookOn?T.hdrText:T.text):T.muted,border:"none",fontFamily:T.font,transition:"all 0.15s",whiteSpace:"nowrap"}}>{v.label}</button>
           ))}
         </div>
         {showTabToolbar&&(
@@ -13927,7 +14157,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
             <div style={{fontSize:12.5,color:T.muted,marginBottom:14}}>{[selectedAssignment.subject,selectedAssignment.date?niceDate(selectedAssignment.date):null,linkedSessions.length>0?linkedSessions.length+" block"+(linkedSessions.length!==1?"s":"")+" scheduled":hasOwnScheduledTime?"1 block scheduled":"no plan yet"].filter(Boolean).join(" · ")}</div>
             <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:14}}>
               {isCompleted?(
-                <span style={{fontSize:11,fontWeight:700,color:T.lime,background:T.lime+"14",border:`1px solid ${T.lime}44`,borderRadius:6,padding:"4px 10px"}}>COMPLETED</span>
+                <span style={{fontSize:11,fontWeight:700,color:T.lookOn?T.accentInk:T.lime,background:T.lookOn?T.chipBg:T.lime+"14",border:`1px solid ${T.lookOn?T.borderTint:T.lime+"44"}`,borderRadius:6,padding:"4px 10px"}}>COMPLETED</span>
               ):itemLifecycleState(selectedAssignment,today)==="past-due"&&(
                 <span style={{fontSize:11,fontWeight:700,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}44`,borderRadius:6,padding:"4px 10px"}}>PAST DUE</span>
               )}
@@ -14334,7 +14564,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                 once they've actually taken it. */}
             <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:14}}>
               {isExamCompleted?(
-                <span style={{fontSize:11,fontWeight:700,color:T.lime,background:T.lime+"14",border:`1px solid ${T.lime}44`,borderRadius:6,padding:"4px 10px"}}>COMPLETED</span>
+                <span style={{fontSize:11,fontWeight:700,color:T.lookOn?T.accentInk:T.lime,background:T.lookOn?T.chipBg:T.lime+"14",border:`1px solid ${T.lookOn?T.borderTint:T.lime+"44"}`,borderRadius:6,padding:"4px 10px"}}>COMPLETED</span>
               ):itemLifecycleState(selectedExam,dayKey())==="past-due"&&(
                 <span style={{fontSize:11,fontWeight:700,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}44`,borderRadius:6,padding:"4px 10px"}}>PAST DUE</span>
               )}
@@ -14643,7 +14873,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
 
             {(deck||examSessions.length>0)&&(
             <Card style={{padding:20,marginBottom:16}}>
-              <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:10}}>Flashcards</div>
+              <div style={{fontSize:13,fontWeight:700,color:T.lookOn?T.hdrText:T.white,marginBottom:10,...(T.lookOn?{background:T.hdrBg,padding:"6px 10px",borderRadius:6}:{})}}>Flashcards</div>
               {!deck?<div style={{fontSize:12,color:T.muted}}>No deck yet. Generate one from material above.</div>:(
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
                   <div style={{fontSize:12.5,color:T.text}}>{deck.name} · {deck.count} cards</div>
@@ -14672,7 +14902,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
 
             {(pes.length>0||examSessions.length>0)&&(
             <Card style={{padding:20}}>
-              <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:10}}>Practice Exams</div>
+              <div style={{fontSize:13,fontWeight:700,color:T.lookOn?T.hdrText:T.white,marginBottom:10,...(T.lookOn?{background:T.hdrBg,padding:"6px 10px",borderRadius:6}:{})}}>Practice Exams</div>
               {pes.length===0?<div style={{fontSize:12,color:T.muted}}>No practice exams yet. Generate one from material above.</div>:(
                 <div style={{display:"flex",flexDirection:"column",gap:8}}>
                   {pes.map(pe=>{
@@ -14744,7 +14974,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                   {linkedExams.length>0&&(
                     <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
                       {linkedExams.map(ex=>(
-                        <span key={ex.id} style={{fontSize:10.5,fontWeight:700,padding:"3px 8px",borderRadius:99,background:T.lime+"14",color:T.lime,border:`1px solid ${T.lime}33`}}>Exam: {ex.title} · {ex.date}</span>
+                        <span key={ex.id} style={{fontSize:10.5,fontWeight:700,padding:"3px 8px",borderRadius:99,background:T.lookOn?T.chipBg:T.lime+"14",color:T.lookOn?T.accentInk:T.lime,border:`1px solid ${T.lookOn?T.borderTint:T.lime+"33"}`}}>Exam: {ex.title} · {ex.date}</span>
                       ))}
                     </div>
                   )}
@@ -14793,7 +15023,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                   </div>
                   {linkedExam&&(
                     <div style={{marginBottom:10}}>
-                      <span style={{fontSize:10.5,fontWeight:700,padding:"3px 8px",borderRadius:99,background:T.lime+"14",color:T.lime,border:`1px solid ${T.lime}33`}}>Exam: {linkedExam.title} · {linkedExam.date}</span>
+                      <span style={{fontSize:10.5,fontWeight:700,padding:"3px 8px",borderRadius:99,background:T.lookOn?T.chipBg:T.lime+"14",color:T.lookOn?T.accentInk:T.lime,border:`1px solid ${T.lookOn?T.borderTint:T.lime+"33"}`}}>Exam: {linkedExam.title} · {linkedExam.date}</span>
                     </div>
                   )}
                   <div style={{display:"flex",gap:6,flexShrink:0,flexWrap:"wrap"}}>
@@ -14993,7 +15223,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                       Edit distinction (accurate: nothing to edit yet vs.
                       something real already there), just warmed with
                       "study" for consistency with the rest of the app. */}
-                  <button type="button" onClick={()=>setBuildPlanMaterialOpen(true)} style={{flexShrink:0,padding:"6px 12px",borderRadius:7,border:`1px solid ${T.lime}44`,background:T.lime+"14",color:T.lime,fontSize:12,fontWeight:600,fontFamily:T.font,cursor:"pointer"}}>{fileTexts.length>0||materialLinks.length>0?"Edit study material":"+ Add study material"}</button>
+                  <button type="button" onClick={()=>setBuildPlanMaterialOpen(true)} style={{flexShrink:0,padding:"6px 12px",borderRadius:7,border:`1px solid ${T.lookOn?T.borderTint:T.lime+"44"}`,background:T.lookOn?T.accentSoft:T.lime+"14",color:T.lookOn?T.accentInk:T.lime,fontSize:12,fontWeight:600,fontFamily:T.font,cursor:"pointer"}}>{fileTexts.length>0||materialLinks.length>0?"Edit study material":"+ Add study material"}</button>
                   <span style={{fontSize:12,color:T.muted}}>{fileTexts.length>0||materialLinks.length>0?fileTexts.length+materialLinks.length+" material item"+((fileTexts.length+materialLinks.length)!==1?"s":""):"No material added -- Studlin can build a real, focused plan instead of generic review blocks"}</span>
                 </div>
               ):(
@@ -15250,7 +15480,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:12.5,marginBottom:6,gap:8}}>
                       <span style={{color:T.text,flexShrink:0,display:"flex",alignItems:"center",gap:6}}>
                         Session {i+1}
-                        {rowGetsPE&&<span style={{fontSize:9.5,fontWeight:700,padding:"2px 6px",borderRadius:99,background:T.lime+"14",color:T.lime,border:`1px solid ${T.lime}33`}}>PRACTICE EXAM</span>}
+                        {rowGetsPE&&<span style={{fontSize:9.5,fontWeight:700,padding:"2px 6px",borderRadius:99,background:T.lookOn?T.chipBg:T.lime+"14",color:T.lookOn?T.accentInk:T.lime,border:`1px solid ${T.lookOn?T.borderTint:T.lime+"33"}`}}>PRACTICE EXAM</span>}
                         {rowGetsCards&&<span style={{fontSize:9.5,fontWeight:700,padding:"2px 6px",borderRadius:99,background:T.teal+"14",color:T.teal,border:`1px solid ${T.teal}33`}}>+ FLASHCARDS</span>}
                       </span>
                       <div style={{display:"flex",alignItems:"center",gap:6}}>
@@ -16175,7 +16405,7 @@ function Flashcards({setActive=()=>{}}={}) {
                       {linkedExams.length>0&&(
                         <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6,flexWrap:"wrap"}}>
                           {linkedExams.map(ex=>(
-                            <span key={ex.id} style={{fontSize:10.5,fontWeight:700,padding:"3px 8px",borderRadius:99,background:T.lime+"14",color:T.lime,border:`1px solid ${T.lime}33`}}>Exam: {ex.title} · {ex.date}</span>
+                            <span key={ex.id} style={{fontSize:10.5,fontWeight:700,padding:"3px 8px",borderRadius:99,background:T.lookOn?T.chipBg:T.lime+"14",color:T.lookOn?T.accentInk:T.lime,border:`1px solid ${T.lookOn?T.borderTint:T.lime+"33"}`}}>Exam: {ex.title} · {ex.date}</span>
                           ))}
                           <button onClick={(e)=>{e.stopPropagation();openReviewSchedule(d);}} style={{background:"none",border:"none",color:T.lime,cursor:"pointer",fontFamily:T.font,fontSize:11,fontWeight:600,textDecoration:"underline",padding:0}}>Schedule reviews →</button>
                         </div>
@@ -16221,7 +16451,7 @@ function Notes({setActive=()=>{}}){
   // Accepts either a real course id or a label -- callers with a courseId
   // handy (post-migration data) get an id match; everything else still
   // resolves the same way it always has via label.
-  const colorOf=(tg)=>{const s=userSubjects.find(x=>x.id===tg||x.label===tg);return s?s.color:T.lime;};
+  const colorOf=(tg)=>subjectColor(tg,T.lime,userSubjects);
 
   const [notes,setNotes]=useState(()=>{const n=lsGet("notes",null);return(n&&Array.isArray(n))?n.filter(x=>x&&x.title):[];});
   const [sel,setSel]=useState(null);
@@ -16762,7 +16992,7 @@ function Notes({setActive=()=>{}}){
   const hasMargin=activeComments.length>0;
 
   // Toolbar button style helper
-  const tbBtn=(active=false)=>({padding:"5px 9px",borderRadius:5,border:`1px solid ${active?T.lime+"55":T.border}`,background:active?T.lime+"14":"transparent",color:active?T.lime:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12,fontWeight:600,display:"inline-flex",alignItems:"center",gap:4,transition:"all 0.12s"});
+  const tbBtn=(active=false)=>({padding:"5px 9px",borderRadius:5,border:`1px solid ${active?T.lime+"55":T.border}`,background:active?(T.lookOn?T.accentSoft:T.lime+"14"):"transparent",color:active?(T.lookOn?T.accentInk:T.lime):T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12,fontWeight:600,display:"inline-flex",alignItems:"center",gap:4,transition:"all 0.12s"});
 
   return (
     <div>
@@ -17099,7 +17329,7 @@ function Notes({setActive=()=>{}}){
             const renderNoteRow=(n,i)=>{
               const idx=notes.indexOf(n);
               return (
-                <div key={n.id||i} onClick={()=>{setSel(idx);setPopover(null);}} style={{background:idx===sel?T.card2:T.card,borderRadius:8,padding:"11px 13px",marginBottom:6,border:"1px solid "+(idx===sel?colorOf(n.tag)+"55":T.border),cursor:"pointer",transition:"all 0.15s"}}>
+                <div key={n.id||i} onClick={()=>{setSel(idx);setPopover(null);}} style={{background:idx===sel?(T.lookOn?T.accentSoft:T.card2):(T.lookOn?T.tint:T.card),borderRadius:8,padding:"11px 13px",marginBottom:6,border:"1px solid "+(idx===sel?(T.lookOn?T.lime:colorOf(n.tag)+"55"):(T.lookOn?T.borderTint:T.border)),boxShadow:idx===sel&&T.lookOn?`inset 3px 0 0 ${T.lime}`:"none",cursor:"pointer",transition:"all 0.15s"}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
                     <div style={{fontSize:12,fontWeight:600,color:T.white,flex:1,marginRight:8,lineHeight:1.3}}>{n.title}</div>
                     <Badge color={colorOf(n.tag)}>{n.tag}</Badge>
@@ -17987,7 +18217,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
                   <div style={{fontSize:11,color:T.muted}}>{req.h} · <span style={{color:T.blue}}>{req.s}</span></div>
                 </div>
                 <div style={{display:"flex",gap:7,flexShrink:0}}>
-                  <button onClick={()=>acceptReq(req.id)} style={{padding:"6px 14px",borderRadius:7,background:T.lime,color:T.ink,border:"none",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Accept</button>
+                  <button onClick={()=>acceptReq(req.id)} style={{padding:"6px 14px",borderRadius:7,background:T.lime,color:T.onLime,border:"none",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Accept</button>
                   <button onClick={()=>declineReq(req.id)} style={{padding:"6px 13px",borderRadius:7,background:"transparent",color:T.muted,border:`1px solid ${T.border}`,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Decline</button>
                 </div>
               </div>
@@ -18017,7 +18247,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
                   <div style={{fontSize:11,color:T.muted}}>From {(proj.participants&&proj.participants[proj.ownerUid]&&proj.participants[proj.ownerUid].name)||"a friend"}{proj.deadline?" · due "+proj.deadline:""}</div>
                 </div>
                 <div style={{display:"flex",gap:7,flexShrink:0}}>
-                  <button disabled={projectInviteBusyId===proj.id} onClick={()=>acceptProjectInvite(proj)} style={{padding:"6px 14px",borderRadius:7,background:T.lime,color:T.ink,border:"none",fontSize:11.5,fontWeight:700,cursor:projectInviteBusyId===proj.id?"default":"pointer",fontFamily:T.font,opacity:projectInviteBusyId===proj.id?0.6:1}}>{projectInviteBusyId===proj.id?"…":"Accept"}</button>
+                  <button disabled={projectInviteBusyId===proj.id} onClick={()=>acceptProjectInvite(proj)} style={{padding:"6px 14px",borderRadius:7,background:T.lime,color:T.onLime,border:"none",fontSize:11.5,fontWeight:700,cursor:projectInviteBusyId===proj.id?"default":"pointer",fontFamily:T.font,opacity:projectInviteBusyId===proj.id?0.6:1}}>{projectInviteBusyId===proj.id?"…":"Accept"}</button>
                   <button disabled={projectInviteBusyId===proj.id} onClick={()=>declineProjectInvite(proj)} style={{padding:"6px 13px",borderRadius:7,background:"transparent",color:T.muted,border:`1px solid ${T.border}`,fontSize:11.5,fontWeight:600,cursor:projectInviteBusyId===proj.id?"default":"pointer",fontFamily:T.font,opacity:projectInviteBusyId===proj.id?0.6:1}}>Decline</button>
                 </div>
               </div>
@@ -18048,7 +18278,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
                     <div style={{fontSize:11,color:T.muted}}>Wants to see your calendar this once, to help schedule something</div>
                   </div>
                   <div style={{display:"flex",gap:7,flexShrink:0}}>
-                    <button disabled={calendarViewRequestBusyId===req.id} onClick={()=>approveCalendarViewRequest(req)} style={{padding:"6px 14px",borderRadius:7,background:T.lime,color:T.ink,border:"none",fontSize:11.5,fontWeight:700,cursor:calendarViewRequestBusyId===req.id?"default":"pointer",fontFamily:T.font,opacity:calendarViewRequestBusyId===req.id?0.6:1}}>{calendarViewRequestBusyId===req.id?"…":"Approve"}</button>
+                    <button disabled={calendarViewRequestBusyId===req.id} onClick={()=>approveCalendarViewRequest(req)} style={{padding:"6px 14px",borderRadius:7,background:T.lime,color:T.onLime,border:"none",fontSize:11.5,fontWeight:700,cursor:calendarViewRequestBusyId===req.id?"default":"pointer",fontFamily:T.font,opacity:calendarViewRequestBusyId===req.id?0.6:1}}>{calendarViewRequestBusyId===req.id?"…":"Approve"}</button>
                     <button disabled={calendarViewRequestBusyId===req.id} onClick={()=>denyCalendarViewRequest(req)} style={{padding:"6px 13px",borderRadius:7,background:"transparent",color:T.muted,border:`1px solid ${T.border}`,fontSize:11.5,fontWeight:600,cursor:calendarViewRequestBusyId===req.id?"default":"pointer",fontFamily:T.font,opacity:calendarViewRequestBusyId===req.id?0.6:1}}>Deny</button>
                   </div>
                 </div>
@@ -18187,7 +18417,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
               planLabel), since that's account status, not a pitch. */}
           <span style={{color:T.text,fontWeight:600}}>Invite classmates to unlock collective scheduling.</span>{" "}For every friend who joins, you <strong style={{color:T.lime}}>both</strong> get <span style={{color:T.lime,fontWeight:600}}>{planDisplayName("Pro-Limited")}</span>, free.
         </div>
-        <button onClick={()=>setInviteOpen(true)} style={{flexShrink:0,padding:"7px 16px",borderRadius:7,background:T.lime,color:T.ink,border:"none",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:T.font,whiteSpace:"nowrap"}}>
+        <button onClick={()=>setInviteOpen(true)} style={{flexShrink:0,padding:"7px 16px",borderRadius:7,background:T.lime,color:T.onLime,border:"none",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:T.font,whiteSpace:"nowrap"}}>
           Invite friends
         </button>
       </div>
@@ -19974,7 +20204,7 @@ function ExploreClassesCard({school,classes,setActive}){
       </Modal>
 
       {toast&&(
-        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,padding:"10px 18px",borderRadius:99,fontSize:12.5,fontWeight:600,boxShadow:"0 12px 28px -10px rgba(0,0,0,0.4)"}}>{toast}</div>
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.onLime,padding:"10px 18px",borderRadius:99,fontSize:12.5,fontWeight:600,boxShadow:"0 12px 28px -10px rgba(0,0,0,0.4)"}}>{toast}</div>
       )}
     </Card>
   );
@@ -21496,7 +21726,7 @@ function deriveStudlinAiProactiveSignal(strugglingBucketOffer,unscheduledDueSoon
 // read at a glance instead of as one undifferentiated stream of text.
 // Kept as its own small map, not inline per call site, so every message
 // push in this drawer stays consistent with the same small vocabulary.
-const STUDLIN_AI_MSG_KIND_ACCENT={proposal:T.lime,done:T.lime,fact:T.teal,coaching:T.purple,clarify:T.amber,paywall:T.amber,error:T.red,info:T.faint,help:T.teal};
+const studlinAiKindAccents=()=>({proposal:T.lime,done:T.lime,fact:T.teal,coaching:T.purple,clarify:T.amber,paywall:T.amber,error:T.red,info:T.faint,help:T.teal}); // a function so it follows palette/theme changes
 function StudlinAiMiniDayPreview({dateKey,proposedBlock}){
   const pp=panelPalette();
   if(!dateKey)return null;
@@ -21505,7 +21735,7 @@ function StudlinAiMiniDayPreview({dateKey,proposedBlock}){
   const subjects=getSubjects();
   const colorFor=(ev)=>{
     const match=subjects.find(s=>s.id===ev.courseId||s.label===ev.subject);
-    return match&&match.color?(lookIsClassic(getLook())?match.color:(lookColorFor(subjects.indexOf(match),getLook(),lookMode(),subjects)||match.color)):T.muted;
+    return match&&match.color?subjectColor(match.id!==undefined?match.id:match.label,match.color,subjects):T.muted;
   };
   const real=[...events,...routineOccs].map(ev=>({...ev,__proposed:false}));
   const proposed=proposedBlock?[{id:"__proposed__",...proposedBlock,__proposed:true}]:[];
@@ -21654,7 +21884,7 @@ function StudlinAiBubble({onClick,hasProactive}){
     // stable id via document.getElementById instead (see TourStep's own
     // targetSelector support).
     <button id="studlin-ai-bubble" type="button" onClick={onClick} title="Ask Studlin AI about your schedule"
-      style={{position:"fixed",bottom:20,right:20,width:52,height:52,borderRadius:"50%",background:T.lime,color:T.ink,border:"none",cursor:"pointer",display:"grid",placeItems:"center",boxShadow:"0 8px 24px -6px rgba(0,0,0,0.4)",zIndex:STUDLIN_AI_BUBBLE_Z}}>
+      style={{position:"fixed",bottom:20,right:20,width:52,height:52,borderRadius:"50%",background:T.lime,color:T.onLime,border:"none",cursor:"pointer",display:"grid",placeItems:"center",boxShadow:"0 8px 24px -6px rgba(0,0,0,0.4)",zIndex:STUDLIN_AI_BUBBLE_Z}}>
       {Icon.sparkles}
       {hasProactive&&(
         <span style={{position:"absolute",top:-2,right:-2,width:14,height:14,borderRadius:"50%",background:T.amber,border:`2px solid ${T.bg}`}} />
@@ -22466,7 +22696,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
           )}
           {messages.map((m,i)=>(
             <div key={i} style={{alignSelf:m.role==="user"?"flex-end":"flex-start",maxWidth:"85%",display:"flex",flexDirection:"column",gap:6}}>
-              <div style={{padding:"9px 13px",borderRadius:12,fontSize:13,lineHeight:1.5,background:m.role==="user"?pp.card2:T.lime+"14",color:pp.text,border:m.role==="user"?`1px solid ${pp.border}`:`1px solid ${T.lime}33`,borderLeft:m.role==="ai"?`3px solid ${STUDLIN_AI_MSG_KIND_ACCENT[m.kind]||T.lime}`:undefined,whiteSpace:m.role==="user"?"pre-wrap":undefined}}>
+              <div style={{padding:"9px 13px",borderRadius:12,fontSize:13,lineHeight:1.5,background:m.role==="user"?pp.card2:T.lime+"14",color:pp.text,border:m.role==="user"?`1px solid ${pp.border}`:`1px solid ${T.lime}33`,borderLeft:m.role==="ai"?`3px solid ${studlinAiKindAccents()[m.kind]||T.lime}`:undefined,whiteSpace:m.role==="user"?"pre-wrap":undefined}}>
                 {m.role==="ai"?renderStudlinAiMarkdown(m.text):m.text}
               </div>
               {m.proposal&&m.proposal.disambiguate&&!m.proposal.resolved&&(
@@ -22490,7 +22720,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
               {m.proposal&&m.proposal.ok&&!m.proposal.resolved&&(
                 <div style={{display:"flex",gap:8}}>
                   <button onClick={()=>confirmProposal(i)}
-                    style={{padding:"7px 14px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontWeight:600,fontSize:12.5,cursor:"pointer",fontFamily:T.font}}>Confirm</button>
+                    style={{padding:"7px 14px",borderRadius:8,border:"none",background:T.lime,color:T.onLime,fontWeight:600,fontSize:12.5,cursor:"pointer",fontFamily:T.font}}>Confirm</button>
                   <button onClick={()=>cancelProposal(i)}
                     style={{padding:"7px 14px",borderRadius:8,border:`1px solid ${pp.border}`,background:"transparent",color:pp.muted,fontSize:12.5,cursor:"pointer",fontFamily:T.font}}>Cancel</button>
                 </div>
@@ -22537,7 +22767,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
                 style={{width:36,height:36,borderRadius:"50%",border:"none",background:aiListening?T.red:pp.card2,color:aiListening?"#fff":pp.muted,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0,opacity:pendingIndex!=null?0.6:1}}>{aiListening?<span style={{width:10,height:10,background:"#fff",borderRadius:2}} />:Icon.mic}</button>
             )}
             <button onClick={send} disabled={!input.trim()||loading||pendingIndex!=null}
-              style={{padding:"9px 14px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontWeight:600,fontSize:13,cursor:"pointer",opacity:(!input.trim()||loading||pendingIndex!=null)?0.5:1,flexShrink:0}}>Send</button>
+              style={{padding:"9px 14px",borderRadius:8,border:"none",background:T.lime,color:T.onLime,fontWeight:600,fontSize:13,cursor:"pointer",opacity:(!input.trim()||loading||pendingIndex!=null)?0.5:1,flexShrink:0}}>Send</button>
           </div>
           {aiListening&&<div style={{fontSize:11,color:T.red,marginTop:6}}>Listening... tap the mic to stop</div>}
           {!aiListening&&aiMicError&&<div style={{fontSize:11,color:T.red,marginTop:6}}>{aiMicError}</div>}
@@ -24187,7 +24417,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
   return (
     <>
     <Card style={{padding:0,overflow:"hidden"}}>
-      <div style={{display:"grid",gridTemplateColumns:"52px repeat(7,1fr)",borderBottom:`1px solid ${T.border}`,background:T.card}}>
+      <div data-wk-hdr="1" style={{display:"grid",gridTemplateColumns:"52px repeat(7,1fr)",borderBottom:`1px solid ${T.borderTint}`,background:T.hdrBg}}>
         <div style={{height:48}} />
         {weekDays.map((d, i) => {
           const dk = dayKey(d);
@@ -24195,9 +24425,9 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
           const isSel = selDay!=null && dk === selDay;
           const duePills = (byDay[dk] || []).filter(isDuePill);
           return (
-            <div key={i} onClick={()=>{if(setSelDay)setSelDay(dk);}} style={{textAlign:"center",padding:"7px 4px 9px",borderLeft:`1px solid ${T.border}`,cursor:setSelDay?"pointer":"default",background:isSel?T.card2:"transparent",minWidth:0}}>
-              <div style={{fontSize:9,fontWeight:700,letterSpacing:"0.1em",color:T.muted,marginBottom:4}}>{DAY_NAMES[i]}</div>
-              <div onDoubleClick={(e)=>{e.stopPropagation();openNew(dk);}} style={{width:28,height:28,borderRadius:"50%",background:isToday?T.lime:"transparent",color:isToday?T.ink:T.white,fontSize:13,fontWeight:700,display:"inline-flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>{d.getDate()}</div>
+            <div key={i} onClick={()=>{if(setSelDay)setSelDay(dk);}} style={{textAlign:"center",padding:"7px 4px 9px",borderLeft:`1px solid ${T.borderTint}`,cursor:setSelDay?"pointer":"default",background:isSel?T.accentSoft:"transparent",minWidth:0}}>
+              <div style={{fontSize:T.lookOn?10:9,fontWeight:700,letterSpacing:"0.1em",color:T.hdrText,marginBottom:4}}>{DAY_NAMES[i]}</div>
+              <div onDoubleClick={(e)=>{e.stopPropagation();openNew(dk);}} style={{width:28,height:28,borderRadius:"50%",background:isToday?T.todayBg:"transparent",color:isToday?T.todayText:T.white,fontSize:13,fontWeight:700,display:"inline-flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>{d.getDate()}</div>
               {/* Phase 10b: a compact "N due" bar instead of listing each
                   due-marker title, matching the monthly grid's same
                   change and Shovel's own header row. */}
@@ -24369,7 +24599,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   </div>
                 ))}
                 {Array.from({length:24}, (_, h) => (
-                  <div key={h} data-gridbg="1" style={{position:"absolute",top:h*WK_PX_HR,left:0,right:0,height:WK_PX_HR,borderTop:`1px solid ${T.borderHover}`,boxSizing:"border-box"}} />
+                  <div key={h} data-gridbg="1" style={{position:"absolute",top:h*WK_PX_HR,left:0,right:0,height:WK_PX_HR,borderTop:`1px solid ${T.lookOn?T.borderTint:T.borderHover}`,boxSizing:"border-box"}} />
                 ))}
                 {/* Drag-to-create ghost block (2026-09-11) -- dashed like
                     previewEl below, but with no drag handles of its own;
@@ -24830,7 +25060,7 @@ const wizardChipStyle=(sel)=>({padding:"7px 12px",borderRadius:8,fontSize:12,fon
 // white background, the existing border still reads as a distinct card.
 const wizardStatusChipStyle=(sel)=>({flex:1,padding:"16px",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",border:`1.5px solid ${sel?T.lime:T.border}`,background:sel?T.lime+"14":T.card,color:sel?T.lime:T.muted,fontFamily:T.font,textAlign:"center"});
 const wizardSelectStyle={padding:"10px 8px",borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,fontSize:13,color:T.text,fontFamily:T.font,outline:"none"};
-const wizardAddBtnStyle={padding:"10px 16px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontSize:13,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"};
+const wizardAddBtnStyle={padding:"10px 16px",borderRadius:8,border:"none",background:T.lime,color:T.onLime,fontSize:13,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"};
 
 function WizardRoutineList({items,onRemove}){
   if(items.length===0)return null;
@@ -28151,9 +28381,9 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
             style={{position:"sticky",top:8,left:0,height:0,zIndex:7,display:"flex",marginLeft:45,cursor:"ns-resize"}}>
             <div style={{width:18,height:18,borderRadius:"50%",background:T.lime,border:`2px solid ${T.card}`,marginLeft:-9,boxShadow:"0 2px 6px rgba(0,0,0,0.35)"}} />
           </div>
-          <div ref={timelineRef} data-gridbg="1" data-daykey={selDay} onDragOver={handleDayDragOver} onDrop={handleDayDrop} onDragLeave={()=>setDayDragOver(false)} onMouseDown={startCreateDrag} style={{position:"relative",height:totalHeightPx,marginLeft:54}}>
+          <div ref={timelineRef} data-gridbg="1" data-daykey={selDay} onDragOver={handleDayDragOver} onDrop={handleDayDrop} onDragLeave={()=>setDayDragOver(false)} onMouseDown={startCreateDrag} style={{position:"relative",height:totalHeightPx,marginLeft:54,...(T.lookOn&&isToday?{background:T.accentSoft+"66"}:null)}}>
             {Array.from({length:Math.max(1,hourEnd-hourStart)},(_,i)=>hourStart+i).map(h=>(
-              <div key={h} data-gridbg="1" style={{position:"absolute",top:(h*60-spanStart)*(pxPerHr/60),left:0,right:0,borderTop:`1px solid ${T.borderHover}`,boxSizing:"border-box"}}>
+              <div key={h} data-gridbg="1" style={{position:"absolute",top:(h*60-spanStart)*(pxPerHr/60),left:0,right:0,borderTop:`1px solid ${T.lookOn?T.borderTint:T.borderHover}`,boxSizing:"border-box"}}>
                 <span style={{position:"absolute",left:-54,top:-7,width:46,textAlign:"right",fontSize:10,color:T.faint,fontFamily:T.mono,pointerEvents:"none"}}>{fmtHourLabel(h*60)}</span>
               </div>
             ))}
@@ -28171,8 +28401,8 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
             })()}
             {isToday&&nowMins>=spanStart&&nowMins<=spanEnd&&(
               <div style={{position:"absolute",top:(nowMins-spanStart)*(pxPerHr/60),left:0,right:0,zIndex:6,pointerEvents:"none"}}>
-                <div style={{position:"absolute",left:-4,top:-4,width:8,height:8,borderRadius:"50%",background:"#E5484D"}} />
-                <div style={{borderTop:"2px solid #E5484D"}} />
+                <div style={{position:"absolute",left:-4,top:-4,width:8,height:8,borderRadius:"50%",background:T.lookOn?T.lime:"#E5484D"}} />
+                <div style={{borderTop:`2px solid ${T.lookOn?T.lime:"#E5484D"}`}} />
               </div>
             )}
             {/* Schedule with Friends: same busy overlay/recommended-time/
@@ -28537,6 +28767,9 @@ function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime
       // "+ Add task" -- this was the one glance-and-close surface with no
       // next action at all when a day was empty.
       footer={visibleEvs.length===0&&duePills.length===0&&openNew?<Btn onClick={()=>{onClose();openNew(selDay);}} style={{flex:1,justifyContent:"center"}}>+ Add task</Btn>:undefined}>
+      {T.lookOn&&visibleEvs.length>0&&(
+        <div data-daypreview-hdr="1" style={{background:T.hdrBg,color:T.hdrText,border:`1px solid ${T.borderTint}`,borderRadius:10,padding:"7px 12px",marginBottom:12,fontSize:11.5,fontWeight:700,letterSpacing:"0.04em"}}>{fmtGapLabel(spanStart)} to {fmtGapLabel(spanEnd%1440)}</div>
+      )}
       {duePills.length>0&&(
         <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:visibleEvs.length>0?12:0}}>
           {duePills.map(ev=>(
@@ -28626,7 +28859,7 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
   // colorOf -- id match preferred (courseId, once a routine/course carries
   // one), label fallback otherwise.
   const userSubjects=getSubjects();
-  const colorOf=(tg)=>{const s=userSubjects.find(x=>x.id===tg||x.label===tg);return s?s.color:T.muted;};
+  const colorOf=(tg)=>subjectColor(tg,T.muted,userSubjects);
   const [addingRoutine,setAddingRoutine]=useState(false);
   const [title,setTitle]=useState("");
   // "Class" used to be the default here, but adding a class already has
@@ -28780,7 +29013,7 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
           the Calendar sidebar's own Courses/Activities "+ Add new"
           placement (top of the section, not the bottom). */}
       {addedSummary&&(
-        <div style={{fontSize:12.5,color:T.text,background:T.lime+"14",border:`1px solid ${T.lime}44`,borderRadius:8,padding:"10px 12px",marginBottom:16,lineHeight:1.5}}>{addedSummary}</div>
+        <div style={{fontSize:12.5,color:T.lookOn?T.accentInk:T.text,background:T.lookOn?T.accentSoft:T.lime+"14",border:`1px solid ${T.lookOn?T.borderTint:T.lime+"44"}`,borderRadius:8,padding:"10px 12px",marginBottom:16,lineHeight:1.5}}>{addedSummary}</div>
       )}
       {!addingRoutine
         ? <Btn variant="subtle" onClick={()=>{setAddingRoutine(true);setAddedSummary(null);}} style={{width:"100%",justifyContent:"center",marginBottom:16}}>+ Add Recurring Activity</Btn>
@@ -28794,7 +29027,7 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
               <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                 {ROUTINE_DOW.map((d,i)=>{
                   const sel=days.includes(i);
-                  return <button key={i} type="button" onClick={()=>toggleDay(i)} style={{padding:"6px 12px",borderRadius:7,fontSize:12,fontWeight:sel?600:400,cursor:"pointer",border:`1px solid ${sel?T.lime+"66":T.border}`,background:sel?T.lime+"14":"transparent",color:sel?T.lime:T.muted,fontFamily:T.font}}>{d}</button>;
+                  return <button key={i} type="button" onClick={()=>toggleDay(i)} style={{padding:"6px 12px",borderRadius:7,fontSize:12,fontWeight:sel?600:400,cursor:"pointer",border:`1px solid ${sel?T.lime+"66":T.border}`,background:sel?(T.lookOn?T.accentSoft:T.lime+"14"):"transparent",color:sel?(T.lookOn?T.accentInk:T.lime):T.muted,fontFamily:T.font}}>{d}</button>;
                 })}
               </div>
             </Field>
@@ -31655,6 +31888,9 @@ function resolveCalendarHighlightFlag(flag, nowMs){
 // setPricingOpen(true)) already merged into this function's BODY cleanly,
 // so dropping this prop would leave those calls throwing on an undefined
 // setPricingOpen.
+// Looks: tinted soft-button treatment for toolbar controls. null under Classic so the
+// toolbar stays byte-identical there (spread of null is a no-op).
+function calTbSoft(){return T.lookOn?{background:T.accentSoft,border:`1px solid ${T.borderTint}`,color:T.accentInk}:null;}
 function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRoutineCenterOpenedFromSettings,detailEventId,setDetailEventId,registerSetEvents,registerSkipSetEvents,onTaskCompleted,catchUpPending,onWizardOpenChange,jumpToSessionOnMount,onJumpSessionConsumed,highlightDraftIdOnMount,onHighlightDraftConsumed,setPricingOpen=()=>{},setTheme=()=>{}}={}){
   const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
   const SUBJ=[{value:"None",label:"None",color:T.lime},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
@@ -31667,7 +31903,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // LOOKS: subject colors come from the chosen palette (computed once per render, not per event); classic leaves each subject's own color untouched.
   const calLook=useLook();
   const [lookPanelOpen,setLookPanelOpen]=useState(false);
-  const lookColorMap=useMemo(()=>lookSubjectColorMap(userSubjects,calLook,lookMode()),[userSubjects,calLook.palette,T.mode]);
+  const lookColorMap=useMemo(()=>lookSubjectColorMap(userSubjects,calLook,lookMode()),[userSubjects,calLook.palette,calLook.perClass,calLook.seed,T.mode]);
   const colorOf=(sub)=>{const x=userSubjects.find(s=>s.id===sub||s.label===sub);if(!x)return T.lime;const m=lookColorMap[x.id!==undefined?x.id:x.label];return m||x.color;};
   // ── Phase 5: Courses/Activities sidebar (Shovel-inspired) ──
   // Own collapse state, independent of the global icon rail's.
@@ -35967,7 +36203,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           </div>
           <div style={{display:"flex",gap:8,flexShrink:0}}>
             <button type="button" onClick={dismissGoogleClassBanner} style={{padding:"8px 14px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.text,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Not now</button>
-            <button type="button" onClick={()=>setGoogleClassReviewOpen(true)} style={{padding:"8px 14px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Review classes</button>
+            <button type="button" onClick={()=>setGoogleClassReviewOpen(true)} style={{padding:"8px 14px",borderRadius:8,border:"none",background:T.lime,color:T.onLime,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Review classes</button>
           </div>
         </div>
       )}
@@ -35986,7 +36222,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
               </div>
               <div style={{display:"flex",gap:8,flexShrink:0}}>
                 <button type="button" onClick={()=>setImportLogOpen(o=>!o)} aria-expanded={importLogOpen} style={{padding:"6px 12px",borderRadius:6,border:`1px solid ${T.border}`,background:"transparent",color:T.text,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>{importLogOpen?"Hide":"See what"}</button>
-                <button type="button" onClick={acknowledgeImports} style={{padding:"6px 12px",borderRadius:6,border:"none",background:T.lime,color:T.ink,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Got it</button>
+                <button type="button" onClick={acknowledgeImports} style={{padding:"6px 12px",borderRadius:6,border:"none",background:T.lime,color:T.onLime,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Got it</button>
               </div>
             </div>
             {importLogOpen&&(
@@ -36025,11 +36261,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           the page instead of the toolbar eating vertical space. */}
       <div style={{display:"flex",alignItems:"center",gap:8,minHeight:30,marginBottom:10}}>
         <div style={{display:"flex",alignItems:"center",gap:3}}>
-          <button onClick={()=>calView==="monthly"?nav(-1):calView==="weekly"?setWeekOffset(o=>o-1):stepSelDay(-1)} style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:11}}>‹</button>
+          <button onClick={()=>calView==="monthly"?nav(-1):calView==="weekly"?setWeekOffset(o=>o-1):stepSelDay(-1)} style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:11,...calTbSoft()}}>‹</button>
           <span onClick={()=>{if(calView==="monthly"){setYm({y:now.getFullYear(),m:now.getMonth()});setSelDay(todayK);}else if(calView==="weekly"){setWeekOffset(0);}else{setSelDay(todayK);}}} title="Jump to today" style={{fontSize:13,fontWeight:500,color:T.text,padding:"0 5px",cursor:"pointer",userSelect:"none",whiteSpace:"nowrap"}}>
             {calView==="monthly"?monthNames[ym.m]+" "+ym.y:calView==="weekly"?weekRangeLabel:niceDate(selDay)}
           </span>
-          <button onClick={()=>calView==="monthly"?nav(1):calView==="weekly"?setWeekOffset(o=>o+1):stepSelDay(1)} style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:11}}>›</button>
+          <button onClick={()=>calView==="monthly"?nav(1):calView==="weekly"?setWeekOffset(o=>o+1):stepSelDay(1)} style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:11,...calTbSoft()}}>›</button>
         </div>
         {/* Undo/redo -- same 22x22 icon-button footprint as the day-nav
             ‹/› pair just to the left, so it reads as one grouped toolbar
@@ -36037,8 +36273,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             the respective stack is empty rather than hidden, so their
             position never shifts as you use them. */}
         <div style={{display:"flex",alignItems:"center",gap:3}}>
-          <button onClick={undoCal} disabled={calHistoryUndo.current.length===0} title="Undo (Ctrl+Z)" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:calHistoryUndo.current.length===0?T.faint:T.muted,cursor:calHistoryUndo.current.length===0?"default":"pointer",opacity:calHistoryUndo.current.length===0?0.5:1}}>{Icon.undo}</button>
-          <button onClick={redoCal} disabled={calHistoryRedo.current.length===0} title="Redo (Ctrl+Shift+Z)" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:calHistoryRedo.current.length===0?T.faint:T.muted,cursor:calHistoryRedo.current.length===0?"default":"pointer",opacity:calHistoryRedo.current.length===0?0.5:1}}>{Icon.redo}</button>
+          <button onClick={undoCal} disabled={calHistoryUndo.current.length===0} title="Undo (Ctrl+Z)" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:calHistoryUndo.current.length===0?T.faint:T.muted,cursor:calHistoryUndo.current.length===0?"default":"pointer",opacity:calHistoryUndo.current.length===0?0.5:1,...(T.lookOn?{background:T.accentSoft,border:`1px solid ${T.borderTint}`,color:calHistoryUndo.current.length===0?T.faint:T.accentInk}:null)}}>{Icon.undo}</button>
+          <button onClick={redoCal} disabled={calHistoryRedo.current.length===0} title="Redo (Ctrl+Shift+Z)" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:calHistoryRedo.current.length===0?T.faint:T.muted,cursor:calHistoryRedo.current.length===0?"default":"pointer",opacity:calHistoryRedo.current.length===0?0.5:1,...(T.lookOn?{background:T.accentSoft,border:`1px solid ${T.borderTint}`,color:calHistoryRedo.current.length===0?T.faint:T.accentInk}:null)}}>{Icon.redo}</button>
         </div>
         {/* Only appears when something's actually wrong -- unlike Undo/Redo
             (an always-available capability, shown dimmed at rest) a warning
@@ -36053,15 +36289,15 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           </button>
         )}
         <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:6}}>
-          <button type="button" onClick={()=>setLookPanelOpen(true)} title="Change your calendar colors and block style" style={{height:22,padding:"0 8px",display:"flex",alignItems:"center",gap:4,background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:11,fontWeight:600,fontFamily:T.font}}>Customize</button>
+          <button type="button" onClick={()=>setLookPanelOpen(true)} title="Change your calendar colors and block style" style={{height:22,padding:"0 8px",display:"flex",alignItems:"center",gap:4,background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:11,fontWeight:600,fontFamily:T.font,...calTbSoft()}}>Customize</button>
           <LookCustomizePanel open={lookPanelOpen} onClose={()=>setLookPanelOpen(false)} />
-          <div style={{display:"flex",gap:2,background:T.card2,padding:2,borderRadius:4}}>
+          <div style={{display:"flex",gap:2,background:T.lookOn?T.accentSoft:T.card2,padding:2,borderRadius:4,...(T.lookOn?{border:`1px solid ${T.borderTint}`}:null)}}>
             {[{id:"daily",label:"Day"},{id:"weekly",label:"Week"},{id:"monthly",label:"Month"}].map(v=>(
-              <button key={v.id} onClick={()=>setCalView(v.id)} style={{padding:"3px 9px",borderRadius:4,fontSize:11.5,fontWeight:calView===v.id?500:400,cursor:"pointer",background:calView===v.id?T.card:"transparent",color:calView===v.id?T.text:T.muted,border:"none",fontFamily:T.font,transition:"all 0.15s"}}>{v.label}</button>
+              <button key={v.id} onClick={()=>setCalView(v.id)} style={{padding:"3px 9px",borderRadius:4,fontSize:11.5,fontWeight:calView===v.id?500:400,cursor:"pointer",background:calView===v.id?(T.lookOn?T.lime:T.card):"transparent",color:calView===v.id?(T.lookOn?lookTextOnFill(T.lime):T.text):(T.lookOn?T.accentInk:T.muted),border:"none",fontFamily:T.font,transition:"all 0.15s"}}>{v.label}</button>
             ))}
           </div>
           <div style={{position:"relative"}} ref={rescheduleBtnRef}>
-            <button onClick={()=>setToolsMenuOpen(o=>!o)} title="More tools" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:editRoutineMode?T.lime+"18":"transparent",border:`1px solid ${editRoutineMode?T.lime+"55":T.border}`,borderRadius:4,color:editRoutineMode?T.lime:T.muted,cursor:"pointer",fontSize:13,lineHeight:1}}>⋯</button>
+            <button onClick={()=>setToolsMenuOpen(o=>!o)} title="More tools" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:editRoutineMode?T.lime+"18":"transparent",border:`1px solid ${editRoutineMode?T.lime+"55":T.border}`,borderRadius:4,color:editRoutineMode?T.lime:T.muted,cursor:"pointer",fontSize:13,lineHeight:1,...(T.lookOn&&!editRoutineMode?calTbSoft():null)}}>⋯</button>
             {toolsMenuOpen&&(<>
               <div onClick={()=>setToolsMenuOpen(false)} style={{position:"fixed",inset:0,zIndex:40}} />
               <div style={{position:"absolute",top:"calc(100% + 6px)",right:0,width:220,background:T.card,border:`1px solid ${T.border}`,borderRadius:6,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:50,overflow:"hidden",animation:"studlinPop 0.18s cubic-bezier(.2,.85,.3,1)"}}>
@@ -36115,7 +36351,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                 matches what the onboarding tour already tells students
                 this button does ("Tap Add Task and Studlin finds the time
                 for it"). Manual is still one click away inside the modal. */}
-            <button onClick={()=>openNewAI(selDay)} title="Add" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:T.lime,border:"none",borderRadius:4,color:T.ink,cursor:"pointer"}}>{Icon.plus}</button>
+            <button onClick={()=>openNewAI(selDay)} title="Add" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:T.lime,border:"none",borderRadius:4,color:T.lookOn?lookTextOnFill(T.lime):T.ink,cursor:"pointer"}}>{Icon.plus}</button>
           </div>
         </div>
       </div>
@@ -36135,7 +36371,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       {calView==="monthly"&&(
         <Card style={{padding:16}}>
           <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
-            {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((d,i)=><div key={i} style={{fontSize:10,fontWeight:600,color:T.muted,textAlign:"center",padding:"6px 0",letterSpacing:"0.05em"}}>{d}</div>)}
+            {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((d,i)=><div key={i} data-month-hdr="1" style={{fontSize:10,fontWeight:T.lookOn?700:600,color:T.hdrText,textAlign:"center",padding:"6px 0",letterSpacing:"0.05em",...(T.lookOn?{background:T.hdrBg,borderRadius:6}:null)}}>{d}</div>)}
             {(()=>{
               // Computed once per render, relative to every real (in-month)
               // day currently visible -- see computeMonthHeavyDays' own
@@ -36205,9 +36441,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                      were sized to their content floor, not the grid's own
                      available height, leaving a gap below a typical
                      5-6-row month; taller cells actually use that room. */
-                  style={{position:"relative",minHeight:96,minWidth:0,borderRadius:9,padding:"6px 7px",cursor:"pointer",background:isSel?T.card2:"transparent",border:"1px solid "+(hasNewItem?T.lime:isSel?T.lime+"55":T.border),transition:"all 0.12s",opacity:c.out?0.35:1}}>
+                  style={{position:"relative",minHeight:96,minWidth:0,borderRadius:9,padding:"6px 7px",cursor:"pointer",background:isSel?T.accentSoft:(T.lookOn&&c.out?T.tint:"transparent"),border:"1px solid "+(hasNewItem?T.lime:isSel?T.lime+"55":T.borderTint),transition:"all 0.12s",opacity:c.out?0.35:1}}>
                   <div style={{display:"flex",justifyContent:"flex-start"}}>
-                    <span style={{width:22,height:22,borderRadius:"50%",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:isToday?700:500,background:isToday?T.lime:"transparent",color:isToday?T.ink:c.out?T.faint:T.text}}>{c.d}</span>
+                    <span style={{width:22,height:22,borderRadius:"50%",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:isToday?700:500,background:isToday?T.todayBg:"transparent",color:isToday?T.todayText:c.out?T.faint:T.text}}>{c.d}</span>
                   </div>
                   {isSel && <button type="button" onClick={(e)=>{e.stopPropagation();openNew(c.key);}} title="Add a task on this day"
                     style={{position:"absolute",top:4,right:4,width:16,height:16,borderRadius:"50%",border:`1px solid ${T.border}`,background:T.card,color:T.muted,fontSize:11,lineHeight:1,cursor:"pointer",display:"grid",placeItems:"center",padding:0}}>+</button>}
@@ -36240,7 +36476,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                     const anyOverdue=!catchUpPending&&evs.some(ev=>daysOverdue(ev)>0);
                     return (
                       <div onClick={e=>{e.stopPropagation();setDayDetailKey(c.key);}}
-                        style={{marginTop:4,display:"flex",alignItems:"center",gap:4,fontSize:9.5,fontWeight:700,color:T.lime,background:T.lime+"18",border:`1px solid ${T.lime}33`,borderRadius:4,padding:"3px 6px",cursor:"pointer",overflow:"hidden"}}>
+                        style={{marginTop:4,display:"flex",alignItems:"center",gap:4,fontSize:9.5,fontWeight:700,color:T.lookOn?T.accentInk:T.lime,background:T.lookOn?T.chipBg:T.lime+"18",border:T.lookOn?`1px solid ${T.borderTint}`:`1px solid ${T.lime}33`,borderRadius:4,padding:"3px 6px",cursor:"pointer",overflow:"hidden"}}>
                         {anyOverdue&&<span title="Something's overdue" style={{width:6,height:6,borderRadius:"50%",background:T.red,flexShrink:0}} />}
                         <span style={{whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{evs.length} task{evs.length!==1?"s":""} due</span>
                       </div>
@@ -36705,10 +36941,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         </>)}
       </Modal>
       {toast&&(
-        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} Task added</div>
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.onLime,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} Task added</div>
       )}
       {placementToast&&(
-        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {placementToast}</div>
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.onLime,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {placementToast}</div>
       )}
       {/* Live-crash hotfix, 2026-09-16: this floating drag-ghost was
           accidentally placed in App()'s own render instead of here in
@@ -36747,13 +36983,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         </div>
       )}
       {rescheduleToast&&(
-        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {rescheduleToast}</div>
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.onLime,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {rescheduleToast}</div>
       )}
       {reconcileToast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.amber,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {reconcileToast}</div>
       )}
       {calClipToast&&(
-        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {calClipToast}</div>
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.onLime,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {calClipToast}</div>
       )}
       {deleteUndoToast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.card,border:`1px solid ${T.border}`,color:T.white,fontSize:12.5,fontWeight:600,padding:"10px 16px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:12}}>
@@ -38192,7 +38428,17 @@ function stuPalette(){
   let name="Lime";
   try{name=localStorage.getItem("studlin-accent")||"Lime";}catch(e){}
   const a=ACCENTS[name]||ACCENTS.Lime;
-  return {color:a.dk.lime,outline:"#0E1F18",edge:T.mode==="dark"?"#E6ECE7":"#0E1F18"};
+  // Under a non-Classic palette whose accent the student has not overridden,
+  // Stu wears the palette accent (the dark-mode swatch, as before).
+  let color=a.dk.lime;
+  try{
+    const lk=getLook();
+    if(!lookIsClassic(lk)&&lk.accentFollows!==false){
+      const pal=lookPaletteById(lk.palette);
+      if(pal&&pal.theme)color=pal.theme.dark.accent;
+    }
+  }catch(e){}
+  return {color,outline:"#0E1F18",edge:T.mode==="dark"?"#E6ECE7":"#0E1F18"};
 }
 // Bedtime nudge: due from 30 minutes before the student's own sleep time (set in
 // the setup wizard) until an hour after it, at most once per 6 hours. Handles a
@@ -39467,7 +39713,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
 
           {active==="General" && (<>
             <Card style={{marginBottom:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Profile basics</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Profile basics</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:16}}>How you appear across Studlin.</div>
               <Field label="Display name"><Input value={profile.name} onChange={e=>updProfile({name:e.target.value})} /></Field>
               {/* Was bound to profile.email -- a cosmetic field in the
@@ -39501,7 +39747,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             </Card>
             {dupGroups.length>0&&(
               <Card style={{marginBottom:12,border:`1px solid ${T.amber}44`}}>
-                <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Possible duplicate classes</div>
+                <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Possible duplicate classes</div>
                 <div style={{fontSize:12,color:T.muted,marginBottom:16}}>These look like the same class under slightly different names -- pick which one to keep, and everything from the others moves over to it.</div>
                 {dupGroups.map((group,gi)=>{
                   const withCounts=group.map(s=>({...s,count:courseItemCount(s)})).sort((a,b)=>b.count-a.count);
@@ -39539,7 +39785,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               </div>
             </Card>
             <Card style={{marginBottom:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Connected accounts</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Connected accounts</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Sync your calendar and cloud notes.</div>
               {/* This used to be a hardcoded, always-"Synced" duplicate of the
                   real Integrations tab (fake state for Apple Calendar/Notion/
@@ -39559,7 +39805,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             <Card style={{border:"1px solid rgba(224,90,71,0.22)"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:18}}>
                 <div>
-                  <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Delete account</div>
+                  <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Delete account</div>
                   <div style={{fontSize:12,color:T.muted,lineHeight:1.55}}>Permanently delete your account and study data. You'll be removed from groups, and old shared messages may remain as Deleted user.</div>
                 </div>
                 <Btn variant="danger" onClick={()=>{setDeleteConfirmText("");setDeleteAccountError("");setDeleteAccountOpen(true);}} style={{flexShrink:0}}>Delete my account</Btn>
@@ -39633,7 +39879,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
 
           {active==="Notifications" && (<>
             <Card style={{marginBottom:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Notification Preferences</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Notification Preferences</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Control how incoming chat messages reach you: a soft chime, a native desktop alert, or both, depending on what you're doing.</div>
               <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:14,padding:"13px 0",borderBottom:`1px solid ${T.border}`}}>
                 <div style={{flex:1,marginRight:14}}>
@@ -39668,12 +39914,12 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <Row label="Enable Message Audio Chimes" sub="A soft chime when a message arrives while you're elsewhere in Studlin. Muted automatically during a lock-in session." k="chatChimes" />
             </Card>
             <Card style={{marginBottom:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Task &amp; App Notifications</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Task &amp; App Notifications</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Master switch for all Studlin alerts. Smart reminders fire before study blocks begin.</div>
               <Row label="Task & App Notifications" sub="Smart alerts before study blocks and deadline reminders." k="notifMaster" />
             </Card>
             <Card style={{marginBottom:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Reminders</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Reminders</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Choose what wakes you up.</div>
               {/* "Push notifications" used to sit here too, describing the
                   exact same scope as "Task & App Notifications" above --
@@ -39700,7 +39946,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
 
           {active==="Privacy" && (<>
             <Card style={{marginBottom:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Private Account · Serious Mode</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Private Account · Serious Mode</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Strip gamification and go heads-down. Focus minutes, levels, and Weekly Wrapped are hidden. Chat, calendar sharing, and notes stay fully accessible.</div>
               {/* N3 in the audit: no leaderboard exists anywhere in the
                   app, and this toggle doesn't affect Dashboard at all
@@ -39714,7 +39960,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               } />
             </Card>
             <Card style={{marginBottom:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Visibility</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Visibility</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Control what others can see.</div>
               <Row label="Public profile" sub="Let other students find you by name, handle or school. Off by default for high school accounts." k="_" right={
                 <button type="button" role="switch" aria-checked={discoverableNow} aria-label="Public profile" onClick={toggleDiscoverable} style={{padding:0,boxSizing:"border-box",width:38,height:20,borderRadius:10,background:discoverableNow?T.lime:T.card2,border:`1px solid ${discoverableNow?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
@@ -39823,7 +40069,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               </>)}
             </Modal>
             <Card style={{marginBottom:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Suggestions and Stu</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Suggestions and Stu</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Control how much Studlin speaks up. Everything here is optional.</div>
               <Row label="Learn how I work (timers, predictions, suggestions)" sub="Begin buttons and timers, duration questions, best-hours ideas, and study spacing tips. Off means you plan and finish everything by hand." k="smartFeatures" />
               <Row label="Suggestions and tips" sub={"Occasional ideas like \"default new tasks to midday?\" and the questions below. Off means none of them pop up."} k="nudgesMaster" />
@@ -39832,7 +40078,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <Row label="Stu cheers when I finish" sub="A quick celebration after you complete a task." k="mascotCheers" />
             </Card>
             <Card style={{marginBottom:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Questions Studlin asks</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Questions Studlin asks</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>These are how Studlin learns things like how long a class really takes you or how a session went — never required, always skippable, and if you keep skipping one Studlin turns it off for you automatically.</div>
               <Row label="Post-session check-ins" sub="A quick 'how did that go?' after a study session tied to an exam or assignment." k="_" right={
                 <button type="button" role="switch" aria-checked={!!(toggles.askCheckIns)} aria-label="Post-session check-ins" onClick={()=>handleAskToggle("askCheckIns")} style={{padding:0,boxSizing:"border-box",width:38,height:20,borderRadius:10,background:toggles.askCheckIns?T.lime:T.card2,border:`1px solid ${toggles.askCheckIns?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
@@ -39846,7 +40092,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               } />
             </Card>
             <Card style={{marginBottom:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Data &amp; AI</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Data &amp; AI</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>You own your notes, essays, and recordings.</div>
               {/* "Use my work to train Studlin AI" used to be here -- read by
                   nothing, and nothing trains on student content (privacy.html
@@ -39864,7 +40110,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               </div>
             </Card>
             <Card style={{marginBottom:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>What Studlin AI remembers</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>What Studlin AI remembers</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Standing preferences it's picked up from your chats — not one-off requests, just things worth not re-explaining every time.</div>
               {aiTimeOfDay&&(
                 <div style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,marginBottom:8}}>
@@ -40007,7 +40253,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               </div>
             )}
             <Card style={{marginBottom:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Calendar Integrations</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Calendar Integrations</div>
               <div style={{fontSize:12,color:T.text,marginBottom:16,lineHeight:1.6}}>Pull your existing events into Studlin. A pasted calendar link is never stored on our servers. Google Calendar syncs automatically in the background instead, which means your sync credential and a copy of your synced events are kept securely server-side — never readable by anyone but you.</div>
               <div style={{display:"flex",flexDirection:"column",gap:10}}>
                 <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${calGoogleLinked?T.teal+"44":T.border}`,transition:"border-color 0.2s"}}>
@@ -40159,7 +40405,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               )}
             </Card>
             <Card>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Coming soon</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Coming soon</div>
               <div style={{fontSize:12,color:T.muted,lineHeight:1.6}}>Notion integration is in development. It'll appear here when ready.</div>
             </Card>
             <Modal open={importCalOpen} onClose={()=>{setImportCalOpen(false);openNextQueuedImportCal();}}
@@ -40453,7 +40699,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <Card style={{marginBottom:12}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:16}}>
                   <div>
-                    <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Manage subscription</div>
+                    <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Manage subscription</div>
                     <div style={{fontSize:12,color:T.muted,lineHeight:1.55}}>
                       {account.subscriptionCancelAtPeriodEnd?"Your subscription is canceled. You'll keep "+(account.plan||getPlan())+" perks until "+fmtBillingDate(account.subscriptionCurrentPeriodEnd||account.subscriptionEndsAt)+".":"Cancel future payments and keep "+(account.plan||getPlan())+" through "+fmtBillingDate(account.subscriptionCurrentPeriodEnd||account.subscriptionEndsAt)+"."}
                     </div>
@@ -40702,7 +40948,7 @@ function Profile({setActive,seriousMode=false}={}) {
           meant two controls silently wrote the same field under different
           labels. */}
       <Card style={{marginBottom:16}}>
-        <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Your profile</div>
+        <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Your profile</div>
         <div style={{fontSize:12,color:T.muted,marginBottom:18}}>Update your school info anytime.</div>
 
         <Field label="Status">
@@ -41092,7 +41338,25 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   // see ROW 2's own comment), so it alone gets the larger, bolder treatment;
   // the other three step down to a real secondary size, not a de-emphasized
   // muted color (still full-strength cards, just visibly not the headline).
-  const sectionTitleStyle=(primary)=>({fontFamily:T.hand,fontSize:primary?26:18,fontWeight:primary?700:600,color:T.text,letterSpacing:primary?"-0.01em":"0"});
+  const sectionTitleStyle=(primary)=>({fontFamily:T.hand,fontSize:primary?26:18,fontWeight:primary?700:600,color:T.lookOn?T.accentInk:T.text,letterSpacing:primary?"-0.01em":"0"});
+  // Palette looks (non-Classic): themed Dashboard surfaces. Every helper returns today's exact
+  // values when T.lookOn is false, so Classic is unchanged.
+  const dashCardStyle=(extra)=>T.lookOn
+    ?{background:T.tint,border:`1px solid ${T.borderTint}`,borderTop:`3px solid ${T.lime}`,borderRadius:8,boxShadow:"0 1px 2px rgba(0,0,0,0.04), 0 8px 22px -12px rgba(0,0,0,0.14)",...extra}
+    :{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,...extra};
+  const dashChipStyle=(extra)=>T.lookOn
+    ?{background:T.chipBg,color:T.accentInk,border:`1px solid ${T.borderTint}`,...extra}
+    :extra;
+  // Rows: white body on the tinted card, accent-soft on hover. Direct DOM style writes (no state).
+  const dashRowBase=T.lookOn?T.card:null;
+  const dashRowHover=T.lookOn?{onMouseEnter:e=>{e.currentTarget.style.background=T.accentSoft;},onMouseLeave:e=>{e.currentTarget.style.background=T.card;}}:{};
+  const dashBtnOutline=(extra)=>T.lookOn
+    ?{background:T.accentSoft,color:T.accentInk,border:`1px solid ${T.borderTint}`,...extra}
+    :{background:"transparent",color:T.text,border:`1px solid ${T.border}`,...extra};
+  const dashBtnPrimaryFg=T.lookOn?lookTextOnFill(T.lime):T.ink;
+  // Weekly Wrapped bars sit on a dark panel: Classic keeps its white-alpha fills, palettes
+  // use the accent at the same strength so bars read as themed, not grey.
+  const wkBarTint=(a)=>T.lookOn?hexA(T.lime,Math.min(1,a*1.6)):`rgba(255,255,255,${a})`;
   // Weekly Wrapped is no longer a permanent dashboard card — it now surfaces
   // once as a full-screen popup during the Sunday/Monday evening window
   // (>=6pm), gated by a per-week localStorage flag so it doesn't reappear
@@ -41174,7 +41438,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
       {/* One-time "Studlin is learning you" reveal -- see
           shouldShowLearnsYouReveal's own comment. */}
       {learnsYouReveal&&(
-        <div style={{background:T.card,border:`1px solid ${T.lime}44`,borderRadius:8,padding:"18px 20px",display:"flex",alignItems:"flex-start",gap:16}}>
+        <div style={dashCardStyle({border:`1px solid ${T.lime}44`,padding:"18px 20px",display:"flex",alignItems:"flex-start",gap:16})}>
           <div style={{flexShrink:0,width:38,height:38,borderRadius:8,background:T.lime+"1A",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🧠</div>
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Studlin's been paying attention</div>
@@ -41192,7 +41456,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
           non-primary Dashboard card title uses) so it guides a new student
           without competing with Today's plan as the actual focal point. */}
       {showSetupChecklist&&(
-        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:checklistExpanded?20:"12px 16px"}}>
+        <div style={dashCardStyle({padding:checklistExpanded?20:"12px 16px"})}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
             <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
               <span style={{fontSize:16}}>🧭</span>
@@ -41202,7 +41466,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
               </span>
             </div>
             <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
-              <button type="button" onClick={()=>setChecklistExpanded(e=>!e)} style={{background:"none",border:"none",color:T.muted,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>{checklistExpanded?"Hide":"Show"}</button>
+              <button type="button" onClick={()=>setChecklistExpanded(e=>!e)} style={{background:"none",border:"none",color:T.lookOn?T.accentInk:T.muted,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>{checklistExpanded?"Hide":"Show"}</button>
               <button type="button" onClick={skipChecklistForNow} title="Skip for now" style={{background:"none",border:"none",color:T.faint,fontSize:14,lineHeight:1,cursor:"pointer",padding:0}}>×</button>
             </div>
           </div>
@@ -41210,7 +41474,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
               plan's own progress indicator already uses -- a text count
               alone still makes a student do the math themselves. */}
           {setupChecklist.hasClasses&&setupChecklist.trackedClasses>0&&(
-            <div style={{height:3,background:T.card2,borderRadius:99,marginTop:12,overflow:"hidden"}}>
+            <div style={{height:3,background:T.lookOn?T.accentSoft:T.card2,borderRadius:99,marginTop:12,overflow:"hidden"}}>
               <div style={{height:"100%",width:Math.round(setupChecklist.classesWithSyllabus/setupChecklist.trackedClasses*100)+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.5s ease"}} />
             </div>
           )}
@@ -41222,8 +41486,8 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                   <div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Add your classes</div>
                   {!setupChecklist.hasClasses&&(
                     <div style={{marginTop:6,display:"flex",gap:8,flexWrap:"wrap"}}>
-                      <button type="button" onClick={()=>openQuickScan(null)} style={{padding:"7px 13px",background:T.lime,color:T.ink,border:"none",borderRadius:6,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Scan your whole schedule</button>
-                      <button type="button" onClick={()=>openQuickScan(null)} style={{padding:"7px 13px",background:"transparent",color:T.muted,border:`1px solid ${T.border}`,borderRadius:6,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Add a class manually</button>
+                      <button type="button" onClick={()=>openQuickScan(null)} style={{padding:"7px 13px",background:T.lime,color:dashBtnPrimaryFg,border:"none",borderRadius:6,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Scan your whole schedule</button>
+                      <button type="button" onClick={()=>openQuickScan(null)} style={{padding:"7px 13px",...dashBtnOutline({color:T.lookOn?T.accentInk:T.muted}),borderRadius:6,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Add a class manually</button>
                     </div>
                   )}
                 </div>
@@ -41245,15 +41509,15 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                             wrong (and unhelpful) for every school on a
                             different platform, so this stays generic and
                             lets them pick the right one in Integrations. */}
-                        {!setupChecklist.lmsConnected&&<button type="button" onClick={()=>{setPendingOpenSetting("integrations");setActive("settings");}} style={{padding:"6px 12px",background:"transparent",color:T.text,border:`1px solid ${T.border}`,borderRadius:6,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Connect your school's LMS</button>}
-                        {!setupChecklist.googleConnected&&<button type="button" onClick={()=>{setPendingOpenSetting("integrations");setActive("settings");}} style={{padding:"6px 12px",background:"transparent",color:T.text,border:`1px solid ${T.border}`,borderRadius:6,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Connect Google Calendar</button>}
+                        {!setupChecklist.lmsConnected&&<button type="button" onClick={()=>{setPendingOpenSetting("integrations");setActive("settings");}} style={{padding:"6px 12px",...dashBtnOutline({}),borderRadius:6,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Connect your school's LMS</button>}
+                        {!setupChecklist.googleConnected&&<button type="button" onClick={()=>{setPendingOpenSetting("integrations");setActive("settings");}} style={{padding:"6px 12px",...dashBtnOutline({}),borderRadius:6,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Connect Google Calendar</button>}
                       </div>
                       <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:10}}>
                         {setupChecklist.classesNeedingSyllabus.slice(0,4).map(s=>(
-                          <div key={s.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",borderRadius:8,border:`1px solid ${T.border}`,background:T.card2}}>
-                            <span style={{width:8,height:8,borderRadius:"50%",background:s.color||T.lime,flexShrink:0}} />
+                          <div key={s.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",borderRadius:8,border:`1px solid ${T.lookOn?T.borderTint:T.border}`,background:T.lookOn?T.card:T.card2}}>
+                            <span style={{width:8,height:8,borderRadius:"50%",background:(T.lookOn?subjectColor(s.id,s.color):s.color)||T.lime,flexShrink:0}} />
                             <span style={{flex:1,minWidth:0,fontSize:12,color:T.text,fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.label}</span>
-                            <button type="button" onClick={()=>openQuickScan(s.id)} style={{flexShrink:0,padding:"4px 9px",borderRadius:6,border:"none",background:T.lime,color:T.ink,fontSize:10.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Import syllabus</button>
+                            <button type="button" onClick={()=>openQuickScan(s.id)} style={{flexShrink:0,padding:"4px 9px",borderRadius:6,border:"none",background:T.lime,color:dashBtnPrimaryFg,fontSize:10.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Import syllabus</button>
                             <button type="button" onClick={()=>skipClassSyllabus(s.id)} title="This class doesn't need one" style={{flexShrink:0,background:"none",border:"none",color:T.faint,fontSize:13,lineHeight:1,cursor:"pointer",padding:0}}>×</button>
                           </div>
                         ))}
@@ -41277,21 +41541,21 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
           everything-assigned reference comes after. */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
         {/* Today's plan */}
-        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:20,display:"flex",flexDirection:"column"}}>
+        <div style={dashCardStyle({padding:20,display:"flex",flexDirection:"column"})}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8,flexWrap:"wrap"}}>
             <span style={sectionTitleStyle(true)}>Today's plan</span>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.1em",padding:"4px 9px",borderRadius:5,background:T.card2,color:T.muted,fontWeight:600}}>{planDoneCount} / {planCountable.length} DONE</span>
-              <button onClick={()=>setActive("calendar")} style={{fontSize:12,color:T.muted,display:"inline-flex",alignItems:"center",gap:3,cursor:"pointer",background:"none",border:"none",fontFamily:T.font,fontWeight:500}}>Calendar <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
+              <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.1em",padding:"4px 9px",borderRadius:5,background:T.card2,color:T.muted,fontWeight:600,...dashChipStyle({})}}>{planDoneCount} / {planCountable.length} DONE</span>
+              <button onClick={()=>setActive("calendar")} style={{fontSize:12,color:T.lookOn?T.accentInk:T.muted,display:"inline-flex",alignItems:"center",gap:3,cursor:"pointer",background:"none",border:"none",fontFamily:T.font,fontWeight:T.lookOn?600:500}}>Calendar <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
             </div>
           </div>
-          {plan.length>0&&<div style={{height:3,background:T.card2,borderRadius:99,marginBottom:14,overflow:"hidden"}}><div style={{height:"100%",width:Math.round(planDoneCount/Math.max(planCountable.length,1)*100)+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.5s ease"}} /></div>}
+          {plan.length>0&&<div style={{height:3,background:T.lookOn?T.accentSoft:T.card2,borderRadius:99,marginBottom:14,overflow:"hidden"}}><div style={{height:"100%",width:Math.round(planDoneCount/Math.max(planCountable.length,1)*100)+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.5s ease"}} /></div>}
           {plan.length===0
             ?<div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px 8px",textAlign:"center"}}>
               <div style={{fontSize:13,color:T.muted,marginBottom:18,lineHeight:1.6}}>Nothing scheduled for today. Add events to your calendar and they appear here automatically.</div>
               <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
-                <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",background:T.lime,color:T.ink,border:"none",borderRadius:6,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Add a task</button>
-                <button onClick={()=>{lsSet("pendingBrainDump",true);setActive("calendar");}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",background:"transparent",color:T.text,border:`1px solid ${T.border}`,borderRadius:6,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Brain dump everything</button>
+                <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",background:T.lime,color:dashBtnPrimaryFg,border:"none",borderRadius:6,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Add a task</button>
+                <button onClick={()=>{lsSet("pendingBrainDump",true);setActive("calendar");}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",...dashBtnOutline({}),borderRadius:6,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Brain dump everything</button>
               </div>
             </div>
             :plan.map((t)=>{
@@ -41303,7 +41567,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
               // since there's no real events[] entry behind it to mark.
               if(t.isRoutine){
                 return(
-                  <div key={t.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,background:T.card}}>
+                  <div key={t.id} {...dashRowHover} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.lookOn?T.borderTint:T.border}`,borderLeft:T.lookOn&&subjectColor(t.subject,null)?`4px solid ${subjectColor(t.subject,null)}`:undefined,marginBottom:8,background:T.card}}>
                     <div style={{flex:1,minWidth:0}}>
                       <span style={{fontSize:13.5,color:T.text,fontWeight:500}}>{t.title}</span>
                       <div style={{fontSize:11,color:T.muted,marginTop:1}}>{t.subject}{t.subject?" · ":""}{t.kind==="class"?"Class":"Recurring"}</div>
@@ -41332,9 +41596,9 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                 );
               }
               return(
-                <div key={t.id} onClick={()=>{if(t.done)uncrossEventDone(t.id);else{markEventDone(t.id);onTaskCompleted&&onTaskCompleted(t.id);}forcePlan(x=>x+1);}} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer",background:T.card2}}>
-                  <div style={{width:20,height:20,borderRadius:"50%",border:`1.5px solid ${t.done?T.text:T.border}`,background:t.done?T.text:"transparent",flex:"none",display:"grid",placeItems:"center"}}>
-                    {t.done&&<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={T.lime} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                <div key={t.id} onClick={()=>{if(t.done)uncrossEventDone(t.id);else{markEventDone(t.id);onTaskCompleted&&onTaskCompleted(t.id);}forcePlan(x=>x+1);}} {...dashRowHover} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.lookOn?T.borderTint:T.border}`,borderLeft:T.lookOn&&subjectColor(t.subject,null)?`4px solid ${subjectColor(t.subject,null)}`:undefined,marginBottom:8,cursor:"pointer",background:T.lookOn?T.card:T.card2}}>
+                  <div style={{width:20,height:20,borderRadius:"50%",border:`1.5px solid ${t.done?(T.lookOn?T.lime:T.text):(T.lookOn?T.borderTint:T.border)}`,background:t.done?(T.lookOn?T.lime:T.text):"transparent",flex:"none",display:"grid",placeItems:"center"}}>
+                    {t.done&&<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={T.lookOn?lookTextOnFill(T.lime):T.lime} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
                   </div>
                   <div style={{flex:1,minWidth:0}}>
                     <span style={{fontSize:13.5,color:t.done?T.faint:T.text,textDecoration:t.done?"line-through":"none",fontWeight:500}}>{t.title}</span>
@@ -41356,10 +41620,10 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                       ("5 - 5 PM"). */}
                   <span style={{fontFamily:T.mono,fontSize:10,color:T.faint}}>{t.duration>0?fmtTimeRange(t.time,t.duration):fmtClock(t.time)}</span>
                   {!t.done&&isTimerEligible(t)&&(
-                    <button onClick={(e)=>{e.stopPropagation();if(window._setTimerTask)window._setTimerTask(t.isChunk?{...t,duration:t.fullDuration}:t);}} style={{flexShrink:0,padding:"3px 9px",borderRadius:6,border:`1px solid ${T.lime}`,background:T.lime,color:T.ink,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Begin</button>
+                    <button onClick={(e)=>{e.stopPropagation();if(window._setTimerTask)window._setTimerTask(t.isChunk?{...t,duration:t.fullDuration}:t);}} style={{flexShrink:0,padding:"3px 9px",borderRadius:6,border:`1px solid ${T.lime}`,background:T.lime,color:dashBtnPrimaryFg,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Begin</button>
                   )}
                   {!t.done&&t.duration&&(t.kind==="study block"||t.kind==="deadline")&&(
-                    <button onClick={(e)=>{e.stopPropagation();setRescheduleTask(t.isChunk?{...t,duration:t.fullDuration}:t);}} style={{flexShrink:0,padding:"3px 7px",borderRadius:6,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Reschedule</button>
+                    <button onClick={(e)=>{e.stopPropagation();setRescheduleTask(t.isChunk?{...t,duration:t.fullDuration}:t);}} style={{flexShrink:0,padding:"3px 7px",borderRadius:6,...dashBtnOutline({color:T.lookOn?T.accentInk:T.muted}),fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Reschedule</button>
                   )}
                 </div>
               );
@@ -41371,17 +41635,17 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
             calendar/Today's-plan entirely; this is the only place they live.
             Restored here after briefly being removed — replaces "Jump back
             in", which just duplicated what the sidebar nav already does. */}
-        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:20}}>
+        <div style={dashCardStyle({padding:20})}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
               <span style={sectionTitleStyle(false)}>Checklist</span>
-              <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:`1px solid ${T.border}`,borderRadius:5,color:T.muted}}>{checklistItems.length} OPEN</span>
+              <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:`1px solid ${T.border}`,borderRadius:5,color:T.muted,...dashChipStyle({})}}>{checklistItems.length} OPEN</span>
             </div>
           </div>
           <div style={{display:"flex",gap:8,marginBottom:14}}>
             <input value={checklistDraft} onChange={e=>setChecklistDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addChecklistItem();}}
               placeholder="e.g. Send AP scores" style={{flex:1,minWidth:0,background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"9px 10px",color:T.text,fontSize:12.5,fontFamily:T.font,outline:"none"}} />
-            <button onClick={addChecklistItem} disabled={!checklistDraft.trim()} style={{padding:"9px 12px",background:T.lime,color:T.ink,border:"none",borderRadius:10,fontSize:12.5,fontWeight:600,cursor:checklistDraft.trim()?"pointer":"default",fontFamily:T.font,opacity:checklistDraft.trim()?1:0.45,flexShrink:0}}>Add</button>
+            <button onClick={addChecklistItem} disabled={!checklistDraft.trim()} style={{padding:"9px 12px",background:T.lime,color:dashBtnPrimaryFg,border:"none",borderRadius:10,fontSize:12.5,fontWeight:600,cursor:checklistDraft.trim()?"pointer":"default",fontFamily:T.font,opacity:checklistDraft.trim()?1:0.45,flexShrink:0}}>Add</button>
           </div>
           {/* D3 in the audit: this used to have no cap and no scroll
               container at all -- every other Dashboard list caps at 4-5
@@ -41416,8 +41680,8 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
               // done item would be indistinguishable from a pending one.
               return (
               <div key={item.id} style={{position:"relative"}}>
-                <div onClick={()=>toggleChecklistItem(item.id)} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"9px 12px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer",opacity:item.status==="done"?0.55:1}}>
-                  <div style={{width:18,height:18,borderRadius:"50%",border:`1.5px solid ${item.status==="done"?T.lime:T.faint}`,background:item.status==="done"?T.lime:"transparent",flex:"none",marginTop:1,display:"grid",placeItems:"center",color:T.ink,fontSize:11}}>{item.status==="done"&&Icon.check}</div>
+                <div onClick={()=>toggleChecklistItem(item.id)} {...dashRowHover} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"9px 12px",borderRadius:12,border:`1px solid ${T.lookOn?T.borderTint:T.border}`,marginBottom:8,cursor:"pointer",opacity:item.status==="done"?0.55:1,background:T.lookOn?T.card:undefined}}>
+                  <div style={{width:18,height:18,borderRadius:"50%",border:`1.5px solid ${item.status==="done"?T.lime:T.faint}`,background:item.status==="done"?T.lime:"transparent",flex:"none",marginTop:1,display:"grid",placeItems:"center",color:dashBtnPrimaryFg,fontSize:11}}>{item.status==="done"&&Icon.check}</div>
                   <div style={{flex:1,minWidth:0,fontSize:12.5,color:T.text,fontWeight:500,lineHeight:1.4,overflowWrap:"break-word",textDecoration:item.status==="done"?"line-through":"none"}}>{item.title}</div>
                   <button onClick={(e)=>{e.stopPropagation();setChecklistMenuOpenId(checklistMenuOpenId===item.id?null:item.id);}} style={{flexShrink:0,background:"none",border:"none",color:T.muted,cursor:"pointer",padding:"0 0 0 6px",fontSize:14,lineHeight:1,marginTop:-2}}>⋯</button>
                 </div>
@@ -41439,18 +41703,18 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
 
       {/* ROW 5: Upcoming + Pick up where you left off */}
       <div style={{display:"grid",gridTemplateColumns:"5fr 7fr",gap:16}}>
-        <div style={{background:T.card,borderRadius:8,padding:20,border:`1px solid ${T.border}`}}>
+        <div style={dashCardStyle({padding:20})}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
               <span style={sectionTitleStyle(false)}>Upcoming</span>
-              <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:`1px solid ${T.border}`,borderRadius:5,color:T.muted}}>NEXT 14 DAYS</span>
+              <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:`1px solid ${T.border}`,borderRadius:5,color:T.muted,...dashChipStyle({})}}>NEXT 14 DAYS</span>
             </div>
             <button onClick={()=>setActive("calendar")} style={{fontSize:12,color:T.muted,display:"inline-flex",alignItems:"center",gap:3,cursor:"pointer",background:"none",border:"none",fontFamily:T.font}}>Calendar <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
           </div>
           {upcomingEvents.length===0
             ?<div style={{padding:"18px 0",textAlign:"center"}}>
               <div style={{fontSize:13,color:T.muted,marginBottom:12,lineHeight:1.5}}>Nothing on the horizon yet. Add one thing that's due this week and Studlin will plan around it.</div>
-              <button type="button" onClick={()=>{lsSet("pendingAddTask",true);setActive("calendar");}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",background:T.lime,color:T.ink,border:"none",borderRadius:6,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>+ Add something due this week</button>
+              <button type="button" onClick={()=>{lsSet("pendingAddTask",true);setActive("calendar");}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",background:T.lime,color:T.onLime,border:"none",borderRadius:6,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>+ Add something due this week</button>
             </div>
             :upcomingEvents.map((ev,i)=>(
               // D4 in the audit: this used to just switch tabs generically
@@ -41458,7 +41722,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
               // use to jump straight to an event's own detail view, it was
               // just never called here.
               <div key={ev.id} onClick={()=>setDetailEventId(ev.id)} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 0",borderBottom:i<upcomingEvents.length-1?`1px solid ${T.border}`:"none",cursor:"pointer"}}>
-                <div style={{width:44,height:44,borderRadius:10,background:ev.urgent?T.lime:T.card2,color:ev.urgent?T.ink:T.text,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                <div style={{width:44,height:44,borderRadius:10,background:ev.urgent?T.lime:(T.lookOn?T.accentSoft:T.card2),color:ev.urgent?dashBtnPrimaryFg:(T.lookOn?T.accentInk:T.text),display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                   <span style={{fontSize:15,fontWeight:800,lineHeight:1}}>{ev.d}</span>
                   <span style={{fontSize:8.5,fontWeight:700,letterSpacing:"0.04em"}}>{ev.mo}</span>
                 </div>
@@ -41475,11 +41739,11 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
             </button>
           )}
         </div>
-        <div style={{background:T.card,borderRadius:8,padding:20,border:`1px solid ${T.border}`}}>
+        <div style={dashCardStyle({padding:20})}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
               <span style={sectionTitleStyle(false)}>Pick up where you left off</span>
-              <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:`1px solid ${T.border}`,borderRadius:5,color:T.muted}}>RECENT</span>
+              <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:`1px solid ${T.border}`,borderRadius:5,color:T.muted,...dashChipStyle({})}}>RECENT</span>
             </div>
           </div>
           {pickUpItems.length===0
@@ -41534,11 +41798,11 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                     <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
                       <div style={{width:"100%",display:"flex",flexDirection:"column",justifyContent:"flex-end",height:40}}>
                         {d.mins>0
-                          ?<div style={{width:"100%",height:h,background:d.isToday?T.lime:"rgba(255,255,255,0.25)",borderRadius:"3px 3px 0 0"}} />
-                          :<div style={{width:"100%",height:3,background:"rgba(255,255,255,0.10)",borderRadius:2}} />
+                          ?<div style={{width:"100%",height:h,background:d.isToday?T.lime:wkBarTint(0.25),borderRadius:"3px 3px 0 0"}} />
+                          :<div style={{width:"100%",height:3,background:wkBarTint(0.10),borderRadius:2}} />
                         }
                       </div>
-                      <span style={{fontSize:9,fontFamily:T.mono,color:d.isToday?T.lime:"rgba(255,255,255,0.4)",fontWeight:d.isToday?700:400}}>{d.lab}</span>
+                      <span style={{fontSize:9,fontFamily:T.mono,color:d.isToday?T.lime:wkBarTint(0.4),fontWeight:d.isToday?700:400}}>{d.lab}</span>
                     </div>
                   );
                 })}
@@ -41592,7 +41856,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                 {weekAheadSummary.days.map((d,i)=>{
                   const maxMins=Math.max.apply(null,weekAheadSummary.days.map(x=>x.minutes).concat([1]));
                   const h=d.minutes>0?Math.max(4,Math.round(d.minutes/maxMins*32)):0;
-                  const barColor=d.tier==="heavy"?T.amber:d.tier==="moderate"?"rgba(255,255,255,0.4)":"rgba(255,255,255,0.18)";
+                  const barColor=d.tier==="heavy"?T.amber:d.tier==="moderate"?wkBarTint(0.4):wkBarTint(0.18);
                   const lab=new Date(d.date+"T12:00:00").toLocaleDateString("en-US",{weekday:"short"}).slice(0,1).toUpperCase();
                   return(
                     <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
@@ -41622,7 +41886,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
               )}
             </>)}
           </div>
-          <button onClick={dismissWrapped} style={{width:"100%",padding:"11px 0",borderRadius:6,background:T.lime,color:T.ink,border:"none",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Done</button>
+          <button onClick={dismissWrapped} style={{width:"100%",padding:"11px 0",borderRadius:6,background:T.lime,color:T.onLime,border:"none",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Done</button>
         </div>
       </div>
     )}
@@ -41675,7 +41939,7 @@ function FeedbackPage() {
       </div>
       <div style={{fontFamily:T.hand,fontSize:36,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>Thanks for the feedback.</div>
       <div style={{fontSize:14,color:T.text,maxWidth:360,lineHeight:1.6}}>Every note goes straight to the team. We read them all and use them to build what matters to you.</div>
-      <button onClick={()=>{setSent(false);setCategory(null);setMsg("");}} style={{marginTop:8,padding:"10px 22px",background:T.lime,color:T.ink,border:"none",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Send another</button>
+      <button onClick={()=>{setSent(false);setCategory(null);setMsg("");}} style={{marginTop:8,padding:"10px 22px",background:T.lime,color:T.onLime,border:"none",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Send another</button>
     </div>
   );
 
@@ -42012,7 +42276,7 @@ function NotifPermModal({onAllow=()=>{},onDeny=()=>{}}) {
         <div style={{fontFamily:T.sans,fontSize:14,color:T.muted,lineHeight:1.6,marginBottom:28}}>
           Allow Studlin to send you smart alerts before study blocks begin — so you never miss a lock-in session.
         </div>
-        <button onClick={onAllow} style={{width:"100%",padding:"13px 0",borderRadius:12,background:T.lime,color:T.ink,border:"none",fontFamily:T.sans,fontWeight:700,fontSize:15,cursor:"pointer",marginBottom:10,letterSpacing:"-0.2px"}}>Allow notifications</button>
+        <button onClick={onAllow} style={{width:"100%",padding:"13px 0",borderRadius:12,background:T.lime,color:T.onLime,border:"none",fontFamily:T.sans,fontWeight:700,fontSize:15,cursor:"pointer",marginBottom:10,letterSpacing:"-0.2px"}}>Allow notifications</button>
         <button onClick={onDeny} style={{width:"100%",padding:"11px 0",borderRadius:12,background:"transparent",color:T.muted,border:`1px solid ${T.border}`,fontFamily:T.sans,fontWeight:500,fontSize:14,cursor:"pointer"}}>Not now</button>
       </div>
     </div>
@@ -42238,9 +42502,16 @@ function App() {
     return "Lime";
   });
   const [density,setDensityState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-density"))||"Comfortable");
+  // Subscribe to the Look BEFORE applyTheme: a palette pick re-renders App, applyTheme (via
+  // applyLookTheme) mutates T first, then every child re-reads it. Children are not memoized.
+  // The tab area is deliberately NOT keyed by look: the Customize panel lives inside it
+  // and a remount would close the panel on every pick.
+  const appLook=useLook();
   applyTheme(theme, accent, density); // mutate T on every render so all child components re-read
+  // A class added after a palette was chosen gets its swatch written into look.perClass.
+  useEffect(()=>{try{if(!lookIsClassic(getLook()))lookPersistMissing(getSubjects());}catch(e){}});
   const setTheme=(name)=>{ setThemeState(name); if(typeof localStorage!=="undefined") localStorage.setItem("studlin-theme",name); };
-  const setAccent=(name)=>{ setAccentState(name); if(typeof localStorage!=="undefined") localStorage.setItem("studlin-accent",name); };
+  const setAccent=(name)=>{ setAccentState(name); if(typeof localStorage!=="undefined") localStorage.setItem("studlin-accent",name); if(!lookIsClassic(getLook()))setLook({accentFollows:false}); };
   const setDensity=(name)=>{ setDensityState(name); if(typeof localStorage!=="undefined") localStorage.setItem("studlin-density",name); };
   // Shared by TaskTimerModal's own onComplete AND the orphaned-session
   // recovery flow below, so both paths apply the exact same double-count
@@ -43236,6 +43507,7 @@ function App() {
   // sibling of [data-page] fixes that.
   const [rescheduleTask,setRescheduleTask]=useState(null);
   const [dashToast,setDashToast]=useState("");
+  const [navHover,setNavHover]=useState(null);
   // Backs EventDetailModal's new Delete button (see its own comment) --
   // same snapshot-and-toast-with-Undo shape CalendarTab's own
   // deleteEventWithUndo already uses for its grid/day-detail delete
@@ -44070,8 +44342,8 @@ function App() {
   const NavItem=({item})=>{
     const act=active===item.id;
     return (
-      <div onClick={()=>setActive(item.id)} title={navExpanded?undefined:(item.badge?item.label+" ("+item.badge+")":item.label)} style={{display:"flex",alignItems:"center",gap:10,padding:navExpanded?"9px 11px":"9px 0",justifyContent:navExpanded?"flex-start":"center",borderRadius:9,cursor:"pointer",fontSize:12.5,background:act?(isLight?"rgba(255,255,255,0.95)":`linear-gradient(100deg, ${T.lime}1c, ${T.lime}08)`):"transparent",color:act?(isLight?T.ink:T.lime):sidebarMuted,fontWeight:act?600:400,marginBottom:2,border:`1px solid ${act?(isLight?"transparent":T.lime+"30"):"transparent"}`,boxShadow:act&&!isLight?`0 4px 14px -8px ${T.lime}70`:"none",transition:"all 0.18s cubic-bezier(.2,.8,.2,1)"}}>
-        <span style={{width:16,height:16,position:"relative",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:act?(isLight?T.ink:T.lime):sidebarFaint}}>
+      <div onClick={()=>setActive(item.id)} title={navExpanded?undefined:(item.badge?item.label+" ("+item.badge+")":item.label)} style={{display:"flex",alignItems:"center",gap:10,padding:navExpanded?"9px 11px":"9px 0",justifyContent:navExpanded?"flex-start":"center",borderRadius:9,cursor:"pointer",fontSize:12.5,background:act?(T.lookOn?T.accentSoft:isLight?"rgba(255,255,255,0.95)":`linear-gradient(100deg, ${T.lime}1c, ${T.lime}08)`):(navHover===item.id&&T.lookOn?hexA(T.tint,0.14):"transparent"),color:act?(T.lookOn?T.accentInk:isLight?T.ink:T.lime):sidebarMuted,fontWeight:act?600:400,marginBottom:2,border:`1px solid ${act?(isLight||T.lookOn?"transparent":T.lime+"30"):"transparent"}`,boxShadow:act&&T.lookOn?`inset 3px 0 0 ${T.lime}`:act&&!isLight?`0 4px 14px -8px ${T.lime}70`:"none",transition:"all 0.18s cubic-bezier(.2,.8,.2,1)"}} onMouseEnter={()=>setNavHover(item.id)} onMouseLeave={()=>setNavHover(h=>h===item.id?null:h)}>
+        <span style={{width:16,height:16,position:"relative",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:act?(T.lookOn?T.accentInk:isLight?T.ink:T.lime):sidebarFaint}}>
           {navIcon[item.id]}
           {/* Collapsed rail has no room for the label-row pill below --
               navCollapsed is the default for every user (lsGet default
@@ -44079,7 +44351,7 @@ function App() {
               badge) was invisible unless the sidebar happened to already be
               expanded. Same small-corner-pill language as the streak badge
               on the profile avatar elsewhere in this sidebar. */}
-          {!navExpanded&&item.badge&&<span style={{position:"absolute",top:-5,right:-7,background:T.lime,color:T.ink,borderRadius:8,padding:"1px 4px",fontSize:8,fontWeight:700,lineHeight:1,minWidth:12,textAlign:"center"}}>{item.badge}</span>}
+          {!navExpanded&&item.badge&&<span style={{position:"absolute",top:-5,right:-7,background:T.lime,color:T.onLime,borderRadius:8,padding:"1px 4px",fontSize:8,fontWeight:700,lineHeight:1,minWidth:12,textAlign:"center"}}>{item.badge}</span>}
         </span>
         {navExpanded&&<span style={{flex:1,letterSpacing:"0.01em",whiteSpace:"nowrap"}}>{item.label}</span>}
         {navExpanded&&item.badge&&<span style={{background:T.lime+(act?"":"18"),color:act?T.ink:T.lime,fontSize:9,fontWeight:700,padding:"2px 6px",borderRadius:4,letterSpacing:"0.03em"}}>{item.badge}</span>}
@@ -44096,7 +44368,7 @@ function App() {
           pinned open/closed only by the toggle button below (Phase 5:
           hover-to-expand removed -- icon-only regardless of pointer
           position; a real second panel now lives in Calendar instead). */}
-      <div style={{width:navExpanded?230:48,flexShrink:0,background:isLight?T.surface:"linear-gradient(180deg, #18241D 0%, #0D120F00 60%)",backgroundColor:isLight?T.surface:T.surface,display:"flex",flexDirection:"column",padding:navExpanded?"20px 12px":"16px 6px",borderRight:`1px solid ${isLight?"transparent":T.border}`,overflowY:"auto",overflowX:"hidden",transition:"width 0.22s cubic-bezier(.2,.8,.2,1), padding 0.22s cubic-bezier(.2,.8,.2,1)"}}>
+      <div style={{width:navExpanded?230:48,flexShrink:0,background:isLight?T.surface:"linear-gradient(180deg, #18241D 0%, #0D120F00 60%)",backgroundColor:isLight&&T.lookOn?T.hdrText:T.surface,display:"flex",flexDirection:"column",padding:navExpanded?"20px 12px":"16px 6px",borderRight:`1px solid ${isLight?"transparent":T.border}`,overflowY:"auto",overflowX:"hidden",transition:"width 0.22s cubic-bezier(.2,.8,.2,1), padding 0.22s cubic-bezier(.2,.8,.2,1)"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,padding:"0 6px",marginBottom:20,justifyContent:navExpanded?"space-between":"center"}}>
           {navExpanded&&(
             <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
@@ -44244,7 +44516,7 @@ function App() {
         }} />
       )}
       {dashToast&&(
-        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:1001,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {dashToast}</div>
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:1001,background:T.lookOn?T.accentSoft:T.lime,color:T.lookOn?T.accentInk:T.ink,border:T.lookOn?`1px solid ${T.borderTint}`:"none",fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {dashToast}</div>
       )}
       {/* EVENT DETAIL MODAL — true sibling of [data-page], see detailEventId's
           state declaration above for why. The one shared detail/edit surface
@@ -44279,7 +44551,7 @@ function App() {
             {["monthly","annual"].map(b=>(
               <button key={b} type="button" onClick={()=>setPricingBilling(b)} style={{padding:"9px 16px",border:"none",borderRadius:99,background:pricingBilling===b?T.ink:"transparent",color:pricingBilling===b?T.cream:T.muted,fontFamily:T.font,fontSize:13.5,fontWeight:500,cursor:"pointer",display:"flex",alignItems:"center",gap:7}}>
                 {b==="monthly"?"Monthly":"Annual"}
-                {b==="annual"&&<span style={{fontFamily:T.mono,fontSize:9.5,fontWeight:700,background:T.lime,color:T.ink,padding:"2px 7px",borderRadius:99}}>Save 29%</span>}
+                {b==="annual"&&<span style={{fontFamily:T.mono,fontSize:9.5,fontWeight:700,background:T.lime,color:T.onLime,padding:"2px 7px",borderRadius:99}}>Save 29%</span>}
               </button>
             ))}
           </div>
@@ -44309,7 +44581,7 @@ function App() {
                 ?<>Used your free trial already? <strong style={{color:T.lime}}>Invite another friend</strong> and you'll both get {planDisplayName("Pro-Limited")} again, free.</>
                 :<>Not ready to pay? <strong style={{color:T.lime}}>Invite a friend</strong> instead — you'll both get {planDisplayName("Pro-Limited")}, free.</>}
             </div>
-            <button type="button" onClick={()=>{lsSet("pendingOpenInvite",true);setPricingOpen(false);setActive("friends");}} style={{flexShrink:0,padding:"8px 16px",borderRadius:8,background:T.lime,color:T.ink,border:"none",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:T.font,whiteSpace:"nowrap"}}>Invite a friend</button>
+            <button type="button" onClick={()=>{lsSet("pendingOpenInvite",true);setPricingOpen(false);setActive("friends");}} style={{flexShrink:0,padding:"8px 16px",borderRadius:8,background:T.lime,color:T.onLime,border:"none",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:T.font,whiteSpace:"nowrap"}}>Invite a friend</button>
           </div>
         )}
         <PlanCards billing={pricingBilling} onSelect={(key)=>{
@@ -44761,7 +45033,7 @@ function App() {
           (computed once, above, from bottomRightNotifSlot) picks one
           winner instead of letting them stack on top of each other. */}
       {bottomRightSlot==="promptBatch"&&(
-        <div style={{position:"fixed",bottom:STUDLIN_AI_BUBBLE_CLEARANCE,right:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
+        <div style={{position:"fixed",bottom:STUDLIN_AI_BUBBLE_CLEARANCE,right:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.lookOn?T.accentSoft:T.card,border:`1px solid ${T.lookOn?T.borderTint:T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
           <div style={{fontSize:13,color:T.white,marginBottom:10}}>
             Due soon. Want Studlin to find prep time for these?
           </div>
@@ -44783,7 +45055,7 @@ function App() {
         </div>
       )}
       {bottomRightSlot==="autoToast"&&(
-        <div style={{position:"fixed",bottom:STUDLIN_AI_BUBBLE_CLEARANCE,right:20,zIndex:999,padding:"11px 18px",borderRadius:10,background:T.teal,color:"#fff",fontSize:13,fontWeight:600,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
+        <div style={{position:"fixed",bottom:STUDLIN_AI_BUBBLE_CLEARANCE,right:20,zIndex:999,padding:"11px 18px",borderRadius:10,background:T.lookOn?T.accentSoft:T.teal,color:T.lookOn?T.accentInk:"#fff",border:T.lookOn?`1px solid ${T.borderTint}`:"none",fontSize:13,fontWeight:600,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
           {prepAutoToast}
         </div>
       )}
