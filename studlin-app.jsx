@@ -13744,9 +13744,9 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
           feedback (didn't like being able to have Exams+Assignments both
           up at once). */}
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,marginBottom:20,flexWrap:"wrap"}}>
-        <div style={{display:"flex",gap:2,background:T.card2,padding:2,borderRadius:4,width:"fit-content",flexWrap:"wrap"}}>
+        <div style={{display:"flex",gap:2,background:T.lookOn?T.tint:T.card2,padding:2,borderRadius:4,width:"fit-content",flexWrap:"wrap"}}>
           {[{id:"exams",label:"Exams"},{id:"assignments",label:"Assignments"},{id:"projects",label:"Projects"},{id:"flashcards",label:"Flashcards"},{id:"practiceExams",label:"Practice Exams"},{id:"insights",label:"Insights"}].map(v=>(
-            <button key={v.id} onClick={()=>{setTab(v.id);setSelectedExamId(null);setSelectedAssignmentId(null);setExamTimeEditOpen(false);}} style={{padding:"5px 12px",borderRadius:4,fontSize:12,fontWeight:tab===v.id?600:400,cursor:"pointer",background:tab===v.id?T.card:"transparent",color:tab===v.id?T.text:T.muted,border:"none",fontFamily:T.font,transition:"all 0.15s",whiteSpace:"nowrap"}}>{v.label}</button>
+            <button key={v.id} onClick={()=>{setTab(v.id);setSelectedExamId(null);setSelectedAssignmentId(null);setExamTimeEditOpen(false);}} style={{padding:"5px 12px",borderRadius:4,fontSize:12,fontWeight:tab===v.id?600:400,cursor:"pointer",background:tab===v.id?(T.lookOn?T.hdrBg:T.card):"transparent",color:tab===v.id?(T.lookOn?T.hdrText:T.text):T.muted,border:"none",fontFamily:T.font,transition:"all 0.15s",whiteSpace:"nowrap"}}>{v.label}</button>
           ))}
         </div>
         {showTabToolbar&&(
@@ -14154,7 +14154,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
             <div style={{fontSize:12.5,color:T.muted,marginBottom:14}}>{[selectedAssignment.subject,selectedAssignment.date?niceDate(selectedAssignment.date):null,linkedSessions.length>0?linkedSessions.length+" block"+(linkedSessions.length!==1?"s":"")+" scheduled":hasOwnScheduledTime?"1 block scheduled":"no plan yet"].filter(Boolean).join(" · ")}</div>
             <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:14}}>
               {isCompleted?(
-                <span style={{fontSize:11,fontWeight:700,color:T.lime,background:T.lime+"14",border:`1px solid ${T.lime}44`,borderRadius:6,padding:"4px 10px"}}>COMPLETED</span>
+                <span style={{fontSize:11,fontWeight:700,color:T.lookOn?T.accentInk:T.lime,background:T.lookOn?T.chipBg:T.lime+"14",border:`1px solid ${T.lookOn?T.borderTint:T.lime+"44"}`,borderRadius:6,padding:"4px 10px"}}>COMPLETED</span>
               ):itemLifecycleState(selectedAssignment,today)==="past-due"&&(
                 <span style={{fontSize:11,fontWeight:700,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}44`,borderRadius:6,padding:"4px 10px"}}>PAST DUE</span>
               )}
@@ -14561,7 +14561,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                 once they've actually taken it. */}
             <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:14}}>
               {isExamCompleted?(
-                <span style={{fontSize:11,fontWeight:700,color:T.lime,background:T.lime+"14",border:`1px solid ${T.lime}44`,borderRadius:6,padding:"4px 10px"}}>COMPLETED</span>
+                <span style={{fontSize:11,fontWeight:700,color:T.lookOn?T.accentInk:T.lime,background:T.lookOn?T.chipBg:T.lime+"14",border:`1px solid ${T.lookOn?T.borderTint:T.lime+"44"}`,borderRadius:6,padding:"4px 10px"}}>COMPLETED</span>
               ):itemLifecycleState(selectedExam,dayKey())==="past-due"&&(
                 <span style={{fontSize:11,fontWeight:700,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}44`,borderRadius:6,padding:"4px 10px"}}>PAST DUE</span>
               )}
@@ -14870,7 +14870,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
 
             {(deck||examSessions.length>0)&&(
             <Card style={{padding:20,marginBottom:16}}>
-              <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:10}}>Flashcards</div>
+              <div style={{fontSize:13,fontWeight:700,color:T.lookOn?T.hdrText:T.white,marginBottom:10,...(T.lookOn?{background:T.hdrBg,padding:"6px 10px",borderRadius:6}:{})}}>Flashcards</div>
               {!deck?<div style={{fontSize:12,color:T.muted}}>No deck yet. Generate one from material above.</div>:(
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
                   <div style={{fontSize:12.5,color:T.text}}>{deck.name} · {deck.count} cards</div>
@@ -14899,7 +14899,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
 
             {(pes.length>0||examSessions.length>0)&&(
             <Card style={{padding:20}}>
-              <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:10}}>Practice Exams</div>
+              <div style={{fontSize:13,fontWeight:700,color:T.lookOn?T.hdrText:T.white,marginBottom:10,...(T.lookOn?{background:T.hdrBg,padding:"6px 10px",borderRadius:6}:{})}}>Practice Exams</div>
               {pes.length===0?<div style={{fontSize:12,color:T.muted}}>No practice exams yet. Generate one from material above.</div>:(
                 <div style={{display:"flex",flexDirection:"column",gap:8}}>
                   {pes.map(pe=>{
@@ -14971,7 +14971,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                   {linkedExams.length>0&&(
                     <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
                       {linkedExams.map(ex=>(
-                        <span key={ex.id} style={{fontSize:10.5,fontWeight:700,padding:"3px 8px",borderRadius:99,background:T.lime+"14",color:T.lime,border:`1px solid ${T.lime}33`}}>Exam: {ex.title} · {ex.date}</span>
+                        <span key={ex.id} style={{fontSize:10.5,fontWeight:700,padding:"3px 8px",borderRadius:99,background:T.lookOn?T.chipBg:T.lime+"14",color:T.lookOn?T.accentInk:T.lime,border:`1px solid ${T.lookOn?T.borderTint:T.lime+"33"}`}}>Exam: {ex.title} · {ex.date}</span>
                       ))}
                     </div>
                   )}
@@ -15020,7 +15020,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                   </div>
                   {linkedExam&&(
                     <div style={{marginBottom:10}}>
-                      <span style={{fontSize:10.5,fontWeight:700,padding:"3px 8px",borderRadius:99,background:T.lime+"14",color:T.lime,border:`1px solid ${T.lime}33`}}>Exam: {linkedExam.title} · {linkedExam.date}</span>
+                      <span style={{fontSize:10.5,fontWeight:700,padding:"3px 8px",borderRadius:99,background:T.lookOn?T.chipBg:T.lime+"14",color:T.lookOn?T.accentInk:T.lime,border:`1px solid ${T.lookOn?T.borderTint:T.lime+"33"}`}}>Exam: {linkedExam.title} · {linkedExam.date}</span>
                     </div>
                   )}
                   <div style={{display:"flex",gap:6,flexShrink:0,flexWrap:"wrap"}}>
@@ -15220,7 +15220,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                       Edit distinction (accurate: nothing to edit yet vs.
                       something real already there), just warmed with
                       "study" for consistency with the rest of the app. */}
-                  <button type="button" onClick={()=>setBuildPlanMaterialOpen(true)} style={{flexShrink:0,padding:"6px 12px",borderRadius:7,border:`1px solid ${T.lime}44`,background:T.lime+"14",color:T.lime,fontSize:12,fontWeight:600,fontFamily:T.font,cursor:"pointer"}}>{fileTexts.length>0||materialLinks.length>0?"Edit study material":"+ Add study material"}</button>
+                  <button type="button" onClick={()=>setBuildPlanMaterialOpen(true)} style={{flexShrink:0,padding:"6px 12px",borderRadius:7,border:`1px solid ${T.lookOn?T.borderTint:T.lime+"44"}`,background:T.lookOn?T.accentSoft:T.lime+"14",color:T.lookOn?T.accentInk:T.lime,fontSize:12,fontWeight:600,fontFamily:T.font,cursor:"pointer"}}>{fileTexts.length>0||materialLinks.length>0?"Edit study material":"+ Add study material"}</button>
                   <span style={{fontSize:12,color:T.muted}}>{fileTexts.length>0||materialLinks.length>0?fileTexts.length+materialLinks.length+" material item"+((fileTexts.length+materialLinks.length)!==1?"s":""):"No material added -- Studlin can build a real, focused plan instead of generic review blocks"}</span>
                 </div>
               ):(
@@ -15477,7 +15477,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:12.5,marginBottom:6,gap:8}}>
                       <span style={{color:T.text,flexShrink:0,display:"flex",alignItems:"center",gap:6}}>
                         Session {i+1}
-                        {rowGetsPE&&<span style={{fontSize:9.5,fontWeight:700,padding:"2px 6px",borderRadius:99,background:T.lime+"14",color:T.lime,border:`1px solid ${T.lime}33`}}>PRACTICE EXAM</span>}
+                        {rowGetsPE&&<span style={{fontSize:9.5,fontWeight:700,padding:"2px 6px",borderRadius:99,background:T.lookOn?T.chipBg:T.lime+"14",color:T.lookOn?T.accentInk:T.lime,border:`1px solid ${T.lookOn?T.borderTint:T.lime+"33"}`}}>PRACTICE EXAM</span>}
                         {rowGetsCards&&<span style={{fontSize:9.5,fontWeight:700,padding:"2px 6px",borderRadius:99,background:T.teal+"14",color:T.teal,border:`1px solid ${T.teal}33`}}>+ FLASHCARDS</span>}
                       </span>
                       <div style={{display:"flex",alignItems:"center",gap:6}}>
@@ -16402,7 +16402,7 @@ function Flashcards({setActive=()=>{}}={}) {
                       {linkedExams.length>0&&(
                         <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6,flexWrap:"wrap"}}>
                           {linkedExams.map(ex=>(
-                            <span key={ex.id} style={{fontSize:10.5,fontWeight:700,padding:"3px 8px",borderRadius:99,background:T.lime+"14",color:T.lime,border:`1px solid ${T.lime}33`}}>Exam: {ex.title} · {ex.date}</span>
+                            <span key={ex.id} style={{fontSize:10.5,fontWeight:700,padding:"3px 8px",borderRadius:99,background:T.lookOn?T.chipBg:T.lime+"14",color:T.lookOn?T.accentInk:T.lime,border:`1px solid ${T.lookOn?T.borderTint:T.lime+"33"}`}}>Exam: {ex.title} · {ex.date}</span>
                           ))}
                           <button onClick={(e)=>{e.stopPropagation();openReviewSchedule(d);}} style={{background:"none",border:"none",color:T.lime,cursor:"pointer",fontFamily:T.font,fontSize:11,fontWeight:600,textDecoration:"underline",padding:0}}>Schedule reviews →</button>
                         </div>
@@ -16989,7 +16989,7 @@ function Notes({setActive=()=>{}}){
   const hasMargin=activeComments.length>0;
 
   // Toolbar button style helper
-  const tbBtn=(active=false)=>({padding:"5px 9px",borderRadius:5,border:`1px solid ${active?T.lime+"55":T.border}`,background:active?T.lime+"14":"transparent",color:active?T.lime:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12,fontWeight:600,display:"inline-flex",alignItems:"center",gap:4,transition:"all 0.12s"});
+  const tbBtn=(active=false)=>({padding:"5px 9px",borderRadius:5,border:`1px solid ${active?T.lime+"55":T.border}`,background:active?(T.lookOn?T.accentSoft:T.lime+"14"):"transparent",color:active?(T.lookOn?T.accentInk:T.lime):T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12,fontWeight:600,display:"inline-flex",alignItems:"center",gap:4,transition:"all 0.12s"});
 
   return (
     <div>
@@ -17326,7 +17326,7 @@ function Notes({setActive=()=>{}}){
             const renderNoteRow=(n,i)=>{
               const idx=notes.indexOf(n);
               return (
-                <div key={n.id||i} onClick={()=>{setSel(idx);setPopover(null);}} style={{background:idx===sel?T.card2:T.card,borderRadius:8,padding:"11px 13px",marginBottom:6,border:"1px solid "+(idx===sel?colorOf(n.tag)+"55":T.border),cursor:"pointer",transition:"all 0.15s"}}>
+                <div key={n.id||i} onClick={()=>{setSel(idx);setPopover(null);}} style={{background:idx===sel?(T.lookOn?T.accentSoft:T.card2):(T.lookOn?T.tint:T.card),borderRadius:8,padding:"11px 13px",marginBottom:6,border:"1px solid "+(idx===sel?(T.lookOn?T.lime:colorOf(n.tag)+"55"):(T.lookOn?T.borderTint:T.border)),boxShadow:idx===sel&&T.lookOn?`inset 3px 0 0 ${T.lime}`:"none",cursor:"pointer",transition:"all 0.15s"}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
                     <div style={{fontSize:12,fontWeight:600,color:T.white,flex:1,marginRight:8,lineHeight:1.3}}>{n.title}</div>
                     <Badge color={colorOf(n.tag)}>{n.tag}</Badge>
@@ -29010,7 +29010,7 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
           the Calendar sidebar's own Courses/Activities "+ Add new"
           placement (top of the section, not the bottom). */}
       {addedSummary&&(
-        <div style={{fontSize:12.5,color:T.text,background:T.lime+"14",border:`1px solid ${T.lime}44`,borderRadius:8,padding:"10px 12px",marginBottom:16,lineHeight:1.5}}>{addedSummary}</div>
+        <div style={{fontSize:12.5,color:T.lookOn?T.accentInk:T.text,background:T.lookOn?T.accentSoft:T.lime+"14",border:`1px solid ${T.lookOn?T.borderTint:T.lime+"44"}`,borderRadius:8,padding:"10px 12px",marginBottom:16,lineHeight:1.5}}>{addedSummary}</div>
       )}
       {!addingRoutine
         ? <Btn variant="subtle" onClick={()=>{setAddingRoutine(true);setAddedSummary(null);}} style={{width:"100%",justifyContent:"center",marginBottom:16}}>+ Add Recurring Activity</Btn>
@@ -29024,7 +29024,7 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
               <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                 {ROUTINE_DOW.map((d,i)=>{
                   const sel=days.includes(i);
-                  return <button key={i} type="button" onClick={()=>toggleDay(i)} style={{padding:"6px 12px",borderRadius:7,fontSize:12,fontWeight:sel?600:400,cursor:"pointer",border:`1px solid ${sel?T.lime+"66":T.border}`,background:sel?T.lime+"14":"transparent",color:sel?T.lime:T.muted,fontFamily:T.font}}>{d}</button>;
+                  return <button key={i} type="button" onClick={()=>toggleDay(i)} style={{padding:"6px 12px",borderRadius:7,fontSize:12,fontWeight:sel?600:400,cursor:"pointer",border:`1px solid ${sel?T.lime+"66":T.border}`,background:sel?(T.lookOn?T.accentSoft:T.lime+"14"):"transparent",color:sel?(T.lookOn?T.accentInk:T.lime):T.muted,fontFamily:T.font}}>{d}</button>;
                 })}
               </div>
             </Field>
@@ -38425,7 +38425,17 @@ function stuPalette(){
   let name="Lime";
   try{name=localStorage.getItem("studlin-accent")||"Lime";}catch(e){}
   const a=ACCENTS[name]||ACCENTS.Lime;
-  return {color:a.dk.lime,outline:"#0E1F18",edge:T.mode==="dark"?"#E6ECE7":"#0E1F18"};
+  // Under a non-Classic palette whose accent the student has not overridden,
+  // Stu wears the palette accent (the dark-mode swatch, as before).
+  let color=a.dk.lime;
+  try{
+    const lk=getLook();
+    if(!lookIsClassic(lk)&&lk.accentFollows!==false){
+      const pal=lookPaletteById(lk.palette);
+      if(pal&&pal.theme)color=pal.theme.dark.accent;
+    }
+  }catch(e){}
+  return {color,outline:"#0E1F18",edge:T.mode==="dark"?"#E6ECE7":"#0E1F18"};
 }
 // Bedtime nudge: due from 30 minutes before the student's own sleep time (set in
 // the setup wizard) until an hour after it, at most once per 6 hours. Handles a
@@ -43494,6 +43504,7 @@ function App() {
   // sibling of [data-page] fixes that.
   const [rescheduleTask,setRescheduleTask]=useState(null);
   const [dashToast,setDashToast]=useState("");
+  const [navHover,setNavHover]=useState(null);
   // Backs EventDetailModal's new Delete button (see its own comment) --
   // same snapshot-and-toast-with-Undo shape CalendarTab's own
   // deleteEventWithUndo already uses for its grid/day-detail delete
@@ -44328,8 +44339,8 @@ function App() {
   const NavItem=({item})=>{
     const act=active===item.id;
     return (
-      <div onClick={()=>setActive(item.id)} title={navExpanded?undefined:(item.badge?item.label+" ("+item.badge+")":item.label)} style={{display:"flex",alignItems:"center",gap:10,padding:navExpanded?"9px 11px":"9px 0",justifyContent:navExpanded?"flex-start":"center",borderRadius:9,cursor:"pointer",fontSize:12.5,background:act?(isLight?"rgba(255,255,255,0.95)":`linear-gradient(100deg, ${T.lime}1c, ${T.lime}08)`):"transparent",color:act?(isLight?T.ink:T.lime):sidebarMuted,fontWeight:act?600:400,marginBottom:2,border:`1px solid ${act?(isLight?"transparent":T.lime+"30"):"transparent"}`,boxShadow:act&&!isLight?`0 4px 14px -8px ${T.lime}70`:"none",transition:"all 0.18s cubic-bezier(.2,.8,.2,1)"}}>
-        <span style={{width:16,height:16,position:"relative",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:act?(isLight?T.ink:T.lime):sidebarFaint}}>
+      <div onClick={()=>setActive(item.id)} title={navExpanded?undefined:(item.badge?item.label+" ("+item.badge+")":item.label)} style={{display:"flex",alignItems:"center",gap:10,padding:navExpanded?"9px 11px":"9px 0",justifyContent:navExpanded?"flex-start":"center",borderRadius:9,cursor:"pointer",fontSize:12.5,background:act?(T.lookOn?T.accentSoft:isLight?"rgba(255,255,255,0.95)":`linear-gradient(100deg, ${T.lime}1c, ${T.lime}08)`):(navHover===item.id&&T.lookOn?hexA(T.tint,0.14):"transparent"),color:act?(T.lookOn?T.accentInk:isLight?T.ink:T.lime):sidebarMuted,fontWeight:act?600:400,marginBottom:2,border:`1px solid ${act?(isLight||T.lookOn?"transparent":T.lime+"30"):"transparent"}`,boxShadow:act&&T.lookOn?`inset 3px 0 0 ${T.lime}`:act&&!isLight?`0 4px 14px -8px ${T.lime}70`:"none",transition:"all 0.18s cubic-bezier(.2,.8,.2,1)"}} onMouseEnter={()=>setNavHover(item.id)} onMouseLeave={()=>setNavHover(h=>h===item.id?null:h)}>
+        <span style={{width:16,height:16,position:"relative",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:act?(T.lookOn?T.accentInk:isLight?T.ink:T.lime):sidebarFaint}}>
           {navIcon[item.id]}
           {/* Collapsed rail has no room for the label-row pill below --
               navCollapsed is the default for every user (lsGet default
@@ -44354,7 +44365,7 @@ function App() {
           pinned open/closed only by the toggle button below (Phase 5:
           hover-to-expand removed -- icon-only regardless of pointer
           position; a real second panel now lives in Calendar instead). */}
-      <div style={{width:navExpanded?230:48,flexShrink:0,background:isLight?T.surface:"linear-gradient(180deg, #18241D 0%, #0D120F00 60%)",backgroundColor:isLight?T.surface:T.surface,display:"flex",flexDirection:"column",padding:navExpanded?"20px 12px":"16px 6px",borderRight:`1px solid ${isLight?"transparent":T.border}`,overflowY:"auto",overflowX:"hidden",transition:"width 0.22s cubic-bezier(.2,.8,.2,1), padding 0.22s cubic-bezier(.2,.8,.2,1)"}}>
+      <div style={{width:navExpanded?230:48,flexShrink:0,background:isLight?T.surface:"linear-gradient(180deg, #18241D 0%, #0D120F00 60%)",backgroundColor:isLight&&T.lookOn?T.hdrText:T.surface,display:"flex",flexDirection:"column",padding:navExpanded?"20px 12px":"16px 6px",borderRight:`1px solid ${isLight?"transparent":T.border}`,overflowY:"auto",overflowX:"hidden",transition:"width 0.22s cubic-bezier(.2,.8,.2,1), padding 0.22s cubic-bezier(.2,.8,.2,1)"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,padding:"0 6px",marginBottom:20,justifyContent:navExpanded?"space-between":"center"}}>
           {navExpanded&&(
             <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
@@ -44502,7 +44513,7 @@ function App() {
         }} />
       )}
       {dashToast&&(
-        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:1001,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {dashToast}</div>
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:1001,background:T.lookOn?T.accentSoft:T.lime,color:T.lookOn?T.accentInk:T.ink,border:T.lookOn?`1px solid ${T.borderTint}`:"none",fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {dashToast}</div>
       )}
       {/* EVENT DETAIL MODAL — true sibling of [data-page], see detailEventId's
           state declaration above for why. The one shared detail/edit surface
@@ -45019,7 +45030,7 @@ function App() {
           (computed once, above, from bottomRightNotifSlot) picks one
           winner instead of letting them stack on top of each other. */}
       {bottomRightSlot==="promptBatch"&&(
-        <div style={{position:"fixed",bottom:STUDLIN_AI_BUBBLE_CLEARANCE,right:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
+        <div style={{position:"fixed",bottom:STUDLIN_AI_BUBBLE_CLEARANCE,right:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.lookOn?T.accentSoft:T.card,border:`1px solid ${T.lookOn?T.borderTint:T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
           <div style={{fontSize:13,color:T.white,marginBottom:10}}>
             Due soon. Want Studlin to find prep time for these?
           </div>
@@ -45041,7 +45052,7 @@ function App() {
         </div>
       )}
       {bottomRightSlot==="autoToast"&&(
-        <div style={{position:"fixed",bottom:STUDLIN_AI_BUBBLE_CLEARANCE,right:20,zIndex:999,padding:"11px 18px",borderRadius:10,background:T.teal,color:"#fff",fontSize:13,fontWeight:600,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
+        <div style={{position:"fixed",bottom:STUDLIN_AI_BUBBLE_CLEARANCE,right:20,zIndex:999,padding:"11px 18px",borderRadius:10,background:T.lookOn?T.accentSoft:T.teal,color:T.lookOn?T.accentInk:"#fff",border:T.lookOn?`1px solid ${T.borderTint}`:"none",fontSize:13,fontWeight:600,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
           {prepAutoToast}
         </div>
       )}
