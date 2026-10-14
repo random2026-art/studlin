@@ -100,6 +100,7 @@ function loadStudlinModule(options) {
     "findFreeSlotInWindow","resolveAvailabilityMatch",
     "checkTimeOffImpact","simulateTimeOffBlock",
     "T","applyTheme","ACCENTS",
+    "LOOK_PALETTES","LOOK_BLOCK_STYLES","readLook","saveLook","lookNormalize","lookColorFor","lookBlockStyle","lookSubjectColorMap","contrastRatio","lookReadableText","blendOverBg","SUBJECT_COLORS","darkT","lightT",
     "getWorkWindowMinsFor","detectPeakHourInsight","dismissPeakHourInsight",
     "shouldShowLearnsYouReveal","dismissLearnsYouReveal","LEARNS_YOU_REVEAL_DELAY_MS",
     "shouldShowPrepGuide","dismissPrepGuide",
