@@ -40455,7 +40455,10 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   // is a new student who skips while still lost shouldn't lose the one
   // thing orienting them, forever, from one early click.
   const SETUP_CHECKLIST_SKIP_COOLDOWN_MS=7*86400000;
-  const [checklistExpanded,setChecklistExpanded]=useState(true);
+  // Hide/Show is remembered: it used to be plain state, so the card sprang back
+  // open every time the student left the Dashboard and returned.
+  const [checklistExpanded,setChecklistExpandedRaw]=useState(()=>!lsGet("setupChecklistCollapsed",false));
+  const setChecklistExpanded=(fn)=>setChecklistExpandedRaw(prev=>{const next=typeof fn==="function"?fn(prev):fn;lsSet("setupChecklistCollapsed",!next);return next;});
   const [checklistCompletedDismiss,setChecklistCompletedDismiss]=useState(()=>lsGet("setupChecklistCompletedDismiss",false));
   const [checklistSkippedAt,setChecklistSkippedAt]=useState(()=>lsGet("setupChecklistSkippedAt",0));
   const [skippedCourseIds,setSkippedCourseIds]=useState(()=>lsGet("syllabusSkippedCourseIds",[]));

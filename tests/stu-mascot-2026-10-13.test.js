@@ -191,3 +191,11 @@ describe("Stu bedtime reminder", () => {
     assert.ok(i > 0 && !APP.slice(i - 200, i + 600).includes("—"));
   });
 });
+
+describe("setup checklist Hide stays hidden (2026-10-13)", () => {
+  test("collapse state is persisted, not plain useState(true)", () => {
+    assert.ok(APP.includes('useState(()=>!lsGet("setupChecklistCollapsed",false))'));
+    assert.ok(APP.includes('lsSet("setupChecklistCollapsed",!next)'));
+    assert.ok(!APP.includes("const [checklistExpanded,setChecklistExpanded]=useState(true);"));
+  });
+});
