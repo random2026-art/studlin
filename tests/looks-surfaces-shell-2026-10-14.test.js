@@ -15,22 +15,24 @@ beforeEach(resetLook);
 describe("shell: nav and toasts read the palette tokens", () => {
   const nav = grab("const NavItem=({item})=>{", 2600);
   test("active nav item uses accentSoft + accentInk + a 3px accent bar when a palette is on", () => {
-    assert.ok(nav.includes("T.lookOn?T.accentSoft"));
+    assert.ok(nav.includes("T.lookOn?(softSide?T.hdrBg:T.accentSoft)"));
     assert.ok(nav.includes("T.lookOn?T.accentInk"));
     assert.ok(nav.includes("inset 3px 0 0 ${T.lime}"));
   });
   test("hover uses the faint tint, only when a palette is on", () => {
-    assert.ok(nav.includes("navHover===item.id&&T.lookOn?hexA(T.tint,"));
+    assert.ok(nav.includes("navHover===item.id&&T.lookOn?(softSide?T.accentSoft:hexA(T.tint,"));
     assert.ok(nav.includes("onMouseEnter={()=>setNavHover(item.id)}"));
   });
   test("classic nav branches are preserved", () => {
     assert.ok(nav.includes('"rgba(255,255,255,0.95)"'));
     assert.ok(nav.includes("linear-gradient(100deg, ${T.lime}1c"));
   });
-  test("palette sidebar background uses the dark hdrText ink (white text stays legible), classic keeps T.surface", () => {
-    assert.ok(SRC.includes("backgroundColor:isLight&&T.lookOn?T.hdrText:T.surface"));
+  test("palette sidebar is a calm tinted surface in light mode with readable ink, classic keeps T.surface", () => {
+    assert.ok(SRC.includes("backgroundColor:softSide?T.tint:T.surface"));
     for (const p of m.LOOK_PALETTES.filter((x) => x.id !== "classic")) {
-      assert.ok(m.contrastRatio("#FFFFFF", p.theme.light.hdrText) >= 7, p.id + " sidebar ink vs white");
+      const t = p.theme.light;
+      assert.ok(m.contrastRatio(t.hdrText, t.tint) >= 7, p.id + " sidebar ink vs tint");
+      assert.ok(m.contrastRatio(t.accentInk, t.hdrBg) >= 4.5, p.id + " active item ink vs highlight");
     }
   });
   test("dashToast and bottom-right toasts use accentSoft/accentInk/borderTint when a palette is on", () => {

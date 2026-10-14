@@ -100,7 +100,7 @@ function loadStudlinModule(options) {
     "findFreeSlotInWindow","resolveAvailabilityMatch",
     "checkTimeOffImpact","simulateTimeOffBlock",
     "T","applyTheme","ACCENTS",
-    "LOOK_PALETTES","LOOK_BLOCK_STYLES","readLook","saveLook","lookNormalize","lookColorFor","lookBlockStyle","lookSubjectColorMap","setLook","getLook","applyLookTheme","subjectColor","lookAutoAssign","lookShuffle","lookResetAssign","lookPersistMissing","lookTextOnFill","lookIsClassic","lookRgb","lookDist","contrastRatio","lookReadableText","blendOverBg","SUBJECT_COLORS","darkT","lightT",
+    "LOOK_PALETTES","LOOK_BLOCK_STYLES","readLook","saveLook","lookNormalize","lookColorFor","lookBlockStyle","lookDraftStyle","lookEventColor","lookLuminance","lookSubjectColorMap","setLook","getLook","applyLookTheme","subjectColor","lookAutoAssign","lookShuffle","lookResetAssign","lookPersistMissing","lookTextOnFill","lookIsClassic","lookRgb","lookDist","contrastRatio","lookReadableText","blendOverBg","SUBJECT_COLORS","darkT","lightT",
     "getWorkWindowMinsFor","detectPeakHourInsight","dismissPeakHourInsight",
     "shouldShowLearnsYouReveal","dismissLearnsYouReveal","LEARNS_YOU_REVEAL_DELAY_MS",
     "shouldShowPrepGuide","dismissPrepGuide",

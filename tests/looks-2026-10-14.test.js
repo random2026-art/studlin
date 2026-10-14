@@ -175,7 +175,7 @@ describe("looks: render sites go through the single helper", () => {
     assert.ok((SRC.match(/<LookCustomizePanel /g) || []).length >= 2, "Calendar header and Settings both open the panel");
   });
   test("per-event ev.color still wins over the palette", () => {
-    assert.ok((SRC.match(/ev\.color\|\|colorOf\(ev\.courseId\|\|ev\.subject\)/g) || []).length >= 4);
+    assert.ok((SRC.match(/lookEventColor\(ev\.color,ev\.courseId\|\|ev\.subject,/g) || []).length >= 4);
   });
   test("no em dashes in the looks block", () => {
     assert.equal(SRC.slice(start, end).includes("—"), false);
