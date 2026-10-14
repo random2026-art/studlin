@@ -37544,6 +37544,21 @@ function stuPalette(){
   const a=ACCENTS[name]||ACCENTS.Lime;
   return {color:a.dk.lime,outline:"#0E1F18",edge:T.mode==="dark"?"#E6ECE7":"#0E1F18"};
 }
+// Bedtime nudge: due from 30 minutes before the student's own sleep time (set in
+// the setup wizard) until an hour after it, at most once per 6 hours. Handles a
+// bedtime past midnight. Returns false when no sleep time was ever saved, so
+// nobody is nagged about a bedtime Studlin never asked about.
+function stuBedtimeDue(now){
+  const ws=getWakeSleep();
+  if(!ws||!ws.sleepTime)return false;
+  if(!stuSettingOn("mascotBedtime")||!nudgesAllowed())return false;
+  const d=now||new Date();
+  const cur=d.getHours()*60+d.getMinutes();
+  const diff=(timeToMinutes(ws.sleepTime)-cur+1440)%1440;
+  if(!(diff<=30||diff>=1440-60))return false;
+  const last=lsGet("stuBedtimeShown",0);
+  return !(last&&d.getTime()-last<6*3600*1000);
+}
 const STU_EXIT_MOOD={yes:"happy",cheer:"proud",no:"sad",late:"worried"};
 function StudCompanion({mode,title,clock,navExpanded,onYes,onDone}){
   const [phase,setPhase]=useState("in"); // in > talk > yes|no|late > out
@@ -37552,22 +37567,26 @@ function StudCompanion({mode,title,clock,navExpanded,onYes,onDone}){
   useEffect(()=>{
     const t=[];
     if(phase==="in")t.push(setTimeout(()=>setPhase("talk"),1500));
-    if(phase==="talk"&&mode==="ask")t.push(setTimeout(()=>{howRef.current="late";setPhase("late");},32000));
+    if(phase==="talk"&&(mode==="ask"||mode==="bedtime"))t.push(setTimeout(()=>{howRef.current="late";setPhase("late");},32000));
     if(phase==="talk"&&mode==="cheer")t.push(setTimeout(()=>setPhase("out"),4200));
     if(phase==="yes")t.push(setTimeout(()=>{if(onYes)onYes();setPhase("out");},800));
     if(phase==="no"||phase==="late")t.push(setTimeout(()=>setPhase("out"),phase==="no"?2000:2800));
-    if(phase==="out")t.push(setTimeout(()=>{if(onDone)onDone();},1300));
+    if(phase==="out")t.push(setTimeout(()=>{if(onDone)onDone(howRef.current);},1300));
     return()=>t.forEach(clearTimeout);
   },[phase]);
   const short=(title||"your next task").length>38?(title||"").slice(0,37)+"...":(title||"your next task");
   let mood="happy",line="",sub="";
   if(phase==="in"){mood="happy";}
   else if(phase==="talk"&&mode==="cheer"){mood="celebrating";line=title?"Nice work on "+short+"!":"Nice work!";}
+  else if(phase==="talk"&&mode==="bedtime"){mood="sleepy";line="Getting late. Want to wrap up for tonight?";sub="Bedtime is "+(clock||"soon")+".";}
   else if(phase==="talk"){mood=declinesBefore>=2?"worried":"waving";line=declinesBefore>=2?"Last nudge, I promise. Ready for "+short+"?":"Time to start "+short+"?";sub=clock?"It's on your plan for "+clock+".":"";}
+  else if(phase==="yes"&&mode==="bedtime"){mood="sleepy";line="Goodnight! Sleep well.";}
   else if(phase==="yes"){mood="celebrating";line="Let's do it!";}
+  else if(phase==="no"&&mode==="bedtime"){mood="sleepy";line="Okay, 5 more minutes. I'll check back once.";}
   else if(phase==="no"){mood="sad";line=declinesBefore>=1?"Okay. I'll give you some space.":"Aw, okay. I'll be around.";}
+  else if(phase==="late"&&mode==="bedtime"){mood="sleepy";line="Sleep well whenever you're ready.";}
   else if(phase==="late"){mood="worried";line="No rush. It's on your calendar.";}
-  else if(phase==="out"){mood=STU_EXIT_MOOD[howRef.current]||"happy";}
+  else if(phase==="out"){mood=mode==="bedtime"?"sleepy":(STU_EXIT_MOOD[howRef.current]||"happy");}
   const walking=phase==="in"||phase==="out";
   const pal=stuPalette();
   const left=(navExpanded?230:48)+16;
@@ -37581,6 +37600,12 @@ function StudCompanion({mode,title,clock,navExpanded,onYes,onDone}){
         <div style={{pointerEvents:"auto",marginBottom:46,maxWidth:270,padding:"12px 14px",borderRadius:14,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 10px 30px rgba(0,0,0,0.22)",animation:reduce?"none":"stuBubbleIn .22s ease both"}}>
           <div style={{fontSize:13,fontWeight:600,color:T.text,lineHeight:1.45}}>{line}</div>
           {sub&&<div style={{fontSize:11.5,color:T.muted,marginTop:3}}>{sub}</div>}
+          {phase==="talk"&&mode==="bedtime"&&(
+            <div style={{display:"flex",gap:8,marginTop:10}}>
+              <BtnSm onClick={()=>{howRef.current="yes";setPhase("yes");}} style={{padding:"6px 12px",fontSize:11.5}}>Wrapping up</BtnSm>
+              <BtnSm variant="ghost" onClick={()=>{howRef.current="snooze";setPhase("no");}} style={{padding:"6px 12px",fontSize:11.5}}>5 more minutes</BtnSm>
+            </div>
+          )}
           {phase==="talk"&&mode==="ask"&&(
             <div style={{display:"flex",gap:8,marginTop:10}}>
               <BtnSm onClick={()=>{howRef.current="yes";setPhase("yes");}} style={{padding:"6px 12px",fontSize:11.5}}>Yes, let's go</BtnSm>
@@ -37657,7 +37682,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     window.addEventListener("studlin-settings-changed",sync);
     return ()=>window.removeEventListener("studlin-settings-changed",sync);
   },[]);
-  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,deadline:true,classReminders:false,onlineStatus:true,incognito:false,twofa:false,motion:false,hand:true,wrapped:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false,askCheckIns:true,askDurationQuestions:true,nudgesMaster:true,mascotReminders:true,mascotCheers:true},...lsGet("settings",{})}));
+  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,deadline:true,classReminders:false,onlineStatus:true,incognito:false,twofa:false,motion:false,hand:true,wrapped:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false,askCheckIns:true,askDurationQuestions:true,nudgesMaster:true,mascotReminders:true,mascotCheers:true,mascotBedtime:true},...lsGet("settings",{})}));
   // 2026-09-13: "Share my free/busy time" used to be all-or-nothing (on =
   // every current accepted friend). shareAvailabilityMode lets a student
   // restrict it to specific people instead -- see the picker modal below
@@ -39124,6 +39149,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Control how much Studlin speaks up. Everything here is optional.</div>
               <Row label="Suggestions and tips" sub={"Occasional ideas like \"default new tasks to midday?\" and the questions below. Off means none of them pop up."} k="nudgesMaster" />
               <Row label="Stu reminds me before things start" sub="Stu walks in a few minutes before a study block or deadline and asks if you want to start. Off uses a plain pop-up instead." k="mascotReminders" />
+              <Row label="Stu reminds me when it is getting late" sub="About 30 minutes before the bedtime you set in class setup, a sleepy Stu asks if you want to wrap up. Once a night." k="mascotBedtime" />
               <Row label="Stu cheers when I finish" sub="A quick celebration after you complete a task." k="mascotCheers" />
             </Card>
             <Card style={{marginBottom:12}}>
@@ -42345,6 +42371,7 @@ function App() {
   const [headsUpEvent,setHeadsUpEvent]=useState(null);
   // Stu's "nice work" cameo after finishing a task (see StudCompanion).
   const [stuCheer,setStuCheer]=useState(null);
+  const [stuBedtime,setStuBedtime]=useState(null);
   const [nudgeOffToast,setNudgeOffToast]=useState("");
   const turnOffNudges=()=>{
     lsSet("settings",{...lsGet("settings",{}),nudgesMaster:false});
@@ -42357,6 +42384,17 @@ function App() {
   // A session started some other way (not via Stu) clears a pending reminder, so
   // it cannot walk back in for a block the student is already doing.
   useEffect(()=>{if(timerTask)setHeadsUpEvent(null);},[timerTask]);
+  // Sleepy Stu: checked once a minute, never during a running timer or another Stu moment.
+  useEffect(()=>{
+    const check=()=>{
+      if(timerTask||headsUpEvent||stuBedtime)return;
+      if(!stuBedtimeDue())return;
+      lsSet("stuBedtimeShown",Date.now());
+      setStuBedtime({id:"bed-"+Date.now()});
+    };
+    const iv=setInterval(check,60000);
+    return ()=>clearInterval(iv);
+  },[timerTask,headsUpEvent,stuBedtime]);
   useEffect(()=>{
     const HEADS_UP_MINS=10;
     const check=()=>{
@@ -44247,6 +44285,14 @@ function App() {
       )}
       {!headsUpEvent&&stuCheer&&!timerTask&&Date.now()-stuCheer.at<10000&&(
         <StudCompanion key={stuCheer.id} mode="cheer" title={stuCheer.title} navExpanded={navExpanded} onDone={()=>setStuCheer(null)} />
+      )}
+      {!headsUpEvent&&!stuCheer&&stuBedtime&&!timerTask&&(
+        <StudCompanion key={stuBedtime.id} mode="bedtime" clock={(()=>{const ws=getWakeSleep();return ws&&ws.sleepTime?fmtRolloverClock(ws.sleepTime):"";})()} navExpanded={navExpanded}
+          onDone={how=>{
+            setStuBedtime(null);
+            // "5 more minutes": one return visit, then he leaves it alone.
+            if(how==="snooze"&&!String(stuBedtime.id).startsWith("bed2"))setTimeout(()=>{if(!stuSettingOn("mascotBedtime"))return;setStuBedtime({id:"bed2-"+Date.now()});},5*60000);
+          }} />
       )}
       {nudgeOffToast&&(
         <div role="status" style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:1001,background:T.ink,color:T.cream,padding:"10px 18px",borderRadius:99,fontSize:12.5,fontWeight:600,boxShadow:"0 8px 24px rgba(0,0,0,0.3)"}}>{nudgeOffToast}</div>
