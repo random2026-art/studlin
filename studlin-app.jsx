@@ -3173,7 +3173,7 @@ const STUDLIN_HELP_ENTRIES=[
   {id:"delete-account",keywords:["delete my account","delete account","close my account","cancel my account"],
     answer:"Settings → General → \"Delete account.\" It's permanent -- you'll need to type DELETE to confirm."},
   {id:"ai-memory",keywords:["what does studlin ai remember","ai memory","forget what you know","clear ai memory","stop ai remembering"],
-    answer:"Settings → Privacy → \"What Studlin AI remembers\" lists everything it's learned, each with its own Remove button, plus a Clear all."},
+    answer:"Settings → Privacy → \"What Stu remembers\" lists everything he's learned, each with its own Remove button, plus a Clear all."},
   {id:"ai-questions",keywords:["stop asking me questions","check-in questions","how long did this take question","stop check-ins"],
     answer:"Settings → Privacy → \"Questions Studlin asks\" -- toggle off post-session check-ins or \"how long did this really take\" questions separately. Both also auto-disable on their own if you keep skipping them."},
   {id:"auto-schedule-prep",keywords:["auto schedule","auto-schedule","automatically add study sessions","auto add study sessions"],
@@ -13026,7 +13026,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
       const withTimeOfDay=mergeAiMemoryTimeOfDay(withFacts,focusResult.timeOfDay);
       saveAiMemory(withTimeOfDay);
       pushAiMemory(withTimeOfDay);
-      setBuildPlanMemoryToast("Studlin AI remembered something new");
+      setBuildPlanMemoryToast("Stu remembered something new");
       setTimeout(()=>setBuildPlanMemoryToast(""),3500);
     }
     setBuildPlanPreview({sessionCount:dates.length,sessionDuration,difficultyValue:params.difficultyValue,dates,
@@ -13069,7 +13069,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
       const withTimeOfDay=mergeAiMemoryTimeOfDay(withFacts,result.timeOfDay);
       saveAiMemory(withTimeOfDay);
       pushAiMemory(withTimeOfDay);
-      setBuildPlanMemoryToast("Studlin AI remembered something new");
+      setBuildPlanMemoryToast("Stu remembered something new");
       setTimeout(()=>setBuildPlanMemoryToast(""),3500);
     }
     setBuildPlanCritique("");
@@ -20230,10 +20230,10 @@ function ExploreClassesCard({school,classes,setActive}){
       <ClassPreviewDrawer open={!!previewCls} cls={previewCls} events={previewCls?effectiveEvents(previewCls):[]} onClose={()=>setPreviewCls(null)} isHS={isHS}
         simOn={previewCls?!!simOn[previewCls.code]:false} onToggleSimulate={()=>previewCls&&onToggleSimulate(previewCls)} />
 
-      <Modal open={!!reOptModal} onClose={()=>setReOptModal(null)} title="Studlin AI detected new course events"
+      <Modal open={!!reOptModal} onClose={()=>setReOptModal(null)} title="Stu noticed new course events"
         footer={<Btn onClick={()=>{setReOptModal(null);if(setActive)setActive("calendar");}}>Let's Re-Optimize</Btn>}>
         <div style={{fontSize:13.5,color:T.text,lineHeight:1.6}}>
-          Studlin AI detected new course events from your synchronized classes. Would you like to automatically re-route your daytime study blocks to accommodate these updates and maximize your free time?
+          Stu noticed new course events from your synchronized classes. Would you like to automatically re-route your daytime study blocks to accommodate these updates and maximize your free time?
         </div>
         {reOptModal&&reOptModal.conflictCount>0&&(
           <div style={{marginTop:14,fontSize:12.5,color:T.amber}}>We've flagged {reOptModal.conflictCount} study block{reOptModal.conflictCount!==1?"s":""} that now conflict — open Calendar to review.</div>
@@ -21920,9 +21920,14 @@ function StudlinAiBubble({onClick,hasProactive}){
     // can't reach across that boundary, so the tour targets it by this
     // stable id via document.getElementById instead (see TourStep's own
     // targetSelector support).
-    <button id="studlin-ai-bubble" type="button" onClick={onClick} title="Ask Studlin AI about your schedule"
-      style={{position:"fixed",bottom:20,right:20,width:52,height:52,borderRadius:"50%",background:T.lime,color:T.onLime,border:"none",cursor:"pointer",display:"grid",placeItems:"center",boxShadow:"0 8px 24px -6px rgba(0,0,0,0.4)",zIndex:STUDLIN_AI_BUBBLE_Z}}>
-      {Icon.sparkles}
+    // 2026-10-14: the chat is "Stu" now. The FAB is the resting mascot, always
+    // shown (the chat is Pro-gated inside the drawer, Free sees the upgrade
+    // prompt on send). His idle breathing and blink come from StudMascot's own
+    // CSS, which already stops under reduced motion.
+    <button id="studlin-ai-bubble" type="button" className="studlin-ai-bubble" onClick={onClick} aria-label="Chat with Stu" title="Ask Stu about your schedule"
+      style={{position:"fixed",bottom:"calc(20px + env(safe-area-inset-bottom, 0px))",right:20,minWidth:44,minHeight:44,padding:0,borderRadius:12,background:"transparent",border:"none",cursor:"pointer",display:"grid",placeItems:"center",filter:"drop-shadow(0 4px 8px rgba(0,0,0,0.28))",zIndex:STUDLIN_AI_BUBBLE_Z}}>
+      <style>{`.studlin-ai-bubble:focus-visible{outline:2px solid ${T.lime};outline-offset:2px}`}</style>
+      <StudMascot size={56} mood="happy" {...stuPalette()} />
       {hasProactive&&(
         <span style={{position:"absolute",top:-2,right:-2,width:14,height:14,borderRadius:"50%",background:T.amber,border:`2px solid ${T.bg}`}} />
       )}
@@ -22086,7 +22091,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
         if(nextMem.facts.length===(existingMem.facts||[]).length)return; // every candidate was a near-duplicate of something already remembered
         saveAiMemory(nextMem);
         pushAiMemory(nextMem);
-        setMemoryToast("Studlin AI remembered something new");
+        setMemoryToast("Stu remembered something new");
         setTimeout(()=>setMemoryToast(""),3500);
       }catch(e){}
     })();
@@ -22101,7 +22106,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
   const askQuestion=async(text,history)=>{
     if(!canUseStudlinAiQna()){
       setPricingOpen(canUseStudlinAiQnaReason()==="free-tier"?"studlinAiQna":"aiUsageCap");
-      setMessages(m=>[...m,{role:"ai",text:"Studlin AI needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
+      setMessages(m=>[...m,{role:"ai",text:"Stu needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
       return;
     }
     // Read fresh at send time, not held in component state -- this
@@ -22182,7 +22187,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
   const answerAvailabilityMatch=async(parsed)=>{
     if(!canUseStudlinAiQna()){
       setPricingOpen(canUseStudlinAiQnaReason()==="free-tier"?"studlinAiQna":"aiUsageCap");
-      setMessages(m=>[...m,{role:"ai",text:"Studlin AI needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
+      setMessages(m=>[...m,{role:"ai",text:"Stu needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
       return;
     }
     recordStudlinAiQnaUsage();
@@ -22202,7 +22207,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
   const giveCoaching=async(text,history,materialText)=>{
     if(!canUseStudlinAiQna()){
       setPricingOpen(canUseStudlinAiQnaReason()==="free-tier"?"studlinAiQna":"aiUsageCap");
-      setMessages(m=>[...m,{role:"ai",text:"Studlin AI needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
+      setMessages(m=>[...m,{role:"ai",text:"Stu needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
       return;
     }
     const events=lsGet("events",[]);
@@ -22237,7 +22242,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
     if(isCreate){
       if(!canUseBrainDump()){
         setPricingOpen(canUseBrainDumpReason()==="free-tier"?"brainDump":"aiUsageCap");
-        setMessages(m=>[...m,{role:"ai",text:"Creating tasks through Studlin AI needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
+        setMessages(m=>[...m,{role:"ai",text:"Creating tasks through Stu needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
         return;
       }
     }else if(isGenMaterial){
@@ -22245,19 +22250,19 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
       if(!gateOk){
         const reason=parsed.genFormat==="quiz"?canGenQuizReason():canGenFlashcardsReason();
         setPricingOpen(reason==="free-tier"?"studyMaterialGen":"aiUsageCap");
-        setMessages(m=>[...m,{role:"ai",text:"Generating "+(parsed.genFormat==="quiz"?"a practice quiz":"flashcards")+" through Studlin AI needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
+        setMessages(m=>[...m,{role:"ai",text:"Generating "+(parsed.genFormat==="quiz"?"a practice quiz":"flashcards")+" through Stu needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
         return;
       }
     }else if(isImportSyllabus){
       if(!canScanSyllabus()){
         const reason=canScanSyllabusReason();
         setPricingOpen(syllabusPaywallKey());
-        setMessages(m=>[...m,{role:"ai",text:"Importing several dates at once through Studlin AI needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
+        setMessages(m=>[...m,{role:"ai",text:"Importing several dates at once through Stu needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
         return;
       }
     }else if(!canUseSmartReschedule()){
       setPricingOpen(canUseSmartRescheduleReason()==="free-tier"?"smartReschedule":"aiUsageCap");
-      setMessages(m=>[...m,{role:"ai",text:"Moving or rescheduling through Studlin AI needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
+      setMessages(m=>[...m,{role:"ai",text:"Moving or rescheduling through Stu needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
       return;
     }
     // import_syllabus_items needs a real second extraction call (the
@@ -22327,7 +22332,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
       if(isCreate?!canUseBrainDump():!canUseSmartReschedule()){
         const reason=isCreate?canUseBrainDumpReason():canUseSmartRescheduleReason();
         setPricingOpen(reason==="free-tier"?(isCreate?"brainDump":"smartReschedule"):"aiUsageCap");
-        setMessages(m=>[...m,{role:"ai",text:"Doing both of those through Studlin AI needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
+        setMessages(m=>[...m,{role:"ai",text:"Doing both of those through Stu needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
         return;
       }
     }
@@ -22394,9 +22399,9 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
       // per-kind gates (askQuestion etc.) already use.
       if(e&&e.status===402){
         setPricingOpen(canUseStudlinAiQnaReason()==="free-tier"?"studlinAiQna":"aiUsageCap");
-        setMessages(m=>[...m,{role:"ai",text:"Studlin AI needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
+        setMessages(m=>[...m,{role:"ai",text:"Stu needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
       }else{
-        setMessages(m=>[...m,{role:"ai",text:"Couldn't reach Studlin AI. Check your connection and try again.",kind:"error"}]);
+        setMessages(m=>[...m,{role:"ai",text:"Couldn't reach Stu. Check your connection and try again.",kind:"error"}]);
       }
       setLoading(false);
       return;
@@ -22721,9 +22726,10 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
       <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(8,12,10,0.5)",zIndex:STUDLIN_AI_DRAWER_BACKDROP_Z,opacity:open?1:0,pointerEvents:open?"auto":"none",transition:"opacity 0.25s"}} />
       <div style={{position:"fixed",top:0,right:0,height:"100vh",width:400,maxWidth:"92vw",background:T.surface,borderLeft:`1px solid ${pp.border}`,boxShadow:"-24px 0 60px -20px rgba(0,0,0,0.5)",zIndex:STUDLIN_AI_DRAWER_PANEL_Z,display:"flex",flexDirection:"column",transform:open?"translateX(0)":"translateX(100%)",transition:"transform 0.28s cubic-bezier(.2,.85,.3,1)",pointerEvents:open?"auto":"none"}}>
         <div style={{padding:"18px 18px 14px",borderBottom:`1px solid ${pp.border}`,display:"flex",alignItems:"center",gap:12}}>
+          <StudMascot size={32} mood="happy" {...stuPalette()} />
           <div style={{flex:1,minWidth:0}}>
-            <div style={{fontSize:14,fontWeight:700,color:pp.text}}>Studlin AI</div>
-            <div style={{fontSize:11,color:pp.muted}}>Ask, or tell me to add or move something</div>
+            <div style={{fontSize:14,fontWeight:700,color:pp.text}}>Stu</div>
+            <div style={{fontSize:11,color:pp.muted}}>Ask me anything, or tell me to add or move something</div>
           </div>
           <button onClick={onClose} style={{width:30,height:30,borderRadius:8,border:`1px solid ${pp.border}`,background:pp.card2,color:pp.muted,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.xmark}</button>
         </div>
@@ -25597,7 +25603,7 @@ function PhasesOutlineEditor({item,onChange,subject,onGateBlocked=()=>{},onNeeds
     const withTimeOfDay=mergeAiMemoryTimeOfDay(withFacts,timeOfDay);
     saveAiMemory(withTimeOfDay);
     pushAiMemory(withTimeOfDay);
-    setMemoryToast("Studlin AI remembered something new");
+    setMemoryToast("Stu remembered something new");
     setTimeout(()=>setMemoryToast(""),3500);
   };
   const suggestPhases=async()=>{
@@ -32508,7 +32514,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // (see StudlinAiBubble's own comment) rather than a ref -- it's
     // rendered once at App() level, a sibling of this component, not a
     // child of it.
-    {targetSelector:"#studlin-ai-bubble",title:"Ask Studlin AI anything",body:"\"Am I behind on anything?\" \"When am I most productive?\" It answers from your real schedule, not a guess."},
+    {targetSelector:"#studlin-ai-bubble",title:"Ask Stu anything",body:"\"Am I behind on anything?\" \"When am I most productive?\" Stu answers from your real schedule, not a guess."},
   ];
   const [calTourStep,setCalTourStep]=useState(-1);
   const advanceCalTour=()=>{
@@ -40135,6 +40141,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <Row label="Stu reminds me before things start" sub="Stu walks in a few minutes before a study block or deadline and asks if you want to start. Off uses a plain pop-up instead. Needs Learn how I work on." k="mascotReminders" />
               <Row label="Stu reminds me when it is getting late" sub="About 30 minutes before the bedtime you set in class setup, a sleepy Stu asks if you want to wrap up. Once a night." k="mascotBedtime" />
               <Row label="Stu cheers when I finish" sub="A quick celebration after you complete a task." k="mascotCheers" />
+              <div style={{fontSize:12,color:T.muted,marginTop:10}}>Stu's chat button is always on.</div>
             </Card>
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Questions Studlin asks</div>
@@ -40169,7 +40176,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               </div>
             </Card>
             <Card style={{marginBottom:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>What Studlin AI remembers</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>What Stu remembers</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Standing preferences it's picked up from your chats — not one-off requests, just things worth not re-explaining every time.</div>
               {aiTimeOfDay&&(
                 <div style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,marginBottom:8}}>
@@ -40203,7 +40210,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                 <div style={{marginTop:6}}>
                   {confirmClearMemory?(
                     <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-                      <span style={{fontSize:12,color:T.muted}}>Forget everything Studlin AI remembers about you?</span>
+                      <span style={{fontSize:12,color:T.muted}}>Forget everything Stu remembers about you?</span>
                       <Btn variant="danger" onClick={clearAiMemory}>Yes, clear all</Btn>
                       <Btn variant="subtle" onClick={()=>setConfirmClearMemory(false)}>Cancel</Btn>
                     </div>
@@ -43456,7 +43463,7 @@ function App() {
     syllabusScan:"Syllabus & schedule scans are a Pro feature.",
     syllabusScanUsed:"You've used your free scan. Pro scans every class.",
     screenshotScan:"Screenshot imports are a Pro feature.",
-    studlinAiQna:"Studlin AI is a Pro feature.",
+    studlinAiQna:"Stu chat is a Pro feature.",
     studyMaterialGen:"AI flashcards & practice quizzes are a Pro feature.",
     // 2026-08-22 intelligence audit fix: every reason above assumed the
     // student wasn't Pro yet -- wrong copy for an already-Pro student who
@@ -44596,7 +44603,7 @@ function App() {
             deducts. Replaced with the real cost map (CREDIT_COST /
             IMAGE_CREDIT_COST / STUDLIN_AI_*_COST constants). */}
         <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"4px 14px"}}>
-          {[["AI chat message","1"],["AI chat with an image attached","4"],["Studlin AI question","2"],["Studlin AI action (move, add, delete...)","1"],["Studlin AI coaching check-in","2"]].map(([k,v],i,arr)=>(
+          {[["AI chat message","1"],["AI chat with an image attached","4"],["Stu question","2"],["Stu action (move, add, delete...)","1"],["Stu coaching check-in","2"]].map(([k,v],i,arr)=>(
             <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"9px 0",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none",fontSize:13}}>
               <span style={{color:T.text}}>{k}</span>
               <span style={{fontFamily:T.mono,fontWeight:600,color:T.lime}}>{v}</span>

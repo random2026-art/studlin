@@ -124,13 +124,13 @@ describe("Source-level regression guards: the post-onboarding tour's 3rd step (S
     assert.ok(idx > -1);
     const body = SOURCE.slice(idx, idx + 900);
     assert.ok(body.includes('targetSelector:"#studlin-ai-bubble"'));
-    assert.ok(body.includes("Ask Studlin AI anything"));
+    assert.ok(body.includes("Ask Stu anything"));
   });
 
   test("StudlinAiBubble's real button carries that exact id", () => {
     const idx = SOURCE.indexOf("function StudlinAiBubble(");
     assert.ok(idx > -1);
-    const body = SOURCE.slice(idx, idx + 600);
+    const body = SOURCE.slice(idx, idx + 1600);
     assert.ok(body.includes('id="studlin-ai-bubble"'));
   });
 });
