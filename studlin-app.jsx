@@ -24410,7 +24410,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
   return (
     <>
     <Card style={{padding:0,overflow:"hidden"}}>
-      <div style={{display:"grid",gridTemplateColumns:"52px repeat(7,1fr)",borderBottom:`1px solid ${T.border}`,background:T.card}}>
+      <div data-wk-hdr="1" style={{display:"grid",gridTemplateColumns:"52px repeat(7,1fr)",borderBottom:`1px solid ${T.borderTint}`,background:T.hdrBg}}>
         <div style={{height:48}} />
         {weekDays.map((d, i) => {
           const dk = dayKey(d);
@@ -24418,9 +24418,9 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
           const isSel = selDay!=null && dk === selDay;
           const duePills = (byDay[dk] || []).filter(isDuePill);
           return (
-            <div key={i} onClick={()=>{if(setSelDay)setSelDay(dk);}} style={{textAlign:"center",padding:"7px 4px 9px",borderLeft:`1px solid ${T.border}`,cursor:setSelDay?"pointer":"default",background:isSel?T.card2:"transparent",minWidth:0}}>
-              <div style={{fontSize:9,fontWeight:700,letterSpacing:"0.1em",color:T.muted,marginBottom:4}}>{DAY_NAMES[i]}</div>
-              <div onDoubleClick={(e)=>{e.stopPropagation();openNew(dk);}} style={{width:28,height:28,borderRadius:"50%",background:isToday?T.lime:"transparent",color:isToday?T.ink:T.white,fontSize:13,fontWeight:700,display:"inline-flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>{d.getDate()}</div>
+            <div key={i} onClick={()=>{if(setSelDay)setSelDay(dk);}} style={{textAlign:"center",padding:"7px 4px 9px",borderLeft:`1px solid ${T.borderTint}`,cursor:setSelDay?"pointer":"default",background:isSel?T.accentSoft:"transparent",minWidth:0}}>
+              <div style={{fontSize:T.lookOn?10:9,fontWeight:700,letterSpacing:"0.1em",color:T.hdrText,marginBottom:4}}>{DAY_NAMES[i]}</div>
+              <div onDoubleClick={(e)=>{e.stopPropagation();openNew(dk);}} style={{width:28,height:28,borderRadius:"50%",background:isToday?T.todayBg:"transparent",color:isToday?T.todayText:T.white,fontSize:13,fontWeight:700,display:"inline-flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>{d.getDate()}</div>
               {/* Phase 10b: a compact "N due" bar instead of listing each
                   due-marker title, matching the monthly grid's same
                   change and Shovel's own header row. */}
@@ -24592,7 +24592,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   </div>
                 ))}
                 {Array.from({length:24}, (_, h) => (
-                  <div key={h} data-gridbg="1" style={{position:"absolute",top:h*WK_PX_HR,left:0,right:0,height:WK_PX_HR,borderTop:`1px solid ${T.borderHover}`,boxSizing:"border-box"}} />
+                  <div key={h} data-gridbg="1" style={{position:"absolute",top:h*WK_PX_HR,left:0,right:0,height:WK_PX_HR,borderTop:`1px solid ${T.lookOn?T.borderTint:T.borderHover}`,boxSizing:"border-box"}} />
                 ))}
                 {/* Drag-to-create ghost block (2026-09-11) -- dashed like
                     previewEl below, but with no drag handles of its own;
@@ -28374,9 +28374,9 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
             style={{position:"sticky",top:8,left:0,height:0,zIndex:7,display:"flex",marginLeft:45,cursor:"ns-resize"}}>
             <div style={{width:18,height:18,borderRadius:"50%",background:T.lime,border:`2px solid ${T.card}`,marginLeft:-9,boxShadow:"0 2px 6px rgba(0,0,0,0.35)"}} />
           </div>
-          <div ref={timelineRef} data-gridbg="1" data-daykey={selDay} onDragOver={handleDayDragOver} onDrop={handleDayDrop} onDragLeave={()=>setDayDragOver(false)} onMouseDown={startCreateDrag} style={{position:"relative",height:totalHeightPx,marginLeft:54}}>
+          <div ref={timelineRef} data-gridbg="1" data-daykey={selDay} onDragOver={handleDayDragOver} onDrop={handleDayDrop} onDragLeave={()=>setDayDragOver(false)} onMouseDown={startCreateDrag} style={{position:"relative",height:totalHeightPx,marginLeft:54,...(T.lookOn&&isToday?{background:T.accentSoft+"66"}:null)}}>
             {Array.from({length:Math.max(1,hourEnd-hourStart)},(_,i)=>hourStart+i).map(h=>(
-              <div key={h} data-gridbg="1" style={{position:"absolute",top:(h*60-spanStart)*(pxPerHr/60),left:0,right:0,borderTop:`1px solid ${T.borderHover}`,boxSizing:"border-box"}}>
+              <div key={h} data-gridbg="1" style={{position:"absolute",top:(h*60-spanStart)*(pxPerHr/60),left:0,right:0,borderTop:`1px solid ${T.lookOn?T.borderTint:T.borderHover}`,boxSizing:"border-box"}}>
                 <span style={{position:"absolute",left:-54,top:-7,width:46,textAlign:"right",fontSize:10,color:T.faint,fontFamily:T.mono,pointerEvents:"none"}}>{fmtHourLabel(h*60)}</span>
               </div>
             ))}
@@ -28394,8 +28394,8 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
             })()}
             {isToday&&nowMins>=spanStart&&nowMins<=spanEnd&&(
               <div style={{position:"absolute",top:(nowMins-spanStart)*(pxPerHr/60),left:0,right:0,zIndex:6,pointerEvents:"none"}}>
-                <div style={{position:"absolute",left:-4,top:-4,width:8,height:8,borderRadius:"50%",background:"#E5484D"}} />
-                <div style={{borderTop:"2px solid #E5484D"}} />
+                <div style={{position:"absolute",left:-4,top:-4,width:8,height:8,borderRadius:"50%",background:T.lookOn?T.lime:"#E5484D"}} />
+                <div style={{borderTop:`2px solid ${T.lookOn?T.lime:"#E5484D"}`}} />
               </div>
             )}
             {/* Schedule with Friends: same busy overlay/recommended-time/
@@ -28760,6 +28760,9 @@ function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime
       // "+ Add task" -- this was the one glance-and-close surface with no
       // next action at all when a day was empty.
       footer={visibleEvs.length===0&&duePills.length===0&&openNew?<Btn onClick={()=>{onClose();openNew(selDay);}} style={{flex:1,justifyContent:"center"}}>+ Add task</Btn>:undefined}>
+      {T.lookOn&&visibleEvs.length>0&&(
+        <div data-daypreview-hdr="1" style={{background:T.hdrBg,color:T.hdrText,border:`1px solid ${T.borderTint}`,borderRadius:10,padding:"7px 12px",marginBottom:12,fontSize:11.5,fontWeight:700,letterSpacing:"0.04em"}}>{fmtGapLabel(spanStart)} to {fmtGapLabel(spanEnd%1440)}</div>
+      )}
       {duePills.length>0&&(
         <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:visibleEvs.length>0?12:0}}>
           {duePills.map(ev=>(
@@ -31878,6 +31881,9 @@ function resolveCalendarHighlightFlag(flag, nowMs){
 // setPricingOpen(true)) already merged into this function's BODY cleanly,
 // so dropping this prop would leave those calls throwing on an undefined
 // setPricingOpen.
+// Looks: tinted soft-button treatment for toolbar controls. null under Classic so the
+// toolbar stays byte-identical there (spread of null is a no-op).
+function calTbSoft(){return T.lookOn?{background:T.accentSoft,border:`1px solid ${T.borderTint}`,color:T.accentInk}:null;}
 function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRoutineCenterOpenedFromSettings,detailEventId,setDetailEventId,registerSetEvents,registerSkipSetEvents,onTaskCompleted,catchUpPending,onWizardOpenChange,jumpToSessionOnMount,onJumpSessionConsumed,highlightDraftIdOnMount,onHighlightDraftConsumed,setPricingOpen=()=>{},setTheme=()=>{}}={}){
   const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
   const SUBJ=[{value:"None",label:"None",color:T.lime},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
@@ -36248,11 +36254,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           the page instead of the toolbar eating vertical space. */}
       <div style={{display:"flex",alignItems:"center",gap:8,minHeight:30,marginBottom:10}}>
         <div style={{display:"flex",alignItems:"center",gap:3}}>
-          <button onClick={()=>calView==="monthly"?nav(-1):calView==="weekly"?setWeekOffset(o=>o-1):stepSelDay(-1)} style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:11}}>‹</button>
+          <button onClick={()=>calView==="monthly"?nav(-1):calView==="weekly"?setWeekOffset(o=>o-1):stepSelDay(-1)} style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:11,...calTbSoft()}}>‹</button>
           <span onClick={()=>{if(calView==="monthly"){setYm({y:now.getFullYear(),m:now.getMonth()});setSelDay(todayK);}else if(calView==="weekly"){setWeekOffset(0);}else{setSelDay(todayK);}}} title="Jump to today" style={{fontSize:13,fontWeight:500,color:T.text,padding:"0 5px",cursor:"pointer",userSelect:"none",whiteSpace:"nowrap"}}>
             {calView==="monthly"?monthNames[ym.m]+" "+ym.y:calView==="weekly"?weekRangeLabel:niceDate(selDay)}
           </span>
-          <button onClick={()=>calView==="monthly"?nav(1):calView==="weekly"?setWeekOffset(o=>o+1):stepSelDay(1)} style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:11}}>›</button>
+          <button onClick={()=>calView==="monthly"?nav(1):calView==="weekly"?setWeekOffset(o=>o+1):stepSelDay(1)} style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:11,...calTbSoft()}}>›</button>
         </div>
         {/* Undo/redo -- same 22x22 icon-button footprint as the day-nav
             ‹/› pair just to the left, so it reads as one grouped toolbar
@@ -36260,8 +36266,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             the respective stack is empty rather than hidden, so their
             position never shifts as you use them. */}
         <div style={{display:"flex",alignItems:"center",gap:3}}>
-          <button onClick={undoCal} disabled={calHistoryUndo.current.length===0} title="Undo (Ctrl+Z)" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:calHistoryUndo.current.length===0?T.faint:T.muted,cursor:calHistoryUndo.current.length===0?"default":"pointer",opacity:calHistoryUndo.current.length===0?0.5:1}}>{Icon.undo}</button>
-          <button onClick={redoCal} disabled={calHistoryRedo.current.length===0} title="Redo (Ctrl+Shift+Z)" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:calHistoryRedo.current.length===0?T.faint:T.muted,cursor:calHistoryRedo.current.length===0?"default":"pointer",opacity:calHistoryRedo.current.length===0?0.5:1}}>{Icon.redo}</button>
+          <button onClick={undoCal} disabled={calHistoryUndo.current.length===0} title="Undo (Ctrl+Z)" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:calHistoryUndo.current.length===0?T.faint:T.muted,cursor:calHistoryUndo.current.length===0?"default":"pointer",opacity:calHistoryUndo.current.length===0?0.5:1,...(T.lookOn?{background:T.accentSoft,border:`1px solid ${T.borderTint}`,color:calHistoryUndo.current.length===0?T.faint:T.accentInk}:null)}}>{Icon.undo}</button>
+          <button onClick={redoCal} disabled={calHistoryRedo.current.length===0} title="Redo (Ctrl+Shift+Z)" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:calHistoryRedo.current.length===0?T.faint:T.muted,cursor:calHistoryRedo.current.length===0?"default":"pointer",opacity:calHistoryRedo.current.length===0?0.5:1,...(T.lookOn?{background:T.accentSoft,border:`1px solid ${T.borderTint}`,color:calHistoryRedo.current.length===0?T.faint:T.accentInk}:null)}}>{Icon.redo}</button>
         </div>
         {/* Only appears when something's actually wrong -- unlike Undo/Redo
             (an always-available capability, shown dimmed at rest) a warning
@@ -36276,15 +36282,15 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           </button>
         )}
         <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:6}}>
-          <button type="button" onClick={()=>setLookPanelOpen(true)} title="Change your calendar colors and block style" style={{height:22,padding:"0 8px",display:"flex",alignItems:"center",gap:4,background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:11,fontWeight:600,fontFamily:T.font}}>Customize</button>
+          <button type="button" onClick={()=>setLookPanelOpen(true)} title="Change your calendar colors and block style" style={{height:22,padding:"0 8px",display:"flex",alignItems:"center",gap:4,background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:11,fontWeight:600,fontFamily:T.font,...calTbSoft()}}>Customize</button>
           <LookCustomizePanel open={lookPanelOpen} onClose={()=>setLookPanelOpen(false)} />
-          <div style={{display:"flex",gap:2,background:T.card2,padding:2,borderRadius:4}}>
+          <div style={{display:"flex",gap:2,background:T.lookOn?T.accentSoft:T.card2,padding:2,borderRadius:4,...(T.lookOn?{border:`1px solid ${T.borderTint}`}:null)}}>
             {[{id:"daily",label:"Day"},{id:"weekly",label:"Week"},{id:"monthly",label:"Month"}].map(v=>(
-              <button key={v.id} onClick={()=>setCalView(v.id)} style={{padding:"3px 9px",borderRadius:4,fontSize:11.5,fontWeight:calView===v.id?500:400,cursor:"pointer",background:calView===v.id?T.card:"transparent",color:calView===v.id?T.text:T.muted,border:"none",fontFamily:T.font,transition:"all 0.15s"}}>{v.label}</button>
+              <button key={v.id} onClick={()=>setCalView(v.id)} style={{padding:"3px 9px",borderRadius:4,fontSize:11.5,fontWeight:calView===v.id?500:400,cursor:"pointer",background:calView===v.id?(T.lookOn?T.lime:T.card):"transparent",color:calView===v.id?(T.lookOn?lookTextOnFill(T.lime):T.text):(T.lookOn?T.accentInk:T.muted),border:"none",fontFamily:T.font,transition:"all 0.15s"}}>{v.label}</button>
             ))}
           </div>
           <div style={{position:"relative"}} ref={rescheduleBtnRef}>
-            <button onClick={()=>setToolsMenuOpen(o=>!o)} title="More tools" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:editRoutineMode?T.lime+"18":"transparent",border:`1px solid ${editRoutineMode?T.lime+"55":T.border}`,borderRadius:4,color:editRoutineMode?T.lime:T.muted,cursor:"pointer",fontSize:13,lineHeight:1}}>⋯</button>
+            <button onClick={()=>setToolsMenuOpen(o=>!o)} title="More tools" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:editRoutineMode?T.lime+"18":"transparent",border:`1px solid ${editRoutineMode?T.lime+"55":T.border}`,borderRadius:4,color:editRoutineMode?T.lime:T.muted,cursor:"pointer",fontSize:13,lineHeight:1,...(T.lookOn&&!editRoutineMode?calTbSoft():null)}}>⋯</button>
             {toolsMenuOpen&&(<>
               <div onClick={()=>setToolsMenuOpen(false)} style={{position:"fixed",inset:0,zIndex:40}} />
               <div style={{position:"absolute",top:"calc(100% + 6px)",right:0,width:220,background:T.card,border:`1px solid ${T.border}`,borderRadius:6,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:50,overflow:"hidden",animation:"studlinPop 0.18s cubic-bezier(.2,.85,.3,1)"}}>
@@ -36338,7 +36344,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                 matches what the onboarding tour already tells students
                 this button does ("Tap Add Task and Studlin finds the time
                 for it"). Manual is still one click away inside the modal. */}
-            <button onClick={()=>openNewAI(selDay)} title="Add" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:T.lime,border:"none",borderRadius:4,color:T.ink,cursor:"pointer"}}>{Icon.plus}</button>
+            <button onClick={()=>openNewAI(selDay)} title="Add" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:T.lime,border:"none",borderRadius:4,color:T.lookOn?lookTextOnFill(T.lime):T.ink,cursor:"pointer"}}>{Icon.plus}</button>
           </div>
         </div>
       </div>
@@ -36358,7 +36364,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       {calView==="monthly"&&(
         <Card style={{padding:16}}>
           <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
-            {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((d,i)=><div key={i} style={{fontSize:10,fontWeight:600,color:T.muted,textAlign:"center",padding:"6px 0",letterSpacing:"0.05em"}}>{d}</div>)}
+            {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((d,i)=><div key={i} data-month-hdr="1" style={{fontSize:10,fontWeight:T.lookOn?700:600,color:T.hdrText,textAlign:"center",padding:"6px 0",letterSpacing:"0.05em",...(T.lookOn?{background:T.hdrBg,borderRadius:6}:null)}}>{d}</div>)}
             {(()=>{
               // Computed once per render, relative to every real (in-month)
               // day currently visible -- see computeMonthHeavyDays' own
@@ -36428,9 +36434,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                      were sized to their content floor, not the grid's own
                      available height, leaving a gap below a typical
                      5-6-row month; taller cells actually use that room. */
-                  style={{position:"relative",minHeight:96,minWidth:0,borderRadius:9,padding:"6px 7px",cursor:"pointer",background:isSel?T.card2:"transparent",border:"1px solid "+(hasNewItem?T.lime:isSel?T.lime+"55":T.border),transition:"all 0.12s",opacity:c.out?0.35:1}}>
+                  style={{position:"relative",minHeight:96,minWidth:0,borderRadius:9,padding:"6px 7px",cursor:"pointer",background:isSel?T.accentSoft:(T.lookOn&&c.out?T.tint:"transparent"),border:"1px solid "+(hasNewItem?T.lime:isSel?T.lime+"55":T.borderTint),transition:"all 0.12s",opacity:c.out?0.35:1}}>
                   <div style={{display:"flex",justifyContent:"flex-start"}}>
-                    <span style={{width:22,height:22,borderRadius:"50%",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:isToday?700:500,background:isToday?T.lime:"transparent",color:isToday?T.ink:c.out?T.faint:T.text}}>{c.d}</span>
+                    <span style={{width:22,height:22,borderRadius:"50%",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:isToday?700:500,background:isToday?T.todayBg:"transparent",color:isToday?T.todayText:c.out?T.faint:T.text}}>{c.d}</span>
                   </div>
                   {isSel && <button type="button" onClick={(e)=>{e.stopPropagation();openNew(c.key);}} title="Add a task on this day"
                     style={{position:"absolute",top:4,right:4,width:16,height:16,borderRadius:"50%",border:`1px solid ${T.border}`,background:T.card,color:T.muted,fontSize:11,lineHeight:1,cursor:"pointer",display:"grid",placeItems:"center",padding:0}}>+</button>}
@@ -36463,7 +36469,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                     const anyOverdue=!catchUpPending&&evs.some(ev=>daysOverdue(ev)>0);
                     return (
                       <div onClick={e=>{e.stopPropagation();setDayDetailKey(c.key);}}
-                        style={{marginTop:4,display:"flex",alignItems:"center",gap:4,fontSize:9.5,fontWeight:700,color:T.lime,background:T.lime+"18",border:`1px solid ${T.lime}33`,borderRadius:4,padding:"3px 6px",cursor:"pointer",overflow:"hidden"}}>
+                        style={{marginTop:4,display:"flex",alignItems:"center",gap:4,fontSize:9.5,fontWeight:700,color:T.lookOn?T.accentInk:T.lime,background:T.lookOn?T.chipBg:T.lime+"18",border:T.lookOn?`1px solid ${T.borderTint}`:`1px solid ${T.lime}33`,borderRadius:4,padding:"3px 6px",cursor:"pointer",overflow:"hidden"}}>
                         {anyOverdue&&<span title="Something's overdue" style={{width:6,height:6,borderRadius:"50%",background:T.red,flexShrink:0}} />}
                         <span style={{whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{evs.length} task{evs.length!==1?"s":""} due</span>
                       </div>
