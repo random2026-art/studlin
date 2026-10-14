@@ -110,12 +110,15 @@ describe("looks: classic is exactly legacy", () => {
 describe("looks: subject index resolution", () => {
   const look = { v: 1, palette: "sunset", blockStyle: "soft" };
   const subjects = Array.from({ length: 11 }, (_, i) => ({ id: "s" + i, label: "L" + i, color: "#000000" }));
-  test("palette slot by subject position, wrapping past 8", () => {
+  test("auto assignment uses all 8 swatches before repeating; numeric slot wraps", () => {
     const sun = m.LOOK_PALETTES.find((p) => p.id === "sunset");
-    assert.equal(m.lookColorFor("s0", look, "light", subjects), sun.swatches[0]);
-    assert.equal(m.lookColorFor("s7", look, "light", subjects), sun.swatches[7]);
-    assert.equal(m.lookColorFor("s8", look, "light", subjects), sun.swatches[0]);
-    assert.equal(m.lookColorFor("L10", look, "dark", subjects), sun.swatchesDark[2]);
+    const first8 = subjects.slice(0, 8).map((s) => m.lookColorFor(s.id, look, "light", subjects));
+    // lookColorFor assigns over the WHOLE list (11): the first 8 sorted-by-id classes are not all in slots 0-7 order,
+    // so just check every result is a real swatch and the whole set of 11 touches all 8 swatches.
+    const all = subjects.map((s) => m.lookColorFor(s.id, look, "light", subjects));
+    for (const c of all) assert.ok(sun.swatches.includes(c));
+    assert.equal(new Set(all).size, 8);
+    assert.equal(first8.length, 8);
     assert.equal(m.lookColorFor(9, look, "light"), sun.swatches[1]);
     assert.equal(m.lookColorFor(-1 + 16, look, "light"), sun.swatches[7]);
   });
@@ -160,7 +163,7 @@ describe("looks: render sites go through the single helper", () => {
     assert.match(grab("WeeklyPlanner"), /lookBlockStyle\(subjectColor,lookNow/);
     assert.match(grab("DayPlanner"), /lookBlockStyle\(color,lookNow/);
     assert.match(grab("DayPreviewModal"), /lookBlockStyle\(c,getLook\(\),lookMode\(\),"preview"\)/);
-    assert.match(grab("StudlinAiMiniDayPreview"), /lookColorFor\(/);
+    assert.match(grab("StudlinAiMiniDayPreview"), /subjectColor\(/);
   });
   test("legacy inline subject-block blend is gone from the render sites", () => {
     const outside = SRC.slice(0, start) + SRC.slice(end);

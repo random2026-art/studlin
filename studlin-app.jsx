@@ -161,6 +161,7 @@ function applyTheme(name, accent, density) {
     // keeps that whole class of control in sync with the actual theme.
     document.documentElement.style.colorScheme = name==='light'?'light':'dark';
   }
+  applyLookTheme(null,name); // whole-app Look tokens; must stay last (see LOOKS block)
 }
 applyTheme(
   (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-theme')) || 'light',
@@ -413,9 +414,9 @@ async function createGoogleDoc(essay) {
 const Btn = ({children,onClick,style={},variant="lime",disabled=false,title}) => {
   const base = {display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",borderRadius:6,fontSize:12,fontWeight:600,cursor:disabled?"not-allowed":"pointer",border:"none",fontFamily:T.font,letterSpacing:"0.01em",transition:"opacity 0.15s"};
   const variants = {
-    lime:{background:T.lime,color:T.bg},
-    ghost:{background:"transparent",color:T.muted,border:`1px solid ${T.border}`},
-    subtle:{background:T.card2,color:T.text,border:`1px solid ${T.border}`},
+    lime:{background:T.lime,color:T.lookOn?lookTextOnFill(T.lime):T.bg},
+    ghost:T.lookOn?{background:T.accentSoft,color:T.accentInk,border:`1px solid ${T.borderTint}`}:{background:"transparent",color:T.muted,border:`1px solid ${T.border}`},
+    subtle:T.lookOn?{background:T.accentSoft,color:T.accentInk,border:`1px solid ${T.borderTint}`}:{background:T.card2,color:T.text,border:`1px solid ${T.border}`},
     danger:{background:"rgba(224,90,71,0.1)",color:T.red,border:"1px solid rgba(224,90,71,0.2)"},
   };
   return <button onClick={onClick} disabled={disabled} title={title} style={{...base,...variants[variant],...style}}>{children}</button>;
@@ -1122,33 +1123,57 @@ const LOOK_PALETTES=[
   {id:"pastel",name:"Soft Pastel",
     swatches:["#E89AA8","#8FB8E8","#B7A2E6","#86D1B4","#E8BC72","#9AA6D8","#7FCB9A","#E8A38E"],
     swatchesDark:["#F0B3BE","#A9CBF0","#CBBBF0","#A3DEC7","#F0CE95","#B4BEE6","#9CDDB4","#F0BCAB"],
-    headerTint:"#B7A2E6"},
+    headerTint:"#B7A2E6",
+    theme:{
+      light:{accent:"#6F4FB8",accentDk:"#6347A6",accentSoft:"#EEE9FA",accentInk:"#4F3A8C",hdrBg:"#DCD2F5",hdrText:"#3F2E7A",tint:"#F5F2FC",borderTint:"#D5CBEF",todayBg:"#6F4FB8",todayText:"#FFFFFF",chipBg:"#E8E1F7"},
+      dark:{accent:"#B9A2F0",accentDk:"#9D8ACC",accentSoft:"#353341",accentInk:"#B9A2F0",hdrBg:"#423E52",hdrText:"#B9A2F0",tint:"#27272F",borderTint:"#48435A",todayBg:"#B9A2F0",todayText:"#0E1F18",chipBg:"#393846"}}},
   {id:"mono",name:"Minimal Mono",
     swatches:["#111827","#374151","#4B5563","#6B7280","#7C8594","#8A94A3","#2B3340","#5A6270"],
     swatchesDark:["#F3F4F6","#D1D5DB","#B4BAC4","#9CA3AF","#E5E7EB","#C7CCD4","#AEB5C0","#8B93A0"],
-    headerTint:"#6B7280"},
+    headerTint:"#6B7280",
+    theme:{
+      light:{accent:"#374151",accentDk:"#1F2937",accentSoft:"#EEF0F3",accentInk:"#1F2937",hdrBg:"#E1E4E9",hdrText:"#1F2937",tint:"#F5F6F8",borderTint:"#D5D9DF",todayBg:"#374151",todayText:"#FFFFFF",chipBg:"#E7EAEE"},
+      dark:{accent:"#D1D5DB",accentDk:"#B2B5BA",accentSoft:"#393B3E",accentInk:"#D1D5DB",hdrBg:"#474A4D",hdrText:"#D1D5DB",tint:"#292B2D",borderTint:"#4F5154",todayBg:"#D1D5DB",todayText:"#0E1F18",chipBg:"#3C3F43"}}},
   {id:"sunset",name:"Sunset",
     swatches:["#E4572E","#F28C28","#D1495B","#EDAE49","#B5446E","#F2723B","#C0392B","#E8A25A"],
     swatchesDark:["#FF8A65","#FFB74D","#F06292","#FFD54F","#CE6A9A","#FF9E6B","#EF7A6B","#FFC27A"],
-    headerTint:"#F28C28"},
+    headerTint:"#F28C28",
+    theme:{
+      light:{accent:"#BC4116",accentDk:"#A23813",accentSoft:"#F6E6EE",accentInk:"#8A2C0E",hdrBg:"#EFC6D8",hdrText:"#6E1F0A",tint:"#F9EEF3",borderTint:"#E6C3D3",todayBg:"#BC4116",todayText:"#FFFFFF",chipBg:"#F0DCEA"},
+      dark:{accent:"#FF9068",accentDk:"#D97A58",accentSoft:"#40302C",accentInk:"#FF9068",hdrBg:"#523931",hdrText:"#FF9068",tint:"#2C2625",borderTint:"#5C3E34",todayBg:"#FF9068",todayText:"#0E1F18",chipBg:"#433633"}}},
   {id:"forest",name:"Forest",
     swatches:["#2E7D5B","#4F9D69","#6B8E4E","#1F6F6B","#7FA650","#3C8D7A","#5E8C3A","#2F6F4F"],
     swatchesDark:["#6FC1A0","#8AD29A","#A3C97B","#5FBDB8","#B4D87F","#7DCBB6","#9CCB6A","#7CC0A0"],
-    headerTint:"#4F9D69"},
+    headerTint:"#4F9D69",
+    theme:{
+      light:{accent:"#2A7553",accentDk:"#236247",accentSoft:"#E3F3EB",accentInk:"#1C5A40",hdrBg:"#C8E6D6",hdrText:"#16503A",tint:"#EEF7F2",borderTint:"#BFDCCD",todayBg:"#2A7553",todayText:"#FFFFFF",chipBg:"#DAEEE3"},
+      dark:{accent:"#6FC1A0",accentDk:"#5EA488",accentSoft:"#293834",accentInk:"#6FC1A0",hdrBg:"#30453F",hdrText:"#6FC1A0",tint:"#222929",borderTint:"#334C44",todayBg:"#6FC1A0",todayText:"#0E1F18",chipBg:"#2F3D3B"}}},
   {id:"ocean",name:"Ocean",
     swatches:["#2D74BC","#3AA0C8","#5B7FD6","#1F8FA6","#4E9AE0","#6A8FD0","#2A64A8","#4DB3C9"],
     swatchesDark:["#84BBEA","#7FD0EA","#9DB4F0","#6FCADB","#8FC4F5","#A4BEEA","#7AAEE6","#8FDAEA"],
-    headerTint:"#3AA0C8"},
+    headerTint:"#3AA0C8",
+    theme:{
+      light:{accent:"#2A6DB4",accentDk:"#225A98",accentSoft:"#E4EFFA",accentInk:"#1D5A9C",hdrBg:"#CBDFF4",hdrText:"#174A82",tint:"#EEF5FB",borderTint:"#C0D6EC",todayBg:"#2A6DB4",todayText:"#FFFFFF",chipBg:"#DBE8F6"},
+      dark:{accent:"#84BBEA",accentDk:"#709FC7",accentSoft:"#2D3740",accentInk:"#84BBEA",hdrBg:"#354450",hdrText:"#84BBEA",tint:"#23292E",borderTint:"#394A59",todayBg:"#84BBEA",todayText:"#0E1F18",chipBg:"#313C45"}}},
 ];
 const LOOK_BLOCK_STYLES=["soft","flat","outlined"];
-const LOOK_DEFAULT={v:1,palette:"classic",blockStyle:"soft"};
+const LOOK_DEFAULT={v:1,palette:"classic",blockStyle:"soft",perClass:{},seed:0,accentFollows:true};
 const lookPaletteById=(id)=>LOOK_PALETTES.find(p=>p.id===id)||LOOK_PALETTES[0];
 const lookIsClassic=(look)=>lookPaletteById(look&&look.palette).id==="classic";
+// perClass: {subjectId: swatchIndex 0-7}. Garbage keys/values are dropped here;
+// ids of classes that no longer exist are pruned by lookPersistMissing (it knows the subjects).
+const lookCleanPerClass=(raw)=>{
+  const out={};
+  if(!raw||typeof raw!=="object"||Array.isArray(raw))return out;
+  Object.keys(raw).forEach(k=>{const v=raw[k];if(k&&k.length<=80&&Number.isInteger(v)&&v>=0&&v<=7)out[k]=v;});
+  return out;
+};
 const lookNormalize=(raw)=>{
-  if(!raw||typeof raw!=="object")return {...LOOK_DEFAULT};
+  if(!raw||typeof raw!=="object")return {...LOOK_DEFAULT,perClass:{}};
   const palette=LOOK_PALETTES.some(p=>p.id===raw.palette)?raw.palette:"classic";
   const blockStyle=LOOK_BLOCK_STYLES.includes(raw.blockStyle)?raw.blockStyle:"soft";
-  return {v:1,palette,blockStyle};
+  const seed=Number.isInteger(raw.seed)&&raw.seed>=0&&raw.seed<=1000000000?raw.seed:0;
+  return {v:1,palette,blockStyle,perClass:lookCleanPerClass(raw.perClass),seed,accentFollows:raw.accentFollows!==false};
 };
 const readLook=()=>{try{return lookNormalize(lsGet("look",null));}catch(e){return {...LOOK_DEFAULT};}};
 const saveLook=(look)=>{const n=lookNormalize(look);lsSet("look",n);return n;};
@@ -1186,30 +1211,146 @@ const lookReadableText=(color,bg,mode)=>{
 // Ink, else white, else pure black on a solid fill (the last always clears 4.5:1 for any fill).
 const lookTextOnFill=(fill)=>{if(contrastRatio(fill,LOOK_INK)>=4.5)return LOOK_INK;if(contrastRatio(fill,"#FFFFFF")>=4.5)return "#FFFFFF";return "#000000";};
 const lookCardBg=(mode)=>mode==="dark"?darkT.card:lightT.card;
+const lookSwatches=(pal,mode)=>mode==="dark"?pal.swatchesDark:pal.swatches;
+const lookKeyOf=(s)=>s.id!==undefined?s.id:s.label;
+const lookRgb=(hex)=>{const h=hex.replace("#","");return [0,2,4].map(i=>parseInt(h.slice(i,i+2),16));};
+const lookDist=(a,b)=>{const x=lookRgb(a),y=lookRgb(b);return Math.sqrt((x[0]-y[0])*(x[0]-y[0])+(x[1]-y[1])*(x[1]-y[1])+(x[2]-y[2])*(x[2]-y[2]));};
+// Seeded permutation of the 8 swatch slots (mulberry32 + Fisher-Yates). Seed 0 is the identity order. Never Math.random: same seed, same result.
+const lookSeededOrder=(seed)=>{
+  const order=[0,1,2,3,4,5,6,7];
+  if(!seed)return order;
+  let a=(seed*2654435761)>>>0;
+  const rnd=()=>{a=(a+0x6D2B79F5)>>>0;let t=a;t=Math.imul(t^(t>>>15),t|1);t^=t+Math.imul(t^(t>>>7),t|61);return((t^(t>>>14))>>>0)/4294967296;};
+  for(let i=order.length-1;i>0;i--){const j=Math.floor(rnd()*(i+1));const x=order[i];order[i]=order[j];order[j]=x;}
+  return order;
+};
+// Deterministic assignment: subjects sorted by id; each unassigned class takes the least-used swatch
+// (so all 8 are used before any repeats) and, among those, the one farthest in RGB from the previous
+// class, so neighbors never look alike. `fixed` ({id: index}) are kept as-is (user picks).
+function lookAutoAssign(subjects,mode,seed,paletteId,fixed){
+  const pal=lookPaletteById(paletteId!==undefined?paletteId:getLook().palette);
+  const sw=lookSwatches(pal,mode);
+  const order=lookSeededOrder(seed||0);
+  const fx=fixed||{};
+  const list=(Array.isArray(subjects)?subjects:[]).filter(s=>s&&lookKeyOf(s)!==undefined)
+    .slice().sort((a,b)=>{const x=String(lookKeyOf(a)),y=String(lookKeyOf(b));return x<y?-1:x>y?1:0;});
+  const out={};const uses=[0,0,0,0,0,0,0,0];
+  list.forEach(s=>{const k=lookKeyOf(s);const v=fx[k];if(Number.isInteger(v)&&v>=0&&v<8){out[k]=v;uses[v]++;}});
+  let prev=null;
+  list.forEach(s=>{
+    const k=lookKeyOf(s);
+    if(out[k]!==undefined){prev=out[k];return;}
+    const minUse=Math.min.apply(null,uses);
+    const cands=order.filter(i=>uses[i]===minUse);
+    let best=cands[0],bestD=-1;
+    if(prev!==null)cands.forEach(i=>{const d=lookDist(sw[i],sw[prev]);if(d>bestD+1e-9){bestD=d;best=i;}});
+    out[k]=best;uses[best]++;prev=best;
+  });
+  return out;
+}
+// One-entry cache so per-event lookups don't recompute the assignment.
+let lookIdxCache={key:"",val:{}};
+function lookResolveIndexMap(subjects,look,mode){
+  const pal=lookPaletteById(look&&look.palette);
+  const list=Array.isArray(subjects)?subjects:[];
+  const pc=(look&&look.perClass)||{};
+  const key=[pal.id,mode,(look&&look.seed)||0,JSON.stringify(pc),list.map(lookKeyOf).join("|")].join("#");
+  if(lookIdxCache.key===key)return lookIdxCache.val;
+  const val=lookAutoAssign(list,mode,(look&&look.seed)||0,pal.id,pc);
+  lookIdxCache={key,val};
+  return val;
+}
 // A subject's color under a look. idOrIndex is a subject id/label (resolved
 // against `subjects`) or a plain number (palette slot; wraps around).
-// Classic returns the subject's own saved color, exactly as before.
+// Classic returns the subject's own saved color, exactly as before and ignores perClass.
+// Non-classic: perClass pick, else the deterministic auto assignment.
 function lookColorFor(idOrIndex,look,mode,subjects){
   const pal=lookPaletteById(look&&look.palette);
   const list=Array.isArray(subjects)?subjects:[];
-  let idx=-1,subj=null;
-  if(typeof idOrIndex==="number"){idx=idOrIndex;}
-  else{idx=list.findIndex(s=>s.id===idOrIndex||s.label===idOrIndex);subj=idx>=0?list[idx]:null;}
-  if(idx<0)return null;
-  if(pal.id==="classic"&&subj)return subj.color;
-  const arr=mode==="dark"?pal.swatchesDark:pal.swatches;
-  return arr[((idx%arr.length)+arr.length)%arr.length];
+  const arr=lookSwatches(pal,mode);
+  if(typeof idOrIndex==="number"){
+    if(idOrIndex<0)return null;
+    return arr[((idOrIndex%arr.length)+arr.length)%arr.length];
+  }
+  const subj=list.find(s=>s.id===idOrIndex||s.label===idOrIndex);
+  if(!subj)return null;
+  if(pal.id==="classic")return subj.color;
+  const map=lookResolveIndexMap(list,look,mode);
+  const i=map[lookKeyOf(subj)];
+  return arr[i!==undefined?i:0];
 }
 // id and label -> color, computed once per render by the caller (useMemo).
 function lookSubjectColorMap(subjects,look,mode){
   const map={};
-  (subjects||[]).forEach((s,i)=>{
-    const v=lookColorFor(i,look,mode,subjects);
-    const c=lookIsClassic(look)?s.color:v;
+  const classic=lookIsClassic(look);
+  (subjects||[]).forEach(s=>{
+    const c=classic?s.color:lookColorFor(lookKeyOf(s),look,mode,subjects);
     if(s.id!==undefined)map[s.id]=c;
     if(s.label!==undefined&&map[s.label]===undefined)map[s.label]=c;
   });
   return map;
+}
+// THE single resolver for "what color is this class". Precedence: ev.color (callers handle it
+// themselves) > look.perClass > auto index > Classic subject.color. Classic never reads perClass.
+// `fallback` is what the caller used before for an unknown class (T.lime, T.muted...).
+function subjectColor(idOrLabel,fallback,subjects){
+  const list=Array.isArray(subjects)?subjects:getSubjects();
+  const s=list.find(x=>x.id===idOrLabel||x.label===idOrLabel);
+  if(!s)return fallback!==undefined?fallback:T.lime;
+  const look=getLook();
+  if(lookIsClassic(look))return s.color;
+  return lookColorFor(lookKeyOf(s),look,lookMode(),list)||s.color;
+}
+// Writes missing assignments (a class added after the palette was chosen gets the
+// first least-used swatch) and prunes ids of deleted classes. No-op under Classic or with no classes.
+function lookPersistMissing(subjects){
+  const look=getLook();
+  if(lookIsClassic(look))return false;
+  const list=(Array.isArray(subjects)?subjects:[]).filter(s=>s&&lookKeyOf(s)!==undefined);
+  if(!list.length)return false;
+  const pc=look.perClass||{};
+  const ids={};list.forEach(s=>{ids[lookKeyOf(s)]=true;});
+  const stale=Object.keys(pc).some(k=>!ids[k]);
+  const missing=list.some(s=>pc[lookKeyOf(s)]===undefined);
+  if(!stale&&!missing)return false;
+  const kept={};Object.keys(pc).forEach(k=>{if(ids[k])kept[k]=pc[k];});
+  setLook({perClass:lookAutoAssign(list,lookMode(),look.seed||0,look.palette,kept)});
+  return true;
+}
+// Auto-assign: back to the default deterministic assignment (seed 0), replacing manual picks.
+function lookResetAssign(subjects,mode){
+  const look=getLook();
+  return setLook({seed:0,perClass:lookAutoAssign(subjects,mode||lookMode(),0,look.palette,{})});
+}
+// Shuffle: next seed, new seeded permutation, persisted so it survives reloads.
+function lookShuffle(subjects,mode){
+  const look=getLook();
+  const seed=(look.seed||0)+1;
+  return setLook({seed,perClass:lookAutoAssign(subjects,mode||lookMode(),seed,look.palette,{})});
+}
+// Whole-app theme tokens. Called at the end of applyTheme (every App render and at module
+// load), after T was reset from lightT/darkT, so it is idempotent and never touches
+// lightT/darkT. Classic gets safe defaults that look exactly like today's UI. At module
+// load the LOOKS consts are not initialised yet: the try/catch then falls back to Classic.
+function applyLookTheme(look,mode){
+  const m=mode==="dark"?"dark":"light";
+  let pal=null,lk=null;
+  try{lk=look||getLook();pal=lookPaletteById(lk.palette);}catch(e){pal=null;}
+  const th=pal&&pal.theme?pal.theme[m]:null;
+  if(!th){
+    T.lookOn=false;
+    T.hdrBg=T.card;T.hdrText=T.muted;T.accentSoft=T.card2;T.accentInk=T.text;T.tint=T.card;
+    T.borderTint=T.border;T.todayBg=T.lime;T.todayText=T.ink;T.chipBg=T.card2;
+    return;
+  }
+  T.lookOn=true;
+  T.hdrBg=th.hdrBg;T.hdrText=th.hdrText;T.accentSoft=th.accentSoft;T.accentInk=th.accentInk;T.tint=th.tint;
+  T.borderTint=th.borderTint;T.todayBg=th.todayBg;T.todayText=th.todayText;T.chipBg=th.chipBg;
+  if(lk.accentFollows!==false){
+    T.lime=th.accent;T.limeDk=th.accentDk;
+    T.limeLt=blendOverBg(th.accent,m==="dark"?0.75:0.35,"#FFFFFF");
+    T.glow=hexA(th.accent,m==="dark"?0.22:0.18);
+  }
 }
 // The one place block fill/edge/text is decided. kind: "subject" (class and
 // other fixed blocks), "study" (solid focus block), "reminder" (text only),
@@ -1244,26 +1385,39 @@ const LOOK_PREVIEW_BLOCKS=[
   {day:4,top:8,h:26,label:"Study",slot:4,kind:"study"},
   {day:4,top:44,h:30,label:"Calculus",slot:1,kind:"subject"},
 ];
-function LookPreview({look,mode}){
+function LookPreview({look,mode,subjects}){
   const pal=lookPaletteById(look.palette);
+  const classic=pal.id==="classic";
+  const th=classic?null:pal.theme[mode==="dark"?"dark":"light"];
+  const list=Array.isArray(subjects)?subjects:[];
   const days=["M","T","W","T","F"];
+  const hdrBg=th?th.hdrBg:T.card2,hdrText=th?th.hdrText:T.muted;
+  const slotColor=(slot)=>{
+    if(list.length)return {color:lookColorFor(lookKeyOf(list[slot%list.length]),look,mode,list),label:list[slot%list.length].label};
+    return {color:lookColorFor(slot,look,mode)||LOOK_PALETTES[0].swatches[slot],label:null};
+  };
   return (
-    <div data-look-preview style={{border:`1px solid ${T.border}`,borderRadius:10,overflow:"hidden",background:T.card}}>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",background:pal.headerTint?hexA(pal.headerTint,0.12):T.card2}}>
-        {days.map((d,i)=>(<div key={i} style={{textAlign:"center",fontSize:10.5,fontWeight:700,color:T.muted,padding:"6px 0"}}>{d}</div>))}
+    <div data-look-preview style={{border:`1px solid ${th?th.borderTint:T.border}`,borderRadius:10,overflow:"hidden",background:th?th.tint:T.card}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",background:hdrBg}}>
+        {days.map((d,i)=>(<div key={i} style={{textAlign:"center",fontSize:10.5,fontWeight:700,color:hdrText,padding:"6px 0"}}><span style={i===2&&th?{background:th.todayBg,color:th.todayText,borderRadius:8,padding:"1px 7px"}:undefined}>{d}</span></div>))}
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",height:92,position:"relative"}}>
         {days.map((d,i)=>(
-          <div key={i} style={{position:"relative",borderLeft:i?`1px solid ${T.border}`:"none"}}>
+          <div key={i} style={{position:"relative",borderLeft:i?`1px solid ${th?th.borderTint:T.border}`:"none"}}>
             {LOOK_PREVIEW_BLOCKS.filter(b=>b.day===i).map((b,j)=>{
-              const c=lookColorFor(b.slot,look,mode)||LOOK_PALETTES[0].swatches[b.slot];
+              const sc=slotColor(b.slot);
+              const c=sc.color;
               const s=lookBlockStyle(c,look,mode,b.kind);
               return (
-                <div key={j} style={{position:"absolute",top:b.top,left:3,right:3,height:b.h,borderRadius:5,padding:"2px 4px",boxSizing:"border-box",overflow:"hidden",background:s.fill,color:s.text,...(s.outline?{border:s.outline}:{}),borderLeft:b.kind==="study"?(s.outline?s.outline:"none"):`3px solid ${s.border}`,fontSize:9.5,fontWeight:700,whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{b.label}</div>
+                <div key={j} style={{position:"absolute",top:b.top,left:3,right:3,height:b.h,borderRadius:5,padding:"2px 4px",boxSizing:"border-box",overflow:"hidden",background:s.fill,color:s.text,...(s.outline?{border:s.outline}:{}),borderLeft:b.kind==="study"?(s.outline?s.outline:"none"):`3px solid ${s.border}`,fontSize:9.5,fontWeight:700,whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{b.kind==="study"?b.label:(sc.label||b.label)}</div>
               );
             })}
           </div>
         ))}
+      </div>
+      <div style={{display:"flex",gap:8,padding:"8px 10px",borderTop:`1px solid ${th?th.borderTint:T.border}`,background:th?th.tint:T.card}}>
+        <span style={{padding:"4px 12px",borderRadius:6,fontSize:10.5,fontWeight:700,background:th?th.accent:T.lime,color:th?lookTextOnFill(th.accent):T.bg}}>Add task</span>
+        <span style={{padding:"4px 12px",borderRadius:6,fontSize:10.5,fontWeight:700,background:th?th.accentSoft:T.card2,color:th?th.accentInk:T.text,border:`1px solid ${th?th.borderTint:T.border}`}}>Filter</span>
       </div>
     </div>
   );
@@ -1271,38 +1425,107 @@ function LookPreview({look,mode}){
 function LookCustomizePanel({open,onClose}){
   const look=useLook();
   const [saved,setSaved]=useState(false);
+  const [note,setNote]=useState("");
+  const [openId,setOpenId]=useState(null);
+  const [busy,setBusy]=useState(false);
   useEffect(()=>{if(!saved)return;const t=setTimeout(()=>setSaved(false),1800);return()=>clearTimeout(t);},[saved]);
+  useEffect(()=>{if(!busy)return;const t=setTimeout(()=>setBusy(false),350);return()=>clearTimeout(t);},[busy]);
   if(!open)return null;
   const mode=lookMode();
+  const pal=lookPaletteById(look.palette);
+  const classic=pal.id==="classic";
+  const subjects=getSubjects();
+  const sw=lookSwatches(pal,mode);
+  const idxMap=classic?{}:lookResolveIndexMap(subjects,look,mode);
   const pick=(patch)=>{setLook(patch);setSaved(true);};
+  const pickPalette=(p)=>{
+    if(p.id===look.palette)return;
+    if(p.id==="classic"){pick({palette:"classic"});setNote("");setOpenId(null);return;}
+    // Coming from Classic (or with nothing assigned yet): hand out colors right away. Between
+    // two non-Classic palettes the existing picks carry over so manual choices are not lost.
+    const keep=lookIsClassic(look)||!Object.keys(look.perClass||{}).length?{}:look.perClass;
+    pick({palette:p.id,accentFollows:true,seed:look.seed||0,perClass:lookAutoAssign(subjects,mode,look.seed||0,p.id,keep)});
+    setNote(subjects.length?`Your classes got colors from ${p.name}. Change any below.`:"");
+    setOpenId(null);
+  };
+  const runAction=(fn,msg)=>{if(busy)return;setBusy(true);fn(subjects,mode);setSaved(true);setNote(msg);setOpenId(null);};
+  const setClassColor=(id,i)=>{pick({perClass:{...idxMap,[id]:i}});setOpenId(null);};
+  const btn={padding:"7px 14px",borderRadius:8,fontFamily:T.font,fontSize:12.5,fontWeight:700,cursor:busy?"not-allowed":"pointer",border:`1px solid ${T.borderTint}`,background:T.accentSoft,color:T.accentInk,opacity:busy?0.6:1};
   return (
-    <Modal open={open} onClose={onClose} title="Customize your calendar" sub="Pick a look. It applies right away." width={520}
-      footer={<button type="button" onClick={onClose} style={{padding:"9px 22px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:T.font}}>Done</button>}>
-      <LookPreview look={look} mode={mode} />
+    <Modal open={open} onClose={onClose} title="Customize your look" sub="Pick a palette. It themes the whole app right away." width={520}
+      footer={<button type="button" className="look-focus" onClick={onClose} style={{padding:"9px 22px",borderRadius:8,border:"none",background:T.lime,color:classic?T.ink:lookTextOnFill(T.lime),fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:T.font}}>Done</button>}>
+      <style>{`.look-focus:focus-visible{outline:2px solid ${T.lime};outline-offset:2px}`}</style>
+      <LookPreview look={look} mode={mode} subjects={subjects} />
       <div style={{fontSize:12,fontWeight:700,color:T.muted,margin:"18px 0 8px"}}>Palette</div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))",gap:10}}>
         {LOOK_PALETTES.map(p=>{
           const on=look.palette===p.id;
-          const sw=mode==="dark"?p.swatchesDark:p.swatches;
+          const psw=lookSwatches(p,mode);
           return (
-            <button key={p.id} type="button" onClick={()=>pick({palette:p.id})} aria-pressed={on}
+            <button key={p.id} type="button" className="look-focus" onClick={()=>pickPalette(p)} aria-pressed={on}
               style={{textAlign:"left",padding:"10px 12px",borderRadius:10,border:`1.5px solid ${on?T.lime:T.border}`,background:on?T.lime+"15":T.card2,cursor:"pointer",fontFamily:T.font}}>
               <div style={{display:"flex",gap:3,marginBottom:8}}>
-                {sw.map((c,i)=>(<span key={i} style={{width:12,height:12,borderRadius:"50%",background:c,flexShrink:0}} />))}
+                {psw.map((c,i)=>(<span key={i} style={{width:12,height:12,borderRadius:"50%",background:c,flexShrink:0}} />))}
               </div>
               <div style={{fontSize:12.5,fontWeight:700,color:T.text}}>{p.name}{on?" ✓":""}</div>
             </button>
           );
         })}
       </div>
+      {!classic&&(
+        <div data-look-classes>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,margin:"18px 0 6px"}}>
+            <div style={{fontSize:12,fontWeight:700,color:T.muted}}>Your classes</div>
+            {subjects.length>0&&(<div style={{display:"flex",gap:6}}>
+              <button type="button" className="look-focus" disabled={busy} onClick={()=>runAction(lookResetAssign,"Colors reset to the automatic assignment.")} style={btn}>Auto-assign</button>
+              <button type="button" className="look-focus" disabled={busy} onClick={()=>runAction(lookShuffle,`Shuffled. Your classes got new colors from ${pal.name}.`)} style={btn}>Shuffle</button>
+            </div>)}
+          </div>
+          {note&&(<div role="status" style={{fontSize:12.5,color:T.accentInk,background:T.accentSoft,border:`1px solid ${T.borderTint}`,borderRadius:8,padding:"8px 10px",marginBottom:8}}>{note}</div>)}
+          {subjects.length===0?(
+            <div style={{fontSize:12.5,color:T.muted,padding:"12px 0"}}>No classes yet. Add one and it gets a {pal.name} color automatically.</div>
+          ):(
+            <div style={{display:"flex",flexDirection:"column",gap:4}}>
+              {subjects.map(s=>{
+                const k=lookKeyOf(s);
+                const cur=idxMap[k]!==undefined?idxMap[k]:0;
+                const isOpen=openId===k;
+                return (
+                  <div key={k} style={{border:`1px solid ${isOpen?T.lime:T.border}`,borderRadius:8,background:T.card}}>
+                    <button type="button" className="look-focus" aria-expanded={isOpen} aria-label={`Change color for ${s.label}`} onClick={()=>setOpenId(isOpen?null:k)}
+                      style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"8px 10px",background:"transparent",border:"none",cursor:"pointer",fontFamily:T.font,color:T.text,fontSize:13,fontWeight:600,textAlign:"left"}}>
+                      <span style={{width:16,height:16,borderRadius:"50%",background:sw[cur],flexShrink:0,border:`1px solid ${T.border}`}} />
+                      <span style={{flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.label}</span>
+                      <span style={{fontSize:11.5,color:T.muted,fontWeight:500}}>{isOpen?"Close":"Change"}</span>
+                    </button>
+                    {isOpen&&(
+                      <div style={{display:"grid",gridTemplateColumns:"repeat(8,1fr)",gap:6,padding:"4px 10px 10px"}}>
+                        {sw.map((c,i)=>(
+                          <button key={i} type="button" className="look-focus" aria-label={`${pal.name} color ${i+1}`} aria-pressed={cur===i} onClick={()=>setClassColor(k,i)}
+                            style={{height:28,borderRadius:6,background:c,cursor:"pointer",border:cur===i?`2px solid ${T.text}`:`1px solid ${T.border}`}} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div style={{fontSize:11.5,color:T.muted,marginTop:8}}>Colors you set on a single event stay as you set them.</div>
+          <div style={{fontSize:11.5,color:T.muted,marginTop:4,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+            <span>{look.accentFollows!==false?`Buttons and highlights use ${pal.name}. Change in Settings.`:"Buttons and highlights use your Settings accent."}</span>
+            {look.accentFollows===false&&(<button type="button" className="look-focus" onClick={()=>pick({accentFollows:true})} style={{...btn,padding:"4px 10px",fontSize:11.5}}>Match palette</button>)}
+          </div>
+        </div>
+      )}
       <div style={{fontSize:12,fontWeight:700,color:T.muted,margin:"18px 0 8px"}}>Block style</div>
       <div role="group" aria-label="Block style" style={{display:"flex",gap:2,background:T.card2,padding:2,borderRadius:8}}>
         {LOOK_BLOCK_STYLES.map(s=>(
-          <button key={s} type="button" onClick={()=>pick({blockStyle:s})} aria-pressed={look.blockStyle===s}
+          <button key={s} type="button" className="look-focus" onClick={()=>pick({blockStyle:s})} aria-pressed={look.blockStyle===s}
             style={{flex:1,padding:"8px 0",borderRadius:6,border:"none",cursor:"pointer",fontFamily:T.font,fontSize:12.5,fontWeight:look.blockStyle===s?700:500,background:look.blockStyle===s?T.card:"transparent",color:look.blockStyle===s?T.text:T.muted,textTransform:"capitalize"}}>{s}</button>
         ))}
       </div>
-      <div style={{fontSize:11.5,color:T.muted,marginTop:12,minHeight:16}}>{saved?"Saved on this device.":"Colors you set on a single event always stay as you set them."}</div>
+      <div style={{fontSize:11.5,color:T.muted,marginTop:12,minHeight:16}}>{saved?"Saved on this device.":(classic?"Colors you set on a single event always stay as you set them.":"")}</div>
     </Modal>
   );
 }
@@ -12404,7 +12627,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
   // Accepts either a real course id or a label -- callers with a courseId
   // handy (post-migration data) get an id match; everything else still
   // resolves the same way it always has via label.
-  const colorOf=(tg)=>{const s=userSubjects.find(x=>x.id===tg||x.label===tg);return s?s.color:T.lime;};
+  const colorOf=(tg)=>subjectColor(tg,T.lime,userSubjects);
   // Same component-local convention as colorOf above -- CalendarTab has its
   // own niceDate too. Short month (vs CalendarTab's long form) since this
   // feeds a single-line meta row that's already tight on space.
@@ -16221,7 +16444,7 @@ function Notes({setActive=()=>{}}){
   // Accepts either a real course id or a label -- callers with a courseId
   // handy (post-migration data) get an id match; everything else still
   // resolves the same way it always has via label.
-  const colorOf=(tg)=>{const s=userSubjects.find(x=>x.id===tg||x.label===tg);return s?s.color:T.lime;};
+  const colorOf=(tg)=>subjectColor(tg,T.lime,userSubjects);
 
   const [notes,setNotes]=useState(()=>{const n=lsGet("notes",null);return(n&&Array.isArray(n))?n.filter(x=>x&&x.title):[];});
   const [sel,setSel]=useState(null);
@@ -21505,7 +21728,7 @@ function StudlinAiMiniDayPreview({dateKey,proposedBlock}){
   const subjects=getSubjects();
   const colorFor=(ev)=>{
     const match=subjects.find(s=>s.id===ev.courseId||s.label===ev.subject);
-    return match&&match.color?(lookIsClassic(getLook())?match.color:(lookColorFor(subjects.indexOf(match),getLook(),lookMode(),subjects)||match.color)):T.muted;
+    return match&&match.color?subjectColor(match.id!==undefined?match.id:match.label,match.color,subjects):T.muted;
   };
   const real=[...events,...routineOccs].map(ev=>({...ev,__proposed:false}));
   const proposed=proposedBlock?[{id:"__proposed__",...proposedBlock,__proposed:true}]:[];
@@ -28626,7 +28849,7 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
   // colorOf -- id match preferred (courseId, once a routine/course carries
   // one), label fallback otherwise.
   const userSubjects=getSubjects();
-  const colorOf=(tg)=>{const s=userSubjects.find(x=>x.id===tg||x.label===tg);return s?s.color:T.muted;};
+  const colorOf=(tg)=>subjectColor(tg,T.muted,userSubjects);
   const [addingRoutine,setAddingRoutine]=useState(false);
   const [title,setTitle]=useState("");
   // "Class" used to be the default here, but adding a class already has
@@ -31667,7 +31890,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // LOOKS: subject colors come from the chosen palette (computed once per render, not per event); classic leaves each subject's own color untouched.
   const calLook=useLook();
   const [lookPanelOpen,setLookPanelOpen]=useState(false);
-  const lookColorMap=useMemo(()=>lookSubjectColorMap(userSubjects,calLook,lookMode()),[userSubjects,calLook.palette,T.mode]);
+  const lookColorMap=useMemo(()=>lookSubjectColorMap(userSubjects,calLook,lookMode()),[userSubjects,calLook.palette,calLook.perClass,calLook.seed,T.mode]);
   const colorOf=(sub)=>{const x=userSubjects.find(s=>s.id===sub||s.label===sub);if(!x)return T.lime;const m=lookColorMap[x.id!==undefined?x.id:x.label];return m||x.color;};
   // ── Phase 5: Courses/Activities sidebar (Shovel-inspired) ──
   // Own collapse state, independent of the global icon rail's.
@@ -42238,9 +42461,16 @@ function App() {
     return "Lime";
   });
   const [density,setDensityState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-density"))||"Comfortable");
+  // Subscribe to the Look BEFORE applyTheme: a palette pick re-renders App, applyTheme (via
+  // applyLookTheme) mutates T first, then every child re-reads it. Children are not memoized.
+  // The tab area is deliberately NOT keyed by look: the Customize panel lives inside it
+  // and a remount would close the panel on every pick.
+  const appLook=useLook();
   applyTheme(theme, accent, density); // mutate T on every render so all child components re-read
+  // A class added after a palette was chosen gets its swatch written into look.perClass.
+  useEffect(()=>{try{if(!lookIsClassic(getLook()))lookPersistMissing(getSubjects());}catch(e){}});
   const setTheme=(name)=>{ setThemeState(name); if(typeof localStorage!=="undefined") localStorage.setItem("studlin-theme",name); };
-  const setAccent=(name)=>{ setAccentState(name); if(typeof localStorage!=="undefined") localStorage.setItem("studlin-accent",name); };
+  const setAccent=(name)=>{ setAccentState(name); if(typeof localStorage!=="undefined") localStorage.setItem("studlin-accent",name); if(!lookIsClassic(getLook()))setLook({accentFollows:false}); };
   const setDensity=(name)=>{ setDensityState(name); if(typeof localStorage!=="undefined") localStorage.setItem("studlin-density",name); };
   // Shared by TaskTimerModal's own onComplete AND the orphaned-session
   // recovery flow below, so both paths apply the exact same double-count
