@@ -3173,7 +3173,7 @@ const STUDLIN_HELP_ENTRIES=[
   {id:"delete-account",keywords:["delete my account","delete account","close my account","cancel my account"],
     answer:"Settings → General → \"Delete account.\" It's permanent -- you'll need to type DELETE to confirm."},
   {id:"ai-memory",keywords:["what does studlin ai remember","ai memory","forget what you know","clear ai memory","stop ai remembering"],
-    answer:"Settings → Privacy → \"What Stu remembers\" lists everything he's learned, each with its own Remove button, plus a Clear all."},
+    answer:"Settings → Privacy → \"What Stu remembers\" lists everything he's learned, each with its own Forget button, plus a Clear all."},
   {id:"ai-questions",keywords:["stop asking me questions","check-in questions","how long did this take question","stop check-ins"],
     answer:"Settings → Privacy → \"Questions Studlin asks\" -- toggle off post-session check-ins or \"how long did this really take\" questions separately. Both also auto-disable on their own if you keep skipping them."},
   {id:"auto-schedule-prep",keywords:["auto schedule","auto-schedule","automatically add study sessions","auto add study sessions"],
@@ -11438,45 +11438,93 @@ const AI_MEMORY_FACT_CAP=20;
 // facts list (morning/afternoon/evening/null) -- unlike a fact string, it
 // gets read directly by the scheduler (see resolveTimeOfDayAnchor), so it
 // needs its own field rather than living inside a fact sentence.
-function getAiMemory(){return lsGet("aiMemory",{facts:[],updatedAt:null,timeOfDay:null});}
+// Memory shape: {facts:[{id,text,addedAt,source?,editedAt?}],timeOfDay,updatedAt,deleted:[{id,at}]}.
+// source is "told" | "asked-to-remember"; legacy facts have neither id nor
+// source and still work (no "you told me" label). Legacy ids are assigned
+// lazily and deterministically from the text so two devices that each
+// upgrade the same legacy fact agree on its id (union-merge needs that).
+const AI_MEMORY_PROMPT_FACT_CHARS=120;
+const AI_MEMORY_TOMBSTONE_CAP=60;
+const AI_MEMORY_EMPTY={facts:[],updatedAt:null,timeOfDay:null,deleted:[]};
+function aiMemoryLegacyId(text){
+  const t=(text||"").trim().toLowerCase();let h=5381;
+  for(let i=0;i<t.length;i++)h=((h*33)^t.charCodeAt(i))>>>0;
+  return "legacy-"+h.toString(36);
+}
+function aiMemoryNewId(){return "m-"+Date.now().toString(36)+"-"+Math.floor(Math.random()*1e6).toString(36);}
+function normalizeAiMemory(mem){
+  const m=mem||{};
+  const facts=(Array.isArray(m.facts)?m.facts:[]).filter(f=>f&&typeof f.text==="string"&&f.text.trim()).map(f=>f.id?f:{...f,id:aiMemoryLegacyId(f.text)});
+  return {...m,facts,timeOfDay:m.timeOfDay||null,updatedAt:m.updatedAt||null,deleted:Array.isArray(m.deleted)?m.deleted:[]};
+}
+// The ONLY place that reads the aiMemory key (a test enforces this). Every
+// other consumer goes through getAiMemory/getStuKnown.
+function getAiMemory(){return normalizeAiMemory(lsGet("aiMemory",AI_MEMORY_EMPTY));}
 function saveAiMemory(mem){lsSet("aiMemory",mem);}
-// Fire-and-forget push to Firestore, mirroring upsertProfile's own shape
-// exactly (same set(...,{merge:true}) pattern, same silent-catch -- a
-// failed background sync here is no worse than upsertProfile's own
-// established precedent, and blocking on it would be a real regression
-// for a feature nobody's waiting on).
+// What Stu is allowed to know, in one place: first name, time-of-day
+// preference, and the saved facts. Nothing else (no events, grades, chat).
+function getStuKnown(){
+  let firstName="";
+  try{firstName=((getProfile()||{}).name||"").trim().split(/\s+/)[0]||"";}catch(e){}
+  const mem=getAiMemory();
+  return {firstName,timeOfDay:mem.timeOfDay,facts:mem.facts};
+}
+// Fire-and-forget push to Firestore, mirroring upsertProfile's shape. A
+// failure leaves aiMemoryPushPending set so the next app open retries
+// (hydrateAiMemoryOnAuth), instead of silently losing the change.
 async function pushAiMemory(mem){
+  lsSet("aiMemoryPushPending",true);
   const u=firebase.auth().currentUser;
   if(!u)return;
-  try{await fsdb().collection('aiMemory').doc(u.uid).set({facts:mem.facts||[],timeOfDay:mem.timeOfDay||null,updatedAt:new Date().toISOString()},{merge:true});}catch(e){}
+  try{
+    await fsdb().collection('aiMemory').doc(u.uid).set({facts:mem.facts||[],timeOfDay:mem.timeOfDay||null,deleted:mem.deleted||[],updatedAt:mem.updatedAt||new Date().toISOString()},{merge:true});
+    lsSet("aiMemoryPushPending",false);
+  }catch(e){}
 }
-// One-time pull on auth -- NEW relative to every other single-owner-doc
-// pattern in this file (upsertProfile is push-only; getProfile/saveProfile
-// never round-trip Firestore at all). Without this, a fact learned on one
-// device would never reach a second one. Remote wins outright on a real
-// conflict (whole-array field, infrequent writes, one person -- the
-// per-item newest-wins merge DataStore needs for a large shared-ish
-// collection is real overkill here).
+// Union merge by fact id, so a fact added offline on one device is not lost
+// when another device's copy loads. Deleted ids are tombstoned so a forgotten
+// fact does not come back from the other side. Same id on both sides: the
+// later editedAt/addedAt wins. timeOfDay follows whichever doc is newer.
+// Pure: no I/O.
+function mergeAiMemoryDocs(localMem,remoteMem){
+  const l=normalizeAiMemory(localMem),r=normalizeAiMemory(remoteMem);
+  const tomb=new Map();
+  [...l.deleted,...r.deleted].forEach(d=>{if(d&&d.id&&(!tomb.has(d.id)||(d.at||0)>(tomb.get(d.id).at||0)))tomb.set(d.id,d);});
+  const byId=new Map();
+  [...r.facts,...l.facts].forEach(f=>{
+    if(tomb.has(f.id))return;
+    const cur=byId.get(f.id);
+    if(!cur||(f.editedAt||f.addedAt||0)>(cur.editedAt||cur.addedAt||0))byId.set(f.id,f);
+  });
+  let facts=[...byId.values()].sort((a,b)=>(a.addedAt||0)-(b.addedAt||0));
+  if(facts.length>AI_MEMORY_FACT_CAP)facts=facts.slice(facts.length-AI_MEMORY_FACT_CAP);
+  const deleted=[...tomb.values()].sort((a,b)=>(a.at||0)-(b.at||0)).slice(-AI_MEMORY_TOMBSTONE_CAP);
+  const localNewer=String(l.updatedAt||"")>=String(r.updatedAt||"");
+  return {facts,deleted,timeOfDay:(localNewer?l:r).timeOfDay,updatedAt:localNewer?l.updatedAt:r.updatedAt};
+}
+// One-time pull on auth: merge (never replace) remote into local, save, and
+// push the union back when it differs from remote or a prior push failed.
 async function hydrateAiMemoryOnAuth(){
   const u=firebase.auth().currentUser;
   if(!u)return;
   try{
     const doc=await fsdb().collection('aiMemory').doc(u.uid).get();
-    if(doc.exists){
-      const data=doc.data();
-      saveAiMemory({facts:Array.isArray(data.facts)?data.facts:[],timeOfDay:data.timeOfDay||null,updatedAt:data.updatedAt||null});
-    }
+    const local=getAiMemory();
+    const remote=doc.exists?normalizeAiMemory(doc.data()):null;
+    const merged=remote?mergeAiMemoryDocs(local,remote):local;
+    saveAiMemory(merged);
+    const ids=m=>JSON.stringify(m.facts.map(f=>f.id).sort());
+    const sameAsRemote=!!remote&&ids(remote)===ids(merged)&&remote.deleted.length===merged.deleted.length;
+    if(lsGet("aiMemoryPushPending",false)||(!sameAsRemote&&(merged.facts.length>0||merged.deleted.length>0)))await pushAiMemory(merged);
   }catch(e){}
 }
-// Merges newly-extracted fact strings into existing memory -- skips a
+// Merges newly-saved fact strings into existing memory -- skips a
 // near-duplicate of something already remembered (same normalized text,
-// or one string containing the other -- catches "hates morning workouts"
-// vs "Hates morning workouts specifically"), then drops the OLDEST facts
-// first if the merge would exceed the cap, so memory stays bounded
-// without ever silently dropping something just learned. Returns the new
-// memory object; caller is responsible for actually calling
-// saveAiMemory/pushAiMemory with it (kept pure/testable, no I/O here).
-function mergeAiMemoryFacts(existingMem,newFactTexts){
+// or one string containing the other), then drops the OLDEST facts
+// first if the merge would exceed the cap. source: "told" (extracted from
+// what the student said) or "asked-to-remember" (they said "remember...").
+// Pure; caller does saveAiMemory/pushAiMemory.
+function mergeAiMemoryFacts(existingMem,newFactTexts,source="told"){
   const existing=(existingMem&&existingMem.facts)||[];
   const norm=s=>(s||"").trim().toLowerCase();
   const isDupe=text=>{
@@ -11484,15 +11532,101 @@ function mergeAiMemoryFacts(existingMem,newFactTexts){
     if(!nt)return true;
     return existing.some(f=>{const nf=norm(f.text);return nf===nt||nf.includes(nt)||nt.includes(nf);});
   };
-  const added=(newFactTexts||[]).map(t=>(t||"").trim()).filter(t=>t&&!isDupe(t)).map(text=>({text,addedAt:Date.now()}));
+  const seen=[];
+  const added=(newFactTexts||[]).map(t=>(t||"").trim()).filter(t=>{if(!t||isDupe(t)||seen.includes(norm(t)))return false;seen.push(norm(t));return true;}).map(text=>({id:aiMemoryNewId(),text,addedAt:Date.now(),source}));
   if(added.length===0)return existingMem||{facts:[],updatedAt:null};
   let facts=[...existing,...added];
   if(facts.length>AI_MEMORY_FACT_CAP)facts=facts.slice(facts.length-AI_MEMORY_FACT_CAP);
-  return {facts,updatedAt:new Date().toISOString()};
+  return {...(existingMem||{}),facts,updatedAt:new Date().toISOString()};
 }
+// Tombstones the removed fact so a merge with another device cannot revive it.
 function removeAiMemoryFact(mem,index){
-  const facts=(mem.facts||[]).filter((_,i)=>i!==index);
-  return {facts,timeOfDay:mem.timeOfDay||null,updatedAt:new Date().toISOString()};
+  const m=normalizeAiMemory(mem);
+  const gone=m.facts[index];
+  const facts=m.facts.filter((_,i)=>i!==index);
+  const deleted=gone?[...m.deleted,{id:gone.id,at:Date.now()}].slice(-AI_MEMORY_TOMBSTONE_CAP):m.deleted;
+  return {facts,timeOfDay:m.timeOfDay,deleted,updatedAt:new Date().toISOString()};
+}
+function removeAiMemoryFactById(mem,id){
+  const m=normalizeAiMemory(mem);
+  const i=m.facts.findIndex(f=>f.id===id);
+  return i<0?m:removeAiMemoryFact(m,i);
+}
+// Edit keeps the id (so other devices treat it as the same fact).
+function editAiMemoryFact(mem,id,newText){
+  const m=normalizeAiMemory(mem);const t=(newText||"").trim();
+  if(!t)return m;
+  return {...m,facts:m.facts.map(f=>f.id===id?{...f,text:t,editedAt:Date.now()}:f),updatedAt:new Date().toISOString()};
+}
+function clearAiMemoryFacts(mem){
+  const m=normalizeAiMemory(mem);
+  const now=Date.now();
+  return {facts:[],timeOfDay:null,deleted:[...m.deleted,...m.facts.map(f=>({id:f.id,at:now}))].slice(-AI_MEMORY_TOMBSTONE_CAP),updatedAt:new Date().toISOString()};
+}
+// CRISIS SAFETY. Pure keyword/phrase check run on every chat message BEFORE
+// any routing, classifier or model call. It has BOTH false negatives (any
+// phrasing it does not list slips through) and false positives (a student
+// quoting a book, or a dark joke, may see the card). It deliberately errs
+// toward showing the card: one unneeded resource card costs a second, a
+// missed message can cost far more. Idioms like "this exam is killing me"
+// and "I could die of boredom" do not match.
+const CRISIS_PATTERNS=[
+  /\b(kill(ing)?|hurt(ing)?|harm(ing)?|cut(ting)?|injur(e|ing)|starv(e|ing)|punish(ing)?|end(ing)?)\s+(my\s?self|myself)\b/,
+  /\bself[\s-]?harm/,
+  /\bsuicidal\b/,
+  /\bkms\b/,
+  /\b(thinking|think|thought|thoughts|ideas?|plans?|considering|contemplating|attempt(ed|ing)?|commit(ting)?|committed)\b[^.!?\n]{0,30}\bsuicide\b/,
+  /\bsuicide\b[^.!?\n]{0,15}\b(plan|note|hotline|lifeline)\b/,
+  /\b(want(ed|s)?|wanna|going|need|hope|wish)\s+(to\s+)?(die|be dead|disappear forever)\b(?!\s+(of|from|laughing|inside a little))/,
+  /\b(don'?t|do not|no longer|dont)\s+(want|wanna)\s+to\s+(live|be alive|be here|exist|wake up)\b/,
+  /\bend\s+(it\s+all|my\s+life|everything)\b/,
+  /\b(take|taking)\s+my\s+own\s+life\b/,
+  /\b(better off|be better off)\s+(dead|without me)\b/,
+  /\b(no (reason|point) (to|in) (live|living|going on)|not worth living|life (isn'?t|is not) worth)/,
+  /\b(can'?t|cannot)\s+go on\b/,
+  /\b(overdos(e|ed|ing) on purpose|swallow(ed)? (a bunch of|all my) pills)\b/,
+  /\b(is|are|being|been|keeps?)\s+(abus(ed|ing)|hitting me|beating me)\b|\b(he|she|they|someone|somebody|my [a-z]+)\s+(hits|beats|abuses|molests|molested|raped|assaulted)\s+me\b|\bi\s*(was|am|got|been)\s+(sexually\s+)?(abused|assaulted|raped|molested)\b/
+];
+function detectCrisis(text){
+  const t=(text||"").toLowerCase().replace(/[‘’]/g,"'").replace(/\s+/g," ");
+  if(!t.trim())return false;
+  return CRISIS_PATTERNS.some(re=>re.test(t));
+}
+const STU_CRISIS_MESSAGE="I'm Stu, not a counselor, and I can't help with this the way a real person can. If you might hurt yourself, please reach out now.";
+const STU_CRISIS_RESOURCES=[
+  "988 Suicide & Crisis Lifeline (US): call or text 988",
+  "Crisis Text Line (US): text HOME to 741741",
+  "If you are in immediate danger, call your local emergency number.",
+  "Outside the US: findahelpline.com",
+  "You can also reach your campus counseling center or a trusted adult."
+];
+// A fact is only ever saved by an explicit request or from what the student
+// said. Pure parse of "remember that I prefer evenings" -> "I prefer evenings".
+// Returns null when the message is not a remember request.
+function parseRememberRequest(text){
+  const m=(text||"").trim().match(/^(?:please\s+|pls\s+)?(?:stu[,:]?\s+)?(?:can you\s+|could you\s+)?(?:remember|don'?t forget)(?:\s+that)?[:,]?\s+(.+)$/i);
+  if(!m)return null;
+  const fact=m[1].trim().replace(/[.!\s]+$/,"");
+  return fact.length>=3?fact:null;
+}
+// Topics Stu never saves on its own. The extraction prompt says so too; this
+// is the backstop for when the model ignores it. A false positive only means
+// a fact is not saved (safe); the student can still say "remember that ...".
+const AI_MEMORY_SENSITIVE_RE=/\b(depress\w*|anxi\w*|panic|therap\w*|counsel\w*|medicat\w*|meds|diagnos\w*|adhd|autis\w*|disorder|illness|disabilit\w*|sick|cancer|pregnan\w*|eating|self.?harm|suicid\w*|mental|my (mom|mother|dad|father|parents?|brother|sister|sibling|husband|wife|boyfriend|girlfriend|partner|friend|roommate)|divorc\w*|gay|lesbian|bisexual|trans|queer|sexual\w*|dating|debt|loan|salary|income|poor|broke|rich|money|religio\w*|church|mosque|temple|prayer|muslim|christian|jewish|hindu|buddhis\w*|atheist)\b/i;
+function filterExtractedFacts(facts,userTurns){
+  const userText=(userTurns||[]).join(" ").toLowerCase();
+  const stem=w=>w.slice(0,5);
+  const userStems=new Set((userText.match(/[a-z0-9']+/g)||[]).map(stem));
+  const seen=[];
+  return (Array.isArray(facts)?facts:[]).map(f=>typeof f==="string"?f.trim():"").filter(f=>{
+    if(!f||f.length>AI_MEMORY_PROMPT_FACT_CHARS)return false;
+    if(AI_MEMORY_SENSITIVE_RE.test(f))return false;
+    const words=(f.toLowerCase().match(/[a-z0-9']+/g)||[]).filter(w=>w.length>3);
+    if(words.length===0)return false;
+    const hit=words.filter(w=>userStems.has(stem(w))).length;
+    if(hit/words.length<0.6)return false; // not near-quoted: likely inferred
+    const k=f.toLowerCase();if(seen.includes(k))return false;seen.push(k);return true;
+  }).slice(0,3);
 }
 // Overwrite-if-present, same "remote/latest wins outright" discipline
 // hydrateAiMemoryOnAuth already uses for this whole doc -- one student,
@@ -11501,7 +11635,7 @@ function removeAiMemoryFact(mem,index){
 // preference alone rather than clearing it.
 function mergeAiMemoryTimeOfDay(existingMem,newTimeOfDay){
   if(!newTimeOfDay)return existingMem||{facts:[],timeOfDay:null,updatedAt:null};
-  return {facts:(existingMem&&existingMem.facts)||[],timeOfDay:newTimeOfDay,updatedAt:new Date().toISOString()};
+  return {...(existingMem||{}),facts:(existingMem&&existingMem.facts)||[],timeOfDay:newTimeOfDay,updatedAt:new Date().toISOString()};
 }
 // Cross-device sync for peak-hour reliability data (completionLog) -- gap
 // audit fix: completionLog was local-only (lsGet/lsSet, never touching
@@ -21392,9 +21526,9 @@ function gatherStudlinAiProfileSignals(flags,prefs){
 // there's nothing yet -- an empty "PREFERENCES:" line would read to the
 // model as "the student has no preferences," not "none captured yet."
 function formatAiMemoryForPrompt(){
-  const facts=(getAiMemory().facts||[]).map(f=>f.text);
+  const facts=(getAiMemory().facts||[]).slice(-AI_MEMORY_FACT_CAP).map(f=>{const t=(f.text||"").trim();return t.length>AI_MEMORY_PROMPT_FACT_CHARS?t.slice(0,AI_MEMORY_PROMPT_FACT_CHARS-3)+"...":t;}).filter(Boolean);
   if(facts.length===0)return "";
-  return "STUDENT'S OWN STATED PREFERENCES (real things they've told Studlin AI before, still true unless today's message says otherwise): "+facts.join("; ")+".";
+  return "Things the student told you (may be outdated; never state them as certain): "+facts.join("; ")+".";
 }
 // Turns the digest + whichever profile signals were gathered into the
 // actual text sent to the model -- one short, pre-written sentence per
@@ -21579,7 +21713,7 @@ function buildStudlinAiChatHistory(messages){
   const merged=[];
   trimmed.forEach(m=>{
     const t=(m.text||"").trim();
-    if(!t)return;
+    if(!t||m.crisis||m.kind==="crisis")return; // crisis turns never go to any model
     const r=m.role==="ai"?"ai":"user";
     const last=merged[merged.length-1];
     if(last&&last.r===r)last.t=last.t+"\n"+t;
@@ -21935,6 +22069,127 @@ function StudlinAiBubble({onClick,hasProactive}){
   );
 }
 
+// "3 months ago" style age for a memory row. Empty when the fact predates
+// addedAt tracking (legacy), never a guess.
+function memoryAgeLabel(ts,now=Date.now()){
+  if(!ts||typeof ts!=="number")return "";
+  const days=Math.floor((now-ts)/86400000);
+  if(days<1)return "today";
+  if(days<7)return days===1?"yesterday":days+" days ago";
+  if(days<30){const w=Math.floor(days/7);return w+(w===1?" week ago":" weeks ago");}
+  if(days<365){const mo=Math.floor(days/30);return mo+(mo===1?" month ago":" months ago");}
+  const y=Math.floor(days/365);return y+(y===1?" year ago":" years ago");
+}
+// Shared by Settings and the chat drawer: see, edit, add, and forget what
+// Stu remembers. Reads/writes only through the memory helpers.
+function StuMemoryPanel(){
+  const [mem,setMem]=useState(()=>getAiMemory());
+  const [confirmId,setConfirmId]=useState(null);
+  const [confirmTod,setConfirmTod]=useState(false);
+  const [confirmClear,setConfirmClear]=useState(false);
+  const [editId,setEditId]=useState(null);
+  const [editText,setEditText]=useState("");
+  const [addText,setAddText]=useState("");
+  const [err,setErr]=useState("");
+  const [status,setStatus]=useState("");
+  const [busy,setBusy]=useState(false);
+  const flash=(t)=>{setStatus(t);setTimeout(()=>setStatus(""),2500);};
+  const commit=(next,msg)=>{saveAiMemory(next);pushAiMemory(next);setMem(getAiMemory());if(msg)flash(msg);};
+  const validate=(t)=>{
+    const v=(t||"").trim();
+    if(!v)return "Type something first.";
+    if(v.length>AI_MEMORY_PROMPT_FACT_CHARS)return "Keep it under "+AI_MEMORY_PROMPT_FACT_CHARS+" characters.";
+    return "";
+  };
+  const doAdd=()=>{
+    if(busy)return;
+    const e=validate(addText);if(e){setErr(e);return;}
+    setBusy(true);
+    const next=mergeAiMemoryFacts(getAiMemory(),[addText.trim()],"asked-to-remember");
+    if(next.facts.length===getAiMemory().facts.length){setErr("Already remembered.");setBusy(false);return;}
+    setErr("");setAddText("");commit(next,"Saved.");setBusy(false);
+  };
+  const doEdit=(id)=>{
+    const e=validate(editText);if(e){setErr(e);return;}
+    setErr("");commit(editAiMemoryFact(getAiMemory(),id,editText),"Updated.");setEditId(null);
+  };
+  const border=T.border,ring=T.lime;
+  const inputStyle={flex:1,minWidth:0,background:T.card2,border:`1px solid ${border}`,borderRadius:8,padding:"8px 10px",color:T.text,fontSize:12.5,fontFamily:T.font,outline:"none"};
+  const onF=e=>{e.target.style.borderColor=ring;};
+  const onB=e=>{e.target.style.borderColor=border;};
+  const smallBtn={background:"none",border:`1px solid ${border}`,color:T.muted,cursor:"pointer",borderRadius:6,padding:"4px 10px",fontSize:12,fontFamily:T.font,flexShrink:0};
+  const empty=mem.facts.length===0&&!mem.timeOfDay;
+  return (
+    <div>
+      <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Only things you told me or asked me to remember. They may be out of date.</div>
+      {mem.timeOfDay&&(
+        <div style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:T.card2,border:`1px solid ${border}`,borderRadius:8,marginBottom:8}}>
+          {confirmTod?(<>
+            <span style={{fontSize:12.5,color:T.text,flex:1}}>Forget this?</span>
+            <Btn variant="danger" onClick={()=>{commit({...getAiMemory(),timeOfDay:null,updatedAt:new Date().toISOString()});setConfirmTod(false);}}>Forget</Btn>
+            <Btn variant="subtle" onClick={()=>setConfirmTod(false)}>Cancel</Btn>
+          </>):(<>
+            <span style={{fontSize:12.5,color:T.text,flex:1}}>Prefers {mem.timeOfDay} study sessions</span>
+            <button type="button" onClick={()=>setConfirmTod(true)} style={smallBtn}>Forget</button>
+          </>)}
+        </div>
+      )}
+      {empty&&(
+        <div style={{fontSize:12.5,color:T.muted,padding:"16px 0",textAlign:"center",borderTop:`1px solid ${border}`}}>Nothing yet. Tell me things and I'll ask before saving.</div>
+      )}
+      {mem.facts.map(f=>(
+        <div key={f.id} style={{padding:"9px 12px",background:T.card2,border:`1px solid ${border}`,borderRadius:8,marginBottom:8}}>
+          {editId===f.id?(
+            <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+              <input value={editText} autoFocus aria-label="Edit memory" onFocus={onF} onBlur={onB} onChange={e=>{setEditText(e.target.value);setErr("");}} onKeyDown={e=>{if(e.key==="Enter")doEdit(f.id);if(e.key==="Escape"){setEditId(null);setErr("");}}} style={inputStyle} />
+              <Btn variant="lime" onClick={()=>doEdit(f.id)}>Save</Btn>
+              <Btn variant="subtle" onClick={()=>{setEditId(null);setErr("");}}>Cancel</Btn>
+              {err&&<div style={{flexBasis:"100%",fontSize:11.5,color:T.red}}>{err}</div>}
+            </div>
+          ):confirmId===f.id?(
+            <div style={{display:"flex",gap:10,alignItems:"center"}}>
+              <span style={{fontSize:12.5,color:T.text,flex:1}}>Forget this?</span>
+              <Btn variant="danger" onClick={()=>{commit(removeAiMemoryFactById(getAiMemory(),f.id),"Forgotten.");setConfirmId(null);}}>Forget</Btn>
+              <Btn variant="subtle" onClick={()=>setConfirmId(null)}>Cancel</Btn>
+            </div>
+          ):(
+            <div style={{display:"flex",gap:10,alignItems:"center"}}>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:12.5,color:T.text,wordBreak:"break-word"}}>{f.text}</div>
+                <div style={{fontSize:11,color:T.muted,marginTop:2}}>
+                  {f.source?<span style={{border:`1px solid ${border}`,borderRadius:10,padding:"1px 7px",marginRight:6}}>{f.source==="asked-to-remember"?"you asked me to remember":"you told me"}</span>:null}
+                  {memoryAgeLabel(f.addedAt)}
+                </div>
+              </div>
+              <button type="button" onClick={()=>{setEditId(f.id);setEditText(f.text);setErr("");}} style={smallBtn}>Edit</button>
+              <button type="button" onClick={()=>setConfirmId(f.id)} style={smallBtn}>Forget</button>
+            </div>
+          )}
+        </div>
+      ))}
+      <div style={{display:"flex",gap:8,alignItems:"center",marginTop:10}}>
+        <input value={addText} aria-label="Add something for Stu to remember" placeholder="Add something" onFocus={onF} onBlur={onB} onChange={e=>{setAddText(e.target.value);setErr("");}} onKeyDown={e=>{if(e.key==="Enter")doAdd();}} style={inputStyle} />
+        <Btn variant="lime" disabled={busy} onClick={doAdd}>{busy?"Saving...":"Add"}</Btn>
+      </div>
+      {err&&editId==null&&<div style={{fontSize:11.5,color:T.red,marginTop:6}}>{err}</div>}
+      {status&&<div role="status" style={{fontSize:11.5,color:T.lime,marginTop:6}}>{status}</div>}
+      {!empty&&(
+        <div style={{marginTop:10}}>
+          {confirmClear?(
+            <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+              <span style={{fontSize:12,color:T.muted}}>Forget everything Stu remembers about you?</span>
+              <Btn variant="danger" onClick={()=>{commit(clearAiMemoryFacts(getAiMemory()),"Cleared.");setConfirmClear(false);}}>Yes, clear all</Btn>
+              <Btn variant="subtle" onClick={()=>setConfirmClear(false)}>Cancel</Btn>
+            </div>
+          ):(
+            <Btn variant="subtle" onClick={()=>setConfirmClear(true)}>Clear all</Btn>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=()=>{},onDeleteEvent=()=>{},proactiveSignal=null,onAcceptProactive=()=>{},onDeclineProactive=()=>{}}){
   const pp=panelPalette();
   const [messages,setMessages]=useState([]); // {role:"user"|"ai",text,proposal?}
@@ -21964,6 +22219,23 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
   // captured in a given open/close cycle. No toast on the common "nothing
   // durable came up" case -- silence there is correct, not a bug.
   const [memoryToast,setMemoryToast]=useState("");
+  // Ids saved by the toast currently showing, so its Undo can forget exactly them.
+  const [memoryUndoIds,setMemoryUndoIds]=useState([]);
+  const memoryToastTimerRef=useRef(null);
+  const showMemoryToast=(text,ids)=>{
+    setMemoryToast(text);setMemoryUndoIds(ids||[]);
+    clearTimeout(memoryToastTimerRef.current);
+    memoryToastTimerRef.current=setTimeout(()=>{setMemoryToast("");setMemoryUndoIds([]);},6000);
+  };
+  const undoMemoryToast=()=>{
+    let mem=getAiMemory();
+    memoryUndoIds.forEach(id=>{mem=removeAiMemoryFactById(mem,id);});
+    saveAiMemory(mem);pushAiMemory(mem);
+    clearTimeout(memoryToastTimerRef.current);
+    setMemoryToast("");setMemoryUndoIds([]);
+  };
+  // "What do you remember?" panel view (shared StuMemoryPanel) inside the drawer.
+  const [memoryPanelOpen,setMemoryPanelOpen]=useState(false);
   const extractedThisSessionRef=useRef(false);
   const scrollRef=useRef(null);
   // Voice input -- same SpeechRecognition pattern as Brain Dump's mic
@@ -22070,15 +22342,20 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
     if(open){extractedThisSessionRef.current=false;return;}
     if(extractedThisSessionRef.current)return;
     if(!messages.some(m=>m.role==="user"))return;
+    // A session containing a crisis message is never extracted into memory.
+    if(messages.some(m=>m.crisis)){extractedThisSessionRef.current=true;return;}
+    // Strict: needs at least 2 real student turns to say anything durable.
+    const userTurns=messages.filter(m=>m.role==="user"&&!m.crisis).map(m=>(m.text||"").trim()).filter(Boolean);
+    if(userTurns.length<2)return;
     extractedThisSessionRef.current=true;
     (async()=>{
       // Memory is an extension of Studlin AI chat, same Pro gate as the
       // rest of it -- not a separate free feature.
       if(!canUseStudlinAiQna())return;
-      const transcript=messages.filter(m=>m.role==="user"||m.role==="ai").slice(-20)
-        .map(m=>(m.role==="user"?"Student: ":"Studlin: ")+(m.text||"")).join("\n");
-      if(!transcript.trim())return;
-      const prompt="Given this conversation between a student and their study assistant, list 0-3 short, durable facts or standing preferences about the student worth remembering long-term (e.g. \"prefers evening workouts\", \"has a part-time job on weekends\") -- real, standing facts about how they live/study/prefer things, NOT one-off scheduling requests, NOT anything already obvious from a single task, NOT a fact about a class/assignment that will stop being relevant once the term ends. If nothing durable came up, return an empty list -- don't strain to find something. Respond with ONLY this JSON, no markdown fences, no explanation: {\"facts\":[\"...\"]}\n\nCONVERSATION:\n"+transcript;
+      // Only the student's own words are sent, so the model cannot "remember"
+      // something the assistant said.
+      const transcript=userTurns.slice(-12).map(t=>"Student: "+t.slice(0,400)).join("\n");
+      const prompt="Below are things a student typed to their study assistant. List 0-3 short facts the student EXPLICITLY STATED about themselves that are worth remembering long-term, near-quoted from their own words (e.g. \"prefers evening study\", \"works weekends\"). Never infer, never guess, never reword into something they did not say. Skip one-off requests, anything about a single task, and anything about a class or assignment that stops mattering after the term. Do NOT include health or mental health, family, sexuality, finances, religion, or any other person's name. If nothing qualifies, return an empty list; do not strain to find something. Respond with ONLY this JSON, no markdown fences, no explanation: {\"facts\":[\"...\"]}\n\nWHAT THE STUDENT SAID:\n"+transcript;
       try{
         const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash",format:"json"})});
         if(!res.ok)return;
@@ -22086,13 +22363,18 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
         const raw=(data.reply||"").replace(/```json?|```/g,"").trim();
         const parsed=JSON.parse(raw);
         if(!parsed||!Array.isArray(parsed.facts)||parsed.facts.length===0)return;
+        // Backstop for the prompt: drop sensitive topics and anything not
+        // near-quoted from what the student actually typed.
+        const safeFacts=filterExtractedFacts(parsed.facts,userTurns);
+        if(safeFacts.length===0)return;
         const existingMem=getAiMemory();
-        const nextMem=mergeAiMemoryFacts(existingMem,parsed.facts);
+        const nextMem=mergeAiMemoryFacts(existingMem,safeFacts,"told");
         if(nextMem.facts.length===(existingMem.facts||[]).length)return; // every candidate was a near-duplicate of something already remembered
         saveAiMemory(nextMem);
         pushAiMemory(nextMem);
-        setMemoryToast("Stu remembered something new");
-        setTimeout(()=>setMemoryToast(""),3500);
+        const knownIds=new Set((existingMem.facts||[]).map(f=>f.id));
+        const added=nextMem.facts.filter(f=>!knownIds.has(f.id));
+        showMemoryToast("Remembered: "+added.map(f=>f.text).join("; "),added.map(f=>f.id));
       }catch(e){}
     })();
   },[open,messages]);
@@ -22367,11 +22649,42 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
     // synchronous function body, so this naturally excludes the message
     // being sent right now (it becomes the final turn, appended
     // separately below) without needing to manually slice it off.
+    // Crisis check FIRST, on every message, every plan (free users included),
+    // before the paywall, help match, classifier or any model call. Static
+    // card only: no AI output, and the message is flagged so history and
+    // memory extraction skip it. It lives only in this component's state.
+    if(detectCrisis(text)){
+      setMessages(m=>[...m,{role:"user",text,crisis:true},{role:"ai",text:STU_CRISIS_MESSAGE,kind:"crisis"}]);
+      setInput("");
+      setPendingClarification(false);
+      return;
+    }
     const history=buildStudlinAiChatHistory(messages);
     setMessages(m=>[...m,{role:"user",text}]);
     setInput("");
     setLoading(true);
     setPendingClarification(false);
+    // "Remember that ..." is handled locally (no model call). Pro only, like
+    // the rest of chat; otherwise it falls through to the normal paywall.
+    const rememberText=canUseStudlinAiQna()?parseRememberRequest(text):null;
+    if(rememberText){
+      if(rememberText.length>AI_MEMORY_PROMPT_FACT_CHARS){
+        setMessages(m=>[...m,{role:"ai",text:"That one is a bit long. Say it in a short sentence and I'll remember it.",kind:"info"}]);
+      }else{
+        const before=getAiMemory();
+        const next=mergeAiMemoryFacts(before,[rememberText],"asked-to-remember");
+        if(next.facts.length===before.facts.length){
+          setMessages(m=>[...m,{role:"ai",text:"I already have that one.",kind:"info"}]);
+        }else{
+          saveAiMemory(next);pushAiMemory(next);
+          const saved=next.facts[next.facts.length-1];
+          showMemoryToast("Remembered: "+saved.text,[saved.id]);
+          setMessages(m=>[...m,{role:"ai",text:"Got it. I'll remember that.",kind:"info"}]);
+        }
+      }
+      setLoading(false);
+      return;
+    }
     // Checked BEFORE classification, not after -- classifyStudlinAiMessage
     // is a real Anthropic call, and both it and the rest of this drawer
     // are Pro-gated server-side (api/chat.js's isStudlinAiFormat check
@@ -22401,7 +22714,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
         setPricingOpen(canUseStudlinAiQnaReason()==="free-tier"?"studlinAiQna":"aiUsageCap");
         setMessages(m=>[...m,{role:"ai",text:"Stu needs Pro. I've opened the upgrade options.",kind:"paywall"}]);
       }else{
-        setMessages(m=>[...m,{role:"ai",text:"Couldn't reach Stu. Check your connection and try again.",kind:"error"}]);
+        setMessages(m=>[...m,{role:"ai",text:"Stu can't reach the server. Try again.",kind:"error"}]);
       }
       setLoading(false);
       return;
@@ -22422,7 +22735,8 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
       else if(parsed.kind==="availability_match")await answerAvailabilityMatch(parsed);
       else await runAction(parsed,null,text);
     }catch(e){
-      setMessages(m=>[...m,{role:"ai",text:"Something went wrong. Try again.",kind:"error"}]);
+      const netFail=!!e&&(e.name==="TypeError"||/fetch|network|failed to load/i.test(String(e.message||"")));
+      setMessages(m=>[...m,{role:"ai",text:netFail?"Stu can't reach the server. Try again.":"Something went wrong. Try again.",kind:"error"}]);
     }finally{
       setLoading(false);
     }
@@ -22730,6 +23044,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontSize:14,fontWeight:700,color:pp.text}}>Stu</div>
             <div style={{fontSize:11,color:pp.muted}}>Ask me anything, or tell me to add or move something</div>
+            <button type="button" onClick={()=>setMemoryPanelOpen(true)} style={{background:"none",border:"none",padding:"4px 0 0",fontSize:11.5,color:pp.muted,textDecoration:"underline",cursor:"pointer",fontFamily:T.font}}>What do you remember?</button>
           </div>
           <button onClick={onClose} style={{width:30,height:30,borderRadius:8,border:`1px solid ${pp.border}`,background:pp.card2,color:pp.muted,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.xmark}</button>
         </div>
@@ -22740,7 +23055,16 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
           {messages.map((m,i)=>(
             <div key={i} style={{alignSelf:m.role==="user"?"flex-end":"flex-start",maxWidth:"85%",display:"flex",flexDirection:"column",gap:6}}>
               <div style={{padding:"9px 13px",borderRadius:12,fontSize:13,lineHeight:1.5,background:m.role==="user"?pp.card2:T.lime+"14",color:pp.text,border:m.role==="user"?`1px solid ${pp.border}`:`1px solid ${T.lime}33`,borderLeft:m.role==="ai"?`3px solid ${studlinAiKindAccents()[m.kind]||T.lime}`:undefined,whiteSpace:m.role==="user"?"pre-wrap":undefined}}>
-                {m.role==="ai"?renderStudlinAiMarkdown(m.text):m.text}
+                {m.kind==="crisis"?(
+                  <div role="alert">
+                    <div style={{fontWeight:600,marginBottom:8}}>{STU_CRISIS_MESSAGE}</div>
+                    <ul style={{margin:0,paddingLeft:18,display:"flex",flexDirection:"column",gap:4}}>
+                      {STU_CRISIS_RESOURCES.map((r,ri)=>(
+                        <li key={ri}>{r.includes("findahelpline.com")?<>Outside the US: <a href="https://findahelpline.com" target="_blank" rel="noopener noreferrer" style={{color:pp.text,textDecoration:"underline"}}>findahelpline.com</a></>:r}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ):m.role==="ai"?renderStudlinAiMarkdown(m.text):m.text}
               </div>
               {m.proposal&&m.proposal.disambiguate&&!m.proposal.resolved&&(
                 <div style={{display:"flex",flexDirection:"column",gap:6}}>
@@ -22815,6 +23139,15 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
           {aiListening&&<div style={{fontSize:11,color:T.red,marginTop:6}}>Listening... tap the mic to stop</div>}
           {!aiListening&&aiMicError&&<div style={{fontSize:11,color:T.red,marginTop:6}}>{aiMicError}</div>}
         </div>
+        {memoryPanelOpen&&(
+          <div style={{position:"absolute",inset:0,background:T.surface,display:"flex",flexDirection:"column",zIndex:5}}>
+            <div style={{padding:"18px 18px 14px",borderBottom:`1px solid ${pp.border}`,display:"flex",alignItems:"center",gap:12}}>
+              <button type="button" onClick={()=>setMemoryPanelOpen(false)} style={{background:"none",border:"none",padding:0,fontSize:12.5,color:pp.muted,cursor:"pointer",fontFamily:T.font}}>Back to chat</button>
+              <div style={{flex:1,fontSize:14,fontWeight:700,color:pp.text,textAlign:"right"}}>What Stu remembers</div>
+            </div>
+            <div style={{flex:1,overflowY:"auto",padding:"14px 18px"}}><StuMemoryPanel /></div>
+          </div>
+        )}
       </div>
       {/* Bug fix, 2026-09-04: this drawer stays mounted at all times (see
           the panel div's own transform:open?...:"translateX(100%)" --
@@ -22824,7 +23157,10 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
           supposed to appear. Positioned as an independent sibling instead
           so it's visible regardless of the drawer's own open state. */}
       {memoryToast&&(
-        <div style={{position:"fixed",bottom:22,right:22,zIndex:STUDLIN_AI_DRAWER_PANEL_Z+1,padding:"10px 16px",background:T.ink,color:T.lime,borderRadius:10,fontSize:12.5,fontWeight:600,boxShadow:"0 16px 40px -12px rgba(0,0,0,0.5)",animation:"studlinPop 0.2s cubic-bezier(.2,.85,.3,1)"}}>{memoryToast}</div>
+        <div style={{position:"fixed",bottom:22,right:22,zIndex:STUDLIN_AI_DRAWER_PANEL_Z+1,padding:"10px 16px",background:T.ink,color:T.lime,borderRadius:10,fontSize:12.5,fontWeight:600,boxShadow:"0 16px 40px -12px rgba(0,0,0,0.5)",animation:"studlinPop 0.2s cubic-bezier(.2,.85,.3,1)",display:"flex",alignItems:"center",gap:12,maxWidth:360}}>
+          <span style={{minWidth:0,overflow:"hidden",textOverflow:"ellipsis"}}>{memoryToast}</span>
+          {memoryUndoIds.length>0&&<button type="button" onClick={undoMemoryToast} style={{background:"none",border:`1px solid ${T.lime}`,color:T.lime,borderRadius:6,padding:"3px 10px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:T.font,flexShrink:0}}>Undo</button>}
+        </div>
       )}
     </>,
     document.body
@@ -39708,23 +40044,6 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   const [confirmRemoveSubjId,setConfirmRemoveSubjId]=useState(null);
   const [courseDeleteSnapshots,setCourseDeleteSnapshots]=useState(null);
   const [courseDeleteToast,setCourseDeleteToast]=useState("");
-  const [aiMemoryFacts,setAiMemoryFacts]=useState(()=>getAiMemory().facts||[]);
-  // Time-of-day is picked up the same way facts are (Build Plan wizard /
-  // Project phase breakdown's own "anything you want Studlin to know"
-  // fields), but it's a structured preference the scheduler reads
-  // directly (see resolveTimeOfDayAnchor), so it gets its own small row
-  // here rather than living inside a fact sentence.
-  const [aiTimeOfDay,setAiTimeOfDay]=useState(()=>getAiMemory().timeOfDay||null);
-  const [confirmRemoveFactIdx,setConfirmRemoveFactIdx]=useState(null);
-  const [confirmClearMemory,setConfirmClearMemory]=useState(false);
-  // Internal audit finding, 2026-09-17: removeAiTimeOfDay (below) fired
-  // on a single click with no confirm, unlike its two siblings right
-  // above (confirmRemoveFactIdx/confirmClearMemory) -- same convention,
-  // just extended to this one too.
-  const [confirmRemoveTimeOfDay,setConfirmRemoveTimeOfDay]=useState(false);
-  const removeAiFact=(idx)=>{const next=removeAiMemoryFact(getAiMemory(),idx);saveAiMemory(next);pushAiMemory(next);setAiMemoryFacts(next.facts);setConfirmRemoveFactIdx(null);};
-  const removeAiTimeOfDay=()=>{const next={...getAiMemory(),timeOfDay:null,updatedAt:new Date().toISOString()};saveAiMemory(next);pushAiMemory(next);setAiTimeOfDay(null);};
-  const clearAiMemory=()=>{const next={facts:[],timeOfDay:null,updatedAt:new Date().toISOString()};saveAiMemory(next);pushAiMemory(next);setAiMemoryFacts([]);setAiTimeOfDay(null);setConfirmClearMemory(false);};
   const countLinkedForSubject=(sub)=>{
     const matches=(item)=>item.courseId===sub.id||item.subject===sub.label;
     return getWeeklyRoutine().filter(matches).length+lsGet("events",[]).filter(matches).length;
@@ -40177,48 +40496,8 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             </Card>
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>What Stu remembers</div>
-              <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Standing preferences it's picked up from your chats — not one-off requests, just things worth not re-explaining every time.</div>
-              {aiTimeOfDay&&(
-                <div style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,marginBottom:8}}>
-                  {confirmRemoveTimeOfDay?(<>
-                    <span style={{fontSize:12.5,color:T.text,flex:1}}>Forget this?</span>
-                    <Btn variant="danger" onClick={()=>{removeAiTimeOfDay();setConfirmRemoveTimeOfDay(false);}}>Forget</Btn>
-                    <Btn variant="subtle" onClick={()=>setConfirmRemoveTimeOfDay(false)}>Cancel</Btn>
-                  </>):(<>
-                    <span style={{fontSize:12.5,color:T.text,flex:1}}>Prefers {aiTimeOfDay} study sessions</span>
-                    <button onClick={()=>setConfirmRemoveTimeOfDay(true)} style={{background:"none",border:`1px solid ${T.border}`,color:T.muted,cursor:"pointer",borderRadius:6,padding:"4px 10px",fontSize:12,fontFamily:T.font,flexShrink:0}}>Remove</button>
-                  </>)}
-                </div>
-              )}
-              {aiMemoryFacts.length===0&&!aiTimeOfDay?(
-                <div style={{fontSize:12.5,color:T.muted,padding:"16px 0",textAlign:"center",borderTop:`1px solid ${T.border}`}}>Nothing remembered yet. It'll pick things up naturally as you chat.</div>
-              ):(
-                aiMemoryFacts.map((f,i)=>(
-                  <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,marginBottom:8}}>
-                    {confirmRemoveFactIdx===i?(<>
-                      <span style={{fontSize:12.5,color:T.text,flex:1}}>Forget this?</span>
-                      <Btn variant="danger" onClick={()=>removeAiFact(i)}>Forget</Btn>
-                      <Btn variant="subtle" onClick={()=>setConfirmRemoveFactIdx(null)}>Cancel</Btn>
-                    </>):(<>
-                      <span style={{fontSize:12.5,color:T.text,flex:1}}>{f.text}</span>
-                      <button onClick={()=>setConfirmRemoveFactIdx(i)} style={{background:"none",border:`1px solid ${T.border}`,color:T.muted,cursor:"pointer",borderRadius:6,padding:"4px 10px",fontSize:12,fontFamily:T.font,flexShrink:0}}>Remove</button>
-                    </>)}
-                  </div>
-                ))
-              )}
-              {(aiMemoryFacts.length>0||aiTimeOfDay)&&(
-                <div style={{marginTop:6}}>
-                  {confirmClearMemory?(
-                    <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-                      <span style={{fontSize:12,color:T.muted}}>Forget everything Stu remembers about you?</span>
-                      <Btn variant="danger" onClick={clearAiMemory}>Yes, clear all</Btn>
-                      <Btn variant="subtle" onClick={()=>setConfirmClearMemory(false)}>Cancel</Btn>
-                    </div>
-                  ):(
-                    <Btn variant="subtle" onClick={()=>setConfirmClearMemory(true)}>Clear all</Btn>
-                  )}
-                </div>
-              )}
+              <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Standing preferences you told Stu about, not one-off requests.</div>
+              <StuMemoryPanel />
             </Card>
             <Card>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:10}}>Account security</div>
