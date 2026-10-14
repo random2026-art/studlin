@@ -100,6 +100,7 @@ function loadStudlinModule(options) {
     "findFreeSlotInWindow","resolveAvailabilityMatch",
     "checkTimeOffImpact","simulateTimeOffBlock",
     "T","applyTheme","ACCENTS",
+    "LOOK_PALETTES","LOOK_BLOCK_STYLES","readLook","saveLook","lookNormalize","lookColorFor","lookBlockStyle","lookSubjectColorMap","contrastRatio","lookReadableText","blendOverBg","SUBJECT_COLORS","darkT","lightT",
     "getWorkWindowMinsFor","detectPeakHourInsight","dismissPeakHourInsight",
     "shouldShowLearnsYouReveal","dismissLearnsYouReveal","LEARNS_YOU_REVEAL_DELAY_MS",
     "shouldShowPrepGuide","dismissPrepGuide",
@@ -168,7 +169,7 @@ function loadStudlinModule(options) {
     "nextAvailableSubjectColor","SUBJECT_COLORS",
     "deleteCourseWithCascade","undoCourseDelete",
     "routineMeetingsOverlap","newMeetingTimesForCourse","dedupCourseClassRoutines","mergeCourses","courseIdForLabelFuzzy","normalizeCourseLabel","findDuplicateCourseGroups",
-    "detectGoogleClassCandidates","applyGoogleEvents","nudgesAllowed","stuSettingOn","stuDeclinesToday","stuRecordDecline","stuPalette","stuBedtimeDue","deriveStudlinAiProactiveSignal","looksLikeGoogleClass","groupGoogleClassCandidates","importGoogleClassGroups","getGoogleClassGroups",
+    "detectGoogleClassCandidates","applyGoogleEvents","nudgesAllowed","smartFeaturesOn","stuSettingOn","stuDeclinesToday","stuRecordDecline","stuPalette","stuBedtimeDue","deriveStudlinAiProactiveSignal","looksLikeGoogleClass","groupGoogleClassCandidates","importGoogleClassGroups","getGoogleClassGroups",
     "deriveFreePeriodsFromPeriods","getHsSchoolHours","saveHsSchoolHours",
     "subtractIntervals","effectiveLeadIn","effectiveTrailOut","effectiveLeadInForManualPlacement","effectiveTrailOutForManualPlacement","isLeadInFixed","isDuePill","isZeroDurationTimedReminder","isExpectedInClassOverlap","formatRealWorldScheduleForDate","findNowConflict",
     "assembleStudlinAiDigest","routeStudlinAiQuestion","STUDLIN_AI_DIGEST_DAYS",
@@ -230,7 +231,8 @@ function loadStudlinModule(options) {
     "getRoutineOccurrenceNote","saveRoutineOccurrenceNote","blendOverBg",
     "diffNewGoogleEvents","describeNewGoogleEvents","summarizeImportReviewQueue",
     "shouldShowImportReviewNudge","dismissImportReviewNudge","IMPORT_REVIEW_NUDGE_COOLDOWN_MS",
-    "hasFiredReminder","markReminderFired"];
+    "hasFiredReminder","markReminderFired",
+    "DURATION_DEFAULTS_BY_KIND","DURATION_CHIP_PRESETS","BRAIN_DUMP_WEEKDAYS","BRAIN_DUMP_MONTHS"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }

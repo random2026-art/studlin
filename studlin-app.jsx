@@ -867,6 +867,144 @@ const NumField = ({value,onChange,min,max,fallback,style,...rest}) => {
     />
   );
 };
+// ─── Low-friction duration picking (2026-10-14) ──────────────────────────────
+// Short label for a duration chip: 15m, 45m, 1h, 1.5h; anything else falls
+// back to "1h 15m".
+function formatDurationChip(mins){
+  const m=Math.round(+mins||0);
+  if(m<60)return m+"m";
+  if(m%30===0)return (m/60)+"h";
+  return Math.floor(m/60)+"h "+(m%60)+"m";
+}
+// Live pill / summary label: "45m", "1h", "1h 15m".
+function formatDurationLong(mins){
+  const m=Math.max(0,Math.round(+mins||0));
+  if(m<60)return m+"m";
+  const h=Math.floor(m/60),r=m%60;
+  return r?h+"h "+r+"m":h+"h";
+}
+const DURATION_CHIP_PRESETS=[15,30,45,60,90,120];
+// Per-type starting point, ONLY used when this student has no real data and
+// no previous pick. These are plain starting values, never presented as
+// "usually accurate" -- only a data-backed suggestDurationFor result keeps
+// that wording.
+const DURATION_DEFAULTS_BY_KIND={
+  "study block":45,study:45,studySession:45,homework:45,assignment:45,deadline:45,
+  reading:30,reminder:15,errand:30,task:30,habit:30,
+  "class":60,routine:60,"busy block":60,exam:60
+};
+function durationKindKey(kind){
+  return typeof kind==="string"&&kind?kind:"task";
+}
+function getLastDuration(kind){
+  const v=lsGet("lastDuration:"+durationKindKey(kind),null);
+  return typeof v==="number"&&v>=5&&v<=480?v:null;
+}
+function rememberLastDuration(kind,minutes){
+  const m=Math.round(+minutes);
+  if(!(m>=5&&m<=480))return;
+  lsSet("lastDuration:"+durationKindKey(kind),m);
+}
+// Priority: real per-subject data (suggestDurationFor keeps its own
+// certainty gating) > the last duration this student chose for this kind >
+// the per-type table. source says which won so the UI only claims "usually"
+// for the data-backed case.
+function getDefaultDurationInfo(kind,subject){
+  const data=smartFeaturesOn()?suggestDurationFor(subject,kind):null;
+  if(typeof data==="number"&&data>0)return {minutes:data,source:"data"};
+  const last=getLastDuration(kind);
+  if(last!=null)return {minutes:last,source:"last"};
+  const table=DURATION_DEFAULTS_BY_KIND[durationKindKey(kind)];
+  return {minutes:table||60,source:"default"};
+}
+function getDefaultDuration(kind,subject){
+  return getDefaultDurationInfo(kind,subject).minutes;
+}
+// Chip row replacing a bare minutes field. Presets are single-tap; Custom
+// reveals the existing NumField inline. A value that is not a preset shows
+// the Custom chip active with that value. role=radiogroup with roving
+// tabindex and arrow keys, like native radios.
+const DurationChips = ({value,onChange,presets=DURATION_CHIP_PRESETS,allowCustom=true,label="Duration"}) => {
+  const [customOpen,setCustomOpen]=useState(false);
+  const [focusIdx,setFocusIdx]=useState(-1);
+  const refs=useRef([]);
+  const isPreset=presets.includes(value);
+  const customActive=allowCustom&&(customOpen||!isPreset);
+  const options=presets.map(p=>({key:"p"+p,mins:p,label:formatDurationChip(p),active:!customActive&&value===p}));
+  if(allowCustom)options.push({key:"custom",mins:null,label:customActive&&!isPreset?"Custom "+formatDurationChip(value):"Custom",active:customActive});
+  const activeIdx=Math.max(0,options.findIndex(o=>o.active));
+  const pick=(i)=>{
+    const o=options[i];if(!o)return;
+    if(o.mins==null){setCustomOpen(true);}
+    else{setCustomOpen(false);if(o.mins!==value)onChange(o.mins);}
+  };
+  const onKeyDown=(e)=>{
+    const k=e.key;
+    let next=null;
+    if(k==="ArrowRight"||k==="ArrowDown")next=(activeIdx+1)%options.length;
+    else if(k==="ArrowLeft"||k==="ArrowUp")next=(activeIdx-1+options.length)%options.length;
+    if(next==null)return;
+    e.preventDefault();
+    pick(next);
+    const el=refs.current[next];if(el&&el.focus)el.focus();
+  };
+  return (
+    <div>
+      <div role="radiogroup" aria-label={label} onKeyDown={onKeyDown} style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+        {options.map((o,i)=>(
+          <button key={o.key} ref={el=>{refs.current[i]=el;}} type="button" role="radio" aria-checked={o.active} tabIndex={i===activeIdx?0:-1}
+            onClick={()=>pick(i)} onFocus={()=>setFocusIdx(i)} onBlur={()=>setFocusIdx(f=>f===i?-1:f)}
+            style={{padding:"6px 11px",borderRadius:7,fontSize:12,cursor:"pointer",fontFamily:T.font,fontWeight:o.active?600:400,
+              border:`1px solid ${o.active?T.lime+"99":T.border}`,background:o.active?T.lime+"18":"transparent",color:o.active?T.lime:T.muted,
+              outline:focusIdx===i?`2px solid ${T.lime}66`:"none",outlineOffset:1}}>{o.label}</button>
+        ))}
+      </div>
+      {customActive&&(
+        <div style={{display:"flex",alignItems:"center",gap:8,marginTop:8}}>
+          <NumField min={5} max={480} step={5} fallback={30} value={value} onChange={onChange} style={{width:80}} aria-label="Custom duration in minutes" />
+          <span style={{fontSize:11.5,color:T.muted}}>minutes</span>
+        </div>
+      )}
+    </div>
+  );
+};
+// Quick date chips (Today / Tomorrow / next few weekdays) above a native
+// date input. Pure helper so it is testable.
+function buildQuickDateChips(todayKey,count){
+  const base=new Date(todayKey+"T12:00:00");
+  const out=[];
+  const names=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  for(let i=0;i<(count||6);i++){
+    const d=new Date(base.getTime()+i*86400000);
+    const key=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+    out.push({key,label:i===0?"Today":i===1?"Tomorrow":names[d.getDay()]});
+  }
+  return out;
+}
+const QuickDateField = ({value,onChange,fallbackKey}) => {
+  const todayKey=dayKey();
+  const chips=buildQuickDateChips(todayKey,6);
+  return (
+    <div>
+      <div role="radiogroup" aria-label="Quick date" style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
+        {chips.map(c=>{
+          const on=value===c.key;
+          return <button key={c.key} type="button" role="radio" aria-checked={on} onClick={()=>onChange(c.key)}
+            style={{padding:"5px 10px",borderRadius:7,fontSize:11.5,cursor:"pointer",fontFamily:T.font,fontWeight:on?600:400,border:`1px solid ${on?T.lime+"99":T.border}`,background:on?T.lime+"18":"transparent",color:on?T.lime:T.muted}}>{c.label}</button>;
+        })}
+      </div>
+      <Input type="date" aria-label="Pick date" value={value} onChange={e=>onChange(e.target.value||fallbackKey||todayKey)} />
+    </div>
+  );
+};
+// Live "1h 15m  3:00 - 4:15 PM" pill shown while resizing a block or
+// dragging out a new one on the calendar grid.
+function liveRangeLabel(startMin,durMin){
+  return formatDurationLong(durMin)+"  "+fmtTimeRange(minutesToTime(startMin),durMin);
+}
+const LiveRangePill = ({startMin,durMin,style}) => (
+  <div style={{position:"absolute",left:4,zIndex:30,pointerEvents:"none",padding:"3px 8px",borderRadius:6,background:"rgba(20,20,20,0.92)",color:"#fff",fontSize:11,fontWeight:700,fontFamily:T.font,whiteSpace:"nowrap",boxShadow:"0 4px 12px rgba(0,0,0,0.3)",...style}}>{liveRangeLabel(startMin,durMin)}</div>
+);
 const SelectChip = ({options, value, onChange, size}) => (
   <div style={{display:"flex",gap:size==="sm"?4:6,flexWrap:"wrap"}}>
     {options.map(o=>{
@@ -974,6 +1112,201 @@ const COLOR_PRESET_TIERS={
 // Users add their own as they go.
 const DEFAULT_SUBJECTS=[];
 const getSubjects=()=>lsGet("user-subjects",DEFAULT_SUBJECTS);
+// ===== LOOKS (calendar palettes + customize panel, Phase 1) =====
+// Device-local only (localStorage "look"); no Firestore key, rules untouched.
+// "classic" reproduces today's colors and block styling exactly: it is the
+// default and every render site falls back to the legacy values for it.
+// Palette surfaces are white/neutral only (no cream), guarded by a test.
+const LOOK_PALETTES=[
+  {id:"classic",name:"Classic",swatches:SUBJECT_COLORS.slice(0,8),swatchesDark:SUBJECT_COLORS.slice(0,8),headerTint:null},
+  {id:"pastel",name:"Soft Pastel",
+    swatches:["#E89AA8","#8FB8E8","#B7A2E6","#86D1B4","#E8BC72","#9AA6D8","#7FCB9A","#E8A38E"],
+    swatchesDark:["#F0B3BE","#A9CBF0","#CBBBF0","#A3DEC7","#F0CE95","#B4BEE6","#9CDDB4","#F0BCAB"],
+    headerTint:"#B7A2E6"},
+  {id:"mono",name:"Minimal Mono",
+    swatches:["#111827","#374151","#4B5563","#6B7280","#7C8594","#8A94A3","#2B3340","#5A6270"],
+    swatchesDark:["#F3F4F6","#D1D5DB","#B4BAC4","#9CA3AF","#E5E7EB","#C7CCD4","#AEB5C0","#8B93A0"],
+    headerTint:"#6B7280"},
+  {id:"sunset",name:"Sunset",
+    swatches:["#E4572E","#F28C28","#D1495B","#EDAE49","#B5446E","#F2723B","#C0392B","#E8A25A"],
+    swatchesDark:["#FF8A65","#FFB74D","#F06292","#FFD54F","#CE6A9A","#FF9E6B","#EF7A6B","#FFC27A"],
+    headerTint:"#F28C28"},
+  {id:"forest",name:"Forest",
+    swatches:["#2E7D5B","#4F9D69","#6B8E4E","#1F6F6B","#7FA650","#3C8D7A","#5E8C3A","#2F6F4F"],
+    swatchesDark:["#6FC1A0","#8AD29A","#A3C97B","#5FBDB8","#B4D87F","#7DCBB6","#9CCB6A","#7CC0A0"],
+    headerTint:"#4F9D69"},
+  {id:"ocean",name:"Ocean",
+    swatches:["#2D74BC","#3AA0C8","#5B7FD6","#1F8FA6","#4E9AE0","#6A8FD0","#2A64A8","#4DB3C9"],
+    swatchesDark:["#84BBEA","#7FD0EA","#9DB4F0","#6FCADB","#8FC4F5","#A4BEEA","#7AAEE6","#8FDAEA"],
+    headerTint:"#3AA0C8"},
+];
+const LOOK_BLOCK_STYLES=["soft","flat","outlined"];
+const LOOK_DEFAULT={v:1,palette:"classic",blockStyle:"soft"};
+const lookPaletteById=(id)=>LOOK_PALETTES.find(p=>p.id===id)||LOOK_PALETTES[0];
+const lookIsClassic=(look)=>lookPaletteById(look&&look.palette).id==="classic";
+const lookNormalize=(raw)=>{
+  if(!raw||typeof raw!=="object")return {...LOOK_DEFAULT};
+  const palette=LOOK_PALETTES.some(p=>p.id===raw.palette)?raw.palette:"classic";
+  const blockStyle=LOOK_BLOCK_STYLES.includes(raw.blockStyle)?raw.blockStyle:"soft";
+  return {v:1,palette,blockStyle};
+};
+const readLook=()=>{try{return lookNormalize(lsGet("look",null));}catch(e){return {...LOOK_DEFAULT};}};
+const saveLook=(look)=>{const n=lookNormalize(look);lsSet("look",n);return n;};
+// Module-level current look + subscribers, so every calendar view re-renders
+// the instant a palette is picked, without threading props through App.
+let lookCache=null;
+const lookListeners=new Set();
+const getLook=()=>{if(!lookCache)lookCache=readLook();return lookCache;};
+const setLook=(next)=>{lookCache=saveLook({...getLook(),...next});lookListeners.forEach(fn=>{try{fn();}catch(e){}});return lookCache;};
+function useLook(){
+  const [,bump]=useState(0);
+  useEffect(()=>{const fn=()=>bump(n=>n+1);lookListeners.add(fn);return()=>{lookListeners.delete(fn);};},[]);
+  return getLook();
+}
+const lookMode=()=>T.mode==="dark"?"dark":"light";
+// WCAG 2.x contrast
+const lookLuminance=(hex)=>{
+  const h=hex.replace("#","");
+  const ch=[0,2,4].map(i=>{const c=parseInt(h.slice(i,i+2),16)/255;return c<=0.03928?c/12.92:Math.pow((c+0.055)/1.055,2.4);});
+  return 0.2126*ch[0]+0.7152*ch[1]+0.0722*ch[2];
+};
+const contrastRatio=(a,b)=>{
+  const la=lookLuminance(a),lb=lookLuminance(b);
+  return (Math.max(la,lb)+0.05)/(Math.min(la,lb)+0.05);
+};
+const LOOK_INK="#0E1F18";
+// Text that is readable on bg: the color itself when it already passes 4.5:1,
+// otherwise the color pulled toward ink (light) or white (dark) until it does.
+const lookReadableText=(color,bg,mode)=>{
+  if(contrastRatio(color,bg)>=4.5)return color;
+  const target=mode==="dark"?"#FFFFFF":LOOK_INK;
+  for(let i=1;i<=10;i++){const c=blendOverBg(target,i/10,color);if(contrastRatio(c,bg)>=4.5)return c;}
+  return target;
+};
+// Ink, else white, else pure black on a solid fill (the last always clears 4.5:1 for any fill).
+const lookTextOnFill=(fill)=>{if(contrastRatio(fill,LOOK_INK)>=4.5)return LOOK_INK;if(contrastRatio(fill,"#FFFFFF")>=4.5)return "#FFFFFF";return "#000000";};
+const lookCardBg=(mode)=>mode==="dark"?darkT.card:lightT.card;
+// A subject's color under a look. idOrIndex is a subject id/label (resolved
+// against `subjects`) or a plain number (palette slot; wraps around).
+// Classic returns the subject's own saved color, exactly as before.
+function lookColorFor(idOrIndex,look,mode,subjects){
+  const pal=lookPaletteById(look&&look.palette);
+  const list=Array.isArray(subjects)?subjects:[];
+  let idx=-1,subj=null;
+  if(typeof idOrIndex==="number"){idx=idOrIndex;}
+  else{idx=list.findIndex(s=>s.id===idOrIndex||s.label===idOrIndex);subj=idx>=0?list[idx]:null;}
+  if(idx<0)return null;
+  if(pal.id==="classic"&&subj)return subj.color;
+  const arr=mode==="dark"?pal.swatchesDark:pal.swatches;
+  return arr[((idx%arr.length)+arr.length)%arr.length];
+}
+// id and label -> color, computed once per render by the caller (useMemo).
+function lookSubjectColorMap(subjects,look,mode){
+  const map={};
+  (subjects||[]).forEach((s,i)=>{
+    const v=lookColorFor(i,look,mode,subjects);
+    const c=lookIsClassic(look)?s.color:v;
+    if(s.id!==undefined)map[s.id]=c;
+    if(s.label!==undefined&&map[s.label]===undefined)map[s.label]=c;
+  });
+  return map;
+}
+// The one place block fill/edge/text is decided. kind: "subject" (class and
+// other fixed blocks), "study" (solid focus block), "reminder" (text only),
+// "preview" (translucent chip in the day-preview modal). Classic reproduces
+// the legacy values byte-for-byte; exam/deadline rules stay at the call sites.
+function lookBlockStyle(color,look,mode,kind){
+  const k=kind||"subject";
+  const classic=lookIsClassic(look);
+  const style=(look&&look.blockStyle)||"soft";
+  const cardBg=lookCardBg(mode);
+  if(k==="reminder")return {fill:"transparent",border:color,text:classic?color:lookReadableText(color,cardBg,mode),outline:null};
+  if(classic||(style==="soft"&&k!=="study")){
+    if(k==="study")return {fill:color,border:"none",text:T.ink,outline:null};
+    if(k==="preview")return {fill:color+"22",border:color+"55",text:T.text,outline:`1px solid ${color}55`};
+    const fill=blendOverBg(color,0.1176,cardBg);
+    return {fill,border:color,text:classic?color:lookReadableText(color,fill,mode),outline:null};
+  }
+  if(style==="flat"||k==="study"){
+    return {fill:color,border:blendOverBg("#000000",0.18,color),text:lookTextOnFill(color),outline:null};
+  }
+  // outlined
+  return {fill:cardBg,border:color,text:lookReadableText(color,cardBg,mode),outline:`1.5px solid ${color}`};
+}
+// Sample data for the live preview: 5 weekdays, same helper as the real grid.
+const LOOK_PREVIEW_BLOCKS=[
+  {day:0,top:6,h:34,label:"Biology",slot:0,kind:"subject"},
+  {day:0,top:52,h:26,label:"Study",slot:1,kind:"study"},
+  {day:1,top:16,h:30,label:"Calculus",slot:1,kind:"subject"},
+  {day:2,top:6,h:30,label:"History",slot:2,kind:"subject"},
+  {day:2,top:48,h:34,label:"Chemistry",slot:3,kind:"subject"},
+  {day:3,top:20,h:34,label:"Biology",slot:0,kind:"subject"},
+  {day:4,top:8,h:26,label:"Study",slot:4,kind:"study"},
+  {day:4,top:44,h:30,label:"Calculus",slot:1,kind:"subject"},
+];
+function LookPreview({look,mode}){
+  const pal=lookPaletteById(look.palette);
+  const days=["M","T","W","T","F"];
+  return (
+    <div data-look-preview style={{border:`1px solid ${T.border}`,borderRadius:10,overflow:"hidden",background:T.card}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",background:pal.headerTint?hexA(pal.headerTint,0.12):T.card2}}>
+        {days.map((d,i)=>(<div key={i} style={{textAlign:"center",fontSize:10.5,fontWeight:700,color:T.muted,padding:"6px 0"}}>{d}</div>))}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",height:92,position:"relative"}}>
+        {days.map((d,i)=>(
+          <div key={i} style={{position:"relative",borderLeft:i?`1px solid ${T.border}`:"none"}}>
+            {LOOK_PREVIEW_BLOCKS.filter(b=>b.day===i).map((b,j)=>{
+              const c=lookColorFor(b.slot,look,mode)||LOOK_PALETTES[0].swatches[b.slot];
+              const s=lookBlockStyle(c,look,mode,b.kind);
+              return (
+                <div key={j} style={{position:"absolute",top:b.top,left:3,right:3,height:b.h,borderRadius:5,padding:"2px 4px",boxSizing:"border-box",overflow:"hidden",background:s.fill,color:s.text,...(s.outline?{border:s.outline}:{}),borderLeft:b.kind==="study"?(s.outline?s.outline:"none"):`3px solid ${s.border}`,fontSize:9.5,fontWeight:700,whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{b.label}</div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+function LookCustomizePanel({open,onClose}){
+  const look=useLook();
+  const [saved,setSaved]=useState(false);
+  useEffect(()=>{if(!saved)return;const t=setTimeout(()=>setSaved(false),1800);return()=>clearTimeout(t);},[saved]);
+  if(!open)return null;
+  const mode=lookMode();
+  const pick=(patch)=>{setLook(patch);setSaved(true);};
+  return (
+    <Modal open={open} onClose={onClose} title="Customize your calendar" sub="Pick a look. It applies right away." width={520}
+      footer={<button type="button" onClick={onClose} style={{padding:"9px 22px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:T.font}}>Done</button>}>
+      <LookPreview look={look} mode={mode} />
+      <div style={{fontSize:12,fontWeight:700,color:T.muted,margin:"18px 0 8px"}}>Palette</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))",gap:10}}>
+        {LOOK_PALETTES.map(p=>{
+          const on=look.palette===p.id;
+          const sw=mode==="dark"?p.swatchesDark:p.swatches;
+          return (
+            <button key={p.id} type="button" onClick={()=>pick({palette:p.id})} aria-pressed={on}
+              style={{textAlign:"left",padding:"10px 12px",borderRadius:10,border:`1.5px solid ${on?T.lime:T.border}`,background:on?T.lime+"15":T.card2,cursor:"pointer",fontFamily:T.font}}>
+              <div style={{display:"flex",gap:3,marginBottom:8}}>
+                {sw.map((c,i)=>(<span key={i} style={{width:12,height:12,borderRadius:"50%",background:c,flexShrink:0}} />))}
+              </div>
+              <div style={{fontSize:12.5,fontWeight:700,color:T.text}}>{p.name}{on?" ✓":""}</div>
+            </button>
+          );
+        })}
+      </div>
+      <div style={{fontSize:12,fontWeight:700,color:T.muted,margin:"18px 0 8px"}}>Block style</div>
+      <div role="group" aria-label="Block style" style={{display:"flex",gap:2,background:T.card2,padding:2,borderRadius:8}}>
+        {LOOK_BLOCK_STYLES.map(s=>(
+          <button key={s} type="button" onClick={()=>pick({blockStyle:s})} aria-pressed={look.blockStyle===s}
+            style={{flex:1,padding:"8px 0",borderRadius:6,border:"none",cursor:"pointer",fontFamily:T.font,fontSize:12.5,fontWeight:look.blockStyle===s?700:500,background:look.blockStyle===s?T.card:"transparent",color:look.blockStyle===s?T.text:T.muted,textTransform:"capitalize"}}>{s}</button>
+        ))}
+      </div>
+      <div style={{fontSize:11.5,color:T.muted,marginTop:12,minHeight:16}}>{saved?"Saved on this device.":"Colors you set on a single event always stay as you set them."}</div>
+    </Modal>
+  );
+}
+// ===== END LOOKS =====
 const saveSubjects=(s)=>lsSet("user-subjects",s);
 // Every "assign a new subject/course a default color" site used to just
 // index SUBJECT_COLORS by a local count (subjects.length%..., i%..., a
@@ -3185,6 +3518,7 @@ const TIER0_FIXED_KINDS=new Set(["exam","class","busy block","reminder"]);
 // which nobody does mid-workout. One shared check so the Begin button and
 // the missed-task notification can never drift out of sync on this again.
 function isTimerEligible(ev){
+  if(!smartFeaturesOn())return false;
   return !!(ev&&!ev.checklist&&ev.duration&&(ev.kind==="study block"||ev.kind==="deadline"));
 }
 // Leading buffer subtracted from a FIXED-kind block's start when computing
@@ -3531,7 +3865,7 @@ function priorityTierOf(task){
 // aggregate getBucketReliability signal.
 function logCompletionOutcome(outcome,timeStr,tier,taskId,subject){
   const bucket=hourBucket(timeStr);
-  if(!bucket)return;
+  if(!bucket||!smartFeaturesOn())return; // manual-first: no learning log when smart features are off
   const log=lsGet("completionLog",[]);
   const entry={bucket,outcome,t:Date.now()};
   if(tier)entry.tier=tier;
@@ -3911,7 +4245,22 @@ function dismissStrugglingBucket(bucketId){
 // Settings screen picks it up next time it re-reads "settings".
 // Master switch for Studlin's proactive suggestions and questions (Settings, Privacy).
 // Missing = on, so nobody is opted out by an unset key.
-const nudgesAllowed=()=>lsGet("settings",{}).nudgesMaster!==false;
+// Manual-first (2026-10-14): smartFeatures is false for brand-new accounts
+// (written by the setup wizard); missing = on so existing users keep today's behaviour.
+const smartFeaturesOn=()=>lsGet("settings",{}).smartFeatures!==false;
+const nudgesAllowed=()=>smartFeaturesOn()&&lsGet("settings",{}).nudgesMaster!==false;
+// True only for a genuinely brand-new account: smartFeatures never set, and
+// nothing on the account yet. Existing users (or anyone re-running setup)
+// are never flipped to manual by accident.
+function isBrandNewAccountForManualFirst(){
+  const st=lsGet("settings",{});
+  // A skipped wizard writes smartFeatures:false plus this marker, so the question
+  // is still asked when setup comes back (the student never actually answered).
+  if(st.smartFeatures!==undefined&&!(st.smartFeatures===false&&st.smartFeaturesSkipDefault===true))return false;
+  if((lsGet("events",[])||[]).length>0)return false;
+  if(lsGet("subjects-configured",false)||lsGet("hasConfiguredRoutine",false))return false;
+  return true;
+}
 function setQuestionAskPref(key,enabled){
   const next={...lsGet("settings",{}),[key]:enabled};
   lsSet("settings",next);
@@ -8684,13 +9033,147 @@ function regexScanDeadlines(text){
 // item it produces is a guess, not just the ones parseBrainDump itself
 // flagged. Surfaced in the review screen as the same "Low confidence,
 // double-check" badge a syllabus scan's low-confidence items already get.
+//
+// 2026-10-14: now runs each line through parseBrainDumpLine so the local path
+// also understands days, times, "due ..." and "for 45m" -- but only ever
+// pulls out what the line literally says (never a guessed duration), and the
+// review screen shows every parsed value as an editable chip.
+const BRAIN_DUMP_WEEKDAYS={sunday:0,monday:1,tuesday:2,wednesday:3,thursday:4,friday:5,saturday:6,
+  mon:1,tue:2,tues:2,wed:3,thu:4,thur:4,thurs:4,fri:5};
+const BRAIN_DUMP_MONTHS={jan:1,january:1,feb:2,february:2,mar:3,march:3,apr:4,april:4,may:5,jun:6,june:6,jul:7,july:7,aug:8,august:8,sep:9,sept:9,september:9,oct:10,october:10,nov:11,november:11,dec:12,december:12};
+function bdKey(y,m,d){return y+"-"+String(m).padStart(2,"0")+"-"+String(d).padStart(2,"0");}
+function bdAddDays(key,n){
+  const p=key.split("-");
+  const d=new Date(+p[0],+p[1]-1,+p[2]+n,12,0,0);
+  return bdKey(d.getFullYear(),d.getMonth()+1,d.getDate());
+}
+// Month/day with no year: the next occurrence on or after today.
+function bdNextMonthDay(todayKey,month,day){
+  const ty=+todayKey.slice(0,4);
+  if(month<1||month>12||day<1||day>31)return null;
+  const probe=new Date(ty,month-1,day,12,0,0);
+  if(probe.getMonth()!==month-1)return null;
+  const thisYear=bdKey(ty,month,day);
+  if(thisYear>=todayKey)return thisYear;
+  const next=new Date(ty+1,month-1,day,12,0,0);
+  return next.getMonth()===month-1?bdKey(ty+1,month,day):null;
+}
+// A weekday name resolves to the NEXT such day strictly after today (never
+// "today" and never in the past). Said on that same weekday it is a week out;
+// the review row shows the date so it is easy to correct.
+function bdNextWeekday(todayKey,dow){
+  const p=todayKey.split("-");
+  const cur=new Date(+p[0],+p[1]-1,+p[2],12,0,0).getDay();
+  let delta=(dow-cur+7)%7;
+  if(delta===0)delta=7;
+  return bdAddDays(todayKey,delta);
+}
+// Bare clock numbers without am/pm: 1-6 read as afternoon, 7-11 as morning,
+// 12 as noon, 13-23 as 24-hour. Always shown and editable in the review row.
+function bdClock(h,m,mer){
+  let hh=h;
+  if(mer){
+    const pm=/^p/i.test(mer);
+    if(hh===12)hh=pm?12:0;else if(pm)hh+=12;
+  }else if(hh>=1&&hh<=6)hh+=12;
+  if(hh>23||m>59)return null;
+  return String(hh).padStart(2,"0")+":"+String(m).padStart(2,"0");
+}
+function parseBrainDumpLine(line,today){
+  const todayKey=typeof today==="string"?today:(today instanceof Date?bdKey(today.getFullYear(),today.getMonth()+1,today.getDate()):dayKey());
+  let s=" "+String(line||"").replace(/\s+/g," ").trim()+" ";
+  const take=(re,fn)=>{
+    const m=s.match(re);
+    if(!m)return false;
+    const ok=fn(m);
+    if(ok===false)return false;
+    s=s.replace(m[0]," ");
+    return true;
+  };
+  let durationMin=null,time=null,dueDate=null,hasDue=false;
+  take(/\s(?:for\s+)?(\d+(?:\.\d+)?)\s*(hours?|hrs?|h|minutes?|mins?|m)(?=[\s,.;!?]|$)/i,m=>{
+    const n=parseFloat(m[1]);
+    const mins=/^h/i.test(m[2])?Math.round(n*60):Math.round(n);
+    if(!(mins>=5&&mins<=480))return false;
+    durationMin=mins;
+  });
+  // Dates before times so "10/20" is never mistaken for part of a clock time.
+  take(/\s(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?(?=[\s,.;!?]|$)/,m=>{
+    const mo=+m[1],d=+m[2];
+    if(m[3]){
+      let y=+m[3];if(y<100)y+=2000;
+      const probe=new Date(y,mo-1,d,12,0,0);
+      if(mo<1||mo>12||probe.getMonth()!==mo-1)return false;
+      dueDate=bdKey(y,mo,d);
+    }else{
+      const k=bdNextMonthDay(todayKey,mo,d);
+      if(!k)return false;
+      dueDate=k;
+    }
+  });
+  if(!dueDate){
+    take(/\s(?:on\s+)?(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?=[\s,.;!?]|$)/i,m=>{
+      const k=bdNextMonthDay(todayKey,BRAIN_DUMP_MONTHS[m[1].toLowerCase()],+m[2]);
+      if(!k)return false;
+      dueDate=k;
+    });
+  }
+  take(/\s(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)(?=[\s,.;!?]|$)/i,m=>{
+    const t=bdClock(+m[1],m[2]?+m[2]:0,m[3].replace(/\./g,""));
+    if(!t||+m[1]<1||+m[1]>12)return false;
+    time=t;
+  })||take(/\s(?:at\s+)(\d{1,2})(?::(\d{2}))?(?=[\s,.;!?]|$)/i,m=>{
+    const t=bdClock(+m[1],m[2]?+m[2]:0,null);
+    if(!t)return false;
+    time=t;
+  })||take(/\s(\d{1,2}):(\d{2})(?=[\s,.;!?]|$)/,m=>{
+    const t=bdClock(+m[1],+m[2],null);
+    if(!t)return false;
+    time=t;
+  })||take(/\s(?:at\s+)?(noon|midnight)(?=[\s,.;!?]|$)/i,m=>{time=/noon/i.test(m[1])?"12:00":"00:00";});
+  if(!dueDate){
+    if(take(/\s(?:due\s+|by\s+|on\s+)?(?:today|tonight)(?=[\s,.;!?]|$)/i,()=>true))dueDate=todayKey;
+    else if(take(/\s(?:due\s+|by\s+|on\s+)?(?:tomorrow|tmrw|tmr)(?=[\s,.;!?]|$)/i,()=>true))dueDate=bdAddDays(todayKey,1);
+    else{
+      take(/\s(?:due\s+|by\s+|on\s+|this\s+|next\s+)*(sunday|monday|tuesday|wednesday|thursday|friday|saturday|mon|tues?|wed|thu(?:rs?)?|fri)(?=[\s,.;!?]|$)/i,m=>{
+        dueDate=bdNextWeekday(todayKey,BRAIN_DUMP_WEEKDAYS[m[1].toLowerCase()]);
+      })||take(/\s(?:due\s+|by\s+|on\s+|this\s+|next\s+)+(sat|sun)(?=[\s,.;!?]|$)/i,m=>{
+        dueDate=bdNextWeekday(todayKey,/^sat/i.test(m[1])?6:0);
+      });
+    }
+  }
+  if(take(/\sdue(?=[\s,.;!?:]|$)/i,()=>true))hasDue=true;
+  // Dangling glue left behind by the removed tokens.
+  let title=s.replace(/\s+/g," ").trim();
+  let prev;
+  do{prev=title;title=title.replace(/^(?:on|at|by|due|for|the|[-,:;])\s+/i,"").replace(/\s+(?:on|at|by|due|for|the|[-,:;])$/i,"").replace(/[-,:;]$/,"").trim();}while(title!==prev);
+  if(!title)title=String(line||"").trim();
+  title=title.charAt(0).toUpperCase()+title.slice(1);
+  const lower=" "+String(line||"").toLowerCase()+" ";
+  const studyish=/\b(study|studying|read|reading|review|homework|hw|practice|revise|work on|finish|write|writing)\b/.test(lower);
+  let kind="todo";
+  if(/^\s*(?:remind me|don'?t forget)\b/i.test(String(line||""))&&time)kind="reminder";
+  else if(/\b(exam|test|quiz|midterm|final)\b/.test(lower)&&dueDate&&!/\b(study|review|prep|practice)\b/.test(lower))kind="exam";
+  else if(durationMin||(studyish&&!time))kind="study";
+  else if(time&&!hasDue)kind="event";
+  return {title,dueDate,time,durationMin,kind};
+}
 function fallbackSplitBrainDump(text){
-  return (text||"")
-    .split(/[,\n]|(?:\s+and\s+)/i)
-    .map(s=>s.trim().replace(/^[\s\-*•.]+/,""))
+  const stripLead=(l)=>l.trim().replace(/^(?:[-*•–—]+|\d+[.)]|\[[ xX]?\])\s*/,"").trim();
+  const rawLines=String(text||"").split(/\r?\n/).map(stripLead).filter(Boolean);
+  // Newlines are the real separators. Commas and " and " only split a
+  // single-line dump (people type a whole list on one line).
+  const pieces=rawLines.length>1?rawLines:rawLines.flatMap(l=>l.split(/,|\s+and\s+/i).map(stripLead));
+  const todayKey=dayKey();
+  return pieces
     .filter(s=>s.length>2)
     .slice(0,15)
-    .map(s=>({title:s.charAt(0).toUpperCase()+s.slice(1),kind:"todo",durationMin:null,dueDate:null,needsDuration:false,confidence:"low"}));
+    .map(s=>{
+      const p=parseBrainDumpLine(s,todayKey);
+      const needsDate=(p.kind==="event"||p.kind==="reminder"||p.kind==="exam")&&!p.dueDate;
+      return {title:p.title,kind:p.kind,durationMin:p.durationMin,dueDate:p.dueDate,dueTime:p.time,needsDuration:false,confidence:"low",
+        ...(needsDate?{clarify:"Which day? Pick a date below."}:{})};
+    });
 }
 // Levels map strictly to real Lock-In Timer minutes — no streak/login/task
 // bonuses, no penalty deductions, no starting offset. An honest sum of
@@ -8833,6 +9316,7 @@ function pushSettingsSync(){
       schoolTerm:lsGet("schoolTerm",null),
       holidays:lsGet("holidays",[]),
       incognito:lsGet("settings",{}).incognito===true,
+      ...(typeof lsGet("settings",{}).smartFeatures==="boolean"?{smartFeatures:lsGet("settings",{}).smartFeatures}:{}), // never push a missing key, so a stored false is not overridden
       updatedAt:new Date().toISOString(),
     },{merge:true}).catch(()=>{});
   }catch(e){}
@@ -8860,6 +9344,7 @@ async function hydrateSettingsSyncOnAuth(){
       if(data.schoolTerm&&data.schoolTerm.start&&data.schoolTerm.end)lsSet("schoolTerm",data.schoolTerm);
       if(Array.isArray(data.holidays))lsSet("holidays",data.holidays);
       if(typeof data.incognito==="boolean")lsSet("settings",{...lsGet("settings",{}),incognito:data.incognito});
+      if(typeof data.smartFeatures==="boolean")lsSet("settings",{...lsGet("settings",{}),smartFeatures:data.smartFeatures});
     }
   }catch(e){}
   settingsSyncHydrated=true;
@@ -8950,6 +9435,18 @@ function computeQuickCreateRange(anchorMins,curMins){
   if(curMins>=anchorMins){ lo=anchorMins; hi=Math.max(curMins,anchorMins+15); }
   else{ hi=anchorMins; lo=Math.min(curMins,anchorMins-15); }
   return {startTime:minutesToTime(lo),endTime:minutesToTime(hi)};
+}
+// A plain click (no movement) used to give a 15-minute block, which is
+// usually wrong. It now seeds the last duration the student used for a
+// quick-created task (30 minutes the first time). The 15-minute floor in
+// computeQuickCreateRange still governs real drags.
+function quickCreateSeedMinutes(){
+  return getLastDuration("quickCreate")||30;
+}
+function computeQuickCreateRangeSeeded(anchorMins,curMins){
+  return curMins===anchorMins
+    ?computeQuickCreateRange(anchorMins,Math.min(1439,anchorMins+quickCreateSeedMinutes()))
+    :computeQuickCreateRange(anchorMins,curMins);
 }
 
 // Normalize a stored priority/difficulty value to 0-1.
@@ -11058,7 +11555,7 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
           </div>
         </div>
 
-        <div style={{marginBottom:22}}>
+        {smartFeaturesOn()&&<div style={{marginBottom:22}}>
           <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>
             Peak Focus Hours <span style={{textTransform:"none",fontWeight:400,color:T.faint}}>(optional)</span>
           </label>
@@ -11076,7 +11573,7 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
               {unreachablePeakBuckets.map(b=>PEAK_BUCKET_LABELS[b.id]).join(" and ")} {unreachablePeakBuckets.length>1?"don't":"doesn't"} overlap your Work Hours ({fmtClock12(workStart)}–{fmtClock12(workEnd)}) at all, so Studlin can't actually place anything there yet — widen your Work Hours above to cover it.
             </div>
           )}
-        </div>
+        </div>}
 
         <div style={{marginBottom:22}}>
           <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>Exam Prep Spacing</label>
@@ -14066,7 +14563,9 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                           );
                         })():(
                           <div style={{display:"flex",gap:8,marginTop:10}}>
-                            <BtnSm onClick={(e)=>{e.stopPropagation();if(window._setTimerTask)window._setTimerTask(s);}}>Start</BtnSm>
+                            {smartFeaturesOn()
+                              ?<BtnSm onClick={(e)=>{e.stopPropagation();if(window._setTimerTask)window._setTimerTask(s);}}>Start</BtnSm>
+                              :<BtnSm onClick={(e)=>{e.stopPropagation();lsSet("events",lsGet("events",[]).map(x=>x.id===s.id?{...x,status:"done",completedAt:Date.now()}:x));onTaskCompleted(s.id);refresh();}}>Mark done</BtnSm>}
                             <BtnSm variant="ghost" onClick={(e)=>{e.stopPropagation();setEditingSessionId(s.id);}}>Move</BtnSm>
                           </div>
                         )
@@ -20610,8 +21109,8 @@ const STUDLIN_AI_BUBBLE_CLEARANCE=90;
 // own internal floor exactly, rather than trusting its return value alone.
 function gatherStudlinAiProfileSignals(flags,prefs){
   const profile={};
-  if(flags.needsPeakHours)profile.peakInsight=detectPeakHourInsight(prefs);
-  if(flags.needsStrugglingBucket)profile.strugglingBucket=detectStrugglingBucket(prefs);
+  if(flags.needsPeakHours&&smartFeaturesOn())profile.peakInsight=detectPeakHourInsight(prefs);
+  if(flags.needsStrugglingBucket&&smartFeaturesOn())profile.strugglingBucket=detectStrugglingBucket(prefs);
   if(flags.subject&&flags.needsSubjectTrend){
     const scoredCount=lsGet("events",[]).filter(e=>e.kind==="exam"&&e.subject===flags.subject&&e.scoreTier).length;
     profile.subjectNudge=scoredCount>=3?subjectOutcomeNudge(flags.subject):null;
@@ -21006,7 +21505,7 @@ function StudlinAiMiniDayPreview({dateKey,proposedBlock}){
   const subjects=getSubjects();
   const colorFor=(ev)=>{
     const match=subjects.find(s=>s.id===ev.courseId||s.label===ev.subject);
-    return match&&match.color?match.color:T.muted;
+    return match&&match.color?(lookIsClassic(getLook())?match.color:(lookColorFor(subjects.indexOf(match),getLook(),lookMode(),subjects)||match.color)):T.muted;
   };
   const real=[...events,...routineOccs].map(ev=>({...ev,__proposed:false}));
   const proposed=proposedBlock?[{id:"__proposed__",...proposedBlock,__proposed:true}]:[];
@@ -23200,6 +23699,7 @@ function AcceptanceRoster({memberUids, memberNames, responses}) {
 }
 
 function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropManualBlockRequest, onDropNewTaskRequest, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange, onSelectEvent, selectedRoutineKey, onSelectRoutineOccurrence, blockRefs, flipOldRectsRef, flipSeq, newItemHighlightIds, gsBusyByDate, gsRecommended, quickCreateDraft, onQuickCreateDrag, onQuickCreateDragEnd}) {
+  const lookNow=getLook(),lookModeNow=lookMode();
   // "Watch it happen" FLIP playback (see CalendarTab's captureFlip) --
   // flipSeq changing means flipOldRectsRef.current now holds a snapshot
   // of every block's on-screen position from right before events just
@@ -23376,7 +23876,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
     e.preventDefault();
     const startMins=minsFromColY(dk,e.clientY);
     createDragRef.current={dateKey:dk,anchorMins:startMins};
-    const r=computeQuickCreateRange(startMins,startMins+30);
+    const r=computeQuickCreateRange(startMins,startMins+quickCreateSeedMinutes());
     onQuickCreateDrag(dk,r.startTime,r.endTime);
     setCreatingDragging(true);
     document.body.style.userSelect="none";
@@ -23387,7 +23887,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
       const info=createDragRef.current;
       if(!info||!onQuickCreateDrag)return;
       const curMins=minsFromColY(info.dateKey,e.clientY);
-      const r=computeQuickCreateRange(info.anchorMins,curMins);
+      const r=computeQuickCreateRangeSeeded(info.anchorMins,curMins);
       onQuickCreateDrag(info.dateKey,r.startTime,r.endTime);
     };
     const onUp=(e)=>{
@@ -23397,7 +23897,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
       createDragRef.current=null;
       if(!info||!onQuickCreateDragEnd)return;
       const curMins=minsFromColY(info.dateKey,e.clientY);
-      const r=computeQuickCreateRange(info.anchorMins,curMins);
+      const r=computeQuickCreateRangeSeeded(info.anchorMins,curMins);
       const col=wkColRefs.current[info.dateKey];
       const rect=col?col.getBoundingClientRect():null;
       onQuickCreateDragEnd(info.dateKey,r.startTime,r.endTime,{x:rect?rect.right:e.clientX,y:e.clientY});
@@ -23511,7 +24011,8 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
     const onMove=(e)=>{
       const info = wkResizeInfo.current;
       if(!info)return;
-      const deltaMin = Math.round((e.clientY - info.startClientY) / (WK_PX_HR / 60) / 5) * 5;
+      // Snaps to 15 minutes (matches the live range pill and drag-to-create).
+      const deltaMin = Math.round((e.clientY - info.startClientY) / (WK_PX_HR / 60) / 15) * 15;
       if(info.edge==="bottom"){
         const liveDuration = Math.max(MIN_DUR, info.origDuration + deltaMin);
         setWkResize({id:info.id, edge:info.edge, liveStartMin:info.origStartMin, liveDuration});
@@ -23879,9 +24380,15 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   const qStart=timeToMinutes(quickCreateDraft.startTime);
                   const qDur=Math.max(15,timeToMinutes(quickCreateDraft.endTime)-qStart);
                   return (
-                    <div style={{position:"absolute",top:qStart*(WK_PX_HR/60),left:2,right:2,height:Math.max(15,qDur)*(WK_PX_HR/60),borderRadius:5,background:quickCreateDraft.color?quickCreateDraft.color+"B3":T.lime+"22",border:`1.5px dashed ${quickCreateDraft.color||T.lime}`,zIndex:7,pointerEvents:"none",boxSizing:"border-box"}} />
+                    <>
+                      <div style={{position:"absolute",top:qStart*(WK_PX_HR/60),left:2,right:2,height:Math.max(15,qDur)*(WK_PX_HR/60),borderRadius:5,background:quickCreateDraft.color?quickCreateDraft.color+"B3":T.lime+"22",border:`1.5px dashed ${quickCreateDraft.color||T.lime}`,zIndex:7,pointerEvents:"none",boxSizing:"border-box"}} />
+                      {creatingDragging&&<LiveRangePill startMin={qStart} durMin={qDur} style={{top:Math.max(2,qStart*(WK_PX_HR/60)-24)}} />}
+                    </>
                   );
                 })()}
+                {wkResize && wkResizeInfo.current && wkResizeInfo.current.date===dk && wkResize.liveStartMin!=null && (
+                  <LiveRangePill startMin={wkResize.liveStartMin} durMin={wkResize.liveDuration} style={{top:Math.max(2,(wkResize.edge==="bottom"?(wkResize.liveStartMin+wkResize.liveDuration)*(WK_PX_HR/60)+4:wkResize.liveStartMin*(WK_PX_HR/60)-24))}} />
+                )}
                 {isPastDeadline && (
                   <div style={{position:"absolute",inset:0,background:"rgba(217,128,107,0.07)",borderLeft:"2px solid rgba(217,128,107,0.35)",zIndex:5,pointerEvents:"none"}}>
                     <div style={{position:"sticky",top:6,textAlign:"center",fontSize:8,fontWeight:800,letterSpacing:"0.08em",color:"rgba(217,128,107,0.65)",padding:3}}>PAST DUE</div>
@@ -23993,12 +24500,12 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   // real background (T.card), so the lines underneath can
                   // no longer show through at all.
                   const kindStyle = isReminderMarker
-                    ? {background:"transparent",color:subjectColor}
+                    ? {background:"transparent",color:lookBlockStyle(subjectColor,lookNow,lookModeNow,"reminder").text}
                     : isStudy
-                      ? {background:ev.color||tokens.color.accent,color:T.ink}
+                      ? (()=>{const ls=lookBlockStyle(ev.color||tokens.color.accent,lookNow,lookModeNow,"study");return {background:ls.fill,color:ls.text};})()
                       : isWarningKind
                         ? {background:blendOverBg(T.amber,0.12,T.card),border:`1px solid ${tokens.color.warning}`,color:tokens.color.warning}
-                        : {background:blendOverBg(subjectColor,0.1176,T.card),color:subjectColor};
+                        : (()=>{const ls=lookBlockStyle(subjectColor,lookNow,lookModeNow,"subject");return {background:ls.fill,color:ls.text,...(ls.outline?{border:ls.outline}:{})};})();
                   const dimmedByRoutineMode = editRoutineMode && !isRoutine;
                   const highlightedByRoutineMode = editRoutineMode && isRoutine;
                   // Schedule with Friends / Find Shared Study Window: a
@@ -24123,7 +24630,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                         <div style={{display:"flex",alignItems:"center",gap:5,height:"100%"}}>
                           <span style={{width:6,height:6,borderRadius:"50%",background:subjectColor,flexShrink:0,boxShadow:`0 0 0 2px ${subjectColor}2a`}} />
                           <span style={{flex:"0 1 auto",minWidth:8,height:2,background:subjectColor+"77",borderRadius:1}} />
-                          <span style={{fontSize:9,fontWeight:700,color:subjectColor,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ev.title}</span>
+                          <span style={{fontSize:9,fontWeight:700,color:kindStyle.color,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ev.title}</span>
                         </div>
                       ) : (<>
                       {/* Subject marker -- see comment above kindStyle */}
@@ -24278,7 +24785,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   reads events that actually have a timeSpent). Still logs a
                   real completion outcome for the reliability signal, same
                   as any other completion. */}
-              {ev.status!=="done"&&isTimerEligible(ev)&&(
+              {ev.status!=="done"&&(isTimerEligible(ev)||(!smartFeaturesOn()&&!ev.checklist&&!ev.isRoutine&&(ev.kind==="study block"||ev.kind==="deadline")))&&(
                 <button onClick={()=>{setEvents(markEventDone(ev.id));closePopover();}} style={itemStyle} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="none"}>Complete</button>
               )}
               <button onClick={()=>{closePopover();openEdit(ev);}} style={itemStyle} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="none"}>Edit</button>
@@ -24919,7 +25426,7 @@ function PhasesOutlineEditor({item,onChange,subject,onGateBlocked=()=>{},onNeeds
 // there, instead of always being a blank field to type into. status (the
 // HS/college fork) has to stay directly ahead of classes either way, since
 // it's what the classes step's own scan options depend on.
-const WIZARD_STEP_ORDER=["status","classes","term","awake","personalize","activities","calendarSync","finalReview"];
+const WIZARD_STEP_ORDER=["status","classes","term","awake","personalize","permissions","activities","calendarSync","finalReview"];
 // The named steps a fresh account walks through, shown as a top progress
 // stepper. "status" (HS/college fork) isn't its own labeled step -- it's
 // the entry to "Courses", same as "classes" itself. Every real step now
@@ -24933,6 +25440,7 @@ const WIZARD_STEPPER=[
   {key:"term",label:"End of Term"},
   {key:"awake",label:"Awake time"},
   {key:"personalize",label:"Study style"},
+  {key:"permissions",label:"Permissions"},
   {key:"activities",label:"Activities"},
   {key:"calendarSync",label:"Connect"},
   {key:"finalReview",label:"Review"},
@@ -25000,6 +25508,7 @@ const STU_WIZARD_LINES={
   term:["thinking","When does your term end?"],
   awake:["sleepy","When do you sleep? I won't plan past it."],
   personalize:["wink","Tell me how you like to study."],
+  permissions:["happy","Pick what I can nudge you about."],
   activities:["happy","Work, gym, clubs. Add what fills your week."],
   calendarSync:["excited","Connect a calendar and I'll do the typing."],
   finalReview:["proud","Looks good! Ready when you are."],
@@ -25225,6 +25734,40 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   // in which case both toggles just keep their existing true-by-default
   // (see SettingsTab), no forced choice either way.
   const [askQuestionsPref,setAskQuestionsPref]=useState(null);
+  // Manual-first (2026-10-14): "Do you want Studlin to learn how you work?"
+  // Preselected to "no". Only written on a brand-new account's first run.
+  const [learnPref,setLearnPref]=useState("no");
+  const [brandNew,setBrandNew]=useState(false);
+  useEffect(()=>{if(open)setBrandNew(!!firstRun&&!quickScan&&!termRollover&&isBrandNewAccountForManualFirst());},[open]);
+  // Permissions step answers: null = not answered, "yes" | "no".
+  const [permPrefs,setPermPrefs]=useState({notif:null,stu:null,google:null,bedtime:null});
+  const [notifPermNote,setNotifPermNote]=useState("");
+  const answerPerm=(key,val)=>setPermPrefs(p=>({...p,[key]:val}));
+  const permNotif=async(allow)=>{
+    setNotifPermNote("");
+    if(!allow){setQuestionAskPref("notifMaster",false);setQuestionAskPref("sysPush",false);answerPerm("notif","no");return;}
+    setQuestionAskPref("notifMaster",true);
+    if(typeof Notification==="undefined"){answerPerm("notif","yes");setNotifPermNote("This browser can't show desktop notifications. In-app reminders are on.");return;}
+    try{
+      const perm=Notification.permission==="default"?await Notification.requestPermission():Notification.permission;
+      if(perm==="granted"){
+        setQuestionAskPref("sysPush",true);
+        const uid=firebase.auth().currentUser&&firebase.auth().currentUser.uid;
+        if(uid)registerPushToken(uid);
+        answerPerm("notif","yes");
+      }else{
+        setQuestionAskPref("sysPush",false);
+        answerPerm("notif","no");
+        setNotifPermNote("Notifications are blocked in your browser. You can allow them in browser settings, then turn them on in Settings.");
+      }
+    }catch(e){answerPerm("notif","no");setNotifPermNote("Couldn't ask for permission. You can turn notifications on in Settings.");}
+  };
+  const permStu=(allow)=>{setQuestionAskPref("mascotReminders",allow);setQuestionAskPref("mascotCheers",allow);answerPerm("stu",allow?"yes":"no");};
+  const permBedtime=(allow)=>{setQuestionAskPref("mascotBedtime",allow);answerPerm("bedtime",allow?"yes":"no");};
+  const permGoogle=(allow)=>answerPerm("google",allow?"yes":"no");
+  // learn-how-I-work is only "on" for the peak-hours picker once the student said yes
+  // (new account) or already has smart features on (existing user re-running setup).
+  const wizLearnOn=brandNew?learnPref==="yes":smartFeaturesOn();
 
   const persistPending=(next)=>{setPendingClasses(next);lsSet("classSetupPending",next);};
   // 2026-08-26 fix: onboarding's own Profile step already requires
@@ -25247,7 +25790,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   // ones are the term that just ended, so treating them as already known
   // skipped the question and kept the old dates.
   const knowsTerm=!termRollover&&(()=>{const t=getSchoolTerm();return !!(t&&t.start&&t.end);})();
-  const effectiveWizardStepOrder=knowsStatus?WIZARD_STEP_ORDER.filter(s=>s!=="status"):WIZARD_STEP_ORDER;
+  const effectiveWizardStepOrder=WIZARD_STEP_ORDER.filter(s=>(!knowsStatus||s!=="status")&&(s!=="permissions"||brandNew)&&(s!=="calendarSync"||permPrefs.google!=="no"));
   // Real Back navigation (2026-07-29 fix) -- null in quickScan mode (that
   // session intentionally starts mid-flow with no earlier step to return
   // to) and on the very first step of a normal session.
@@ -26258,7 +26801,17 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     if(status)saveProfile({...getProfile(),status});
     // Only writes when the student actually answered -- untouched/skipped
     // leaves both toggles at their existing true-by-default (SettingsTab).
-    if(askQuestionsPref!=null){
+    // Manual-first: only a brand-new account's first run decides smartFeatures.
+    // Re-running setup on an existing account never touches it.
+    // (brandNew was computed when the wizard opened, before classes were committed above.)
+    if(brandNew&&(lsGet("settings",{}).smartFeatures===undefined||lsGet("settings",{}).smartFeaturesSkipDefault===true)){
+      const learn=learnPref==="yes";
+      lsSet("settings",{...lsGet("settings",{}),smartFeaturesSkipDefault:false});
+      setQuestionAskPref("smartFeatures",learn);
+      setQuestionAskPref("askCheckIns",learn);
+      setQuestionAskPref("askDurationQuestions",learn);
+      if(learn)setQuestionAskPref("nudgesMaster",true); // off is already covered by smartFeatures; keeps Stu bedtime reminders working
+    }else if(askQuestionsPref!=null){
       setQuestionAskPref("askCheckIns",askQuestionsPref==="yes");
       setQuestionAskPref("askDurationQuestions",askQuestionsPref==="yes");
     }
@@ -26374,7 +26927,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
               <TimeField label="Study end" value={workEnd} onChange={setWorkEnd} />
             </div>
             {windowInvalid&&<div style={{fontSize:11.5,color:T.red,marginTop:8}}>End time must be after start time.</div>}
-            <div style={{marginTop:20}}>
+            {wizLearnOn&&<div style={{marginTop:20}}>
               <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>
                 Peak Focus Hours <span style={{textTransform:"none",fontWeight:400,color:T.faint}}>(optional)</span>
               </label>
@@ -26392,7 +26945,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                   </button>
                 ))}
               </div>
-            </div>
+            </div>}
           </>)}
 
           {step==="personalize"&&(<>
@@ -26408,13 +26961,51 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                 actual question. Condensed to one line -- the feature
                 itself (askCheckIns/askDurationQuestions, see Settings)
                 is real and stays, just the copy in front of it. */}
-            <div style={{marginTop:18,paddingTop:16,borderTop:`1px solid ${T.border}`}}>
-              <div style={{fontSize:12,color:T.muted,marginBottom:10,lineHeight:1.5}}>Okay if Studlin asks the occasional quick question, like how a session went? Skippable anytime, adjustable in Settings.</div>
-              <PrefChipRow label="Okay to ask?" value={askQuestionsPref} onChange={setAskQuestionsPref} options={[
-                {value:"yes",label:"Yes, ask me"},
-                {value:"no",label:"No thanks"},
-              ]} />
+            {brandNew?(
+              <div style={{marginTop:18,paddingTop:16,borderTop:`1px solid ${T.border}`}}>
+                <div style={{fontSize:12,color:T.muted,marginBottom:10,lineHeight:1.5}}>Studlin can time your sessions and suggest better hours. Off by default. You can turn it on anytime in Settings.</div>
+                <div style={{marginBottom:18}}>
+                  <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>Do you want Studlin to learn how you work?</label>
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                    {[{value:"no",label:"Not now"},{value:"yes",label:"Yes, learn how I work"}].map(opt=>(
+                      <button key={opt.value} type="button" aria-pressed={learnPref===opt.value} onClick={()=>setLearnPref(opt.value)} style={{...peakChipStyle(learnPref===opt.value),borderRadius:10}}>{opt.label}</button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ):(
+              <div style={{marginTop:18,paddingTop:16,borderTop:`1px solid ${T.border}`}}>
+                <div style={{fontSize:12,color:T.muted,marginBottom:10,lineHeight:1.5}}>Okay if Studlin asks the occasional quick question, like how a session went? Skippable anytime, adjustable in Settings.</div>
+                <PrefChipRow label="Okay to ask?" value={askQuestionsPref} onChange={setAskQuestionsPref} options={[
+                  {value:"yes",label:"Yes, ask me"},
+                  {value:"no",label:"No thanks"},
+                ]} />
+              </div>
+            )}
+          </>)}
+
+          {step==="permissions"&&(<>
+            <TitleSub title="What can Studlin do?" sub="Pick what you want. Change any of it later in Settings." />
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              {[
+                {key:"notif",title:"Notifications",sub:"Alerts for deadlines and reminders.",onAllow:()=>permNotif(true),onNo:()=>permNotif(false)},
+                {key:"stu",title:"Stu reminders",sub:learnPref==="yes"?"Stu pops in before things start and cheers when you finish.":"Stu says hi and cheers when you finish.",onAllow:()=>permStu(true),onNo:()=>permStu(false)},
+                {key:"google",title:"Google Calendar",sub:"Bring in your events. Next screens will connect it.",onAllow:()=>permGoogle(true),onNo:()=>permGoogle(false)},
+                {key:"bedtime",title:"Bedtime reminder",sub:"A nudge 30 minutes before the bedtime you set.",onAllow:()=>permBedtime(true),onNo:()=>permBedtime(false)},
+              ].map(c=>(
+                <div key={c.key} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",borderRadius:10,border:`1px solid ${permPrefs[c.key]==="yes"?T.lime+"66":T.border}`,background:T.card2}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:600,color:T.text}}>{c.title}</div>
+                    <div style={{fontSize:11.5,color:T.muted,marginTop:2,lineHeight:1.4}}>{c.sub}</div>
+                  </div>
+                  <div style={{display:"flex",gap:6,flexShrink:0}}>
+                    <button type="button" aria-pressed={permPrefs[c.key]==="yes"} onClick={c.onAllow} style={{...peakChipStyle(permPrefs[c.key]==="yes"),borderRadius:10,padding:"6px 12px"}}>Allow</button>
+                    <button type="button" aria-pressed={permPrefs[c.key]==="no"} onClick={c.onNo} style={{...peakChipStyle(permPrefs[c.key]==="no"),borderRadius:10,padding:"6px 12px"}}>Not now</button>
+                  </div>
+                </div>
+              ))}
             </div>
+            {notifPermNote&&<div role="alert" style={{fontSize:11.5,color:T.red,marginTop:8}}>{notifPermNote}</div>}
           </>)}
 
           {step==="status"&&(<>
@@ -27211,9 +27802,12 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
             </>)}
             {step==="awake"&&(<Btn onClick={()=>setStep("personalize")} disabled={windowInvalid} style={{opacity:windowInvalid?0.45:1}}>Continue</Btn>)}
             {step==="personalize"&&(<>
-              <Btn variant="subtle" onClick={()=>setStep("activities")}>Skip</Btn>
-              <Btn onClick={()=>setStep("activities")}>Continue</Btn>
+              <Btn variant="subtle" onClick={()=>setStep(brandNew?"permissions":"activities")}>Skip</Btn>
+              <Btn onClick={()=>setStep(brandNew?"permissions":"activities")}>Continue</Btn>
             </>)}
+            {step==="permissions"&&(
+              <Btn onClick={()=>setStep("activities")}>Continue</Btn>
+            )}
             {step==="classes"&&addMode===null&&(
               // 2026-09-11: Courses now runs before End of Term, so THIS is
               // where term comes next -- unless it's already configured
@@ -27242,8 +27836,8 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
               <Btn onClick={finishReviewingClass}>{editingPendingId?"Save changes":"Done"}</Btn>
             )}
             {step==="activities"&&(<>
-              <Btn variant="subtle" onClick={()=>setStep("calendarSync")}>Skip</Btn>
-              <Btn onClick={()=>setStep("calendarSync")}>Continue</Btn>
+              <Btn variant="subtle" onClick={()=>setStep(permPrefs.google==="no"?"finalReview":"calendarSync")}>Skip</Btn>
+              <Btn onClick={()=>setStep(permPrefs.google==="no"?"finalReview":"calendarSync")}>Continue</Btn>
             </>)}
             {step==="calendarSync"&&(
               <Btn onClick={()=>setStep("finalReview")}>Continue</Btn>
@@ -27278,6 +27872,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
 // one). The container just scrolls, same as any normal calendar, landing
 // near the current time or the first real event on open.
 function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending, openNew, newItemHighlightIds, onEditRoutine, moveEvent, sidebarDragChip, onDropSidebarChip, onDropManualBlockRequest, onDropNewTaskRequest, onDropRoutineOccurrence, onRoutineDragStateChange, quickCreateDraft, onQuickCreateDrag, onQuickCreateDragEnd, gsBusyByDate, gsRecommended, gsDraft, onGsPreviewMove, onGsPreviewResize}) {
+  const lookNow=getLook(),lookModeNow=lookMode();
   const scrollRef=useRef(null);
   // User report, 2026-09-10: dragging an unscheduled item ("Don't know
   // exactly when? Drag onto the calendar", the sidebar's own unscheduled
@@ -27428,7 +28023,7 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
     e.preventDefault();
     const startMins=minsFromDayY(e.clientY);
     createDragRef.current={anchorMins:startMins};
-    const r=computeQuickCreateRange(startMins,startMins+30);
+    const r=computeQuickCreateRange(startMins,startMins+quickCreateSeedMinutes());
     onQuickCreateDrag(selDay,r.startTime,r.endTime);
     setCreatingDragging(true);
     document.body.style.userSelect="none";
@@ -27439,7 +28034,7 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
       const info=createDragRef.current;
       if(!info||!onQuickCreateDrag)return;
       const curMins=minsFromDayY(e.clientY);
-      const r=computeQuickCreateRange(info.anchorMins,curMins);
+      const r=computeQuickCreateRangeSeeded(info.anchorMins,curMins);
       onQuickCreateDrag(selDay,r.startTime,r.endTime);
     };
     const onUp=(e)=>{
@@ -27449,7 +28044,7 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
       createDragRef.current=null;
       if(!info||!onQuickCreateDragEnd)return;
       const curMins=minsFromDayY(e.clientY);
-      const r=computeQuickCreateRange(info.anchorMins,curMins);
+      const r=computeQuickCreateRangeSeeded(info.anchorMins,curMins);
       const el=timelineRef.current;
       const rect=el?el.getBoundingClientRect():null;
       onQuickCreateDragEnd(selDay,r.startTime,r.endTime,{x:rect?rect.right:e.clientX,y:e.clientY});
@@ -27568,7 +28163,10 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
               const qStart=timeToMinutes(quickCreateDraft.startTime);
               const qDur=Math.max(15,timeToMinutes(quickCreateDraft.endTime)-qStart);
               return (
-                <div style={{position:"absolute",top:(qStart-spanStart)*(pxPerHr/60),left:2,right:2,height:qDur*(pxPerHr/60),borderRadius:5,background:quickCreateDraft.color?quickCreateDraft.color+"B3":T.lime+"22",border:`1.5px dashed ${quickCreateDraft.color||T.lime}`,zIndex:7,pointerEvents:"none",boxSizing:"border-box"}} />
+                <>
+                  <div style={{position:"absolute",top:(qStart-spanStart)*(pxPerHr/60),left:2,right:2,height:qDur*(pxPerHr/60),borderRadius:5,background:quickCreateDraft.color?quickCreateDraft.color+"B3":T.lime+"22",border:`1.5px dashed ${quickCreateDraft.color||T.lime}`,zIndex:7,pointerEvents:"none",boxSizing:"border-box"}} />
+                  {creatingDragging&&<LiveRangePill startMin={qStart} durMin={qDur} style={{top:Math.max(2,(qStart-spanStart)*(pxPerHr/60)-24)}} />}
+                </>
               );
             })()}
             {isToday&&nowMins>=spanStart&&nowMins<=spanEnd&&(
@@ -27687,12 +28285,12 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
               // perceived tint, but flattened to one solid hex so the lines
               // underneath stop showing through.
               const kindStyle=isReminderMarker
-                ?{background:"transparent",borderLeft:"none",color}
+                ?{background:"transparent",borderLeft:"none",color:lookBlockStyle(color,lookNow,lookModeNow,"reminder").text}
                 :isStudy
-                  ?{background:color,borderLeft:"none",color:T.ink}
+                  ?(()=>{const ls=lookBlockStyle(color,lookNow,lookModeNow,"study");return {background:ls.fill,borderLeft:"none",color:ls.text,...(ls.outline?{border:ls.outline}:{})};})()
                   :isExam
                     ?{background:T.ink,border:`2px solid ${color}`,borderLeft:`2px solid ${color}`,boxShadow:`0 0 10px -1px ${color}, inset 0 0 10px ${color}22`,color:T.cream}
-                    :{background:blendOverBg(color,0.1176,T.card),borderLeft:`3px solid ${color}`,color};
+                    :(()=>{const ls=lookBlockStyle(color,lookNow,lookModeNow,"subject");return {...(ls.outline?{border:ls.outline}:{}),background:ls.fill,borderLeft:`3px solid ${ls.border}`,color:ls.text};})();
               const leftPct=(displayCol/displayTotalCols)*100;
               const widthPct=100/displayTotalCols;
               // Same "just added/imported" marker as WeeklyPlanner's own
@@ -27745,7 +28343,7 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
                     <div style={{display:"flex",alignItems:"center",gap:5,height:"100%"}}>
                       <span style={{width:6,height:6,borderRadius:"50%",background:color,flexShrink:0,boxShadow:`0 0 0 2px ${color}2a`}} />
                       <span style={{flex:"0 1 auto",minWidth:8,height:2,background:color+"77",borderRadius:1}} />
-                      <span style={{fontSize:10,fontWeight:700,color,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",textDecoration:isDone?"line-through":"none"}}>{ev.title}</span>
+                      <span style={{fontSize:10,fontWeight:700,color:kindStyle.color,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",textDecoration:isDone?"line-through":"none"}}>{ev.title}</span>
                     </div>
                   ) : (<>
                   {!catchUpPending&&over>0&&<span title={"Scheduled "+over+(over===1?" day":" days")+" after its due date"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:`0 0 0 1.5px ${isExam?T.ink:"#fff"}`,zIndex:1}} />}
@@ -27900,6 +28498,7 @@ function ClassDayNotesFields({routineId,date}){
 const DAY_PREVIEW_ICON_BY_KIND={"class":Icon.cal,"study block":Icon.brain,"exam":Icon.zap,"deadline":Icon.file,"reminder":Icon.clock};
 function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime,fmtTimeRange,catchUpPending,openNew}){
   if(!open)return null;
+  const pvStyle=(c)=>lookBlockStyle(c,getLook(),lookMode(),"preview");
   // Same isDuePill exclusion as DayPlanner's own timeline (see its
   // comment) -- an exam/deadline/unconfirmed-time reminder never had a
   // real clock position, so this modal shouldn't lay one out here either.
@@ -27997,11 +28596,11 @@ function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime
                 );
               }
               return(
-                <div key={ev.id} style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:8,padding:"6px 10px",overflow:"hidden",zIndex:3,boxSizing:"border-box",background:color+"22",border:`1px solid ${color}55`,display:"flex",flexDirection:"column",justifyContent:"center"}}>
+                <div key={ev.id} style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:8,padding:"6px 10px",overflow:"hidden",zIndex:3,boxSizing:"border-box",background:pvStyle(color).fill,border:pvStyle(color).outline,display:"flex",flexDirection:"column",justifyContent:"center"}}>
                   {conflictTitles.length>0&&<span title={"Overlaps with "+conflictTitles.join(", ")} style={{position:"absolute",top:2,right:2,fontSize:9,lineHeight:1,zIndex:1,filter:"drop-shadow(0 1px 1px rgba(0,0,0,0.35))"}}>⚠️</span>}
                   <div style={{display:"flex",alignItems:"center",gap:6}}>
                     <span style={{color,display:"flex",flexShrink:0}}>{iconFor(ev.kind)}</span>
-                    <span style={{fontSize:12,fontWeight:700,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.title}</span>
+                    <span style={{fontSize:12,fontWeight:700,color:pvStyle(color).text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.title}</span>
                   </div>
                   {heightPx>30&&<div style={{fontSize:10,color:T.muted,marginTop:2,marginLeft:19}}>{fmtTimeRange(ev.time,dur)}</div>}
                   {overflowCount>0&&<div style={{fontSize:9.5,fontWeight:700,color,marginTop:1,marginLeft:19}}>+{overflowCount} more at this time</div>}
@@ -28211,7 +28810,7 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
                 as dragging an event in Google Calendar. */}
             {isHabit?(
               <div style={{marginBottom:14}}>
-                <Field label="Duration (minutes)"><NumField min={5} max={480} fallback={30} value={duration} onChange={setDuration} /></Field>
+                <Field label="Duration"><DurationChips value={duration} onChange={setDuration} /></Field>
               </div>
             ):(
               <Field label="Start – End">
@@ -30806,7 +31405,7 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
                 routine editor did. */}
             {!allDay&&evKind==="habit"?(
               <div style={{flex:1}}>
-                <NumField min={5} max={480} fallback={30} value={Math.max(5,timeToMinutes(endTime)-timeToMinutes(startTime))} onChange={v=>setEndTime(minutesToTime(timeToMinutes(startTime)+v))} style={{width:"100%"}} />
+                <DurationChips value={Math.max(5,timeToMinutes(endTime)-timeToMinutes(startTime))} onChange={v=>setEndTime(minutesToTime(timeToMinutes(startTime)+v))} />
               </div>
             ):(!allDay&&(
               // Google Calendar-inspired polish: this row's own start/end
@@ -30989,14 +31588,18 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
 // the full Add Task flow (openNew) for anything needing AI arrange,
 // subject, Attack Block, etc., pre-seeded with the same date/time so nothing
 // typed here is lost.
-function QuickCreateTaskPopover({draft,anchorX,anchorY,onCreate,onMoreOptions,onClose,onColorChange}){
+function QuickCreateTaskPopover({draft,anchorX,anchorY,onCreate,onMoreOptions,onClose,onColorChange,onDurationChange}){
   const [title,setTitle]=useState("");
   const [color,setColorState]=useState(T.lime);
   const setColor=(c)=>{setColorState(c);if(onColorChange)onColorChange(c);};
-  useEffect(()=>{ if(draft){setTitle("");setColorState(T.lime);} },[draft&&draft.dateKey,draft&&draft.startTime,draft&&draft.endTime]);
+  // endTime is deliberately NOT a dependency: changing the duration chips moves
+  // the end time of the SAME draft and must not wipe the typed title.
+  useEffect(()=>{ if(draft){setTitle("");setColorState(T.lime);} },[draft&&draft.dateKey,draft&&draft.startTime,draft&&draft.seed]);
   if(!draft)return null;
   const POPOVER_WIDTH=280;
-  const ESTIMATED_HEIGHT=150;
+  // Title row + duration chips (with the inline custom field open) + range
+  // line + footer.
+  const ESTIMATED_HEIGHT=230;
   const x=anchorX!=null?anchorX:window.innerWidth-POPOVER_WIDTH-40;
   const y=anchorY!=null?anchorY:window.innerHeight/2;
   const fitsRight=x+10+POPOVER_WIDTH<=window.innerWidth-8;
@@ -31013,6 +31616,7 @@ function QuickCreateTaskPopover({draft,anchorX,anchorY,onCreate,onMoreOptions,on
           <Input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Add a title" style={{flex:1,fontSize:13,fontWeight:600,padding:"7px 10px"}} autoFocus
             onKeyDown={e=>{ if(e.key==="Enter"){e.preventDefault();submit();} else if(e.key==="Escape"){e.preventDefault();onClose();} }} />
         </div>
+        <DurationChips value={Math.max(15,timeToMinutes(draft.endTime)-timeToMinutes(draft.startTime))} onChange={v=>{if(onDurationChange)onDurationChange(v);}} presets={[15,30,45,60,90]} />
         <div style={{fontSize:11.5,color:T.muted}}>{niceDate} · {fmtTimeRange(draft.startTime,Math.max(15,timeToMinutes(draft.endTime)-timeToMinutes(draft.startTime)))}</div>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:2}}>
           <button type="button" onClick={()=>onMoreOptions(draft)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:11,fontFamily:T.font,padding:0,textDecoration:"underline"}}>More options</button>
@@ -31060,7 +31664,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // is picked) both fall through to the same lime default as every other
   // colorOf in the file -- gray used to mean "no subject," which read as a
   // dead/disabled task on the calendar instead of just an untagged one.
-  const colorOf=(sub)=>{const x=userSubjects.find(s=>s.id===sub||s.label===sub);return x?x.color:T.lime;};
+  // LOOKS: subject colors come from the chosen palette (computed once per render, not per event); classic leaves each subject's own color untouched.
+  const calLook=useLook();
+  const [lookPanelOpen,setLookPanelOpen]=useState(false);
+  const lookColorMap=useMemo(()=>lookSubjectColorMap(userSubjects,calLook,lookMode()),[userSubjects,calLook.palette,T.mode]);
+  const colorOf=(sub)=>{const x=userSubjects.find(s=>s.id===sub||s.label===sub);if(!x)return T.lime;const m=lookColorMap[x.id!==undefined?x.id:x.label];return m||x.color;};
   // ── Phase 5: Courses/Activities sidebar (Shovel-inspired) ──
   // Own collapse state, independent of the global icon rail's.
   const [calSidebarCollapsed,setCalSidebarCollapsedState]=useState(()=>lsGet("calSidebarCollapsed",false));
@@ -31250,7 +31858,14 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const handleQuickCreateDrag=(dateKey,startTime,endTime)=>setQuickCreateDraft({dateKey,startTime,endTime});
   const handleQuickCreateDragEnd=(dateKey,startTime,endTime,anchor)=>{
     setQuickCreateDraft({dateKey,startTime,endTime});
-    setQuickCreatePopover({dateKey,startTime,endTime,anchorX:anchor&&anchor.x,anchorY:anchor&&anchor.y});
+    setQuickCreatePopover({dateKey,startTime,endTime,anchorX:anchor&&anchor.x,anchorY:anchor&&anchor.y,seed:Date.now()});
+  };
+  // Duration chips in the popover move the draft's end time, so the grid
+  // block resizes live (same one-way pattern as the colour change).
+  const handleQuickCreateDuration=(mins)=>{
+    const withEnd=(d)=>d?{...d,endTime:minutesToTime(Math.min(1439,timeToMinutes(d.startTime)+mins))}:d;
+    setQuickCreateDraft(withEnd);
+    setQuickCreatePopover(withEnd);
   };
   // The popover's color pick is mirrored onto the ghost block so the whole
   // preview fills with it, not just the popover's small swatch.
@@ -31267,6 +31882,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       ...(color&&color!==T.lime?{color}:{})};
     const next=events.concat([task]);
     setEvents(next);lsSet("events",next);
+    if(duration<=90)rememberLastDuration("quickCreate",duration); // a long drag must not become every future click's default
     setPlacementToast((cleanTitle.length>28?cleanTitle.slice(0,28)+"…":cleanTitle)+" added — "+fmtTimeRange(startTime,duration)+".");
     setTimeout(()=>setPlacementToast(""),3200);
     cancelQuickCreate();
@@ -31600,7 +32216,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const brainDumpLinkRef=useRef(null);
   const rescheduleBtnRef=useRef(null);
   const CAL_TOUR_STEPS=[
-    {targetRef:addTaskBtnRef,title:"Add anything, one place",body:"A class, an assignment, a reminder. Tap Add Task and Studlin finds the time for it."},
+    {targetRef:addTaskBtnRef,title:"Add anything, one place",body:smartFeaturesOn()?"A class, an assignment, a reminder. Tap Add Task and Studlin finds the time for it.":"A class, an assignment, a reminder. Tap Add Task and pick when it happens. Studlin can find the time instead, one tap away."},
     {targetRef:rescheduleBtnRef,title:"When things don't go as planned",body:"Tell Studlin what happened and it reschedules everything around it. Deadlines stay safe, nothing gets crammed in."},
     // 2026-09-11 user request: "another pop up for studlin ai ask it
     // anything about your schedule." Targets the bubble by a stable id
@@ -32104,7 +32720,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // replaces the old implicit "fill in Target Date to go manual" behavior,
   // which showed both the Target Date and Deadline fields at once and left
   // users unsure which one they were supposed to fill in.
-  const [taskMode,setTaskMode]=useState("ai");
+  const [taskMode,setTaskMode]=useState(()=>smartFeaturesOn()?"ai":"manual"); // manual-first default
   const [evDuration,setEvDuration]=useState(60);
   // C9 in the audit: commuteBefore/commuteAfter already existed as real,
   // scheduler-respected fields (effectiveLeadIn/effectiveTrailOut), but
@@ -33523,7 +34139,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // "let AI schedule this". The clicked day is remembered so fixed-time kinds
   // (exam/class/reminder), which always need a real date, can still default
   // to it once the user picks one of those types.
-  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("09:00");setEvSubject("None");setEvCustomColor(T.lime);setEvDate("");setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setEvScheduleLater(false);setEvCommuteBefore("");setEvCommuteAfter("");setAsChecklist(false);setTaskRepeatDays([]);resetTypeExtras();setNewOpen(true);};
+  // AI mode keeps the date blank (a pre-filled date would read as a chosen target
+  // date); manual mode always has a date so Save is never blocked.
+  useEffect(()=>{if(newOpen&&taskMode==="manual"&&!evDate)setEvDate(evPrefillDate||dayKey());},[newOpen,taskMode]);
+  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("09:00");setEvSubject("None");setEvCustomColor(T.lime);setEvDate(smartFeaturesOn()?"":(dateK||selDay||dayKey()));setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setEvScheduleLater(false);setEvCommuteBefore("");setEvCommuteAfter("");setAsChecklist(false);setTaskRepeatDays([]);resetTypeExtras();setNewOpen(true);};
   // Same form as openNew, just arriving with the scheduling mode already
   // decided by which "Add task" menu option was tapped -- the in-modal
   // manual/AI toggle stays visible so it's correctable, not a dead end.
@@ -33540,8 +34159,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // overwrites a value the student actually touched.
   useEffect(()=>{
     if(!newOpen||evDurationTouched)return;
-    const suggested=suggestDurationFor(evSubject,resolveAssignmentKind());
-    if(suggested)setEvDuration(suggested);
+    // Real data > last pick for this kind > per-type starting value.
+    setEvDuration(getDefaultDuration(resolveAssignmentKind(),evSubject));
   },[evSubject,evKind,taskMode,newOpen]);
   // Same "derive a default, but never overwrite what the student actually
   // touched" convention as evDuration's own effect just above -- confidence
@@ -33555,7 +34174,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     const params=computeStudyPlanParams(undefined,25,evConfidence,materialCharCount,undefined,daysUntilExam);
     if(params.sessionCount!==evExamPlan.sessionCount)setEvExamPlan(m=>({...m,sessionCount:params.sessionCount}));
   },[newOpen,evKind,evExamPlan.proposeSessions,evExamPlan.materialFiles,evConfidence,evSessionCountTouched]);
-  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvTitleError("");setEvNotes("");setEvCustom("");setEvCustomColor(T.lime);setEvDate("");setEvTime("09:00");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setEvScheduleLater(false);setEvCommuteBefore("");setEvCommuteAfter("");setAiLoading(false);setAsChecklist(false);setTaskRepeatDays([]);resetTypeExtras();};
+  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvTitleError("");setEvNotes("");setEvCustom("");setEvCustomColor(T.lime);setEvDate("");setEvTime("09:00");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode(smartFeaturesOn()?"ai":"manual");setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setEvScheduleLater(false);setEvCommuteBefore("");setEvCommuteAfter("");setAiLoading(false);setAsChecklist(false);setTaskRepeatDays([]);resetTypeExtras();};
   const onEvKindChange=(k)=>{
     setEvKind(k);
     const willBeFixed=(k==="exam"||k==="class"||k==="reminder"||k==="busy block");
@@ -33696,6 +34315,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       ...(splitInfo||{})};
   };
   const commitTasks=(newTasks,opts)=>{
+    // Remember a duration the student actually picked, so the next task of
+    // this kind starts from it. Untouched defaults are never saved back.
+    if(newOpen&&evDurationTouched)rememberLastDuration(resolveAssignmentKind(),evDuration);
     const prefs=getSchedulePreferences();
     // opts.userPinned marks tasks whose time the user typed in directly
     // (Add Task / split sessions) so rebalanceDay leaves them alone —
@@ -33843,6 +34465,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // placeholder the habit engine ignores, same as NewEventModal's own.
   const saveRepeatingTask=()=>{
     if(!evTitle.trim()||taskRepeatDays.length===0)return;
+    if(evDurationTouched)rememberLastDuration(resolveAssignmentKind(),evDuration);
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
     const base={title:evTitle.trim(),kind:"habit",...(subj?{subject:subj}:{}),notes:evNotes||undefined,isGeneralTask:true};
     persistRoutines([...routines,...buildRoutineObjectsForDays(base,taskRepeatDays,"09:00",evDuration||30,{})]);
@@ -33894,7 +34517,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       // below — every item became an unscheduled "todo" with no explanation,
       // which is exactly what looked like "brain dump doesn't work." Surface
       // the real reason instead of pretending it succeeded.
-      if(!res.ok)return {items:[],error:data.error||"Couldn't reach Studlin AI. Please try again."};
+      if(!res.ok){
+        // The AI call failed, so no credit was used and recordBrainDump is NOT
+        // called. The local line parser still gives a useful breakdown to review.
+        const local=fallbackSplitBrainDump(text);
+        const why=data.error||"Couldn't reach Studlin AI.";
+        return local.length>0?{items:local,error:why+" Here's a basic breakdown instead. Check each item."}:{items:[],error:why+" Please try again."};
+      }
       // A real, successful round-trip -- counts against the cap regardless
       // of what happens to the reply below (a garbled-JSON fallback to
       // fallbackSplitBrainDump still spent the same real API call).
@@ -33910,7 +34539,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       // it as degraded so they know to double-check what came out.
       return {items:fallbackSplitBrainDump(text),error:"Couldn't fully understand that — here's a basic breakdown. Edit anything that's off."};
     }catch(e){
-      return {items:[],error:"Something went wrong reaching Studlin AI. Check your connection and try again."};
+      const local=fallbackSplitBrainDump(text);
+      return local.length>0
+        ?{items:local,error:"Couldn't reach Studlin AI. Here's a basic breakdown instead. Check each item."}
+        :{items:[],error:"Something went wrong reaching Studlin AI. Check your connection and try again."};
     }
   };
   const [bdError,setBdError]=useState("");
@@ -34146,7 +34778,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // one.
   const projectMissingBreakdown=()=>evKind==="project"&&!(evProjectPlan.phases&&evProjectPlan.phases.length>0)&&!(evProjectPlan.outline&&evProjectPlan.outline.length>0);
   const saveManual=()=>{
-    if(!evTitle.trim()||!evDate.trim()||!evTime.trim())return;
+    if(!evTitle.trim()||!evTime.trim())return;
+    // The date field can never be left empty (it defaults to the selected
+    // day and snaps back to it if cleared); this is a last-resort guard.
+    if(!evDate.trim()){setEvDate(evPrefillDate||dayKey());return;}
     if(evKind==="project"&&!evNotes.trim()){setEvDetailErr("Add a bit of detail so Studlin can suggest real phases, not a generic template.");return;}
     if(projectMissingBreakdown()){setEvDetailErr("Break this into phases or a checklist below first -- otherwise it's just a plain deadline, not a real project Studlin can track.");return;}
     setEvDetailErr("");
@@ -35418,6 +36053,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           </button>
         )}
         <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:6}}>
+          <button type="button" onClick={()=>setLookPanelOpen(true)} title="Change your calendar colors and block style" style={{height:22,padding:"0 8px",display:"flex",alignItems:"center",gap:4,background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:11,fontWeight:600,fontFamily:T.font}}>Customize</button>
+          <LookCustomizePanel open={lookPanelOpen} onClose={()=>setLookPanelOpen(false)} />
           <div style={{display:"flex",gap:2,background:T.card2,padding:2,borderRadius:4}}>
             {[{id:"daily",label:"Day"},{id:"weekly",label:"Week"},{id:"monthly",label:"Month"}].map(v=>(
               <button key={v.id} onClick={()=>setCalView(v.id)} style={{padding:"3px 9px",borderRadius:4,fontSize:11.5,fontWeight:calView===v.id?500:400,cursor:"pointer",background:calView===v.id?T.card:"transparent",color:calView===v.id?T.text:T.muted,border:"none",fontFamily:T.font,transition:"all 0.15s"}}>{v.label}</button>
@@ -35644,7 +36281,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           gsDraft={gsOpen&&gsStep==="place"?gsDraft:null} onGsPreviewMove={gsOpen&&gsStep==="place"?gsPreviewMove:undefined} onGsPreviewResize={gsOpen&&gsStep==="place"?gsPreviewResize:undefined} />
       )}
       <QuickCreateTaskPopover draft={quickCreatePopover} anchorX={quickCreatePopover&&quickCreatePopover.anchorX} anchorY={quickCreatePopover&&quickCreatePopover.anchorY}
-        onColorChange={handleQuickCreateColor} onCreate={commitQuickCreateTask} onMoreOptions={quickCreateMoreOptions} onClose={cancelQuickCreate} />
+        onColorChange={handleQuickCreateColor} onDurationChange={handleQuickCreateDuration} onCreate={commitQuickCreateTask} onMoreOptions={quickCreateMoreOptions} onClose={cancelQuickCreate} />
     </div>
       {/* Right-hand column (Phase 5e) -- upcoming across everything by
           default, re-filtered to the selected course's items on a chip
@@ -35702,7 +36339,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         <TourStep {...CAL_TOUR_STEPS[calTourStep]} step={calTourStep} total={CAL_TOUR_STEPS.length}
           isLast={calTourStep===CAL_TOUR_STEPS.length-1} onNext={advanceCalTour} onSkip={skipCalTour} />
       )}
-      <ClassSetupWizard open={classSetupOpen} termRollover={classSetupRollover} firstRun={isFreshAccount} initialStatus={getProfile().status} onSkip={()=>{lsSet("classSetupDeferredUntil",Date.now()+86400000);setClassSetupOpen(false);setClassSetupRollover(false);if(isFreshAccount)setTheme("dark");}} onFinish={finishClassSetup} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
+      <ClassSetupWizard open={classSetupOpen} termRollover={classSetupRollover} firstRun={isFreshAccount} initialStatus={getProfile().status} onSkip={()=>{lsSet("classSetupDeferredUntil",Date.now()+86400000);setClassSetupOpen(false);setClassSetupRollover(false);if(isFreshAccount){setTheme("dark");if(isBrandNewAccountForManualFirst()){setQuestionAskPref("smartFeatures",false);lsSet("settings",{...lsGet("settings",{}),smartFeaturesSkipDefault:true});}}}} onFinish={finishClassSetup} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
       <ClassSetupWizard open={quickScanOpen} quickScan targetCourseId={quickScanTargetCourseId} initialStatus={getProfile().status} onFinish={finishQuickScan} onSkip={()=>{setQuickScanOpen(false);setQuickScanTargetCourseId(null);syncClassSetupState();returnToChecklistIfNeeded();}} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
       <Modal open={!!weeklyContentCourseId} onClose={()=>setWeeklyContentCourseId(null)} title="Class notes" sub="A short note for each day this class meets -- lecture, lab, homework due, whatever's useful." width={460}
         footer={<><Btn variant="subtle" onClick={()=>setWeeklyContentCourseId(null)}>Cancel</Btn><Btn onClick={saveWeeklyContent}>Save</Btn></>}>
@@ -36183,9 +36820,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             : isChecklistMode
             ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveChecklistItem} disabled={!evTitle.trim()} style={{flex:1,justifyContent:"center",opacity:evTitle.trim()?1:0.45}}>Add to Checklist</Btn></>
             : isReminderKind||isFixedKind
-              ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveManual} disabled={!(evTitle.trim()&&evDate.trim()&&evTime.trim())} style={{opacity:evTitle.trim()&&evDate.trim()&&evTime.trim()?1:0.45}}>{isReminderKind?"Save reminder":"Save"}</Btn></>
+              ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveManual} disabled={!(evTitle.trim()&&evTime.trim())} style={{opacity:evTitle.trim()&&evTime.trim()?1:0.45}}>{isReminderKind?"Save reminder":"Save"}</Btn></>
               : taskMode==="manual"
-                ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveManual} disabled={!evTitle.trim()||!evDate.trim()||!evTime.trim()} style={{flex:1,justifyContent:"center",opacity:evTitle.trim()&&evDate.trim()&&evTime.trim()?1:0.45}}>Save to Calendar</Btn></>
+                ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveManual} disabled={!evTitle.trim()||!evTime.trim()} style={{flex:1,justifyContent:"center",opacity:evTitle.trim()&&evTime.trim()?1:0.45}}>Save to Calendar</Btn></>
                 : <>
                     <Btn variant="subtle" onClick={resetForm}>Cancel</Btn>
                     {/* Attack Block only -- "let me place it myself" is a
@@ -36330,7 +36967,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           </Field>
         )}
         {evKind==="task"&&taskRepeatDays.length>0&&(
-          <Field label="Duration (minutes)" hint="How long this occupies on your calendar"><NumField min={5} max={480} fallback={30} value={evDuration} onChange={setEvDuration} /></Field>
+          <Field label="Duration" hint="How long this occupies on your calendar"><DurationChips value={evDuration} onChange={v=>{setEvDuration(v);setEvDurationTouched(true);}} /></Field>
         )}
 
         {/* Optional exam link, Study Session only -- so a session created
@@ -36368,7 +37005,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
 
         {!isTaskKind&&(
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-            <Field label="Date"><Input type="date" value={evDate} onChange={ev=>setEvDate(ev.target.value)} /></Field>
+            <div style={{gridColumn:"1 / -1"}}><Field label="Date"><QuickDateField value={evDate} onChange={setEvDate} fallbackKey={evPrefillDate} /></Field></div>
             <Field label={isReminderKind?"Reminder time":"Start time"}><BoxedTimeInput value={evTime} onChange={setEvTime} /></Field>
           </div>
         )}
@@ -36394,7 +37031,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                 (evTime/setEvTime) -- evDuration stays the only real
                 persisted state, same derive-and-write-back shape as every
                 other conversion in this pass. */}
-            <Field label="End time" hint="How long this occupies on your calendar"><BoxedTimeInput value={minutesToTime(timeToMinutes(evTime)+evDuration)} onChange={v=>setEvDuration(Math.max(5,timeToMinutes(v)-timeToMinutes(evTime)))} /></Field>
+            <Field label="End time" hint="How long this occupies on your calendar"><BoxedTimeInput value={minutesToTime(timeToMinutes(evTime)+evDuration)} onChange={v=>{setEvDuration(Math.max(5,timeToMinutes(v)-timeToMinutes(evTime)));setEvDurationTouched(true);}} /></Field>
             {/* C9 in the audit: same inline label+pill commute row the
                 recurring-routine edit modal already has -- this is the one
                 place a one-off appointment (not marked "Save to Weekly
@@ -36565,7 +37202,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
 
         {isTaskKind&&!isChecklistMode&&taskRepeatDays.length===0&&taskMode==="manual"&&(
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-            <Field label="Date"><Input type="date" value={evDate} onChange={ev=>setEvDate(ev.target.value)} /></Field>
+            <div style={{gridColumn:"1 / -1"}}><Field label="Date"><QuickDateField value={evDate} onChange={setEvDate} fallbackKey={evPrefillDate} /></Field></div>
             <Field label="Start Time"><BoxedTimeInput value={evTime} onChange={setEvTime} /></Field>
           </div>
         )}
@@ -36627,9 +37264,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             that isn't being scheduled yet) -- see aiArrange's own early
             return for what this actually commits. */}
         {isTaskKind&&!isChecklistMode&&taskRepeatDays.length===0&&!evAttackBlock&&!evScheduleLater&&(
-          <Field label="Duration (minutes)" hint="How long you plan to spend">
-            <NumField min={5} max={480} fallback={5} value={evDuration} onChange={v=>{setEvDuration(v);setEvDurationTouched(true);}} />
-            {(()=>{const s=suggestDurationFor(evSubject,resolveAssignmentKind());return s&&s!==evDuration&&(
+          <Field label="Duration" hint="How long you plan to spend">
+            <DurationChips value={evDuration} onChange={v=>{setEvDuration(v);setEvDurationTouched(true);}} />
+            {(()=>{const s=smartFeaturesOn()?suggestDurationFor(evSubject,resolveAssignmentKind()):null;return s&&s!==evDuration&&(
               <div style={{fontSize:11.5,color:T.muted,marginTop:6}}>Similar tasks usually take you ~{s}m — <button type="button" onClick={()=>{setEvDuration(s);setEvDurationTouched(true);}} style={{background:"none",border:"none",color:T.lime,cursor:"pointer",fontSize:11.5,fontFamily:T.font,padding:0,textDecoration:"underline"}}>use this</button></div>
             );})()}
           </Field>
@@ -36762,12 +37399,16 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       <Modal open={brainDumpOpen} onClose={()=>{if(bdListening)stopBdRec();setBrainDumpOpen(false);setBrainDumpText("");setBdError("");setBdMicError("");}} title="Brain dump" sub="Tell Studlin everything you need to do. It'll sort out the rest." width={560}
         footer={<><Btn variant="subtle" onClick={()=>{if(bdListening)stopBdRec();setBrainDumpOpen(false);setBrainDumpText("");setBdError("");setBdMicError("");}}>Cancel</Btn><Btn onClick={submitBrainDump} disabled={brainDumpLoading||!brainDumpText.trim()} style={{flex:1,justifyContent:"center",opacity:brainDumpLoading?1:(!brainDumpText.trim()?0.45:1)}}>{brainDumpLoading?"Sorting it out...":"Sort it out →"}</Btn></>}>
         <div style={{position:"relative"}}>
-          <Textarea placeholder="e.g. I have chem homework, need to email my counselor about my schedule, and my bio project is due Friday..." value={brainDumpText} onChange={e=>setBrainDumpText(e.target.value)} style={{minHeight:140,paddingRight:44}} autoFocus />
+          <Textarea placeholder="e.g. I have chem homework, need to email my counselor about my schedule, and my bio project is due Friday..." value={brainDumpText} onChange={e=>setBrainDumpText(e.target.value)} onKeyDown={e=>{if((e.ctrlKey||e.metaKey)&&e.key==="Enter"){e.preventDefault();submitBrainDump();}}} style={{minHeight:140,paddingRight:44}} autoFocus />
           {(window.SpeechRecognition||window.webkitSpeechRecognition)&&(
             <button type="button" onClick={bdListening?stopBdRec:startBdRec} title={bdListening?"Stop listening":"Speak instead of typing"} style={{position:"absolute",right:8,bottom:8,width:30,height:30,borderRadius:"50%",border:"none",background:bdListening?T.red:T.lime,color:bdListening?"#fff":T.ink,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{bdListening?<span style={{width:10,height:10,background:"#fff",borderRadius:2}} />:Icon.mic}</button>
           )}
         </div>
         {!canUseBrainDump()&&<div style={{fontSize:12,color:T.muted,marginTop:8}}>{canUseBrainDumpReason()==="free-tier"?"Brain dump is a Pro feature. ":AI_USAGE_CAP_MESSAGE+" "}<span role="button" tabIndex={0} onClick={()=>setPricingOpen(canUseBrainDumpReason()==="free-tier"?"brainDump":"aiUsageCap")} onKeyDown={e=>{if(e.key==="Enter")setPricingOpen(canUseBrainDumpReason()==="free-tier"?"brainDump":"aiUsageCap");}} style={{color:T.lime,fontWeight:600,cursor:"pointer"}}>See plans</span></div>}
+        {brainDumpOpen&&brainDumpText.trim()&&(()=>{
+          const n=fallbackSplitBrainDump(brainDumpText).length;
+          return n>0?<div style={{fontSize:11.5,color:T.muted,marginTop:6}}>{n+" item"+(n!==1?"s":"")+" detected"} · Ctrl/Cmd+Enter to sort it out</div>:null;
+        })()}
         {bdListening&&<div style={{fontSize:11.5,color:T.red,marginTop:6}}>Listening... tap the mic to stop</div>}
         {!bdListening&&bdMicError&&<div style={{fontSize:11.5,color:T.red,marginTop:6}}>{bdMicError}</div>}
         {brainDumpLoading&&<div style={{fontSize:11.5,color:T.muted,marginTop:6}}>Reading through everything you said...</div>}
@@ -36842,6 +37483,15 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                     <SelectChip options={[{value:"study",label:"Assignment"},{value:"todo",label:"To-do"},{value:"event",label:"Activity"},{value:"exam",label:"Exam"},{value:"project",label:"Project"},{value:"reminder",label:"Reminder"},{value:"unavailable",label:"Vacation/Break"}]} value={it.kind} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v,proposeSessions:false,sessionCount:x.sessionCount||4}:x)}))} />
                     {it.kind==="project"&&(
                       <Input type="date" value={it.dueDate} onChange={ev=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,dueDate:ev.target.value}:x)}))} style={{width:138}} />
+                    )}
+                    {/* Parsed due date, always visible and editable (a day name
+                        like "fri" resolves to the next one, so this is where a
+                        wrong guess gets fixed). */}
+                    {(it.kind==="todo"||it.kind==="study")&&(
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <span style={{fontSize:11.5,color:T.muted}}>Due</span>
+                        <Input type="date" aria-label="Due date" value={it.dueDate||""} onChange={ev=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,dueDate:ev.target.value}:x)}))} style={{width:138}} />
+                      </div>
                     )}
                     {it.kind==="study"&&!it.attackBlock&&(
                       <div style={{display:"flex",alignItems:"center",gap:6}}>
@@ -37551,7 +38201,7 @@ function stuPalette(){
 function stuBedtimeDue(now){
   const ws=getWakeSleep();
   if(!ws||!ws.sleepTime)return false;
-  if(!stuSettingOn("mascotBedtime")||!nudgesAllowed())return false;
+  if(!stuSettingOn("mascotBedtime")||lsGet("settings",{}).nudgesMaster===false)return false; // not smartFeaturesOn: bedtime is a manual-friendly reminder
   const d=now||new Date();
   const cur=d.getHours()*60+d.getMinutes();
   const diff=(timeToMinutes(ws.sleepTime)-cur+1440)%1440;
@@ -37646,6 +38296,8 @@ function SettingsRow({label,sub,k,right,highlight}){
 }
 
 function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}, onOpenRoutineCenter=()=>{}, setScheduleSettingsOpen=()=>{}, setPricingOpen=()=>{}, setActivePage=()=>{}, pendingOpenSetting=null, onSettingOpened=()=>{}}) {
+  const [lookPanelOpen,setLookPanelOpen]=useState(false);
+  const settingsLook=useLook();
   // "integrations": the setup checklist's Connect your school's LMS/Google
   // Calendar buttons (Dashboard, 2026-09-30) -- lands directly on this tab instead
   // of the generic General one a new student would otherwise have to hunt
@@ -37682,7 +38334,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     window.addEventListener("studlin-settings-changed",sync);
     return ()=>window.removeEventListener("studlin-settings-changed",sync);
   },[]);
-  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,deadline:true,classReminders:false,onlineStatus:true,incognito:false,twofa:false,motion:false,hand:true,wrapped:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false,askCheckIns:true,askDurationQuestions:true,nudgesMaster:true,mascotReminders:true,mascotCheers:true,mascotBedtime:true},...lsGet("settings",{})}));
+  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,deadline:true,classReminders:false,onlineStatus:true,incognito:false,twofa:false,motion:false,hand:true,wrapped:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false,askCheckIns:true,askDurationQuestions:true,nudgesMaster:true,smartFeatures:true,mascotReminders:true,mascotCheers:true,mascotBedtime:true},...lsGet("settings",{})}));
   // 2026-09-13: "Share my free/busy time" used to be all-or-nothing (on =
   // every current accepted friend). shareAvailabilityMode lets a student
   // restrict it to specific people instead -- see the picker modal below
@@ -38933,6 +39585,16 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               </div>
             </Card>
             <Card style={{marginBottom:12}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+                <div>
+                  <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:3}}>Calendar look</div>
+                  <div style={{fontSize:12,color:T.muted}}>Palette: {lookPaletteById(settingsLook.palette).name}. Pick colors and block style for your calendar.</div>
+                </div>
+                <button type="button" onClick={()=>setLookPanelOpen(true)} style={{padding:"8px 16px",borderRadius:8,border:`1.5px solid ${T.lime}`,background:T.lime+"15",color:T.lime,fontWeight:700,fontSize:12.5,cursor:"pointer",fontFamily:T.font}}>Customize</button>
+              </div>
+              <LookCustomizePanel open={lookPanelOpen} onClose={()=>setLookPanelOpen(false)} />
+            </Card>
+            <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:16}}>Accent color</div>
               <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
                 {accents.map(a=>(
@@ -39147,8 +39809,9 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Suggestions and Stu</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Control how much Studlin speaks up. Everything here is optional.</div>
+              <Row label="Learn how I work (timers, predictions, suggestions)" sub="Begin buttons and timers, duration questions, best-hours ideas, and study spacing tips. Off means you plan and finish everything by hand." k="smartFeatures" />
               <Row label="Suggestions and tips" sub={"Occasional ideas like \"default new tasks to midday?\" and the questions below. Off means none of them pop up."} k="nudgesMaster" />
-              <Row label="Stu reminds me before things start" sub="Stu walks in a few minutes before a study block or deadline and asks if you want to start. Off uses a plain pop-up instead." k="mascotReminders" />
+              <Row label="Stu reminds me before things start" sub="Stu walks in a few minutes before a study block or deadline and asks if you want to start. Off uses a plain pop-up instead. Needs Learn how I work on." k="mascotReminders" />
               <Row label="Stu reminds me when it is getting late" sub="About 30 minutes before the bedtime you set in class setup, a sleepy Stu asks if you want to wrap up. Once a night." k="mascotBedtime" />
               <Row label="Stu cheers when I finish" sub="A quick celebration after you complete a task." k="mascotCheers" />
             </Card>
@@ -42402,6 +43065,7 @@ function App() {
     const HEADS_UP_MINS=10;
     const check=()=>{
       if(timerTask)return; // already locked in, no need to be reminded
+      if(!smartFeaturesOn())return; // manual-first: the heads-up only offers Begin/timer
       // Stu stops asking for the day after 3 "not now"s (see StudCompanion).
       if(stuSettingOn("mascotReminders")&&stuDeclinesToday()>=3)return;
       const today=dayKey();

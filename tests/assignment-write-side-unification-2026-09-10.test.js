@@ -101,7 +101,7 @@ describe("\"Just track the due date\" -- evScheduleLater (source-level regressio
   });
 
   test("Duration, Attack Block, and Split sections are all suppressed while it's on -- nothing to configure for a session that isn't being scheduled", () => {
-    assert.match(APP_SOURCE, /taskRepeatDays\.length===0&&!evAttackBlock&&!evScheduleLater&&\(\s*\n\s*<Field label="Duration \(minutes\)"/);
+    assert.match(APP_SOURCE, /taskRepeatDays\.length===0&&!evAttackBlock&&!evScheduleLater&&\(\s*\n\s*<Field label="Duration" hint=/);
     assert.match(APP_SOURCE, /!isChecklistMode&&!evScheduleLater&&evKind!=="task"&&evKind!=="studySession"&&\(evSplitEnabled\?/);
     assert.match(APP_SOURCE, /isTaskKind&&!isChecklistMode&&!evScheduleLater&&\(evAttackBlock\?/);
   });
