@@ -51,7 +51,7 @@ describe("ClassSetupWizard's personalize step only renders the one real question
     const source = fs.readFileSync(path.join(__dirname, "..", "studlin-app.jsx"), "utf8");
     const idx = source.indexOf('label="When you sit down to study"');
     assert.notEqual(idx, -1);
-    const body = source.slice(idx, idx + 1200);
+    const body = source.slice(idx, idx + 4000);
     assert.doesNotMatch(body, /Studying for a few things at once/);
     assert.doesNotMatch(body, /How far ahead you want to see your plan/);
     assert.doesNotMatch(body, /Be honest -- when do you actually start/);

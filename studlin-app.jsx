@@ -3185,6 +3185,7 @@ const TIER0_FIXED_KINDS=new Set(["exam","class","busy block","reminder"]);
 // which nobody does mid-workout. One shared check so the Begin button and
 // the missed-task notification can never drift out of sync on this again.
 function isTimerEligible(ev){
+  if(!smartFeaturesOn())return false;
   return !!(ev&&!ev.checklist&&ev.duration&&(ev.kind==="study block"||ev.kind==="deadline"));
 }
 // Leading buffer subtracted from a FIXED-kind block's start when computing
@@ -3531,7 +3532,7 @@ function priorityTierOf(task){
 // aggregate getBucketReliability signal.
 function logCompletionOutcome(outcome,timeStr,tier,taskId,subject){
   const bucket=hourBucket(timeStr);
-  if(!bucket)return;
+  if(!bucket||!smartFeaturesOn())return; // manual-first: no learning log when smart features are off
   const log=lsGet("completionLog",[]);
   const entry={bucket,outcome,t:Date.now()};
   if(tier)entry.tier=tier;
@@ -3911,7 +3912,19 @@ function dismissStrugglingBucket(bucketId){
 // Settings screen picks it up next time it re-reads "settings".
 // Master switch for Studlin's proactive suggestions and questions (Settings, Privacy).
 // Missing = on, so nobody is opted out by an unset key.
-const nudgesAllowed=()=>lsGet("settings",{}).nudgesMaster!==false;
+// Manual-first (2026-10-14): smartFeatures is false for brand-new accounts
+// (written by the setup wizard); missing = on so existing users keep today's behaviour.
+const smartFeaturesOn=()=>lsGet("settings",{}).smartFeatures!==false;
+const nudgesAllowed=()=>smartFeaturesOn()&&lsGet("settings",{}).nudgesMaster!==false;
+// True only for a genuinely brand-new account: smartFeatures never set, and
+// nothing on the account yet. Existing users (or anyone re-running setup)
+// are never flipped to manual by accident.
+function isBrandNewAccountForManualFirst(){
+  if(lsGet("settings",{}).smartFeatures!==undefined)return false;
+  if((lsGet("events",[])||[]).length>0)return false;
+  if(lsGet("subjects-configured",false)||lsGet("hasConfiguredRoutine",false))return false;
+  return true;
+}
 function setQuestionAskPref(key,enabled){
   const next={...lsGet("settings",{}),[key]:enabled};
   lsSet("settings",next);
@@ -8833,6 +8846,7 @@ function pushSettingsSync(){
       schoolTerm:lsGet("schoolTerm",null),
       holidays:lsGet("holidays",[]),
       incognito:lsGet("settings",{}).incognito===true,
+      ...(typeof lsGet("settings",{}).smartFeatures==="boolean"?{smartFeatures:lsGet("settings",{}).smartFeatures}:{}), // never push a missing key, so a stored false is not overridden
       updatedAt:new Date().toISOString(),
     },{merge:true}).catch(()=>{});
   }catch(e){}
@@ -8860,6 +8874,7 @@ async function hydrateSettingsSyncOnAuth(){
       if(data.schoolTerm&&data.schoolTerm.start&&data.schoolTerm.end)lsSet("schoolTerm",data.schoolTerm);
       if(Array.isArray(data.holidays))lsSet("holidays",data.holidays);
       if(typeof data.incognito==="boolean")lsSet("settings",{...lsGet("settings",{}),incognito:data.incognito});
+      if(typeof data.smartFeatures==="boolean")lsSet("settings",{...lsGet("settings",{}),smartFeatures:data.smartFeatures});
     }
   }catch(e){}
   settingsSyncHydrated=true;
@@ -11058,7 +11073,7 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
           </div>
         </div>
 
-        <div style={{marginBottom:22}}>
+        {smartFeaturesOn()&&<div style={{marginBottom:22}}>
           <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>
             Peak Focus Hours <span style={{textTransform:"none",fontWeight:400,color:T.faint}}>(optional)</span>
           </label>
@@ -11076,7 +11091,7 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
               {unreachablePeakBuckets.map(b=>PEAK_BUCKET_LABELS[b.id]).join(" and ")} {unreachablePeakBuckets.length>1?"don't":"doesn't"} overlap your Work Hours ({fmtClock12(workStart)}–{fmtClock12(workEnd)}) at all, so Studlin can't actually place anything there yet — widen your Work Hours above to cover it.
             </div>
           )}
-        </div>
+        </div>}
 
         <div style={{marginBottom:22}}>
           <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>Exam Prep Spacing</label>
@@ -14066,7 +14081,9 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                           );
                         })():(
                           <div style={{display:"flex",gap:8,marginTop:10}}>
-                            <BtnSm onClick={(e)=>{e.stopPropagation();if(window._setTimerTask)window._setTimerTask(s);}}>Start</BtnSm>
+                            {smartFeaturesOn()
+                              ?<BtnSm onClick={(e)=>{e.stopPropagation();if(window._setTimerTask)window._setTimerTask(s);}}>Start</BtnSm>
+                              :<BtnSm onClick={(e)=>{e.stopPropagation();lsSet("events",lsGet("events",[]).map(x=>x.id===s.id?{...x,status:"done",completedAt:Date.now()}:x));onTaskCompleted(s.id);refresh();}}>Mark done</BtnSm>}
                             <BtnSm variant="ghost" onClick={(e)=>{e.stopPropagation();setEditingSessionId(s.id);}}>Move</BtnSm>
                           </div>
                         )
@@ -20610,8 +20627,8 @@ const STUDLIN_AI_BUBBLE_CLEARANCE=90;
 // own internal floor exactly, rather than trusting its return value alone.
 function gatherStudlinAiProfileSignals(flags,prefs){
   const profile={};
-  if(flags.needsPeakHours)profile.peakInsight=detectPeakHourInsight(prefs);
-  if(flags.needsStrugglingBucket)profile.strugglingBucket=detectStrugglingBucket(prefs);
+  if(flags.needsPeakHours&&smartFeaturesOn())profile.peakInsight=detectPeakHourInsight(prefs);
+  if(flags.needsStrugglingBucket&&smartFeaturesOn())profile.strugglingBucket=detectStrugglingBucket(prefs);
   if(flags.subject&&flags.needsSubjectTrend){
     const scoredCount=lsGet("events",[]).filter(e=>e.kind==="exam"&&e.subject===flags.subject&&e.scoreTier).length;
     profile.subjectNudge=scoredCount>=3?subjectOutcomeNudge(flags.subject):null;
@@ -24278,7 +24295,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   reads events that actually have a timeSpent). Still logs a
                   real completion outcome for the reliability signal, same
                   as any other completion. */}
-              {ev.status!=="done"&&isTimerEligible(ev)&&(
+              {ev.status!=="done"&&(isTimerEligible(ev)||(!smartFeaturesOn()&&!ev.checklist&&!ev.isRoutine&&(ev.kind==="study block"||ev.kind==="deadline")))&&(
                 <button onClick={()=>{setEvents(markEventDone(ev.id));closePopover();}} style={itemStyle} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="none"}>Complete</button>
               )}
               <button onClick={()=>{closePopover();openEdit(ev);}} style={itemStyle} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="none"}>Edit</button>
@@ -24919,7 +24936,7 @@ function PhasesOutlineEditor({item,onChange,subject,onGateBlocked=()=>{},onNeeds
 // there, instead of always being a blank field to type into. status (the
 // HS/college fork) has to stay directly ahead of classes either way, since
 // it's what the classes step's own scan options depend on.
-const WIZARD_STEP_ORDER=["status","classes","term","awake","personalize","activities","calendarSync","finalReview"];
+const WIZARD_STEP_ORDER=["status","classes","term","awake","personalize","permissions","activities","calendarSync","finalReview"];
 // The named steps a fresh account walks through, shown as a top progress
 // stepper. "status" (HS/college fork) isn't its own labeled step -- it's
 // the entry to "Courses", same as "classes" itself. Every real step now
@@ -24933,6 +24950,7 @@ const WIZARD_STEPPER=[
   {key:"term",label:"End of Term"},
   {key:"awake",label:"Awake time"},
   {key:"personalize",label:"Study style"},
+  {key:"permissions",label:"Permissions"},
   {key:"activities",label:"Activities"},
   {key:"calendarSync",label:"Connect"},
   {key:"finalReview",label:"Review"},
@@ -25000,6 +25018,7 @@ const STU_WIZARD_LINES={
   term:["thinking","When does your term end?"],
   awake:["sleepy","When do you sleep? I won't plan past it."],
   personalize:["wink","Tell me how you like to study."],
+  permissions:["happy","Pick what I can nudge you about."],
   activities:["happy","Work, gym, clubs. Add what fills your week."],
   calendarSync:["excited","Connect a calendar and I'll do the typing."],
   finalReview:["proud","Looks good! Ready when you are."],
@@ -25225,6 +25244,40 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   // in which case both toggles just keep their existing true-by-default
   // (see SettingsTab), no forced choice either way.
   const [askQuestionsPref,setAskQuestionsPref]=useState(null);
+  // Manual-first (2026-10-14): "Do you want Studlin to learn how you work?"
+  // Preselected to "no". Only written on a brand-new account's first run.
+  const [learnPref,setLearnPref]=useState("no");
+  const [brandNew,setBrandNew]=useState(false);
+  useEffect(()=>{if(open)setBrandNew(!!firstRun&&!quickScan&&!termRollover&&isBrandNewAccountForManualFirst());},[open]);
+  // Permissions step answers: null = not answered, "yes" | "no".
+  const [permPrefs,setPermPrefs]=useState({notif:null,stu:null,google:null,bedtime:null});
+  const [notifPermNote,setNotifPermNote]=useState("");
+  const answerPerm=(key,val)=>setPermPrefs(p=>({...p,[key]:val}));
+  const permNotif=async(allow)=>{
+    setNotifPermNote("");
+    if(!allow){setQuestionAskPref("notifMaster",false);setQuestionAskPref("sysPush",false);answerPerm("notif","no");return;}
+    setQuestionAskPref("notifMaster",true);
+    if(typeof Notification==="undefined"){answerPerm("notif","yes");setNotifPermNote("This browser can't show desktop notifications. In-app reminders are on.");return;}
+    try{
+      const perm=Notification.permission==="default"?await Notification.requestPermission():Notification.permission;
+      if(perm==="granted"){
+        setQuestionAskPref("sysPush",true);
+        const uid=firebase.auth().currentUser&&firebase.auth().currentUser.uid;
+        if(uid)registerPushToken(uid);
+        answerPerm("notif","yes");
+      }else{
+        setQuestionAskPref("sysPush",false);
+        answerPerm("notif","no");
+        setNotifPermNote("Notifications are blocked in your browser. You can allow them in browser settings, then turn them on in Settings.");
+      }
+    }catch(e){answerPerm("notif","no");setNotifPermNote("Couldn't ask for permission. You can turn notifications on in Settings.");}
+  };
+  const permStu=(allow)=>{setQuestionAskPref("mascotReminders",allow);setQuestionAskPref("mascotCheers",allow);answerPerm("stu",allow?"yes":"no");};
+  const permBedtime=(allow)=>{setQuestionAskPref("mascotBedtime",allow);answerPerm("bedtime",allow?"yes":"no");};
+  const permGoogle=(allow)=>answerPerm("google",allow?"yes":"no");
+  // learn-how-I-work is only "on" for the peak-hours picker once the student said yes
+  // (new account) or already has smart features on (existing user re-running setup).
+  const wizLearnOn=brandNew?learnPref==="yes":smartFeaturesOn();
 
   const persistPending=(next)=>{setPendingClasses(next);lsSet("classSetupPending",next);};
   // 2026-08-26 fix: onboarding's own Profile step already requires
@@ -25247,7 +25300,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   // ones are the term that just ended, so treating them as already known
   // skipped the question and kept the old dates.
   const knowsTerm=!termRollover&&(()=>{const t=getSchoolTerm();return !!(t&&t.start&&t.end);})();
-  const effectiveWizardStepOrder=knowsStatus?WIZARD_STEP_ORDER.filter(s=>s!=="status"):WIZARD_STEP_ORDER;
+  const effectiveWizardStepOrder=WIZARD_STEP_ORDER.filter(s=>(!knowsStatus||s!=="status")&&(s!=="permissions"||brandNew)&&(s!=="calendarSync"||permPrefs.google!=="no"));
   // Real Back navigation (2026-07-29 fix) -- null in quickScan mode (that
   // session intentionally starts mid-flow with no earlier step to return
   // to) and on the very first step of a normal session.
@@ -26258,7 +26311,16 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     if(status)saveProfile({...getProfile(),status});
     // Only writes when the student actually answered -- untouched/skipped
     // leaves both toggles at their existing true-by-default (SettingsTab).
-    if(askQuestionsPref!=null){
+    // Manual-first: only a brand-new account's first run decides smartFeatures.
+    // Re-running setup on an existing account never touches it.
+    // (brandNew was computed when the wizard opened, before classes were committed above.)
+    if(brandNew&&lsGet("settings",{}).smartFeatures===undefined){
+      const learn=learnPref==="yes";
+      setQuestionAskPref("smartFeatures",learn);
+      setQuestionAskPref("askCheckIns",learn);
+      setQuestionAskPref("askDurationQuestions",learn);
+      if(learn)setQuestionAskPref("nudgesMaster",true); // off is already covered by smartFeatures; keeps Stu bedtime reminders working
+    }else if(askQuestionsPref!=null){
       setQuestionAskPref("askCheckIns",askQuestionsPref==="yes");
       setQuestionAskPref("askDurationQuestions",askQuestionsPref==="yes");
     }
@@ -26374,7 +26436,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
               <TimeField label="Study end" value={workEnd} onChange={setWorkEnd} />
             </div>
             {windowInvalid&&<div style={{fontSize:11.5,color:T.red,marginTop:8}}>End time must be after start time.</div>}
-            <div style={{marginTop:20}}>
+            {wizLearnOn&&<div style={{marginTop:20}}>
               <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>
                 Peak Focus Hours <span style={{textTransform:"none",fontWeight:400,color:T.faint}}>(optional)</span>
               </label>
@@ -26392,7 +26454,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                   </button>
                 ))}
               </div>
-            </div>
+            </div>}
           </>)}
 
           {step==="personalize"&&(<>
@@ -26408,13 +26470,51 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                 actual question. Condensed to one line -- the feature
                 itself (askCheckIns/askDurationQuestions, see Settings)
                 is real and stays, just the copy in front of it. */}
-            <div style={{marginTop:18,paddingTop:16,borderTop:`1px solid ${T.border}`}}>
-              <div style={{fontSize:12,color:T.muted,marginBottom:10,lineHeight:1.5}}>Okay if Studlin asks the occasional quick question, like how a session went? Skippable anytime, adjustable in Settings.</div>
-              <PrefChipRow label="Okay to ask?" value={askQuestionsPref} onChange={setAskQuestionsPref} options={[
-                {value:"yes",label:"Yes, ask me"},
-                {value:"no",label:"No thanks"},
-              ]} />
+            {brandNew?(
+              <div style={{marginTop:18,paddingTop:16,borderTop:`1px solid ${T.border}`}}>
+                <div style={{fontSize:12,color:T.muted,marginBottom:10,lineHeight:1.5}}>Studlin can time your sessions and suggest better hours. Off by default. You can turn it on anytime in Settings.</div>
+                <div style={{marginBottom:18}}>
+                  <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>Do you want Studlin to learn how you work?</label>
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                    {[{value:"no",label:"Not now"},{value:"yes",label:"Yes, learn how I work"}].map(opt=>(
+                      <button key={opt.value} type="button" aria-pressed={learnPref===opt.value} onClick={()=>setLearnPref(opt.value)} style={{...peakChipStyle(learnPref===opt.value),borderRadius:10}}>{opt.label}</button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ):(
+              <div style={{marginTop:18,paddingTop:16,borderTop:`1px solid ${T.border}`}}>
+                <div style={{fontSize:12,color:T.muted,marginBottom:10,lineHeight:1.5}}>Okay if Studlin asks the occasional quick question, like how a session went? Skippable anytime, adjustable in Settings.</div>
+                <PrefChipRow label="Okay to ask?" value={askQuestionsPref} onChange={setAskQuestionsPref} options={[
+                  {value:"yes",label:"Yes, ask me"},
+                  {value:"no",label:"No thanks"},
+                ]} />
+              </div>
+            )}
+          </>)}
+
+          {step==="permissions"&&(<>
+            <TitleSub title="What can Studlin do?" sub="Pick what you want. Change any of it later in Settings." />
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              {[
+                {key:"notif",title:"Notifications",sub:"Reminders before study blocks and deadlines.",onAllow:()=>permNotif(true),onNo:()=>permNotif(false)},
+                {key:"stu",title:"Stu reminders",sub:"Stu pops in before things start and cheers when you finish.",onAllow:()=>permStu(true),onNo:()=>permStu(false)},
+                {key:"google",title:"Google Calendar",sub:"Bring in your events. Next screens will connect it.",onAllow:()=>permGoogle(true),onNo:()=>permGoogle(false)},
+                {key:"bedtime",title:"Bedtime reminder",sub:"A nudge 30 minutes before the bedtime you set.",onAllow:()=>permBedtime(true),onNo:()=>permBedtime(false)},
+              ].map(c=>(
+                <div key={c.key} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",borderRadius:10,border:`1px solid ${permPrefs[c.key]==="yes"?T.lime+"66":T.border}`,background:T.card2}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:600,color:T.text}}>{c.title}</div>
+                    <div style={{fontSize:11.5,color:T.muted,marginTop:2,lineHeight:1.4}}>{c.sub}</div>
+                  </div>
+                  <div style={{display:"flex",gap:6,flexShrink:0}}>
+                    <button type="button" aria-pressed={permPrefs[c.key]==="yes"} onClick={c.onAllow} style={{...peakChipStyle(permPrefs[c.key]==="yes"),borderRadius:10,padding:"6px 12px"}}>Allow</button>
+                    <button type="button" aria-pressed={permPrefs[c.key]==="no"} onClick={c.onNo} style={{...peakChipStyle(permPrefs[c.key]==="no"),borderRadius:10,padding:"6px 12px"}}>Not now</button>
+                  </div>
+                </div>
+              ))}
             </div>
+            {notifPermNote&&<div role="alert" style={{fontSize:11.5,color:T.red,marginTop:8}}>{notifPermNote}</div>}
           </>)}
 
           {step==="status"&&(<>
@@ -27211,9 +27311,12 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
             </>)}
             {step==="awake"&&(<Btn onClick={()=>setStep("personalize")} disabled={windowInvalid} style={{opacity:windowInvalid?0.45:1}}>Continue</Btn>)}
             {step==="personalize"&&(<>
-              <Btn variant="subtle" onClick={()=>setStep("activities")}>Skip</Btn>
-              <Btn onClick={()=>setStep("activities")}>Continue</Btn>
+              <Btn variant="subtle" onClick={()=>setStep(brandNew?"permissions":"activities")}>Skip</Btn>
+              <Btn onClick={()=>setStep(brandNew?"permissions":"activities")}>Continue</Btn>
             </>)}
+            {step==="permissions"&&(
+              <Btn onClick={()=>setStep("activities")}>Continue</Btn>
+            )}
             {step==="classes"&&addMode===null&&(
               // 2026-09-11: Courses now runs before End of Term, so THIS is
               // where term comes next -- unless it's already configured
@@ -27242,8 +27345,8 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
               <Btn onClick={finishReviewingClass}>{editingPendingId?"Save changes":"Done"}</Btn>
             )}
             {step==="activities"&&(<>
-              <Btn variant="subtle" onClick={()=>setStep("calendarSync")}>Skip</Btn>
-              <Btn onClick={()=>setStep("calendarSync")}>Continue</Btn>
+              <Btn variant="subtle" onClick={()=>setStep(permPrefs.google==="no"?"finalReview":"calendarSync")}>Skip</Btn>
+              <Btn onClick={()=>setStep(permPrefs.google==="no"?"finalReview":"calendarSync")}>Continue</Btn>
             </>)}
             {step==="calendarSync"&&(
               <Btn onClick={()=>setStep("finalReview")}>Continue</Btn>
@@ -31600,7 +31703,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const brainDumpLinkRef=useRef(null);
   const rescheduleBtnRef=useRef(null);
   const CAL_TOUR_STEPS=[
-    {targetRef:addTaskBtnRef,title:"Add anything, one place",body:"A class, an assignment, a reminder. Tap Add Task and Studlin finds the time for it."},
+    {targetRef:addTaskBtnRef,title:"Add anything, one place",body:smartFeaturesOn()?"A class, an assignment, a reminder. Tap Add Task and Studlin finds the time for it.":"A class, an assignment, a reminder. Tap Add Task and pick when it happens. Studlin can find the time instead, one tap away."},
     {targetRef:rescheduleBtnRef,title:"When things don't go as planned",body:"Tell Studlin what happened and it reschedules everything around it. Deadlines stay safe, nothing gets crammed in."},
     // 2026-09-11 user request: "another pop up for studlin ai ask it
     // anything about your schedule." Targets the bubble by a stable id
@@ -32104,7 +32207,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // replaces the old implicit "fill in Target Date to go manual" behavior,
   // which showed both the Target Date and Deadline fields at once and left
   // users unsure which one they were supposed to fill in.
-  const [taskMode,setTaskMode]=useState("ai");
+  const [taskMode,setTaskMode]=useState(()=>smartFeaturesOn()?"ai":"manual"); // manual-first default
   const [evDuration,setEvDuration]=useState(60);
   // C9 in the audit: commuteBefore/commuteAfter already existed as real,
   // scheduler-respected fields (effectiveLeadIn/effectiveTrailOut), but
@@ -33555,7 +33658,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     const params=computeStudyPlanParams(undefined,25,evConfidence,materialCharCount,undefined,daysUntilExam);
     if(params.sessionCount!==evExamPlan.sessionCount)setEvExamPlan(m=>({...m,sessionCount:params.sessionCount}));
   },[newOpen,evKind,evExamPlan.proposeSessions,evExamPlan.materialFiles,evConfidence,evSessionCountTouched]);
-  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvTitleError("");setEvNotes("");setEvCustom("");setEvCustomColor(T.lime);setEvDate("");setEvTime("09:00");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setEvScheduleLater(false);setEvCommuteBefore("");setEvCommuteAfter("");setAiLoading(false);setAsChecklist(false);setTaskRepeatDays([]);resetTypeExtras();};
+  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvTitleError("");setEvNotes("");setEvCustom("");setEvCustomColor(T.lime);setEvDate("");setEvTime("09:00");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode(smartFeaturesOn()?"ai":"manual");setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setEvScheduleLater(false);setEvCommuteBefore("");setEvCommuteAfter("");setAiLoading(false);setAsChecklist(false);setTaskRepeatDays([]);resetTypeExtras();};
   const onEvKindChange=(k)=>{
     setEvKind(k);
     const willBeFixed=(k==="exam"||k==="class"||k==="reminder"||k==="busy block");
@@ -35702,7 +35805,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         <TourStep {...CAL_TOUR_STEPS[calTourStep]} step={calTourStep} total={CAL_TOUR_STEPS.length}
           isLast={calTourStep===CAL_TOUR_STEPS.length-1} onNext={advanceCalTour} onSkip={skipCalTour} />
       )}
-      <ClassSetupWizard open={classSetupOpen} termRollover={classSetupRollover} firstRun={isFreshAccount} initialStatus={getProfile().status} onSkip={()=>{lsSet("classSetupDeferredUntil",Date.now()+86400000);setClassSetupOpen(false);setClassSetupRollover(false);if(isFreshAccount)setTheme("dark");}} onFinish={finishClassSetup} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
+      <ClassSetupWizard open={classSetupOpen} termRollover={classSetupRollover} firstRun={isFreshAccount} initialStatus={getProfile().status} onSkip={()=>{lsSet("classSetupDeferredUntil",Date.now()+86400000);setClassSetupOpen(false);setClassSetupRollover(false);if(isFreshAccount){setTheme("dark");if(isBrandNewAccountForManualFirst())setQuestionAskPref("smartFeatures",false);}}} onFinish={finishClassSetup} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
       <ClassSetupWizard open={quickScanOpen} quickScan targetCourseId={quickScanTargetCourseId} initialStatus={getProfile().status} onFinish={finishQuickScan} onSkip={()=>{setQuickScanOpen(false);setQuickScanTargetCourseId(null);syncClassSetupState();returnToChecklistIfNeeded();}} onPartialSync={syncClassSetupState} setPricingOpen={setPricingOpen} setActivePage={setActive} />
       <Modal open={!!weeklyContentCourseId} onClose={()=>setWeeklyContentCourseId(null)} title="Class notes" sub="A short note for each day this class meets -- lecture, lab, homework due, whatever's useful." width={460}
         footer={<><Btn variant="subtle" onClick={()=>setWeeklyContentCourseId(null)}>Cancel</Btn><Btn onClick={saveWeeklyContent}>Save</Btn></>}>
@@ -37551,7 +37654,7 @@ function stuPalette(){
 function stuBedtimeDue(now){
   const ws=getWakeSleep();
   if(!ws||!ws.sleepTime)return false;
-  if(!stuSettingOn("mascotBedtime")||!nudgesAllowed())return false;
+  if(!stuSettingOn("mascotBedtime")||lsGet("settings",{}).nudgesMaster===false)return false; // not smartFeaturesOn: bedtime is a manual-friendly reminder
   const d=now||new Date();
   const cur=d.getHours()*60+d.getMinutes();
   const diff=(timeToMinutes(ws.sleepTime)-cur+1440)%1440;
@@ -37682,7 +37785,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     window.addEventListener("studlin-settings-changed",sync);
     return ()=>window.removeEventListener("studlin-settings-changed",sync);
   },[]);
-  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,deadline:true,classReminders:false,onlineStatus:true,incognito:false,twofa:false,motion:false,hand:true,wrapped:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false,askCheckIns:true,askDurationQuestions:true,nudgesMaster:true,mascotReminders:true,mascotCheers:true,mascotBedtime:true},...lsGet("settings",{})}));
+  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,deadline:true,classReminders:false,onlineStatus:true,incognito:false,twofa:false,motion:false,hand:true,wrapped:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false,askCheckIns:true,askDurationQuestions:true,nudgesMaster:true,smartFeatures:true,mascotReminders:true,mascotCheers:true,mascotBedtime:true},...lsGet("settings",{})}));
   // 2026-09-13: "Share my free/busy time" used to be all-or-nothing (on =
   // every current accepted friend). shareAvailabilityMode lets a student
   // restrict it to specific people instead -- see the picker modal below
@@ -39147,8 +39250,9 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Suggestions and Stu</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Control how much Studlin speaks up. Everything here is optional.</div>
+              <Row label="Learn how I work (timers, predictions, suggestions)" sub="Begin buttons and timers, duration questions, best-hours ideas, and study spacing tips. Off means you plan and finish everything by hand." k="smartFeatures" />
               <Row label="Suggestions and tips" sub={"Occasional ideas like \"default new tasks to midday?\" and the questions below. Off means none of them pop up."} k="nudgesMaster" />
-              <Row label="Stu reminds me before things start" sub="Stu walks in a few minutes before a study block or deadline and asks if you want to start. Off uses a plain pop-up instead." k="mascotReminders" />
+              <Row label="Stu reminds me before things start" sub="Stu walks in a few minutes before a study block or deadline and asks if you want to start. Off uses a plain pop-up instead. Needs Learn how I work on." k="mascotReminders" />
               <Row label="Stu reminds me when it is getting late" sub="About 30 minutes before the bedtime you set in class setup, a sleepy Stu asks if you want to wrap up. Once a night." k="mascotBedtime" />
               <Row label="Stu cheers when I finish" sub="A quick celebration after you complete a task." k="mascotCheers" />
             </Card>
@@ -42399,6 +42503,7 @@ function App() {
     const HEADS_UP_MINS=10;
     const check=()=>{
       if(timerTask)return; // already locked in, no need to be reminded
+      if(!smartFeaturesOn())return; // manual-first: the heads-up only offers Begin/timer
       // Stu stops asking for the day after 3 "not now"s (see StudCompanion).
       if(stuSettingOn("mascotReminders")&&stuDeclinesToday()>=3)return;
       const today=dayKey();
