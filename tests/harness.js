@@ -230,7 +230,8 @@ function loadStudlinModule(options) {
     "getRoutineOccurrenceNote","saveRoutineOccurrenceNote","blendOverBg",
     "diffNewGoogleEvents","describeNewGoogleEvents","summarizeImportReviewQueue",
     "shouldShowImportReviewNudge","dismissImportReviewNudge","IMPORT_REVIEW_NUDGE_COOLDOWN_MS",
-    "hasFiredReminder","markReminderFired"];
+    "hasFiredReminder","markReminderFired",
+    "DURATION_DEFAULTS_BY_KIND","DURATION_CHIP_PRESETS","BRAIN_DUMP_WEEKDAYS","BRAIN_DUMP_MONTHS"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }

@@ -867,6 +867,144 @@ const NumField = ({value,onChange,min,max,fallback,style,...rest}) => {
     />
   );
 };
+// ─── Low-friction duration picking (2026-10-14) ──────────────────────────────
+// Short label for a duration chip: 15m, 45m, 1h, 1.5h; anything else falls
+// back to "1h 15m".
+function formatDurationChip(mins){
+  const m=Math.round(+mins||0);
+  if(m<60)return m+"m";
+  if(m%30===0)return (m/60)+"h";
+  return Math.floor(m/60)+"h "+(m%60)+"m";
+}
+// Live pill / summary label: "45m", "1h", "1h 15m".
+function formatDurationLong(mins){
+  const m=Math.max(0,Math.round(+mins||0));
+  if(m<60)return m+"m";
+  const h=Math.floor(m/60),r=m%60;
+  return r?h+"h "+r+"m":h+"h";
+}
+const DURATION_CHIP_PRESETS=[15,30,45,60,90,120];
+// Per-type starting point, ONLY used when this student has no real data and
+// no previous pick. These are plain starting values, never presented as
+// "usually accurate" -- only a data-backed suggestDurationFor result keeps
+// that wording.
+const DURATION_DEFAULTS_BY_KIND={
+  "study block":45,study:45,studySession:45,homework:45,assignment:45,deadline:45,
+  reading:30,reminder:15,errand:30,task:30,habit:30,
+  "class":60,routine:60,"busy block":60,exam:60
+};
+function durationKindKey(kind){
+  return typeof kind==="string"&&kind?kind:"task";
+}
+function getLastDuration(kind){
+  const v=lsGet("lastDuration:"+durationKindKey(kind),null);
+  return typeof v==="number"&&v>=5&&v<=480?v:null;
+}
+function rememberLastDuration(kind,minutes){
+  const m=Math.round(+minutes);
+  if(!(m>=5&&m<=480))return;
+  lsSet("lastDuration:"+durationKindKey(kind),m);
+}
+// Priority: real per-subject data (suggestDurationFor keeps its own
+// certainty gating) > the last duration this student chose for this kind >
+// the per-type table. source says which won so the UI only claims "usually"
+// for the data-backed case.
+function getDefaultDurationInfo(kind,subject){
+  const data=suggestDurationFor(subject,kind);
+  if(typeof data==="number"&&data>0)return {minutes:data,source:"data"};
+  const last=getLastDuration(kind);
+  if(last!=null)return {minutes:last,source:"last"};
+  const table=DURATION_DEFAULTS_BY_KIND[durationKindKey(kind)];
+  return {minutes:table||60,source:"default"};
+}
+function getDefaultDuration(kind,subject){
+  return getDefaultDurationInfo(kind,subject).minutes;
+}
+// Chip row replacing a bare minutes field. Presets are single-tap; Custom
+// reveals the existing NumField inline. A value that is not a preset shows
+// the Custom chip active with that value. role=radiogroup with roving
+// tabindex and arrow keys, like native radios.
+const DurationChips = ({value,onChange,presets=DURATION_CHIP_PRESETS,allowCustom=true,label="Duration"}) => {
+  const [customOpen,setCustomOpen]=useState(false);
+  const [focusIdx,setFocusIdx]=useState(-1);
+  const refs=useRef([]);
+  const isPreset=presets.includes(value);
+  const customActive=allowCustom&&(customOpen||!isPreset);
+  const options=presets.map(p=>({key:"p"+p,mins:p,label:formatDurationChip(p),active:!customActive&&value===p}));
+  if(allowCustom)options.push({key:"custom",mins:null,label:customActive&&!isPreset?"Custom "+formatDurationChip(value):"Custom",active:customActive});
+  const activeIdx=Math.max(0,options.findIndex(o=>o.active));
+  const pick=(i)=>{
+    const o=options[i];if(!o)return;
+    if(o.mins==null){setCustomOpen(true);}
+    else{setCustomOpen(false);if(o.mins!==value)onChange(o.mins);}
+  };
+  const onKeyDown=(e)=>{
+    const k=e.key;
+    let next=null;
+    if(k==="ArrowRight"||k==="ArrowDown")next=(activeIdx+1)%options.length;
+    else if(k==="ArrowLeft"||k==="ArrowUp")next=(activeIdx-1+options.length)%options.length;
+    if(next==null)return;
+    e.preventDefault();
+    pick(next);
+    const el=refs.current[next];if(el&&el.focus)el.focus();
+  };
+  return (
+    <div>
+      <div role="radiogroup" aria-label={label} onKeyDown={onKeyDown} style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+        {options.map((o,i)=>(
+          <button key={o.key} ref={el=>{refs.current[i]=el;}} type="button" role="radio" aria-checked={o.active} tabIndex={i===activeIdx?0:-1}
+            onClick={()=>pick(i)} onFocus={()=>setFocusIdx(i)} onBlur={()=>setFocusIdx(f=>f===i?-1:f)}
+            style={{padding:"6px 11px",borderRadius:7,fontSize:12,cursor:"pointer",fontFamily:T.font,fontWeight:o.active?600:400,
+              border:`1px solid ${o.active?T.lime+"99":T.border}`,background:o.active?T.lime+"18":"transparent",color:o.active?T.lime:T.muted,
+              outline:focusIdx===i?`2px solid ${T.lime}66`:"none",outlineOffset:1}}>{o.label}</button>
+        ))}
+      </div>
+      {customActive&&(
+        <div style={{display:"flex",alignItems:"center",gap:8,marginTop:8}}>
+          <NumField min={5} max={480} step={5} fallback={30} value={value} onChange={onChange} style={{width:80}} aria-label="Custom duration in minutes" />
+          <span style={{fontSize:11.5,color:T.muted}}>minutes</span>
+        </div>
+      )}
+    </div>
+  );
+};
+// Quick date chips (Today / Tomorrow / next few weekdays) above a native
+// date input. Pure helper so it is testable.
+function buildQuickDateChips(todayKey,count){
+  const base=new Date(todayKey+"T12:00:00");
+  const out=[];
+  const names=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  for(let i=0;i<(count||6);i++){
+    const d=new Date(base.getTime()+i*86400000);
+    const key=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+    out.push({key,label:i===0?"Today":i===1?"Tomorrow":names[d.getDay()]});
+  }
+  return out;
+}
+const QuickDateField = ({value,onChange,fallbackKey}) => {
+  const todayKey=dayKey();
+  const chips=buildQuickDateChips(todayKey,6);
+  return (
+    <div>
+      <div role="radiogroup" aria-label="Quick date" style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
+        {chips.map(c=>{
+          const on=value===c.key;
+          return <button key={c.key} type="button" role="radio" aria-checked={on} onClick={()=>onChange(c.key)}
+            style={{padding:"5px 10px",borderRadius:7,fontSize:11.5,cursor:"pointer",fontFamily:T.font,fontWeight:on?600:400,border:`1px solid ${on?T.lime+"99":T.border}`,background:on?T.lime+"18":"transparent",color:on?T.lime:T.muted}}>{c.label}</button>;
+        })}
+      </div>
+      <Input type="date" aria-label="Pick date" value={value} onChange={e=>onChange(e.target.value||fallbackKey||todayKey)} />
+    </div>
+  );
+};
+// Live "1h 15m  3:00 - 4:15 PM" pill shown while resizing a block or
+// dragging out a new one on the calendar grid.
+function liveRangeLabel(startMin,durMin){
+  return formatDurationLong(durMin)+"  "+fmtTimeRange(minutesToTime(startMin),durMin);
+}
+const LiveRangePill = ({startMin,durMin,style}) => (
+  <div style={{position:"absolute",left:4,zIndex:30,pointerEvents:"none",padding:"3px 8px",borderRadius:6,background:"rgba(20,20,20,0.92)",color:"#fff",fontSize:11,fontWeight:700,fontFamily:T.font,whiteSpace:"nowrap",boxShadow:"0 4px 12px rgba(0,0,0,0.3)",...style}}>{liveRangeLabel(startMin,durMin)}</div>
+);
 const SelectChip = ({options, value, onChange, size}) => (
   <div style={{display:"flex",gap:size==="sm"?4:6,flexWrap:"wrap"}}>
     {options.map(o=>{
@@ -8684,13 +8822,147 @@ function regexScanDeadlines(text){
 // item it produces is a guess, not just the ones parseBrainDump itself
 // flagged. Surfaced in the review screen as the same "Low confidence,
 // double-check" badge a syllabus scan's low-confidence items already get.
+//
+// 2026-10-14: now runs each line through parseBrainDumpLine so the local path
+// also understands days, times, "due ..." and "for 45m" -- but only ever
+// pulls out what the line literally says (never a guessed duration), and the
+// review screen shows every parsed value as an editable chip.
+const BRAIN_DUMP_WEEKDAYS={sunday:0,monday:1,tuesday:2,wednesday:3,thursday:4,friday:5,saturday:6,
+  mon:1,tue:2,tues:2,wed:3,thu:4,thur:4,thurs:4,fri:5};
+const BRAIN_DUMP_MONTHS={jan:1,january:1,feb:2,february:2,mar:3,march:3,apr:4,april:4,may:5,jun:6,june:6,jul:7,july:7,aug:8,august:8,sep:9,sept:9,september:9,oct:10,october:10,nov:11,november:11,dec:12,december:12};
+function bdKey(y,m,d){return y+"-"+String(m).padStart(2,"0")+"-"+String(d).padStart(2,"0");}
+function bdAddDays(key,n){
+  const p=key.split("-");
+  const d=new Date(+p[0],+p[1]-1,+p[2]+n,12,0,0);
+  return bdKey(d.getFullYear(),d.getMonth()+1,d.getDate());
+}
+// Month/day with no year: the next occurrence on or after today.
+function bdNextMonthDay(todayKey,month,day){
+  const ty=+todayKey.slice(0,4);
+  if(month<1||month>12||day<1||day>31)return null;
+  const probe=new Date(ty,month-1,day,12,0,0);
+  if(probe.getMonth()!==month-1)return null;
+  const thisYear=bdKey(ty,month,day);
+  if(thisYear>=todayKey)return thisYear;
+  const next=new Date(ty+1,month-1,day,12,0,0);
+  return next.getMonth()===month-1?bdKey(ty+1,month,day):null;
+}
+// A weekday name resolves to the NEXT such day strictly after today (never
+// "today" and never in the past). Said on that same weekday it is a week out;
+// the review row shows the date so it is easy to correct.
+function bdNextWeekday(todayKey,dow){
+  const p=todayKey.split("-");
+  const cur=new Date(+p[0],+p[1]-1,+p[2],12,0,0).getDay();
+  let delta=(dow-cur+7)%7;
+  if(delta===0)delta=7;
+  return bdAddDays(todayKey,delta);
+}
+// Bare clock numbers without am/pm: 1-6 read as afternoon, 7-11 as morning,
+// 12 as noon, 13-23 as 24-hour. Always shown and editable in the review row.
+function bdClock(h,m,mer){
+  let hh=h;
+  if(mer){
+    const pm=/^p/i.test(mer);
+    if(hh===12)hh=pm?12:0;else if(pm)hh+=12;
+  }else if(hh>=1&&hh<=6)hh+=12;
+  if(hh>23||m>59)return null;
+  return String(hh).padStart(2,"0")+":"+String(m).padStart(2,"0");
+}
+function parseBrainDumpLine(line,today){
+  const todayKey=typeof today==="string"?today:(today instanceof Date?bdKey(today.getFullYear(),today.getMonth()+1,today.getDate()):dayKey());
+  let s=" "+String(line||"").replace(/\s+/g," ").trim()+" ";
+  const take=(re,fn)=>{
+    const m=s.match(re);
+    if(!m)return false;
+    const ok=fn(m);
+    if(ok===false)return false;
+    s=s.replace(m[0]," ");
+    return true;
+  };
+  let durationMin=null,time=null,dueDate=null,hasDue=false;
+  take(/\s(?:for\s+)?(\d+(?:\.\d+)?)\s*(hours?|hrs?|h|minutes?|mins?|m)(?=[\s,.;!?]|$)/i,m=>{
+    const n=parseFloat(m[1]);
+    const mins=/^h/i.test(m[2])?Math.round(n*60):Math.round(n);
+    if(!(mins>=5&&mins<=480))return false;
+    durationMin=mins;
+  });
+  // Dates before times so "10/20" is never mistaken for part of a clock time.
+  take(/\s(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?(?=[\s,.;!?]|$)/,m=>{
+    const mo=+m[1],d=+m[2];
+    if(m[3]){
+      let y=+m[3];if(y<100)y+=2000;
+      const probe=new Date(y,mo-1,d,12,0,0);
+      if(mo<1||mo>12||probe.getMonth()!==mo-1)return false;
+      dueDate=bdKey(y,mo,d);
+    }else{
+      const k=bdNextMonthDay(todayKey,mo,d);
+      if(!k)return false;
+      dueDate=k;
+    }
+  });
+  if(!dueDate){
+    take(/\s(?:on\s+)?(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?=[\s,.;!?]|$)/i,m=>{
+      const k=bdNextMonthDay(todayKey,BRAIN_DUMP_MONTHS[m[1].toLowerCase()],+m[2]);
+      if(!k)return false;
+      dueDate=k;
+    });
+  }
+  take(/\s(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)(?=[\s,.;!?]|$)/i,m=>{
+    const t=bdClock(+m[1],m[2]?+m[2]:0,m[3].replace(/\./g,""));
+    if(!t||+m[1]<1||+m[1]>12)return false;
+    time=t;
+  })||take(/\s(?:at\s+)(\d{1,2})(?::(\d{2}))?(?=[\s,.;!?]|$)/i,m=>{
+    const t=bdClock(+m[1],m[2]?+m[2]:0,null);
+    if(!t)return false;
+    time=t;
+  })||take(/\s(\d{1,2}):(\d{2})(?=[\s,.;!?]|$)/,m=>{
+    const t=bdClock(+m[1],+m[2],null);
+    if(!t)return false;
+    time=t;
+  })||take(/\s(?:at\s+)?(noon|midnight)(?=[\s,.;!?]|$)/i,m=>{time=/noon/i.test(m[1])?"12:00":"00:00";});
+  if(!dueDate){
+    if(take(/\s(?:due\s+|by\s+|on\s+)?(?:today|tonight)(?=[\s,.;!?]|$)/i,()=>true))dueDate=todayKey;
+    else if(take(/\s(?:due\s+|by\s+|on\s+)?(?:tomorrow|tmrw|tmr)(?=[\s,.;!?]|$)/i,()=>true))dueDate=bdAddDays(todayKey,1);
+    else{
+      take(/\s(?:due\s+|by\s+|on\s+|this\s+|next\s+)*(sunday|monday|tuesday|wednesday|thursday|friday|saturday|mon|tues?|wed|thu(?:rs?)?|fri)(?=[\s,.;!?]|$)/i,m=>{
+        dueDate=bdNextWeekday(todayKey,BRAIN_DUMP_WEEKDAYS[m[1].toLowerCase()]);
+      })||take(/\s(?:due\s+|by\s+|on\s+|this\s+|next\s+)+(sat|sun)(?=[\s,.;!?]|$)/i,m=>{
+        dueDate=bdNextWeekday(todayKey,/^sat/i.test(m[1])?6:0);
+      });
+    }
+  }
+  if(take(/\sdue(?=[\s,.;!?:]|$)/i,()=>true))hasDue=true;
+  // Dangling glue left behind by the removed tokens.
+  let title=s.replace(/\s+/g," ").trim();
+  let prev;
+  do{prev=title;title=title.replace(/^(?:on|at|by|due|for|the|[-,:;])\s+/i,"").replace(/\s+(?:on|at|by|due|for|the|[-,:;])$/i,"").replace(/[-,:;]$/,"").trim();}while(title!==prev);
+  if(!title)title=String(line||"").trim();
+  title=title.charAt(0).toUpperCase()+title.slice(1);
+  const lower=" "+String(line||"").toLowerCase()+" ";
+  const studyish=/\b(study|studying|read|reading|review|homework|hw|practice|revise|work on|finish|write|writing)\b/.test(lower);
+  let kind="todo";
+  if(/^\s*(?:remind me|don'?t forget)\b/i.test(String(line||""))&&time)kind="reminder";
+  else if(/\b(exam|test|quiz|midterm|final)\b/.test(lower)&&dueDate&&!/\b(study|review|prep|practice)\b/.test(lower))kind="exam";
+  else if(durationMin||(studyish&&!time))kind="study";
+  else if(time&&!hasDue)kind="event";
+  return {title,dueDate,time,durationMin,kind};
+}
 function fallbackSplitBrainDump(text){
-  return (text||"")
-    .split(/[,\n]|(?:\s+and\s+)/i)
-    .map(s=>s.trim().replace(/^[\s\-*•.]+/,""))
+  const stripLead=(l)=>l.trim().replace(/^(?:[-*•–—]+|\d+[.)]|\[[ xX]?\])\s*/,"").trim();
+  const rawLines=String(text||"").split(/\r?\n/).map(stripLead).filter(Boolean);
+  // Newlines are the real separators. Commas and " and " only split a
+  // single-line dump (people type a whole list on one line).
+  const pieces=rawLines.length>1?rawLines:rawLines.flatMap(l=>l.split(/,|\s+and\s+/i).map(stripLead));
+  const todayKey=dayKey();
+  return pieces
     .filter(s=>s.length>2)
     .slice(0,15)
-    .map(s=>({title:s.charAt(0).toUpperCase()+s.slice(1),kind:"todo",durationMin:null,dueDate:null,needsDuration:false,confidence:"low"}));
+    .map(s=>{
+      const p=parseBrainDumpLine(s,todayKey);
+      const needsDate=(p.kind==="event"||p.kind==="reminder"||p.kind==="exam")&&!p.dueDate;
+      return {title:p.title,kind:p.kind,durationMin:p.durationMin,dueDate:p.dueDate,dueTime:p.time,needsDuration:false,confidence:"low",
+        ...(needsDate?{clarify:"Which day? Pick a date below."}:{})};
+    });
 }
 // Levels map strictly to real Lock-In Timer minutes — no streak/login/task
 // bonuses, no penalty deductions, no starting offset. An honest sum of
@@ -8950,6 +9222,18 @@ function computeQuickCreateRange(anchorMins,curMins){
   if(curMins>=anchorMins){ lo=anchorMins; hi=Math.max(curMins,anchorMins+15); }
   else{ hi=anchorMins; lo=Math.min(curMins,anchorMins-15); }
   return {startTime:minutesToTime(lo),endTime:minutesToTime(hi)};
+}
+// A plain click (no movement) used to give a 15-minute block, which is
+// usually wrong. It now seeds the last duration the student used for a
+// quick-created task (30 minutes the first time). The 15-minute floor in
+// computeQuickCreateRange still governs real drags.
+function quickCreateSeedMinutes(){
+  return getLastDuration("quickCreate")||30;
+}
+function computeQuickCreateRangeSeeded(anchorMins,curMins){
+  return curMins===anchorMins
+    ?computeQuickCreateRange(anchorMins,Math.min(1439,anchorMins+quickCreateSeedMinutes()))
+    :computeQuickCreateRange(anchorMins,curMins);
 }
 
 // Normalize a stored priority/difficulty value to 0-1.
@@ -23376,7 +23660,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
     e.preventDefault();
     const startMins=minsFromColY(dk,e.clientY);
     createDragRef.current={dateKey:dk,anchorMins:startMins};
-    const r=computeQuickCreateRange(startMins,startMins+30);
+    const r=computeQuickCreateRange(startMins,startMins+quickCreateSeedMinutes());
     onQuickCreateDrag(dk,r.startTime,r.endTime);
     setCreatingDragging(true);
     document.body.style.userSelect="none";
@@ -23387,7 +23671,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
       const info=createDragRef.current;
       if(!info||!onQuickCreateDrag)return;
       const curMins=minsFromColY(info.dateKey,e.clientY);
-      const r=computeQuickCreateRange(info.anchorMins,curMins);
+      const r=computeQuickCreateRangeSeeded(info.anchorMins,curMins);
       onQuickCreateDrag(info.dateKey,r.startTime,r.endTime);
     };
     const onUp=(e)=>{
@@ -23397,7 +23681,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
       createDragRef.current=null;
       if(!info||!onQuickCreateDragEnd)return;
       const curMins=minsFromColY(info.dateKey,e.clientY);
-      const r=computeQuickCreateRange(info.anchorMins,curMins);
+      const r=computeQuickCreateRangeSeeded(info.anchorMins,curMins);
       const col=wkColRefs.current[info.dateKey];
       const rect=col?col.getBoundingClientRect():null;
       onQuickCreateDragEnd(info.dateKey,r.startTime,r.endTime,{x:rect?rect.right:e.clientX,y:e.clientY});
@@ -23511,7 +23795,8 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
     const onMove=(e)=>{
       const info = wkResizeInfo.current;
       if(!info)return;
-      const deltaMin = Math.round((e.clientY - info.startClientY) / (WK_PX_HR / 60) / 5) * 5;
+      // Snaps to 15 minutes (matches the live range pill and drag-to-create).
+      const deltaMin = Math.round((e.clientY - info.startClientY) / (WK_PX_HR / 60) / 15) * 15;
       if(info.edge==="bottom"){
         const liveDuration = Math.max(MIN_DUR, info.origDuration + deltaMin);
         setWkResize({id:info.id, edge:info.edge, liveStartMin:info.origStartMin, liveDuration});
@@ -23879,9 +24164,15 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   const qStart=timeToMinutes(quickCreateDraft.startTime);
                   const qDur=Math.max(15,timeToMinutes(quickCreateDraft.endTime)-qStart);
                   return (
-                    <div style={{position:"absolute",top:qStart*(WK_PX_HR/60),left:2,right:2,height:Math.max(15,qDur)*(WK_PX_HR/60),borderRadius:5,background:quickCreateDraft.color?quickCreateDraft.color+"B3":T.lime+"22",border:`1.5px dashed ${quickCreateDraft.color||T.lime}`,zIndex:7,pointerEvents:"none",boxSizing:"border-box"}} />
+                    <>
+                      <div style={{position:"absolute",top:qStart*(WK_PX_HR/60),left:2,right:2,height:Math.max(15,qDur)*(WK_PX_HR/60),borderRadius:5,background:quickCreateDraft.color?quickCreateDraft.color+"B3":T.lime+"22",border:`1.5px dashed ${quickCreateDraft.color||T.lime}`,zIndex:7,pointerEvents:"none",boxSizing:"border-box"}} />
+                      {creatingDragging&&<LiveRangePill startMin={qStart} durMin={qDur} style={{top:Math.max(2,qStart*(WK_PX_HR/60)-24)}} />}
+                    </>
                   );
                 })()}
+                {wkResize && wkResizeInfo.current && wkResizeInfo.current.date===dk && wkResize.liveStartMin!=null && (
+                  <LiveRangePill startMin={wkResize.liveStartMin} durMin={wkResize.liveDuration} style={{top:Math.max(2,(wkResize.edge==="bottom"?(wkResize.liveStartMin+wkResize.liveDuration)*(WK_PX_HR/60)+4:wkResize.liveStartMin*(WK_PX_HR/60)-24))}} />
+                )}
                 {isPastDeadline && (
                   <div style={{position:"absolute",inset:0,background:"rgba(217,128,107,0.07)",borderLeft:"2px solid rgba(217,128,107,0.35)",zIndex:5,pointerEvents:"none"}}>
                     <div style={{position:"sticky",top:6,textAlign:"center",fontSize:8,fontWeight:800,letterSpacing:"0.08em",color:"rgba(217,128,107,0.65)",padding:3}}>PAST DUE</div>
@@ -27428,7 +27719,7 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
     e.preventDefault();
     const startMins=minsFromDayY(e.clientY);
     createDragRef.current={anchorMins:startMins};
-    const r=computeQuickCreateRange(startMins,startMins+30);
+    const r=computeQuickCreateRange(startMins,startMins+quickCreateSeedMinutes());
     onQuickCreateDrag(selDay,r.startTime,r.endTime);
     setCreatingDragging(true);
     document.body.style.userSelect="none";
@@ -27439,7 +27730,7 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
       const info=createDragRef.current;
       if(!info||!onQuickCreateDrag)return;
       const curMins=minsFromDayY(e.clientY);
-      const r=computeQuickCreateRange(info.anchorMins,curMins);
+      const r=computeQuickCreateRangeSeeded(info.anchorMins,curMins);
       onQuickCreateDrag(selDay,r.startTime,r.endTime);
     };
     const onUp=(e)=>{
@@ -27449,7 +27740,7 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
       createDragRef.current=null;
       if(!info||!onQuickCreateDragEnd)return;
       const curMins=minsFromDayY(e.clientY);
-      const r=computeQuickCreateRange(info.anchorMins,curMins);
+      const r=computeQuickCreateRangeSeeded(info.anchorMins,curMins);
       const el=timelineRef.current;
       const rect=el?el.getBoundingClientRect():null;
       onQuickCreateDragEnd(selDay,r.startTime,r.endTime,{x:rect?rect.right:e.clientX,y:e.clientY});
@@ -27568,7 +27859,10 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
               const qStart=timeToMinutes(quickCreateDraft.startTime);
               const qDur=Math.max(15,timeToMinutes(quickCreateDraft.endTime)-qStart);
               return (
-                <div style={{position:"absolute",top:(qStart-spanStart)*(pxPerHr/60),left:2,right:2,height:qDur*(pxPerHr/60),borderRadius:5,background:quickCreateDraft.color?quickCreateDraft.color+"B3":T.lime+"22",border:`1.5px dashed ${quickCreateDraft.color||T.lime}`,zIndex:7,pointerEvents:"none",boxSizing:"border-box"}} />
+                <>
+                  <div style={{position:"absolute",top:(qStart-spanStart)*(pxPerHr/60),left:2,right:2,height:qDur*(pxPerHr/60),borderRadius:5,background:quickCreateDraft.color?quickCreateDraft.color+"B3":T.lime+"22",border:`1.5px dashed ${quickCreateDraft.color||T.lime}`,zIndex:7,pointerEvents:"none",boxSizing:"border-box"}} />
+                  {creatingDragging&&<LiveRangePill startMin={qStart} durMin={qDur} style={{top:Math.max(2,(qStart-spanStart)*(pxPerHr/60)-24)}} />}
+                </>
               );
             })()}
             {isToday&&nowMins>=spanStart&&nowMins<=spanEnd&&(
@@ -28211,7 +28505,7 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
                 as dragging an event in Google Calendar. */}
             {isHabit?(
               <div style={{marginBottom:14}}>
-                <Field label="Duration (minutes)"><NumField min={5} max={480} fallback={30} value={duration} onChange={setDuration} /></Field>
+                <Field label="Duration"><DurationChips value={duration} onChange={setDuration} /></Field>
               </div>
             ):(
               <Field label="Start – End">
@@ -30806,7 +31100,7 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
                 routine editor did. */}
             {!allDay&&evKind==="habit"?(
               <div style={{flex:1}}>
-                <NumField min={5} max={480} fallback={30} value={Math.max(5,timeToMinutes(endTime)-timeToMinutes(startTime))} onChange={v=>setEndTime(minutesToTime(timeToMinutes(startTime)+v))} style={{width:"100%"}} />
+                <DurationChips value={Math.max(5,timeToMinutes(endTime)-timeToMinutes(startTime))} onChange={v=>setEndTime(minutesToTime(timeToMinutes(startTime)+v))} />
               </div>
             ):(!allDay&&(
               // Google Calendar-inspired polish: this row's own start/end
@@ -30989,14 +31283,18 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
 // the full Add Task flow (openNew) for anything needing AI arrange,
 // subject, Attack Block, etc., pre-seeded with the same date/time so nothing
 // typed here is lost.
-function QuickCreateTaskPopover({draft,anchorX,anchorY,onCreate,onMoreOptions,onClose,onColorChange}){
+function QuickCreateTaskPopover({draft,anchorX,anchorY,onCreate,onMoreOptions,onClose,onColorChange,onDurationChange}){
   const [title,setTitle]=useState("");
   const [color,setColorState]=useState(T.lime);
   const setColor=(c)=>{setColorState(c);if(onColorChange)onColorChange(c);};
-  useEffect(()=>{ if(draft){setTitle("");setColorState(T.lime);} },[draft&&draft.dateKey,draft&&draft.startTime,draft&&draft.endTime]);
+  // endTime is deliberately NOT a dependency: changing the duration chips moves
+  // the end time of the SAME draft and must not wipe the typed title.
+  useEffect(()=>{ if(draft){setTitle("");setColorState(T.lime);} },[draft&&draft.dateKey,draft&&draft.startTime,draft&&draft.seed]);
   if(!draft)return null;
   const POPOVER_WIDTH=280;
-  const ESTIMATED_HEIGHT=150;
+  // Title row + duration chips (with the inline custom field open) + range
+  // line + footer.
+  const ESTIMATED_HEIGHT=230;
   const x=anchorX!=null?anchorX:window.innerWidth-POPOVER_WIDTH-40;
   const y=anchorY!=null?anchorY:window.innerHeight/2;
   const fitsRight=x+10+POPOVER_WIDTH<=window.innerWidth-8;
@@ -31013,6 +31311,7 @@ function QuickCreateTaskPopover({draft,anchorX,anchorY,onCreate,onMoreOptions,on
           <Input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Add a title" style={{flex:1,fontSize:13,fontWeight:600,padding:"7px 10px"}} autoFocus
             onKeyDown={e=>{ if(e.key==="Enter"){e.preventDefault();submit();} else if(e.key==="Escape"){e.preventDefault();onClose();} }} />
         </div>
+        <DurationChips value={Math.max(15,timeToMinutes(draft.endTime)-timeToMinutes(draft.startTime))} onChange={v=>{if(onDurationChange)onDurationChange(v);}} presets={[15,30,45,60,90]} />
         <div style={{fontSize:11.5,color:T.muted}}>{niceDate} · {fmtTimeRange(draft.startTime,Math.max(15,timeToMinutes(draft.endTime)-timeToMinutes(draft.startTime)))}</div>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:2}}>
           <button type="button" onClick={()=>onMoreOptions(draft)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:11,fontFamily:T.font,padding:0,textDecoration:"underline"}}>More options</button>
@@ -31250,7 +31549,14 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const handleQuickCreateDrag=(dateKey,startTime,endTime)=>setQuickCreateDraft({dateKey,startTime,endTime});
   const handleQuickCreateDragEnd=(dateKey,startTime,endTime,anchor)=>{
     setQuickCreateDraft({dateKey,startTime,endTime});
-    setQuickCreatePopover({dateKey,startTime,endTime,anchorX:anchor&&anchor.x,anchorY:anchor&&anchor.y});
+    setQuickCreatePopover({dateKey,startTime,endTime,anchorX:anchor&&anchor.x,anchorY:anchor&&anchor.y,seed:Date.now()});
+  };
+  // Duration chips in the popover move the draft's end time, so the grid
+  // block resizes live (same one-way pattern as the colour change).
+  const handleQuickCreateDuration=(mins)=>{
+    const withEnd=(d)=>d?{...d,endTime:minutesToTime(Math.min(1439,timeToMinutes(d.startTime)+mins))}:d;
+    setQuickCreateDraft(withEnd);
+    setQuickCreatePopover(withEnd);
   };
   // The popover's color pick is mirrored onto the ghost block so the whole
   // preview fills with it, not just the popover's small swatch.
@@ -31267,6 +31573,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       ...(color&&color!==T.lime?{color}:{})};
     const next=events.concat([task]);
     setEvents(next);lsSet("events",next);
+    rememberLastDuration("quickCreate",duration);
     setPlacementToast((cleanTitle.length>28?cleanTitle.slice(0,28)+"…":cleanTitle)+" added — "+fmtTimeRange(startTime,duration)+".");
     setTimeout(()=>setPlacementToast(""),3200);
     cancelQuickCreate();
@@ -33523,7 +33830,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // "let AI schedule this". The clicked day is remembered so fixed-time kinds
   // (exam/class/reminder), which always need a real date, can still default
   // to it once the user picks one of those types.
-  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("09:00");setEvSubject("None");setEvCustomColor(T.lime);setEvDate("");setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setEvScheduleLater(false);setEvCommuteBefore("");setEvCommuteAfter("");setAsChecklist(false);setTaskRepeatDays([]);resetTypeExtras();setNewOpen(true);};
+  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("09:00");setEvSubject("None");setEvCustomColor(T.lime);setEvDate(dateK||selDay||dayKey());setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setEvScheduleLater(false);setEvCommuteBefore("");setEvCommuteAfter("");setAsChecklist(false);setTaskRepeatDays([]);resetTypeExtras();setNewOpen(true);};
   // Same form as openNew, just arriving with the scheduling mode already
   // decided by which "Add task" menu option was tapped -- the in-modal
   // manual/AI toggle stays visible so it's correctable, not a dead end.
@@ -33540,8 +33847,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // overwrites a value the student actually touched.
   useEffect(()=>{
     if(!newOpen||evDurationTouched)return;
-    const suggested=suggestDurationFor(evSubject,resolveAssignmentKind());
-    if(suggested)setEvDuration(suggested);
+    // Real data > last pick for this kind > per-type starting value.
+    setEvDuration(getDefaultDuration(resolveAssignmentKind(),evSubject));
   },[evSubject,evKind,taskMode,newOpen]);
   // Same "derive a default, but never overwrite what the student actually
   // touched" convention as evDuration's own effect just above -- confidence
@@ -33696,6 +34003,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       ...(splitInfo||{})};
   };
   const commitTasks=(newTasks,opts)=>{
+    // Remember a duration the student actually picked, so the next task of
+    // this kind starts from it. Untouched defaults are never saved back.
+    if(newOpen&&evDurationTouched)rememberLastDuration(resolveAssignmentKind(),evDuration);
     const prefs=getSchedulePreferences();
     // opts.userPinned marks tasks whose time the user typed in directly
     // (Add Task / split sessions) so rebalanceDay leaves them alone —
@@ -33843,6 +34153,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // placeholder the habit engine ignores, same as NewEventModal's own.
   const saveRepeatingTask=()=>{
     if(!evTitle.trim()||taskRepeatDays.length===0)return;
+    if(evDurationTouched)rememberLastDuration(resolveAssignmentKind(),evDuration);
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
     const base={title:evTitle.trim(),kind:"habit",...(subj?{subject:subj}:{}),notes:evNotes||undefined,isGeneralTask:true};
     persistRoutines([...routines,...buildRoutineObjectsForDays(base,taskRepeatDays,"09:00",evDuration||30,{})]);
@@ -33894,7 +34205,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       // below — every item became an unscheduled "todo" with no explanation,
       // which is exactly what looked like "brain dump doesn't work." Surface
       // the real reason instead of pretending it succeeded.
-      if(!res.ok)return {items:[],error:data.error||"Couldn't reach Studlin AI. Please try again."};
+      if(!res.ok){
+        // The AI call failed, so no credit was used and recordBrainDump is NOT
+        // called. The local line parser still gives a useful breakdown to review.
+        const local=fallbackSplitBrainDump(text);
+        const why=data.error||"Couldn't reach Studlin AI.";
+        return local.length>0?{items:local,error:why+" Here's a basic breakdown instead. Check each item."}:{items:[],error:why+" Please try again."};
+      }
       // A real, successful round-trip -- counts against the cap regardless
       // of what happens to the reply below (a garbled-JSON fallback to
       // fallbackSplitBrainDump still spent the same real API call).
@@ -33910,7 +34227,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       // it as degraded so they know to double-check what came out.
       return {items:fallbackSplitBrainDump(text),error:"Couldn't fully understand that — here's a basic breakdown. Edit anything that's off."};
     }catch(e){
-      return {items:[],error:"Something went wrong reaching Studlin AI. Check your connection and try again."};
+      const local=fallbackSplitBrainDump(text);
+      return local.length>0
+        ?{items:local,error:"Couldn't reach Studlin AI. Here's a basic breakdown instead. Check each item."}
+        :{items:[],error:"Something went wrong reaching Studlin AI. Check your connection and try again."};
     }
   };
   const [bdError,setBdError]=useState("");
@@ -34146,7 +34466,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // one.
   const projectMissingBreakdown=()=>evKind==="project"&&!(evProjectPlan.phases&&evProjectPlan.phases.length>0)&&!(evProjectPlan.outline&&evProjectPlan.outline.length>0);
   const saveManual=()=>{
-    if(!evTitle.trim()||!evDate.trim()||!evTime.trim())return;
+    if(!evTitle.trim()||!evTime.trim())return;
+    // The date field can never be left empty (it defaults to the selected
+    // day and snaps back to it if cleared); this is a last-resort guard.
+    if(!evDate.trim()){setEvDate(evPrefillDate||dayKey());return;}
     if(evKind==="project"&&!evNotes.trim()){setEvDetailErr("Add a bit of detail so Studlin can suggest real phases, not a generic template.");return;}
     if(projectMissingBreakdown()){setEvDetailErr("Break this into phases or a checklist below first -- otherwise it's just a plain deadline, not a real project Studlin can track.");return;}
     setEvDetailErr("");
@@ -35644,7 +35967,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           gsDraft={gsOpen&&gsStep==="place"?gsDraft:null} onGsPreviewMove={gsOpen&&gsStep==="place"?gsPreviewMove:undefined} onGsPreviewResize={gsOpen&&gsStep==="place"?gsPreviewResize:undefined} />
       )}
       <QuickCreateTaskPopover draft={quickCreatePopover} anchorX={quickCreatePopover&&quickCreatePopover.anchorX} anchorY={quickCreatePopover&&quickCreatePopover.anchorY}
-        onColorChange={handleQuickCreateColor} onCreate={commitQuickCreateTask} onMoreOptions={quickCreateMoreOptions} onClose={cancelQuickCreate} />
+        onColorChange={handleQuickCreateColor} onDurationChange={handleQuickCreateDuration} onCreate={commitQuickCreateTask} onMoreOptions={quickCreateMoreOptions} onClose={cancelQuickCreate} />
     </div>
       {/* Right-hand column (Phase 5e) -- upcoming across everything by
           default, re-filtered to the selected course's items on a chip
@@ -36183,9 +36506,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             : isChecklistMode
             ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveChecklistItem} disabled={!evTitle.trim()} style={{flex:1,justifyContent:"center",opacity:evTitle.trim()?1:0.45}}>Add to Checklist</Btn></>
             : isReminderKind||isFixedKind
-              ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveManual} disabled={!(evTitle.trim()&&evDate.trim()&&evTime.trim())} style={{opacity:evTitle.trim()&&evDate.trim()&&evTime.trim()?1:0.45}}>{isReminderKind?"Save reminder":"Save"}</Btn></>
+              ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveManual} disabled={!(evTitle.trim()&&evTime.trim())} style={{opacity:evTitle.trim()&&evTime.trim()?1:0.45}}>{isReminderKind?"Save reminder":"Save"}</Btn></>
               : taskMode==="manual"
-                ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveManual} disabled={!evTitle.trim()||!evDate.trim()||!evTime.trim()} style={{flex:1,justifyContent:"center",opacity:evTitle.trim()&&evDate.trim()&&evTime.trim()?1:0.45}}>Save to Calendar</Btn></>
+                ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveManual} disabled={!evTitle.trim()||!evTime.trim()} style={{flex:1,justifyContent:"center",opacity:evTitle.trim()&&evTime.trim()?1:0.45}}>Save to Calendar</Btn></>
                 : <>
                     <Btn variant="subtle" onClick={resetForm}>Cancel</Btn>
                     {/* Attack Block only -- "let me place it myself" is a
@@ -36330,7 +36653,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           </Field>
         )}
         {evKind==="task"&&taskRepeatDays.length>0&&(
-          <Field label="Duration (minutes)" hint="How long this occupies on your calendar"><NumField min={5} max={480} fallback={30} value={evDuration} onChange={setEvDuration} /></Field>
+          <Field label="Duration" hint="How long this occupies on your calendar"><DurationChips value={evDuration} onChange={v=>{setEvDuration(v);setEvDurationTouched(true);}} /></Field>
         )}
 
         {/* Optional exam link, Study Session only -- so a session created
@@ -36368,7 +36691,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
 
         {!isTaskKind&&(
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-            <Field label="Date"><Input type="date" value={evDate} onChange={ev=>setEvDate(ev.target.value)} /></Field>
+            <div style={{gridColumn:"1 / -1"}}><Field label="Date"><QuickDateField value={evDate} onChange={setEvDate} fallbackKey={evPrefillDate} /></Field></div>
             <Field label={isReminderKind?"Reminder time":"Start time"}><BoxedTimeInput value={evTime} onChange={setEvTime} /></Field>
           </div>
         )}
@@ -36394,7 +36717,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                 (evTime/setEvTime) -- evDuration stays the only real
                 persisted state, same derive-and-write-back shape as every
                 other conversion in this pass. */}
-            <Field label="End time" hint="How long this occupies on your calendar"><BoxedTimeInput value={minutesToTime(timeToMinutes(evTime)+evDuration)} onChange={v=>setEvDuration(Math.max(5,timeToMinutes(v)-timeToMinutes(evTime)))} /></Field>
+            <Field label="End time" hint="How long this occupies on your calendar"><BoxedTimeInput value={minutesToTime(timeToMinutes(evTime)+evDuration)} onChange={v=>{setEvDuration(Math.max(5,timeToMinutes(v)-timeToMinutes(evTime)));setEvDurationTouched(true);}} /></Field>
             {/* C9 in the audit: same inline label+pill commute row the
                 recurring-routine edit modal already has -- this is the one
                 place a one-off appointment (not marked "Save to Weekly
@@ -36565,7 +36888,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
 
         {isTaskKind&&!isChecklistMode&&taskRepeatDays.length===0&&taskMode==="manual"&&(
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-            <Field label="Date"><Input type="date" value={evDate} onChange={ev=>setEvDate(ev.target.value)} /></Field>
+            <div style={{gridColumn:"1 / -1"}}><Field label="Date"><QuickDateField value={evDate} onChange={setEvDate} fallbackKey={evPrefillDate} /></Field></div>
             <Field label="Start Time"><BoxedTimeInput value={evTime} onChange={setEvTime} /></Field>
           </div>
         )}
@@ -36627,8 +36950,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             that isn't being scheduled yet) -- see aiArrange's own early
             return for what this actually commits. */}
         {isTaskKind&&!isChecklistMode&&taskRepeatDays.length===0&&!evAttackBlock&&!evScheduleLater&&(
-          <Field label="Duration (minutes)" hint="How long you plan to spend">
-            <NumField min={5} max={480} fallback={5} value={evDuration} onChange={v=>{setEvDuration(v);setEvDurationTouched(true);}} />
+          <Field label="Duration" hint="How long you plan to spend">
+            <DurationChips value={evDuration} onChange={v=>{setEvDuration(v);setEvDurationTouched(true);}} />
             {(()=>{const s=suggestDurationFor(evSubject,resolveAssignmentKind());return s&&s!==evDuration&&(
               <div style={{fontSize:11.5,color:T.muted,marginTop:6}}>Similar tasks usually take you ~{s}m — <button type="button" onClick={()=>{setEvDuration(s);setEvDurationTouched(true);}} style={{background:"none",border:"none",color:T.lime,cursor:"pointer",fontSize:11.5,fontFamily:T.font,padding:0,textDecoration:"underline"}}>use this</button></div>
             );})()}
@@ -36762,12 +37085,16 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       <Modal open={brainDumpOpen} onClose={()=>{if(bdListening)stopBdRec();setBrainDumpOpen(false);setBrainDumpText("");setBdError("");setBdMicError("");}} title="Brain dump" sub="Tell Studlin everything you need to do. It'll sort out the rest." width={560}
         footer={<><Btn variant="subtle" onClick={()=>{if(bdListening)stopBdRec();setBrainDumpOpen(false);setBrainDumpText("");setBdError("");setBdMicError("");}}>Cancel</Btn><Btn onClick={submitBrainDump} disabled={brainDumpLoading||!brainDumpText.trim()} style={{flex:1,justifyContent:"center",opacity:brainDumpLoading?1:(!brainDumpText.trim()?0.45:1)}}>{brainDumpLoading?"Sorting it out...":"Sort it out →"}</Btn></>}>
         <div style={{position:"relative"}}>
-          <Textarea placeholder="e.g. I have chem homework, need to email my counselor about my schedule, and my bio project is due Friday..." value={brainDumpText} onChange={e=>setBrainDumpText(e.target.value)} style={{minHeight:140,paddingRight:44}} autoFocus />
+          <Textarea placeholder="e.g. I have chem homework, need to email my counselor about my schedule, and my bio project is due Friday..." value={brainDumpText} onChange={e=>setBrainDumpText(e.target.value)} onKeyDown={e=>{if((e.ctrlKey||e.metaKey)&&e.key==="Enter"){e.preventDefault();submitBrainDump();}}} style={{minHeight:140,paddingRight:44}} autoFocus />
           {(window.SpeechRecognition||window.webkitSpeechRecognition)&&(
             <button type="button" onClick={bdListening?stopBdRec:startBdRec} title={bdListening?"Stop listening":"Speak instead of typing"} style={{position:"absolute",right:8,bottom:8,width:30,height:30,borderRadius:"50%",border:"none",background:bdListening?T.red:T.lime,color:bdListening?"#fff":T.ink,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{bdListening?<span style={{width:10,height:10,background:"#fff",borderRadius:2}} />:Icon.mic}</button>
           )}
         </div>
         {!canUseBrainDump()&&<div style={{fontSize:12,color:T.muted,marginTop:8}}>{canUseBrainDumpReason()==="free-tier"?"Brain dump is a Pro feature. ":AI_USAGE_CAP_MESSAGE+" "}<span role="button" tabIndex={0} onClick={()=>setPricingOpen(canUseBrainDumpReason()==="free-tier"?"brainDump":"aiUsageCap")} onKeyDown={e=>{if(e.key==="Enter")setPricingOpen(canUseBrainDumpReason()==="free-tier"?"brainDump":"aiUsageCap");}} style={{color:T.lime,fontWeight:600,cursor:"pointer"}}>See plans</span></div>}
+        {brainDumpOpen&&brainDumpText.trim()&&(()=>{
+          const n=fallbackSplitBrainDump(brainDumpText).length;
+          return n>0?<div style={{fontSize:11.5,color:T.muted,marginTop:6}}>{n+" item"+(n!==1?"s":"")+" detected"} · Ctrl/Cmd+Enter to sort it out</div>:null;
+        })()}
         {bdListening&&<div style={{fontSize:11.5,color:T.red,marginTop:6}}>Listening... tap the mic to stop</div>}
         {!bdListening&&bdMicError&&<div style={{fontSize:11.5,color:T.red,marginTop:6}}>{bdMicError}</div>}
         {brainDumpLoading&&<div style={{fontSize:11.5,color:T.muted,marginTop:6}}>Reading through everything you said...</div>}
@@ -36842,6 +37169,15 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                     <SelectChip options={[{value:"study",label:"Assignment"},{value:"todo",label:"To-do"},{value:"event",label:"Activity"},{value:"exam",label:"Exam"},{value:"project",label:"Project"},{value:"reminder",label:"Reminder"},{value:"unavailable",label:"Vacation/Break"}]} value={it.kind} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v,proposeSessions:false,sessionCount:x.sessionCount||4}:x)}))} />
                     {it.kind==="project"&&(
                       <Input type="date" value={it.dueDate} onChange={ev=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,dueDate:ev.target.value}:x)}))} style={{width:138}} />
+                    )}
+                    {/* Parsed due date, always visible and editable (a day name
+                        like "fri" resolves to the next one, so this is where a
+                        wrong guess gets fixed). */}
+                    {(it.kind==="todo"||it.kind==="study")&&(
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <span style={{fontSize:11.5,color:T.muted}}>Due</span>
+                        <Input type="date" aria-label="Due date" value={it.dueDate||""} onChange={ev=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,dueDate:ev.target.value}:x)}))} style={{width:138}} />
+                      </div>
                     )}
                     {it.kind==="study"&&!it.attackBlock&&(
                       <div style={{display:"flex",alignItems:"center",gap:6}}>
