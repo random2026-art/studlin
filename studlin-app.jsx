@@ -22123,7 +22123,7 @@ function StudlinAiDrawer({open,onClose,setPricingOpen=()=>{},onEventsCommitted=(
       setMessages(m=>[...m,{role:"ai",text:entry.answer,kind:"help"}]);
       return;
     }
-    setMessages(m=>[...m,{role:"ai",text:"I don't have a specific answer for that one. Check Settings, or use Feedback in the sidebar to ask a real person.",kind:"info"}]);
+    setMessages(m=>[...m,{role:"ai",text:"I don't have a specific answer for that one. Try rewording it, or check Settings.",kind:"info"}]);
   };
 
   // availability_match (2026-09-15): the student pasted/described specific
@@ -33339,6 +33339,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       // task the moment it overlapped a class/work block. The overlap still
       // shows as a conflict on the calendar; the student decides what to do.
       if(ev.userPinned)return ev;
+      // Due-date markers (no duration, e.g. a Canvas "E3 is due") don't
+      // occupy time, so there is nothing to conflict with. And anything
+      // synced from Google/Canvas is overwritten with the source's own
+      // date/time on the next sync, so a move here never sticks: it was
+      // re-detected and re-moved on every app open, with a toast each time.
+      if(isDuePill(ev))return ev;
+      if(ev.source==="import"||String(ev.id||"").startsWith("gcal-"))return ev;
       if(ev.date>horizonEnd)return ev;
       const duration=ev.duration||30;
       const tMins=timeToMinutes(ev.time);
@@ -40823,7 +40830,11 @@ function resizeImageForAvatar(file){
   });
 }
 // ─── PROFILE ──────────────────────────────────────────────────────────────────
-function Profile({setActive,seriousMode=false}={}) {
+function Profile({setActive,seriousMode:seriousModeProp=false}={}) {
+  // Levels, focus minutes and the weekly focus chart all come from the
+  // Begin timer, so a student who isn't using it (smart features off) sees
+  // none of them, same as Private Account mode.
+  const seriousMode=seriousModeProp||!smartFeaturesOn();
   const [prof,setProfState]=useState(()=>getProfile());
   const [picUrl,setPicUrl]=useState(()=>getUserPicUrl());
   const [status,setStatus]=useState(prof.status||"");
@@ -41787,7 +41798,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
           {/* Day-by-day breakdown — used to be its own permanent "This
               week's focus" dashboard card; folded in here instead since
               this is the one place a week-in-review actually belongs. */}
-          {(()=>{
+          {smartFeaturesOn()&&(()=>{
             const barData=weekDays7.map((d)=>{const key=dayKey(d);const mins=minsByDay[key]||0;const isToday=key===dayKey(new Date());const lab=d.toLocaleDateString("en-US",{weekday:"short"}).slice(0,1).toUpperCase();return {mins,isToday,lab};});
             const maxMins=Math.max.apply(null,barData.map((d)=>d.mins).concat([1]));
             return(
@@ -41814,14 +41825,14 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
               recap that's supposed to feel like a celebration. One
               encouraging line instead, in the same spot the real stats
               would occupy once there's something to show. */}
-          {weeklyFocusMin===0&&cardsMasteredTotal===0&&tasksCompletedTotal===0?(
+          {(smartFeaturesOn()?weeklyFocusMin===0:true)&&cardsMasteredTotal===0&&tasksCompletedTotal===0?(
             <div style={{background:"rgba(255,255,255,0.05)",borderRadius:10,padding:"16px 14px",textAlign:"center",marginTop:14}}>
               <div style={{fontSize:12.5,color:"rgba(255,255,255,0.75)",lineHeight:1.5}}>Nothing tracked yet this week. Add a task and next week's recap will actually mean something.</div>
             </div>
           ):(
             <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:14}}>
               {[
-                {ln:"Focus hours",vn:fmtH(weeklyFocusMin)||"0m"},
+                ...(smartFeaturesOn()?[{ln:"Focus hours",vn:fmtH(weeklyFocusMin)||"0m"}]:[]),
                 {ln:"Top subject",vn:topSubjectThisWeek||"—"},
                 {ln:"Tasks completed",vn:tasksCompletedTotal},
               ].map((ins,i)=>(
@@ -41891,102 +41902,6 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
       </div>
     )}
     </>
-  );
-}
-
-// ─── FEEDBACK ─────────────────────────────────────────────────────────────────
-function FeedbackPage() {
-  const [category,setCategory]=useState(null);
-  const [msg,setMsg]=useState("");
-  const [sent,setSent]=useState(false);
-  const [sending,setSending]=useState(false);
-
-  const CATS=[
-    {id:"love",label:"I love something",icon:Icon.heart,color:"#E05757"},
-    {id:"bug",label:"Bug report",icon:Icon.zap,color:T.amber},
-    {id:"feature",label:"Feature request",icon:Icon.sparkles,color:T.lime},
-    {id:"other",label:"Other",icon:Icon.msgSquare,color:T.muted},
-  ];
-
-  const submit=async()=>{
-    if(!category||!msg.trim())return;
-    setSending(true);
-    // Store in localStorage so nothing is lost; best-effort server send
-    const entry={id:Date.now().toString(),category,msg:msg.trim(),created:Date.now()};
-    lsSet("feedback-log",[entry,...lsGet("feedback-log",[])].slice(0,50));
-    try{
-      const tok=firebase.auth().currentUser?await firebase.auth().currentUser.getIdToken():null;
-      if(tok){
-        // Bug fix, 2026-09-30 user report ("where does feedback go to"):
-        // this used to send {type:"note",subject,body} -- api/notify.js's
-        // router falls anything that isn't push/welcome/share/calendarView
-        // through to sendNote, which requires recipientEmail+noteTitle,
-        // neither of which this ever sent. Every submission 400'd silently
-        // (this fetch's own .catch swallows it) -- nothing ever reached an
-        // inbox despite the copy above promising it goes to the team. Now
-        // uses the real, dedicated feedback type api/notify.js handles.
-        await fetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+tok},body:JSON.stringify({type:"feedback",category,body:msg.trim()})}).catch(()=>{});
-      }
-    }catch(e){}
-    setSending(false);
-    setSent(true);
-  };
-
-  if(sent) return (
-    <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:400,gap:16,textAlign:"center"}}>
-      <div style={{width:64,height:64,borderRadius:"50%",background:T.lime+"18",display:"grid",placeItems:"center",color:T.lime}}>
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-      </div>
-      <div style={{fontFamily:T.hand,fontSize:36,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>Thanks for the feedback.</div>
-      <div style={{fontSize:14,color:T.text,maxWidth:360,lineHeight:1.6}}>Every note goes straight to the team. We read them all and use them to build what matters to you.</div>
-      <button onClick={()=>{setSent(false);setCategory(null);setMsg("");}} style={{marginTop:8,padding:"10px 22px",background:T.lime,color:T.onLime,border:"none",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Send another</button>
-    </div>
-  );
-
-  return (
-    <div style={{display:"flex",flexDirection:"column",gap:16,paddingBottom:40,maxWidth:680}}>
-      <div>
-        <h1 style={{fontFamily:T.hand,fontSize:42,fontWeight:700,color:T.white,margin:"0 0 4px",letterSpacing:"-0.02em",lineHeight:1}}>Feedback</h1>
-        <p style={{fontSize:14,color:T.muted,margin:0}}>Help shape Studlin. Every message goes straight to the founders.</p>
-      </div>
-
-      {/* Category */}
-      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:20}}>
-        <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,marginBottom:14}}>What kind of feedback?</div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-          {CATS.map(c=>(
-            <button key={c.id} onClick={()=>setCategory(c.id)} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",borderRadius:8,border:`1.5px solid ${category===c.id?c.color+"80":T.border}`,background:category===c.id?c.color+"0e":T.card2,cursor:"pointer",fontFamily:T.font,textAlign:"left",transition:"all 0.15s"}}>
-              <span style={{width:32,height:32,borderRadius:8,background:c.color+"18",display:"grid",placeItems:"center",color:c.color,flexShrink:0}}>{c.icon}</span>
-              <span style={{fontSize:13,fontWeight:category===c.id?700:500,color:category===c.id?T.white:T.muted}}>{c.label}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Message */}
-      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:20}}>
-        <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,marginBottom:14}}>Tell us more</div>
-        <textarea
-          value={msg}
-          onChange={e=>setMsg(e.target.value)}
-          placeholder={category==="bug"?"Describe the bug — what happened, what did you expect?":category==="feature"?"What would you like to see? Describe the problem it solves.":category==="love"?"What specifically made your day?":"Anything on your mind..."}
-          rows={6}
-          style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:12,padding:"14px 16px",color:T.text,fontSize:14,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box",lineHeight:1.6}}
-        />
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:14}}>
-          <span style={{fontSize:12,color:T.faint}}>{msg.length} chars</span>
-          <button onClick={submit} disabled={!category||!msg.trim()||sending} style={{padding:"10px 24px",background:category&&msg.trim()?T.lime:T.card2,color:category&&msg.trim()?T.ink:T.faint,border:"none",borderRadius:99,fontSize:13,fontWeight:700,cursor:category&&msg.trim()?"pointer":"default",fontFamily:T.font,transition:"all 0.2s"}}>
-            {sending?"Sending...":"Send feedback"}
-          </button>
-        </div>
-      </div>
-
-      {/* Footer note */}
-      <div style={{padding:"14px 18px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,display:"flex",gap:12,alignItems:"flex-start"}}>
-        <span style={{color:T.lime,flexShrink:0,marginTop:2}}>{Icon.heart}</span>
-        <div style={{fontSize:12.5,color:T.text,lineHeight:1.6}}>Studlin is built by students, for students. Your feedback directly influences what we build next. We read every message.</div>
-      </div>
-    </div>
   );
 }
 
@@ -44325,13 +44240,12 @@ function App() {
       {id:"friends",label:"Studlin Network",badge:String((unreadCount+pendingFriendRequestCount)||"")},
     ]},
     {label:"Account",items:[
-      {id:"feedback",label:"Feedback"},
       {id:"settings",label:"Settings"},
       {id:"profile",label:"Profile"},
     ]},
   ];
   const bottomItems=[];
-  const pages={prep:StudlinPrep,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,profile:Profile,feedback:FeedbackPage};
+  const pages={prep:StudlinPrep,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,profile:Profile};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
   const sidebarText=isLight?"#FFFFFF":T.text;

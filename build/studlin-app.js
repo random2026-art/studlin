@@ -13707,7 +13707,7 @@ CONVERSATION:
       setMessages((m) => [...m, { role: "ai", text: entry.answer, kind: "help" }]);
       return;
     }
-    setMessages((m) => [...m, { role: "ai", text: "I don't have a specific answer for that one. Check Settings, or use Feedback in the sidebar to ask a real person.", kind: "info" }]);
+    setMessages((m) => [...m, { role: "ai", text: "I don't have a specific answer for that one. Try rewording it, or check Settings.", kind: "info" }]);
   };
   const answerAvailabilityMatch = async (parsed) => {
     if (!canUseStudlinAiQna()) {
@@ -20121,6 +20121,8 @@ function CalendarTab({ setActive = () => {
       if (ev.status === "done" || !ev.time) return ev;
       if (isLeadInFixed(ev)) return ev;
       if (ev.userPinned) return ev;
+      if (isDuePill(ev)) return ev;
+      if (ev.source === "import" || String(ev.id || "").startsWith("gcal-")) return ev;
       if (ev.date > horizonEnd) return ev;
       const duration = ev.duration || 30;
       const tMins = timeToMinutes(ev.time);
@@ -24862,7 +24864,8 @@ function resizeImageForAvatar(file) {
     reader.readAsDataURL(file);
   });
 }
-function Profile({ setActive, seriousMode = false } = {}) {
+function Profile({ setActive, seriousMode: seriousModeProp = false } = {}) {
+  const seriousMode = seriousModeProp || !smartFeaturesOn();
   const [prof, setProfState] = useState(() => getProfile());
   const [picUrl, setPicUrl] = useState(() => getUserPicUrl());
   const [status, setStatus] = useState(prof.status || "");
@@ -25288,7 +25291,7 @@ function Dashboard({ setActive, seriousMode = false, rescheduleTask, setReschedu
         setActive("notes");
       }
     }, style: { background: bgColors[i % 4], borderRadius: 8, padding: 14, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 9.5, fontWeight: 700, letterSpacing: "0.06em", color: "rgba(8,12,40,0.65)", marginBottom: 8 } }, it.subj), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: "#0D120F", marginBottom: 10, lineHeight: 1.3 } }, it.title), /* @__PURE__ */ React.createElement("div", { style: { height: 4, background: "rgba(8,12,40,0.15)", borderRadius: 99, marginBottom: 8, overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { height: "100%", width: it.pct + "%", background: "#0D120F", borderRadius: 99 } })), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: "rgba(8,12,40,0.6)", display: "flex", justifyContent: "space-between" } }, /* @__PURE__ */ React.createElement("span", null, it.a), /* @__PURE__ */ React.createElement("span", null, it.b)));
-  }))))), wrappedOpen && !seriousMode && /* @__PURE__ */ React.createElement("div", { onClick: dismissWrapped, style: { position: "fixed", inset: 0, background: "rgba(8,12,10,0.72)", zIndex: 1e3, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, animation: "studlinFade 0.18s ease-out" } }, /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { width: "100%", maxWidth: 420, background: T.forest, color: T.cream, borderRadius: 10, padding: 26, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)", animation: "studlinPop 0.22s cubic-bezier(.2,.85,.3,1)" } }, /* @__PURE__ */ React.createElement(CardHead, { title: "Weekly Wrapped", label: "WEEK " + weekNo(), light: true }), (() => {
+  }))))), wrappedOpen && !seriousMode && /* @__PURE__ */ React.createElement("div", { onClick: dismissWrapped, style: { position: "fixed", inset: 0, background: "rgba(8,12,10,0.72)", zIndex: 1e3, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, animation: "studlinFade 0.18s ease-out" } }, /* @__PURE__ */ React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { width: "100%", maxWidth: 420, background: T.forest, color: T.cream, borderRadius: 10, padding: 26, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.5)", animation: "studlinPop 0.22s cubic-bezier(.2,.85,.3,1)" } }, /* @__PURE__ */ React.createElement(CardHead, { title: "Weekly Wrapped", label: "WEEK " + weekNo(), light: true }), smartFeaturesOn() && (() => {
     const barData = weekDays7.map((d) => {
       const key = dayKey(d);
       const mins = minsByDay[key] || 0;
@@ -25301,8 +25304,8 @@ function Dashboard({ setActive, seriousMode = false, rescheduleTask, setReschedu
       const h = d.mins > 0 ? Math.max(4, Math.round(d.mins / maxMins * 40)) : 0;
       return /* @__PURE__ */ React.createElement("div", { key: i, style: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 } }, /* @__PURE__ */ React.createElement("div", { style: { width: "100%", display: "flex", flexDirection: "column", justifyContent: "flex-end", height: 40 } }, d.mins > 0 ? /* @__PURE__ */ React.createElement("div", { style: { width: "100%", height: h, background: d.isToday ? T.lime : wkBarTint(0.25), borderRadius: "3px 3px 0 0" } }) : /* @__PURE__ */ React.createElement("div", { style: { width: "100%", height: 3, background: wkBarTint(0.1), borderRadius: 2 } })), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, fontFamily: T.mono, color: d.isToday ? T.lime : wkBarTint(0.4), fontWeight: d.isToday ? 700 : 400 } }, d.lab));
     }));
-  })(), weeklyFocusMin === 0 && cardsMasteredTotal === 0 && tasksCompletedTotal === 0 ? /* @__PURE__ */ React.createElement("div", { style: { background: "rgba(255,255,255,0.05)", borderRadius: 10, padding: "16px 14px", textAlign: "center", marginTop: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: "rgba(255,255,255,0.75)", lineHeight: 1.5 } }, "Nothing tracked yet this week. Add a task and next week's recap will actually mean something.")) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginTop: 14 } }, [
-    { ln: "Focus hours", vn: fmtH(weeklyFocusMin) || "0m" },
+  })(), (smartFeaturesOn() ? weeklyFocusMin === 0 : true) && cardsMasteredTotal === 0 && tasksCompletedTotal === 0 ? /* @__PURE__ */ React.createElement("div", { style: { background: "rgba(255,255,255,0.05)", borderRadius: 10, padding: "16px 14px", textAlign: "center", marginTop: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: "rgba(255,255,255,0.75)", lineHeight: 1.5 } }, "Nothing tracked yet this week. Add a task and next week's recap will actually mean something.")) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginTop: 14 } }, [
+    ...smartFeaturesOn() ? [{ ln: "Focus hours", vn: fmtH(weeklyFocusMin) || "0m" }] : [],
     { ln: "Top subject", vn: topSubjectThisWeek || "\u2014" },
     { ln: "Tasks completed", vn: tasksCompletedTotal }
   ].map((ins, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { background: "rgba(255,255,255,0.05)", borderRadius: 10, padding: "9px 12px", display: "flex", justifyContent: "space-between", alignItems: "center" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: "rgba(255,255,255,0.55)", fontFamily: T.mono, letterSpacing: "0.04em", textTransform: "uppercase" } }, ins.ln), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.hand, fontSize: 20, fontWeight: 600, color: T.lime } }, ins.vn)))), /* @__PURE__ */ React.createElement("div", { style: { borderTop: "1px solid rgba(255,255,255,0.12)", paddingTop: 16, marginTop: -8, marginBottom: 20 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontFamily: T.mono, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(255,255,255,0.55)", marginBottom: 10 } }, "Your Week Ahead"), weekAheadSummary.isChillWeek ? /* @__PURE__ */ React.createElement("div", { style: { background: "rgba(255,255,255,0.05)", borderRadius: 10, padding: "14px", fontSize: 12.5, color: "rgba(255,255,255,0.8)", lineHeight: 1.5 } }, "Nothing major on the calendar next week -- a good one to get ahead, or just breathe.") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.cream, lineHeight: 1.5, marginBottom: 12 } }, weekAheadSummary.busiestDay.minutes > 0 ? (/* @__PURE__ */ new Date(weekAheadSummary.busiestDay.date + "T12:00:00")).toLocaleDateString("en-US", { weekday: "long" }) + " is your busiest day -- " + fmtH(weekAheadSummary.busiestDay.minutes) + " already scheduled." : "Nothing due next week."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "flex-end", gap: 6, height: 44, marginBottom: 14 } }, weekAheadSummary.days.map((d, i) => {
@@ -25312,49 +25315,6 @@ function Dashboard({ setActive, seriousMode = false, rescheduleTask, setReschedu
     const lab = (/* @__PURE__ */ new Date(d.date + "T12:00:00")).toLocaleDateString("en-US", { weekday: "short" }).slice(0, 1).toUpperCase();
     return /* @__PURE__ */ React.createElement("div", { key: i, style: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 } }, /* @__PURE__ */ React.createElement("div", { style: { width: "100%", display: "flex", flexDirection: "column", justifyContent: "flex-end", height: 32 } }, d.minutes > 0 ? /* @__PURE__ */ React.createElement("div", { style: { width: "100%", height: h, background: barColor, borderRadius: "3px 3px 0 0" } }) : /* @__PURE__ */ React.createElement("div", { style: { width: "100%", height: 3, background: "rgba(255,255,255,0.10)", borderRadius: 2 } })), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, fontFamily: T.mono, color: "rgba(255,255,255,0.4)" } }, lab));
   })), weekAheadNarration.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, weekAheadNarration.slice(0, 4).map((n) => /* @__PURE__ */ React.createElement("div", { key: n.id, style: { display: "flex", gap: 8, alignItems: "flex-start", background: n.urgent ? "rgba(216,155,60,0.14)" : "rgba(255,255,255,0.05)", border: n.urgent ? `1px solid ${T.amber}44` : "1px solid transparent", borderRadius: 8, padding: "8px 10px", fontSize: 12, lineHeight: 1.45 } }, /* @__PURE__ */ React.createElement("span", { style: { color: n.urgent ? T.amber : "rgba(255,255,255,0.4)", fontFamily: T.mono, fontSize: 10, fontWeight: 700, flexShrink: 0, marginTop: 2, minWidth: 20 } }, n.daysUntil <= 0 ? "NOW" : n.daysUntil + "D"), /* @__PURE__ */ React.createElement("span", { style: { color: n.urgent ? T.cream : "rgba(255,255,255,0.85)" } }, n.text))), weekAheadNarration.length > 4 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: "rgba(255,255,255,0.4)", textAlign: "center", marginTop: 2 } }, "+", weekAheadNarration.length - 4, " more next week")))), /* @__PURE__ */ React.createElement("button", { onClick: dismissWrapped, style: { width: "100%", padding: "11px 0", borderRadius: 6, background: T.lime, color: T.onLime, border: "none", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: T.font } }, "Done"))));
-}
-function FeedbackPage() {
-  const [category, setCategory] = useState(null);
-  const [msg, setMsg] = useState("");
-  const [sent, setSent] = useState(false);
-  const [sending, setSending] = useState(false);
-  const CATS = [
-    { id: "love", label: "I love something", icon: Icon.heart, color: "#E05757" },
-    { id: "bug", label: "Bug report", icon: Icon.zap, color: T.amber },
-    { id: "feature", label: "Feature request", icon: Icon.sparkles, color: T.lime },
-    { id: "other", label: "Other", icon: Icon.msgSquare, color: T.muted }
-  ];
-  const submit = async () => {
-    if (!category || !msg.trim()) return;
-    setSending(true);
-    const entry = { id: Date.now().toString(), category, msg: msg.trim(), created: Date.now() };
-    lsSet("feedback-log", [entry, ...lsGet("feedback-log", [])].slice(0, 50));
-    try {
-      const tok = firebase.auth().currentUser ? await firebase.auth().currentUser.getIdToken() : null;
-      if (tok) {
-        await fetch("/api/notify", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": "Bearer " + tok }, body: JSON.stringify({ type: "feedback", category, body: msg.trim() }) }).catch(() => {
-        });
-      }
-    } catch (e) {
-    }
-    setSending(false);
-    setSent(true);
-  };
-  if (sent) return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 400, gap: 16, textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 64, height: 64, borderRadius: "50%", background: T.lime + "18", display: "grid", placeItems: "center", color: T.lime } }, /* @__PURE__ */ React.createElement("svg", { width: "28", height: "28", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2.5", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("polyline", { points: "20 6 9 17 4 12" }))), /* @__PURE__ */ React.createElement("div", { style: { fontFamily: T.hand, fontSize: 36, fontWeight: 700, color: T.white, letterSpacing: "-0.02em" } }, "Thanks for the feedback."), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, color: T.text, maxWidth: 360, lineHeight: 1.6 } }, "Every note goes straight to the team. We read them all and use them to build what matters to you."), /* @__PURE__ */ React.createElement("button", { onClick: () => {
-    setSent(false);
-    setCategory(null);
-    setMsg("");
-  }, style: { marginTop: 8, padding: "10px 22px", background: T.lime, color: T.onLime, border: "none", borderRadius: 99, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: T.font } }, "Send another"));
-  return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 16, paddingBottom: 40, maxWidth: 680 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h1", { style: { fontFamily: T.hand, fontSize: 42, fontWeight: 700, color: T.white, margin: "0 0 4px", letterSpacing: "-0.02em", lineHeight: 1 } }, "Feedback"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 14, color: T.muted, margin: 0 } }, "Help shape Studlin. Every message goes straight to the founders.")), /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: 20 } }, /* @__PURE__ */ React.createElement("div", { style: { fontFamily: T.mono, fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: T.muted, marginBottom: 14 } }, "What kind of feedback?"), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } }, CATS.map((c) => /* @__PURE__ */ React.createElement("button", { key: c.id, onClick: () => setCategory(c.id), style: { display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 8, border: `1.5px solid ${category === c.id ? c.color + "80" : T.border}`, background: category === c.id ? c.color + "0e" : T.card2, cursor: "pointer", fontFamily: T.font, textAlign: "left", transition: "all 0.15s" } }, /* @__PURE__ */ React.createElement("span", { style: { width: 32, height: 32, borderRadius: 8, background: c.color + "18", display: "grid", placeItems: "center", color: c.color, flexShrink: 0 } }, c.icon), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13, fontWeight: category === c.id ? 700 : 500, color: category === c.id ? T.white : T.muted } }, c.label))))), /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: 20 } }, /* @__PURE__ */ React.createElement("div", { style: { fontFamily: T.mono, fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: T.muted, marginBottom: 14 } }, "Tell us more"), /* @__PURE__ */ React.createElement(
-    "textarea",
-    {
-      value: msg,
-      onChange: (e) => setMsg(e.target.value),
-      placeholder: category === "bug" ? "Describe the bug \u2014 what happened, what did you expect?" : category === "feature" ? "What would you like to see? Describe the problem it solves." : category === "love" ? "What specifically made your day?" : "Anything on your mind...",
-      rows: 6,
-      style: { width: "100%", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 12, padding: "14px 16px", color: T.text, fontSize: 14, fontFamily: T.font, outline: "none", resize: "vertical", boxSizing: "border-box", lineHeight: 1.6 }
-    }
-  ), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.faint } }, msg.length, " chars"), /* @__PURE__ */ React.createElement("button", { onClick: submit, disabled: !category || !msg.trim() || sending, style: { padding: "10px 24px", background: category && msg.trim() ? T.lime : T.card2, color: category && msg.trim() ? T.ink : T.faint, border: "none", borderRadius: 99, fontSize: 13, fontWeight: 700, cursor: category && msg.trim() ? "pointer" : "default", fontFamily: T.font, transition: "all 0.2s" } }, sending ? "Sending..." : "Send feedback"))), /* @__PURE__ */ React.createElement("div", { style: { padding: "14px 18px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, display: "flex", gap: 12, alignItems: "flex-start" } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.lime, flexShrink: 0, marginTop: 2 } }, Icon.heart), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, lineHeight: 1.6 } }, "Studlin is built by students, for students. Your feedback directly influences what we build next. We read every message.")));
 }
 function AuthScreen() {
   return /* @__PURE__ */ React.createElement("div", { style: { minHeight: "100vh", background: "#0D120F", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#14342A,#0E1F18)", display: "grid", placeItems: "center", boxShadow: "0 0 16px 4px rgba(174,206,94,0.38)" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 11, height: 11, borderRadius: "50%", background: "radial-gradient(circle at 35% 35%, #CBDF92, #AECE5E)", boxShadow: "0 0 10px 3px rgba(174,206,94,0.65)" } })), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 22, fontWeight: 700, color: "#E8EFE7" } }, "Studlin")), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 15, color: "rgba(232,239,231,0.6)", margin: 0 } }, "Sign in to access your workspace."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 12, marginTop: 8 } }, /* @__PURE__ */ React.createElement("a", { href: "/signin", style: { padding: "12px 28px", borderRadius: 10, background: "#AECE5E", color: "#0E1F18", fontSize: 14, fontWeight: 600, textDecoration: "none" } }, "Sign in"), /* @__PURE__ */ React.createElement("a", { href: "/onboarding", style: { padding: "12px 28px", borderRadius: 10, border: "1px solid rgba(174,206,94,0.3)", background: "transparent", color: "#AECE5E", fontSize: 14, fontWeight: 600, textDecoration: "none" } }, "Create account")));
@@ -26888,13 +26848,12 @@ function App() {
       { id: "friends", label: "Studlin Network", badge: String(unreadCount + pendingFriendRequestCount || "") }
     ] },
     { label: "Account", items: [
-      { id: "feedback", label: "Feedback" },
       { id: "settings", label: "Settings" },
       { id: "profile", label: "Profile" }
     ] }
   ];
   const bottomItems = [];
-  const pages = { prep: StudlinPrep, flashcards: Flashcards, notes: Notes, calendar: CalendarTab, friends: FriendsChat, profile: Profile, feedback: FeedbackPage };
+  const pages = { prep: StudlinPrep, flashcards: Flashcards, notes: Notes, calendar: CalendarTab, friends: FriendsChat, profile: Profile };
   const ActivePage = pages[active];
   const isLight = T.mode === "light";
   const sidebarText = isLight ? "#FFFFFF" : T.text;
