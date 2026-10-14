@@ -3909,6 +3909,9 @@ function dismissStrugglingBucket(bucketId){
 // (handleTaskCompleted, the Timer's completion block), not just from inside
 // the Settings screen itself. Writes localStorage too so any already-open
 // Settings screen picks it up next time it re-reads "settings".
+// Master switch for Studlin's proactive suggestions and questions (Settings, Privacy).
+// Missing = on, so nobody is opted out by an unset key.
+const nudgesAllowed=()=>lsGet("settings",{}).nudgesMaster!==false;
 function setQuestionAskPref(key,enabled){
   const next={...lsGet("settings",{}),[key]:enabled};
   lsSet("settings",next);
@@ -20968,6 +20971,7 @@ async function classifyStudlinAiMessage(text,history){
 // miss signal) since it reflects genuinely time-sensitive unscheduled work,
 // not a stable pattern. See its own detectUnscheduledDueSoon comment.
 function deriveStudlinAiProactiveSignal(strugglingBucketOffer,unscheduledDueSoonOffer,peakInsightOffer){
+  if(!nudgesAllowed())return null;
   if(strugglingBucketOffer)return{kind:"struggling_bucket",...strugglingBucketOffer};
   if(unscheduledDueSoonOffer)return{kind:"unscheduled_due_soon",...unscheduledDueSoonOffer};
   if(peakInsightOffer)return{kind:"peak_hours",...peakInsightOffer};
@@ -24989,6 +24993,17 @@ const WizardStepper=({step})=>{
 // actually makes this read as "the next page of the same flow" rather
 // than "a popup with no border." Only for firstRun -- term rollover/quick
 // scan keep the real modal (see the outer wrapper's own comment).
+// What Stu says (and how he feels) on each setup step.
+const STU_WIZARD_LINES={
+  status:["waving","Hi, I'm Stu! Let's set up your semester."],
+  classes:["happy","Add your classes. I'll remember them."],
+  term:["thinking","When does your term end?"],
+  awake:["sleepy","When do you sleep? I won't plan past it."],
+  personalize:["wink","Tell me how you like to study."],
+  activities:["happy","Work, gym, clubs. Add what fills your week."],
+  calendarSync:["excited","Connect a calendar and I'll do the typing."],
+  finalReview:["proud","Looks good! Ready when you are."],
+};
 const WizardRail=({step})=>{
   const computed=wizardStepperLabels(step);
   return (
@@ -25013,6 +25028,15 @@ const WizardRail=({step})=>{
           })}
         </div>
       )}
+      {(()=>{
+        const [mood,line]=STU_WIZARD_LINES[step]||["happy","I'm Stu. I'll keep you on track."];
+        return (
+          <div style={{marginTop:"auto",paddingTop:28,display:"flex",alignItems:"flex-end",gap:8}}>
+            <StudMascot mood={mood} size={78} ariaLabel={STU_NAME} {...stuPalette()} edge="#E6ECE7" />
+            <div style={{marginBottom:40,padding:"9px 12px",borderRadius:12,background:"rgba(255,255,255,0.10)",border:"1px solid rgba(255,255,255,0.16)",fontSize:12.5,lineHeight:1.45,color:T.cream}}>{line}</div>
+          </div>
+        );
+      })()}
     </div>
   );
 };
@@ -37365,6 +37389,211 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
 // component identity across renders: a component created inside another
 // remounts on every render, which drops keyboard focus from a switch the
 // moment it is toggled.
+// ===== STU MASCOT: the Studlin logo square come to life. SHARED COPY, keep identical in studlin-app.jsx and onboarding.jsx (a test checks). =====
+// Props: mood, color (body fill), outline (face ink), edge (body/limb outline, defaults to outline), size (px height), walking, facing, speaking, ariaLabel.
+const stuH = React.createElement;
+const STU_CSS = [
+  '.stu-root{display:inline-block;line-height:0;overflow:visible}',
+  '.stu-root svg{overflow:visible;display:block}',
+  '.stu-breathe{transform-origin:60px 80px;animation:stu-breathe 4s ease-in-out infinite}',
+  '.stu-bob{animation:stu-bob .56s ease-in-out infinite}',
+  '.stu-blink{transform-origin:60px 44px;animation:stu-blink 4.2s infinite}',
+  '.stu-legA{transform-origin:47px 82px;animation:stu-swingA .56s ease-in-out infinite}',
+  '.stu-legB{transform-origin:73px 82px;animation:stu-swingB .56s ease-in-out infinite}',
+  '.stu-talk{transform-origin:60px 58px;animation:stu-talk .34s ease-in-out infinite}',
+  '.stu-conf{animation:stu-conf 1.6s ease-in-out infinite}',
+  '.stu-spark{transform-origin:100px 22px;animation:stu-spark 1.8s ease-in-out infinite}',
+  '@keyframes stu-breathe{0%,100%{transform:scale(1,1)}50%{transform:scale(1.015,.985)}}',
+  '@keyframes stu-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-2.5px)}}',
+  '@keyframes stu-blink{0%,93%,100%{transform:scaleY(1)}96%{transform:scaleY(.08)}}',
+  '@keyframes stu-swingA{0%,100%{transform:rotate(-22deg)}50%{transform:rotate(22deg)}}',
+  '@keyframes stu-swingB{0%,100%{transform:rotate(22deg)}50%{transform:rotate(-22deg)}}',
+  '@keyframes stu-talk{0%,100%{transform:scaleY(1)}50%{transform:scaleY(.55)}}',
+  '@keyframes stu-conf{0%,100%{transform:translateY(0);opacity:1}50%{transform:translateY(-3px);opacity:.7}}',
+  '@keyframes stu-spark{0%,100%{transform:scale(1) rotate(0)}50%{transform:scale(1.25) rotate(20deg)}}',
+  '@media (prefers-reduced-motion:reduce){.stu-root *{animation:none!important}}',
+  'body[data-motion="reduce"] .stu-root *{animation:none!important}'
+].join('');
+
+function stuRgb(c) { c = String(c).replace('#', ''); if (c.length === 3) c = c.replace(/(.)/g, '$1$1'); var n = parseInt(c, 16); return isNaN(n) ? [158, 200, 61] : [n >> 16 & 255, n >> 8 & 255, n & 255]; }
+function stuMix(a, b, t) { var A = stuRgb(a), B = stuRgb(b); return 'rgb(' + A.map(function (v, i) { return Math.round(v + (B[i] - v) * t); }).join(',') + ')'; }
+
+// Hand-made wonky body, flat bottom, clipped top-right corner like the drawing.
+const STU_BODY = 'M31 24 Q30 20 36 19.5 L77 18 Q82 17.5 85 21 L90 27 Q91.5 29 91.5 33 L91.5 74 Q92 79 87 79.5 L38 82 Q31 82.5 31 77 Z';
+
+// arms: per side [elbowX, elbowY, handX, handY]
+const STU_ARMS = {
+  out: [[22, 62, 14, 50], [98, 62, 106, 50]],
+  up: [[20, 52, 18, 36], [100, 52, 102, 36]],
+  droop: [[22, 70, 18, 82], [98, 70, 102, 82]],
+  hips: [[20, 64, 30, 72], [100, 64, 90, 72]],
+  wave: [[22, 62, 14, 50], [100, 50, 110, 34]],
+  think: [[22, 66, 14, 74], [92, 62, 80, 54]],
+  hurray: [[18, 48, 12, 30], [102, 48, 108, 30]],
+  sleepy: [[22, 68, 16, 78], [98, 68, 104, 78]],
+  proud: [[24, 66, 18, 56], [96, 66, 102, 56]]
+};
+
+const STU_MOODS = {
+  neutral: { l: 'dot', r: 'ring', mouth: 'M50 62 Q60 65 70 62', arms: 'out' },
+  happy: { l: 'dot', r: 'ring', mouth: 'M47 59 Q60 71 73 59', arms: 'out', blush: 1 },
+  excited: { l: 'big', r: 'ring', mouth: 'open', arms: 'up', blush: 1, brow: 'up' },
+  wink: { l: 'dot', r: 'arcUp', mouth: 'M47 59 Q58 70 73 58', arms: 'wave', blush: 1 },
+  sad: { l: 'dot', r: 'ring', mouth: 'M50 66 Q60 58 70 66', arms: 'droop', brow: 'sad', tear: 1 },
+  worried: { l: 'dot', r: 'ring', mouth: 'M49 65 Q54 61 59 65 Q64 69 71 64', arms: 'hips', brow: 'sad', sweat: 1 },
+  sleepy: { l: 'line', r: 'line', mouth: 'M55 62 Q60 66 65 62', arms: 'sleepy', zz: 1 },
+  proud: { l: 'arcUp', r: 'arcUp', mouth: 'M48 60 Q60 70 72 60', arms: 'proud', blush: 1, sparkle: 1, chest: 1 },
+  thinking: { l: 'dotUp', r: 'ringUp', mouth: 'M52 63 Q58 61 68 64', arms: 'think', brow: 'think', dots: 1 },
+  waving: { l: 'dot', r: 'ring', mouth: 'M47 59 Q60 70 73 59', arms: 'wave', blush: 1 },
+  celebrating: { l: 'arcUp', r: 'arcUp', mouth: 'open', arms: 'hurray', blush: 1, confetti: 1 }
+};
+
+function stuEye(kind, x, ink, hi) {
+  var y = 44, s = { stroke: ink, strokeWidth: 3, fill: 'none', strokeLinecap: 'round' };
+  switch (kind) {
+    case 'dot': return stuH('ellipse', { cx: x, cy: y, rx: 3.6, ry: 4.2, fill: ink });
+    case 'dotUp': return stuH('ellipse', { cx: x + 1.5, cy: y - 2, rx: 3.6, ry: 4.2, fill: ink });
+    case 'big': return stuH('g', null, stuH('circle', { cx: x, cy: y, r: 6, fill: ink }), stuH('circle', { cx: x + 1.8, cy: y - 2, r: 1.8, fill: hi }));
+    case 'ring': return stuH('g', null, stuH('circle', { cx: x, cy: y, r: 5.4, fill: hi, stroke: ink, strokeWidth: 2.6 }), stuH('circle', { cx: x, cy: y, r: 2.4, fill: ink }));
+    case 'ringUp': return stuH('g', null, stuH('circle', { cx: x, cy: y - 1, r: 5.4, fill: hi, stroke: ink, strokeWidth: 2.6 }), stuH('circle', { cx: x + 1.5, cy: y - 3, r: 2.4, fill: ink }));
+    case 'arcUp': return stuH('path', Object.assign({ d: 'M' + (x - 5) + ' ' + (y + 2) + ' Q' + x + ' ' + (y - 6) + ' ' + (x + 5) + ' ' + (y + 2) }, s));
+    case 'line': return stuH('path', Object.assign({ d: 'M' + (x - 5) + ' ' + (y + 1) + ' Q' + x + ' ' + (y + 4) + ' ' + (x + 5) + ' ' + (y + 1) }, s));
+  }
+}
+
+function StudMascot(p) {
+  var mood = STU_MOODS[p.mood] ? p.mood : 'happy', m = STU_MOODS[mood];
+  var color = p.color || '#9EC83D', ink = p.outline || '#0E1F18', edge = p.edge || ink, size = p.size || 96;
+  var hi = stuMix(color, '#ffffff', 0.82), shine = stuMix(color, '#ffffff', 0.45), blush = stuMix(color, '#ff4d7a', 0.55), shade = stuMix(color, '#000000', 0.12);
+  var walking = !!p.walking, arms = STU_ARMS[m.arms];
+  var line = { stroke: ink, strokeWidth: 3.4, fill: 'none', strokeLinecap: 'round', strokeLinejoin: 'round' };
+  var eline = Object.assign({}, line, { stroke: edge });
+  var ky = m.chest ? -2 : 0;
+
+  if (typeof document !== 'undefined' && !document.getElementById('stu-style')) {
+    var st = document.createElement('style'); st.id = 'stu-style'; st.textContent = STU_CSS; document.head.appendChild(st);
+  }
+
+  function arm(a, side) {
+    var sx = side ? 91 : 31, sy = m.chest ? 62 : 60;
+    return stuH('path', Object.assign({ key: 'arm' + side, d: 'M' + sx + ' ' + sy + ' L' + a[0] + ' ' + a[1] + ' L' + a[2] + ' ' + a[3] }, eline));
+  }
+  function leg(x, cls) {
+    return stuH('g', { key: 'leg' + x, className: walking ? cls : undefined },
+      stuH('path', Object.assign({ d: 'M' + x + ' 81 L' + x + ' 104' }, eline)),
+      stuH('path', Object.assign({ d: 'M' + (x - 6) + ' 106 Q' + (x - 6) + ' 102 ' + (x - 1) + ' 102.5 L' + (x + 6) + ' 103 Q' + (x + 8) + ' 108 ' + (x + 3) + ' 109 L' + (x - 4) + ' 109 Q' + (x - 6) + ' 109 ' + (x - 6) + ' 106 Z', fill: color }, eline, { strokeWidth: 3 })));
+  }
+  var mouth;
+  if (p.speaking) {
+    mouth = stuH('g', { className: 'stu-talk' }, stuH('path', { d: 'M51 60 Q60 62 69 60 Q68 70 60 70 Q52 70 51 60 Z', fill: ink, stroke: ink, strokeWidth: 2.4, strokeLinejoin: 'round' }));
+  } else if (m.mouth === 'open') {
+    mouth = [stuH('path', { key: 'o', d: 'M49 58 Q60 60 71 58 Q70 72 60 72 Q50 72 49 58 Z', fill: ink, stroke: ink, strokeWidth: 2.4, strokeLinejoin: 'round' }),
+      stuH('path', { key: 't', d: 'M54 69 Q60 64 66 69 Q60 72 54 69 Z', fill: blush })];
+  } else {
+    mouth = stuH('path', Object.assign({ d: m.mouth }, line, { strokeWidth: 3 }));
+  }
+
+  var bs = { stroke: ink, strokeWidth: 2.6, fill: 'none', strokeLinecap: 'round' }, brows = null;
+  if (m.brow === 'sad') brows = [stuH('path', Object.assign({ key: 1, d: 'M40 38 L53 33' }, bs)), stuH('path', Object.assign({ key: 2, d: 'M80 38 L67 33' }, bs))];
+  if (m.brow === 'up') brows = [stuH('path', Object.assign({ key: 1, d: 'M42 33 Q48 29 54 33' }, bs)), stuH('path', Object.assign({ key: 2, d: 'M66 33 Q72 29 78 33' }, bs))];
+  if (m.brow === 'think') brows = stuH('path', Object.assign({ d: 'M66 32 Q72 29 78 33' }, bs));
+
+  var extras = [];
+  if (m.blush) extras.push(stuH('ellipse', { key: 'b1', cx: 40, cy: 55, rx: 5, ry: 3, fill: blush, opacity: 0.5 }), stuH('ellipse', { key: 'b2', cx: 80, cy: 55, rx: 5, ry: 3, fill: blush, opacity: 0.5 }));
+  if (m.tear) extras.push(stuH('path', { key: 'tr', d: 'M72 52 Q75 57 72 60 Q69 57 72 52 Z', fill: '#7cc4ff', stroke: ink, strokeWidth: 1.6 }));
+  if (m.sweat) extras.push(stuH('path', { key: 'sw', d: 'M85 28 Q88 33 85 36 Q82 33 85 28 Z', fill: '#7cc4ff', stroke: ink, strokeWidth: 1.6 }));
+  var star = function (cx, cy, r, k) { return stuH('path', { key: k, d: 'M' + cx + ' ' + (cy - r) + ' Q' + cx + ' ' + cy + ' ' + (cx + r) + ' ' + cy + ' Q' + cx + ' ' + cy + ' ' + cx + ' ' + (cy + r) + ' Q' + cx + ' ' + cy + ' ' + (cx - r) + ' ' + cy + ' Q' + cx + ' ' + cy + ' ' + cx + ' ' + (cy - r) + ' Z', fill: ink }); };
+  if (m.sparkle) extras.push(stuH('g', { key: 'sp', className: 'stu-spark' }, star(100, 22, 8, 's1')), star(22, 14, 4, 's2'));
+  if (m.zz) extras.push(stuH('text', { key: 'zz', x: 92, y: 20, fontSize: 14, fontWeight: 800, fontFamily: 'system-ui,sans-serif', fill: ink, className: 'stu-conf' }, 'z'), stuH('text', { key: 'zz2', x: 101, y: 8, fontSize: 10, fontWeight: 800, fontFamily: 'system-ui,sans-serif', fill: ink, className: 'stu-conf' }, 'z'));
+  if (m.dots) extras.push(stuH('circle', { key: 'd1', cx: 96, cy: 24, r: 2, fill: ink }), stuH('circle', { key: 'd2', cx: 102, cy: 16, r: 3, fill: ink }), stuH('circle', { key: 'd3', cx: 110, cy: 6, r: 4.2, fill: 'none', stroke: ink, strokeWidth: 2 }));
+  if (m.confetti) [[12, 14, '#F27BAA'], [28, 4, '#FFC93C'], [96, 6, '#5BC0EB'], [108, 18, '#F27BAA'], [60, 2, '#FFC93C'], [116, 40, '#5BC0EB'], [4, 36, '#5BC0EB']].forEach(function (c, i) {
+    extras.push(stuH('rect', { key: 'c' + i, x: c[0], y: c[1], width: 5, height: 5, rx: 1.4, fill: c[2], className: 'stu-conf', style: { animationDelay: (i * 0.17) + 's' }, transform: 'rotate(' + (i * 27) + ' ' + c[0] + ' ' + c[1] + ')' }));
+  });
+
+  var face = stuH('g', null, stuH('g', { className: 'stu-blink' }, stuEye(m.l, 48, ink, hi), stuEye(m.r, 72, ink, hi)), brows, mouth);
+  var body = stuH('g', { className: walking ? 'stu-bob' : undefined },
+    stuH('g', { className: 'stu-breathe' },
+      arms.map(function (a, i) { return arm(a, i); }),
+      stuH('path', { d: STU_BODY, fill: color, stroke: edge, strokeWidth: 4, strokeLinejoin: 'round' }),
+      stuH('path', { d: 'M37 27 L37 40', stroke: shine, strokeWidth: 3.4, strokeLinecap: 'round', opacity: 0.9 }),
+      stuH('path', { d: 'M38 77 L89 75', stroke: shade, strokeWidth: 3, strokeLinecap: 'round', opacity: 0.6 }),
+      stuH('g', { transform: 'translate(0 ' + ky + ')' }, face), extras));
+  var aria = p.ariaLabel ? { role: 'img', 'aria-label': p.ariaLabel } : { 'aria-hidden': true };
+  return stuH('span', { className: 'stu-root ' + (p.className || ''), style: Object.assign({ transform: p.facing === 'left' ? 'scaleX(-1)' : undefined, filter: p.onDark ? 'drop-shadow(0 0 1.2px rgba(255,255,255,.95))' : undefined }, p.style) },
+    stuH('svg', Object.assign({ viewBox: '-2 -4 124 120', height: size, width: size * 124 / 120, xmlns: 'http://www.w3.org/2000/svg' }, aria),
+      stuH('g', null, leg(47, 'stu-legA'), leg(73, 'stu-legB'), body)));
+}
+// ===== END STU MASCOT =====
+
+// ===== Stu, the corner companion (2026-10-13) =====
+// A little character who walks in from the corner to remind the student
+// about something coming up, instead of a plain pop-up. Asks yes or no;
+// "no" makes him sad and he walks off. After 3 "no"s in one day he stops
+// asking until tomorrow. He follows the student's accent color (a pink
+// theme makes a pink Stu). All of this is opt-out in Settings, Privacy.
+const STU_NAME="Stu";
+const stuSettingOn=(key)=>lsGet("settings",{})[key]!==false;
+const stuDeclinesToday=()=>{const d=lsGet("stuDeclines",null);return d&&d.date===dayKey()?d.count:0;};
+const stuRecordDecline=()=>lsSet("stuDeclines",{date:dayKey(),count:stuDeclinesToday()+1});
+// Reads the saved accent at render time (T is mutated in place, never cache).
+// Uses each accent's brighter dark-theme tone in BOTH themes: he is a
+// character, not UI chrome, so he stays bright and cute on white too.
+function stuPalette(){
+  let name="Lime";
+  try{name=localStorage.getItem("studlin-accent")||"Lime";}catch(e){}
+  const a=ACCENTS[name]||ACCENTS.Lime;
+  return {color:a.dk.lime,outline:"#0E1F18",edge:T.mode==="dark"?"#E6ECE7":"#0E1F18"};
+}
+const STU_EXIT_MOOD={yes:"happy",cheer:"proud",no:"sad",late:"worried"};
+function StudCompanion({mode,title,clock,navExpanded,onYes,onDone}){
+  const [phase,setPhase]=useState("in"); // in > talk > yes|no|late > out
+  const declinesBefore=useRef(stuDeclinesToday()).current;
+  const howRef=useRef(mode==="cheer"?"cheer":"late");
+  useEffect(()=>{
+    const t=[];
+    if(phase==="in")t.push(setTimeout(()=>setPhase("talk"),1500));
+    if(phase==="talk"&&mode==="ask")t.push(setTimeout(()=>{howRef.current="late";setPhase("late");},32000));
+    if(phase==="talk"&&mode==="cheer")t.push(setTimeout(()=>setPhase("out"),4200));
+    if(phase==="yes")t.push(setTimeout(()=>{if(onYes)onYes();setPhase("out");},800));
+    if(phase==="no"||phase==="late")t.push(setTimeout(()=>setPhase("out"),phase==="no"?2000:2800));
+    if(phase==="out")t.push(setTimeout(()=>{if(onDone)onDone();},1300));
+    return()=>t.forEach(clearTimeout);
+  },[phase]);
+  const short=(title||"your next task").length>38?(title||"").slice(0,37)+"...":(title||"your next task");
+  let mood="happy",line="",sub="";
+  if(phase==="in"){mood="happy";}
+  else if(phase==="talk"&&mode==="cheer"){mood="celebrating";line=title?"Nice work on "+short+"!":"Nice work!";}
+  else if(phase==="talk"){mood=declinesBefore>=2?"worried":"waving";line=declinesBefore>=2?"Last nudge, I promise. Ready for "+short+"?":"Time to start "+short+"?";sub=clock?"It's on your plan for "+clock+".":"";}
+  else if(phase==="yes"){mood="celebrating";line="Let's do it!";}
+  else if(phase==="no"){mood="sad";line=declinesBefore>=1?"Okay. I'll give you some space.":"Aw, okay. I'll be around.";}
+  else if(phase==="late"){mood="worried";line="No rush. It's on your calendar.";}
+  else if(phase==="out"){mood=STU_EXIT_MOOD[howRef.current]||"happy";}
+  const walking=phase==="in"||phase==="out";
+  const pal=stuPalette();
+  const left=(navExpanded?230:48)+16;
+  const showBubble=!walking;
+  const reduce=typeof document!=="undefined"&&!!document.body&&document.body.getAttribute("data-motion")==="reduce";
+  return (
+    <div className="stu-wrap-anim" role="status" aria-live="polite" style={{position:"fixed",bottom:14,left,zIndex:999,display:"flex",alignItems:"flex-end",gap:6,pointerEvents:"none",animation:reduce?"none":phase==="in"?"stuWalkIn 1.5s ease-out both":phase==="out"?"stuWalkOut 1.3s ease-in both":"none"}}>
+      <style>{"@keyframes stuWalkIn{from{transform:translateX(-340px)}to{transform:translateX(0)}}@keyframes stuWalkOut{from{transform:translateX(0)}to{transform:translateX(-340px)}}@keyframes stuBubbleIn{from{opacity:0;transform:translateY(6px) scale(.96)}to{opacity:1;transform:none}}@media (prefers-reduced-motion:reduce){.stu-wrap-anim,.stu-wrap-anim *{animation:none!important}}"}</style>
+      <span style={{pointerEvents:"auto"}}><StudMascot mood={mood} size={88} walking={walking} facing={phase==="out"?"left":"right"} speaking={phase==="talk"&&mode==="cheer"} ariaLabel={STU_NAME} {...pal} /></span>
+      {showBubble&&(
+        <div style={{pointerEvents:"auto",marginBottom:46,maxWidth:270,padding:"12px 14px",borderRadius:14,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 10px 30px rgba(0,0,0,0.22)",animation:reduce?"none":"stuBubbleIn .22s ease both"}}>
+          <div style={{fontSize:13,fontWeight:600,color:T.text,lineHeight:1.45}}>{line}</div>
+          {sub&&<div style={{fontSize:11.5,color:T.muted,marginTop:3}}>{sub}</div>}
+          {phase==="talk"&&mode==="ask"&&(
+            <div style={{display:"flex",gap:8,marginTop:10}}>
+              <BtnSm onClick={()=>{howRef.current="yes";setPhase("yes");}} style={{padding:"6px 12px",fontSize:11.5}}>Yes, let's go</BtnSm>
+              <BtnSm variant="ghost" onClick={()=>{stuRecordDecline();howRef.current="no";setPhase("no");}} style={{padding:"6px 12px",fontSize:11.5}}>Not now</BtnSm>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+// ===== END Stu companion =====
+
 const SettingsCtx=React.createContext({toggles:{},tog:()=>{}});
 function SettingsToggle({k,label}){
   const {toggles,tog}=React.useContext(SettingsCtx);
@@ -37423,7 +37652,12 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     setMergeConfirm(null);
   };
   const [canvasSeeding,setCanvasSeeding]=useState(false);
-  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,deadline:true,classReminders:false,onlineStatus:true,incognito:false,twofa:false,motion:false,hand:true,wrapped:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false,askCheckIns:true,askDurationQuestions:true},...lsGet("settings",{})}));
+  useEffect(()=>{
+    const sync=()=>setToggles(t=>({...t,...lsGet("settings",{})}));
+    window.addEventListener("studlin-settings-changed",sync);
+    return ()=>window.removeEventListener("studlin-settings-changed",sync);
+  },[]);
+  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,deadline:true,classReminders:false,onlineStatus:true,incognito:false,twofa:false,motion:false,hand:true,wrapped:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false,askCheckIns:true,askDurationQuestions:true,nudgesMaster:true,mascotReminders:true,mascotCheers:true},...lsGet("settings",{})}));
   // 2026-09-13: "Share my free/busy time" used to be all-or-nothing (on =
   // every current accepted friend). shareAvailabilityMode lets a student
   // restrict it to specific people instead -- see the picker modal below
@@ -37495,7 +37729,11 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     applyAnalyticsChoice(next);
   };
   const tog=k=>setToggles(t=>{
-    const n={...t,[k]:!t[k]};
+    // Merge over what is saved right now, not just this tab's snapshot: the
+    // "Stop showing suggestions" link on the Calendar cards writes the same
+    // object while Settings may be open, and a stale snapshot would undo it.
+    const cur={...t,...lsGet("settings",{})};
+    const n={...cur,[k]:!cur[k]};
     lsSet("settings",n);
     // Instant feedback for "Reduce motion" -- App()'s own mount effect
     // applies the same attribute on load, this just makes flipping the
@@ -38881,6 +39119,13 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                 </div>
               </>)}
             </Modal>
+            <Card style={{marginBottom:12}}>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Suggestions and Stu</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Control how much Studlin speaks up. Everything here is optional.</div>
+              <Row label="Suggestions and tips" sub={"Occasional ideas like \"default new tasks to midday?\" and the questions below. Off means none of them pop up."} k="nudgesMaster" />
+              <Row label="Stu reminds me before things start" sub="Stu walks in a few minutes before a study block or deadline and asks if you want to start. Off uses a plain pop-up instead." k="mascotReminders" />
+              <Row label="Stu cheers when I finish" sub="A quick celebration after you complete a task." k="mascotCheers" />
+            </Card>
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Questions Studlin asks</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>These are how Studlin learns things like how long a class really takes you or how a session went — never required, always skippable, and if you keep skipping one Studlin turns it off for you automatically.</div>
@@ -41582,7 +41827,7 @@ function App() {
   const offerDurationQuestionIfDue=(task)=>{
     if(!task||task.timeSpent||task.isGeneralTask||task.routineId)return;
     if(task.kind!=="study block"||!task.subject)return;
-    if(lsGet("settings",{}).askDurationQuestions===false)return;
+    if(lsGet("settings",{}).askDurationQuestions===false||!nudgesAllowed())return;
     if(durationSampleCountFor(task.subject,task.kind)>=TIER0_MIN_BUCKET_SAMPLE)return;
     if(isDurationQuestionOnCooldown(task.subject,task.kind))return;
     setDurationQuestionOffer({task});
@@ -41607,6 +41852,7 @@ function App() {
     const events=lsGet("events",[]);
     const task=events.find(e=>e.id===taskId);
     if(!task)return;
+    if(stuSettingOn("mascotCheers"))setStuCheer({id:taskId+"-"+Date.now(),at:Date.now(),title:task.title||""});
     if(shouldOfferProjectCheckIn(task,events))setProjectCheckInTaskId(taskId);
     // Bug fix, 2026-09-18 user report: "why is this question on every
     // task, shouldn't it be for exams or assignments not for tasks" --
@@ -41646,7 +41892,7 @@ function App() {
           // check."
           setPricingOpen(canGenQuizReason()==="free-tier"?"studyMaterialGen":"aiUsageCap");
         }
-      }else{
+      }else if(nudgesAllowed()){
         setExamCheckIn(task);
       }
     }
@@ -42097,11 +42343,26 @@ function App() {
   // check doesn't. Fires once per event per session (notifiedHeadsUpRef),
   // never re-nags for the same block.
   const [headsUpEvent,setHeadsUpEvent]=useState(null);
+  // Stu's "nice work" cameo after finishing a task (see StudCompanion).
+  const [stuCheer,setStuCheer]=useState(null);
+  const [nudgeOffToast,setNudgeOffToast]=useState("");
+  const turnOffNudges=()=>{
+    lsSet("settings",{...lsGet("settings",{}),nudgesMaster:false});
+    try{window.dispatchEvent(new Event("studlin-settings-changed"));}catch(e){}
+    setStrugglingBucketOffer(null);setPeakInsightOffer(null);setExamPrepSpacingOffer(null);setUnscheduledDueSoonOffer(null);
+    setNudgeOffToast("Okay, no more suggestions. You can turn them back on in Settings, Privacy.");
+    setTimeout(()=>setNudgeOffToast(""),4500);
+  };
   const notifiedHeadsUpRef=useRef(new Set());
+  // A session started some other way (not via Stu) clears a pending reminder, so
+  // it cannot walk back in for a block the student is already doing.
+  useEffect(()=>{if(timerTask)setHeadsUpEvent(null);},[timerTask]);
   useEffect(()=>{
     const HEADS_UP_MINS=10;
     const check=()=>{
       if(timerTask)return; // already locked in, no need to be reminded
+      // Stu stops asking for the day after 3 "not now"s (see StudCompanion).
+      if(stuSettingOn("mascotReminders")&&stuDeclinesToday()>=3)return;
       const today=dayKey();
       const nowMins=(()=>{const d=new Date();return d.getHours()*60+d.getMinutes();})();
       const events=lsGet("events",[]);
@@ -42112,7 +42373,7 @@ function App() {
         const em=timeToMinutes(e.time);
         return em>nowMins&&em-nowMins<=HEADS_UP_MINS;
       });
-      if(upcoming){notifiedHeadsUpRef.current.add(upcoming.id);setHeadsUpEvent(upcoming);setTimeout(()=>setHeadsUpEvent(h=>h&&h.id===upcoming.id?null:h),12000);}
+      if(upcoming){notifiedHeadsUpRef.current.add(upcoming.id);setHeadsUpEvent(upcoming);setTimeout(()=>setHeadsUpEvent(h=>h&&h.id===upcoming.id?null:h),stuSettingOn("mascotReminders")?40000:12000);}
     };
     check();
     const id=setInterval(check,60000);
@@ -42940,7 +43201,7 @@ function App() {
     // after the log write above so today's data (if any landed here) is
     // already included. This is about the student's own declared
     // preference, independent of what happens to any missed item.
-    const strugglingBucket=detectStrugglingBucket(getSchedulePreferences());
+    const strugglingBucket=nudgesAllowed()?detectStrugglingBucket(getSchedulePreferences()):null;
     if(strugglingBucket){
       if(recoveryPending)queueInsightNudge("strugglingBucket",strugglingBucket);
       else setStrugglingBucketOffer(strugglingBucket);
@@ -42952,7 +43213,7 @@ function App() {
     // the way peakInsight is below -- unscheduled real work due soon is
     // independent of a behavioral hour-bucket pattern, not competing for
     // the same bottom-left UI slot.
-    const unscheduledDueSoon=detectUnscheduledDueSoon(evs,today);
+    const unscheduledDueSoon=nudgesAllowed()?detectUnscheduledDueSoon(evs,today):null;
     if(unscheduledDueSoon){
       if(recoveryPending)queueInsightNudge("unscheduledDueSoon",unscheduledDueSoon);
       else setUnscheduledDueSoonOffer(unscheduledDueSoon);
@@ -42961,7 +43222,7 @@ function App() {
     // banners share the same fixed bottom-left corner, so only surface
     // this one on a day the struggling-bucket nudge isn't already using
     // it — one nudge at a time, not a stack fighting for the same spot.
-    const peakInsight=strugglingBucket?null:detectPeakHourInsight(getSchedulePreferences());
+    const peakInsight=(strugglingBucket||!nudgesAllowed())?null:detectPeakHourInsight(getSchedulePreferences());
     if(peakInsight){
       if(recoveryPending)queueInsightNudge("peakInsight",peakInsight);
       else setPeakInsightOffer(peakInsight);
@@ -42970,7 +43231,7 @@ function App() {
     // its own long (30-day) cooldown already, so deferring on a busy day
     // costs nothing -- it isn't urgent the way a real recovery signal is,
     // not worth its own queueInsightNudge path.
-    if(!strugglingBucket&&!peakInsight){
+    if(nudgesAllowed()&&!strugglingBucket&&!peakInsight){
       const spacingOffer=detectExamPrepSpacingOffer();
       if(spacingOffer)setExamPrepSpacingOffer(spacingOffer);
     }
@@ -43925,6 +44186,7 @@ function App() {
             <Btn onClick={acceptStrugglingBucketOffer} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Switch to {PEAK_BUCKET_LABELS[strugglingBucketOffer.suggestedBucket]}</Btn>
             <Btn variant="ghost" onClick={declineStrugglingBucketOffer} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Not now</Btn>
           </div>
+          <button type="button" onClick={turnOffNudges} style={{background:"none",border:"none",color:T.muted,fontSize:11.5,cursor:"pointer",fontFamily:T.font,padding:"8px 0 0",textDecoration:"underline"}}>Stop showing suggestions like this</button>
         </div>
       )}
       {examPrepSpacingOffer&&(
@@ -43936,6 +44198,7 @@ function App() {
             <Btn onClick={acceptExamPrepSpacingOffer} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Switch it</Btn>
             <Btn variant="ghost" onClick={declineExamPrepSpacingOffer} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Not now</Btn>
           </div>
+          <button type="button" onClick={turnOffNudges} style={{background:"none",border:"none",color:T.muted,fontSize:11.5,cursor:"pointer",fontFamily:T.font,padding:"8px 0 0",textDecoration:"underline"}}>Stop showing suggestions like this</button>
         </div>
       )}
       {peakInsightOffer&&(
@@ -43947,6 +44210,7 @@ function App() {
             <Btn onClick={acceptPeakHourInsight} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Switch to {PEAK_BUCKET_LABELS[peakInsightOffer.suggestedBucket]}</Btn>
             <Btn variant="ghost" onClick={declinePeakHourInsight} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Not now</Btn>
           </div>
+          <button type="button" onClick={turnOffNudges} style={{background:"none",border:"none",color:T.muted,fontSize:11.5,cursor:"pointer",fontFamily:T.font,padding:"8px 0 0",textDecoration:"underline"}}>Stop showing suggestions like this</button>
         </div>
       )}
       {/* !calendarWizardOpen: found stacking on top of Class Setup /
@@ -43977,7 +44241,17 @@ function App() {
           ("lock-in overrules everything") already enforced for chat chimes
           elsewhere in this file. !timerTask keeps both consistent with
           that same rule instead of interrupting an active session. */}
-      {headsUpEvent&&!timerTask&&(
+      {headsUpEvent&&!timerTask&&stuSettingOn("mascotReminders")&&(
+        <StudCompanion key={headsUpEvent.id} mode="ask" title={headsUpEvent.title} clock={fmtRolloverClock(headsUpEvent.time)} navExpanded={navExpanded}
+          onYes={()=>{setTimerTask(headsUpEvent);setHeadsUpEvent(null);}} onDone={()=>setHeadsUpEvent(null)} />
+      )}
+      {!headsUpEvent&&stuCheer&&!timerTask&&Date.now()-stuCheer.at<10000&&(
+        <StudCompanion key={stuCheer.id} mode="cheer" title={stuCheer.title} navExpanded={navExpanded} onDone={()=>setStuCheer(null)} />
+      )}
+      {nudgeOffToast&&(
+        <div role="status" style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:1001,background:T.ink,color:T.cream,padding:"10px 18px",borderRadius:99,fontSize:12.5,fontWeight:600,boxShadow:"0 8px 24px rgba(0,0,0,0.3)"}}>{nudgeOffToast}</div>
+      )}
+      {headsUpEvent&&!timerTask&&!stuSettingOn("mascotReminders")&&(
         <div style={{position:"fixed",bottom:20,left:20,zIndex:999,padding:"12px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:300,display:"flex",alignItems:"center",gap:12}}>
           <div style={{fontSize:12.5,color:T.text,flex:1}}>
             <strong>{headsUpEvent.title}</strong> starts soon — {fmtRolloverClock(headsUpEvent.time)}.
@@ -43990,7 +44264,7 @@ function App() {
       )}
 
       {liveInvite&&!timerTask&&(
-        <div style={{position:"fixed",bottom:headsUpEvent?110:20,left:20,zIndex:999,padding:"12px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.teal}55`,boxShadow:`0 8px 24px rgba(0,0,0,0.35), 0 0 0 1px ${T.teal}22`,animation:"studlinPop 0.2s ease",maxWidth:300,display:"flex",alignItems:"center",gap:12}}>
+        <div style={{position:"fixed",bottom:headsUpEvent?(stuSettingOn("mascotReminders")?200:110):20,left:20,zIndex:999,padding:"12px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.teal}55`,boxShadow:`0 8px 24px rgba(0,0,0,0.35), 0 0 0 1px ${T.teal}22`,animation:"studlinPop 0.2s ease",maxWidth:300,display:"flex",alignItems:"center",gap:12}}>
           <div style={{fontSize:12.5,color:T.text,flex:1}}>
             <strong>{liveInvite.title}</strong> is locking in right now — join?
           </div>
@@ -44078,7 +44352,7 @@ function App() {
                 onClose={()=>setObClassGroups(null)} />
             ):(<>
             <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:6}}>
-              <div style={{width:44,height:44,borderRadius:12,background:T.lime+"18",border:`1px solid ${T.lime}33`,display:"flex",alignItems:"center",justifyContent:"center",color:T.lime,fontSize:20}}>{Icon.cal}</div>
+              <StudMascot mood="waving" size={60} ariaLabel={STU_NAME} {...stuPalette()} />
               <div>
                 <div style={{fontSize:19,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>Connect your calendar</div>
                 <div style={{fontSize:12,color:T.muted}}>Pull existing events into Studlin · takes 10 seconds</div>

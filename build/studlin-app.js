@@ -2323,6 +2323,7 @@ function dismissStrugglingBucket(bucketId) {
   dismissed[bucketId] = Date.now();
   lsSet("strugglingBucketDismissed", dismissed);
 }
+const nudgesAllowed = () => lsGet("settings", {}).nudgesMaster !== false;
 function setQuestionAskPref(key, enabled) {
   const next = { ...lsGet("settings", {}), [key]: enabled };
   lsSet("settings", next);
@@ -12587,6 +12588,7 @@ Examples:
   }
 }
 function deriveStudlinAiProactiveSignal(strugglingBucketOffer, unscheduledDueSoonOffer, peakInsightOffer) {
+  if (!nudgesAllowed()) return null;
   if (strugglingBucketOffer) return { kind: "struggling_bucket", ...strugglingBucketOffer };
   if (unscheduledDueSoonOffer) return { kind: "unscheduled_due_soon", ...unscheduledDueSoonOffer };
   if (peakInsightOffer) return { kind: "peak_hours", ...peakInsightOffer };
@@ -15099,6 +15101,16 @@ const WizardStepper = ({ step }) => {
     return /* @__PURE__ */ React.createElement("div", { key: s.key, style: { flex: 1 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600, color: done || current ? T.text : T.faint, marginBottom: 6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, done && /* @__PURE__ */ React.createElement("span", { style: { color: T.lime } }, "\u2713"), s.label), /* @__PURE__ */ React.createElement("div", { style: { height: 2, borderRadius: 2, background: done || current ? T.lime : T.border } }));
   })));
 };
+const STU_WIZARD_LINES = {
+  status: ["waving", "Hi, I'm Stu! Let's set up your semester."],
+  classes: ["happy", "Add your classes. I'll remember them."],
+  term: ["thinking", "When does your term end?"],
+  awake: ["sleepy", "When do you sleep? I won't plan past it."],
+  personalize: ["wink", "Tell me how you like to study."],
+  activities: ["happy", "Work, gym, clubs. Add what fills your week."],
+  calendarSync: ["excited", "Connect a calendar and I'll do the typing."],
+  finalReview: ["proud", "Looks good! Ready when you are."]
+};
 const WizardRail = ({ step }) => {
   const computed = wizardStepperLabels(step);
   return /* @__PURE__ */ React.createElement("div", { style: { width: 340, flexShrink: 0, background: T.forest, color: T.cream, padding: "48px 40px", display: "flex", flexDirection: "column", overflowY: "auto" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, marginBottom: 48 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 34, height: 34, borderRadius: 8, background: T.lime, display: "grid", placeItems: "center", fontSize: 17, fontWeight: 800, color: T.forest, flexShrink: 0 } }, "S"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 20, fontWeight: 700, letterSpacing: "-0.02em", color: T.cream } }, "studlin")), computed && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4 } }, computed.labels.map((lbl, i) => {
@@ -15117,7 +15129,10 @@ const WizardRail = ({ step }) => {
       border: `1.5px solid ${current ? T.cream : done ? T.lime : "rgba(255,255,255,0.2)"}`,
       color: current ? T.forest : done ? T.ink : "rgba(255,255,255,0.45)"
     } }, done ? "\u2713" : i + 1), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 14.5, fontWeight: current ? 600 : 500, color: current ? T.cream : done ? "rgba(255,255,255,0.78)" : "rgba(255,255,255,0.45)" } }, lbl.label));
-  })));
+  })), (() => {
+    const [mood, line] = STU_WIZARD_LINES[step] || ["happy", "I'm Stu. I'll keep you on track."];
+    return /* @__PURE__ */ React.createElement("div", { style: { marginTop: "auto", paddingTop: 28, display: "flex", alignItems: "flex-end", gap: 8 } }, /* @__PURE__ */ React.createElement(StudMascot, { mood, size: 78, ariaLabel: STU_NAME, ...stuPalette(), edge: "#E6ECE7" }), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 40, padding: "9px 12px", borderRadius: 12, background: "rgba(255,255,255,0.10)", border: "1px solid rgba(255,255,255,0.16)", fontSize: 12.5, lineHeight: 1.45, color: T.cream } }, line));
+  })());
 };
 const TitleSub = ({ title, sub }) => /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 22 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 19, fontWeight: 700, color: T.white, letterSpacing: "-0.01em", marginBottom: 5 } }, title), sub && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, lineHeight: 1.5 } }, sub));
 const PrefChipRow = ({ label, value, onChange, options }) => /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 18 } }, /* @__PURE__ */ React.createElement("label", { style: { display: "block", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, marginBottom: 8 } }, label), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } }, options.map((opt) => /* @__PURE__ */ React.createElement("button", { key: opt.value, type: "button", onClick: () => onChange(value === opt.value ? null : opt.value), style: { ...peakChipStyle(value === opt.value), borderRadius: 10 } }, opt.label))));
@@ -22433,6 +22448,243 @@ Examples:
     })()
   ));
 }
+const stuH = React.createElement;
+const STU_CSS = [
+  ".stu-root{display:inline-block;line-height:0;overflow:visible}",
+  ".stu-root svg{overflow:visible;display:block}",
+  ".stu-breathe{transform-origin:60px 80px;animation:stu-breathe 4s ease-in-out infinite}",
+  ".stu-bob{animation:stu-bob .56s ease-in-out infinite}",
+  ".stu-blink{transform-origin:60px 44px;animation:stu-blink 4.2s infinite}",
+  ".stu-legA{transform-origin:47px 82px;animation:stu-swingA .56s ease-in-out infinite}",
+  ".stu-legB{transform-origin:73px 82px;animation:stu-swingB .56s ease-in-out infinite}",
+  ".stu-talk{transform-origin:60px 58px;animation:stu-talk .34s ease-in-out infinite}",
+  ".stu-conf{animation:stu-conf 1.6s ease-in-out infinite}",
+  ".stu-spark{transform-origin:100px 22px;animation:stu-spark 1.8s ease-in-out infinite}",
+  "@keyframes stu-breathe{0%,100%{transform:scale(1,1)}50%{transform:scale(1.015,.985)}}",
+  "@keyframes stu-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-2.5px)}}",
+  "@keyframes stu-blink{0%,93%,100%{transform:scaleY(1)}96%{transform:scaleY(.08)}}",
+  "@keyframes stu-swingA{0%,100%{transform:rotate(-22deg)}50%{transform:rotate(22deg)}}",
+  "@keyframes stu-swingB{0%,100%{transform:rotate(22deg)}50%{transform:rotate(-22deg)}}",
+  "@keyframes stu-talk{0%,100%{transform:scaleY(1)}50%{transform:scaleY(.55)}}",
+  "@keyframes stu-conf{0%,100%{transform:translateY(0);opacity:1}50%{transform:translateY(-3px);opacity:.7}}",
+  "@keyframes stu-spark{0%,100%{transform:scale(1) rotate(0)}50%{transform:scale(1.25) rotate(20deg)}}",
+  "@media (prefers-reduced-motion:reduce){.stu-root *{animation:none!important}}",
+  'body[data-motion="reduce"] .stu-root *{animation:none!important}'
+].join("");
+function stuRgb(c) {
+  c = String(c).replace("#", "");
+  if (c.length === 3) c = c.replace(/(.)/g, "$1$1");
+  var n = parseInt(c, 16);
+  return isNaN(n) ? [158, 200, 61] : [n >> 16 & 255, n >> 8 & 255, n & 255];
+}
+function stuMix(a, b, t) {
+  var A = stuRgb(a), B = stuRgb(b);
+  return "rgb(" + A.map(function(v, i) {
+    return Math.round(v + (B[i] - v) * t);
+  }).join(",") + ")";
+}
+const STU_BODY = "M31 24 Q30 20 36 19.5 L77 18 Q82 17.5 85 21 L90 27 Q91.5 29 91.5 33 L91.5 74 Q92 79 87 79.5 L38 82 Q31 82.5 31 77 Z";
+const STU_ARMS = {
+  out: [[22, 62, 14, 50], [98, 62, 106, 50]],
+  up: [[20, 52, 18, 36], [100, 52, 102, 36]],
+  droop: [[22, 70, 18, 82], [98, 70, 102, 82]],
+  hips: [[20, 64, 30, 72], [100, 64, 90, 72]],
+  wave: [[22, 62, 14, 50], [100, 50, 110, 34]],
+  think: [[22, 66, 14, 74], [92, 62, 80, 54]],
+  hurray: [[18, 48, 12, 30], [102, 48, 108, 30]],
+  sleepy: [[22, 68, 16, 78], [98, 68, 104, 78]],
+  proud: [[24, 66, 18, 56], [96, 66, 102, 56]]
+};
+const STU_MOODS = {
+  neutral: { l: "dot", r: "ring", mouth: "M50 62 Q60 65 70 62", arms: "out" },
+  happy: { l: "dot", r: "ring", mouth: "M47 59 Q60 71 73 59", arms: "out", blush: 1 },
+  excited: { l: "big", r: "ring", mouth: "open", arms: "up", blush: 1, brow: "up" },
+  wink: { l: "dot", r: "arcUp", mouth: "M47 59 Q58 70 73 58", arms: "wave", blush: 1 },
+  sad: { l: "dot", r: "ring", mouth: "M50 66 Q60 58 70 66", arms: "droop", brow: "sad", tear: 1 },
+  worried: { l: "dot", r: "ring", mouth: "M49 65 Q54 61 59 65 Q64 69 71 64", arms: "hips", brow: "sad", sweat: 1 },
+  sleepy: { l: "line", r: "line", mouth: "M55 62 Q60 66 65 62", arms: "sleepy", zz: 1 },
+  proud: { l: "arcUp", r: "arcUp", mouth: "M48 60 Q60 70 72 60", arms: "proud", blush: 1, sparkle: 1, chest: 1 },
+  thinking: { l: "dotUp", r: "ringUp", mouth: "M52 63 Q58 61 68 64", arms: "think", brow: "think", dots: 1 },
+  waving: { l: "dot", r: "ring", mouth: "M47 59 Q60 70 73 59", arms: "wave", blush: 1 },
+  celebrating: { l: "arcUp", r: "arcUp", mouth: "open", arms: "hurray", blush: 1, confetti: 1 }
+};
+function stuEye(kind, x, ink, hi) {
+  var y = 44, s = { stroke: ink, strokeWidth: 3, fill: "none", strokeLinecap: "round" };
+  switch (kind) {
+    case "dot":
+      return stuH("ellipse", { cx: x, cy: y, rx: 3.6, ry: 4.2, fill: ink });
+    case "dotUp":
+      return stuH("ellipse", { cx: x + 1.5, cy: y - 2, rx: 3.6, ry: 4.2, fill: ink });
+    case "big":
+      return stuH("g", null, stuH("circle", { cx: x, cy: y, r: 6, fill: ink }), stuH("circle", { cx: x + 1.8, cy: y - 2, r: 1.8, fill: hi }));
+    case "ring":
+      return stuH("g", null, stuH("circle", { cx: x, cy: y, r: 5.4, fill: hi, stroke: ink, strokeWidth: 2.6 }), stuH("circle", { cx: x, cy: y, r: 2.4, fill: ink }));
+    case "ringUp":
+      return stuH("g", null, stuH("circle", { cx: x, cy: y - 1, r: 5.4, fill: hi, stroke: ink, strokeWidth: 2.6 }), stuH("circle", { cx: x + 1.5, cy: y - 3, r: 2.4, fill: ink }));
+    case "arcUp":
+      return stuH("path", Object.assign({ d: "M" + (x - 5) + " " + (y + 2) + " Q" + x + " " + (y - 6) + " " + (x + 5) + " " + (y + 2) }, s));
+    case "line":
+      return stuH("path", Object.assign({ d: "M" + (x - 5) + " " + (y + 1) + " Q" + x + " " + (y + 4) + " " + (x + 5) + " " + (y + 1) }, s));
+  }
+}
+function StudMascot(p) {
+  var mood = STU_MOODS[p.mood] ? p.mood : "happy", m = STU_MOODS[mood];
+  var color = p.color || "#9EC83D", ink = p.outline || "#0E1F18", edge = p.edge || ink, size = p.size || 96;
+  var hi = stuMix(color, "#ffffff", 0.82), shine = stuMix(color, "#ffffff", 0.45), blush = stuMix(color, "#ff4d7a", 0.55), shade = stuMix(color, "#000000", 0.12);
+  var walking = !!p.walking, arms = STU_ARMS[m.arms];
+  var line = { stroke: ink, strokeWidth: 3.4, fill: "none", strokeLinecap: "round", strokeLinejoin: "round" };
+  var eline = Object.assign({}, line, { stroke: edge });
+  var ky = m.chest ? -2 : 0;
+  if (typeof document !== "undefined" && !document.getElementById("stu-style")) {
+    var st = document.createElement("style");
+    st.id = "stu-style";
+    st.textContent = STU_CSS;
+    document.head.appendChild(st);
+  }
+  function arm(a, side) {
+    var sx = side ? 91 : 31, sy = m.chest ? 62 : 60;
+    return stuH("path", Object.assign({ key: "arm" + side, d: "M" + sx + " " + sy + " L" + a[0] + " " + a[1] + " L" + a[2] + " " + a[3] }, eline));
+  }
+  function leg(x, cls) {
+    return stuH(
+      "g",
+      { key: "leg" + x, className: walking ? cls : void 0 },
+      stuH("path", Object.assign({ d: "M" + x + " 81 L" + x + " 104" }, eline)),
+      stuH("path", Object.assign({ d: "M" + (x - 6) + " 106 Q" + (x - 6) + " 102 " + (x - 1) + " 102.5 L" + (x + 6) + " 103 Q" + (x + 8) + " 108 " + (x + 3) + " 109 L" + (x - 4) + " 109 Q" + (x - 6) + " 109 " + (x - 6) + " 106 Z", fill: color }, eline, { strokeWidth: 3 }))
+    );
+  }
+  var mouth;
+  if (p.speaking) {
+    mouth = stuH("g", { className: "stu-talk" }, stuH("path", { d: "M51 60 Q60 62 69 60 Q68 70 60 70 Q52 70 51 60 Z", fill: ink, stroke: ink, strokeWidth: 2.4, strokeLinejoin: "round" }));
+  } else if (m.mouth === "open") {
+    mouth = [
+      stuH("path", { key: "o", d: "M49 58 Q60 60 71 58 Q70 72 60 72 Q50 72 49 58 Z", fill: ink, stroke: ink, strokeWidth: 2.4, strokeLinejoin: "round" }),
+      stuH("path", { key: "t", d: "M54 69 Q60 64 66 69 Q60 72 54 69 Z", fill: blush })
+    ];
+  } else {
+    mouth = stuH("path", Object.assign({ d: m.mouth }, line, { strokeWidth: 3 }));
+  }
+  var bs = { stroke: ink, strokeWidth: 2.6, fill: "none", strokeLinecap: "round" }, brows = null;
+  if (m.brow === "sad") brows = [stuH("path", Object.assign({ key: 1, d: "M40 38 L53 33" }, bs)), stuH("path", Object.assign({ key: 2, d: "M80 38 L67 33" }, bs))];
+  if (m.brow === "up") brows = [stuH("path", Object.assign({ key: 1, d: "M42 33 Q48 29 54 33" }, bs)), stuH("path", Object.assign({ key: 2, d: "M66 33 Q72 29 78 33" }, bs))];
+  if (m.brow === "think") brows = stuH("path", Object.assign({ d: "M66 32 Q72 29 78 33" }, bs));
+  var extras = [];
+  if (m.blush) extras.push(stuH("ellipse", { key: "b1", cx: 40, cy: 55, rx: 5, ry: 3, fill: blush, opacity: 0.5 }), stuH("ellipse", { key: "b2", cx: 80, cy: 55, rx: 5, ry: 3, fill: blush, opacity: 0.5 }));
+  if (m.tear) extras.push(stuH("path", { key: "tr", d: "M72 52 Q75 57 72 60 Q69 57 72 52 Z", fill: "#7cc4ff", stroke: ink, strokeWidth: 1.6 }));
+  if (m.sweat) extras.push(stuH("path", { key: "sw", d: "M85 28 Q88 33 85 36 Q82 33 85 28 Z", fill: "#7cc4ff", stroke: ink, strokeWidth: 1.6 }));
+  var star = function(cx, cy, r, k) {
+    return stuH("path", { key: k, d: "M" + cx + " " + (cy - r) + " Q" + cx + " " + cy + " " + (cx + r) + " " + cy + " Q" + cx + " " + cy + " " + cx + " " + (cy + r) + " Q" + cx + " " + cy + " " + (cx - r) + " " + cy + " Q" + cx + " " + cy + " " + cx + " " + (cy - r) + " Z", fill: ink });
+  };
+  if (m.sparkle) extras.push(stuH("g", { key: "sp", className: "stu-spark" }, star(100, 22, 8, "s1")), star(22, 14, 4, "s2"));
+  if (m.zz) extras.push(stuH("text", { key: "zz", x: 92, y: 20, fontSize: 14, fontWeight: 800, fontFamily: "system-ui,sans-serif", fill: ink, className: "stu-conf" }, "z"), stuH("text", { key: "zz2", x: 101, y: 8, fontSize: 10, fontWeight: 800, fontFamily: "system-ui,sans-serif", fill: ink, className: "stu-conf" }, "z"));
+  if (m.dots) extras.push(stuH("circle", { key: "d1", cx: 96, cy: 24, r: 2, fill: ink }), stuH("circle", { key: "d2", cx: 102, cy: 16, r: 3, fill: ink }), stuH("circle", { key: "d3", cx: 110, cy: 6, r: 4.2, fill: "none", stroke: ink, strokeWidth: 2 }));
+  if (m.confetti) [[12, 14, "#F27BAA"], [28, 4, "#FFC93C"], [96, 6, "#5BC0EB"], [108, 18, "#F27BAA"], [60, 2, "#FFC93C"], [116, 40, "#5BC0EB"], [4, 36, "#5BC0EB"]].forEach(function(c, i) {
+    extras.push(stuH("rect", { key: "c" + i, x: c[0], y: c[1], width: 5, height: 5, rx: 1.4, fill: c[2], className: "stu-conf", style: { animationDelay: i * 0.17 + "s" }, transform: "rotate(" + i * 27 + " " + c[0] + " " + c[1] + ")" }));
+  });
+  var face = stuH("g", null, stuH("g", { className: "stu-blink" }, stuEye(m.l, 48, ink, hi), stuEye(m.r, 72, ink, hi)), brows, mouth);
+  var body = stuH(
+    "g",
+    { className: walking ? "stu-bob" : void 0 },
+    stuH(
+      "g",
+      { className: "stu-breathe" },
+      arms.map(function(a, i) {
+        return arm(a, i);
+      }),
+      stuH("path", { d: STU_BODY, fill: color, stroke: edge, strokeWidth: 4, strokeLinejoin: "round" }),
+      stuH("path", { d: "M37 27 L37 40", stroke: shine, strokeWidth: 3.4, strokeLinecap: "round", opacity: 0.9 }),
+      stuH("path", { d: "M38 77 L89 75", stroke: shade, strokeWidth: 3, strokeLinecap: "round", opacity: 0.6 }),
+      stuH("g", { transform: "translate(0 " + ky + ")" }, face),
+      extras
+    )
+  );
+  var aria = p.ariaLabel ? { role: "img", "aria-label": p.ariaLabel } : { "aria-hidden": true };
+  return stuH(
+    "span",
+    { className: "stu-root " + (p.className || ""), style: Object.assign({ transform: p.facing === "left" ? "scaleX(-1)" : void 0, filter: p.onDark ? "drop-shadow(0 0 1.2px rgba(255,255,255,.95))" : void 0 }, p.style) },
+    stuH(
+      "svg",
+      Object.assign({ viewBox: "-2 -4 124 120", height: size, width: size * 124 / 120, xmlns: "http://www.w3.org/2000/svg" }, aria),
+      stuH("g", null, leg(47, "stu-legA"), leg(73, "stu-legB"), body)
+    )
+  );
+}
+const STU_NAME = "Stu";
+const stuSettingOn = (key) => lsGet("settings", {})[key] !== false;
+const stuDeclinesToday = () => {
+  const d = lsGet("stuDeclines", null);
+  return d && d.date === dayKey() ? d.count : 0;
+};
+const stuRecordDecline = () => lsSet("stuDeclines", { date: dayKey(), count: stuDeclinesToday() + 1 });
+function stuPalette() {
+  let name = "Lime";
+  try {
+    name = localStorage.getItem("studlin-accent") || "Lime";
+  } catch (e) {
+  }
+  const a = ACCENTS[name] || ACCENTS.Lime;
+  return { color: a.dk.lime, outline: "#0E1F18", edge: T.mode === "dark" ? "#E6ECE7" : "#0E1F18" };
+}
+const STU_EXIT_MOOD = { yes: "happy", cheer: "proud", no: "sad", late: "worried" };
+function StudCompanion({ mode, title, clock, navExpanded, onYes, onDone }) {
+  const [phase, setPhase] = useState("in");
+  const declinesBefore = useRef(stuDeclinesToday()).current;
+  const howRef = useRef(mode === "cheer" ? "cheer" : "late");
+  useEffect(() => {
+    const t = [];
+    if (phase === "in") t.push(setTimeout(() => setPhase("talk"), 1500));
+    if (phase === "talk" && mode === "ask") t.push(setTimeout(() => {
+      howRef.current = "late";
+      setPhase("late");
+    }, 32e3));
+    if (phase === "talk" && mode === "cheer") t.push(setTimeout(() => setPhase("out"), 4200));
+    if (phase === "yes") t.push(setTimeout(() => {
+      if (onYes) onYes();
+      setPhase("out");
+    }, 800));
+    if (phase === "no" || phase === "late") t.push(setTimeout(() => setPhase("out"), phase === "no" ? 2e3 : 2800));
+    if (phase === "out") t.push(setTimeout(() => {
+      if (onDone) onDone();
+    }, 1300));
+    return () => t.forEach(clearTimeout);
+  }, [phase]);
+  const short = (title || "your next task").length > 38 ? (title || "").slice(0, 37) + "..." : title || "your next task";
+  let mood = "happy", line = "", sub = "";
+  if (phase === "in") {
+    mood = "happy";
+  } else if (phase === "talk" && mode === "cheer") {
+    mood = "celebrating";
+    line = title ? "Nice work on " + short + "!" : "Nice work!";
+  } else if (phase === "talk") {
+    mood = declinesBefore >= 2 ? "worried" : "waving";
+    line = declinesBefore >= 2 ? "Last nudge, I promise. Ready for " + short + "?" : "Time to start " + short + "?";
+    sub = clock ? "It's on your plan for " + clock + "." : "";
+  } else if (phase === "yes") {
+    mood = "celebrating";
+    line = "Let's do it!";
+  } else if (phase === "no") {
+    mood = "sad";
+    line = declinesBefore >= 1 ? "Okay. I'll give you some space." : "Aw, okay. I'll be around.";
+  } else if (phase === "late") {
+    mood = "worried";
+    line = "No rush. It's on your calendar.";
+  } else if (phase === "out") {
+    mood = STU_EXIT_MOOD[howRef.current] || "happy";
+  }
+  const walking = phase === "in" || phase === "out";
+  const pal = stuPalette();
+  const left = (navExpanded ? 230 : 48) + 16;
+  const showBubble = !walking;
+  const reduce = typeof document !== "undefined" && !!document.body && document.body.getAttribute("data-motion") === "reduce";
+  return /* @__PURE__ */ React.createElement("div", { className: "stu-wrap-anim", role: "status", "aria-live": "polite", style: { position: "fixed", bottom: 14, left, zIndex: 999, display: "flex", alignItems: "flex-end", gap: 6, pointerEvents: "none", animation: reduce ? "none" : phase === "in" ? "stuWalkIn 1.5s ease-out both" : phase === "out" ? "stuWalkOut 1.3s ease-in both" : "none" } }, /* @__PURE__ */ React.createElement("style", null, "@keyframes stuWalkIn{from{transform:translateX(-340px)}to{transform:translateX(0)}}@keyframes stuWalkOut{from{transform:translateX(0)}to{transform:translateX(-340px)}}@keyframes stuBubbleIn{from{opacity:0;transform:translateY(6px) scale(.96)}to{opacity:1;transform:none}}@media (prefers-reduced-motion:reduce){.stu-wrap-anim,.stu-wrap-anim *{animation:none!important}}"), /* @__PURE__ */ React.createElement("span", { style: { pointerEvents: "auto" } }, /* @__PURE__ */ React.createElement(StudMascot, { mood, size: 88, walking, facing: phase === "out" ? "left" : "right", speaking: phase === "talk" && mode === "cheer", ariaLabel: STU_NAME, ...pal })), showBubble && /* @__PURE__ */ React.createElement("div", { style: { pointerEvents: "auto", marginBottom: 46, maxWidth: 270, padding: "12px 14px", borderRadius: 14, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 10px 30px rgba(0,0,0,0.22)", animation: reduce ? "none" : "stuBubbleIn .22s ease both" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text, lineHeight: 1.45 } }, line), sub && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginTop: 3 } }, sub), phase === "talk" && mode === "ask" && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
+    howRef.current = "yes";
+    setPhase("yes");
+  }, style: { padding: "6px 12px", fontSize: 11.5 } }, "Yes, let's go"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => {
+    stuRecordDecline();
+    howRef.current = "no";
+    setPhase("no");
+  }, style: { padding: "6px 12px", fontSize: 11.5 } }, "Not now"))));
+}
 const SettingsCtx = React.createContext({ toggles: {}, tog: () => {
 } });
 function SettingsToggle({ k, label }) {
@@ -22475,7 +22727,12 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     setMergeConfirm(null);
   };
   const [canvasSeeding, setCanvasSeeding] = useState(false);
-  const [toggles, setToggles] = useState(() => ({ ...{ push: true, sound: true, deadline: true, classReminders: false, onlineStatus: true, incognito: false, twofa: false, motion: false, hand: true, wrapped: true, autoSession: false, block: false, notifMaster: true, sysPush: false, chatChimes: true, shareAvailability: false, askCheckIns: true, askDurationQuestions: true }, ...lsGet("settings", {}) }));
+  useEffect(() => {
+    const sync = () => setToggles((t) => ({ ...t, ...lsGet("settings", {}) }));
+    window.addEventListener("studlin-settings-changed", sync);
+    return () => window.removeEventListener("studlin-settings-changed", sync);
+  }, []);
+  const [toggles, setToggles] = useState(() => ({ ...{ push: true, sound: true, deadline: true, classReminders: false, onlineStatus: true, incognito: false, twofa: false, motion: false, hand: true, wrapped: true, autoSession: false, block: false, notifMaster: true, sysPush: false, chatChimes: true, shareAvailability: false, askCheckIns: true, askDurationQuestions: true, nudgesMaster: true, mascotReminders: true, mascotCheers: true }, ...lsGet("settings", {}) }));
   const [shareModePickerOpen, setShareModePickerOpen] = useState(false);
   const [shareCandidates, setShareCandidates] = useState([]);
   const [shareCandidatesLoading, setShareCandidatesLoading] = useState(false);
@@ -22537,7 +22794,8 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     applyAnalyticsChoice(next);
   };
   const tog = (k) => setToggles((t) => {
-    const n = { ...t, [k]: !t[k] };
+    const cur = { ...t, ...lsGet("settings", {}) };
+    const n = { ...cur, [k]: !cur[k] };
     lsSet("settings", n);
     if (k === "motion" && typeof document !== "undefined" && document.body) document.body.setAttribute("data-motion", n.motion ? "reduce" : "");
     if (k === "incognito") upsertProfile();
@@ -23413,7 +23671,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
   ))), toggles.shareAvailabilityMode === "selected" && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted } }, (toggles.shareAvailabilitySelectedUids || []).length === 0 ? "Nobody picked yet -- sharing is on, but no one can see it." : (toggles.shareAvailabilitySelectedUids || []).length + " friend" + ((toggles.shareAvailabilitySelectedUids || []).length === 1 ? "" : "s") + " can see your free/busy time."), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: openShareModePicker, style: { flexShrink: 0, fontSize: 11.5, fontWeight: 700, color: T.lime, background: "none", border: `1px solid ${T.lime}55`, borderRadius: 7, padding: "6px 10px", cursor: "pointer", fontFamily: T.font } }, "Manage")))), /* @__PURE__ */ React.createElement(Modal, { open: shareModePickerOpen, onClose: () => setShareModePickerOpen(false), title: "Choose who can see your free/busy time", sub: "Only these friends' 'Find Shared Study Window' searches and Schedule with Friends overlays will see when you're busy.", width: 420 }, shareCandidatesLoading ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "Loading your friends\u2026") : shareCandidates.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "No friends yet -- add some in Studlin Network first.") : /* @__PURE__ */ React.createElement(React.Fragment, null, shareCandidates.length > 5 && /* @__PURE__ */ React.createElement(Input, { value: shareSearchQuery, onChange: (e) => setShareSearchQuery(e.target.value), placeholder: "Search friends", style: { marginBottom: 10, width: "100%" } }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, maxHeight: 360, overflowY: "auto" } }, shareCandidates.filter((c) => c.name.toLowerCase().includes(shareSearchQuery.trim().toLowerCase())).map((c) => {
     const checked = (toggles.shareAvailabilitySelectedUids || []).includes(c.uid);
     return /* @__PURE__ */ React.createElement("label", { key: c.uid, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 8, border: `1px solid ${T.border}`, cursor: "pointer", background: checked ? T.card2 : "transparent" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked, onChange: () => toggleShareSelectedUid(c.uid), style: { cursor: "pointer" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text } }, c.name));
-  })))), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "Questions Studlin asks"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "These are how Studlin learns things like how long a class really takes you or how a session went \u2014 never required, always skippable, and if you keep skipping one Studlin turns it off for you automatically."), /* @__PURE__ */ React.createElement(Row, { label: "Post-session check-ins", sub: "A quick 'how did that go?' after a study session tied to an exam or assignment.", k: "_", right: /* @__PURE__ */ React.createElement("button", { type: "button", role: "switch", "aria-checked": !!toggles.askCheckIns, "aria-label": "Post-session check-ins", onClick: () => handleAskToggle("askCheckIns"), style: { padding: 0, boxSizing: "border-box", width: 38, height: 20, borderRadius: 10, background: toggles.askCheckIns ? T.lime : T.card2, border: `1px solid ${toggles.askCheckIns ? T.lime : T.border}`, position: "relative", cursor: "pointer", transition: "all 0.2s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 14, borderRadius: "50%", background: toggles.askCheckIns ? T.bg : "#fff", position: "absolute", top: 2, left: toggles.askCheckIns ? 21 : 2, transition: "left 0.2s" } })) }), /* @__PURE__ */ React.createElement(Row, { label: '"How long did this really take?"', sub: "Asked only when you finish a session without using the Lock-In Timer, and only for a class Studlin doesn't have enough real data on yet.", k: "_", right: /* @__PURE__ */ React.createElement("button", { type: "button", role: "switch", "aria-checked": !!toggles.askDurationQuestions, "aria-label": "How long did this really take question", onClick: () => handleAskToggle("askDurationQuestions"), style: { padding: 0, boxSizing: "border-box", width: 38, height: 20, borderRadius: 10, background: toggles.askDurationQuestions ? T.lime : T.card2, border: `1px solid ${toggles.askDurationQuestions ? T.lime : T.border}`, position: "relative", cursor: "pointer", transition: "all 0.2s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 14, borderRadius: "50%", background: toggles.askDurationQuestions ? T.bg : "#fff", position: "absolute", top: 2, left: toggles.askDurationQuestions ? 21 : 2, transition: "left 0.2s" } })) })), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "Data & AI"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "You own your notes, essays, and recordings."), /* @__PURE__ */ React.createElement(Row, { label: "Anonymous usage analytics", sub: "Helps us fix bugs and prioritise features. On by default; turn it off any time.", k: "_", right: /* @__PURE__ */ React.createElement("button", { type: "button", role: "switch", "aria-checked": !!!analyticsOptOut, "aria-label": "Anonymous usage analytics", onClick: toggleAnalytics, style: { padding: 0, boxSizing: "border-box", width: 38, height: 20, borderRadius: 10, background: !analyticsOptOut ? T.lime : T.card2, border: `1px solid ${!analyticsOptOut ? T.lime : T.border}`, position: "relative", cursor: "pointer", transition: "all 0.2s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 14, borderRadius: "50%", background: !analyticsOptOut ? T.bg : "#fff", position: "absolute", top: 2, left: !analyticsOptOut ? 21 : 2, transition: "left 0.2s" } })) }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: exportAllData }, React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 6 } }, Icon.copy, "Export all data")), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: downloadChatHistory, disabled: chatHistoryLoading }, chatHistoryLoading ? "Preparing\u2026" : "Download chat history"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle" }, "Privacy policy"))), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "What Studlin AI remembers"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "Standing preferences it's picked up from your chats \u2014 not one-off requests, just things worth not re-explaining every time."), aiTimeOfDay && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, marginBottom: 8 } }, confirmRemoveTimeOfDay ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, "Forget this?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => {
+  })))), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "Suggestions and Stu"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "Control how much Studlin speaks up. Everything here is optional."), /* @__PURE__ */ React.createElement(Row, { label: "Suggestions and tips", sub: 'Occasional ideas like "default new tasks to midday?" and the questions below. Off means none of them pop up.', k: "nudgesMaster" }), /* @__PURE__ */ React.createElement(Row, { label: "Stu reminds me before things start", sub: "Stu walks in a few minutes before a study block or deadline and asks if you want to start. Off uses a plain pop-up instead.", k: "mascotReminders" }), /* @__PURE__ */ React.createElement(Row, { label: "Stu cheers when I finish", sub: "A quick celebration after you complete a task.", k: "mascotCheers" })), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "Questions Studlin asks"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "These are how Studlin learns things like how long a class really takes you or how a session went \u2014 never required, always skippable, and if you keep skipping one Studlin turns it off for you automatically."), /* @__PURE__ */ React.createElement(Row, { label: "Post-session check-ins", sub: "A quick 'how did that go?' after a study session tied to an exam or assignment.", k: "_", right: /* @__PURE__ */ React.createElement("button", { type: "button", role: "switch", "aria-checked": !!toggles.askCheckIns, "aria-label": "Post-session check-ins", onClick: () => handleAskToggle("askCheckIns"), style: { padding: 0, boxSizing: "border-box", width: 38, height: 20, borderRadius: 10, background: toggles.askCheckIns ? T.lime : T.card2, border: `1px solid ${toggles.askCheckIns ? T.lime : T.border}`, position: "relative", cursor: "pointer", transition: "all 0.2s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 14, borderRadius: "50%", background: toggles.askCheckIns ? T.bg : "#fff", position: "absolute", top: 2, left: toggles.askCheckIns ? 21 : 2, transition: "left 0.2s" } })) }), /* @__PURE__ */ React.createElement(Row, { label: '"How long did this really take?"', sub: "Asked only when you finish a session without using the Lock-In Timer, and only for a class Studlin doesn't have enough real data on yet.", k: "_", right: /* @__PURE__ */ React.createElement("button", { type: "button", role: "switch", "aria-checked": !!toggles.askDurationQuestions, "aria-label": "How long did this really take question", onClick: () => handleAskToggle("askDurationQuestions"), style: { padding: 0, boxSizing: "border-box", width: 38, height: 20, borderRadius: 10, background: toggles.askDurationQuestions ? T.lime : T.card2, border: `1px solid ${toggles.askDurationQuestions ? T.lime : T.border}`, position: "relative", cursor: "pointer", transition: "all 0.2s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 14, borderRadius: "50%", background: toggles.askDurationQuestions ? T.bg : "#fff", position: "absolute", top: 2, left: toggles.askDurationQuestions ? 21 : 2, transition: "left 0.2s" } })) })), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "Data & AI"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "You own your notes, essays, and recordings."), /* @__PURE__ */ React.createElement(Row, { label: "Anonymous usage analytics", sub: "Helps us fix bugs and prioritise features. On by default; turn it off any time.", k: "_", right: /* @__PURE__ */ React.createElement("button", { type: "button", role: "switch", "aria-checked": !!!analyticsOptOut, "aria-label": "Anonymous usage analytics", onClick: toggleAnalytics, style: { padding: 0, boxSizing: "border-box", width: 38, height: 20, borderRadius: 10, background: !analyticsOptOut ? T.lime : T.card2, border: `1px solid ${!analyticsOptOut ? T.lime : T.border}`, position: "relative", cursor: "pointer", transition: "all 0.2s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 14, borderRadius: "50%", background: !analyticsOptOut ? T.bg : "#fff", position: "absolute", top: 2, left: !analyticsOptOut ? 21 : 2, transition: "left 0.2s" } })) }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: exportAllData }, React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 6 } }, Icon.copy, "Export all data")), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: downloadChatHistory, disabled: chatHistoryLoading }, chatHistoryLoading ? "Preparing\u2026" : "Download chat history"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle" }, "Privacy policy"))), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "What Studlin AI remembers"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "Standing preferences it's picked up from your chats \u2014 not one-off requests, just things worth not re-explaining every time."), aiTimeOfDay && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, marginBottom: 8 } }, confirmRemoveTimeOfDay ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, "Forget this?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => {
     removeAiTimeOfDay();
     setConfirmRemoveTimeOfDay(false);
   } }, "Forget"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmRemoveTimeOfDay(false) }, "Cancel")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, "Prefers ", aiTimeOfDay, " study sessions"), /* @__PURE__ */ React.createElement("button", { onClick: () => setConfirmRemoveTimeOfDay(true), style: { background: "none", border: `1px solid ${T.border}`, color: T.muted, cursor: "pointer", borderRadius: 6, padding: "4px 10px", fontSize: 12, fontFamily: T.font, flexShrink: 0 } }, "Remove"))), aiMemoryFacts.length === 0 && !aiTimeOfDay ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, padding: "16px 0", textAlign: "center", borderTop: `1px solid ${T.border}` } }, "Nothing remembered yet. It'll pick things up naturally as you chat.") : aiMemoryFacts.map((f, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, marginBottom: 8 } }, confirmRemoveFactIdx === i ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, "Forget this?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => removeAiFact(i) }, "Forget"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmRemoveFactIdx(null) }, "Cancel")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, f.text), /* @__PURE__ */ React.createElement("button", { onClick: () => setConfirmRemoveFactIdx(i), style: { background: "none", border: `1px solid ${T.border}`, color: T.muted, cursor: "pointer", borderRadius: 6, padding: "4px 10px", fontSize: 12, fontFamily: T.font, flexShrink: 0 } }, "Remove")))), (aiMemoryFacts.length > 0 || aiTimeOfDay) && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 6 } }, confirmClearMemory ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Forget everything Studlin AI remembers about you?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: clearAiMemory }, "Yes, clear all"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmClearMemory(false) }, "Cancel")) : /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmClearMemory(true) }, "Clear all"))), /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 10 } }, "Account security"), /* @__PURE__ */ React.createElement(Row, { label: "Two-factor authentication", sub: "Add a one-time code on every sign in.", k: "twofa", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: true, style: { opacity: 0.4, cursor: "not-allowed" } }, "Coming Soon") }), /* @__PURE__ */ React.createElement(Row, { label: "Active sessions", sub: "See and sign out other signed-in devices.", k: "sessions", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: true, style: { opacity: 0.4, cursor: "not-allowed" } }, "Coming Soon") }), /* @__PURE__ */ React.createElement(Row, { label: "Change password", sub: passwordResetSent ? "Reset link sent to " + profile.email + "." : "We'll email you a secure link to set a new one.", k: "pw", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: passwordResetLoading, onClick: sendPasswordReset }, passwordResetLoading ? "Sending\u2026" : passwordResetSent ? "Resend" : "Email reset link") }))), active === "Subjects & Labels" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Manage Subjects & Labels"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Color-code your classes. These labels appear on your calendar and tasks globally.")), /* @__PURE__ */ React.createElement(Btn, { onClick: () => {
@@ -24550,7 +24808,7 @@ function App() {
   const offerDurationQuestionIfDue = (task) => {
     if (!task || task.timeSpent || task.isGeneralTask || task.routineId) return;
     if (task.kind !== "study block" || !task.subject) return;
-    if (lsGet("settings", {}).askDurationQuestions === false) return;
+    if (lsGet("settings", {}).askDurationQuestions === false || !nudgesAllowed()) return;
     if (durationSampleCountFor(task.subject, task.kind) >= TIER0_MIN_BUCKET_SAMPLE) return;
     if (isDurationQuestionOnCooldown(task.subject, task.kind)) return;
     setDurationQuestionOffer({ task });
@@ -24575,6 +24833,7 @@ function App() {
     const events = lsGet("events", []);
     const task = events.find((e) => e.id === taskId);
     if (!task) return;
+    if (stuSettingOn("mascotCheers")) setStuCheer({ id: taskId + "-" + Date.now(), at: Date.now(), title: task.title || "" });
     if (shouldOfferProjectCheckIn(task, events)) setProjectCheckInTaskId(taskId);
     else if (task.kind === "study block" && !task.routineId && task.dueEventId) {
       const examEvent = task.dueEventId ? events.find((e) => e.id === task.dueEventId) : null;
@@ -24588,7 +24847,7 @@ function App() {
         } else {
           setPricingOpen(canGenQuizReason() === "free-tier" ? "studyMaterialGen" : "aiUsageCap");
         }
-      } else {
+      } else if (nudgesAllowed()) {
         setExamCheckIn(task);
       }
     }
@@ -24930,11 +25189,30 @@ function App() {
   };
   const navExpanded = !navCollapsed;
   const [headsUpEvent, setHeadsUpEvent] = useState(null);
+  const [stuCheer, setStuCheer] = useState(null);
+  const [nudgeOffToast, setNudgeOffToast] = useState("");
+  const turnOffNudges = () => {
+    lsSet("settings", { ...lsGet("settings", {}), nudgesMaster: false });
+    try {
+      window.dispatchEvent(new Event("studlin-settings-changed"));
+    } catch (e) {
+    }
+    setStrugglingBucketOffer(null);
+    setPeakInsightOffer(null);
+    setExamPrepSpacingOffer(null);
+    setUnscheduledDueSoonOffer(null);
+    setNudgeOffToast("Okay, no more suggestions. You can turn them back on in Settings, Privacy.");
+    setTimeout(() => setNudgeOffToast(""), 4500);
+  };
   const notifiedHeadsUpRef = useRef(/* @__PURE__ */ new Set());
+  useEffect(() => {
+    if (timerTask) setHeadsUpEvent(null);
+  }, [timerTask]);
   useEffect(() => {
     const HEADS_UP_MINS = 10;
     const check = () => {
       if (timerTask) return;
+      if (stuSettingOn("mascotReminders") && stuDeclinesToday() >= 3) return;
       const today = dayKey();
       const nowMins = (() => {
         const d = /* @__PURE__ */ new Date();
@@ -24951,7 +25229,7 @@ function App() {
       if (upcoming) {
         notifiedHeadsUpRef.current.add(upcoming.id);
         setHeadsUpEvent(upcoming);
-        setTimeout(() => setHeadsUpEvent((h) => h && h.id === upcoming.id ? null : h), 12e3);
+        setTimeout(() => setHeadsUpEvent((h) => h && h.id === upcoming.id ? null : h), stuSettingOn("mascotReminders") ? 4e4 : 12e3);
       }
     };
     check();
@@ -25485,22 +25763,22 @@ function App() {
     const missedItems = computeCatchUpMissedItems(evs, today);
     const catchUpOffered = missedItems.length >= CATCHUP_BANNER_THRESHOLD;
     const recoveryPending = missedItems.length >= CATCHUP_RECOVERY_THRESHOLD;
-    const strugglingBucket = detectStrugglingBucket(getSchedulePreferences());
+    const strugglingBucket = nudgesAllowed() ? detectStrugglingBucket(getSchedulePreferences()) : null;
     if (strugglingBucket) {
       if (recoveryPending) queueInsightNudge("strugglingBucket", strugglingBucket);
       else setStrugglingBucketOffer(strugglingBucket);
     }
-    const unscheduledDueSoon = detectUnscheduledDueSoon(evs, today);
+    const unscheduledDueSoon = nudgesAllowed() ? detectUnscheduledDueSoon(evs, today) : null;
     if (unscheduledDueSoon) {
       if (recoveryPending) queueInsightNudge("unscheduledDueSoon", unscheduledDueSoon);
       else setUnscheduledDueSoonOffer(unscheduledDueSoon);
     }
-    const peakInsight = strugglingBucket ? null : detectPeakHourInsight(getSchedulePreferences());
+    const peakInsight = strugglingBucket || !nudgesAllowed() ? null : detectPeakHourInsight(getSchedulePreferences());
     if (peakInsight) {
       if (recoveryPending) queueInsightNudge("peakInsight", peakInsight);
       else setPeakInsightOffer(peakInsight);
     }
-    if (!strugglingBucket && !peakInsight) {
+    if (nudgesAllowed() && !strugglingBucket && !peakInsight) {
       const spacingOffer = detectExamPrepSpacingOffer();
       if (spacingOffer) setExamPrepSpacingOffer(spacingOffer);
     }
@@ -25908,10 +26186,24 @@ function App() {
   }, style: { width: "100%", justifyContent: "center" } }, "Done"))), /* @__PURE__ */ React.createElement(ProjectCheckInModal, { taskId: projectCheckInTaskId, onClose: () => setProjectCheckInTaskId(null), onToast: (msg) => {
     setDashToast(msg);
     setTimeout(() => setDashToast(""), 2800);
-  } }), bottomRightSlot === "suggestion" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: STUDLIN_AI_BUBBLE_CLEARANCE, right: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 360 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, marginBottom: 12, lineHeight: 1.5 } }, examPrepSuggestion.reason), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, ["shorten", "extend", "drop-remaining", "pull-closer", "shaky-packed"].includes(examPrepSuggestion.type) && /* @__PURE__ */ React.createElement(Btn, { onClick: acceptExamPrepSuggestion, style: { flex: 1, justifyContent: "center", fontSize: 12, padding: "7px 14px" } }, examPrepSuggestion.type === "shorten" ? "Shorten it" : examPrepSuggestion.type === "extend" ? "Extend it" : examPrepSuggestion.type === "drop-remaining" ? "Drop them" : examPrepSuggestion.type === "shaky-packed" ? "Fit it in anyway" : "Move it closer"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: dismissExamPrepSuggestion, style: { flex: 1, justifyContent: "center", fontSize: 12, padding: "7px 14px" } }, ["ahead-of-pace", "last-session"].includes(examPrepSuggestion.type) ? "Got it" : "Leave it"))), strugglingBucketOffer && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10, lineHeight: 1.5 } }, "Your ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.amber } }, PEAK_BUCKET_LABELS[strugglingBucketOffer.strugglingBucket].toLowerCase()), " tasks haven't been sticking \u2014 ", strugglingBucketOffer.recentMissedCount, " of your last ", strugglingBucketOffer.recentWindow, " were missed. Default new tasks to ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, PEAK_BUCKET_LABELS[strugglingBucketOffer.suggestedBucket].toLowerCase()), " instead?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: acceptStrugglingBucketOffer, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Switch to ", PEAK_BUCKET_LABELS[strugglingBucketOffer.suggestedBucket]), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: declineStrugglingBucketOffer, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Not now"))), examPrepSpacingOffer && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10, lineHeight: 1.5 } }, "Your real exam prep tends to happen close to the deadline, no matter how far out Studlin schedules it. Want fewer, closer-together sessions instead of a spread-out plan you might not get to?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: acceptExamPrepSpacingOffer, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Switch it"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: declineExamPrepSpacingOffer, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Not now"))), peakInsightOffer && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10, lineHeight: 1.5 } }, "Looks like you actually finish more ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, PEAK_BUCKET_LABELS[peakInsightOffer.suggestedBucket].toLowerCase()), " tasks (", Math.round(peakInsightOffer.suggestedPct * 100), "%) than ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.amber } }, PEAK_BUCKET_LABELS[peakInsightOffer.currentBucket].toLowerCase()), " ones (", Math.round(peakInsightOffer.currentPct * 100), "%) \u2014 update your peak hours?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: acceptPeakHourInsight, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Switch to ", PEAK_BUCKET_LABELS[peakInsightOffer.suggestedBucket]), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: declinePeakHourInsight, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Not now"))), expiredPending.length > 0 && !calendarWizardOpen && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 76, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("strong", { style: { color: T.red } }, expiredPending.length, " task", expiredPending.length !== 1 ? "s" : ""), " missed ", expiredPending.length !== 1 ? "their" : "its", " deadline without being finished."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 12, maxHeight: 160, overflowY: "auto" } }, expiredPending.map((ev) => /* @__PURE__ */ React.createElement("div", { key: ev.id, style: { fontSize: 12, padding: "6px 9px", background: T.card2, borderRadius: 8, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.title))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: clearExpiredPending, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Clear them"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: () => setExpiredPending([]), style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Keep them"))), headsUpEvent && !timerTask && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "12px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 300, display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, /* @__PURE__ */ React.createElement("strong", null, headsUpEvent.title), " starts soon \u2014 ", fmtRolloverClock(headsUpEvent.time), "."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
+  } }), bottomRightSlot === "suggestion" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: STUDLIN_AI_BUBBLE_CLEARANCE, right: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 360 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, marginBottom: 12, lineHeight: 1.5 } }, examPrepSuggestion.reason), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, ["shorten", "extend", "drop-remaining", "pull-closer", "shaky-packed"].includes(examPrepSuggestion.type) && /* @__PURE__ */ React.createElement(Btn, { onClick: acceptExamPrepSuggestion, style: { flex: 1, justifyContent: "center", fontSize: 12, padding: "7px 14px" } }, examPrepSuggestion.type === "shorten" ? "Shorten it" : examPrepSuggestion.type === "extend" ? "Extend it" : examPrepSuggestion.type === "drop-remaining" ? "Drop them" : examPrepSuggestion.type === "shaky-packed" ? "Fit it in anyway" : "Move it closer"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: dismissExamPrepSuggestion, style: { flex: 1, justifyContent: "center", fontSize: 12, padding: "7px 14px" } }, ["ahead-of-pace", "last-session"].includes(examPrepSuggestion.type) ? "Got it" : "Leave it"))), strugglingBucketOffer && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10, lineHeight: 1.5 } }, "Your ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.amber } }, PEAK_BUCKET_LABELS[strugglingBucketOffer.strugglingBucket].toLowerCase()), " tasks haven't been sticking \u2014 ", strugglingBucketOffer.recentMissedCount, " of your last ", strugglingBucketOffer.recentWindow, " were missed. Default new tasks to ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, PEAK_BUCKET_LABELS[strugglingBucketOffer.suggestedBucket].toLowerCase()), " instead?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: acceptStrugglingBucketOffer, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Switch to ", PEAK_BUCKET_LABELS[strugglingBucketOffer.suggestedBucket]), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: declineStrugglingBucketOffer, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Not now")), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: turnOffNudges, style: { background: "none", border: "none", color: T.muted, fontSize: 11.5, cursor: "pointer", fontFamily: T.font, padding: "8px 0 0", textDecoration: "underline" } }, "Stop showing suggestions like this")), examPrepSpacingOffer && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10, lineHeight: 1.5 } }, "Your real exam prep tends to happen close to the deadline, no matter how far out Studlin schedules it. Want fewer, closer-together sessions instead of a spread-out plan you might not get to?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: acceptExamPrepSpacingOffer, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Switch it"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: declineExamPrepSpacingOffer, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Not now")), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: turnOffNudges, style: { background: "none", border: "none", color: T.muted, fontSize: 11.5, cursor: "pointer", fontFamily: T.font, padding: "8px 0 0", textDecoration: "underline" } }, "Stop showing suggestions like this")), peakInsightOffer && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10, lineHeight: 1.5 } }, "Looks like you actually finish more ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, PEAK_BUCKET_LABELS[peakInsightOffer.suggestedBucket].toLowerCase()), " tasks (", Math.round(peakInsightOffer.suggestedPct * 100), "%) than ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.amber } }, PEAK_BUCKET_LABELS[peakInsightOffer.currentBucket].toLowerCase()), " ones (", Math.round(peakInsightOffer.currentPct * 100), "%) \u2014 update your peak hours?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: acceptPeakHourInsight, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Switch to ", PEAK_BUCKET_LABELS[peakInsightOffer.suggestedBucket]), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: declinePeakHourInsight, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Not now")), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: turnOffNudges, style: { background: "none", border: "none", color: T.muted, fontSize: 11.5, cursor: "pointer", fontFamily: T.font, padding: "8px 0 0", textDecoration: "underline" } }, "Stop showing suggestions like this")), expiredPending.length > 0 && !calendarWizardOpen && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 76, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("strong", { style: { color: T.red } }, expiredPending.length, " task", expiredPending.length !== 1 ? "s" : ""), " missed ", expiredPending.length !== 1 ? "their" : "its", " deadline without being finished."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 12, maxHeight: 160, overflowY: "auto" } }, expiredPending.map((ev) => /* @__PURE__ */ React.createElement("div", { key: ev.id, style: { fontSize: 12, padding: "6px 9px", background: T.card2, borderRadius: 8, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.title))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: clearExpiredPending, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Clear them"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: () => setExpiredPending([]), style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Keep them"))), headsUpEvent && !timerTask && stuSettingOn("mascotReminders") && /* @__PURE__ */ React.createElement(
+    StudCompanion,
+    {
+      key: headsUpEvent.id,
+      mode: "ask",
+      title: headsUpEvent.title,
+      clock: fmtRolloverClock(headsUpEvent.time),
+      navExpanded,
+      onYes: () => {
+        setTimerTask(headsUpEvent);
+        setHeadsUpEvent(null);
+      },
+      onDone: () => setHeadsUpEvent(null)
+    }
+  ), !headsUpEvent && stuCheer && !timerTask && Date.now() - stuCheer.at < 1e4 && /* @__PURE__ */ React.createElement(StudCompanion, { key: stuCheer.id, mode: "cheer", title: stuCheer.title, navExpanded, onDone: () => setStuCheer(null) }), nudgeOffToast && /* @__PURE__ */ React.createElement("div", { role: "status", style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 1001, background: T.ink, color: T.cream, padding: "10px 18px", borderRadius: 99, fontSize: 12.5, fontWeight: 600, boxShadow: "0 8px 24px rgba(0,0,0,0.3)" } }, nudgeOffToast), headsUpEvent && !timerTask && !stuSettingOn("mascotReminders") && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "12px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 300, display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, /* @__PURE__ */ React.createElement("strong", null, headsUpEvent.title), " starts soon \u2014 ", fmtRolloverClock(headsUpEvent.time), "."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
     setTimerTask(headsUpEvent);
     setHeadsUpEvent(null);
-  }, style: { padding: "6px 12px", fontSize: 11 } }, "Begin now"), /* @__PURE__ */ React.createElement("button", { onClick: () => setHeadsUpEvent(null), style: { background: "none", border: "none", color: T.faint, fontSize: 11, cursor: "pointer", fontFamily: T.font } }, "Dismiss"))), liveInvite && !timerTask && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: headsUpEvent ? 110 : 20, left: 20, zIndex: 999, padding: "12px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.teal}55`, boxShadow: `0 8px 24px rgba(0,0,0,0.35), 0 0 0 1px ${T.teal}22`, animation: "studlinPop 0.2s ease", maxWidth: 300, display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, /* @__PURE__ */ React.createElement("strong", null, liveInvite.title), " is locking in right now \u2014 join?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: joinLiveInvite, style: { padding: "6px 12px", fontSize: 11, background: T.teal } }, "Join now"), /* @__PURE__ */ React.createElement("button", { onClick: () => setLiveInvite(null), style: { background: "none", border: "none", color: T.faint, fontSize: 11, cursor: "pointer", fontFamily: T.font } }, "Dismiss"))), /* @__PURE__ */ React.createElement(ScheduleSettingsPanel, { open: scheduleSettingsOpen, onClose: () => setScheduleSettingsOpen(false), onSave: () => {
+  }, style: { padding: "6px 12px", fontSize: 11 } }, "Begin now"), /* @__PURE__ */ React.createElement("button", { onClick: () => setHeadsUpEvent(null), style: { background: "none", border: "none", color: T.faint, fontSize: 11, cursor: "pointer", fontFamily: T.font } }, "Dismiss"))), liveInvite && !timerTask && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: headsUpEvent ? stuSettingOn("mascotReminders") ? 200 : 110 : 20, left: 20, zIndex: 999, padding: "12px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.teal}55`, boxShadow: `0 8px 24px rgba(0,0,0,0.35), 0 0 0 1px ${T.teal}22`, animation: "studlinPop 0.2s ease", maxWidth: 300, display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, /* @__PURE__ */ React.createElement("strong", null, liveInvite.title), " is locking in right now \u2014 join?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: joinLiveInvite, style: { padding: "6px 12px", fontSize: 11, background: T.teal } }, "Join now"), /* @__PURE__ */ React.createElement("button", { onClick: () => setLiveInvite(null), style: { background: "none", border: "none", color: T.faint, fontSize: 11, cursor: "pointer", fontFamily: T.font } }, "Dismiss"))), /* @__PURE__ */ React.createElement(ScheduleSettingsPanel, { open: scheduleSettingsOpen, onClose: () => setScheduleSettingsOpen(false), onSave: () => {
   } }), /* @__PURE__ */ React.createElement("style", null, `
         @keyframes studlinPulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.7)} }
         @keyframes studlinGlow { 0%,100%{box-shadow:0 0 0 0 var(--glow)} 50%{box-shadow:0 0 32px 8px var(--glow)} }
@@ -25991,7 +26283,7 @@ function App() {
       },
       onClose: () => setObClassGroups(null)
     }
-  ) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, marginBottom: 6 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 44, height: 44, borderRadius: 12, background: T.lime + "18", border: `1px solid ${T.lime}33`, display: "flex", alignItems: "center", justifyContent: "center", color: T.lime, fontSize: 20 } }, Icon.cal), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 19, fontWeight: 700, color: T.white, letterSpacing: "-0.02em" } }, "Connect your calendar"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Pull existing events into Studlin \xB7 takes 10 seconds"))), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 13, color: T.muted, lineHeight: 1.7, margin: "18px 0 20px" } }, "Studlin can read your upcoming events so you never double book a study block. Your calendar data is cached locally and never stored on our servers."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10, marginBottom: 24 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 14, padding: "13px 16px", borderRadius: 10, background: T.card2, border: `1px solid ${obGoogleLinked ? T.teal + "44" : T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { width: 36, height: 36, borderRadius: 9, background: "rgba(66,133,244,0.10)", border: "1px solid rgba(66,133,244,0.22)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("svg", { width: "18", height: "18", viewBox: "0 0 24 24", fill: "none" }, /* @__PURE__ */ React.createElement("path", { d: "M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z", fill: "#4285F4" }), /* @__PURE__ */ React.createElement("path", { d: "M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z", fill: "#34A853" }), /* @__PURE__ */ React.createElement("path", { d: "M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z", fill: "#FBBC05" }), /* @__PURE__ */ React.createElement("path", { d: "M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z", fill: "#EA4335" }))), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white } }, "Google Calendar"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: obGoogleLinked ? T.teal : calOnboardGoogleSyncing ? T.amber : T.muted, marginTop: 1 } }, calOnboardGoogleSyncing ? "Importing events\u2026" : obGoogleLinked ? "Connected \xB7 events imported" : "Read-only \xB7 your events, no editing")), obGoogleLinked ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, color: T.teal, fontSize: 12, fontWeight: 600 } }, Icon.check, " Connected") : /* @__PURE__ */ React.createElement(BtnSm, { variant: "lime", style: { flexShrink: 0, opacity: calOnboardGoogleSyncing ? 0.55 : 1 }, onClick: async () => {
+  ) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, marginBottom: 6 } }, /* @__PURE__ */ React.createElement(StudMascot, { mood: "waving", size: 60, ariaLabel: STU_NAME, ...stuPalette() }), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 19, fontWeight: 700, color: T.white, letterSpacing: "-0.02em" } }, "Connect your calendar"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Pull existing events into Studlin \xB7 takes 10 seconds"))), /* @__PURE__ */ React.createElement("p", { style: { fontSize: 13, color: T.muted, lineHeight: 1.7, margin: "18px 0 20px" } }, "Studlin can read your upcoming events so you never double book a study block. Your calendar data is cached locally and never stored on our servers."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10, marginBottom: 24 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 14, padding: "13px 16px", borderRadius: 10, background: T.card2, border: `1px solid ${obGoogleLinked ? T.teal + "44" : T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { width: 36, height: 36, borderRadius: 9, background: "rgba(66,133,244,0.10)", border: "1px solid rgba(66,133,244,0.22)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("svg", { width: "18", height: "18", viewBox: "0 0 24 24", fill: "none" }, /* @__PURE__ */ React.createElement("path", { d: "M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z", fill: "#4285F4" }), /* @__PURE__ */ React.createElement("path", { d: "M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z", fill: "#34A853" }), /* @__PURE__ */ React.createElement("path", { d: "M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z", fill: "#FBBC05" }), /* @__PURE__ */ React.createElement("path", { d: "M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z", fill: "#EA4335" }))), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white } }, "Google Calendar"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: obGoogleLinked ? T.teal : calOnboardGoogleSyncing ? T.amber : T.muted, marginTop: 1 } }, calOnboardGoogleSyncing ? "Importing events\u2026" : obGoogleLinked ? "Connected \xB7 events imported" : "Read-only \xB7 your events, no editing")), obGoogleLinked ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, color: T.teal, fontSize: 12, fontWeight: 600 } }, Icon.check, " Connected") : /* @__PURE__ */ React.createElement(BtnSm, { variant: "lime", style: { flexShrink: 0, opacity: calOnboardGoogleSyncing ? 0.55 : 1 }, onClick: async () => {
     setCalOnboardGoogleSyncing(true);
     const result = await connectGoogleCalendar();
     setCalOnboardGoogleSyncing(false);
