@@ -69,7 +69,7 @@ function loadStudlinModule(options) {
   // and explicitly exposes the ones tests actually need.
   const epilogue = `
 ;(function(){
-  var exportNames = ["dayKey","filterByQuery","parseJsonReply","sanitizeMeetingTimes","sanitizeHsPeriods","findOverlappingPeriods","sanitizeDeadlineDate","uniqueDeadlineFilter","looksLikeDateString","appendImportLog","summarizeImportLog","scanReviewNotice","isDiscoverableFor","shouldShowSyllabusNudge","syllabusPaywallKey","selectSidebarDueItems","SIDEBAR_DUE_CAP","checklistItemVisible","lsGet","lsSet","findOpenSlotFor","findReliableSlotFor",
+  var exportNames = ["dayKey","JOURNAL_PROMPTS","JOURNAL_MOODS","journalPromptFor","normalizeJournal","upsertJournalEntry","removeJournalEntry","filterByQuery","parseJsonReply","sanitizeMeetingTimes","sanitizeHsPeriods","findOverlappingPeriods","sanitizeDeadlineDate","uniqueDeadlineFilter","looksLikeDateString","appendImportLog","summarizeImportLog","scanReviewNotice","isDiscoverableFor","shouldShowSyllabusNudge","syllabusPaywallKey","selectSidebarDueItems","SIDEBAR_DUE_CAP","checklistItemVisible","lsGet","lsSet","findOpenSlotFor","findReliableSlotFor",
     "findLegalSlotOrNull","rebalanceDay","isTier0Missed","computePausePlan","computeOccupiedIntervals",
     "IMMEDIATE_CATCHUP_MINS","IMMEDIATE_NOW_BUFFER_MINS",
     "findAllOverlaps","CALENDAR_OVERLAP_SCAN_DAYS_AHEAD","CALENDAR_OVERLAP_SCAN_DAYS_BEHIND",
@@ -169,7 +169,7 @@ function loadStudlinModule(options) {
     "nextAvailableSubjectColor","SUBJECT_COLORS",
     "deleteCourseWithCascade","undoCourseDelete",
     "routineMeetingsOverlap","newMeetingTimesForCourse","dedupCourseClassRoutines","mergeCourses","courseIdForLabelFuzzy","normalizeCourseLabel","findDuplicateCourseGroups",
-    "detectGoogleClassCandidates","applyGoogleEvents","nudgesAllowed","smartFeaturesOn","stuSettingOn","stuDeclinesToday","stuRecordDecline","stuPalette","stuBedtimeDue","deriveStudlinAiProactiveSignal","looksLikeGoogleClass","groupGoogleClassCandidates","importGoogleClassGroups","getGoogleClassGroups",
+    "detectGoogleClassCandidates","applyGoogleEvents","nudgesAllowed","smartFeaturesOn","stuSettingOn","stuDeclinesToday","stuRecordDecline","stuPalette","stuBedtimeDue","stuIsSleepWindow","stuSleepsNow","stuMotionPlan","stuHasNightRoutine","stuNightOfferEligible","stuNightRoutinePrefill","stuRecordWindDownDismiss","deriveStudlinAiProactiveSignal","looksLikeGoogleClass","groupGoogleClassCandidates","importGoogleClassGroups","getGoogleClassGroups",
     "deriveFreePeriodsFromPeriods","getHsSchoolHours","saveHsSchoolHours",
     "subtractIntervals","effectiveLeadIn","effectiveTrailOut","effectiveLeadInForManualPlacement","effectiveTrailOutForManualPlacement","isLeadInFixed","isDuePill","isZeroDurationTimedReminder","isExpectedInClassOverlap","formatRealWorldScheduleForDate","findNowConflict",
     "assembleStudlinAiDigest","routeStudlinAiQuestion","STUDLIN_AI_DIGEST_DAYS",
