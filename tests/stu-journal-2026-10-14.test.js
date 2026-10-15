@@ -41,16 +41,25 @@ describe("journal pure helpers", () => {
     assert.equal(M.journalPromptFor("2026-10-14"), M.journalPromptFor("2026-10-14"));
     for (const k of ["2026-10-14", "2026-10-15", "2027-01-01"]) assert.ok(M.JOURNAL_PROMPTS.indexOf(M.journalPromptFor(k)) >= 0);
   });
-  test("one entry per day, same id, replaced text, newest first", () => {
-    let l = M.upsertJournalEntry([], { date: "2026-10-13", text: "a", mood: "good" }, "t1");
-    l = M.upsertJournalEntry(l, { date: "2026-10-14", text: "b", mood: null }, "t2");
-    l = M.upsertJournalEntry(l, { date: "2026-10-14", text: "c", mood: "okay", crisis: true }, "t3");
-    assert.equal(l.length, 2);
-    assert.equal(l[0].date, "2026-10-14");
-    assert.equal(l[0].text, "c");
-    assert.equal(l[0].createdAt, "t2");
-    assert.equal(l[0].updatedAt, "t3");
-    assert.equal(l[0].crisis, true);
+  test("log of entries: many per day, edit by id, titled, newest day first", () => {
+    let l = M.upsertJournalEntry([], { date: "2026-10-13", title: "Old", text: "a", mood: "good" }, "2026-10-13T08:00:00Z");
+    l = M.upsertJournalEntry(l, { date: "2026-10-14", title: "Morning", text: "b", mood: null }, "2026-10-14T08:00:00Z");
+    l = M.upsertJournalEntry(l, { date: "2026-10-14", title: "Evening", text: "c" }, "2026-10-14T20:00:00Z");
+    assert.equal(l.length, 3, "two entries on one day are both kept");
+    assert.equal(l[0].title, "Evening", "newest entry of the newest day first");
+    const id = l[0].id;
+    l = M.upsertJournalEntry(l, { id, date: "2026-10-14", title: "Evening 2", text: "d", mood: "okay", crisis: true }, "2026-10-14T21:00:00Z");
+    assert.equal(l.length, 3, "editing by id replaces, not adds");
+    const e = l.find((x) => x.id === id);
+    assert.equal(e.title, "Evening 2");
+    assert.equal(e.createdAt, "2026-10-14T20:00:00Z");
+    assert.equal(e.updatedAt, "2026-10-14T21:00:00Z");
+    assert.equal(e.crisis, true);
+  });
+  test("old one-per-day entries without a title still load", () => {
+    const l = M.normalizeJournal([{ id: "j-2026-10-10", date: "2026-10-10", text: "legacy", mood: "good" }]);
+    assert.equal(l.length, 1);
+    assert.equal(l[0].title, "");
   });
   test("invalid mood is dropped and removal works", () => {
     const l = M.normalizeJournal([{ id: "j-1", date: "2026-10-14", text: "x", mood: "sad-guess" }]);
@@ -69,6 +78,7 @@ describe("journal UI guardrails", () => {
     assert.ok(BLOCK.includes('title="Delete this entry?"') && BLOCK.includes('title="Delete your whole journal?"'));
     assert.ok(BLOCK.includes("Write your first entry"));
     assert.ok(BLOCK.includes("Stu is not a counselor."));
+    assert.ok(BLOCK.includes('placeholder="Title"') && BLOCK.includes("+ New entry"));
     assert.ok(BLOCK.includes("not sent to AI in this version"));
     assert.ok(BLOCK.includes("Download (JSON)"));
   });

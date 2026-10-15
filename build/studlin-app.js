@@ -3460,14 +3460,45 @@ function reconcileFixedEventConflicts(newFixedEvents) {
   lsSet("events", finalEvents);
   return { events: finalEvents, moved, needsAttention };
 }
+function scheduleAlertKey(a) {
+  return a.kind === "moved" ? "moved:" + a.id : "attention:" + (a.newEvent && a.newEvent.id) + "|" + (a.conflictsWith && a.conflictsWith.id);
+}
+function dismissedScheduleAlertKeys() {
+  return lsGet("dismissedScheduleAlerts", []);
+}
+function rememberDismissedScheduleAlerts(alerts) {
+  const keys = (alerts || []).filter((a) => a.kind === "attention").map(scheduleAlertKey);
+  if (keys.length === 0) return;
+  const merged = Array.from(/* @__PURE__ */ new Set([...dismissedScheduleAlertKeys(), ...keys])).slice(-300);
+  lsSet("dismissedScheduleAlerts", merged);
+}
 function dedupeScheduleAlerts(alerts) {
   const seen = /* @__PURE__ */ new Set();
+  const dismissed = new Set(dismissedScheduleAlertKeys());
   return (alerts || []).filter((a) => {
-    const key = a.kind === "moved" ? "moved:" + a.id : "attention:" + (a.newEvent && a.newEvent.id) + "|" + (a.conflictsWith && a.conflictsWith.id);
+    const key = scheduleAlertKey(a);
     if (seen.has(key)) return false;
+    if (a.kind === "attention" && dismissed.has(key)) return false;
     seen.add(key);
     return true;
   });
+}
+function scheduleAlertSummary(alerts) {
+  const list = alerts || [];
+  const moved = list.filter((a) => a.kind === "moved").length;
+  const attn = list.filter((a) => a.kind === "attention");
+  const parts = [];
+  if (moved > 0) parts.push(moved + " study session" + (moved !== 1 ? "s" : "") + " moved");
+  if (attn.length > 0) parts.push(attn.length + " conflict" + (attn.length !== 1 ? "s" : "") + " to look at");
+  const first = list[0];
+  let sub = "";
+  if (first) {
+    if (first.kind === "moved") sub = first.title + " moved to make room for " + first.causedByTitle + ".";
+    else if (first.noSlotFound) sub = "Could not find a new time for " + first.conflictsWith.title + ". It overlaps " + first.newEvent.title + ".";
+    else sub = first.newEvent.title + " overlaps " + first.conflictsWith.title + ".";
+    if (list.length > 1) sub += " Plus " + (list.length - 1) + " more.";
+  }
+  return { line: "Your schedule changed. " + parts.join(", ") + ".", sub };
 }
 function surfaceReconcileResult(result) {
   const entries = result.moved.map((m) => ({ kind: "moved", ...m })).concat(result.needsAttention.map((a) => ({ kind: "attention", ...a })));
@@ -6315,12 +6346,7 @@ function computeQuickCreateRange(anchorMins, curMins) {
   }
   return { startTime: minutesToTime(lo), endTime: minutesToTime(hi) };
 }
-function quickCreateSeedMinutes() {
-  return getLastDuration("quickCreate") || 30;
-}
-function computeQuickCreateRangeSeeded(anchorMins, curMins) {
-  return curMins === anchorMins ? computeQuickCreateRange(anchorMins, Math.min(1439, anchorMins + quickCreateSeedMinutes())) : computeQuickCreateRange(anchorMins, curMins);
-}
+const CREATE_DRAG_THRESHOLD_PX = 6;
 function normalizeTaskVal(v, defaultVal) {
   const n = v != null ? v : defaultVal;
   return n > 10 ? n / 1e3 : n / 10;
@@ -15605,9 +15631,7 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
     if (!(e.target.dataset && e.target.dataset.gridbg === "1")) return;
     e.preventDefault();
     const startMins = minsFromColY(dk, e.clientY);
-    createDragRef.current = { dateKey: dk, anchorMins: startMins };
-    const r = computeQuickCreateRange(startMins, startMins + quickCreateSeedMinutes());
-    onQuickCreateDrag(dk, r.startTime, r.endTime);
+    createDragRef.current = { dateKey: dk, anchorMins: startMins, startY: e.clientY, moved: false };
     setCreatingDragging(true);
     document.body.style.userSelect = "none";
   };
@@ -15616,8 +15640,12 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
     const onMove = (e) => {
       const info = createDragRef.current;
       if (!info || !onQuickCreateDrag) return;
+      if (!info.moved) {
+        if (Math.abs(e.clientY - info.startY) < CREATE_DRAG_THRESHOLD_PX) return;
+        info.moved = true;
+      }
       const curMins = minsFromColY(info.dateKey, e.clientY);
-      const r = computeQuickCreateRangeSeeded(info.anchorMins, curMins);
+      const r = computeQuickCreateRange(info.anchorMins, curMins);
       onQuickCreateDrag(info.dateKey, r.startTime, r.endTime);
     };
     const onUp = (e) => {
@@ -15625,9 +15653,9 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
       document.body.style.userSelect = "";
       const info = createDragRef.current;
       createDragRef.current = null;
-      if (!info || !onQuickCreateDragEnd) return;
+      if (!info || !info.moved || !onQuickCreateDragEnd) return;
       const curMins = minsFromColY(info.dateKey, e.clientY);
-      const r = computeQuickCreateRangeSeeded(info.anchorMins, curMins);
+      const r = computeQuickCreateRange(info.anchorMins, curMins);
       const col = wkColRefs.current[info.dateKey];
       const rect = col ? col.getBoundingClientRect() : null;
       onQuickCreateDragEnd(info.dateKey, r.startTime, r.endTime, { x: rect ? rect.right : e.clientX, y: e.clientY });
@@ -17994,9 +18022,7 @@ function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf,
     if (!(e.target.dataset && e.target.dataset.gridbg === "1")) return;
     e.preventDefault();
     const startMins = minsFromDayY(e.clientY);
-    createDragRef.current = { anchorMins: startMins };
-    const r = computeQuickCreateRange(startMins, startMins + quickCreateSeedMinutes());
-    onQuickCreateDrag(selDay, r.startTime, r.endTime);
+    createDragRef.current = { anchorMins: startMins, startY: e.clientY, moved: false };
     setCreatingDragging(true);
     document.body.style.userSelect = "none";
   };
@@ -18005,8 +18031,12 @@ function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf,
     const onMove = (e) => {
       const info = createDragRef.current;
       if (!info || !onQuickCreateDrag) return;
+      if (!info.moved) {
+        if (Math.abs(e.clientY - info.startY) < CREATE_DRAG_THRESHOLD_PX) return;
+        info.moved = true;
+      }
       const curMins = minsFromDayY(e.clientY);
-      const r = computeQuickCreateRangeSeeded(info.anchorMins, curMins);
+      const r = computeQuickCreateRange(info.anchorMins, curMins);
       onQuickCreateDrag(selDay, r.startTime, r.endTime);
     };
     const onUp = (e) => {
@@ -18014,9 +18044,9 @@ function DayPlanner({ dayEvents, setEvents: setEvents2, selDay, todayK, colorOf,
       document.body.style.userSelect = "";
       const info = createDragRef.current;
       createDragRef.current = null;
-      if (!info || !onQuickCreateDragEnd) return;
+      if (!info || !info.moved || !onQuickCreateDragEnd) return;
       const curMins = minsFromDayY(e.clientY);
-      const r = computeQuickCreateRangeSeeded(info.anchorMins, curMins);
+      const r = computeQuickCreateRange(info.anchorMins, curMins);
       const el = timelineRef.current;
       const rect = el ? el.getBoundingClientRect() : null;
       onQuickCreateDragEnd(selDay, r.startTime, r.endTime, { x: rect ? rect.right : e.clientX, y: e.clientY });
@@ -24043,6 +24073,7 @@ const JOURNAL_MOODS = [
   { id: "hard", label: "Hard" }
 ];
 const JOURNAL_MAX_CHARS = 5e3;
+const JOURNAL_MAX_TITLE = 80;
 function journalPromptFor(key) {
   const s = String(key || "");
   let h = 0;
@@ -24054,12 +24085,13 @@ function normalizeJournal(raw) {
   return raw.filter((e) => e && typeof e.date === "string" && typeof e.id === "string").map((e) => ({
     id: e.id,
     date: e.date,
+    title: typeof e.title === "string" ? e.title.slice(0, JOURNAL_MAX_TITLE) : "",
     text: typeof e.text === "string" ? e.text : "",
     mood: JOURNAL_MOODS.some((m) => m.id === e.mood) ? e.mood : null,
     createdAt: e.createdAt || "",
     updatedAt: e.updatedAt || e.createdAt || "",
     crisis: !!e.crisis
-  })).sort((a, b) => a.date < b.date ? 1 : a.date > b.date ? -1 : 0);
+  })).sort((a, b) => a.date < b.date ? 1 : a.date > b.date ? -1 : a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0);
 }
 function getJournal() {
   return normalizeJournal(lsGet("journal", []));
@@ -24067,11 +24099,12 @@ function getJournal() {
 function saveJournal(list) {
   lsSet("journal", normalizeJournal(list));
 }
-function upsertJournalEntry(list, { date, text, mood, crisis }, nowIso) {
+function upsertJournalEntry(list, { id, date, title, text, mood, crisis }, nowIso) {
   const base = normalizeJournal(list);
-  const prev = base.find((e) => e.date === date);
-  const entry = { id: prev ? prev.id : "j-" + date, date, text: String(text || "").slice(0, JOURNAL_MAX_CHARS), mood: mood || null, createdAt: prev ? prev.createdAt : nowIso, updatedAt: nowIso, crisis: !!crisis };
-  return normalizeJournal(base.filter((e) => e.date !== date).concat([entry]));
+  const prev = id ? base.find((e) => e.id === id) : null;
+  const newId = "j-" + date + "-" + String(nowIso).replace(/[^0-9]/g, "") + Math.random().toString(36).slice(2, 6);
+  const entry = { id: prev ? prev.id : newId, date, title: String(title || "").trim().slice(0, JOURNAL_MAX_TITLE), text: String(text || "").slice(0, JOURNAL_MAX_CHARS), mood: mood || null, createdAt: prev ? prev.createdAt : nowIso, updatedAt: nowIso, crisis: !!crisis };
+  return normalizeJournal(base.filter((e) => e.id !== entry.id).concat([entry]));
 }
 function removeJournalEntry(list, id) {
   return normalizeJournal(list).filter((e) => e.id !== id);
@@ -24091,13 +24124,21 @@ function downloadJournalJson() {
 function JournalCrisisCard() {
   return /* @__PURE__ */ React.createElement("div", { role: "alert", style: { padding: "12px 14px", borderRadius: 8, border: `1px solid ${T.border}`, background: T.card2, color: T.text, fontSize: 13, lineHeight: 1.5 } }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, marginBottom: 8 } }, STU_CRISIS_MESSAGE), /* @__PURE__ */ React.createElement("ul", { style: { margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 4 } }, STU_CRISIS_RESOURCES.map((r, ri) => /* @__PURE__ */ React.createElement("li", { key: ri }, r.includes("findahelpline.com") ? /* @__PURE__ */ React.createElement(React.Fragment, null, "Outside the US: ", /* @__PURE__ */ React.createElement("a", { href: "https://findahelpline.com", target: "_blank", rel: "noopener noreferrer", style: { color: T.text, textDecoration: "underline" } }, "findahelpline.com")) : r))));
 }
+function journalLongDateLabel(key, todayKey) {
+  const p = String(key).split("-");
+  const d = new Date(+p[0], (+p[1] || 1) - 1, +p[2] || 1);
+  if (isNaN(d.getTime())) return String(key);
+  const base = d.toLocaleDateString(void 0, { weekday: "long", month: "long", day: "numeric" });
+  return key === todayKey ? "Today, " + base : base;
+}
+function journalPreview(text) {
+  const t = String(text || "").replace(/\s+/g, " ").trim();
+  return t.length > 110 ? t.slice(0, 109) + "..." : t;
+}
 function JournalView() {
   const todayKey = dayKey();
   const [entries, setEntries] = useState(() => getJournal());
-  const today = entries.find((e) => e.date === todayKey) || null;
-  const [writing, setWriting] = useState(() => entries.length > 0);
-  const [text, setText] = useState(today ? today.text : "");
-  const [mood, setMood] = useState(today ? today.mood : null);
+  const [editing, setEditing] = useState(null);
   const [err, setErr] = useState("");
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState("");
@@ -24113,25 +24154,42 @@ function JournalView() {
   const onB = (e) => {
     e.target.style.borderColor = T.border;
   };
+  const startNew = () => {
+    setErr("");
+    setShowCrisis(false);
+    setEditing({ id: null, date: todayKey, title: "", text: "", mood: null });
+  };
+  const openEntry = (e) => {
+    setErr("");
+    setShowCrisis(false);
+    setEditing({ id: e.id, date: e.date, title: e.title || "", text: e.text, mood: e.mood });
+  };
+  const patch = (o) => {
+    setEditing((x) => ({ ...x, ...o }));
+    if (err) setErr("");
+  };
   const save = () => {
-    if (saving) return;
-    const t = text.trim();
-    if (!t && !mood) {
-      setErr("Write a line or pick how it went first.");
+    if (saving || !editing) return;
+    const title = editing.title.trim();
+    const body = editing.text.trim();
+    if (!title && !body) {
+      setErr("Add a title or write a line first.");
       return;
     }
-    if (t.length > JOURNAL_MAX_CHARS) {
+    if (body.length > JOURNAL_MAX_CHARS) {
       setErr("Keep it under " + JOURNAL_MAX_CHARS + " characters.");
       return;
     }
     setSaving(true);
     setErr("");
+    const t = (title + "\n" + body).trim();
     const crisis = detectCrisis(t);
     try {
-      saveJournal(upsertJournalEntry(getJournal(), { date: todayKey, text: t, mood, crisis }, (/* @__PURE__ */ new Date()).toISOString()));
+      saveJournal(upsertJournalEntry(getJournal(), { id: editing.id, date: editing.date || todayKey, title, text: body, mood: editing.mood, crisis }, (/* @__PURE__ */ new Date()).toISOString()));
       setEntries(getJournal());
       setShowCrisis(crisis);
-      flash("Saved on this device.");
+      setEditing(null);
+      flash("Saved to your journal.");
     } catch (e) {
       setErr("Couldn't save that. Try again.");
     }
@@ -24141,42 +24199,11 @@ function JournalView() {
     const id = confirmId;
     setConfirmId(null);
     saveJournal(removeJournalEntry(getJournal(), id));
-    const next = getJournal();
-    setEntries(next);
-    if (!next.some((e) => e.date === todayKey)) {
-      setText("");
-      setMood(null);
-      setShowCrisis(false);
-    }
+    setEntries(getJournal());
+    if (editing && editing.id === id) setEditing(null);
     flash("Entry deleted.");
   };
-  const past = entries.filter((e) => e.date !== todayKey);
-  return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement(StudMascot, { size: 44, mood: "happy", ariaLabel: "Stu", ...stuPalette() }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, lineHeight: 1.5 } }, "Just for you. Stored on this device only.")), entries.length === 0 && !writing ? /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", padding: "18px 8px" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, marginBottom: 12 } }, "No entries yet. One line is enough."), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setWriting(true) }, "Write your first entry")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { htmlFor: "journal-text", style: { display: "block", fontSize: 14, fontWeight: 600, color: T.white, marginBottom: 8 } }, journalPromptFor(todayKey)), /* @__PURE__ */ React.createElement("div", { role: "group", "aria-label": "How did today go (optional)", style: { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 } }, JOURNAL_MOODS.map((m) => /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      key: m.id,
-      type: "button",
-      "aria-pressed": mood === m.id,
-      onClick: () => setMood(mood === m.id ? null : m.id),
-      style: { padding: "7px 12px", borderRadius: 8, fontSize: 12.5, fontFamily: T.font, cursor: "pointer", border: `1px solid ${mood === m.id ? T.lime : T.border}`, background: mood === m.id ? T.lime + "22" : T.card2, color: T.text, fontWeight: mood === m.id ? 600 : 400 }
-    },
-    m.label
-  ))), /* @__PURE__ */ React.createElement(
-    "textarea",
-    {
-      id: "journal-text",
-      value: text,
-      onChange: (e) => {
-        setText(e.target.value);
-        if (err) setErr("");
-      },
-      onFocus: onF,
-      onBlur: onB,
-      rows: 5,
-      placeholder: "Optional. Write as much or as little as you like.",
-      style: { width: "100%", boxSizing: "border-box", background: T.card2, border: `1px solid ${err ? T.red : T.border}`, borderRadius: 8, padding: "10px 12px", color: T.text, fontSize: 13, lineHeight: 1.5, fontFamily: T.font, outline: "none", resize: "vertical" }
-    }
-  ), err && /* @__PURE__ */ React.createElement("div", { role: "alert", style: { color: T.red, fontSize: 12, marginTop: 6 } }, err), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginTop: 10 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: save, disabled: saving }, saving ? "Saving..." : today ? "Update today" : "Save"), today && /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => setConfirmId(today.id) }, "Delete today"))), showCrisis && /* @__PURE__ */ React.createElement(JournalCrisisCard, null), past.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 600, color: T.muted } }, "Past entries"), past.map((e) => /* @__PURE__ */ React.createElement("div", { key: e.id, style: { padding: "10px 12px", borderRadius: 8, border: `1px solid ${T.border}`, background: T.card2 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: e.text ? 4 : 0 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, fontWeight: 600, color: T.white } }, journalDateLabel(e.date)), e.mood && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11.5, color: T.muted } }, (JOURNAL_MOODS.find((m) => m.id === e.mood) || {}).label), /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setConfirmId(e.id), "aria-label": "Delete entry from " + journalDateLabel(e.date), style: { background: "none", border: `1px solid ${T.border}`, color: T.muted, cursor: "pointer", borderRadius: 6, padding: "3px 9px", fontSize: 11.5, fontFamily: T.font } }, "Delete")), e.text && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, lineHeight: 1.5, whiteSpace: "pre-wrap" } }, e.text))))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted } }, "Stu is not a counselor."), toast && /* @__PURE__ */ React.createElement("div", { role: "status", style: { position: "sticky", bottom: 0, alignSelf: "flex-start", padding: "8px 14px", borderRadius: 8, background: T.lime, color: T.lookOn ? lookTextOnFill(T.lime) : T.bg, fontSize: 12.5, fontWeight: 600 } }, toast), /* @__PURE__ */ React.createElement(
+  const footer = /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted } }, "Just for you. Stored on this device only. Stu is not a counselor."), toast && /* @__PURE__ */ React.createElement("div", { role: "status", style: { position: "sticky", bottom: 0, alignSelf: "flex-start", padding: "8px 14px", borderRadius: 8, background: T.lime, color: T.lookOn ? lookTextOnFill(T.lime) : T.bg, fontSize: 12.5, fontWeight: 600 } }, toast), /* @__PURE__ */ React.createElement(
     Modal,
     {
       open: !!confirmId,
@@ -24188,10 +24215,71 @@ function JournalView() {
     },
     /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text } }, "It will be removed from this device.")
   ));
+  if (editing) {
+    return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 12 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setEditing(null), style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 12.5, fontFamily: T.font, padding: "4px 0" } }, "< Back to journal")), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { htmlFor: "journal-title", style: { position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" } }, "Title"), /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        id: "journal-title",
+        value: editing.title,
+        maxLength: JOURNAL_MAX_TITLE,
+        onChange: (e) => patch({ title: e.target.value }),
+        onFocus: onF,
+        onBlur: onB,
+        placeholder: "Title",
+        autoFocus: true,
+        style: { width: "100%", boxSizing: "border-box", background: "transparent", border: "none", borderBottom: `1px solid ${T.border}`, padding: "6px 2px 10px", color: T.white, fontSize: 20, fontWeight: 700, fontFamily: T.font, outline: "none" }
+      }
+    ), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginTop: 8, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.muted } }, journalLongDateLabel(editing.date, todayKey)), /* @__PURE__ */ React.createElement("label", { style: { fontSize: 12, color: T.muted, display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" } }, /* @__PURE__ */ React.createElement("span", { style: { textDecoration: "underline" } }, "Change date"), /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        type: "date",
+        value: editing.date,
+        max: todayKey,
+        onChange: (e) => patch({ date: e.target.value || todayKey }),
+        "aria-label": "Entry date",
+        style: { background: T.card2, border: `1px solid ${T.border}`, borderRadius: 6, color: T.text, fontSize: 12, padding: "3px 6px", fontFamily: T.font }
+      }
+    )))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { htmlFor: "journal-text", style: { position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" } }, "Entry"), /* @__PURE__ */ React.createElement(
+      "textarea",
+      {
+        id: "journal-text",
+        value: editing.text,
+        onChange: (e) => patch({ text: e.target.value }),
+        onFocus: onF,
+        onBlur: onB,
+        rows: 10,
+        placeholder: "What's on your mind?",
+        style: { width: "100%", boxSizing: "border-box", background: T.card2, border: `1px solid ${err ? T.red : T.border}`, borderRadius: 10, padding: "12px 14px", color: T.text, fontSize: 14, lineHeight: 1.6, fontFamily: T.font, outline: "none", resize: "vertical", minHeight: 200 }
+      }
+    ), err && /* @__PURE__ */ React.createElement("div", { role: "alert", style: { color: T.red, fontSize: 12, marginTop: 6 } }, err)), /* @__PURE__ */ React.createElement("div", { role: "group", "aria-label": "How did it go (optional)", style: { display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted, marginRight: 2 } }, "Mood"), JOURNAL_MOODS.map((m) => /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        key: m.id,
+        type: "button",
+        "aria-pressed": editing.mood === m.id,
+        onClick: () => patch({ mood: editing.mood === m.id ? null : m.id }),
+        style: { padding: "6px 11px", borderRadius: 8, fontSize: 12, fontFamily: T.font, cursor: "pointer", border: `1px solid ${editing.mood === m.id ? T.lime : T.border}`, background: editing.mood === m.id ? T.lime + "22" : T.card2, color: T.text, fontWeight: editing.mood === m.id ? 600 : 400 }
+      },
+      m.label
+    ))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: save, disabled: saving }, saving ? "Saving..." : editing.id ? "Save changes" : "Save entry"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setEditing(null) }, "Cancel"), /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }), editing.id && /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => setConfirmId(editing.id) }, "Delete")), footer);
+  }
+  return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 14 } }, entries.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", padding: "26px 8px" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: T.white, marginBottom: 4 } }, "Your journal is empty"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, marginBottom: 14 } }, "Give it a title and write what's on your mind. One line is enough."), /* @__PURE__ */ React.createElement(Btn, { onClick: startNew }, "Write your first entry")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: 12.5, color: T.muted } }, entries.length, entries.length === 1 ? " entry" : " entries"), /* @__PURE__ */ React.createElement(Btn, { onClick: startNew }, "+ New entry")), showCrisis && /* @__PURE__ */ React.createElement(JournalCrisisCard, null), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, entries.map((e) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: e.id,
+      type: "button",
+      onClick: () => openEntry(e),
+      "aria-label": "Open entry " + (e.title || "Untitled"),
+      style: { textAlign: "left", width: "100%", padding: "12px 14px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.card2, cursor: "pointer", fontFamily: T.font, color: T.text, display: "block" }
+    },
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 14, fontWeight: 700, color: T.white, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, e.title || "Untitled"), e.mood && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11.5, color: T.muted } }, (JOURNAL_MOODS.find((m) => m.id === e.mood) || {}).label)),
+    /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, margin: "2px 0 4px" } }, journalLongDateLabel(e.date, todayKey)),
+    e.text && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, lineHeight: 1.5 } }, journalPreview(e.text))
+  )))), footer);
 }
 function JournalCard() {
   const [open, setOpen] = useState(false);
-  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 14, padding: "14px 18px", borderRadius: 8, border: `1px solid ${T.border}`, background: T.card } }, /* @__PURE__ */ React.createElement(StudMascot, { size: 36, mood: "happy", ...stuPalette() }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white } }, "Journal"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "A private note for today. Only on this device.")), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setOpen(true) }, "Open")), /* @__PURE__ */ React.createElement(Modal, { open, onClose: () => setOpen(false), title: "Journal", width: 520 }, /* @__PURE__ */ React.createElement("div", { style: { padding: "4px 0", overflowY: "auto", maxHeight: "70vh" } }, /* @__PURE__ */ React.createElement(JournalView, null))));
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 14, padding: "14px 18px", borderRadius: 8, border: `1px solid ${T.border}`, background: T.card } }, /* @__PURE__ */ React.createElement(StudMascot, { size: 36, mood: "happy", ...stuPalette() }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white } }, "Journal"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "Write what is on your mind. Only on this device.")), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setOpen(true) }, "Open")), /* @__PURE__ */ React.createElement(Modal, { open, onClose: () => setOpen(false), title: "Journal", width: 520 }, /* @__PURE__ */ React.createElement("div", { style: { padding: "4px 0", overflowY: "auto", maxHeight: "70vh" } }, /* @__PURE__ */ React.createElement(JournalView, null))));
 }
 function JournalSettingsCard() {
   const [count, setCount] = useState(() => getJournal().length);
@@ -24518,7 +24606,7 @@ function StuSleepingFab({ asleep }) {
   return /* @__PURE__ */ React.createElement("div", { "aria-hidden": "true", className: "stu-sleep-fab", style: { position: "fixed", bottom: "calc(20px + env(safe-area-inset-bottom, 0px))", right: 20, minWidth: 44, minHeight: 44, display: "grid", placeItems: "center", pointerEvents: "none", filter: "drop-shadow(0 4px 8px rgba(0,0,0,0.28))", zIndex: STUDLIN_AI_BUBBLE_Z } }, /* @__PURE__ */ React.createElement(StudMascot, { size: 56, mood: "sleepy", ...pal }), /* @__PURE__ */ React.createElement("span", { className: "stu-zz", style: { top: -2, right: -2, fontSize: 13, color: T.muted } }, "z"), /* @__PURE__ */ React.createElement("span", { className: "stu-zz", style: { top: -12, right: -12, fontSize: 10, color: T.muted, animationDelay: "1.2s" } }, "z"));
 }
 const STU_EXIT_MOOD = { yes: "happy", cheer: "proud", no: "sad", late: "worried" };
-function StudCompanion({ mode, title, clock, navExpanded, onYes, onDone, sub: subProp, firstPrompt = true, onNightRoutine }) {
+function StudCompanion({ mode, title, clock, navExpanded, onYes, onDone, sub: subProp, firstPrompt = true, onNightRoutine, onTurnOff }) {
   const [phase, setPhase] = useState("in");
   const declinesBefore = useRef(stuDeclinesToday()).current;
   const howRef = useRef(mode === "cheer" ? "cheer" : "late");
@@ -24553,6 +24641,16 @@ function StudCompanion({ mode, title, clock, navExpanded, onYes, onDone, sub: su
   } else if (phase === "talk" && mode === "cheer") {
     mood = "celebrating";
     line = title ? "Nice work on " + short + "!" : "Nice work!";
+  } else if (phase === "talk" && mode === "alert") {
+    mood = "thinking";
+    line = title;
+    sub = subProp || "";
+  } else if (phase === "yes" && mode === "alert") {
+    mood = "happy";
+    line = "Opening your calendar.";
+  } else if (phase === "no" && mode === "alert") {
+    mood = "happy";
+    line = "Okay, dismissed.";
   } else if (phase === "talk" && mode === "catchup") {
     mood = "thinking";
     line = title;
@@ -24593,7 +24691,7 @@ function StudCompanion({ mode, title, clock, navExpanded, onYes, onDone, sub: su
     mood = "worried";
     line = "No rush. It's on your calendar.";
   } else if (phase === "out") {
-    mood = mode === "bedtime" ? "sleepy" : mode === "catchup" ? "thinking" : STU_EXIT_MOOD[howRef.current] || "happy";
+    mood = mode === "bedtime" ? "sleepy" : mode === "catchup" ? "thinking" : mode === "alert" ? "happy" : STU_EXIT_MOOD[howRef.current] || "happy";
   }
   const walking = phase === "in" || phase === "out";
   const pal = stuPalette();
@@ -24605,7 +24703,13 @@ function StudCompanion({ mode, title, clock, navExpanded, onYes, onDone, sub: su
   };
   const physAnim = reduceMotionOn() ? "none" : poked > 0 && phase === "talk" ? "stuPoke .45s ease-out" : phase === "in" ? "stuHop .3s ease-in-out 5" : phase === "out" ? "stuHop .3s ease-in-out infinite" : phase === "talk" && mode === "cheer" ? "stuJump .75s ease-in-out infinite" : phase === "yes" ? "stuJump .75s ease-in-out 2" : phase === "no" && mode === "ask" ? "stuSlump 1s ease-out forwards" : phase === "talk" ? "stuLand .55s ease-out" : "none";
   const reduce = typeof document !== "undefined" && !!document.body && document.body.getAttribute("data-motion") === "reduce";
-  return /* @__PURE__ */ React.createElement("div", { className: "stu-wrap-anim", role: "status", "aria-live": "polite", style: { position: "fixed", bottom: 14, left, zIndex: 999, display: "flex", alignItems: "flex-end", gap: 6, pointerEvents: "none", animation: reduce ? "none" : phase === "in" ? "stuWalkIn 1.6s ease-out both" : phase === "out" ? "stuWalkOut 1.3s ease-in both" : "none" } }, /* @__PURE__ */ React.createElement("style", null, "@keyframes stuWalkIn{0%{transform:translateX(-340px)}72%{transform:translateX(9px)}86%{transform:translateX(-3px)}100%{transform:translateX(0)}}@keyframes stuWalkOut{0%{transform:translateX(0)}14%{transform:translateX(10px)}100%{transform:translateX(-340px)}}@keyframes stuBubbleIn{0%{opacity:0;transform:translateY(10px) scale(.6)}55%{opacity:1;transform:translateY(-2px) scale(1.06)}78%{transform:scale(.98)}100%{opacity:1;transform:none}}@keyframes stuHop{0%{transform:translateY(0) scale(1.08,.92)}25%{transform:translateY(-12px) scale(.94,1.08)}50%{transform:translateY(0) scale(1.08,.92)}62%,100%{transform:translateY(0) scale(1,1)}}@keyframes stuLand{0%{transform:scale(1.18,.82)}35%{transform:scale(.92,1.1)}65%{transform:scale(1.04,.97)}100%{transform:scale(1,1)}}@keyframes stuJump{0%,100%{transform:translateY(0) scale(1.12,.88)}20%{transform:translateY(-4px) scale(.93,1.1)}50%{transform:translateY(-26px) scale(.95,1.07)}80%{transform:translateY(0) scale(1.1,.9)}}@keyframes stuSlump{0%{transform:scale(1,1)}60%{transform:translateY(4px) scale(1.06,.9)}100%{transform:translateY(3px) scale(1.04,.93)}}@keyframes stuPoke{0%{transform:scale(1,1)}30%{transform:scale(1.2,.8)}60%{transform:translateY(-8px) scale(.9,1.14)}100%{transform:scale(1,1)}}@media (prefers-reduced-motion:reduce){.stu-wrap-anim,.stu-wrap-anim *{animation:none!important}}"), /* @__PURE__ */ React.createElement("span", { key: "phys-" + phase + "-" + poked, onClick: poke, style: { pointerEvents: "auto", display: "inline-block", transformOrigin: "50% 100%", cursor: "pointer", animation: physAnim } }, /* @__PURE__ */ React.createElement(StudMascot, { mood, size: 88, walking, facing: phase === "out" ? "left" : "right", speaking: phase === "talk" && mode === "cheer", ariaLabel: STU_NAME, ...pal })), showBubble && /* @__PURE__ */ React.createElement("div", { style: { pointerEvents: "auto", marginBottom: 46, maxWidth: 270, padding: "12px 14px", borderRadius: 14, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 10px 30px rgba(0,0,0,0.22)", animation: reduce ? "none" : "stuBubbleIn .22s ease both" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text, lineHeight: 1.45 } }, line), sub && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginTop: 3 } }, sub), phase === "talk" && mode === "catchup" && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
+  return /* @__PURE__ */ React.createElement("div", { className: "stu-wrap-anim", role: "status", "aria-live": "polite", style: { position: "fixed", bottom: 14, left, zIndex: 999, display: "flex", alignItems: "flex-end", gap: 6, pointerEvents: "none", animation: reduce ? "none" : phase === "in" ? "stuWalkIn 1.6s ease-out both" : phase === "out" ? "stuWalkOut 1.3s ease-in both" : "none" } }, /* @__PURE__ */ React.createElement("style", null, "@keyframes stuWalkIn{0%{transform:translateX(-340px)}72%{transform:translateX(9px)}86%{transform:translateX(-3px)}100%{transform:translateX(0)}}@keyframes stuWalkOut{0%{transform:translateX(0)}14%{transform:translateX(10px)}100%{transform:translateX(-340px)}}@keyframes stuBubbleIn{0%{opacity:0;transform:translateY(10px) scale(.6)}55%{opacity:1;transform:translateY(-2px) scale(1.06)}78%{transform:scale(.98)}100%{opacity:1;transform:none}}@keyframes stuHop{0%{transform:translateY(0) scale(1.08,.92)}25%{transform:translateY(-12px) scale(.94,1.08)}50%{transform:translateY(0) scale(1.08,.92)}62%,100%{transform:translateY(0) scale(1,1)}}@keyframes stuLand{0%{transform:scale(1.18,.82)}35%{transform:scale(.92,1.1)}65%{transform:scale(1.04,.97)}100%{transform:scale(1,1)}}@keyframes stuJump{0%,100%{transform:translateY(0) scale(1.12,.88)}20%{transform:translateY(-4px) scale(.93,1.1)}50%{transform:translateY(-26px) scale(.95,1.07)}80%{transform:translateY(0) scale(1.1,.9)}}@keyframes stuSlump{0%{transform:scale(1,1)}60%{transform:translateY(4px) scale(1.06,.9)}100%{transform:translateY(3px) scale(1.04,.93)}}@keyframes stuPoke{0%{transform:scale(1,1)}30%{transform:scale(1.2,.8)}60%{transform:translateY(-8px) scale(.9,1.14)}100%{transform:scale(1,1)}}@media (prefers-reduced-motion:reduce){.stu-wrap-anim,.stu-wrap-anim *{animation:none!important}}"), /* @__PURE__ */ React.createElement("span", { key: "phys-" + phase + "-" + poked, onClick: poke, style: { pointerEvents: "auto", display: "inline-block", transformOrigin: "50% 100%", cursor: "pointer", animation: physAnim } }, /* @__PURE__ */ React.createElement(StudMascot, { mood, size: 88, walking, facing: phase === "out" ? "left" : "right", speaking: phase === "talk" && mode === "cheer", ariaLabel: STU_NAME, ...pal })), showBubble && /* @__PURE__ */ React.createElement("div", { style: { pointerEvents: "auto", marginBottom: 46, maxWidth: 270, padding: "12px 14px", borderRadius: 14, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 10px 30px rgba(0,0,0,0.22)", animation: reduce ? "none" : "stuBubbleIn .22s ease both" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text, lineHeight: 1.45 } }, line), sub && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginTop: 3 } }, sub), phase === "talk" && mode === "alert" && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
+    howRef.current = "yes";
+    setPhase("yes");
+  }, style: { padding: "6px 12px", fontSize: 11.5 } }, "Open calendar"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => {
+    howRef.current = "no";
+    setPhase("no");
+  }, style: { padding: "6px 12px", fontSize: 11.5 } }, "Dismiss")), phase === "talk" && onTurnOff && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onTurnOff, style: { display: "block", marginTop: 8, background: "none", border: "none", padding: 0, color: T.muted, fontSize: 11, cursor: "pointer", fontFamily: T.font, textDecoration: "underline" } }, "Turn off Stu notifications"), phase === "talk" && mode === "catchup" && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
     howRef.current = "yes";
     setPhase("yes");
   }, style: { padding: "6px 12px", fontSize: 11.5 } }, "Show me"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => {
@@ -24679,7 +24783,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     window.addEventListener("studlin-settings-changed", sync);
     return () => window.removeEventListener("studlin-settings-changed", sync);
   }, []);
-  const [toggles, setToggles] = useState(() => ({ ...{ push: true, sound: true, deadline: true, classReminders: false, onlineStatus: true, incognito: false, twofa: false, motion: false, hand: true, wrapped: true, autoSession: false, block: false, notifMaster: true, sysPush: false, chatChimes: true, shareAvailability: false, askCheckIns: true, askDurationQuestions: true, nudgesMaster: true, smartFeatures: true, mascotReminders: true, mascotCheers: true, mascotBedtime: true, stuSleeps: true }, ...lsGet("settings", {}) }));
+  const [toggles, setToggles] = useState(() => ({ ...{ push: true, sound: true, deadline: true, classReminders: false, onlineStatus: true, incognito: false, twofa: false, motion: false, hand: true, wrapped: true, autoSession: false, block: false, notifMaster: true, sysPush: false, chatChimes: true, shareAvailability: false, askCheckIns: true, askDurationQuestions: true, nudgesMaster: true, smartFeatures: true, mascotReminders: true, mascotCheers: true, mascotBedtime: true, stuSleeps: true, mascotAlerts: true }, ...lsGet("settings", {}) }));
   const [shareModePickerOpen, setShareModePickerOpen] = useState(false);
   const [shareCandidates, setShareCandidates] = useState([]);
   const [shareCandidatesLoading, setShareCandidatesLoading] = useState(false);
@@ -25592,7 +25696,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
   ))), toggles.shareAvailabilityMode === "selected" && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted } }, (toggles.shareAvailabilitySelectedUids || []).length === 0 ? "Nobody picked yet -- sharing is on, but no one can see it." : (toggles.shareAvailabilitySelectedUids || []).length + " friend" + ((toggles.shareAvailabilitySelectedUids || []).length === 1 ? "" : "s") + " can see your free/busy time."), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: openShareModePicker, style: { flexShrink: 0, fontSize: 11.5, fontWeight: 700, color: T.lime, background: "none", border: `1px solid ${T.lime}55`, borderRadius: 7, padding: "6px 10px", cursor: "pointer", fontFamily: T.font } }, "Manage")))), /* @__PURE__ */ React.createElement(Modal, { open: shareModePickerOpen, onClose: () => setShareModePickerOpen(false), title: "Choose who can see your free/busy time", sub: "Only these friends' 'Find Shared Study Window' searches and Schedule with Friends overlays will see when you're busy.", width: 420 }, shareCandidatesLoading ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "Loading your friends\u2026") : shareCandidates.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "No friends yet -- add some in Studlin Network first.") : /* @__PURE__ */ React.createElement(React.Fragment, null, shareCandidates.length > 5 && /* @__PURE__ */ React.createElement(Input, { value: shareSearchQuery, onChange: (e) => setShareSearchQuery(e.target.value), placeholder: "Search friends", style: { marginBottom: 10, width: "100%" } }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, maxHeight: 360, overflowY: "auto" } }, shareCandidates.filter((c) => c.name.toLowerCase().includes(shareSearchQuery.trim().toLowerCase())).map((c) => {
     const checked = (toggles.shareAvailabilitySelectedUids || []).includes(c.uid);
     return /* @__PURE__ */ React.createElement("label", { key: c.uid, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 8, border: `1px solid ${T.border}`, cursor: "pointer", background: checked ? T.card2 : "transparent" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked, onChange: () => toggleShareSelectedUid(c.uid), style: { cursor: "pointer" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text } }, c.name));
-  })))), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.lookOn ? T.accentInk : T.white, marginBottom: 4, paddingBottom: T.lookOn ? 6 : 0, borderBottom: T.lookOn ? `2px solid ${T.accentSoft}` : "none" } }, "Suggestions and Stu"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "Control how much Studlin speaks up. Everything here is optional."), /* @__PURE__ */ React.createElement(Row, { label: "Learn how I work (timers, predictions, suggestions)", sub: "Begin buttons and timers, duration questions, best-hours ideas, and study spacing tips. Off means you plan and finish everything by hand.", k: "smartFeatures" }), /* @__PURE__ */ React.createElement(Row, { label: "Suggestions and tips", sub: 'Occasional ideas like "default new tasks to midday?" and the questions below. Off means none of them pop up.', k: "nudgesMaster" }), /* @__PURE__ */ React.createElement(Row, { label: "Stu reminds me before things start", sub: "Stu walks in a few minutes before a study block or deadline and asks if you want to start. Off uses a plain pop-up instead. Needs Learn how I work on.", k: "mascotReminders" }), /* @__PURE__ */ React.createElement(Row, { label: "Stu reminds me when it is getting late", sub: "About 30 minutes before the bedtime you set in class setup, a sleepy Stu asks if you want to wrap up. Once a night.", k: "mascotBedtime" }), /* @__PURE__ */ React.createElement(Row, { label: "Stu sleeps at night", sub: "Between the bedtime and wake time you set in class setup, Stu naps in the corner. Tap him any time to chat.", k: "stuSleeps" }), /* @__PURE__ */ React.createElement(Row, { label: "Stu cheers when I finish", sub: "A quick celebration after you complete a task.", k: "mascotCheers" }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginTop: 10 } }, "Stu's chat button is always on.")), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.lookOn ? T.accentInk : T.white, marginBottom: 4, paddingBottom: T.lookOn ? 6 : 0, borderBottom: T.lookOn ? `2px solid ${T.accentSoft}` : "none" } }, "Questions Studlin asks"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "These are how Studlin learns things like how long a class really takes you or how a session went \u2014 never required, always skippable, and if you keep skipping one Studlin turns it off for you automatically."), /* @__PURE__ */ React.createElement(Row, { label: "Post-session check-ins", sub: "A quick 'how did that go?' after a study session tied to an exam or assignment.", k: "_", right: /* @__PURE__ */ React.createElement("button", { type: "button", role: "switch", "aria-checked": !!toggles.askCheckIns, "aria-label": "Post-session check-ins", onClick: () => handleAskToggle("askCheckIns"), style: { padding: 0, boxSizing: "border-box", width: 38, height: 20, borderRadius: 10, background: toggles.askCheckIns ? T.lime : T.card2, border: `1px solid ${toggles.askCheckIns ? T.lime : T.border}`, position: "relative", cursor: "pointer", transition: "all 0.2s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 14, borderRadius: "50%", background: toggles.askCheckIns ? T.bg : "#fff", position: "absolute", top: 2, left: toggles.askCheckIns ? 21 : 2, transition: "left 0.2s" } })) }), /* @__PURE__ */ React.createElement(Row, { label: '"How long did this really take?"', sub: "Asked only when you finish a session without using the Lock-In Timer, and only for a class Studlin doesn't have enough real data on yet.", k: "_", right: /* @__PURE__ */ React.createElement("button", { type: "button", role: "switch", "aria-checked": !!toggles.askDurationQuestions, "aria-label": "How long did this really take question", onClick: () => handleAskToggle("askDurationQuestions"), style: { padding: 0, boxSizing: "border-box", width: 38, height: 20, borderRadius: 10, background: toggles.askDurationQuestions ? T.lime : T.card2, border: `1px solid ${toggles.askDurationQuestions ? T.lime : T.border}`, position: "relative", cursor: "pointer", transition: "all 0.2s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 14, borderRadius: "50%", background: toggles.askDurationQuestions ? T.bg : "#fff", position: "absolute", top: 2, left: toggles.askDurationQuestions ? 21 : 2, transition: "left 0.2s" } })) })), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.lookOn ? T.accentInk : T.white, marginBottom: 4, paddingBottom: T.lookOn ? 6 : 0, borderBottom: T.lookOn ? `2px solid ${T.accentSoft}` : "none" } }, "Data & AI"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "You own your notes, essays, and recordings."), /* @__PURE__ */ React.createElement(Row, { label: "Anonymous usage analytics", sub: "Helps us fix bugs and prioritise features. On by default; turn it off any time.", k: "_", right: /* @__PURE__ */ React.createElement("button", { type: "button", role: "switch", "aria-checked": !!!analyticsOptOut, "aria-label": "Anonymous usage analytics", onClick: toggleAnalytics, style: { padding: 0, boxSizing: "border-box", width: 38, height: 20, borderRadius: 10, background: !analyticsOptOut ? T.lime : T.card2, border: `1px solid ${!analyticsOptOut ? T.lime : T.border}`, position: "relative", cursor: "pointer", transition: "all 0.2s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 14, borderRadius: "50%", background: !analyticsOptOut ? T.bg : "#fff", position: "absolute", top: 2, left: !analyticsOptOut ? 21 : 2, transition: "left 0.2s" } })) }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: exportAllData }, React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 6 } }, Icon.copy, "Export all data")), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: downloadChatHistory, disabled: chatHistoryLoading }, chatHistoryLoading ? "Preparing\u2026" : "Download chat history"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle" }, "Privacy policy"))), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.lookOn ? T.accentInk : T.white, marginBottom: 4, paddingBottom: T.lookOn ? 6 : 0, borderBottom: T.lookOn ? `2px solid ${T.accentSoft}` : "none" } }, "What Stu remembers"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "Standing preferences you told Stu about, not one-off requests."), /* @__PURE__ */ React.createElement(StuMemoryPanel, null)), /* @__PURE__ */ React.createElement(JournalSettingsCard, null), /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 10 } }, "Account security"), /* @__PURE__ */ React.createElement(Row, { label: "Two-factor authentication", sub: "Add a one-time code on every sign in.", k: "twofa", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: true, style: { opacity: 0.4, cursor: "not-allowed" } }, "Coming Soon") }), /* @__PURE__ */ React.createElement(Row, { label: "Active sessions", sub: "See and sign out other signed-in devices.", k: "sessions", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: true, style: { opacity: 0.4, cursor: "not-allowed" } }, "Coming Soon") }), /* @__PURE__ */ React.createElement(Row, { label: "Change password", sub: passwordResetSent ? "Reset link sent to " + profile.email + "." : "We'll email you a secure link to set a new one.", k: "pw", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: passwordResetLoading, onClick: sendPasswordReset }, passwordResetLoading ? "Sending\u2026" : passwordResetSent ? "Resend" : "Email reset link") }))), active === "Subjects & Labels" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Manage Subjects & Labels"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Color-code your classes. These labels appear on your calendar and tasks globally.")), /* @__PURE__ */ React.createElement(Btn, { onClick: () => {
+  })))), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.lookOn ? T.accentInk : T.white, marginBottom: 4, paddingBottom: T.lookOn ? 6 : 0, borderBottom: T.lookOn ? `2px solid ${T.accentSoft}` : "none" } }, "Suggestions and Stu"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "Control how much Studlin speaks up. Everything here is optional."), /* @__PURE__ */ React.createElement(Row, { label: "Learn how I work (timers, predictions, suggestions)", sub: "Begin buttons and timers, duration questions, best-hours ideas, and study spacing tips. Off means you plan and finish everything by hand.", k: "smartFeatures" }), /* @__PURE__ */ React.createElement(Row, { label: "Suggestions and tips", sub: 'Occasional ideas like "default new tasks to midday?" and the questions below. Off means none of them pop up.', k: "nudgesMaster" }), /* @__PURE__ */ React.createElement(Row, { label: "Stu reminds me before things start", sub: "Stu walks in a few minutes before a study block or deadline and asks if you want to start. Off uses a plain pop-up instead. Needs Learn how I work on.", k: "mascotReminders" }), /* @__PURE__ */ React.createElement(Row, { label: "Stu reminds me when it is getting late", sub: "About 30 minutes before the bedtime you set in class setup, a sleepy Stu asks if you want to wrap up. Once a night.", k: "mascotBedtime" }), /* @__PURE__ */ React.createElement(Row, { label: "Stu sleeps at night", sub: "Between the bedtime and wake time you set in class setup, Stu naps in the corner. Tap him any time to chat.", k: "stuSleeps" }), /* @__PURE__ */ React.createElement(Row, { label: "Stu tells me when my schedule changes", sub: "When a sync moves a study block or finds a conflict, Stu lets you know. Off uses a plain pop-up instead.", k: "mascotAlerts" }), /* @__PURE__ */ React.createElement(Row, { label: "Stu cheers when I finish", sub: "A quick celebration after you complete a task.", k: "mascotCheers" }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginTop: 10 } }, "Stu's chat button is always on.")), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.lookOn ? T.accentInk : T.white, marginBottom: 4, paddingBottom: T.lookOn ? 6 : 0, borderBottom: T.lookOn ? `2px solid ${T.accentSoft}` : "none" } }, "Questions Studlin asks"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "These are how Studlin learns things like how long a class really takes you or how a session went \u2014 never required, always skippable, and if you keep skipping one Studlin turns it off for you automatically."), /* @__PURE__ */ React.createElement(Row, { label: "Post-session check-ins", sub: "A quick 'how did that go?' after a study session tied to an exam or assignment.", k: "_", right: /* @__PURE__ */ React.createElement("button", { type: "button", role: "switch", "aria-checked": !!toggles.askCheckIns, "aria-label": "Post-session check-ins", onClick: () => handleAskToggle("askCheckIns"), style: { padding: 0, boxSizing: "border-box", width: 38, height: 20, borderRadius: 10, background: toggles.askCheckIns ? T.lime : T.card2, border: `1px solid ${toggles.askCheckIns ? T.lime : T.border}`, position: "relative", cursor: "pointer", transition: "all 0.2s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 14, borderRadius: "50%", background: toggles.askCheckIns ? T.bg : "#fff", position: "absolute", top: 2, left: toggles.askCheckIns ? 21 : 2, transition: "left 0.2s" } })) }), /* @__PURE__ */ React.createElement(Row, { label: '"How long did this really take?"', sub: "Asked only when you finish a session without using the Lock-In Timer, and only for a class Studlin doesn't have enough real data on yet.", k: "_", right: /* @__PURE__ */ React.createElement("button", { type: "button", role: "switch", "aria-checked": !!toggles.askDurationQuestions, "aria-label": "How long did this really take question", onClick: () => handleAskToggle("askDurationQuestions"), style: { padding: 0, boxSizing: "border-box", width: 38, height: 20, borderRadius: 10, background: toggles.askDurationQuestions ? T.lime : T.card2, border: `1px solid ${toggles.askDurationQuestions ? T.lime : T.border}`, position: "relative", cursor: "pointer", transition: "all 0.2s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 14, borderRadius: "50%", background: toggles.askDurationQuestions ? T.bg : "#fff", position: "absolute", top: 2, left: toggles.askDurationQuestions ? 21 : 2, transition: "left 0.2s" } })) })), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.lookOn ? T.accentInk : T.white, marginBottom: 4, paddingBottom: T.lookOn ? 6 : 0, borderBottom: T.lookOn ? `2px solid ${T.accentSoft}` : "none" } }, "Data & AI"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "You own your notes, essays, and recordings."), /* @__PURE__ */ React.createElement(Row, { label: "Anonymous usage analytics", sub: "Helps us fix bugs and prioritise features. On by default; turn it off any time.", k: "_", right: /* @__PURE__ */ React.createElement("button", { type: "button", role: "switch", "aria-checked": !!!analyticsOptOut, "aria-label": "Anonymous usage analytics", onClick: toggleAnalytics, style: { padding: 0, boxSizing: "border-box", width: 38, height: 20, borderRadius: 10, background: !analyticsOptOut ? T.lime : T.card2, border: `1px solid ${!analyticsOptOut ? T.lime : T.border}`, position: "relative", cursor: "pointer", transition: "all 0.2s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 14, borderRadius: "50%", background: !analyticsOptOut ? T.bg : "#fff", position: "absolute", top: 2, left: !analyticsOptOut ? 21 : 2, transition: "left 0.2s" } })) }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: exportAllData }, React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 6 } }, Icon.copy, "Export all data")), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: downloadChatHistory, disabled: chatHistoryLoading }, chatHistoryLoading ? "Preparing\u2026" : "Download chat history"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle" }, "Privacy policy"))), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.lookOn ? T.accentInk : T.white, marginBottom: 4, paddingBottom: T.lookOn ? 6 : 0, borderBottom: T.lookOn ? `2px solid ${T.accentSoft}` : "none" } }, "What Stu remembers"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "Standing preferences you told Stu about, not one-off requests."), /* @__PURE__ */ React.createElement(StuMemoryPanel, null)), /* @__PURE__ */ React.createElement(JournalSettingsCard, null), /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 10 } }, "Account security"), /* @__PURE__ */ React.createElement(Row, { label: "Two-factor authentication", sub: "Add a one-time code on every sign in.", k: "twofa", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: true, style: { opacity: 0.4, cursor: "not-allowed" } }, "Coming Soon") }), /* @__PURE__ */ React.createElement(Row, { label: "Active sessions", sub: "See and sign out other signed-in devices.", k: "sessions", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: true, style: { opacity: 0.4, cursor: "not-allowed" } }, "Coming Soon") }), /* @__PURE__ */ React.createElement(Row, { label: "Change password", sub: passwordResetSent ? "Reset link sent to " + profile.email + "." : "We'll email you a secure link to set a new one.", k: "pw", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: passwordResetLoading, onClick: sendPasswordReset }, passwordResetLoading ? "Sending\u2026" : passwordResetSent ? "Resend" : "Email reset link") }))), active === "Subjects & Labels" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Manage Subjects & Labels"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Color-code your classes. These labels appear on your calendar and tasks globally.")), /* @__PURE__ */ React.createElement(Btn, { onClick: () => {
     const term = getSchoolTerm();
     setMgmtSubjs((s) => [...s, { id: String(Date.now()), label: "", color: nextAvailableSubjectColor(s.map((x) => x.color)), termEnd: term ? term.end : null }]);
   } }, "+ Add")), mgmtSubjs.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, padding: "20px 0", textAlign: "center", borderTop: `1px solid ${T.border}` } }, 'No subjects yet. Click "+ Add" to create your first label.'), mgmtSubjs.map((sub, i) => /* @__PURE__ */ React.createElement("div", { key: sub.id || i, style: { ...subjectRowStyle(sub.color), marginBottom: 10 } }, confirmRemoveSubjId === sub.id ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flex: 1 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, 'Delete "', sub.label, '" and its ', countLinkedForSubject(sub), " linked item", countLinkedForSubject(sub) !== 1 ? "s" : "", " (class times, assignments, exams)?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => confirmRemoveSubject(sub) }, "Delete"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmRemoveSubjId(null) }, "Cancel")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(ColorSelect, { value: sub.color, onChange: (c) => setMgmtSubjs((s) => s.map((x, j) => j === i ? { ...x, color: c } : x)) }), /* @__PURE__ */ React.createElement("input", { value: sub.label, onChange: (e) => setMgmtSubjs((s) => s.map((x, j) => j === i ? { ...x, label: e.target.value } : x)), placeholder: "Subject name...", style: { flex: 1, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 7, padding: "7px 10px", color: T.text, fontSize: 13, fontFamily: T.font, outline: "none" } }), /* @__PURE__ */ React.createElement("button", { onClick: () => removeSubjectRow(sub), style: { background: "none", border: `1px solid ${T.border}`, color: T.muted, cursor: "pointer", borderRadius: 6, padding: "4px 10px", fontSize: 12, fontFamily: T.font } }, "Remove")))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 16, alignItems: "center", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Btn, { onClick: saveMgmtSubjs }, "Save changes"), mgmtSubjs.length > 0 && (confirmClearSubjs ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Delete all ", mgmtSubjs.length, " subject", mgmtSubjs.length !== 1 ? "s" : "", " and everything linked to them?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: clearAllSubjects }, "Yes, delete all"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmClearSubjs(false) }, "Cancel")) : /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmClearSubjs(true) }, "Clear all")), mgmtSaved && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.lime, fontWeight: 600 } }, "\u2713 Saved")), courseDeleteToast && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginTop: 10, padding: "9px 12px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.text, flex: 1 } }, courseDeleteToast), /* @__PURE__ */ React.createElement("button", { onClick: undoCourseDeletes, style: { background: "none", border: "none", color: T.lime, cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: T.font, textDecoration: "underline" } }, "Undo")))), active === "Calendar Preferences" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Study Schedule"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 16 } }, "Work hours, weekend schedule, difficulty, and peak focus hours."), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setScheduleSettingsOpen(true) }, "Customize Schedule")), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Weekly Routine"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 16 } }, "Your classes, sports, and shifts: the times the AI treats as absolute and never schedules over."), /* @__PURE__ */ React.createElement(Btn, { onClick: onOpenRoutineCenter }, "Manage Routine")), /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Auto-schedule prep time"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 16 } }, "How Studlin handles study sessions for assignments and exams pulled from a syllabus scan, once they're actually coming up."), /* @__PURE__ */ React.createElement(SelectChip, { options: [{ value: "ask", label: "Always ask" }, { value: "auto", label: "Auto-add" }, { value: "off", label: "Off" }], value: prepScheduleMode, onChange: (v) => {
@@ -26618,6 +26722,22 @@ function App() {
   const [expiredPending, setExpiredPending] = useState([]);
   const [calendarWizardOpen, setCalendarWizardOpen] = useState(false);
   const [scheduleChangeAlerts, setScheduleChangeAlerts] = useState([]);
+  const dismissScheduleAlerts = () => {
+    rememberDismissedScheduleAlerts(scheduleChangeAlerts);
+    setScheduleChangeAlerts([]);
+  };
+  const turnOffStuNotifications = () => {
+    lsSet("settings", { ...lsGet("settings", {}), mascotReminders: false, mascotCheers: false, mascotBedtime: false, mascotAlerts: false, stuSleeps: false });
+    try {
+      window.dispatchEvent(new Event("studlin-settings-changed"));
+    } catch (e) {
+    }
+    setStuBedtime(null);
+    setStuCheer(null);
+    setHeadsUpEvent(null);
+    setNudgeOffToast("Stu notifications are off. You can turn them back on in Settings, Privacy.");
+    setTimeout(() => setNudgeOffToast(""), 4e3);
+  };
   useEffect(() => {
     const pending = lsGet("pendingScheduleChangeAlerts", []);
     if (pending.length > 0) {
@@ -28123,7 +28243,27 @@ function App() {
         setCatchUpMoveError("");
       } }, "Cancel")), catchUpMoveError && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.red, marginTop: 6 } }, catchUpMoveError)));
     }))
-  ), scheduleChangeAlerts.length > 0 && (() => {
+  ), scheduleChangeAlerts.length > 0 && stuSettingOn("mascotAlerts") && !timerTask && !headsUpEvent && !stuCheer && !stuBedtime && (() => {
+    const sum = scheduleAlertSummary(scheduleChangeAlerts);
+    return /* @__PURE__ */ React.createElement(
+      StudCompanion,
+      {
+        key: "schedule-alert",
+        mode: "alert",
+        title: sum.line,
+        sub: sum.sub,
+        navExpanded,
+        onYes: () => {
+          setActive("calendar");
+          dismissScheduleAlerts();
+        },
+        onDone: (how) => {
+          if (how === "no") dismissScheduleAlerts();
+        },
+        onTurnOff: turnOffStuNotifications
+      }
+    );
+  })(), scheduleChangeAlerts.length > 0 && !stuSettingOn("mascotAlerts") && (() => {
     const movedCount = scheduleChangeAlerts.filter((a) => a.kind === "moved").length;
     const attnCount = scheduleChangeAlerts.filter((a) => a.kind === "attention").length;
     const headerParts = [];
@@ -28139,8 +28279,8 @@ function App() {
       setScheduleChangeAlerts((b) => b.filter((x, xi) => xi !== i));
     }, style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, textDecoration: "underline", flexShrink: 0, padding: 0 } }, "Undo")) : /* @__PURE__ */ React.createElement("div", { key: i, style: { fontSize: 12, padding: "6px 9px", background: T.card2, borderRadius: 8, color: T.text, lineHeight: 1.5 } }, a.noSlotFound ? /* @__PURE__ */ React.createElement(React.Fragment, null, "Couldn't find a new time for ", /* @__PURE__ */ React.createElement("strong", null, a.conflictsWith.title), " \u2014 it still conflicts with ", /* @__PURE__ */ React.createElement("strong", null, a.newEvent.title), " on ", a.newEvent.date === dayKey() ? "today" : a.newEvent.date, ".") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("strong", null, a.newEvent.title), " conflicts with ", /* @__PURE__ */ React.createElement("strong", null, a.conflictsWith.title), " on ", a.newEvent.date === dayKey() ? "today" : a.newEvent.date, " \u2014 neither can move automatically.")))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: () => {
       setActive("calendar");
-      setScheduleChangeAlerts([]);
-    }, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Open Calendar"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: () => setScheduleChangeAlerts([]), style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Dismiss")));
+      dismissScheduleAlerts();
+    }, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Open Calendar"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: dismissScheduleAlerts, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Dismiss")));
   })(), coopCancelAlerts.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("strong", { style: { color: T.amber } }, coopCancelAlerts.length, " study session", coopCancelAlerts.length !== 1 ? "s" : ""), " cancelled:"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 4, maxHeight: 220, overflowY: "auto" } }, coopCancelAlerts.map((a) => /* @__PURE__ */ React.createElement("div", { key: a.sessionId, style: { padding: "8px 9px", background: T.card2, borderRadius: 8, fontSize: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { color: T.text, marginBottom: 6 } }, a.byName, ' cancelled "', a.title, '" \u2014 ', a.date === dayKey() ? "today" : a.date, " ", fmtRolloverClock(a.time)), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement("button", { onClick: () => removeCoopCancelAlert(a.sessionId), style: { background: "none", border: `1px solid ${T.border}`, borderRadius: 6, color: T.muted, cursor: "pointer", fontSize: 11, padding: "5px 8px", fontFamily: T.font } }, "Remove from my calendar"), /* @__PURE__ */ React.createElement("button", { onClick: () => keepCoopCancelAlert(a.sessionId), style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, textDecoration: "underline" } }, "Keep it anyway")))))), bottomRightSlot === "promptBatch" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: STUDLIN_AI_BUBBLE_CLEARANCE, right: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.lookOn ? T.accentSoft : T.card, border: `1px solid ${T.lookOn ? T.borderTint : T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10 } }, "Due soon. Want Studlin to find prep time for these?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 12, maxHeight: 200, overflowY: "auto" } }, prepPromptBatch.map((m) => /* @__PURE__ */ React.createElement("div", { key: m.id, style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, fontSize: 12, padding: "6px 9px", background: T.card2, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, m.title), /* @__PURE__ */ React.createElement("div", { style: { color: T.muted, fontSize: 10.5 } }, "Due ", m.date)), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexShrink: 0 } }, /* @__PURE__ */ React.createElement("button", { onClick: () => acceptPrepPrompt(m), style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, textDecoration: "underline", padding: 0 } }, "Schedule"), /* @__PURE__ */ React.createElement("button", { onClick: () => declinePrepPrompt(m), style: { background: "none", border: "none", color: T.muted, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, padding: 0 } }, "Not now"))))), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: declineAllPrepPrompts, style: { padding: "7px 14px", fontSize: 12, width: "100%", justifyContent: "center" } }, "Dismiss all")), bottomRightSlot === "autoToast" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: STUDLIN_AI_BUBBLE_CLEARANCE, right: 20, zIndex: 999, padding: "11px 18px", borderRadius: 10, background: T.lookOn ? T.accentSoft : T.teal, color: T.lookOn ? T.accentInk : "#fff", border: T.lookOn ? `1px solid ${T.borderTint}` : "none", fontSize: 13, fontWeight: 600, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, prepAutoToast), bottomRightSlot === "error" && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: STUDLIN_AI_BUBBLE_CLEARANCE, right: 20, zIndex: 1001, padding: "11px 18px", borderRadius: 10, background: T.red, color: "#fff", fontSize: 13, fontWeight: 600, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, lockInErrorToast), /* @__PURE__ */ React.createElement(Modal, { open: !!examCheckIn, onClose: () => {
     setExamCheckIn(null);
     handleQuestionDismissed("checkIn");
@@ -28187,9 +28327,10 @@ function App() {
         setTimerTask(headsUpEvent);
         setHeadsUpEvent(null);
       },
-      onDone: () => setHeadsUpEvent(null)
+      onDone: () => setHeadsUpEvent(null),
+      onTurnOff: turnOffStuNotifications
     }
-  ), !headsUpEvent && stuCheer && !timerTask && Date.now() - stuCheer.at < 1e4 && /* @__PURE__ */ React.createElement(StudCompanion, { key: stuCheer.id, mode: "cheer", title: stuCheer.title, navExpanded, onDone: () => setStuCheer(null) }), !headsUpEvent && !stuCheer && stuBedtime && !timerTask && /* @__PURE__ */ React.createElement(
+  ), !headsUpEvent && stuCheer && !timerTask && Date.now() - stuCheer.at < 1e4 && /* @__PURE__ */ React.createElement(StudCompanion, { key: stuCheer.id, mode: "cheer", title: stuCheer.title, navExpanded, onDone: () => setStuCheer(null), onTurnOff: turnOffStuNotifications }), !headsUpEvent && !stuCheer && stuBedtime && !timerTask && /* @__PURE__ */ React.createElement(
     StudCompanion,
     {
       key: stuBedtime.id,
@@ -28201,6 +28342,7 @@ function App() {
       navExpanded,
       firstPrompt: !String(stuBedtime.id).startsWith("bed2"),
       onNightRoutine: openNightRoutine,
+      onTurnOff: turnOffStuNotifications,
       onDone: (how) => {
         setStuBedtime(null);
         if (how === "snooze" && !String(stuBedtime.id).startsWith("bed2")) setTimeout(() => {
