@@ -38787,6 +38787,216 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   );
 }
 
+// ===== STU JOURNAL v1 (2026-10-14) =====
+// A per-day note, local-only. Lives in localStorage ("studlin-journal") and
+// nowhere else: never in any synced or shared store, and never sent to the AI in this version. Pull-only: nothing
+// here ever prompts the student. The generic account-delete cleanup removes
+// every studlin-* key, which covers it.
+const JOURNAL_PROMPTS=[
+  "What was the best part of today?",
+  "What took more energy than you expected?",
+  "One thing to remember about today",
+  "What are you glad is done?",
+  "What would make tomorrow a bit easier?",
+  "Anything on your mind you want to put down?"
+];
+// The student picks one of these; nothing is ever inferred from their text.
+const JOURNAL_MOODS=[
+  {id:"great",label:"Great"},
+  {id:"good",label:"Good"},
+  {id:"okay",label:"Okay"},
+  {id:"rough",label:"Rough"},
+  {id:"hard",label:"Hard"}
+];
+const JOURNAL_MAX_CHARS=5000;
+function journalPromptFor(key){
+  const s=String(key||"");let h=0;
+  for(let i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))>>>0;
+  return JOURNAL_PROMPTS[h%JOURNAL_PROMPTS.length];
+}
+function normalizeJournal(raw){
+  if(!Array.isArray(raw))return [];
+  return raw.filter(e=>e&&typeof e.date==="string"&&typeof e.id==="string").map(e=>({
+    id:e.id,date:e.date,text:typeof e.text==="string"?e.text:"",
+    mood:JOURNAL_MOODS.some(m=>m.id===e.mood)?e.mood:null,
+    createdAt:e.createdAt||"",updatedAt:e.updatedAt||e.createdAt||"",crisis:!!e.crisis
+  })).sort((a,b)=>a.date<b.date?1:a.date>b.date?-1:0);
+}
+function getJournal(){return normalizeJournal(lsGet("journal",[]));}
+function saveJournal(list){lsSet("journal",normalizeJournal(list));}
+// Pure: one entry per day. Saving again for the same day replaces that entry.
+function upsertJournalEntry(list,{date,text,mood,crisis},nowIso){
+  const base=normalizeJournal(list);
+  const prev=base.find(e=>e.date===date);
+  const entry={id:prev?prev.id:"j-"+date,date,text:String(text||"").slice(0,JOURNAL_MAX_CHARS),mood:mood||null,createdAt:prev?prev.createdAt:nowIso,updatedAt:nowIso,crisis:!!crisis};
+  return normalizeJournal(base.filter(e=>e.date!==date).concat([entry]));
+}
+function removeJournalEntry(list,id){return normalizeJournal(list).filter(e=>e.id!==id);}
+function journalDateLabel(key){
+  const p=String(key).split("-");
+  const d=new Date(+p[0],(+p[1]||1)-1,+p[2]||1);
+  return isNaN(d.getTime())?String(key):d.toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"});
+}
+function downloadJournalJson(){
+  const blob=new Blob([JSON.stringify({journal:getJournal()},null,2)],{type:"application/json"});
+  const a=Object.assign(document.createElement("a"),{href:URL.createObjectURL(blob),download:"studlin-journal.json"});
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+}
+function JournalCrisisCard(){
+  return (
+    <div role="alert" style={{padding:"12px 14px",borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,color:T.text,fontSize:13,lineHeight:1.5}}>
+      <div style={{fontWeight:600,marginBottom:8}}>{STU_CRISIS_MESSAGE}</div>
+      <ul style={{margin:0,paddingLeft:18,display:"flex",flexDirection:"column",gap:4}}>
+        {STU_CRISIS_RESOURCES.map((r,ri)=>(
+          <li key={ri}>{r.includes("findahelpline.com")?<>Outside the US: <a href="https://findahelpline.com" target="_blank" rel="noopener noreferrer" style={{color:T.text,textDecoration:"underline"}}>findahelpline.com</a></>:r}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+function JournalView(){
+  const todayKey=dayKey();
+  const [entries,setEntries]=useState(()=>getJournal());
+  const today=entries.find(e=>e.date===todayKey)||null;
+  const [writing,setWriting]=useState(()=>entries.length>0);
+  const [text,setText]=useState(today?today.text:"");
+  const [mood,setMood]=useState(today?today.mood:null);
+  const [err,setErr]=useState("");
+  const [saving,setSaving]=useState(false);
+  const [toast,setToast]=useState("");
+  const [showCrisis,setShowCrisis]=useState(false);
+  const [confirmId,setConfirmId]=useState(null);
+  const flash=(t)=>{setToast(t);setTimeout(()=>setToast(""),2600);};
+  const onF=e=>{e.target.style.borderColor=T.lime;};
+  const onB=e=>{e.target.style.borderColor=T.border;};
+  const save=()=>{
+    if(saving)return;
+    const t=text.trim();
+    if(!t&&!mood){setErr("Write a line or pick how it went first.");return;}
+    if(t.length>JOURNAL_MAX_CHARS){setErr("Keep it under "+JOURNAL_MAX_CHARS+" characters.");return;}
+    setSaving(true);setErr("");
+    // Crisis check runs first, on every save of free text.
+    const crisis=detectCrisis(t);
+    try{
+      saveJournal(upsertJournalEntry(getJournal(),{date:todayKey,text:t,mood,crisis},new Date().toISOString()));
+      setEntries(getJournal());
+      setShowCrisis(crisis);
+      flash("Saved on this device.");
+    }catch(e){setErr("Couldn't save that. Try again.");}
+    setSaving(false);
+  };
+  const doDelete=()=>{
+    const id=confirmId;setConfirmId(null);
+    saveJournal(removeJournalEntry(getJournal(),id));
+    const next=getJournal();setEntries(next);
+    if(!next.some(e=>e.date===todayKey)){setText("");setMood(null);setShowCrisis(false);}
+    flash("Entry deleted.");
+  };
+  const past=entries.filter(e=>e.date!==todayKey);
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+      <div style={{display:"flex",alignItems:"center",gap:12}}>
+        <StudMascot size={44} mood="happy" ariaLabel="Stu" {...stuPalette()} />
+        <div style={{fontSize:13,color:T.muted,lineHeight:1.5}}>Just for you. Stored on this device only.</div>
+      </div>
+      {entries.length===0&&!writing?(
+        <div style={{textAlign:"center",padding:"18px 8px"}}>
+          <div style={{fontSize:13,color:T.muted,marginBottom:12}}>No entries yet. One line is enough.</div>
+          <Btn onClick={()=>setWriting(true)}>Write your first entry</Btn>
+        </div>
+      ):(<>
+        <div>
+          <label htmlFor="journal-text" style={{display:"block",fontSize:14,fontWeight:600,color:T.white,marginBottom:8}}>{journalPromptFor(todayKey)}</label>
+          <div role="group" aria-label="How did today go (optional)" style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+            {JOURNAL_MOODS.map(m=>(
+              <button key={m.id} type="button" aria-pressed={mood===m.id} onClick={()=>setMood(mood===m.id?null:m.id)}
+                style={{padding:"7px 12px",borderRadius:8,fontSize:12.5,fontFamily:T.font,cursor:"pointer",border:`1px solid ${mood===m.id?T.lime:T.border}`,background:mood===m.id?T.lime+"22":T.card2,color:T.text,fontWeight:mood===m.id?600:400}}>{m.label}</button>
+            ))}
+          </div>
+          <textarea id="journal-text" value={text} onChange={e=>{setText(e.target.value);if(err)setErr("");}} onFocus={onF} onBlur={onB} rows={5} placeholder="Optional. Write as much or as little as you like."
+            style={{width:"100%",boxSizing:"border-box",background:T.card2,border:`1px solid ${err?T.red:T.border}`,borderRadius:8,padding:"10px 12px",color:T.text,fontSize:13,lineHeight:1.5,fontFamily:T.font,outline:"none",resize:"vertical"}} />
+          {err&&<div role="alert" style={{color:T.red,fontSize:12,marginTop:6}}>{err}</div>}
+          <div style={{display:"flex",alignItems:"center",gap:10,marginTop:10}}>
+            <Btn onClick={save} disabled={saving}>{saving?"Saving...":(today?"Update today":"Save")}</Btn>
+            {today&&<Btn variant="danger" onClick={()=>setConfirmId(today.id)}>Delete today</Btn>}
+          </div>
+        </div>
+        {showCrisis&&<JournalCrisisCard />}
+        {past.length>0&&(
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            <div style={{fontSize:12,fontWeight:600,color:T.muted}}>Past entries</div>
+            {past.map(e=>(
+              <div key={e.id} style={{padding:"10px 12px",borderRadius:8,border:`1px solid ${T.border}`,background:T.card2}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:e.text?4:0}}>
+                  <span style={{fontSize:12,fontWeight:600,color:T.white}}>{journalDateLabel(e.date)}</span>
+                  {e.mood&&<span style={{fontSize:11.5,color:T.muted}}>{(JOURNAL_MOODS.find(m=>m.id===e.mood)||{}).label}</span>}
+                  <span style={{flex:1}} />
+                  <button type="button" onClick={()=>setConfirmId(e.id)} aria-label={"Delete entry from "+journalDateLabel(e.date)} style={{background:"none",border:`1px solid ${T.border}`,color:T.muted,cursor:"pointer",borderRadius:6,padding:"3px 9px",fontSize:11.5,fontFamily:T.font}}>Delete</button>
+                </div>
+                {e.text&&<div style={{fontSize:13,color:T.text,lineHeight:1.5,whiteSpace:"pre-wrap"}}>{e.text}</div>}
+              </div>
+            ))}
+          </div>
+        )}
+      </>)}
+      <div style={{fontSize:11.5,color:T.muted}}>Stu is not a counselor.</div>
+      {toast&&<div role="status" style={{position:"sticky",bottom:0,alignSelf:"flex-start",padding:"8px 14px",borderRadius:8,background:T.lime,color:T.lookOn?lookTextOnFill(T.lime):T.bg,fontSize:12.5,fontWeight:600}}>{toast}</div>}
+      <Modal open={!!confirmId} onClose={()=>setConfirmId(null)} title="Delete this entry?" sub="This can't be undone." width={400}
+        footer={<><Btn variant="subtle" onClick={()=>setConfirmId(null)}>Cancel</Btn><Btn variant="danger" onClick={doDelete}>Delete</Btn></>}>
+        <div style={{fontSize:13,color:T.text}}>It will be removed from this device.</div>
+      </Modal>
+    </div>
+  );
+}
+// Dashboard entry point: one quiet card, opens the journal in a modal.
+function JournalCard(){
+  const [open,setOpen]=useState(false);
+  return (
+    <>
+      <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 18px",borderRadius:8,border:`1px solid ${T.border}`,background:T.card}}>
+        <StudMascot size={36} mood="happy" {...stuPalette()} />
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:14,fontWeight:700,color:T.white}}>Journal</div>
+          <div style={{fontSize:12.5,color:T.muted}}>A private note for today. Only on this device.</div>
+        </div>
+        <Btn variant="subtle" onClick={()=>setOpen(true)}>Open</Btn>
+      </div>
+      <Modal open={open} onClose={()=>setOpen(false)} title="Journal" width={520}>
+        <div style={{padding:"4px 0",overflowY:"auto",maxHeight:"70vh"}}><JournalView /></div>
+      </Modal>
+    </>
+  );
+}
+// Settings card: download + delete all, with the plain privacy line.
+function JournalSettingsCard(){
+  const [count,setCount]=useState(()=>getJournal().length);
+  const [confirm,setConfirm]=useState(false);
+  const [msg,setMsg]=useState("");
+  const flash=(t)=>{setMsg(t);setTimeout(()=>setMsg(""),2600);};
+  const doDownload=()=>{
+    if(!count){flash("Nothing to download yet.");return;}
+    try{downloadJournalJson();flash("Downloaded.");}catch(e){flash("Couldn't download that. Try again.");}
+  };
+  const doDeleteAll=()=>{saveJournal([]);setCount(0);setConfirm(false);flash("Journal deleted.");};
+  return (
+    <Card style={{marginBottom:12}}>
+      <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Journal</div>
+      <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Stored on this device only. Not shared, not used to train anything, and not sent to AI in this version.</div>
+      <div style={{fontSize:12.5,color:T.text,marginBottom:10}}>{count?count+(count===1?" entry":" entries"):"No entries yet."}</div>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+        <Btn variant="subtle" onClick={doDownload}>Download (JSON)</Btn>
+        <Btn variant="danger" onClick={()=>count?setConfirm(true):flash("Nothing to delete.")}>Delete all</Btn>
+        {msg&&<span role="status" style={{fontSize:12,color:T.muted}}>{msg}</span>}
+      </div>
+      <Modal open={confirm} onClose={()=>setConfirm(false)} title="Delete your whole journal?" sub="This can't be undone." width={400}
+        footer={<><Btn variant="subtle" onClick={()=>setConfirm(false)}>Cancel</Btn><Btn variant="danger" onClick={doDeleteAll}>Delete all</Btn></>}>
+        <div style={{fontSize:13,color:T.text}}>All {count} {count===1?"entry":"entries"} will be removed from this device. Download first if you want a copy.</div>
+      </Modal>
+    </Card>
+  );
+}
+// ===== END STU JOURNAL =====
+
 // ─── SETTINGS ─────────────────────────────────────────────────────────────────
 // setActivePage (top-level tab switcher, e.g. to jump to Profile) --
 // deliberately not called setActive: this component already has its own
@@ -40621,6 +40831,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Standing preferences you told Stu about, not one-off requests.</div>
               <StuMemoryPanel />
             </Card>
+            <JournalSettingsCard />
             <Card>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:10}}>Account security</div>
               {/* Two-factor and active-sessions used to be a toggle and a
@@ -41905,6 +42116,8 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   return (
     <>
     <div style={{display:"flex",flexDirection:"column",gap:16,paddingBottom:40}}>
+
+      <JournalCard />
 
       {/* One-time "Studlin is learning you" reveal -- see
           shouldShowLearnsYouReveal's own comment. */}
