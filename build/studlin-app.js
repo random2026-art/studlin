@@ -15994,6 +15994,20 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
                 style: { position: "absolute", bottom: -2, left: 0, right: 0, height: 6, cursor: "ns-resize", zIndex: 4 }
               }
             ),
+            isRoutine && !editRoutineMode && isRoutineSelected && onDeleteRoutine && /* @__PURE__ */ React.createElement(
+              "button",
+              {
+                onMouseDown: (e) => e.stopPropagation(),
+                onDoubleClick: (e) => e.stopPropagation(),
+                onClick: (e) => {
+                  e.stopPropagation();
+                  onDeleteRoutine(ev.routineId);
+                },
+                title: "Delete (asks you to confirm)",
+                style: { position: "absolute", top: -9, right: -9, height: 20, padding: "0 7px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.card, color: T.red, fontSize: 10.5, fontWeight: 700, fontFamily: T.font, lineHeight: 1, cursor: "pointer", boxShadow: "0 4px 10px -2px rgba(0,0,0,0.4)", zIndex: 6 }
+              },
+              "Delete"
+            ),
             isRoutine && editRoutineMode && hoveredRoutineId === ev.routineId && /* @__PURE__ */ React.createElement(
               "button",
               {
@@ -19723,7 +19737,7 @@ function QuickCreateTaskPopover({ draft, anchorX, anchorY, onCreate, onMoreOptio
     }
   )), /* @__PURE__ */ React.createElement(DurationChips, { value: Math.max(15, timeToMinutes(draft.endTime) - timeToMinutes(draft.startTime)), onChange: (v) => {
     if (onDurationChange) onDurationChange(v);
-  }, presets: [15, 30, 45, 60, 90] }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted } }, niceDate, " \xB7 ", fmtTimeRange(draft.startTime, Math.max(15, timeToMinutes(draft.endTime) - timeToMinutes(draft.startTime)))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 2 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => onMoreOptions(draft), style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 11, fontFamily: T.font, padding: 0, textDecoration: "underline" } }, "More options"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: onClose, style: { padding: "6px 13px", fontSize: 12 } }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: submit, style: { padding: "6px 13px", fontSize: 12 } }, "Add task"))))), document.body);
+  }, presets: [15, 30, 45, 60, 90] }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted } }, niceDate, " \xB7 ", fmtTimeRange(draft.startTime, Math.max(15, timeToMinutes(draft.endTime) - timeToMinutes(draft.startTime)))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 2 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => onMoreOptions(draft, title, color), style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 11, fontFamily: T.font, padding: 0, textDecoration: "underline" } }, "More options"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: onClose, style: { padding: "6px 13px", fontSize: 12 } }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: submit, style: { padding: "6px 13px", fontSize: 12 } }, "Add task"))))), document.body);
 }
 const CALENDAR_HIGHLIGHT_MAX_AGE_MS = 5 * 60 * 1e3;
 function resolveCalendarHighlightFlag(flag, nowMs) {
@@ -19901,10 +19915,17 @@ function CalendarTab({ setActive = () => {
     setTimeout(() => setPlacementToast(""), 3200);
     cancelQuickCreate();
   };
-  const quickCreateMoreOptions = (draft) => {
+  const quickCreateMoreOptions = (draft, title, color) => {
+    const duration = Math.max(15, timeToMinutes(draft.endTime) - timeToMinutes(draft.startTime));
     cancelQuickCreate();
     setSelDay(draft.dateKey);
     openNew(draft.dateKey);
+    setEvTitle((title || "").trim());
+    setEvTime(draft.startTime);
+    setEvDuration(duration);
+    setEvDurationTouched(true);
+    setEvDate(draft.dateKey);
+    if (color) setEvCustomColor(color);
   };
   const [gsOpen, setGsOpen] = useState(false);
   const [gsStep, setGsStep] = useState("pick");
