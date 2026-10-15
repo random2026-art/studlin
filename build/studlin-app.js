@@ -15658,7 +15658,7 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
   const weekDays = (() => {
     const d = /* @__PURE__ */ new Date();
     const day = d.getDay();
-    const diff = day === 0 ? -6 : 1 - day;
+    const diff = -day;
     d.setDate(d.getDate() + diff + weekOffset * 7);
     d.setHours(0, 0, 0, 0);
     return Array.from({ length: 7 }, (_, i) => {
@@ -15735,7 +15735,7 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
     setWkDragRoutineOccurrence(null);
     if (onRoutineDragStateChange) onRoutineDragStateChange(false);
   };
-  const DAY_NAMES = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
+  const DAY_NAMES = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
   return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, { style: { padding: 0, overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { "data-wk-hdr": "1", style: { display: "grid", gridTemplateColumns: "52px repeat(7,1fr)", borderBottom: `1px solid ${T.borderTint}`, background: T.hdrBg } }, /* @__PURE__ */ React.createElement("div", { style: { height: 48 } }), weekDays.map((d, i) => {
     const dk = dayKey(d);
     const isToday = dk === todayK;
@@ -15839,7 +15839,7 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
         onMouseDown: (e) => startCreateDrag(e, dk),
         onClick: closePopover
       },
-      schoolWindow && colIdx < 5 && subtractIntervals(schoolWindow, colEvs.filter((ev) => ev.kind === "free period").map((ev) => {
+      schoolWindow && day.getDay() >= 1 && day.getDay() <= 5 && subtractIntervals(schoolWindow, colEvs.filter((ev) => ev.kind === "free period").map((ev) => {
         const p = ev.time.split(":").map(Number);
         const start = p[0] * 60 + p[1];
         return { start, end: start + (ev.duration || 30) };
@@ -21354,7 +21354,7 @@ function CalendarTab({ setActive = () => {
     setRoutineDropPending(null);
   };
   const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-  const lead = (new Date(ym.y, ym.m, 1).getDay() + 6) % 7;
+  const lead = new Date(ym.y, ym.m, 1).getDay();
   const dim = new Date(ym.y, ym.m + 1, 0).getDate();
   const dimPrev = new Date(ym.y, ym.m, 0).getDate();
   const cells = [];
@@ -22440,7 +22440,7 @@ Examples:
   const weekRangeLabel = (() => {
     const d = /* @__PURE__ */ new Date();
     const day = d.getDay();
-    const diff = day === 0 ? -6 : 1 - day;
+    const diff = -day;
     d.setDate(d.getDate() + diff + weekOffset * 7);
     d.setHours(0, 0, 0, 0);
     const end = new Date(d);
@@ -22550,13 +22550,13 @@ Examples:
   const weekOffsetForDate = (dateStr) => {
     const now2 = /* @__PURE__ */ new Date();
     const day = now2.getDay();
-    const diff = day === 0 ? -6 : 1 - day;
+    const diff = -day;
     const curMonday = new Date(now2);
     curMonday.setDate(curMonday.getDate() + diff);
     curMonday.setHours(0, 0, 0, 0);
     const target = /* @__PURE__ */ new Date(dateStr + "T00:00:00");
     const tDay = target.getDay();
-    const tDiff = tDay === 0 ? -6 : 1 - tDay;
+    const tDiff = -tDay;
     const targetMonday = new Date(target);
     targetMonday.setDate(targetMonday.getDate() + tDiff);
     targetMonday.setHours(0, 0, 0, 0);
@@ -22856,7 +22856,7 @@ Examples:
   ].map((item) => /* @__PURE__ */ React.createElement("div", { key: item.label, onClick: item.onClick, style: { display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 14px", cursor: "pointer" }, onMouseEnter: (e) => e.currentTarget.style.background = T.card2, onMouseLeave: (e) => e.currentTarget.style.background = "transparent" }, /* @__PURE__ */ React.createElement("span", { style: { width: 16, color: item.danger ? T.red : T.muted, display: "flex", marginTop: 2 } }, item.icon), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: item.danger ? T.red : T.text } }, item.label), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 1 } }, item.sub))))))), /* @__PURE__ */ React.createElement("div", { style: { position: "relative" }, ref: addTaskBtnRef }, /* @__PURE__ */ React.createElement("button", { onClick: () => openNewAI(selDay), title: "Add", style: { width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", background: T.lime, border: "none", borderRadius: 4, color: T.lookOn ? lookTextOnFill(T.lime) : T.ink, cursor: "pointer" } }, Icon.plus)))), editRoutineMode && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "9px 14px", background: T.lime + "10", border: `1px solid ${T.lime}33`, borderRadius: 6, marginBottom: 14, fontSize: 12.5, color: T.text } }, /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, "Editing your Weekly Routine. One-off tasks are dimmed. Click a routine block to edit it, or hover and tap \xD7 to delete it everywhere it repeats."), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => {
     setEditRoutineMode(false);
     setHoveredRoutineId(null);
-  } }, "Done")), manualPlacement && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "9px 14px", background: T.lime + "10", border: `1px solid ${T.lime}33`, borderRadius: 6, marginBottom: 14, fontSize: 12.5, color: T.text } }, /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, "Placing sessions for ", /* @__PURE__ */ React.createElement("strong", null, manualPlacement.title), ". Drag each one to where you want it, resize to change duration.", manualPlacementCount > 0 ? " " + manualPlacementCount + " placed so far." : ""), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: addManualPlacementSession }, "+ Add a session"), /* @__PURE__ */ React.createElement(BtnSm, { onClick: finishManualPlacement }, "Done")), calView === "monthly" && /* @__PURE__ */ React.createElement(Card, { style: { padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 3 } }, ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d, i) => /* @__PURE__ */ React.createElement("div", { key: i, "data-month-hdr": "1", style: { fontSize: 10, fontWeight: T.lookOn ? 700 : 600, color: T.hdrText, textAlign: "center", padding: "6px 0", letterSpacing: "0.05em", ...T.lookOn ? { background: T.hdrBg, borderRadius: 6 } : null } }, d)), (() => {
+  } }, "Done")), manualPlacement && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "9px 14px", background: T.lime + "10", border: `1px solid ${T.lime}33`, borderRadius: 6, marginBottom: 14, fontSize: 12.5, color: T.text } }, /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, "Placing sessions for ", /* @__PURE__ */ React.createElement("strong", null, manualPlacement.title), ". Drag each one to where you want it, resize to change duration.", manualPlacementCount > 0 ? " " + manualPlacementCount + " placed so far." : ""), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: addManualPlacementSession }, "+ Add a session"), /* @__PURE__ */ React.createElement(BtnSm, { onClick: finishManualPlacement }, "Done")), calView === "monthly" && /* @__PURE__ */ React.createElement(Card, { style: { padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 3 } }, ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d, i) => /* @__PURE__ */ React.createElement("div", { key: i, "data-month-hdr": "1", style: { fontSize: 10, fontWeight: T.lookOn ? 700 : 600, color: T.hdrText, textAlign: "center", padding: "6px 0", letterSpacing: "0.05em", ...T.lookOn ? { background: T.hdrBg, borderRadius: 6 } : null } }, d)), (() => {
     const monthHeavyDays = computeMonthHeavyDays(cells.filter((c) => !c.out).map((c) => ({ key: c.key, minutes: dayWorkloadMinutes((byDay[c.key] || []).filter((ev) => ev.kind !== "free period")) })));
     return cells.map((c, i) => {
       const evs = (byDay[c.key] || []).filter((ev) => ev.kind !== "free period");
