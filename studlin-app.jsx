@@ -24787,7 +24787,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
   const weekDays = (() => {
     const d = new Date();
     const day = d.getDay();
-    const diff = day === 0 ? -6 : 1 - day;
+    const diff = -day; // weeks start on Sunday, like Google Calendar
     d.setDate(d.getDate() + diff + weekOffset * 7);
     d.setHours(0, 0, 0, 0);
     return Array.from({length: 7}, (_, i) => { const x = new Date(d); x.setDate(x.getDate() + i); return x; });
@@ -24877,7 +24877,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
   // popover permanently hidden even though nothing was actually dropped.
   const handleDragEnd = () => { setWkDragId(null); setWkDragDeadline(null); setWkDragOverDay(null); setWkDropTime(null); setWkDragRoutineOccurrence(null); if(onRoutineDragStateChange)onRoutineDragStateChange(false); };
 
-  const DAY_NAMES = ["MON","TUE","WED","THU","FRI","SAT","SUN"];
+  const DAY_NAMES = ["SUN","MON","TUE","WED","THU","FRI","SAT"];
 
   // No internal header here anymore -- date range + prev/next/"today" now
   // live once, in CalendarTab's own toolbar above every view (Month/Week/
@@ -25061,7 +25061,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                     Mon–Fri) — free periods "punch through" it via
                     subtractIntervals, so those windows show the normal clear
                     background instead of the tint. */}
-                {schoolWindow && colIdx<5 && subtractIntervals(schoolWindow, colEvs.filter(ev=>ev.kind==="free period").map(ev=>{const p=ev.time.split(":").map(Number);const start=p[0]*60+p[1];return {start,end:start+(ev.duration||30)};})).map((seg,si)=>(
+                {schoolWindow && day.getDay()>=1 && day.getDay()<=5 && subtractIntervals(schoolWindow, colEvs.filter(ev=>ev.kind==="free period").map(ev=>{const p=ev.time.split(":").map(Number);const start=p[0]*60+p[1];return {start,end:start+(ev.duration||30)};})).map((seg,si)=>(
                   <div key={"sh"+si} style={{position:"absolute",top:seg.start*(WK_PX_HR/60),left:0,right:0,height:(seg.end-seg.start)*(WK_PX_HR/60),background:mutedAlpha("0C"),pointerEvents:"none",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
                     {(seg.end-seg.start)>=45 && <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.12em",color:mutedAlpha("88")}}>SCHOOL HOURS</span>}
                   </div>
@@ -34821,7 +34821,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     setRoutineDropPending(null);
   };
   const monthNames=["January","February","March","April","May","June","July","August","September","October","November","December"];
-  const lead=(new Date(ym.y,ym.m,1).getDay()+6)%7;
+  const lead=new Date(ym.y,ym.m,1).getDay();
   const dim=new Date(ym.y,ym.m+1,0).getDate();
   const dimPrev=new Date(ym.y,ym.m,0).getDate();
   const cells=[];
@@ -36221,7 +36221,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // (rather than threading a new prop back out of it) since it's cheap and
   // self-contained, just to render the range label in the toolbar above it.
   const weekRangeLabel=(()=>{
-    const d=new Date();const day=d.getDay();const diff=day===0?-6:1-day;
+    const d=new Date();const day=d.getDay();const diff=-day;
     d.setDate(d.getDate()+diff+weekOffset*7);d.setHours(0,0,0,0);
     const end=new Date(d);end.setDate(end.getDate()+6);
     return d.toLocaleDateString("en-US",{month:"short",day:"numeric"})+" – "+end.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
@@ -36388,10 +36388,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // uses) contains a given date -- lets jumpToSession land on the exact
   // week a session is actually scheduled in, not just today's.
   const weekOffsetForDate=(dateStr)=>{
-    const now=new Date();const day=now.getDay();const diff=day===0?-6:1-day;
+    const now=new Date();const day=now.getDay();const diff=-day;
     const curMonday=new Date(now);curMonday.setDate(curMonday.getDate()+diff);curMonday.setHours(0,0,0,0);
     const target=new Date(dateStr+"T00:00:00");
-    const tDay=target.getDay();const tDiff=tDay===0?-6:1-tDay;
+    const tDay=target.getDay();const tDiff=-tDay;
     const targetMonday=new Date(target);targetMonday.setDate(targetMonday.getDate()+tDiff);targetMonday.setHours(0,0,0,0);
     return Math.round((targetMonday-curMonday)/(7*86400000));
   };
@@ -36881,7 +36881,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       {calView==="monthly"&&(
         <Card style={{padding:16}}>
           <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
-            {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((d,i)=><div key={i} data-month-hdr="1" style={{fontSize:10,fontWeight:T.lookOn?700:600,color:T.hdrText,textAlign:"center",padding:"6px 0",letterSpacing:"0.05em",...(T.lookOn?{background:T.hdrBg,borderRadius:6}:null)}}>{d}</div>)}
+            {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d,i)=><div key={i} data-month-hdr="1" style={{fontSize:10,fontWeight:T.lookOn?700:600,color:T.hdrText,textAlign:"center",padding:"6px 0",letterSpacing:"0.05em",...(T.lookOn?{background:T.hdrBg,borderRadius:6}:null)}}>{d}</div>)}
             {(()=>{
               // Computed once per render, relative to every real (in-month)
               // day currently visible -- see computeMonthHeavyDays' own
