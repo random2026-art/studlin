@@ -13847,7 +13847,7 @@ function studlinAiChipsFor(catchUpBanner) {
   chips.push({ id: "findTime", label: "Find me a time", kind: "prefill", prefill: "Find me time for " });
   return chips;
 }
-function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
+function StudlinAiDrawer({ open, onClose, stuRide = 0, setPricingOpen = () => {
 }, onEventsCommitted = () => {
 }, onDeleteEvent = () => {
 }, proactiveSignal = null, onAcceptProactive = () => {
@@ -13862,6 +13862,61 @@ function StudlinAiDrawer({ open, onClose, setPricingOpen = () => {
     if (!open) setBdMode(false);
   }, [open]);
   const inputRef = useRef(null);
+  const [plusOpen, setPlusOpen] = useState(false);
+  const [plusHint, setPlusHint] = useState(false);
+  const [riderOn, setRiderOn] = useState(false);
+  const plusWrapRef = useRef(null);
+  const plusBtnRef = useRef(null);
+  const plusMenuRef = useRef(null);
+  useEffect(() => {
+    if (!open) setPlusOpen(false);
+  }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    let seen = true;
+    try {
+      seen = !!localStorage.getItem("studlin-stuPlusHintSeen");
+    } catch (e) {
+    }
+    if (seen) return;
+    lsSet("stuPlusHintSeen", true);
+    setPlusHint(true);
+    const t = setTimeout(() => setPlusHint(false), 9e3);
+    return () => {
+      clearTimeout(t);
+      setPlusHint(false);
+    };
+  }, [open]);
+  useEffect(() => {
+    if (!plusOpen) return;
+    const first = plusMenuRef.current && plusMenuRef.current.querySelector('[role="menuitem"]:not([disabled])');
+    if (first) first.focus();
+    const onKey = (e) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setPlusOpen(false);
+        if (plusBtnRef.current) plusBtnRef.current.focus();
+      }
+    };
+    const onDown = (e) => {
+      const w = plusWrapRef.current;
+      if (w && !w.contains(e.target)) setPlusOpen(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("touchstart", onDown, { passive: true });
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("touchstart", onDown);
+    };
+  }, [plusOpen]);
+  useEffect(() => {
+    if (!stuRide) return;
+    setRiderOn(true);
+    const t = setTimeout(() => setRiderOn(false), 420);
+    return () => clearTimeout(t);
+  }, [stuRide]);
   const brainDumpPaywall = () => {
     setPricingOpen(canUseBrainDumpReason() === "free-tier" ? "brainDump" : "aiUsageCap");
     setMessages((m) => [...m, { role: "ai", text: "Brain dump through Stu needs Pro. I've opened the upgrade options.", kind: "paywall" }]);
@@ -14559,34 +14614,75 @@ WHAT THE STUDENT SAID:
     });
     setPendingIndex(null);
   };
-  const renderStuChips = () => {
-    if (loading || pendingIndex != null) return null;
-    return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 8 } }, /* @__PURE__ */ React.createElement("style", null, `.stu-chip:focus-visible{outline:2px solid ${T.lime};outline-offset:2px}`), studlinAiChipsFor(catchUpBanner).map((c) => /* @__PURE__ */ React.createElement(
-      "button",
-      {
-        key: c.id,
-        type: "button",
-        className: "stu-chip",
-        "aria-label": c.label,
-        disabled: chipBusy,
-        onClick: () => tapChip(c),
-        style: { minHeight: 36, padding: "7px 14px", borderRadius: 18, border: `1px solid ${pp.border}`, background: pp.card2, color: pp.text, fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: T.font, opacity: chipBusy ? 0.6 : 1 }
-      },
-      c.label
-    )), bdMode && /* @__PURE__ */ React.createElement(
+  const renderBdPill = () => {
+    if (!bdMode) return null;
+    return /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 10 } }, /* @__PURE__ */ React.createElement(
       "button",
       {
         type: "button",
         className: "stu-chip",
         "aria-label": "Cancel brain dump",
         onClick: () => setBdMode(false),
-        style: { minHeight: 36, padding: "7px 14px", borderRadius: 18, border: "none", background: "transparent", color: pp.muted, fontSize: 12.5, cursor: "pointer", fontFamily: T.font }
+        style: { minHeight: 44, padding: "7px 14px", borderRadius: 22, border: `1px solid ${T.lime}66`, background: T.lime + "14", color: pp.text, fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: T.font }
       },
-      "Cancel brain dump"
+      "Brain dump on. Tap to cancel"
     ));
   };
+  const plusItemStyle = { display: "flex", alignItems: "center", width: "100%", minHeight: 44, padding: "10px 14px", border: "none", background: "transparent", color: pp.text, fontSize: 13, fontWeight: 600, textAlign: "left", cursor: "pointer", fontFamily: T.font };
+  const onPlusMenuKey = (e) => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    e.preventDefault();
+    const items = Array.from(plusMenuRef.current.querySelectorAll('[role="menuitem"]:not([disabled])'));
+    if (!items.length) return;
+    const i = items.indexOf(document.activeElement);
+    const next = e.key === "ArrowDown" ? (i + 1) % items.length : i <= 0 ? items.length - 1 : i - 1;
+    items[next].focus();
+  };
+  const renderPlusMenu = () => /* @__PURE__ */ React.createElement(
+    "div",
+    {
+      ref: plusMenuRef,
+      role: "menu",
+      "aria-label": "Quick actions",
+      onKeyDown: onPlusMenuKey,
+      style: { position: "absolute", left: 0, bottom: "calc(100% + 8px)", width: 240, maxWidth: "calc(92vw - 36px)", background: T.surface, border: `1px solid ${pp.border}`, borderRadius: 12, boxShadow: "0 16px 40px -12px rgba(0,0,0,0.5)", padding: 6, zIndex: 6, overflow: "hidden" }
+    },
+    studlinAiChipsFor(catchUpBanner).map((c) => /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        key: c.id,
+        type: "button",
+        role: "menuitem",
+        className: "stu-plus-item",
+        "aria-label": c.label,
+        disabled: chipBusy || loading,
+        onClick: () => {
+          setPlusOpen(false);
+          tapChip(c);
+        },
+        style: { ...plusItemStyle, opacity: chipBusy || loading ? 0.6 : 1 }
+      },
+      c.label
+    )),
+    /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        type: "button",
+        role: "menuitem",
+        className: "stu-plus-item",
+        "aria-label": "Attach material",
+        disabled: aiAttaching,
+        onClick: () => {
+          setPlusOpen(false);
+          if (aiFileRef.current) aiFileRef.current.click();
+        },
+        style: { ...plusItemStyle, borderTop: `1px solid ${pp.border}`, borderRadius: 0, opacity: aiAttaching ? 0.6 : 1 }
+      },
+      "Attach material"
+    )
+  );
   return ReactDOM.createPortal(
-    /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: onClose, style: { position: "fixed", inset: 0, background: "rgba(8,12,10,0.5)", zIndex: STUDLIN_AI_DRAWER_BACKDROP_Z, opacity: open ? 1 : 0, pointerEvents: open ? "auto" : "none", transition: "opacity 0.25s" } }), /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 0, right: 0, height: "100vh", width: 400, maxWidth: "92vw", background: T.surface, borderLeft: `1px solid ${pp.border}`, boxShadow: "-24px 0 60px -20px rgba(0,0,0,0.5)", zIndex: STUDLIN_AI_DRAWER_PANEL_Z, display: "flex", flexDirection: "column", transform: open ? "translateX(0)" : "translateX(100%)", transition: "transform 0.28s cubic-bezier(.2,.85,.3,1)", pointerEvents: open ? "auto" : "none" } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "18px 18px 14px", borderBottom: `1px solid ${pp.border}`, display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement(StudMascot, { size: 32, mood: "happy", ...stuPalette() }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: pp.text } }, "Stu"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: pp.muted } }, "Ask me anything, or tell me to add or move something"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setMemoryPanelOpen(true), style: { background: "none", border: "none", padding: "4px 0 0", fontSize: 11.5, color: pp.muted, textDecoration: "underline", cursor: "pointer", fontFamily: T.font } }, "What do you remember?")), /* @__PURE__ */ React.createElement("button", { onClick: onClose, style: { width: 30, height: 30, borderRadius: 8, border: `1px solid ${pp.border}`, background: pp.card2, color: pp.muted, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0 } }, Icon.xmark)), /* @__PURE__ */ React.createElement("div", { ref: scrollRef, style: { flex: 1, overflowY: "auto", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10 } }, messages.length === 0 && !loading && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 12, marginTop: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: pp.muted, lineHeight: 1.6 } }, 'Try "which day next week is busiest?" or "how do I turn on dark mode." Or start with one of these.'), renderStuChips()), messages.map((m, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "85%", display: "flex", flexDirection: "column", gap: 6 } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "9px 13px", borderRadius: 12, fontSize: 13, lineHeight: 1.5, background: m.role === "user" ? pp.card2 : T.lime + "14", color: pp.text, border: m.role === "user" ? `1px solid ${pp.border}` : `1px solid ${T.lime}33`, borderLeft: m.role === "ai" ? `3px solid ${studlinAiKindAccents()[m.kind] || T.lime}` : void 0, whiteSpace: m.role === "user" ? "pre-wrap" : void 0 } }, m.kind === "crisis" ? /* @__PURE__ */ React.createElement("div", { role: "alert" }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, marginBottom: 8 } }, STU_CRISIS_MESSAGE), /* @__PURE__ */ React.createElement("ul", { style: { margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 4 } }, STU_CRISIS_RESOURCES.map((r, ri) => /* @__PURE__ */ React.createElement("li", { key: ri }, r.includes("findahelpline.com") ? /* @__PURE__ */ React.createElement(React.Fragment, null, "Outside the US: ", /* @__PURE__ */ React.createElement("a", { href: "https://findahelpline.com", target: "_blank", rel: "noopener noreferrer", style: { color: pp.text, textDecoration: "underline" } }, "findahelpline.com")) : r)))) : m.role === "ai" ? renderStudlinAiMarkdown(m.text) : m.text), m.proposal && m.proposal.disambiguate && !m.proposal.resolved && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, m.proposal.disambiguate.map((c) => /* @__PURE__ */ React.createElement(
+    /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { onClick: onClose, style: { position: "fixed", inset: 0, background: "rgba(8,12,10,0.5)", zIndex: STUDLIN_AI_DRAWER_BACKDROP_Z, opacity: open ? 1 : 0, pointerEvents: open ? "auto" : "none", transition: "opacity 0.25s" } }), /* @__PURE__ */ React.createElement("style", null, STU_UI_CSS + `.stu-chip:focus-visible,.stu-plus-item:focus-visible,.stu-plus-btn:focus-visible{outline:2px solid ${T.lime};outline-offset:2px}.stu-plus-item:hover,.stu-plus-item:focus-visible{background:${pp.card2}!important}.stu-ai-input:focus{border-color:${T.lime}!important}`), /* @__PURE__ */ React.createElement("div", { className: "stu-ai-panel", style: { position: "fixed", top: 0, right: 0, width: 400, maxWidth: "92vw", background: T.surface, borderLeft: `1px solid ${pp.border}`, boxShadow: "-24px 0 60px -20px rgba(0,0,0,0.5)", zIndex: STUDLIN_AI_DRAWER_PANEL_Z, display: "flex", flexDirection: "column", transform: open ? "translateX(0)" : "translateX(100%)", transition: "transform 0.28s cubic-bezier(.2,.85,.3,1)", pointerEvents: open ? "auto" : "none" } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "18px 18px 14px", borderBottom: `1px solid ${pp.border}`, display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement(StudMascot, { size: 32, mood: "happy", ...stuPalette() }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: pp.text } }, "Stu"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: pp.muted } }, "Ask me anything, or tell me to add or move something"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setMemoryPanelOpen(true), style: { background: "none", border: "none", padding: "4px 0 0", fontSize: 11.5, color: pp.muted, textDecoration: "underline", cursor: "pointer", fontFamily: T.font } }, "What do you remember?")), /* @__PURE__ */ React.createElement("button", { onClick: onClose, style: { width: 30, height: 30, borderRadius: 8, border: `1px solid ${pp.border}`, background: pp.card2, color: pp.muted, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0 } }, Icon.xmark)), riderOn && /* @__PURE__ */ React.createElement("span", { "aria-hidden": "true", className: "stu-rider", style: { position: "absolute", left: -30, bottom: 96, pointerEvents: "none", lineHeight: 0 } }, /* @__PURE__ */ React.createElement(StudMascot, { size: 28, mood: "happy", facing: "left", ...stuPalette() })), /* @__PURE__ */ React.createElement("div", { ref: scrollRef, style: { flex: 1, overflowY: "auto", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10 } }, messages.length === 0 && !loading && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 12, marginTop: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: pp.muted, lineHeight: 1.6 } }, 'Try "which day next week is busiest?" or "how do I turn on dark mode." Or tap + for quick actions like Brain dump.')), messages.map((m, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "85%", display: "flex", flexDirection: "column", gap: 6 } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "9px 13px", borderRadius: 12, fontSize: 13, lineHeight: 1.5, background: m.role === "user" ? pp.card2 : T.lime + "14", color: pp.text, border: m.role === "user" ? `1px solid ${pp.border}` : `1px solid ${T.lime}33`, borderLeft: m.role === "ai" ? `3px solid ${studlinAiKindAccents()[m.kind] || T.lime}` : void 0, whiteSpace: m.role === "user" ? "pre-wrap" : void 0 } }, m.kind === "crisis" ? /* @__PURE__ */ React.createElement("div", { role: "alert" }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, marginBottom: 8 } }, STU_CRISIS_MESSAGE), /* @__PURE__ */ React.createElement("ul", { style: { margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 4 } }, STU_CRISIS_RESOURCES.map((r, ri) => /* @__PURE__ */ React.createElement("li", { key: ri }, r.includes("findahelpline.com") ? /* @__PURE__ */ React.createElement(React.Fragment, null, "Outside the US: ", /* @__PURE__ */ React.createElement("a", { href: "https://findahelpline.com", target: "_blank", rel: "noopener noreferrer", style: { color: pp.text, textDecoration: "underline" } }, "findahelpline.com")) : r)))) : m.role === "ai" ? renderStudlinAiMarkdown(m.text) : m.text), m.proposal && m.proposal.disambiguate && !m.proposal.resolved && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, m.proposal.disambiguate.map((c) => /* @__PURE__ */ React.createElement(
       "button",
       {
         key: c.id,
@@ -14643,20 +14739,29 @@ WHAT THE STUDENT SAID:
     // happening" the way a static label can't. Styled to match a
     // real AI message bubble (same lime tint/border) so it reads
     // as "a reply is forming here," not a disconnected label.
-    /* @__PURE__ */ React.createElement("div", { style: { alignSelf: "flex-start", display: "flex", gap: 5, alignItems: "center", padding: "12px 15px", borderRadius: 12, background: T.lime + "14", border: `1px solid ${T.lime}33` } }, [0, 1, 2].map((i) => /* @__PURE__ */ React.createElement("span", { key: i, style: { width: 6, height: 6, borderRadius: "50%", background: pp.muted, animation: "studlinPulse 1s ease-in-out infinite", animationDelay: i * 0.15 + "s" } })))), /* @__PURE__ */ React.createElement("div", { style: { padding: "12px 18px", borderTop: `1px solid ${pp.border}` } }, messages.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 10 } }, renderStuChips()), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement("input", { ref: aiFileRef, type: "file", accept: ".pdf,.docx,.txt,.md,image/*", style: { display: "none" }, onChange: handleAiAttachFile }), /* @__PURE__ */ React.createElement(
+    /* @__PURE__ */ React.createElement("div", { style: { alignSelf: "flex-start", display: "flex", gap: 5, alignItems: "center", padding: "12px 15px", borderRadius: 12, background: T.lime + "14", border: `1px solid ${T.lime}33` } }, [0, 1, 2].map((i) => /* @__PURE__ */ React.createElement("span", { key: i, style: { width: 6, height: 6, borderRadius: "50%", background: pp.muted, animation: "studlinPulse 1s ease-in-out infinite", animationDelay: i * 0.15 + "s" } })))), /* @__PURE__ */ React.createElement("div", { style: { padding: "12px 18px calc(12px + env(safe-area-inset-bottom, 0px))", borderTop: `1px solid ${pp.border}` } }, renderBdPill(), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center" } }, /* @__PURE__ */ React.createElement("input", { ref: aiFileRef, type: "file", accept: ".pdf,.docx,.txt,.md,image/*", style: { display: "none" }, onChange: handleAiAttachFile }), /* @__PURE__ */ React.createElement("div", { ref: plusWrapRef, style: { position: "relative", flexShrink: 0 } }, /* @__PURE__ */ React.createElement(
       "button",
       {
+        ref: plusBtnRef,
         type: "button",
-        onClick: () => aiFileRef.current && aiFileRef.current.click(),
-        disabled: pendingIndex != null || aiAttaching,
-        title: "Attach material (notes, a PDF, a photo of a page)",
-        style: { width: 36, height: 36, borderRadius: "50%", border: "none", background: pp.card2, color: pp.muted, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, opacity: pendingIndex != null || aiAttaching ? 0.6 : 1 }
+        className: "stu-plus-btn",
+        "aria-label": "More actions",
+        "aria-haspopup": "menu",
+        "aria-expanded": plusOpen,
+        onClick: () => {
+          setPlusHint(false);
+          setPlusOpen((o) => !o);
+        },
+        disabled: pendingIndex != null,
+        title: "Quick actions and attach",
+        style: { width: 44, height: 44, borderRadius: "50%", border: `1px solid ${plusOpen ? T.lime : pp.border}`, background: pp.card2, color: plusOpen ? pp.text : pp.muted, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, opacity: pendingIndex != null ? 0.6 : 1 }
       },
       Icon.plus
-    ), /* @__PURE__ */ React.createElement(
+    ), plusHint && !plusOpen && /* @__PURE__ */ React.createElement("div", { role: "status", onClick: () => setPlusHint(false), style: { position: "absolute", left: 0, bottom: "calc(100% + 10px)", whiteSpace: "nowrap", padding: "9px 14px", background: T.ink, color: T.lime, borderRadius: 10, fontSize: 12.5, fontWeight: 600, boxShadow: "0 10px 30px -10px rgba(0,0,0,0.5)", zIndex: 6, cursor: "pointer" } }, "Quick actions live under +"), plusOpen && renderPlusMenu()), /* @__PURE__ */ React.createElement(
       "input",
       {
         ref: inputRef,
+        className: "stu-ai-input",
         value: input,
         onChange: (e) => setInput(e.target.value),
         onKeyDown: (e) => {
@@ -14676,7 +14781,7 @@ WHAT THE STUDENT SAID:
         onClick: aiListening ? stopAiRec : startAiRec,
         disabled: pendingIndex != null,
         title: aiListening ? "Stop listening" : "Speak instead of typing",
-        style: { width: 36, height: 36, borderRadius: "50%", border: "none", background: aiListening ? T.red : pp.card2, color: aiListening ? "#fff" : pp.muted, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, opacity: pendingIndex != null ? 0.6 : 1 }
+        style: { width: 44, height: 44, borderRadius: "50%", border: "none", background: aiListening ? T.red : pp.card2, color: aiListening ? "#fff" : pp.muted, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, opacity: pendingIndex != null ? 0.6 : 1 }
       },
       aiListening ? /* @__PURE__ */ React.createElement("span", { style: { width: 10, height: 10, background: "#fff", borderRadius: 2 } }) : Icon.mic
     ), /* @__PURE__ */ React.createElement(
@@ -19493,7 +19598,7 @@ function findAllOverlaps(events, todayKey) {
   }
   return pairs;
 }
-function NewEventModal({ open, initialTitle, initialDate, initialStartTime, initialKind, anchorX, anchorY, color, hideRepeat, onPreviewChange, liveOverride, events, routines, hidden, editRoutine, editRoutineDate, subjectOptions, onClose, onCreate, onSave, onDelete, setActive = () => {
+function NewEventModal({ open, initialTitle, initialDate, initialStartTime, initialKind, initialDurationMins, initialRepeatAll, anchorX, anchorY, color, hideRepeat, onPreviewChange, liveOverride, events, routines, hidden, editRoutine, editRoutineDate, subjectOptions, onClose, onCreate, onSave, onDelete, setActive = () => {
 } }) {
   const [title, setTitle] = useState("");
   const [date, setDate] = useState("");
@@ -19558,12 +19663,17 @@ function NewEventModal({ open, initialTitle, initialDate, initialStartTime, init
     setRepeat("none");
     const jsDay = (/* @__PURE__ */ new Date(d + "T12:00:00")).getDay();
     setRepeatDays([jsDay === 0 ? 6 : jsDay - 1]);
+    if (initialRepeatAll) {
+      setRepeat("selected");
+      setRepeatDays([0, 1, 2, 3, 4, 5, 6]);
+    }
+    if (initialDurationMins) setEndTime(minutesToTime(timeToMinutes(st) + initialDurationMins));
     setCommuteBefore("");
     setCommuteAfter("");
     setLocation("");
     setMovable(false);
     setRoutineColor(nextAvailableSubjectColor([...getSubjects().map((s) => s.color), ...(routines || []).filter((r) => r.color).map((r) => r.color)]));
-  }, [open, initialTitle, initialDate, initialStartTime, editRoutine]);
+  }, [open, initialTitle, initialDate, initialStartTime, initialDurationMins, initialRepeatAll, editRoutine]);
   useEffect(() => {
     if (!open || !liveOverride) return;
     if (liveOverride.date != null) setDate(liveOverride.date);
@@ -21500,6 +21610,12 @@ function CalendarTab({ setActive = () => {
       localStorage.removeItem("studlin-pendingCalendarTool");
     } catch (e) {
     }
+    if (tool && tool.kind === "nightRoutine") {
+      resetForm();
+      setNewEventPrefill({ title: tool.title || "Night routine", date: dayKey(), startTime: tool.startTime || "22:00", chipKind: null, courseId: null, routineId: null, sessionId: null, color: T.lime, anchorX: null, anchorY: null, durationMins: tool.durationMins || 30, repeatAll: true });
+      setNewEventOpen(true);
+      return;
+    }
     if (!tool || tool.kind !== "brainDump") return;
     resetForm();
     setBrainDumpText(typeof tool.text === "string" ? tool.text : "");
@@ -23233,6 +23349,8 @@ Examples:
       initialDate: newEventPrefill.date,
       initialStartTime: newEventPrefill.startTime,
       initialKind: newEventPrefill.chipKind,
+      initialDurationMins: newEventPrefill.durationMins,
+      initialRepeatAll: !!newEventPrefill.repeatAll,
       anchorX: newEventPrefill.anchorX,
       anchorY: newEventPrefill.anchorY,
       color: newEventPrefill.color,
@@ -24107,12 +24225,105 @@ function stuBedtimeDue(now) {
   return !(last && d.getTime() - last < 6 * 3600 * 1e3);
 }
 const reduceMotionOn = () => typeof document !== "undefined" && !!document.body && document.body.getAttribute("data-motion") === "reduce";
+const STU_UI_CSS = [
+  ".stu-ai-panel{height:100vh;height:100dvh}",
+  "@media (max-width:640px){.stu-ai-input{font-size:16px!important}.stu-rider{display:none!important}}",
+  ".studlin-ai-bubble .stu-root{transform-origin:50% 100%}",
+  ".studlin-ai-bubble .stu-root.stu-tug{animation:stuTug .24s cubic-bezier(.3,.7,.4,1) 1}",
+  ".studlin-ai-bubble .stu-root.stu-jump{animation:stuJumpOut .5s ease-out 1;pointer-events:none}",
+  ".studlin-ai-bubble .stu-root.stu-wake{animation:stuWake .32s ease-out 1}",
+  ".stu-rider{animation:stuRider .36s ease-out 1 both}",
+  'body[data-stu-asleep="1"] #studlin-ai-bubble .stu-root{visibility:hidden}',
+  ".stu-sleep-fab .stu-conf{display:none}",
+  ".stu-zz{position:absolute;font-family:system-ui,sans-serif;font-weight:800;line-height:1;opacity:0;animation:stuZz 2.8s ease-in-out infinite}",
+  "@keyframes stuTug{0%{transform:none}35%{transform:translateX(-7px) rotate(-8deg) scale(1.06,.94)}100%{transform:none}}",
+  "@keyframes stuJumpOut{0%{transform:scale(1.1,.9)}30%{transform:translateY(-16px) scale(.94,1.08)}60%{transform:translateY(0) scale(1.1,.9)}80%{transform:scale(.97,1.03)}100%{transform:none}}",
+  "@keyframes stuWake{0%{transform:scale(1.12,.88)}40%{transform:translateY(-8px) scale(.95,1.07)}100%{transform:none}}",
+  "@keyframes stuRider{0%{opacity:0;transform:translateX(14px)}20%{opacity:1}80%{opacity:1;transform:translateX(0)}100%{opacity:0;transform:translateX(-6px)}}",
+  "@keyframes stuZz{0%{opacity:0;transform:translate(0,6px) scale(.7)}25%{opacity:1}100%{opacity:0;transform:translate(8px,-18px) scale(1.1)}}",
+  "@media (prefers-reduced-motion:reduce){.stu-tug,.stu-jump,.stu-wake,.stu-rider{animation:none!important}.stu-zz{animation:none!important;opacity:.85!important}}",
+  'body[data-motion="reduce"] .stu-tug,body[data-motion="reduce"] .stu-jump,body[data-motion="reduce"] .stu-wake,body[data-motion="reduce"] .stu-rider{animation:none!important}',
+  'body[data-motion="reduce"] .stu-zz{animation:none!important;opacity:.85!important}'
+].join("");
+function stuIsSleepWindow(ws, now) {
+  if (!ws || !ws.sleepTime || !ws.wakeTime) return false;
+  const s = timeToMinutes(ws.sleepTime), w = timeToMinutes(ws.wakeTime);
+  if (isNaN(s) || isNaN(w) || s === w) return false;
+  const d = now || /* @__PURE__ */ new Date();
+  const cur = d.getHours() * 60 + d.getMinutes();
+  return s > w ? cur >= s || cur < w : cur >= s && cur < w;
+}
+const stuSleepsNow = (now) => stuSettingOn("stuSleeps") && stuIsSleepWindow(getWakeSleep(), now);
+const stuMotionAllowed = (timerActive) => {
+  if (timerActive || reduceMotionOn()) return false;
+  try {
+    if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return false;
+  } catch (e) {
+  }
+  return true;
+};
+function stuMotionPlan(key) {
+  let n = 0;
+  try {
+    n = Number(lsGet(key, 0)) || 0;
+  } catch (e) {
+  }
+  if (n >= 3) return false;
+  lsSet(key, n + 1);
+  return true;
+}
+function stuPlayBubbleClass(cls, ms) {
+  try {
+    const el = document.querySelector("#studlin-ai-bubble .stu-root");
+    if (!el) return;
+    el.classList.remove("stu-tug", "stu-jump", "stu-wake");
+    void el.offsetWidth;
+    el.classList.add(cls);
+    setTimeout(() => {
+      try {
+        el.classList.remove(cls);
+      } catch (e) {
+      }
+    }, ms);
+  } catch (e) {
+  }
+}
+function stuHasNightRoutine(routines) {
+  const list = Array.isArray(routines) ? routines : [];
+  return list.some((r) => r && /night|wind.?down|bed ?time|before bed|sleep/i.test(String(r.title || "")));
+}
+function stuNightOfferEligible(state, routines, sleepTime) {
+  if (!sleepTime) return false;
+  const c = state && typeof state.count === "number" ? state.count : 0;
+  if (c >= 2) return false;
+  return !stuHasNightRoutine(routines);
+}
+const stuRecordWindDownDismiss = () => {
+  const s = lsGet("stuWindDownOffer", null);
+  lsSet("stuWindDownOffer", { dismissedAt: Date.now(), count: (s && s.count || 0) + 1 });
+};
+function stuNightRoutinePrefill(sleepTime) {
+  const s = timeToMinutes(sleepTime);
+  const start = (s - 30 + 1440) % 1440;
+  return { title: "Night routine", startTime: minutesToTime(start), durationMins: Math.max(5, Math.min(30, 1439 - start)) };
+}
+function StuSleepingFab({ asleep }) {
+  if (!asleep) return null;
+  const pal = stuPalette();
+  return /* @__PURE__ */ React.createElement("div", { "aria-hidden": "true", className: "stu-sleep-fab", style: { position: "fixed", bottom: "calc(20px + env(safe-area-inset-bottom, 0px))", right: 20, minWidth: 44, minHeight: 44, display: "grid", placeItems: "center", pointerEvents: "none", filter: "drop-shadow(0 4px 8px rgba(0,0,0,0.28))", zIndex: STUDLIN_AI_BUBBLE_Z } }, /* @__PURE__ */ React.createElement(StudMascot, { size: 56, mood: "sleepy", ...pal }), /* @__PURE__ */ React.createElement("span", { className: "stu-zz", style: { top: -2, right: -2, fontSize: 13, color: T.muted } }, "z"), /* @__PURE__ */ React.createElement("span", { className: "stu-zz", style: { top: -12, right: -12, fontSize: 10, color: T.muted, animationDelay: "1.2s" } }, "z"));
+}
 const STU_EXIT_MOOD = { yes: "happy", cheer: "proud", no: "sad", late: "worried" };
-function StudCompanion({ mode, title, clock, navExpanded, onYes, onDone, sub: subProp }) {
+function StudCompanion({ mode, title, clock, navExpanded, onYes, onDone, sub: subProp, firstPrompt = true, onNightRoutine }) {
   const [phase, setPhase] = useState("in");
   const declinesBefore = useRef(stuDeclinesToday()).current;
   const howRef = useRef(mode === "cheer" ? "cheer" : "late");
+  const offerNight = useRef(mode === "bedtime" && firstPrompt && !!onNightRoutine && stuNightOfferEligible(lsGet("stuWindDownOffer", null), getWeeklyRoutine(), (getWakeSleep() || {}).sleepTime)).current;
+  const dismissRecordedRef = useRef(false);
   useEffect(() => {
+    if (phase === "out" && offerNight && howRef.current !== "routine" && !dismissRecordedRef.current) {
+      dismissRecordedRef.current = true;
+      stuRecordWindDownDismiss();
+    }
     const t = [];
     if (phase === "in") t.push(setTimeout(() => setPhase("talk"), 1500));
     if (phase === "talk" && (mode === "ask" || mode === "bedtime" || mode === "catchup")) t.push(setTimeout(() => {
@@ -24160,13 +24371,13 @@ function StudCompanion({ mode, title, clock, navExpanded, onYes, onDone, sub: su
     sub = clock ? "It's on your plan for " + clock + "." : "";
   } else if (phase === "yes" && mode === "bedtime") {
     mood = "sleepy";
-    line = "Goodnight! Sleep well.";
+    line = howRef.current === "routine" ? "Good idea. Let's set it up." : "Goodnight! Sleep well.";
   } else if (phase === "yes") {
     mood = "celebrating";
     line = "Let's do it!";
   } else if (phase === "no" && mode === "bedtime") {
     mood = "sleepy";
-    line = "Okay, 5 more minutes. I'll check back once.";
+    line = firstPrompt ? "Okay, 5 more minutes. I'll check back once." : "Okay. Sleep well.";
   } else if (phase === "no") {
     mood = "sad";
     line = declinesBefore >= 1 ? "Okay. I'll give you some space." : "Aw, okay. I'll be around.";
@@ -24195,13 +24406,17 @@ function StudCompanion({ mode, title, clock, navExpanded, onYes, onDone, sub: su
   }, style: { padding: "6px 12px", fontSize: 11.5 } }, "Show me"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => {
     howRef.current = "no";
     setPhase("no");
-  }, style: { padding: "6px 12px", fontSize: 11.5 } }, "Not now")), phase === "talk" && mode === "bedtime" && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
+  }, style: { padding: "6px 12px", fontSize: 11.5 } }, "Not now")), phase === "talk" && mode === "bedtime" && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
     howRef.current = "yes";
     setPhase("yes");
-  }, style: { padding: "6px 12px", fontSize: 11.5 } }, "Wrapping up"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => {
+  }, style: { padding: "6px 12px", fontSize: 11.5, minHeight: 44 } }, "Wrapping up"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => {
     howRef.current = "snooze";
     setPhase("no");
-  }, style: { padding: "6px 12px", fontSize: 11.5 } }, "5 more minutes")), phase === "talk" && mode === "ask" && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
+  }, style: { padding: "6px 12px", fontSize: 11.5, minHeight: 44 } }, "5 more minutes"), offerNight && /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => {
+    howRef.current = "routine";
+    onNightRoutine();
+    setPhase("yes");
+  }, style: { padding: "6px 12px", fontSize: 11.5, minHeight: 44 } }, "Set a night routine?")), phase === "talk" && mode === "ask" && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
     howRef.current = "yes";
     setPhase("yes");
   }, style: { padding: "6px 12px", fontSize: 11.5 } }, "Yes, let's go"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => {
@@ -24259,7 +24474,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     window.addEventListener("studlin-settings-changed", sync);
     return () => window.removeEventListener("studlin-settings-changed", sync);
   }, []);
-  const [toggles, setToggles] = useState(() => ({ ...{ push: true, sound: true, deadline: true, classReminders: false, onlineStatus: true, incognito: false, twofa: false, motion: false, hand: true, wrapped: true, autoSession: false, block: false, notifMaster: true, sysPush: false, chatChimes: true, shareAvailability: false, askCheckIns: true, askDurationQuestions: true, nudgesMaster: true, smartFeatures: true, mascotReminders: true, mascotCheers: true, mascotBedtime: true }, ...lsGet("settings", {}) }));
+  const [toggles, setToggles] = useState(() => ({ ...{ push: true, sound: true, deadline: true, classReminders: false, onlineStatus: true, incognito: false, twofa: false, motion: false, hand: true, wrapped: true, autoSession: false, block: false, notifMaster: true, sysPush: false, chatChimes: true, shareAvailability: false, askCheckIns: true, askDurationQuestions: true, nudgesMaster: true, smartFeatures: true, mascotReminders: true, mascotCheers: true, mascotBedtime: true, stuSleeps: true }, ...lsGet("settings", {}) }));
   const [shareModePickerOpen, setShareModePickerOpen] = useState(false);
   const [shareCandidates, setShareCandidates] = useState([]);
   const [shareCandidatesLoading, setShareCandidatesLoading] = useState(false);
@@ -25172,7 +25387,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
   ))), toggles.shareAvailabilityMode === "selected" && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted } }, (toggles.shareAvailabilitySelectedUids || []).length === 0 ? "Nobody picked yet -- sharing is on, but no one can see it." : (toggles.shareAvailabilitySelectedUids || []).length + " friend" + ((toggles.shareAvailabilitySelectedUids || []).length === 1 ? "" : "s") + " can see your free/busy time."), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: openShareModePicker, style: { flexShrink: 0, fontSize: 11.5, fontWeight: 700, color: T.lime, background: "none", border: `1px solid ${T.lime}55`, borderRadius: 7, padding: "6px 10px", cursor: "pointer", fontFamily: T.font } }, "Manage")))), /* @__PURE__ */ React.createElement(Modal, { open: shareModePickerOpen, onClose: () => setShareModePickerOpen(false), title: "Choose who can see your free/busy time", sub: "Only these friends' 'Find Shared Study Window' searches and Schedule with Friends overlays will see when you're busy.", width: 420 }, shareCandidatesLoading ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "Loading your friends\u2026") : shareCandidates.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted } }, "No friends yet -- add some in Studlin Network first.") : /* @__PURE__ */ React.createElement(React.Fragment, null, shareCandidates.length > 5 && /* @__PURE__ */ React.createElement(Input, { value: shareSearchQuery, onChange: (e) => setShareSearchQuery(e.target.value), placeholder: "Search friends", style: { marginBottom: 10, width: "100%" } }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, maxHeight: 360, overflowY: "auto" } }, shareCandidates.filter((c) => c.name.toLowerCase().includes(shareSearchQuery.trim().toLowerCase())).map((c) => {
     const checked = (toggles.shareAvailabilitySelectedUids || []).includes(c.uid);
     return /* @__PURE__ */ React.createElement("label", { key: c.uid, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 8, border: `1px solid ${T.border}`, cursor: "pointer", background: checked ? T.card2 : "transparent" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked, onChange: () => toggleShareSelectedUid(c.uid), style: { cursor: "pointer" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text } }, c.name));
-  })))), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.lookOn ? T.accentInk : T.white, marginBottom: 4, paddingBottom: T.lookOn ? 6 : 0, borderBottom: T.lookOn ? `2px solid ${T.accentSoft}` : "none" } }, "Suggestions and Stu"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "Control how much Studlin speaks up. Everything here is optional."), /* @__PURE__ */ React.createElement(Row, { label: "Learn how I work (timers, predictions, suggestions)", sub: "Begin buttons and timers, duration questions, best-hours ideas, and study spacing tips. Off means you plan and finish everything by hand.", k: "smartFeatures" }), /* @__PURE__ */ React.createElement(Row, { label: "Suggestions and tips", sub: 'Occasional ideas like "default new tasks to midday?" and the questions below. Off means none of them pop up.', k: "nudgesMaster" }), /* @__PURE__ */ React.createElement(Row, { label: "Stu reminds me before things start", sub: "Stu walks in a few minutes before a study block or deadline and asks if you want to start. Off uses a plain pop-up instead. Needs Learn how I work on.", k: "mascotReminders" }), /* @__PURE__ */ React.createElement(Row, { label: "Stu reminds me when it is getting late", sub: "About 30 minutes before the bedtime you set in class setup, a sleepy Stu asks if you want to wrap up. Once a night.", k: "mascotBedtime" }), /* @__PURE__ */ React.createElement(Row, { label: "Stu cheers when I finish", sub: "A quick celebration after you complete a task.", k: "mascotCheers" }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginTop: 10 } }, "Stu's chat button is always on.")), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.lookOn ? T.accentInk : T.white, marginBottom: 4, paddingBottom: T.lookOn ? 6 : 0, borderBottom: T.lookOn ? `2px solid ${T.accentSoft}` : "none" } }, "Questions Studlin asks"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "These are how Studlin learns things like how long a class really takes you or how a session went \u2014 never required, always skippable, and if you keep skipping one Studlin turns it off for you automatically."), /* @__PURE__ */ React.createElement(Row, { label: "Post-session check-ins", sub: "A quick 'how did that go?' after a study session tied to an exam or assignment.", k: "_", right: /* @__PURE__ */ React.createElement("button", { type: "button", role: "switch", "aria-checked": !!toggles.askCheckIns, "aria-label": "Post-session check-ins", onClick: () => handleAskToggle("askCheckIns"), style: { padding: 0, boxSizing: "border-box", width: 38, height: 20, borderRadius: 10, background: toggles.askCheckIns ? T.lime : T.card2, border: `1px solid ${toggles.askCheckIns ? T.lime : T.border}`, position: "relative", cursor: "pointer", transition: "all 0.2s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 14, borderRadius: "50%", background: toggles.askCheckIns ? T.bg : "#fff", position: "absolute", top: 2, left: toggles.askCheckIns ? 21 : 2, transition: "left 0.2s" } })) }), /* @__PURE__ */ React.createElement(Row, { label: '"How long did this really take?"', sub: "Asked only when you finish a session without using the Lock-In Timer, and only for a class Studlin doesn't have enough real data on yet.", k: "_", right: /* @__PURE__ */ React.createElement("button", { type: "button", role: "switch", "aria-checked": !!toggles.askDurationQuestions, "aria-label": "How long did this really take question", onClick: () => handleAskToggle("askDurationQuestions"), style: { padding: 0, boxSizing: "border-box", width: 38, height: 20, borderRadius: 10, background: toggles.askDurationQuestions ? T.lime : T.card2, border: `1px solid ${toggles.askDurationQuestions ? T.lime : T.border}`, position: "relative", cursor: "pointer", transition: "all 0.2s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 14, borderRadius: "50%", background: toggles.askDurationQuestions ? T.bg : "#fff", position: "absolute", top: 2, left: toggles.askDurationQuestions ? 21 : 2, transition: "left 0.2s" } })) })), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.lookOn ? T.accentInk : T.white, marginBottom: 4, paddingBottom: T.lookOn ? 6 : 0, borderBottom: T.lookOn ? `2px solid ${T.accentSoft}` : "none" } }, "Data & AI"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "You own your notes, essays, and recordings."), /* @__PURE__ */ React.createElement(Row, { label: "Anonymous usage analytics", sub: "Helps us fix bugs and prioritise features. On by default; turn it off any time.", k: "_", right: /* @__PURE__ */ React.createElement("button", { type: "button", role: "switch", "aria-checked": !!!analyticsOptOut, "aria-label": "Anonymous usage analytics", onClick: toggleAnalytics, style: { padding: 0, boxSizing: "border-box", width: 38, height: 20, borderRadius: 10, background: !analyticsOptOut ? T.lime : T.card2, border: `1px solid ${!analyticsOptOut ? T.lime : T.border}`, position: "relative", cursor: "pointer", transition: "all 0.2s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 14, borderRadius: "50%", background: !analyticsOptOut ? T.bg : "#fff", position: "absolute", top: 2, left: !analyticsOptOut ? 21 : 2, transition: "left 0.2s" } })) }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: exportAllData }, React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 6 } }, Icon.copy, "Export all data")), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: downloadChatHistory, disabled: chatHistoryLoading }, chatHistoryLoading ? "Preparing\u2026" : "Download chat history"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle" }, "Privacy policy"))), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.lookOn ? T.accentInk : T.white, marginBottom: 4, paddingBottom: T.lookOn ? 6 : 0, borderBottom: T.lookOn ? `2px solid ${T.accentSoft}` : "none" } }, "What Stu remembers"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "Standing preferences you told Stu about, not one-off requests."), /* @__PURE__ */ React.createElement(StuMemoryPanel, null)), /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 10 } }, "Account security"), /* @__PURE__ */ React.createElement(Row, { label: "Two-factor authentication", sub: "Add a one-time code on every sign in.", k: "twofa", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: true, style: { opacity: 0.4, cursor: "not-allowed" } }, "Coming Soon") }), /* @__PURE__ */ React.createElement(Row, { label: "Active sessions", sub: "See and sign out other signed-in devices.", k: "sessions", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: true, style: { opacity: 0.4, cursor: "not-allowed" } }, "Coming Soon") }), /* @__PURE__ */ React.createElement(Row, { label: "Change password", sub: passwordResetSent ? "Reset link sent to " + profile.email + "." : "We'll email you a secure link to set a new one.", k: "pw", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: passwordResetLoading, onClick: sendPasswordReset }, passwordResetLoading ? "Sending\u2026" : passwordResetSent ? "Resend" : "Email reset link") }))), active === "Subjects & Labels" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Manage Subjects & Labels"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Color-code your classes. These labels appear on your calendar and tasks globally.")), /* @__PURE__ */ React.createElement(Btn, { onClick: () => {
+  })))), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.lookOn ? T.accentInk : T.white, marginBottom: 4, paddingBottom: T.lookOn ? 6 : 0, borderBottom: T.lookOn ? `2px solid ${T.accentSoft}` : "none" } }, "Suggestions and Stu"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "Control how much Studlin speaks up. Everything here is optional."), /* @__PURE__ */ React.createElement(Row, { label: "Learn how I work (timers, predictions, suggestions)", sub: "Begin buttons and timers, duration questions, best-hours ideas, and study spacing tips. Off means you plan and finish everything by hand.", k: "smartFeatures" }), /* @__PURE__ */ React.createElement(Row, { label: "Suggestions and tips", sub: 'Occasional ideas like "default new tasks to midday?" and the questions below. Off means none of them pop up.', k: "nudgesMaster" }), /* @__PURE__ */ React.createElement(Row, { label: "Stu reminds me before things start", sub: "Stu walks in a few minutes before a study block or deadline and asks if you want to start. Off uses a plain pop-up instead. Needs Learn how I work on.", k: "mascotReminders" }), /* @__PURE__ */ React.createElement(Row, { label: "Stu reminds me when it is getting late", sub: "About 30 minutes before the bedtime you set in class setup, a sleepy Stu asks if you want to wrap up. Once a night.", k: "mascotBedtime" }), /* @__PURE__ */ React.createElement(Row, { label: "Stu sleeps at night", sub: "Between the bedtime and wake time you set in class setup, Stu naps in the corner. Tap him any time to chat.", k: "stuSleeps" }), /* @__PURE__ */ React.createElement(Row, { label: "Stu cheers when I finish", sub: "A quick celebration after you complete a task.", k: "mascotCheers" }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginTop: 10 } }, "Stu's chat button is always on.")), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.lookOn ? T.accentInk : T.white, marginBottom: 4, paddingBottom: T.lookOn ? 6 : 0, borderBottom: T.lookOn ? `2px solid ${T.accentSoft}` : "none" } }, "Questions Studlin asks"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "These are how Studlin learns things like how long a class really takes you or how a session went \u2014 never required, always skippable, and if you keep skipping one Studlin turns it off for you automatically."), /* @__PURE__ */ React.createElement(Row, { label: "Post-session check-ins", sub: "A quick 'how did that go?' after a study session tied to an exam or assignment.", k: "_", right: /* @__PURE__ */ React.createElement("button", { type: "button", role: "switch", "aria-checked": !!toggles.askCheckIns, "aria-label": "Post-session check-ins", onClick: () => handleAskToggle("askCheckIns"), style: { padding: 0, boxSizing: "border-box", width: 38, height: 20, borderRadius: 10, background: toggles.askCheckIns ? T.lime : T.card2, border: `1px solid ${toggles.askCheckIns ? T.lime : T.border}`, position: "relative", cursor: "pointer", transition: "all 0.2s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 14, borderRadius: "50%", background: toggles.askCheckIns ? T.bg : "#fff", position: "absolute", top: 2, left: toggles.askCheckIns ? 21 : 2, transition: "left 0.2s" } })) }), /* @__PURE__ */ React.createElement(Row, { label: '"How long did this really take?"', sub: "Asked only when you finish a session without using the Lock-In Timer, and only for a class Studlin doesn't have enough real data on yet.", k: "_", right: /* @__PURE__ */ React.createElement("button", { type: "button", role: "switch", "aria-checked": !!toggles.askDurationQuestions, "aria-label": "How long did this really take question", onClick: () => handleAskToggle("askDurationQuestions"), style: { padding: 0, boxSizing: "border-box", width: 38, height: 20, borderRadius: 10, background: toggles.askDurationQuestions ? T.lime : T.card2, border: `1px solid ${toggles.askDurationQuestions ? T.lime : T.border}`, position: "relative", cursor: "pointer", transition: "all 0.2s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 14, borderRadius: "50%", background: toggles.askDurationQuestions ? T.bg : "#fff", position: "absolute", top: 2, left: toggles.askDurationQuestions ? 21 : 2, transition: "left 0.2s" } })) })), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.lookOn ? T.accentInk : T.white, marginBottom: 4, paddingBottom: T.lookOn ? 6 : 0, borderBottom: T.lookOn ? `2px solid ${T.accentSoft}` : "none" } }, "Data & AI"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "You own your notes, essays, and recordings."), /* @__PURE__ */ React.createElement(Row, { label: "Anonymous usage analytics", sub: "Helps us fix bugs and prioritise features. On by default; turn it off any time.", k: "_", right: /* @__PURE__ */ React.createElement("button", { type: "button", role: "switch", "aria-checked": !!!analyticsOptOut, "aria-label": "Anonymous usage analytics", onClick: toggleAnalytics, style: { padding: 0, boxSizing: "border-box", width: 38, height: 20, borderRadius: 10, background: !analyticsOptOut ? T.lime : T.card2, border: `1px solid ${!analyticsOptOut ? T.lime : T.border}`, position: "relative", cursor: "pointer", transition: "all 0.2s", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 14, height: 14, borderRadius: "50%", background: !analyticsOptOut ? T.bg : "#fff", position: "absolute", top: 2, left: !analyticsOptOut ? 21 : 2, transition: "left 0.2s" } })) }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: exportAllData }, React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 6 } }, Icon.copy, "Export all data")), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: downloadChatHistory, disabled: chatHistoryLoading }, chatHistoryLoading ? "Preparing\u2026" : "Download chat history"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle" }, "Privacy policy"))), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.lookOn ? T.accentInk : T.white, marginBottom: 4, paddingBottom: T.lookOn ? 6 : 0, borderBottom: T.lookOn ? `2px solid ${T.accentSoft}` : "none" } }, "What Stu remembers"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, "Standing preferences you told Stu about, not one-off requests."), /* @__PURE__ */ React.createElement(StuMemoryPanel, null)), /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 10 } }, "Account security"), /* @__PURE__ */ React.createElement(Row, { label: "Two-factor authentication", sub: "Add a one-time code on every sign in.", k: "twofa", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: true, style: { opacity: 0.4, cursor: "not-allowed" } }, "Coming Soon") }), /* @__PURE__ */ React.createElement(Row, { label: "Active sessions", sub: "See and sign out other signed-in devices.", k: "sessions", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: true, style: { opacity: 0.4, cursor: "not-allowed" } }, "Coming Soon") }), /* @__PURE__ */ React.createElement(Row, { label: "Change password", sub: passwordResetSent ? "Reset link sent to " + profile.email + "." : "We'll email you a secure link to set a new one.", k: "pw", right: /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: passwordResetLoading, onClick: sendPasswordReset }, passwordResetLoading ? "Sending\u2026" : passwordResetSent ? "Resend" : "Email reset link") }))), active === "Subjects & Labels" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Manage Subjects & Labels"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "Color-code your classes. These labels appear on your calendar and tasks globally.")), /* @__PURE__ */ React.createElement(Btn, { onClick: () => {
     const term = getSchoolTerm();
     setMgmtSubjs((s) => [...s, { id: String(Date.now()), label: "", color: nextAvailableSubjectColor(s.map((x) => x.color)), termEnd: term ? term.end : null }]);
   } }, "+ Add")), mgmtSubjs.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, padding: "20px 0", textAlign: "center", borderTop: `1px solid ${T.border}` } }, 'No subjects yet. Click "+ Add" to create your first label.'), mgmtSubjs.map((sub, i) => /* @__PURE__ */ React.createElement("div", { key: sub.id || i, style: { ...subjectRowStyle(sub.color), marginBottom: 10 } }, confirmRemoveSubjId === sub.id ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flex: 1 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text, flex: 1 } }, 'Delete "', sub.label, '" and its ', countLinkedForSubject(sub), " linked item", countLinkedForSubject(sub) !== 1 ? "s" : "", " (class times, assignments, exams)?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: () => confirmRemoveSubject(sub) }, "Delete"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmRemoveSubjId(null) }, "Cancel")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(ColorSelect, { value: sub.color, onChange: (c) => setMgmtSubjs((s) => s.map((x, j) => j === i ? { ...x, color: c } : x)) }), /* @__PURE__ */ React.createElement("input", { value: sub.label, onChange: (e) => setMgmtSubjs((s) => s.map((x, j) => j === i ? { ...x, label: e.target.value } : x)), placeholder: "Subject name...", style: { flex: 1, background: T.card2, border: `1px solid ${T.border}`, borderRadius: 7, padding: "7px 10px", color: T.text, fontSize: 13, fontFamily: T.font, outline: "none" } }), /* @__PURE__ */ React.createElement("button", { onClick: () => removeSubjectRow(sub), style: { background: "none", border: `1px solid ${T.border}`, color: T.muted, cursor: "pointer", borderRadius: 6, padding: "4px 10px", fontSize: 12, fontFamily: T.font } }, "Remove")))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 16, alignItems: "center", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Btn, { onClick: saveMgmtSubjs }, "Save changes"), mgmtSubjs.length > 0 && (confirmClearSubjs ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted } }, "Delete all ", mgmtSubjs.length, " subject", mgmtSubjs.length !== 1 ? "s" : "", " and everything linked to them?"), /* @__PURE__ */ React.createElement(Btn, { variant: "danger", onClick: clearAllSubjects }, "Yes, delete all"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmClearSubjs(false) }, "Cancel")) : /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setConfirmClearSubjs(true) }, "Clear all")), mgmtSaved && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.lime, fontWeight: 600 } }, "\u2713 Saved")), courseDeleteToast && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginTop: 10, padding: "9px 12px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.text, flex: 1 } }, courseDeleteToast), /* @__PURE__ */ React.createElement("button", { onClick: undoCourseDeletes, style: { background: "none", border: "none", color: T.lime, cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: T.font, textDecoration: "underline" } }, "Undo")))), active === "Calendar Preferences" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Study Schedule"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 16 } }, "Work hours, weekend schedule, difficulty, and peak focus hours."), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setScheduleSettingsOpen(true) }, "Customize Schedule")), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Weekly Routine"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 16 } }, "Your classes, sports, and shifts: the times the AI treats as absolute and never schedules over."), /* @__PURE__ */ React.createElement(Btn, { onClick: onOpenRoutineCenter }, "Manage Routine")), /* @__PURE__ */ React.createElement(Card, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 } }, "Auto-schedule prep time"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 16 } }, "How Studlin handles study sessions for assignments and exams pulled from a syllabus scan, once they're actually coming up."), /* @__PURE__ */ React.createElement(SelectChip, { options: [{ value: "ask", label: "Always ask" }, { value: "auto", label: "Auto-add" }, { value: "off", label: "Off" }], value: prepScheduleMode, onChange: (v) => {
@@ -26700,6 +26915,65 @@ function App() {
     const iv = setInterval(check, 6e4);
     return () => clearInterval(iv);
   }, [timerTask, headsUpEvent, stuBedtime]);
+  const [stuRide, setStuRide] = useState(0);
+  const [, setStuSleepTick] = useState(0);
+  useEffect(() => {
+    const bump = () => setStuSleepTick((n) => n + 1);
+    const iv = setInterval(bump, 6e4);
+    window.addEventListener("studlin-settings-changed", bump);
+    return () => {
+      clearInterval(iv);
+      window.removeEventListener("studlin-settings-changed", bump);
+    };
+  }, []);
+  const stuAsleep = !studlinAiOpen && !stuBedtime && stuSleepsNow();
+  const stuAsleepRef = useRef(false);
+  const stuPrevOpenRef = useRef(studlinAiOpen);
+  const stuMotionAtRef = useRef(0);
+  useEffect(() => {
+    const was = stuPrevOpenRef.current;
+    stuPrevOpenRef.current = studlinAiOpen;
+    if (was === studlinAiOpen) return;
+    const now = Date.now();
+    if (now - stuMotionAtRef.current < 450) return;
+    if (!stuMotionAllowed(!!timerTask)) return;
+    if (studlinAiOpen) {
+      if (stuAsleepRef.current) {
+        stuMotionAtRef.current = now;
+        stuPlayBubbleClass("stu-wake", 360);
+        return;
+      }
+      if (stuMotionPlan("stuOpenAnims")) {
+        stuMotionAtRef.current = now;
+        stuPlayBubbleClass("stu-tug", 260);
+        setStuRide((n) => n + 1);
+      }
+    } else {
+      if (stuAsleep || document.querySelector(".stu-wrap-anim")) return;
+      if (stuMotionPlan("stuCloseAnims")) {
+        stuMotionAtRef.current = now;
+        stuPlayBubbleClass("stu-jump", 520);
+      }
+    }
+  }, [studlinAiOpen]);
+  useEffect(() => {
+    stuAsleepRef.current = stuAsleep;
+    try {
+      document.body.setAttribute("data-stu-asleep", stuAsleep ? "1" : "0");
+    } catch (e) {
+    }
+    return () => {
+      try {
+        document.body.removeAttribute("data-stu-asleep");
+      } catch (e) {
+      }
+    };
+  }, [stuAsleep]);
+  const openNightRoutine = () => {
+    const ws = getWakeSleep();
+    if (!ws || !ws.sleepTime) return;
+    openStuCalendarTool({ kind: "nightRoutine", ...stuNightRoutinePrefill(ws.sleepTime) }, setActive);
+  };
   useEffect(() => {
     const HEADS_UP_MINS = 10;
     const check = () => {
@@ -27720,6 +27994,8 @@ function App() {
         return ws && ws.sleepTime ? fmtRolloverClock(ws.sleepTime) : "";
       })(),
       navExpanded,
+      firstPrompt: !String(stuBedtime.id).startsWith("bed2"),
+      onNightRoutine: openNightRoutine,
       onDone: (how) => {
         setStuBedtime(null);
         if (how === "snooze" && !String(stuBedtime.id).startsWith("bed2")) setTimeout(() => {
@@ -27834,12 +28110,13 @@ function App() {
   }, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Review"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: () => {
     dismissImportReviewNudge();
     setImportReviewSummary(null);
-  }, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Not now"))), /* @__PURE__ */ React.createElement(StudlinAiBubble, { onClick: () => setStudlinAiOpen(true), hasProactive: !!studlinAiProactive }), /* @__PURE__ */ React.createElement(
+  }, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Not now"))), /* @__PURE__ */ React.createElement(StudlinAiBubble, { onClick: () => setStudlinAiOpen(true), hasProactive: !!studlinAiProactive }), /* @__PURE__ */ React.createElement(StuSleepingFab, { asleep: stuAsleep }), /* @__PURE__ */ React.createElement(
     StudlinAiDrawer,
     {
       open: studlinAiOpen,
       onClose: () => setStudlinAiOpen(false),
       setPricingOpen,
+      stuRide,
       setActive,
       catchUpBanner,
       onOpenCatchUp: openCatchUpPreview,
