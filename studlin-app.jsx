@@ -9703,18 +9703,10 @@ function computeQuickCreateRange(anchorMins,curMins){
   else{ hi=anchorMins; lo=Math.min(curMins,anchorMins-15); }
   return {startTime:minutesToTime(lo),endTime:minutesToTime(hi)};
 }
-// A plain click (no movement) used to give a 15-minute block, which is
-// usually wrong. It now seeds the last duration the student used for a
-// quick-created task (30 minutes the first time). The 15-minute floor in
-// computeQuickCreateRange still governs real drags.
-function quickCreateSeedMinutes(){
-  return getLastDuration("quickCreate")||30;
-}
-function computeQuickCreateRangeSeeded(anchorMins,curMins){
-  return curMins===anchorMins
-    ?computeQuickCreateRange(anchorMins,Math.min(1439,anchorMins+quickCreateSeedMinutes()))
-    :computeQuickCreateRange(anchorMins,curMins);
-}
+// A plain click no longer creates anything: the block only starts once the
+// mouse has moved this far while pressed. Real drags snap to 15 minutes with
+// a 15-minute floor (computeQuickCreateRange).
+const CREATE_DRAG_THRESHOLD_PX=6;
 
 // Normalize a stored priority/difficulty value to 0-1.
 // New tasks (Phase 3+) store 0-1000; legacy tasks store 0-10.
@@ -24640,10 +24632,10 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
     if(e.button!==0)return;
     if(!(e.target.dataset&&e.target.dataset.gridbg==="1"))return;
     e.preventDefault();
+    // A plain press makes nothing; the block only appears once the mouse
+    // actually drags (see CREATE_DRAG_THRESHOLD_PX in onMove below).
     const startMins=minsFromColY(dk,e.clientY);
-    createDragRef.current={dateKey:dk,anchorMins:startMins};
-    const r=computeQuickCreateRange(startMins,startMins+quickCreateSeedMinutes());
-    onQuickCreateDrag(dk,r.startTime,r.endTime);
+    createDragRef.current={dateKey:dk,anchorMins:startMins,startY:e.clientY,moved:false};
     setCreatingDragging(true);
     document.body.style.userSelect="none";
   };
@@ -24652,8 +24644,12 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
     const onMove=(e)=>{
       const info=createDragRef.current;
       if(!info||!onQuickCreateDrag)return;
+      if(!info.moved){
+        if(Math.abs(e.clientY-info.startY)<CREATE_DRAG_THRESHOLD_PX)return;
+        info.moved=true;
+      }
       const curMins=minsFromColY(info.dateKey,e.clientY);
-      const r=computeQuickCreateRangeSeeded(info.anchorMins,curMins);
+      const r=computeQuickCreateRange(info.anchorMins,curMins);
       onQuickCreateDrag(info.dateKey,r.startTime,r.endTime);
     };
     const onUp=(e)=>{
@@ -24661,9 +24657,9 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
       document.body.style.userSelect="";
       const info=createDragRef.current;
       createDragRef.current=null;
-      if(!info||!onQuickCreateDragEnd)return;
+      if(!info||!info.moved||!onQuickCreateDragEnd)return;
       const curMins=minsFromColY(info.dateKey,e.clientY);
-      const r=computeQuickCreateRangeSeeded(info.anchorMins,curMins);
+      const r=computeQuickCreateRange(info.anchorMins,curMins);
       const col=wkColRefs.current[info.dateKey];
       const rect=col?col.getBoundingClientRect():null;
       onQuickCreateDragEnd(info.dateKey,r.startTime,r.endTime,{x:rect?rect.right:e.clientX,y:e.clientY});
@@ -28800,9 +28796,7 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
     if(!(e.target.dataset&&e.target.dataset.gridbg==="1"))return;
     e.preventDefault();
     const startMins=minsFromDayY(e.clientY);
-    createDragRef.current={anchorMins:startMins};
-    const r=computeQuickCreateRange(startMins,startMins+quickCreateSeedMinutes());
-    onQuickCreateDrag(selDay,r.startTime,r.endTime);
+    createDragRef.current={anchorMins:startMins,startY:e.clientY,moved:false};
     setCreatingDragging(true);
     document.body.style.userSelect="none";
   };
@@ -28811,8 +28805,12 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
     const onMove=(e)=>{
       const info=createDragRef.current;
       if(!info||!onQuickCreateDrag)return;
+      if(!info.moved){
+        if(Math.abs(e.clientY-info.startY)<CREATE_DRAG_THRESHOLD_PX)return;
+        info.moved=true;
+      }
       const curMins=minsFromDayY(e.clientY);
-      const r=computeQuickCreateRangeSeeded(info.anchorMins,curMins);
+      const r=computeQuickCreateRange(info.anchorMins,curMins);
       onQuickCreateDrag(selDay,r.startTime,r.endTime);
     };
     const onUp=(e)=>{
@@ -28820,9 +28818,9 @@ function DayPlanner({dayEvents, setEvents, selDay, todayK, colorOf, fmtTime, fmt
       document.body.style.userSelect="";
       const info=createDragRef.current;
       createDragRef.current=null;
-      if(!info||!onQuickCreateDragEnd)return;
+      if(!info||!info.moved||!onQuickCreateDragEnd)return;
       const curMins=minsFromDayY(e.clientY);
-      const r=computeQuickCreateRangeSeeded(info.anchorMins,curMins);
+      const r=computeQuickCreateRange(info.anchorMins,curMins);
       const el=timelineRef.current;
       const rect=el?el.getBoundingClientRect():null;
       onQuickCreateDragEnd(selDay,r.startTime,r.endTime,{x:rect?rect.right:e.clientX,y:e.clientY});
@@ -38888,6 +38886,7 @@ const JOURNAL_MOODS=[
   {id:"hard",label:"Hard"}
 ];
 const JOURNAL_MAX_CHARS=5000;
+const JOURNAL_MAX_TITLE=80;
 function journalPromptFor(key){
   const s=String(key||"");let h=0;
   for(let i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))>>>0;
@@ -38896,19 +38895,23 @@ function journalPromptFor(key){
 function normalizeJournal(raw){
   if(!Array.isArray(raw))return [];
   return raw.filter(e=>e&&typeof e.date==="string"&&typeof e.id==="string").map(e=>({
-    id:e.id,date:e.date,text:typeof e.text==="string"?e.text:"",
+    id:e.id,date:e.date,title:typeof e.title==="string"?e.title.slice(0,JOURNAL_MAX_TITLE):"",
+    text:typeof e.text==="string"?e.text:"",
     mood:JOURNAL_MOODS.some(m=>m.id===e.mood)?e.mood:null,
     createdAt:e.createdAt||"",updatedAt:e.updatedAt||e.createdAt||"",crisis:!!e.crisis
-  })).sort((a,b)=>a.date<b.date?1:a.date>b.date?-1:0);
+  })).sort((a,b)=>a.date<b.date?1:a.date>b.date?-1:(a.createdAt<b.createdAt?1:a.createdAt>b.createdAt?-1:0));
 }
 function getJournal(){return normalizeJournal(lsGet("journal",[]));}
 function saveJournal(list){lsSet("journal",normalizeJournal(list));}
-// Pure: one entry per day. Saving again for the same day replaces that entry.
-function upsertJournalEntry(list,{date,text,mood,crisis},nowIso){
+// Pure: a log of entries, any number per day. Passing an existing id edits that
+// entry in place; no id adds a new one. Entries from the old one-per-day
+// version (id "j-<date>", no title) keep working and simply read as untitled.
+function upsertJournalEntry(list,{id,date,title,text,mood,crisis},nowIso){
   const base=normalizeJournal(list);
-  const prev=base.find(e=>e.date===date);
-  const entry={id:prev?prev.id:"j-"+date,date,text:String(text||"").slice(0,JOURNAL_MAX_CHARS),mood:mood||null,createdAt:prev?prev.createdAt:nowIso,updatedAt:nowIso,crisis:!!crisis};
-  return normalizeJournal(base.filter(e=>e.date!==date).concat([entry]));
+  const prev=id?base.find(e=>e.id===id):null;
+  const newId="j-"+date+"-"+String(nowIso).replace(/[^0-9]/g,"")+Math.random().toString(36).slice(2,6);
+  const entry={id:prev?prev.id:newId,date,title:String(title||"").trim().slice(0,JOURNAL_MAX_TITLE),text:String(text||"").slice(0,JOURNAL_MAX_CHARS),mood:mood||null,createdAt:prev?prev.createdAt:nowIso,updatedAt:nowIso,crisis:!!crisis};
+  return normalizeJournal(base.filter(e=>e.id!==entry.id).concat([entry]));
 }
 function removeJournalEntry(list,id){return normalizeJournal(list).filter(e=>e.id!==id);}
 function journalDateLabel(key){
@@ -38933,13 +38936,23 @@ function JournalCrisisCard(){
     </div>
   );
 }
+function journalLongDateLabel(key,todayKey){
+  const p=String(key).split("-");
+  const d=new Date(+p[0],(+p[1]||1)-1,+p[2]||1);
+  if(isNaN(d.getTime()))return String(key);
+  const base=d.toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric"});
+  return key===todayKey?"Today, "+base:base;
+}
+function journalPreview(text){
+  const t=String(text||"").replace(/\s+/g," ").trim();
+  return t.length>110?t.slice(0,109)+"...":t;
+}
+// Two screens inside one modal: the log (newest first) and the editor.
+// editing === null -> log, {id|null,date,title,text,mood} -> editor.
 function JournalView(){
   const todayKey=dayKey();
   const [entries,setEntries]=useState(()=>getJournal());
-  const today=entries.find(e=>e.date===todayKey)||null;
-  const [writing,setWriting]=useState(()=>entries.length>0);
-  const [text,setText]=useState(today?today.text:"");
-  const [mood,setMood]=useState(today?today.mood:null);
+  const [editing,setEditing]=useState(null);
   const [err,setErr]=useState("");
   const [saving,setSaving]=useState(false);
   const [toast,setToast]=useState("");
@@ -38948,82 +38961,114 @@ function JournalView(){
   const flash=(t)=>{setToast(t);setTimeout(()=>setToast(""),2600);};
   const onF=e=>{e.target.style.borderColor=T.lime;};
   const onB=e=>{e.target.style.borderColor=T.border;};
+  const startNew=()=>{setErr("");setShowCrisis(false);setEditing({id:null,date:todayKey,title:"",text:"",mood:null});};
+  const openEntry=(e)=>{setErr("");setShowCrisis(false);setEditing({id:e.id,date:e.date,title:e.title||"",text:e.text,mood:e.mood});};
+  const patch=(o)=>{setEditing(x=>({...x,...o}));if(err)setErr("");};
   const save=()=>{
-    if(saving)return;
-    const t=text.trim();
-    if(!t&&!mood){setErr("Write a line or pick how it went first.");return;}
-    if(t.length>JOURNAL_MAX_CHARS){setErr("Keep it under "+JOURNAL_MAX_CHARS+" characters.");return;}
+    if(saving||!editing)return;
+    const title=editing.title.trim();
+    const body=editing.text.trim();
+    if(!title&&!body){setErr("Add a title or write a line first.");return;}
+    if(body.length>JOURNAL_MAX_CHARS){setErr("Keep it under "+JOURNAL_MAX_CHARS+" characters.");return;}
     setSaving(true);setErr("");
     // Crisis check runs first, on every save of free text.
+    const t=(title+"\n"+body).trim();
     const crisis=detectCrisis(t);
     try{
-      saveJournal(upsertJournalEntry(getJournal(),{date:todayKey,text:t,mood,crisis},new Date().toISOString()));
+      saveJournal(upsertJournalEntry(getJournal(),{id:editing.id,date:editing.date||todayKey,title,text:body,mood:editing.mood,crisis},new Date().toISOString()));
       setEntries(getJournal());
       setShowCrisis(crisis);
-      flash("Saved on this device.");
+      setEditing(null);
+      flash("Saved to your journal.");
     }catch(e){setErr("Couldn't save that. Try again.");}
     setSaving(false);
   };
   const doDelete=()=>{
     const id=confirmId;setConfirmId(null);
     saveJournal(removeJournalEntry(getJournal(),id));
-    const next=getJournal();setEntries(next);
-    if(!next.some(e=>e.date===todayKey)){setText("");setMood(null);setShowCrisis(false);}
+    setEntries(getJournal());
+    if(editing&&editing.id===id)setEditing(null);
     flash("Entry deleted.");
   };
-  const past=entries.filter(e=>e.date!==todayKey);
+  const footer=(<>
+    <div style={{fontSize:11.5,color:T.muted}}>Just for you. Stored on this device only. Stu is not a counselor.</div>
+    {toast&&<div role="status" style={{position:"sticky",bottom:0,alignSelf:"flex-start",padding:"8px 14px",borderRadius:8,background:T.lime,color:T.lookOn?lookTextOnFill(T.lime):T.bg,fontSize:12.5,fontWeight:600}}>{toast}</div>}
+    <Modal open={!!confirmId} onClose={()=>setConfirmId(null)} title="Delete this entry?" sub="This can't be undone." width={400}
+      footer={<><Btn variant="subtle" onClick={()=>setConfirmId(null)}>Cancel</Btn><Btn variant="danger" onClick={doDelete}>Delete</Btn></>}>
+      <div style={{fontSize:13,color:T.text}}>It will be removed from this device.</div>
+    </Modal>
+  </>);
+  if(editing){
+    return (
+      <div style={{display:"flex",flexDirection:"column",gap:12}}>
+        <div>
+          <button type="button" onClick={()=>setEditing(null)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:12.5,fontFamily:T.font,padding:"4px 0"}}>{"< Back to journal"}</button>
+        </div>
+        <div>
+          <label htmlFor="journal-title" style={{position:"absolute",width:1,height:1,overflow:"hidden",clip:"rect(0 0 0 0)"}}>Title</label>
+          <input id="journal-title" value={editing.title} maxLength={JOURNAL_MAX_TITLE} onChange={e=>patch({title:e.target.value})} onFocus={onF} onBlur={onB} placeholder="Title" autoFocus
+            style={{width:"100%",boxSizing:"border-box",background:"transparent",border:"none",borderBottom:`1px solid ${T.border}`,padding:"6px 2px 10px",color:T.white,fontSize:20,fontWeight:700,fontFamily:T.font,outline:"none"}} />
+          <div style={{display:"flex",alignItems:"center",gap:10,marginTop:8,flexWrap:"wrap"}}>
+            <span style={{fontSize:12.5,color:T.muted}}>{journalLongDateLabel(editing.date,todayKey)}</span>
+            <label style={{fontSize:12,color:T.muted,display:"inline-flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+              <span style={{textDecoration:"underline"}}>Change date</span>
+              <input type="date" value={editing.date} max={todayKey} onChange={e=>patch({date:e.target.value||todayKey})} aria-label="Entry date"
+                style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:6,color:T.text,fontSize:12,padding:"3px 6px",fontFamily:T.font}} />
+            </label>
+          </div>
+        </div>
+        <div>
+          <label htmlFor="journal-text" style={{position:"absolute",width:1,height:1,overflow:"hidden",clip:"rect(0 0 0 0)"}}>Entry</label>
+          <textarea id="journal-text" value={editing.text} onChange={e=>patch({text:e.target.value})} onFocus={onF} onBlur={onB} rows={10} placeholder="What's on your mind?"
+            style={{width:"100%",boxSizing:"border-box",background:T.card2,border:`1px solid ${err?T.red:T.border}`,borderRadius:10,padding:"12px 14px",color:T.text,fontSize:14,lineHeight:1.6,fontFamily:T.font,outline:"none",resize:"vertical",minHeight:200}} />
+          {err&&<div role="alert" style={{color:T.red,fontSize:12,marginTop:6}}>{err}</div>}
+        </div>
+        <div role="group" aria-label="How did it go (optional)" style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+          <span style={{fontSize:12,color:T.muted,marginRight:2}}>Mood</span>
+          {JOURNAL_MOODS.map(m=>(
+            <button key={m.id} type="button" aria-pressed={editing.mood===m.id} onClick={()=>patch({mood:editing.mood===m.id?null:m.id})}
+              style={{padding:"6px 11px",borderRadius:8,fontSize:12,fontFamily:T.font,cursor:"pointer",border:`1px solid ${editing.mood===m.id?T.lime:T.border}`,background:editing.mood===m.id?T.lime+"22":T.card2,color:T.text,fontWeight:editing.mood===m.id?600:400}}>{m.label}</button>
+          ))}
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <Btn onClick={save} disabled={saving}>{saving?"Saving...":(editing.id?"Save changes":"Save entry")}</Btn>
+          <Btn variant="subtle" onClick={()=>setEditing(null)}>Cancel</Btn>
+          <span style={{flex:1}} />
+          {editing.id&&<Btn variant="danger" onClick={()=>setConfirmId(editing.id)}>Delete</Btn>}
+        </div>
+        {footer}
+      </div>
+    );
+  }
   return (
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
-      <div style={{display:"flex",alignItems:"center",gap:12}}>
-        <StudMascot size={44} mood="happy" ariaLabel="Stu" {...stuPalette()} />
-        <div style={{fontSize:13,color:T.muted,lineHeight:1.5}}>Just for you. Stored on this device only.</div>
-      </div>
-      {entries.length===0&&!writing?(
-        <div style={{textAlign:"center",padding:"18px 8px"}}>
-          <div style={{fontSize:13,color:T.muted,marginBottom:12}}>No entries yet. One line is enough.</div>
-          <Btn onClick={()=>setWriting(true)}>Write your first entry</Btn>
+      {entries.length===0?(
+        <div style={{textAlign:"center",padding:"26px 8px"}}>
+          <div style={{fontSize:14,fontWeight:600,color:T.white,marginBottom:4}}>Your journal is empty</div>
+          <div style={{fontSize:13,color:T.muted,marginBottom:14}}>Give it a title and write what's on your mind. One line is enough.</div>
+          <Btn onClick={startNew}>Write your first entry</Btn>
         </div>
       ):(<>
-        <div>
-          <label htmlFor="journal-text" style={{display:"block",fontSize:14,fontWeight:600,color:T.white,marginBottom:8}}>{journalPromptFor(todayKey)}</label>
-          <div role="group" aria-label="How did today go (optional)" style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
-            {JOURNAL_MOODS.map(m=>(
-              <button key={m.id} type="button" aria-pressed={mood===m.id} onClick={()=>setMood(mood===m.id?null:m.id)}
-                style={{padding:"7px 12px",borderRadius:8,fontSize:12.5,fontFamily:T.font,cursor:"pointer",border:`1px solid ${mood===m.id?T.lime:T.border}`,background:mood===m.id?T.lime+"22":T.card2,color:T.text,fontWeight:mood===m.id?600:400}}>{m.label}</button>
-            ))}
-          </div>
-          <textarea id="journal-text" value={text} onChange={e=>{setText(e.target.value);if(err)setErr("");}} onFocus={onF} onBlur={onB} rows={5} placeholder="Optional. Write as much or as little as you like."
-            style={{width:"100%",boxSizing:"border-box",background:T.card2,border:`1px solid ${err?T.red:T.border}`,borderRadius:8,padding:"10px 12px",color:T.text,fontSize:13,lineHeight:1.5,fontFamily:T.font,outline:"none",resize:"vertical"}} />
-          {err&&<div role="alert" style={{color:T.red,fontSize:12,marginTop:6}}>{err}</div>}
-          <div style={{display:"flex",alignItems:"center",gap:10,marginTop:10}}>
-            <Btn onClick={save} disabled={saving}>{saving?"Saving...":(today?"Update today":"Save")}</Btn>
-            {today&&<Btn variant="danger" onClick={()=>setConfirmId(today.id)}>Delete today</Btn>}
-          </div>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <div style={{flex:1,fontSize:12.5,color:T.muted}}>{entries.length}{entries.length===1?" entry":" entries"}</div>
+          <Btn onClick={startNew}>+ New entry</Btn>
         </div>
         {showCrisis&&<JournalCrisisCard />}
-        {past.length>0&&(
-          <div style={{display:"flex",flexDirection:"column",gap:8}}>
-            <div style={{fontSize:12,fontWeight:600,color:T.muted}}>Past entries</div>
-            {past.map(e=>(
-              <div key={e.id} style={{padding:"10px 12px",borderRadius:8,border:`1px solid ${T.border}`,background:T.card2}}>
-                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:e.text?4:0}}>
-                  <span style={{fontSize:12,fontWeight:600,color:T.white}}>{journalDateLabel(e.date)}</span>
-                  {e.mood&&<span style={{fontSize:11.5,color:T.muted}}>{(JOURNAL_MOODS.find(m=>m.id===e.mood)||{}).label}</span>}
-                  <span style={{flex:1}} />
-                  <button type="button" onClick={()=>setConfirmId(e.id)} aria-label={"Delete entry from "+journalDateLabel(e.date)} style={{background:"none",border:`1px solid ${T.border}`,color:T.muted,cursor:"pointer",borderRadius:6,padding:"3px 9px",fontSize:11.5,fontFamily:T.font}}>Delete</button>
-                </div>
-                {e.text&&<div style={{fontSize:13,color:T.text,lineHeight:1.5,whiteSpace:"pre-wrap"}}>{e.text}</div>}
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {entries.map(e=>(
+            <button key={e.id} type="button" onClick={()=>openEntry(e)} aria-label={"Open entry "+(e.title||"Untitled")}
+              style={{textAlign:"left",width:"100%",padding:"12px 14px",borderRadius:10,border:`1px solid ${T.border}`,background:T.card2,cursor:"pointer",fontFamily:T.font,color:T.text,display:"block"}}>
+              <div style={{display:"flex",alignItems:"baseline",gap:8}}>
+                <span style={{fontSize:14,fontWeight:700,color:T.white,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{e.title||"Untitled"}</span>
+                {e.mood&&<span style={{fontSize:11.5,color:T.muted}}>{(JOURNAL_MOODS.find(m=>m.id===e.mood)||{}).label}</span>}
               </div>
-            ))}
-          </div>
-        )}
+              <div style={{fontSize:11.5,color:T.muted,margin:"2px 0 4px"}}>{journalLongDateLabel(e.date,todayKey)}</div>
+              {e.text&&<div style={{fontSize:13,color:T.text,lineHeight:1.5}}>{journalPreview(e.text)}</div>}
+            </button>
+          ))}
+        </div>
       </>)}
-      <div style={{fontSize:11.5,color:T.muted}}>Stu is not a counselor.</div>
-      {toast&&<div role="status" style={{position:"sticky",bottom:0,alignSelf:"flex-start",padding:"8px 14px",borderRadius:8,background:T.lime,color:T.lookOn?lookTextOnFill(T.lime):T.bg,fontSize:12.5,fontWeight:600}}>{toast}</div>}
-      <Modal open={!!confirmId} onClose={()=>setConfirmId(null)} title="Delete this entry?" sub="This can't be undone." width={400}
-        footer={<><Btn variant="subtle" onClick={()=>setConfirmId(null)}>Cancel</Btn><Btn variant="danger" onClick={doDelete}>Delete</Btn></>}>
-        <div style={{fontSize:13,color:T.text}}>It will be removed from this device.</div>
-      </Modal>
+      {footer}
     </div>
   );
 }
@@ -39036,7 +39081,7 @@ function JournalCard(){
         <StudMascot size={36} mood="happy" {...stuPalette()} />
         <div style={{flex:1,minWidth:0}}>
           <div style={{fontSize:14,fontWeight:700,color:T.white}}>Journal</div>
-          <div style={{fontSize:12.5,color:T.muted}}>A private note for today. Only on this device.</div>
+          <div style={{fontSize:12.5,color:T.muted}}>Write what is on your mind. Only on this device.</div>
         </div>
         <Btn variant="subtle" onClick={()=>setOpen(true)}>Open</Btn>
       </div>

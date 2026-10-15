@@ -146,17 +146,15 @@ describe("helpers", () => {
     assert.equal(chips[2].label, "Fri");
     assert.equal(chips[5].key, "2026-10-19");
   });
-  test("a plain click seeds the last quick-create duration, drags keep the 15 minute floor", () => {
+  test("drags keep the 15 minute floor and a plain click is gated by a drag threshold", () => {
     const q = loadStudlinModule();
-    let r = q.computeQuickCreateRangeSeeded(600, 600);
-    assert.equal(r.endTime, "10:30", "first time: 30 minutes");
-    q.rememberLastDuration("quickCreate", 45);
-    r = q.computeQuickCreateRangeSeeded(600, 600);
-    assert.equal(r.endTime, "10:45");
-    r = q.computeQuickCreateRangeSeeded(600, 615);
-    assert.equal(r.endTime, "10:15", "a real drag is untouched");
+    let r = q.computeQuickCreateRange(600, 615);
+    assert.equal(r.endTime, "10:15");
     r = q.computeQuickCreateRange(600, 600);
-    assert.equal(r.endTime, "10:15", "floor kept in the base function");
+    assert.equal(r.endTime, "10:15", "floor kept");
+    assert.match(SOURCE, /CREATE_DRAG_THRESHOLD_PX=\d+/);
+    assert.equal((SOURCE.match(/if\(!info\.moved\)\{/g) || []).length, 2, "week and day both wait for movement");
+    assert.doesNotMatch(SOURCE, /computeQuickCreateRangeSeeded|quickCreateSeedMinutes/);
   });
 });
 
