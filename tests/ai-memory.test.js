@@ -124,5 +124,6 @@ describe("formatAiMemoryForPrompt", () => {
     assert.ok(line.includes("Hates morning workouts"));
     assert.ok(line.includes("Prefers evening sessions"));
     assert.ok(line.length > 0);
+    assert.ok(line.startsWith("Things the student told you (may be outdated; never state them as certain):"));
   });
 });
