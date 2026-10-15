@@ -25420,6 +25420,10 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                         onMouseDown={(e)=>startWkResize(ev,"bottom",e,effStartMin,effDuration)}
                         onClick={(e)=>e.stopPropagation()}
                         style={{position:"absolute",bottom:-2,left:0,right:0,height:6,cursor:"ns-resize",zIndex:4}} />}
+                      {isRoutine&&!editRoutineMode&&isRoutineSelected&&onDeleteRoutine&&(
+                        <button onMouseDown={(e)=>e.stopPropagation()} onDoubleClick={(e)=>e.stopPropagation()} onClick={(e)=>{e.stopPropagation();onDeleteRoutine(ev.routineId);}} title="Delete (asks you to confirm)"
+                          style={{position:"absolute",top:-9,right:-9,height:20,padding:"0 7px",borderRadius:10,border:`1px solid ${T.border}`,background:T.card,color:T.red,fontSize:10.5,fontWeight:700,fontFamily:T.font,lineHeight:1,cursor:"pointer",boxShadow:"0 4px 10px -2px rgba(0,0,0,0.4)",zIndex:6}}>Delete</button>
+                      )}
                       {isRoutine&&editRoutineMode&&hoveredRoutineId===ev.routineId&&(
                         <button onClick={(e)=>{e.stopPropagation();if(onDeleteRoutine)onDeleteRoutine(ev.routineId);if(setHoveredRoutineId)setHoveredRoutineId(null);}} title="Delete this routine block (every week)"
                           style={{position:"absolute",top:-8,right:-8,width:18,height:18,borderRadius:"50%",border:`1px solid ${T.border}`,background:T.card,color:T.red,fontSize:11,lineHeight:1,cursor:"pointer",display:"grid",placeItems:"center",boxShadow:"0 4px 10px -2px rgba(0,0,0,0.4)"}}>×</button>
@@ -32332,7 +32336,7 @@ function QuickCreateTaskPopover({draft,anchorX,anchorY,onCreate,onMoreOptions,on
         <DurationChips value={Math.max(15,timeToMinutes(draft.endTime)-timeToMinutes(draft.startTime))} onChange={v=>{if(onDurationChange)onDurationChange(v);}} presets={[15,30,45,60,90]} />
         <div style={{fontSize:11.5,color:T.muted}}>{niceDate} · {fmtTimeRange(draft.startTime,Math.max(15,timeToMinutes(draft.endTime)-timeToMinutes(draft.startTime)))}</div>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:2}}>
-          <button type="button" onClick={()=>onMoreOptions(draft)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:11,fontFamily:T.font,padding:0,textDecoration:"underline"}}>More options</button>
+          <button type="button" onClick={()=>onMoreOptions(draft,title,color)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:11,fontFamily:T.font,padding:0,textDecoration:"underline"}}>More options</button>
           <div style={{display:"flex",gap:6}}>
             <Btn variant="subtle" onClick={onClose} style={{padding:"6px 13px",fontSize:12}}>Cancel</Btn>
             <Btn onClick={submit} style={{padding:"6px 13px",fontSize:12}}>Add task</Btn>
@@ -32606,10 +32610,19 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // "More options" hands off to the real Add Task flow (AI arrange,
   // subject, Attack Block, etc.) instead of trying to cram all of that into
   // this small popover -- same date/time it already had, nothing re-typed.
-  const quickCreateMoreOptions=(draft)=>{
+  // Carries over everything already picked in the popover (title, colour,
+  // start time, duration, date) so nothing has to be re-entered.
+  const quickCreateMoreOptions=(draft,title,color)=>{
+    const duration=Math.max(15,timeToMinutes(draft.endTime)-timeToMinutes(draft.startTime));
     cancelQuickCreate();
     setSelDay(draft.dateKey);
     openNew(draft.dateKey);
+    setEvTitle((title||"").trim());
+    setEvTime(draft.startTime);
+    setEvDuration(duration);
+    setEvDurationTouched(true);
+    setEvDate(draft.dateKey);
+    if(color)setEvCustomColor(color);
   };
   // ── Schedule with Friends (2026-08-21) ──────────────────────────────────
   // A calendar-native front door onto the exact same propose/accept/decline
