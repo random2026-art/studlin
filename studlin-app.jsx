@@ -5278,14 +5278,48 @@ function reconcileFixedEventConflicts(newFixedEvents){
 // alert. Keyed by the actual pair (or the moved event's id) rather than
 // object identity, since each poll builds entirely new plain objects for
 // the same real conflict.
+function scheduleAlertKey(a){
+  return a.kind==="moved"?"moved:"+a.id:"attention:"+(a.newEvent&&a.newEvent.id)+"|"+(a.conflictsWith&&a.conflictsWith.id);
+}
+// A conflict that is still unresolved gets re-detected on every app load (the
+// Google Calendar pull runs each time), so dismissing it must be remembered or
+// the same banner comes back forever. Only "attention" alerts are remembered;
+// a "moved" alert is a one-off event, not a standing state.
+function dismissedScheduleAlertKeys(){return lsGet("dismissedScheduleAlerts",[]);}
+function rememberDismissedScheduleAlerts(alerts){
+  const keys=(alerts||[]).filter(a=>a.kind==="attention").map(scheduleAlertKey);
+  if(keys.length===0)return;
+  const merged=Array.from(new Set([...dismissedScheduleAlertKeys(),...keys])).slice(-300);
+  lsSet("dismissedScheduleAlerts",merged);
+}
 function dedupeScheduleAlerts(alerts){
   const seen=new Set();
+  const dismissed=new Set(dismissedScheduleAlertKeys());
   return (alerts||[]).filter(a=>{
-    const key=a.kind==="moved"?"moved:"+a.id:"attention:"+(a.newEvent&&a.newEvent.id)+"|"+(a.conflictsWith&&a.conflictsWith.id);
+    const key=scheduleAlertKey(a);
     if(seen.has(key))return false;
+    if(a.kind==="attention"&&dismissed.has(key))return false;
     seen.add(key);
     return true;
   });
+}
+// Short copy for Stu's bubble: a headline plus the first item.
+function scheduleAlertSummary(alerts){
+  const list=alerts||[];
+  const moved=list.filter(a=>a.kind==="moved").length;
+  const attn=list.filter(a=>a.kind==="attention");
+  const parts=[];
+  if(moved>0)parts.push(moved+" study session"+(moved!==1?"s":"")+" moved");
+  if(attn.length>0)parts.push(attn.length+" conflict"+(attn.length!==1?"s":"")+" to look at");
+  const first=list[0];
+  let sub="";
+  if(first){
+    if(first.kind==="moved")sub=first.title+" moved to make room for "+first.causedByTitle+".";
+    else if(first.noSlotFound)sub="Could not find a new time for "+first.conflictsWith.title+". It overlaps "+first.newEvent.title+".";
+    else sub=first.newEvent.title+" overlaps "+first.conflictsWith.title+".";
+    if(list.length>1)sub+=" Plus "+(list.length-1)+" more.";
+  }
+  return {line:"Your schedule changed. "+parts.join(", ")+".",sub};
 }
 function surfaceReconcileResult(result){
   const entries=result.moved.map(m=>({kind:"moved",...m}))
@@ -39405,7 +39439,7 @@ function StuSleepingFab({asleep}){
   );
 }
 const STU_EXIT_MOOD={yes:"happy",cheer:"proud",no:"sad",late:"worried"};
-function StudCompanion({mode,title,clock,navExpanded,onYes,onDone,sub:subProp,firstPrompt=true,onNightRoutine}){
+function StudCompanion({mode,title,clock,navExpanded,onYes,onDone,sub:subProp,firstPrompt=true,onNightRoutine,onTurnOff}){
   const [phase,setPhase]=useState("in"); // in > talk > yes|no|late > out
   const declinesBefore=useRef(stuDeclinesToday()).current;
   const howRef=useRef(mode==="cheer"?"cheer":"late");
@@ -39428,6 +39462,9 @@ function StudCompanion({mode,title,clock,navExpanded,onYes,onDone,sub:subProp,fi
   let mood="happy",line="",sub="";
   if(phase==="in"){mood="happy";}
   else if(phase==="talk"&&mode==="cheer"){mood="celebrating";line=title?"Nice work on "+short+"!":"Nice work!";}
+  else if(phase==="talk"&&mode==="alert"){mood="thinking";line=title;sub=subProp||"";}
+  else if(phase==="yes"&&mode==="alert"){mood="happy";line="Opening your calendar.";}
+  else if(phase==="no"&&mode==="alert"){mood="happy";line="Okay, dismissed.";}
   else if(phase==="talk"&&mode==="catchup"){mood="thinking";line=title;sub=subProp||"";}
   else if(phase==="yes"&&mode==="catchup"){mood="happy";line="On it. Let's look.";}
   else if(phase==="no"&&mode==="catchup"){mood="thinking";line="No problem. I'll leave it for now.";}
@@ -39440,7 +39477,7 @@ function StudCompanion({mode,title,clock,navExpanded,onYes,onDone,sub:subProp,fi
   else if(phase==="no"){mood="sad";line=declinesBefore>=1?"Okay. I'll give you some space.":"Aw, okay. I'll be around.";}
   else if(phase==="late"&&mode==="bedtime"){mood="sleepy";line="Sleep well whenever you're ready.";}
   else if(phase==="late"){mood="worried";line="No rush. It's on your calendar.";}
-  else if(phase==="out"){mood=mode==="bedtime"?"sleepy":mode==="catchup"?"thinking":(STU_EXIT_MOOD[howRef.current]||"happy");}
+  else if(phase==="out"){mood=mode==="bedtime"?"sleepy":mode==="catchup"?"thinking":mode==="alert"?"happy":(STU_EXIT_MOOD[howRef.current]||"happy");}
   const walking=phase==="in"||phase==="out";
   const pal=stuPalette();
   const left=(navExpanded?230:48)+16;
@@ -39459,6 +39496,15 @@ function StudCompanion({mode,title,clock,navExpanded,onYes,onDone,sub:subProp,fi
         <div style={{pointerEvents:"auto",marginBottom:46,maxWidth:270,padding:"12px 14px",borderRadius:14,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 10px 30px rgba(0,0,0,0.22)",animation:reduce?"none":"stuBubbleIn .22s ease both"}}>
           <div style={{fontSize:13,fontWeight:600,color:T.text,lineHeight:1.45}}>{line}</div>
           {sub&&<div style={{fontSize:11.5,color:T.muted,marginTop:3}}>{sub}</div>}
+          {phase==="talk"&&mode==="alert"&&(
+            <div style={{display:"flex",gap:8,marginTop:10}}>
+              <BtnSm onClick={()=>{howRef.current="yes";setPhase("yes");}} style={{padding:"6px 12px",fontSize:11.5}}>Open calendar</BtnSm>
+              <BtnSm variant="ghost" onClick={()=>{howRef.current="no";setPhase("no");}} style={{padding:"6px 12px",fontSize:11.5}}>Dismiss</BtnSm>
+            </div>
+          )}
+          {phase==="talk"&&onTurnOff&&(
+            <button type="button" onClick={onTurnOff} style={{display:"block",marginTop:8,background:"none",border:"none",padding:0,color:T.muted,fontSize:11,cursor:"pointer",fontFamily:T.font,textDecoration:"underline"}}>Turn off Stu notifications</button>
+          )}
           {phase==="talk"&&mode==="catchup"&&(
             <div style={{display:"flex",gap:8,marginTop:10}}>
               <BtnSm onClick={()=>{howRef.current="yes";setPhase("yes");}} style={{padding:"6px 12px",fontSize:11.5}}>Show me</BtnSm>
@@ -39550,7 +39596,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     window.addEventListener("studlin-settings-changed",sync);
     return ()=>window.removeEventListener("studlin-settings-changed",sync);
   },[]);
-  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,deadline:true,classReminders:false,onlineStatus:true,incognito:false,twofa:false,motion:false,hand:true,wrapped:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false,askCheckIns:true,askDurationQuestions:true,nudgesMaster:true,smartFeatures:true,mascotReminders:true,mascotCheers:true,mascotBedtime:true,stuSleeps:true},...lsGet("settings",{})}));
+  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,deadline:true,classReminders:false,onlineStatus:true,incognito:false,twofa:false,motion:false,hand:true,wrapped:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false,askCheckIns:true,askDurationQuestions:true,nudgesMaster:true,smartFeatures:true,mascotReminders:true,mascotCheers:true,mascotBedtime:true,stuSleeps:true,mascotAlerts:true},...lsGet("settings",{})}));
   // 2026-09-13: "Share my free/busy time" used to be all-or-nothing (on =
   // every current accepted friend). shareAvailabilityMode lets a student
   // restrict it to specific people instead -- see the picker modal below
@@ -41013,6 +41059,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <Row label="Stu reminds me before things start" sub="Stu walks in a few minutes before a study block or deadline and asks if you want to start. Off uses a plain pop-up instead. Needs Learn how I work on." k="mascotReminders" />
               <Row label="Stu reminds me when it is getting late" sub="About 30 minutes before the bedtime you set in class setup, a sleepy Stu asks if you want to wrap up. Once a night." k="mascotBedtime" />
               <Row label="Stu sleeps at night" sub="Between the bedtime and wake time you set in class setup, Stu naps in the corner. Tap him any time to chat." k="stuSleeps" />
+              <Row label="Stu tells me when my schedule changes" sub="When a sync moves a study block or finds a conflict, Stu lets you know. Off uses a plain pop-up instead." k="mascotAlerts" />
               <Row label="Stu cheers when I finish" sub="A quick celebration after you complete a task." k="mascotCheers" />
               <div style={{fontSize:12,color:T.muted,marginTop:10}}>Stu's chat button is always on.</div>
             </Card>
@@ -43443,6 +43490,21 @@ function App() {
   // results over via a one-shot localStorage flag, same idiom as
   // pendingTour/pendingRoutineCenter above.
   const [scheduleChangeAlerts,setScheduleChangeAlerts]=useState([]);
+  // Remembered so the same unresolved conflict does not come back on the next
+  // app load (see rememberDismissedScheduleAlerts).
+  const dismissScheduleAlerts=()=>{
+    rememberDismissedScheduleAlerts(scheduleChangeAlerts);
+    setScheduleChangeAlerts([]);
+  };
+  // "Turn off Stu notifications" in any Stu bubble: every Stu pop-up off at
+  // once. Plain cards (never silence) still cover things that need a decision.
+  const turnOffStuNotifications=()=>{
+    lsSet("settings",{...lsGet("settings",{}),mascotReminders:false,mascotCheers:false,mascotBedtime:false,mascotAlerts:false,stuSleeps:false});
+    try{window.dispatchEvent(new Event("studlin-settings-changed"));}catch(e){}
+    setStuBedtime(null);setStuCheer(null);setHeadsUpEvent(null);
+    setNudgeOffToast("Stu notifications are off. You can turn them back on in Settings, Privacy.");
+    setTimeout(()=>setNudgeOffToast(""),4000);
+  };
   useEffect(()=>{
     const pending=lsGet("pendingScheduleChangeAlerts",[]);
     if(pending.length>0){
@@ -45823,7 +45885,14 @@ function App() {
           </div>
         )}
       </Modal>
-      {scheduleChangeAlerts.length>0&&(()=>{
+      {scheduleChangeAlerts.length>0&&stuSettingOn("mascotAlerts")&&!timerTask&&!headsUpEvent&&!stuCheer&&!stuBedtime&&(()=>{
+        const sum=scheduleAlertSummary(scheduleChangeAlerts);
+        return (
+          <StudCompanion key="schedule-alert" mode="alert" title={sum.line} sub={sum.sub} navExpanded={navExpanded}
+            onYes={()=>{setActive("calendar");dismissScheduleAlerts();}} onDone={how=>{if(how==="no")dismissScheduleAlerts();}} onTurnOff={turnOffStuNotifications} />
+        );
+      })()}
+      {scheduleChangeAlerts.length>0&&!stuSettingOn("mascotAlerts")&&(()=>{
         const movedCount=scheduleChangeAlerts.filter(a=>a.kind==="moved").length;
         const attnCount=scheduleChangeAlerts.filter(a=>a.kind==="attention").length;
         const headerParts=[];
@@ -45860,8 +45929,8 @@ function App() {
             ))}
           </div>
           <div style={{display:"flex",gap:8}}>
-            <Btn onClick={()=>{setActive("calendar");setScheduleChangeAlerts([]);}} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Open Calendar</Btn>
-            <Btn variant="ghost" onClick={()=>setScheduleChangeAlerts([])} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Dismiss</Btn>
+            <Btn onClick={()=>{setActive("calendar");dismissScheduleAlerts();}} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Open Calendar</Btn>
+            <Btn variant="ghost" onClick={dismissScheduleAlerts} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Dismiss</Btn>
           </div>
         </div>
         );
@@ -46100,14 +46169,14 @@ function App() {
           that same rule instead of interrupting an active session. */}
       {headsUpEvent&&!timerTask&&stuSettingOn("mascotReminders")&&(
         <StudCompanion key={headsUpEvent.id} mode="ask" title={headsUpEvent.title} clock={fmtRolloverClock(headsUpEvent.time)} navExpanded={navExpanded}
-          onYes={()=>{setTimerTask(headsUpEvent);setHeadsUpEvent(null);}} onDone={()=>setHeadsUpEvent(null)} />
+          onYes={()=>{setTimerTask(headsUpEvent);setHeadsUpEvent(null);}} onDone={()=>setHeadsUpEvent(null)} onTurnOff={turnOffStuNotifications} />
       )}
       {!headsUpEvent&&stuCheer&&!timerTask&&Date.now()-stuCheer.at<10000&&(
-        <StudCompanion key={stuCheer.id} mode="cheer" title={stuCheer.title} navExpanded={navExpanded} onDone={()=>setStuCheer(null)} />
+        <StudCompanion key={stuCheer.id} mode="cheer" title={stuCheer.title} navExpanded={navExpanded} onDone={()=>setStuCheer(null)} onTurnOff={turnOffStuNotifications} />
       )}
       {!headsUpEvent&&!stuCheer&&stuBedtime&&!timerTask&&(
         <StudCompanion key={stuBedtime.id} mode="bedtime" clock={(()=>{const ws=getWakeSleep();return ws&&ws.sleepTime?fmtRolloverClock(ws.sleepTime):"";})()} navExpanded={navExpanded}
-          firstPrompt={!String(stuBedtime.id).startsWith("bed2")} onNightRoutine={openNightRoutine}
+          firstPrompt={!String(stuBedtime.id).startsWith("bed2")} onNightRoutine={openNightRoutine} onTurnOff={turnOffStuNotifications}
           onDone={how=>{
             setStuBedtime(null);
             // "5 more minutes": one return visit, then he leaves it alone.
