@@ -15693,6 +15693,35 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
   }, [selectedEventId, events, onDeleteEvent, onSelectEvent]);
+  const swipeRef = useRef({ acc: 0, locked: false, timer: null });
+  useEffect(() => {
+    const SWIPE_THRESHOLD = 90, QUIET_MS = 160;
+    const onWheel = (e) => {
+      const t = e.target;
+      if (!(t && t.closest && t.closest("[data-wk-hdr],[data-wk-grid]"))) return;
+      const dx = e.shiftKey && e.deltaX === 0 ? e.deltaY : e.deltaX;
+      if (Math.abs(dx) <= Math.abs(e.shiftKey ? 0 : e.deltaY) || dx === 0) return;
+      e.preventDefault();
+      const s = swipeRef.current;
+      clearTimeout(s.timer);
+      s.timer = setTimeout(() => {
+        s.acc = 0;
+        s.locked = false;
+      }, QUIET_MS);
+      if (s.locked) return;
+      s.acc += dx;
+      if (Math.abs(s.acc) >= SWIPE_THRESHOLD) {
+        setWeekOffset((o) => o + (s.acc > 0 ? 1 : -1));
+        s.acc = 0;
+        s.locked = true;
+      }
+    };
+    document.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      document.removeEventListener("wheel", onWheel);
+      clearTimeout(swipeRef.current.timer);
+    };
+  }, [setWeekOffset]);
   useEffect(() => {
     if (!selectedRoutineKey || editRoutineMode || !onDeleteRoutine) return;
     const handler = (e) => {
@@ -15906,7 +15935,7 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
       duePills.length,
       " due"
     ));
-  })), /* @__PURE__ */ React.createElement("div", { ref: weekScrollRef, style: { display: "flex", overflowY: "auto", maxHeight: "calc(100vh - 170px)" }, onDragEnd: handleDragEnd }, /* @__PURE__ */ React.createElement("div", { style: { width: 52, flexShrink: 0, background: T.card, borderRight: `1px solid ${T.border}`, zIndex: 2, position: "relative" } }, /* @__PURE__ */ React.createElement(
+  })), /* @__PURE__ */ React.createElement("div", { ref: weekScrollRef, "data-wk-grid": "1", style: { display: "flex", overflowY: "auto", overscrollBehaviorX: "contain", maxHeight: "calc(100vh - 170px)" }, onDragEnd: handleDragEnd }, /* @__PURE__ */ React.createElement("div", { style: { width: 52, flexShrink: 0, background: T.card, borderRight: `1px solid ${T.border}`, zIndex: 2, position: "relative" } }, /* @__PURE__ */ React.createElement(
     "div",
     {
       onMouseDown: startWkZoomDrag,
