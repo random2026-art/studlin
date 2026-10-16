@@ -33813,37 +33813,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     setSelDay(task.date);
   };
   const finishManualPlacement=()=>{setManualPlacement(null);setManualPlacementCount(0);};
-  // Proactive version of the button above — checked once per Calendar
-  // visit (not on every render/keystroke) rather than a real daily gate,
-  // since this component only exists while the tab is open; the 3-day
-  // dismiss cooldown (see dismissWeekBalanceNudge) keeps it from re-firing
-  // on every single visit regardless. Reuses computeWeekBalancePlan itself
-  // rather than a separate threshold check, so the nudge and the actual
-  // "Balance my week" modal can never disagree about whether there's
-  // anything to balance.
-  const [weekBalanceNudge,setWeekBalanceNudge]=useState(false);
-  // C6 in the audit: this used to be a mount-only effect ([] deps), so
-  // adding several tasks while staying on the Calendar tab never
-  // re-triggered it -- only the next full tab visit would. events in the
-  // dependency array re-runs the same check whenever this tab's own task
-  // list actually changes; it only ever sets the nudge to true, so an
-  // already-dismissed or not-yet-warranted week can't get spuriously
-  // re-shown by an unrelated edit.
-  useEffect(()=>{
-    if(!shouldShowWeekBalanceNudge())return;
-    const plan=computeWeekBalancePlan(events,routines,getSchedulePreferences(),dayKey());
-    if(plan.moves.length>0)setWeekBalanceNudge(true);
-  },[events]);
-  const declineWeekBalanceNudge=()=>{logSuggestionDecision("weekBalanceNudge","dismissed",{});dismissWeekBalanceNudge();setWeekBalanceNudge(false);};
-  // Real bug found live: only "Not now" started the cooldown, so
-  // "Review" left the ambient [events]-watching effect above free to
-  // re-check the instant events changed again -- which included any
-  // edit made from inside the Review flow itself. shouldShowWeekBalanceNudge()
-  // would still pass, computeWeekBalancePlan would still find moves, and
-  // the same nudge popped right back up seconds after being answered,
-  // reading as it flapping back and forth. Either answer means the
-  // student has now seen today's nudge, so either should start the cooldown.
-  const acceptWeekBalanceNudge=()=>{logSuggestionDecision("weekBalanceNudge","accepted",{});dismissWeekBalanceNudge();setWeekBalanceNudge(false);openWeekBalance();};
+  // 2026-10-16: the automatic "your week's a bit lopsided" pop-up was removed
+  // (users found it annoying). "Balance my week" is now only ever opened by the
+  // student, from the calendar menu.
   const confirmWeekBalance=()=>{
     if(!weekBalancePlan||weekBalancePlan.moves.length===0){setWeekBalanceOpen(false);return;}
     logSuggestionDecision("weekBalancePlan","accepted",{moveCount:weekBalancePlan.moves.length});
@@ -38876,22 +38848,6 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.card,border:`1px solid ${T.border}`,color:T.white,fontSize:12.5,fontWeight:600,padding:"10px 16px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:12}}>
           <span>{bulkReflowUndoToast}</span>
           <button onClick={undoBulkReflow} style={{background:"none",border:"none",color:T.lime,fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:T.font,textDecoration:"underline",padding:0}}>Undo</button>
-        </div>
-      )}
-      {/* Suppressed while a setup wizard is open -- this used to be able
-          to stack on top of Class Setup / Routine Wizard mid-flow (found
-          alongside the "1 task missed its deadline" popup doing the same
-          thing), fighting for attention with whatever the student is
-          actually in the middle of answering. Still fires normally once
-          the wizard closes, since only the render is gated here, not the
-          trigger effect that decided there's something to say. */}
-      {weekBalanceNudge&&!classSetupOpen&&!routineCenterOpen&&(
-        <div style={{position:"fixed",bottom:20,left:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
-          <div style={{fontSize:13,color:T.white,marginBottom:10,lineHeight:1.5}}>Your week's a bit lopsided. Some days are carrying a lot more than others. Want Studlin to spread it out?</div>
-          <div style={{display:"flex",gap:8}}>
-            <Btn onClick={acceptWeekBalanceNudge} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Review</Btn>
-            <Btn variant="ghost" onClick={declineWeekBalanceNudge} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Not now</Btn>
-          </div>
         </div>
       )}
       <RoutineControlCenterModal open={routineCenterOpen} onClose={()=>setRoutineCenterOpen(false)} routines={routines} fmtTime={fmtTime}
