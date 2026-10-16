@@ -20667,23 +20667,6 @@ function CalendarTab({ setActive = () => {
     setManualPlacement(null);
     setManualPlacementCount(0);
   };
-  const [weekBalanceNudge, setWeekBalanceNudge] = useState(false);
-  useEffect(() => {
-    if (!shouldShowWeekBalanceNudge()) return;
-    const plan = computeWeekBalancePlan(events, routines, getSchedulePreferences(), dayKey());
-    if (plan.moves.length > 0) setWeekBalanceNudge(true);
-  }, [events]);
-  const declineWeekBalanceNudge = () => {
-    logSuggestionDecision("weekBalanceNudge", "dismissed", {});
-    dismissWeekBalanceNudge();
-    setWeekBalanceNudge(false);
-  };
-  const acceptWeekBalanceNudge = () => {
-    logSuggestionDecision("weekBalanceNudge", "accepted", {});
-    dismissWeekBalanceNudge();
-    setWeekBalanceNudge(false);
-    openWeekBalance();
-  };
   const confirmWeekBalance = () => {
     if (!weekBalancePlan || weekBalancePlan.moves.length === 0) {
       setWeekBalanceOpen(false);
@@ -24013,7 +23996,7 @@ Examples:
       } }, "Close")
     },
     weekBalancePlan && weekBalancePlan.moves.length > 0 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 5, marginBottom: 16 } }, weekBalancePlan.perDay.filter((d) => d.minutesBefore !== d.minutesAfter).map((d) => /* @__PURE__ */ React.createElement("div", { key: d.date, style: { display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, padding: "6px 10px", background: T.card2, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.text } }, d.date), /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, fontFamily: T.mono } }, d.minutesBefore, "m \u2192 ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, d.minutesAfter, "m"))))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 7, maxHeight: 220, overflowY: "auto" } }, weekBalancePlan.moves.map((m) => /* @__PURE__ */ React.createElement("div", { key: m.id, style: { display: "flex", flexDirection: "column", gap: 4, padding: "9px 12px", background: T.card2, borderRadius: 8, border: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: 13, color: T.text, fontWeight: 500 } }, m.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, flexShrink: 0 } }, m.fromDate, " ", fmtTime2(m.fromTime), " \u2192 ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.lime } }, m.toDate, " ", fmtTime2(m.toTime)))), m.reason && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.faint } }, m.reason)))))
-  ), bulkReflowUndoToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.card, border: `1px solid ${T.border}`, color: T.white, fontSize: 12.5, fontWeight: 600, padding: "10px 16px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("span", null, bulkReflowUndoToast), /* @__PURE__ */ React.createElement("button", { onClick: undoBulkReflow, style: { background: "none", border: "none", color: T.lime, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: T.font, textDecoration: "underline", padding: 0 } }, "Undo")), weekBalanceNudge && !classSetupOpen && !routineCenterOpen && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 20, left: 20, zIndex: 999, padding: "14px 16px", borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.white, marginBottom: 10, lineHeight: 1.5 } }, "Your week's a bit lopsided. Some days are carrying a lot more than others. Want Studlin to spread it out?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: acceptWeekBalanceNudge, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Review"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: declineWeekBalanceNudge, style: { padding: "7px 14px", fontSize: 12, flex: 1, justifyContent: "center" } }, "Not now"))), /* @__PURE__ */ React.createElement(
+  ), bulkReflowUndoToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 80, background: T.card, border: `1px solid ${T.border}`, color: T.white, fontSize: 12.5, fontWeight: 600, padding: "10px 16px", borderRadius: 99, boxShadow: "0 14px 30px -10px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement("span", null, bulkReflowUndoToast), /* @__PURE__ */ React.createElement("button", { onClick: undoBulkReflow, style: { background: "none", border: "none", color: T.lime, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: T.font, textDecoration: "underline", padding: 0 } }, "Undo")), /* @__PURE__ */ React.createElement(
     RoutineControlCenterModal,
     {
       open: routineCenterOpen,
