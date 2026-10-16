@@ -25064,23 +25064,28 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
         style={{overflow:"auto",overscrollBehaviorX:"contain",maxHeight:"calc(100vh - 85px)",scrollbarWidth:"thin"}}>
       <div style={{width:WK_GUTTER_PX+wkColW*WK_STRIP_DAYS,position:"relative"}}>
       <div data-wk-hdr="1" style={{borderBottom:`1px solid ${T.borderTint}`,background:T.hdrBg,display:"grid",gridTemplateColumns:`${WK_GUTTER_PX}px repeat(${WK_STRIP_DAYS},${wkColW}px)`,position:"sticky",top:0,zIndex:8}}>
-        <div style={{height:48,position:"sticky",left:0,zIndex:9,background:T.hdrBg}} />
+        <div style={{position:"sticky",left:0,zIndex:9,background:T.hdrBg}} />
         {weekDays.map((d, i) => {
           const dk = dayKey(d);
           const isToday = dk === todayK;
           const isSel = selDay!=null && dk === selDay;
           const duePills = (byDay[dk] || []).filter(isDuePill);
           return (
-            <div key={i} onClick={()=>{if(setSelDay)setSelDay(dk);}} style={{textAlign:"center",padding:"7px 4px 9px",borderLeft:`1px solid ${T.borderTint}`,cursor:setSelDay?"pointer":"default",background:isSel?T.accentSoft:"transparent",minWidth:0}}>
-              <div style={{fontSize:T.lookOn?10:9,fontWeight:700,letterSpacing:"0.1em",color:T.hdrText,marginBottom:4}}>{DAY_NAMES[d.getDay()]}</div>
-              <div onDoubleClick={(e)=>{e.stopPropagation();openNew(dk);}} style={{width:28,height:28,borderRadius:"50%",background:isToday?T.todayBg:"transparent",color:isToday?T.todayText:T.white,fontSize:13,fontWeight:700,display:"inline-flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>{d.getDate()}</div>
+            <div key={i} onClick={()=>{if(setSelDay)setSelDay(dk);}} style={{textAlign:"center",padding:"5px 4px 6px",borderLeft:`1px solid ${T.borderTint}`,cursor:setSelDay?"pointer":"default",background:isSel?T.accentSoft:"transparent",minWidth:0}}>
+              {/* 2026-10-16: day name and date number now sit on one line (was
+                  stacked) so the header is about a third thinner and the grid
+                  below gets the room. Same info, same click targets. */}
+              <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                <div style={{fontSize:T.lookOn?10:9,fontWeight:700,letterSpacing:"0.1em",color:T.hdrText}}>{DAY_NAMES[d.getDay()]}</div>
+                <div onDoubleClick={(e)=>{e.stopPropagation();openNew(dk);}} style={{width:24,height:24,borderRadius:"50%",background:isToday?T.todayBg:"transparent",color:isToday?T.todayText:T.white,fontSize:12.5,fontWeight:700,display:"inline-flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>{d.getDate()}</div>
+              </div>
               {/* Phase 10b: a compact "N due" bar instead of listing each
                   due-marker title, matching the monthly grid's same
                   change and Shovel's own header row. */}
               {duePills.length>0&&(
                 <div onClick={(e)=>{e.stopPropagation();if(setSelDay)setSelDay(dk);setPreviewDayKey(dk);}}
                   title={"See everything due "+fmtWeekDueLabel(dk)}
-                  style={{marginTop:5,fontSize:9,fontWeight:700,color:T.lime,background:T.lime+"18",border:`1px solid ${T.lime}33`,borderRadius:4,padding:"2px 6px",cursor:"pointer",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                  style={{marginTop:3,fontSize:9,fontWeight:700,color:T.lime,background:T.lime+"18",border:`1px solid ${T.lime}33`,borderRadius:4,padding:"1px 6px",cursor:"pointer",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
                   {duePills.length} due
                 </div>
               )}
@@ -25098,7 +25103,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
               vertically to rescale WK_PX_HR; sticky so it stays reachable
               regardless of scroll position. */}
           <div onMouseDown={startWkZoomDrag} title="Drag to zoom"
-            style={{position:"sticky",top:56,left:0,right:-1,height:0,zIndex:7,display:"flex",justifyContent:"flex-end",cursor:"ns-resize"}}>
+            style={{position:"sticky",top:60,left:0,right:-1,height:0,zIndex:7,display:"flex",justifyContent:"flex-end",cursor:"ns-resize"}}>
             <div style={{width:18,height:18,borderRadius:"50%",background:T.lime,border:`2px solid ${T.card}`,marginRight:-9,boxShadow:"0 2px 6px rgba(0,0,0,0.35)"}} />
           </div>
           {Array.from({length:24}, (_, h) => (
@@ -36660,9 +36665,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     <div style={{display:"flex",alignItems:"flex-start"}}>
       {/* Courses/Activities sidebar (Phase 5, Shovel-inspired) -- own
           collapse state, independent of the global icon rail's. */}
-      <div style={{flexShrink:0,display:"flex",position:"relative",height:"calc(100vh - 150px)"}}>
+      <div style={{flexShrink:0,display:"flex",position:"relative",alignSelf:"stretch"}}>
         {!calSidebarCollapsed&&(
-        <div style={{width:196,paddingRight:20,maxHeight:"100%",overflowY:"auto"}}>
+        <div style={{width:196,paddingRight:20,height:0,minHeight:"100%",overflowY:"auto"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
             <span style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Courses</span>
             <button type="button" onClick={()=>setQuickScanOpen(true)} style={{background:"none",border:"none",color:T.lime,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:0}}>+ Add new</button>
@@ -37211,13 +37216,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           own header (matching Shovel exactly) instead of a separate
           margined strip -- that strip was the actual cause of the
           reported gap between this column and the calendar grid. */}
-      <div style={{flexShrink:0,display:"flex",position:"relative",height:"calc(100vh - 150px)"}}>
+      <div style={{flexShrink:0,display:"flex",position:"relative",alignSelf:"stretch"}}>
         {/* Full-height divider with a subtle shadow (173547), independent
             of the content's own scroll height -- same fix as the left
             sidebar's divider above. */}
         <div style={{position:"absolute",top:0,bottom:0,left:calRightColCollapsed?0:14,width:1,background:T.border,boxShadow:`-1px 0 3px rgba(0,0,0,0.12)`}} />
         {!calRightColCollapsed&&(
-        <div style={{width:220,marginLeft:34,maxHeight:"100%",overflowY:"auto"}}>
+        <div style={{width:220,marginLeft:34,height:0,minHeight:"100%",overflowY:"auto",paddingBottom:96,boxSizing:"border-box"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
             <span style={{fontSize:12.5,fontWeight:700,color:T.white}}>{selectedCourse?selectedCourse.label:"Upcoming"}</span>
             <button type="button" onClick={toggleCalRightColCollapsed} style={{background:"none",border:"none",color:T.lime,fontSize:11,fontWeight:600,fontFamily:T.font,cursor:"pointer",padding:0}}>Close ›</button>
