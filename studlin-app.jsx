@@ -473,6 +473,11 @@ const Card = ({children,style={},onClick}) => (
 );
 
 // ─── MODAL ────────────────────────────────────────────────────────────────────
+// Renders children straight into <body>. Bottom-centered toasts need this: inside
+// [data-page] (which has a transform animation) position:fixed is relative to
+// that wrapper, so "centered" lands off-center in the window. Same reason Modal
+// portals.
+const BodyPortal = ({children}) => (typeof document!=="undefined"&&document.body?ReactDOM.createPortal(children,document.body):null);
 const Modal = ({open, onClose, title, sub, children, footer, width=540}) => {
   if (!open) return null;
   // Portaled straight to <body> -- see flashcardsOverlay's own comment in
@@ -24739,6 +24744,21 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
     document.addEventListener("keydown",handler);
     return ()=>document.removeEventListener("keydown",handler);
   },[selectedEventId,events,onDeleteEvent,onSelectEvent]);
+  // Same shortcut for a selected recurring (routine) block. No on-block Delete
+  // button: select it and press Backspace/Delete, which opens the usual
+  // "Delete this routine?" confirm (onDeleteRoutine never deletes directly).
+  useEffect(()=>{
+    if(!selectedRoutineKey||editRoutineMode||!onDeleteRoutine)return;
+    const handler=(e)=>{
+      if(e.key!=="Backspace"&&e.key!=="Delete")return;
+      const el=document.activeElement;
+      if(el&&(el.tagName==="INPUT"||el.tagName==="TEXTAREA"||el.tagName==="SELECT"||el.isContentEditable))return;
+      e.preventDefault();
+      onDeleteRoutine(String(selectedRoutineKey).split("|")[0]);
+    };
+    document.addEventListener("keydown",handler);
+    return ()=>document.removeEventListener("keydown",handler);
+  },[selectedRoutineKey,editRoutineMode,onDeleteRoutine]);
   useEffect(()=>{
     if(weekScrollRef.current){
       const hour = new Date().getHours();
@@ -25518,11 +25538,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                         onMouseDown={(e)=>startWkResize(ev,"bottom",e,effStartMin,effDuration)}
                         onClick={(e)=>e.stopPropagation()}
                         style={{position:"absolute",bottom:-2,left:0,right:0,height:6,cursor:"ns-resize",zIndex:4}} />}
-                      {isRoutine&&!editRoutineMode&&isRoutineSelected&&onDeleteRoutine&&(
-                        <button onMouseDown={(e)=>e.stopPropagation()} onDoubleClick={(e)=>e.stopPropagation()} onClick={(e)=>{e.stopPropagation();onDeleteRoutine(ev.routineId);}} title="Delete (asks you to confirm)"
-                          style={{position:"absolute",top:-9,right:-9,height:20,padding:"0 7px",borderRadius:10,border:`1px solid ${T.border}`,background:T.card,color:T.red,fontSize:10.5,fontWeight:700,fontFamily:T.font,lineHeight:1,cursor:"pointer",boxShadow:"0 4px 10px -2px rgba(0,0,0,0.4)",zIndex:6}}>Delete</button>
-                      )}
-                      {isRoutine&&editRoutineMode&&hoveredRoutineId===ev.routineId&&(
+                                      {isRoutine&&editRoutineMode&&hoveredRoutineId===ev.routineId&&(
                         <button onClick={(e)=>{e.stopPropagation();if(onDeleteRoutine)onDeleteRoutine(ev.routineId);if(setHoveredRoutineId)setHoveredRoutineId(null);}} title="Delete this routine block (every week)"
                           style={{position:"absolute",top:-8,right:-8,width:18,height:18,borderRadius:"50%",border:`1px solid ${T.border}`,background:T.card,color:T.red,fontSize:11,lineHeight:1,cursor:"pointer",display:"grid",placeItems:"center",boxShadow:"0 4px 10px -2px rgba(0,0,0,0.4)"}}>×</button>
                       )}
@@ -37574,12 +37590,14 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           </div>
         </>)}
       </Modal>
+      <BodyPortal>
       {toast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.onLime,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} Task added</div>
       )}
       {placementToast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.onLime,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {placementToast}</div>
       )}
+      </BodyPortal>
       {/* Live-crash hotfix, 2026-09-16: this floating drag-ghost was
           accidentally placed in App()'s own render instead of here in
           CalendarTab, where draftChipDragging/draftChipDragRef actually
@@ -37592,6 +37610,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           {draftChipDragRef.current.draft.title}
         </div>
       )}
+      <BodyPortal>
       {deadlineToast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.red,color:"#fff",fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)"}}>{deadlineToast}</div>
       )}
@@ -37637,6 +37656,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           <button onClick={undoMove} style={{background:"none",border:"none",color:T.lime,fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:T.font,textDecoration:"underline",padding:0}}>Undo</button>
         </div>
       )}
+      </BodyPortal>
       {fillPrompt&&(
         <>
         {/* Click-anywhere-outside dismisses the same as "Leave it" -- this
