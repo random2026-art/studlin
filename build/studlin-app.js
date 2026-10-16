@@ -15699,35 +15699,93 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
   }, [selectedEventId, events, onDeleteEvent, onSelectEvent]);
-  const swipeRef = useRef({ acc: 0, locked: false, timer: null });
-  useEffect(() => {
-    const SWIPE_THRESHOLD = 90, QUIET_MS = 160;
-    const onWheel = (e) => {
-      const t = e.target;
-      if (!(t && t.closest && t.closest("[data-wk-hdr],[data-wk-grid]"))) return;
-      const dx = e.shiftKey && e.deltaX === 0 ? e.deltaY : e.deltaX;
-      if (Math.abs(dx) <= Math.abs(e.shiftKey ? 0 : e.deltaY) || dx === 0) return;
-      e.preventDefault();
-      const s = swipeRef.current;
-      clearTimeout(s.timer);
-      s.timer = setTimeout(() => {
-        s.acc = 0;
-        s.locked = false;
-      }, QUIET_MS);
-      if (s.locked) return;
-      s.acc += dx;
-      if (Math.abs(s.acc) >= SWIPE_THRESHOLD) {
-        setWeekOffset((o) => o + (s.acc > 0 ? 1 : -1));
-        s.acc = 0;
-        s.locked = true;
-      }
+  const WK_STRIP_DAYS = 21;
+  const WK_GUTTER_PX = 52;
+  const [wkColW, setWkColW] = useState(120);
+  const wkColWRef = useRef(120);
+  const wkPendingRatioRef = useRef(7);
+  const wkPrevOffsetRef = useRef(null);
+  const wkInternalShiftRef = useRef(false);
+  const wkProgrammaticRef = useRef(false);
+  const wkSnapTimerRef = useRef(null);
+  useLayoutEffect(() => {
+    const el = weekScrollRef.current;
+    if (!el) return;
+    const measure = () => {
+      const w = (el.clientWidth - WK_GUTTER_PX) / 7;
+      if (!(w >= 48) || Math.abs(w - wkColWRef.current) < 0.01) return;
+      if (wkPrevOffsetRef.current !== null) wkPendingRatioRef.current = wkColWRef.current ? el.scrollLeft / wkColWRef.current : 7;
+      wkColWRef.current = w;
+      setWkColW(w);
     };
-    document.addEventListener("wheel", onWheel, { passive: false });
-    return () => {
-      document.removeEventListener("wheel", onWheel);
-      clearTimeout(swipeRef.current.timer);
-    };
-  }, [setWeekOffset]);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  useLayoutEffect(() => {
+    const el = weekScrollRef.current;
+    if (!el || wkPendingRatioRef.current == null) return;
+    el.scrollLeft = wkPendingRatioRef.current * wkColW;
+    wkPendingRatioRef.current = null;
+  }, [wkColW]);
+  useLayoutEffect(() => {
+    const el = weekScrollRef.current;
+    if (!el) return;
+    const c = wkColWRef.current;
+    const prev = wkPrevOffsetRef.current;
+    wkPrevOffsetRef.current = weekOffset;
+    if (prev === null || prev === weekOffset) {
+      el.scrollLeft = 7 * c;
+      return;
+    }
+    const delta = weekOffset - prev;
+    if (wkInternalShiftRef.current) {
+      wkInternalShiftRef.current = false;
+      el.scrollLeft = el.scrollLeft - delta * 7 * c;
+      return;
+    }
+    if (Math.abs(delta) === 1) {
+      el.scrollLeft = Math.max(0, Math.min(14 * c, el.scrollLeft - delta * 7 * c));
+      wkProgrammaticRef.current = true;
+      el.scrollTo({ left: 7 * c, behavior: "smooth" });
+      setTimeout(() => {
+        wkProgrammaticRef.current = false;
+      }, 650);
+    } else {
+      el.scrollLeft = 7 * c;
+    }
+  }, [weekOffset]);
+  useEffect(() => () => clearTimeout(wkSnapTimerRef.current), []);
+  const onWkScroll = () => {
+    const el = weekScrollRef.current;
+    const c = wkColWRef.current;
+    if (!el || !c) return;
+    clearTimeout(wkSnapTimerRef.current);
+    if (wkProgrammaticRef.current || wkInternalShiftRef.current) return;
+    const pos = el.scrollLeft / c;
+    let k = 0;
+    if (pos < 3) k = -Math.ceil((3 - pos) / 7);
+    else if (pos > 11) k = Math.ceil((pos - 11) / 7);
+    if (k !== 0) {
+      wkInternalShiftRef.current = true;
+      setWeekOffset((o) => o + k);
+      return;
+    }
+    wkSnapTimerRef.current = setTimeout(() => {
+      const e2 = weekScrollRef.current;
+      const c2 = wkColWRef.current;
+      if (!e2 || !c2 || wkProgrammaticRef.current || wkInternalShiftRef.current) return;
+      const target = Math.round(e2.scrollLeft / c2) * c2;
+      if (Math.abs(target - e2.scrollLeft) <= 1.5) return;
+      wkProgrammaticRef.current = true;
+      e2.scrollTo({ left: target, behavior: "smooth" });
+      setTimeout(() => {
+        wkProgrammaticRef.current = false;
+      }, 450);
+    }, 160);
+  };
   useEffect(() => {
     if (!selectedRoutineKey || editRoutineMode || !onDeleteRoutine) return;
     const handler = (e) => {
@@ -15840,9 +15898,9 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
     const d = /* @__PURE__ */ new Date();
     const day = d.getDay();
     const diff = -day;
-    d.setDate(d.getDate() + diff + weekOffset * 7);
+    d.setDate(d.getDate() + diff + (weekOffset - 1) * 7);
     d.setHours(0, 0, 0, 0);
-    return Array.from({ length: 7 }, (_, i) => {
+    return Array.from({ length: WK_STRIP_DAYS }, (_, i) => {
       const x = new Date(d);
       x.setDate(x.getDate() + i);
       return x;
@@ -15852,7 +15910,7 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
   events.forEach((ev) => {
     (byDay[ev.date] = byDay[ev.date] || []).push(ev);
   });
-  expandRoutineOccurrences(routines || [], dayKey(weekDays[0]), dayKey(weekDays[6])).forEach((ev) => {
+  expandRoutineOccurrences(routines || [], dayKey(weekDays[0]), dayKey(weekDays[weekDays.length - 1])).forEach((ev) => {
     (byDay[ev.date] = byDay[ev.date] || []).push(ev);
   });
   const handleDragOver = (e, dk) => {
@@ -15917,286 +15975,296 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
     if (onRoutineDragStateChange) onRoutineDragStateChange(false);
   };
   const DAY_NAMES = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
-  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, { style: { padding: 0, overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { "data-wk-hdr": "1", style: { display: "grid", gridTemplateColumns: "52px repeat(7,1fr)", borderBottom: `1px solid ${T.borderTint}`, background: T.hdrBg } }, /* @__PURE__ */ React.createElement("div", { style: { height: 48 } }), weekDays.map((d, i) => {
-    const dk = dayKey(d);
-    const isToday = dk === todayK;
-    const isSel = selDay != null && dk === selDay;
-    const duePills = (byDay[dk] || []).filter(isDuePill);
-    return /* @__PURE__ */ React.createElement("div", { key: i, onClick: () => {
-      if (setSelDay) setSelDay(dk);
-    }, style: { textAlign: "center", padding: "7px 4px 9px", borderLeft: `1px solid ${T.borderTint}`, cursor: setSelDay ? "pointer" : "default", background: isSel ? T.accentSoft : "transparent", minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: T.lookOn ? 10 : 9, fontWeight: 700, letterSpacing: "0.1em", color: T.hdrText, marginBottom: 4 } }, DAY_NAMES[i]), /* @__PURE__ */ React.createElement("div", { onDoubleClick: (e) => {
-      e.stopPropagation();
-      openNew(dk);
-    }, style: { width: 28, height: 28, borderRadius: "50%", background: isToday ? T.todayBg : "transparent", color: isToday ? T.todayText : T.white, fontSize: 13, fontWeight: 700, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" } }, d.getDate()), duePills.length > 0 && /* @__PURE__ */ React.createElement(
-      "div",
-      {
-        onClick: (e) => {
-          e.stopPropagation();
-          if (setSelDay) setSelDay(dk);
-          setPreviewDayKey(dk);
-        },
-        title: "See everything due " + fmtWeekDueLabel(dk),
-        style: { marginTop: 5, fontSize: 9, fontWeight: 700, color: T.lime, background: T.lime + "18", border: `1px solid ${T.lime}33`, borderRadius: 4, padding: "2px 6px", cursor: "pointer", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }
-      },
-      duePills.length,
-      " due"
-    ));
-  })), /* @__PURE__ */ React.createElement("div", { ref: weekScrollRef, "data-wk-grid": "1", style: { display: "flex", overflowY: "auto", overscrollBehaviorX: "contain", maxHeight: "calc(100vh - 170px)" }, onDragEnd: handleDragEnd }, /* @__PURE__ */ React.createElement("div", { style: { width: 52, flexShrink: 0, background: T.card, borderRight: `1px solid ${T.border}`, zIndex: 2, position: "relative" } }, /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, { style: { padding: 0, overflow: "hidden" } }, /* @__PURE__ */ React.createElement(
     "div",
     {
-      onMouseDown: startWkZoomDrag,
-      title: "Drag to zoom",
-      style: { position: "sticky", top: 8, left: 0, right: -1, height: 0, zIndex: 7, display: "flex", justifyContent: "flex-end", cursor: "ns-resize" }
+      ref: weekScrollRef,
+      "data-wk-grid": "1",
+      onScroll: onWkScroll,
+      onDragEnd: handleDragEnd,
+      style: { overflow: "auto", overscrollBehaviorX: "contain", maxHeight: "calc(100vh - 85px)", scrollbarWidth: "thin" }
     },
-    /* @__PURE__ */ React.createElement("div", { style: { width: 18, height: 18, borderRadius: "50%", background: T.lime, border: `2px solid ${T.card}`, marginRight: -9, boxShadow: "0 2px 6px rgba(0,0,0,0.35)" } })
-  ), Array.from({ length: 24 }, (_, h) => /* @__PURE__ */ React.createElement("div", { key: h, style: { height: WK_PX_HR, display: "flex", alignItems: "flex-start", justifyContent: "flex-end", paddingRight: 8, paddingTop: 3, borderTop: `1px solid ${T.border}`, boxSizing: "border-box" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.muted, whiteSpace: "nowrap" } }, h === 0 ? "12 AM" : h < 12 ? h + " AM" : h === 12 ? "12 PM" : h - 12 + " PM")))), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(7,1fr)", flex: 1, minWidth: 0 } }, weekDays.map((day, colIdx) => {
-    const dk = dayKey(day);
-    const colEvs = (byDay[dk] || []).filter((ev) => ev.time && !isDuePill(ev));
-    const visibleEvs = colEvs.filter((ev) => ev.kind !== "free period" && ev.routineId !== "hs-school");
-    const isPastDeadline = !!(wkDragDeadline && dk > wkDragDeadline);
-    let ghostEl = null;
-    if (wkDragOverDay === dk && wkDropTime) {
-      const parts = wkDropTime.split(":").map(Number);
-      const gh = parts[0];
-      const gm = parts[1];
-      const dragEv = events.find((e) => e.id === wkDragId);
-      const dur = dragEv ? dragEv.duration || 30 : wkDragRoutineOccurrence ? wkDragRoutineOccurrence.duration || 30 : 30;
-      ghostEl = /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: (gh * 60 + gm) * (WK_PX_HR / 60), left: 2, right: 2, height: Math.max(22, dur * (WK_PX_HR / 60)), borderRadius: 5, background: T.lime + "14", border: `1.5px dashed ${T.lime}`, zIndex: 4, pointerEvents: "none", boxSizing: "border-box" } });
-    }
-    let previewEl = null;
-    if (previewEvent && previewEvent.date === dk && !previewEvent.allDay) {
-      const p = previewEvent.startTime.split(":").map(Number);
-      const pStart = p[0] * 60 + p[1];
-      const pDur = Math.max(15, timeToMinutes(previewEvent.endTime) - timeToMinutes(previewEvent.startTime));
-      const draggable = !!(onPreviewMove || onPreviewResize);
-      const startMove = (e) => {
-        if (!onPreviewMove) return;
-        e.preventDefault();
+    /* @__PURE__ */ React.createElement("div", { style: { width: WK_GUTTER_PX + wkColW * WK_STRIP_DAYS, position: "relative" } }, /* @__PURE__ */ React.createElement("div", { "data-wk-hdr": "1", style: { borderBottom: `1px solid ${T.borderTint}`, background: T.hdrBg, display: "grid", gridTemplateColumns: `${WK_GUTTER_PX}px repeat(${WK_STRIP_DAYS},${wkColW}px)`, position: "sticky", top: 0, zIndex: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { position: "sticky", left: 0, zIndex: 9, background: T.hdrBg } }), weekDays.map((d, i) => {
+      const dk = dayKey(d);
+      const isToday = dk === todayK;
+      const isSel = selDay != null && dk === selDay;
+      const duePills = (byDay[dk] || []).filter(isDuePill);
+      return /* @__PURE__ */ React.createElement("div", { key: i, onClick: () => {
+        if (setSelDay) setSelDay(dk);
+      }, style: { textAlign: "center", padding: "5px 4px 6px", borderLeft: `1px solid ${T.borderTint}`, cursor: setSelDay ? "pointer" : "default", background: isSel ? T.accentSoft : "transparent", minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 6 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: T.lookOn ? 10 : 9, fontWeight: 700, letterSpacing: "0.1em", color: T.hdrText } }, DAY_NAMES[d.getDay()]), /* @__PURE__ */ React.createElement("div", { onDoubleClick: (e) => {
         e.stopPropagation();
-        const colEl = wkColRefs.current[dk];
-        const r = colEl ? colEl.getBoundingClientRect() : null;
-        const blockTopClientY = (r ? r.top : e.clientY) + pStart * (WK_PX_HR / 60);
-        previewDragRef.current = { mode: "move", origDate: dk, origStart: previewEvent.startTime, origDur: pDur, grabOffsetPx: e.clientY - blockTopClientY };
-        setPreviewDragging(true);
-        document.body.style.cursor = "grabbing";
-        document.body.style.userSelect = "none";
-      };
-      const startResize = (e) => {
-        if (!onPreviewResize) return;
-        e.preventDefault();
-        e.stopPropagation();
-        previewDragRef.current = { mode: "resize", origDate: dk, origStart: previewEvent.startTime, origDur: pDur, startClientY: e.clientY };
-        setPreviewDragging(true);
-        document.body.style.cursor = "ns-resize";
-        document.body.style.userSelect = "none";
-      };
-      previewEl = /* @__PURE__ */ React.createElement("div", { onMouseDown: startMove, style: { position: "absolute", top: pStart * (WK_PX_HR / 60), left: 2, right: 2, height: Math.max(22, pDur * (WK_PX_HR / 60)), borderRadius: 5, padding: "2px 5px 2px 8px", background: lookDraftStyle(previewEvent.color, getLook(), lookMode(), previewEvent.color + "22").fill, border: `1.5px dashed ${previewEvent.color}`, zIndex: 6, pointerEvents: draggable ? "auto" : "none", cursor: draggable ? "grab" : "default", boxSizing: "border-box", overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 9.5, fontWeight: 700, color: lookDraftStyle(previewEvent.color, getLook(), lookMode(), previewEvent.color + "22").text, lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, previewEvent.title || "New event"), onPreviewResize && /* @__PURE__ */ React.createElement("div", { onMouseDown: startResize, title: "Drag to change duration", style: { position: "absolute", bottom: 0, left: 0, right: 0, height: 9, cursor: "ns-resize", display: "flex", alignItems: "center", justifyContent: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 26, height: 3, borderRadius: 99, background: previewEvent.color, opacity: 0.65 } })));
-    }
-    let gsBusyEl = null;
-    if (gsBusyByDate) {
-      const busyIntervals = (gsBusyByDate[dk] || []).concat(getDayOccupiedIntervals(dk));
-      if (busyIntervals.length > 0) {
-        gsBusyEl = busyIntervals.map((iv, ii) => /* @__PURE__ */ React.createElement("div", { key: "gsb" + ii, style: { position: "absolute", top: iv.s * (WK_PX_HR / 60), left: 0, right: 0, height: Math.max(4, (iv.e - iv.s) * (WK_PX_HR / 60)), background: mutedAlpha("CC"), zIndex: 2, pointerEvents: "none" } }));
-      }
-    }
-    let gsRecommendedEl = null;
-    if (gsRecommended && gsRecommended.date === dk) {
-      const rStart = timeToMinutes(gsRecommended.time);
-      const rDur = gsRecommended.duration || 60;
-      gsRecommendedEl = /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: rStart * (WK_PX_HR / 60), left: 2, right: 2, height: Math.max(22, rDur * (WK_PX_HR / 60)), borderRadius: 5, background: T.lime + "10", border: `1.5px dashed ${T.lime}`, zIndex: 5, pointerEvents: "none", display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: 2, boxSizing: "border-box" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 8, fontWeight: 700, letterSpacing: "0.05em", color: T.lime, background: T.card, padding: "1px 5px", borderRadius: 3, whiteSpace: "nowrap" } }, "STUDLIN RECOMMENDS"));
-    }
-    return /* @__PURE__ */ React.createElement(
+        openNew(dk);
+      }, style: { width: 24, height: 24, borderRadius: "50%", background: isToday ? T.todayBg : "transparent", color: isToday ? T.todayText : T.white, fontSize: 12.5, fontWeight: 700, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" } }, d.getDate())), duePills.length > 0 && /* @__PURE__ */ React.createElement(
+        "div",
+        {
+          onClick: (e) => {
+            e.stopPropagation();
+            if (setSelDay) setSelDay(dk);
+            setPreviewDayKey(dk);
+          },
+          title: "See everything due " + fmtWeekDueLabel(dk),
+          style: { marginTop: 3, fontSize: 9, fontWeight: 700, color: T.lime, background: T.lime + "18", border: `1px solid ${T.lime}33`, borderRadius: 4, padding: "1px 6px", cursor: "pointer", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }
+        },
+        duePills.length,
+        " due"
+      ));
+    })), /* @__PURE__ */ React.createElement("div", { style: { display: "flex" } }, /* @__PURE__ */ React.createElement("div", { style: { width: WK_GUTTER_PX, flexShrink: 0, background: T.card, borderRight: `1px solid ${T.border}`, zIndex: 7, position: "sticky", left: 0 } }, /* @__PURE__ */ React.createElement(
       "div",
       {
-        key: colIdx,
-        style: { position: "relative", borderLeft: `1px solid ${T.border}`, height: 24 * WK_PX_HR, boxSizing: "border-box" },
-        ref: (el) => {
-          wkColRefs.current[dk] = el;
-        },
-        "data-gridbg": "1",
-        "data-daykey": dk,
-        onDragOver: (e) => handleDragOver(e, dk),
-        onDrop: (e) => handleDrop(e, dk),
-        onMouseDown: (e) => startCreateDrag(e, dk),
-        onClick: closePopover
+        onMouseDown: startWkZoomDrag,
+        title: "Drag to zoom",
+        style: { position: "sticky", top: 60, left: 0, right: -1, height: 0, zIndex: 7, display: "flex", justifyContent: "flex-end", cursor: "ns-resize" }
       },
-      schoolWindow && day.getDay() >= 1 && day.getDay() <= 5 && subtractIntervals(schoolWindow, colEvs.filter((ev) => ev.kind === "free period").map((ev) => {
-        const p = ev.time.split(":").map(Number);
-        const start = p[0] * 60 + p[1];
-        return { start, end: start + (ev.duration || 30) };
-      })).map((seg, si) => /* @__PURE__ */ React.createElement("div", { key: "sh" + si, style: { position: "absolute", top: seg.start * (WK_PX_HR / 60), left: 0, right: 0, height: (seg.end - seg.start) * (WK_PX_HR / 60), background: mutedAlpha("0C"), pointerEvents: "none", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" } }, seg.end - seg.start >= 45 && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, fontWeight: 800, letterSpacing: "0.12em", color: mutedAlpha("88") } }, "SCHOOL HOURS"))),
-      Array.from({ length: 24 }, (_, h) => /* @__PURE__ */ React.createElement("div", { key: h, "data-gridbg": "1", style: { position: "absolute", top: h * WK_PX_HR, left: 0, right: 0, height: WK_PX_HR, borderTop: `1px solid ${T.lookOn ? T.borderTint : T.borderHover}`, boxSizing: "border-box" } })),
-      quickCreateDraft && quickCreateDraft.dateKey === dk && (() => {
-        const qStart = timeToMinutes(quickCreateDraft.startTime);
-        const qDur = Math.max(15, timeToMinutes(quickCreateDraft.endTime) - qStart);
-        return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: qStart * (WK_PX_HR / 60), left: 2, right: 2, height: Math.max(15, qDur) * (WK_PX_HR / 60), borderRadius: 5, background: quickCreateDraft.color ? lookDraftStyle(quickCreateDraft.color, getLook(), lookMode(), quickCreateDraft.color + "B3").fill : lookDraftStyle(T.lime, getLook(), lookMode(), T.lime + "22").fill, border: `1.5px dashed ${quickCreateDraft.color || T.lime}`, zIndex: 7, pointerEvents: "none", boxSizing: "border-box" } }), creatingDragging && /* @__PURE__ */ React.createElement(LiveRangePill, { startMin: qStart, durMin: qDur, style: { top: Math.max(2, qStart * (WK_PX_HR / 60) - 24) } }));
-      })(),
-      wkResize && wkResizeInfo.current && wkResizeInfo.current.date === dk && wkResize.liveStartMin != null && /* @__PURE__ */ React.createElement(LiveRangePill, { startMin: wkResize.liveStartMin, durMin: wkResize.liveDuration, style: { top: Math.max(2, wkResize.edge === "bottom" ? (wkResize.liveStartMin + wkResize.liveDuration) * (WK_PX_HR / 60) + 4 : wkResize.liveStartMin * (WK_PX_HR / 60) - 24) } }),
-      isPastDeadline && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", inset: 0, background: "rgba(217,128,107,0.07)", borderLeft: "2px solid rgba(217,128,107,0.35)", zIndex: 5, pointerEvents: "none" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "sticky", top: 6, textAlign: "center", fontSize: 8, fontWeight: 800, letterSpacing: "0.08em", color: "rgba(217,128,107,0.65)", padding: 3 } }, "PAST DUE")),
-      dk === todayK && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: nowMins * (WK_PX_HR / 60), left: 0, right: 0, zIndex: 6, pointerEvents: "none" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", left: -4, top: -4, width: 8, height: 8, borderRadius: "50%", background: "#E5484D" } }), /* @__PURE__ */ React.createElement("div", { style: { borderTop: "2px solid #E5484D" } })),
-      (() => {
-        const dayLaidOut = layoutDayEvents(visibleEvs);
-        return dayLaidOut.map(({ ev, col, totalCols, displayCol, displayTotalCols, start, end, hidden, overflowCount }) => {
-          if (hidden) return null;
-          const timeParts = ev.time.split(":").map(Number);
-          const hh = timeParts[0];
-          const mm = timeParts[1];
-          const origStartMin = hh * 60 + mm;
-          const dur = ev.duration || 30;
-          const isRoutine = !!ev.isRoutine;
-          const conflictTitles = totalCols > 1 ? dayLaidOut.filter((o) => o.ev.id !== ev.id && o.ev.status !== "done" && o.start < end && start < o.end && !isExpectedInClassOverlap(ev, o.ev)).map((o) => o.ev.title) : [];
-          const isResizing = wkResize && wkResize.id === ev.id;
-          const pendingForThis = isRoutine && pendingRoutineChange && pendingRoutineChange.fromDate === pendingRoutineChange.toDate && pendingRoutineChange.routineId === ev.routineId && pendingRoutineChange.fromDate === ev.date ? pendingRoutineChange : null;
-          const pendingStartMin = pendingForThis ? timeToMinutes(pendingForThis.toTime) : null;
-          const effStartMin = isResizing && wkResize.liveStartMin != null ? wkResize.liveStartMin : pendingStartMin != null ? pendingStartMin : origStartMin;
-          const effDuration = isResizing && wkResize.liveDuration != null ? wkResize.liveDuration : pendingForThis && pendingForThis.newDuration != null ? pendingForThis.newDuration : dur;
-          const topPx = effStartMin * (WK_PX_HR / 60);
-          const nextInCol = dayLaidOut.filter((o) => o.col === col && o.start > start).sort((a, b) => a.start - b.start)[0];
-          const isReminderMarker = isZeroDurationTimedReminder(ev);
-          const heightPx = isReminderMarker ? 13 : isResizing || pendingForThis ? Math.max(22, effDuration * (WK_PX_HR / 60)) : computeEventBlockHeightPx(dur, nextInCol ? nextInCol.start - start : null, WK_PX_HR);
-          const isDone = ev.status === "done";
-          const over = daysOverdue(ev);
-          const subjectColor2 = lookEventColor(ev.color, ev.courseId || ev.subject, colorOf(ev.courseId || ev.subject));
-          const isStudy = ev.kind === "study block";
-          const isExam = ev.kind === "exam";
-          const isWarningKind = isExam || ev.kind === "deadline";
-          const lookClassicNow = lookIsClassic(lookNow);
-          const warnLegacy = isWarningKind && lookClassicNow;
-          const kindStyle = isReminderMarker ? { background: "transparent", color: lookBlockStyle(subjectColor2, lookNow, lookModeNow, "reminder").text } : isStudy ? (() => {
-            const ls = lookBlockStyle(lookEventColor(ev.color, ev.courseId || ev.subject, tokens.color.accent), lookNow, lookModeNow, "study");
-            return { background: ls.fill, color: ls.text, ...ls.outline ? { border: ls.outline } : {} };
-          })() : warnLegacy ? { background: blendOverBg(T.amber, 0.12, T.card), border: `1px solid ${tokens.color.warning}`, color: tokens.color.warning } : (() => {
-            const ls = lookBlockStyle(isWarningKind ? T.amber : subjectColor2, lookNow, lookModeNow, "subject");
-            return { background: ls.fill, color: ls.text, ...ls.outline ? { border: ls.outline } : {} };
-          })();
-          const lookFlatNow = !lookClassicNow && lookNow.blockStyle === "flat";
-          const subTxt = isStudy ? lookClassicNow ? T.ink + "aa" : kindStyle.color : lookFlatNow ? kindStyle.color : tokens.color.textSecondary;
-          const dimmedByRoutineMode = editRoutineMode && !isRoutine;
-          const highlightedByRoutineMode = editRoutineMode && isRoutine;
-          const acceptanceSummary = ev.proposalMemberUids ? computeAcceptanceSummary(ev.proposalMemberUids, ev.proposalResponses) : null;
-          const isPendingAcceptance = !!acceptanceSummary && !acceptanceSummary.allAccepted;
-          const isDeclined = !!acceptanceSummary && acceptanceSummary.declined > 0;
-          const isSelected = !isRoutine && selectedEventId === ev.id;
-          const isRoutineSelected = isRoutine && selectedRoutineKey === ev.routineId + "|" + ev.date;
-          const isNewlyAdded = !!newItemHighlightIds && (newItemHighlightIds.has(ev.id) || ev.routineId && newItemHighlightIds.has(ev.routineId));
-          const newItemBoxShadow = isNewlyAdded ? `inset 3px 0 0 0 ${T.lime}` + (kindStyle.boxShadow ? `, ${kindStyle.boxShadow}` : "") : null;
-          const leftPct = displayCol / displayTotalCols * 100;
-          const widthPct = 100 / displayTotalCols;
-          const commuteStripStyle = (mins, edge) => ({ position: "absolute", top: edge === "before" ? topPx - mins * (WK_PX_HR / 60) : topPx + heightPx, left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`, height: mins * (WK_PX_HR / 60), borderRadius: edge === "before" ? "5px 5px 0 0" : "0 0 5px 5px", background: `repeating-linear-gradient(135deg, ${subjectColor2}26, ${subjectColor2}26 4px, transparent 4px, transparent 8px)`, border: `1px dashed ${subjectColor2}55`, [edge === "before" ? "borderBottom" : "borderTop"]: "none", zIndex: 2, pointerEvents: "none", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" });
-          return /* @__PURE__ */ React.createElement(React.Fragment, { key: ev.id }, ev.commuteBefore > 0 && /* @__PURE__ */ React.createElement("div", { title: ev.commuteBefore + " min commute", style: commuteStripStyle(ev.commuteBefore, "before") }, ev.commuteBefore * (WK_PX_HR / 60) > 13 && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 8, color: subjectColor2, fontWeight: 600, whiteSpace: "nowrap" } }, ev.commuteBefore, "m commute")), /* @__PURE__ */ React.createElement(
-            "div",
-            {
-              draggable: true,
-              onDragStart: () => {
-                if (!isRoutine) {
-                  setWkDragId(ev.id);
-                  setWkDragDeadline(ev.deadline || null);
-                  closePopover();
-                } else {
-                  if (onRoutineDragStateChange) onRoutineDragStateChange(true);
-                  setWkDragRoutineOccurrence({ routineId: ev.routineId, fromDate: ev.date, duration: dur });
-                }
-              },
-              onDoubleClick: () => {
-                if (!isRoutine) openEdit(ev);
-                else if (onEditRoutine) onEditRoutine(ev.routineId, ev.date);
-              },
-              onClick: (e) => {
-                if (isRoutine) {
-                  if (editRoutineMode && onEditRoutine) {
-                    onEditRoutine(ev.routineId, ev.date);
+      /* @__PURE__ */ React.createElement("div", { style: { width: 18, height: 18, borderRadius: "50%", background: T.lime, border: `2px solid ${T.card}`, marginRight: -9, boxShadow: "0 2px 6px rgba(0,0,0,0.35)" } })
+    ), Array.from({ length: 24 }, (_, h) => /* @__PURE__ */ React.createElement("div", { key: h, style: { height: WK_PX_HR, display: "flex", alignItems: "flex-start", justifyContent: "flex-end", paddingRight: 8, paddingTop: 3, borderTop: `1px solid ${T.border}`, boxSizing: "border-box" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.muted, whiteSpace: "nowrap" } }, h === 0 ? "12 AM" : h < 12 ? h + " AM" : h === 12 ? "12 PM" : h - 12 + " PM")))), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: `repeat(${WK_STRIP_DAYS},${wkColW}px)`, flex: 1, minWidth: 0 } }, weekDays.map((day, colIdx) => {
+      const dk = dayKey(day);
+      const colEvs = (byDay[dk] || []).filter((ev) => ev.time && !isDuePill(ev));
+      const visibleEvs = colEvs.filter((ev) => ev.kind !== "free period" && ev.routineId !== "hs-school");
+      const isPastDeadline = !!(wkDragDeadline && dk > wkDragDeadline);
+      let ghostEl = null;
+      if (wkDragOverDay === dk && wkDropTime) {
+        const parts = wkDropTime.split(":").map(Number);
+        const gh = parts[0];
+        const gm = parts[1];
+        const dragEv = events.find((e) => e.id === wkDragId);
+        const dur = dragEv ? dragEv.duration || 30 : wkDragRoutineOccurrence ? wkDragRoutineOccurrence.duration || 30 : 30;
+        ghostEl = /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: (gh * 60 + gm) * (WK_PX_HR / 60), left: 2, right: 2, height: Math.max(22, dur * (WK_PX_HR / 60)), borderRadius: 5, background: T.lime + "14", border: `1.5px dashed ${T.lime}`, zIndex: 4, pointerEvents: "none", boxSizing: "border-box" } });
+      }
+      let previewEl = null;
+      if (previewEvent && previewEvent.date === dk && !previewEvent.allDay) {
+        const p = previewEvent.startTime.split(":").map(Number);
+        const pStart = p[0] * 60 + p[1];
+        const pDur = Math.max(15, timeToMinutes(previewEvent.endTime) - timeToMinutes(previewEvent.startTime));
+        const draggable = !!(onPreviewMove || onPreviewResize);
+        const startMove = (e) => {
+          if (!onPreviewMove) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const colEl = wkColRefs.current[dk];
+          const r = colEl ? colEl.getBoundingClientRect() : null;
+          const blockTopClientY = (r ? r.top : e.clientY) + pStart * (WK_PX_HR / 60);
+          previewDragRef.current = { mode: "move", origDate: dk, origStart: previewEvent.startTime, origDur: pDur, grabOffsetPx: e.clientY - blockTopClientY };
+          setPreviewDragging(true);
+          document.body.style.cursor = "grabbing";
+          document.body.style.userSelect = "none";
+        };
+        const startResize = (e) => {
+          if (!onPreviewResize) return;
+          e.preventDefault();
+          e.stopPropagation();
+          previewDragRef.current = { mode: "resize", origDate: dk, origStart: previewEvent.startTime, origDur: pDur, startClientY: e.clientY };
+          setPreviewDragging(true);
+          document.body.style.cursor = "ns-resize";
+          document.body.style.userSelect = "none";
+        };
+        previewEl = /* @__PURE__ */ React.createElement("div", { onMouseDown: startMove, style: { position: "absolute", top: pStart * (WK_PX_HR / 60), left: 2, right: 2, height: Math.max(22, pDur * (WK_PX_HR / 60)), borderRadius: 5, padding: "2px 5px 2px 8px", background: lookDraftStyle(previewEvent.color, getLook(), lookMode(), previewEvent.color + "22").fill, border: `1.5px dashed ${previewEvent.color}`, zIndex: 6, pointerEvents: draggable ? "auto" : "none", cursor: draggable ? "grab" : "default", boxSizing: "border-box", overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 9.5, fontWeight: 700, color: lookDraftStyle(previewEvent.color, getLook(), lookMode(), previewEvent.color + "22").text, lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, previewEvent.title || "New event"), onPreviewResize && /* @__PURE__ */ React.createElement("div", { onMouseDown: startResize, title: "Drag to change duration", style: { position: "absolute", bottom: 0, left: 0, right: 0, height: 9, cursor: "ns-resize", display: "flex", alignItems: "center", justifyContent: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 26, height: 3, borderRadius: 99, background: previewEvent.color, opacity: 0.65 } })));
+      }
+      let gsBusyEl = null;
+      if (gsBusyByDate) {
+        const busyIntervals = (gsBusyByDate[dk] || []).concat(getDayOccupiedIntervals(dk));
+        if (busyIntervals.length > 0) {
+          gsBusyEl = busyIntervals.map((iv, ii) => /* @__PURE__ */ React.createElement("div", { key: "gsb" + ii, style: { position: "absolute", top: iv.s * (WK_PX_HR / 60), left: 0, right: 0, height: Math.max(4, (iv.e - iv.s) * (WK_PX_HR / 60)), background: mutedAlpha("CC"), zIndex: 2, pointerEvents: "none" } }));
+        }
+      }
+      let gsRecommendedEl = null;
+      if (gsRecommended && gsRecommended.date === dk) {
+        const rStart = timeToMinutes(gsRecommended.time);
+        const rDur = gsRecommended.duration || 60;
+        gsRecommendedEl = /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: rStart * (WK_PX_HR / 60), left: 2, right: 2, height: Math.max(22, rDur * (WK_PX_HR / 60)), borderRadius: 5, background: T.lime + "10", border: `1.5px dashed ${T.lime}`, zIndex: 5, pointerEvents: "none", display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: 2, boxSizing: "border-box" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 8, fontWeight: 700, letterSpacing: "0.05em", color: T.lime, background: T.card, padding: "1px 5px", borderRadius: 3, whiteSpace: "nowrap" } }, "STUDLIN RECOMMENDS"));
+      }
+      return /* @__PURE__ */ React.createElement(
+        "div",
+        {
+          key: colIdx,
+          style: { position: "relative", borderLeft: `1px solid ${T.border}`, height: 24 * WK_PX_HR, boxSizing: "border-box" },
+          ref: (el) => {
+            wkColRefs.current[dk] = el;
+          },
+          "data-gridbg": "1",
+          "data-daykey": dk,
+          onDragOver: (e) => handleDragOver(e, dk),
+          onDrop: (e) => handleDrop(e, dk),
+          onMouseDown: (e) => startCreateDrag(e, dk),
+          onClick: closePopover
+        },
+        schoolWindow && day.getDay() >= 1 && day.getDay() <= 5 && subtractIntervals(schoolWindow, colEvs.filter((ev) => ev.kind === "free period").map((ev) => {
+          const p = ev.time.split(":").map(Number);
+          const start = p[0] * 60 + p[1];
+          return { start, end: start + (ev.duration || 30) };
+        })).map((seg, si) => /* @__PURE__ */ React.createElement("div", { key: "sh" + si, style: { position: "absolute", top: seg.start * (WK_PX_HR / 60), left: 0, right: 0, height: (seg.end - seg.start) * (WK_PX_HR / 60), background: mutedAlpha("0C"), pointerEvents: "none", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" } }, seg.end - seg.start >= 45 && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, fontWeight: 800, letterSpacing: "0.12em", color: mutedAlpha("88") } }, "SCHOOL HOURS"))),
+        Array.from({ length: 24 }, (_, h) => /* @__PURE__ */ React.createElement("div", { key: h, "data-gridbg": "1", style: { position: "absolute", top: h * WK_PX_HR, left: 0, right: 0, height: WK_PX_HR, borderTop: `1px solid ${T.lookOn ? T.borderTint : T.borderHover}`, boxSizing: "border-box" } })),
+        quickCreateDraft && quickCreateDraft.dateKey === dk && (() => {
+          const qStart = timeToMinutes(quickCreateDraft.startTime);
+          const qDur = Math.max(15, timeToMinutes(quickCreateDraft.endTime) - qStart);
+          return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: qStart * (WK_PX_HR / 60), left: 2, right: 2, height: Math.max(15, qDur) * (WK_PX_HR / 60), borderRadius: 5, background: quickCreateDraft.color ? lookDraftStyle(quickCreateDraft.color, getLook(), lookMode(), quickCreateDraft.color + "B3").fill : lookDraftStyle(T.lime, getLook(), lookMode(), T.lime + "22").fill, border: `1.5px dashed ${quickCreateDraft.color || T.lime}`, zIndex: 7, pointerEvents: "none", boxSizing: "border-box" } }), creatingDragging && /* @__PURE__ */ React.createElement(LiveRangePill, { startMin: qStart, durMin: qDur, style: { top: Math.max(2, qStart * (WK_PX_HR / 60) - 24) } }));
+        })(),
+        wkResize && wkResizeInfo.current && wkResizeInfo.current.date === dk && wkResize.liveStartMin != null && /* @__PURE__ */ React.createElement(LiveRangePill, { startMin: wkResize.liveStartMin, durMin: wkResize.liveDuration, style: { top: Math.max(2, wkResize.edge === "bottom" ? (wkResize.liveStartMin + wkResize.liveDuration) * (WK_PX_HR / 60) + 4 : wkResize.liveStartMin * (WK_PX_HR / 60) - 24) } }),
+        isPastDeadline && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", inset: 0, background: "rgba(217,128,107,0.07)", borderLeft: "2px solid rgba(217,128,107,0.35)", zIndex: 5, pointerEvents: "none" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "sticky", top: 6, textAlign: "center", fontSize: 8, fontWeight: 800, letterSpacing: "0.08em", color: "rgba(217,128,107,0.65)", padding: 3 } }, "PAST DUE")),
+        dk === todayK && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: nowMins * (WK_PX_HR / 60), left: 0, right: 0, zIndex: 6, pointerEvents: "none" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", left: -4, top: -4, width: 8, height: 8, borderRadius: "50%", background: "#E5484D" } }), /* @__PURE__ */ React.createElement("div", { style: { borderTop: "2px solid #E5484D" } })),
+        (() => {
+          const dayLaidOut = layoutDayEvents(visibleEvs);
+          return dayLaidOut.map(({ ev, col, totalCols, displayCol, displayTotalCols, start, end, hidden, overflowCount }) => {
+            if (hidden) return null;
+            const timeParts = ev.time.split(":").map(Number);
+            const hh = timeParts[0];
+            const mm = timeParts[1];
+            const origStartMin = hh * 60 + mm;
+            const dur = ev.duration || 30;
+            const isRoutine = !!ev.isRoutine;
+            const conflictTitles = totalCols > 1 ? dayLaidOut.filter((o) => o.ev.id !== ev.id && o.ev.status !== "done" && o.start < end && start < o.end && !isExpectedInClassOverlap(ev, o.ev)).map((o) => o.ev.title) : [];
+            const isResizing = wkResize && wkResize.id === ev.id;
+            const pendingForThis = isRoutine && pendingRoutineChange && pendingRoutineChange.fromDate === pendingRoutineChange.toDate && pendingRoutineChange.routineId === ev.routineId && pendingRoutineChange.fromDate === ev.date ? pendingRoutineChange : null;
+            const pendingStartMin = pendingForThis ? timeToMinutes(pendingForThis.toTime) : null;
+            const effStartMin = isResizing && wkResize.liveStartMin != null ? wkResize.liveStartMin : pendingStartMin != null ? pendingStartMin : origStartMin;
+            const effDuration = isResizing && wkResize.liveDuration != null ? wkResize.liveDuration : pendingForThis && pendingForThis.newDuration != null ? pendingForThis.newDuration : dur;
+            const topPx = effStartMin * (WK_PX_HR / 60);
+            const nextInCol = dayLaidOut.filter((o) => o.col === col && o.start > start).sort((a, b) => a.start - b.start)[0];
+            const isReminderMarker = isZeroDurationTimedReminder(ev);
+            const heightPx = isReminderMarker ? 13 : isResizing || pendingForThis ? Math.max(22, effDuration * (WK_PX_HR / 60)) : computeEventBlockHeightPx(dur, nextInCol ? nextInCol.start - start : null, WK_PX_HR);
+            const isDone = ev.status === "done";
+            const over = daysOverdue(ev);
+            const subjectColor2 = lookEventColor(ev.color, ev.courseId || ev.subject, colorOf(ev.courseId || ev.subject));
+            const isStudy = ev.kind === "study block";
+            const isExam = ev.kind === "exam";
+            const isWarningKind = isExam || ev.kind === "deadline";
+            const lookClassicNow = lookIsClassic(lookNow);
+            const warnLegacy = isWarningKind && lookClassicNow;
+            const kindStyle = isReminderMarker ? { background: "transparent", color: lookBlockStyle(subjectColor2, lookNow, lookModeNow, "reminder").text } : isStudy ? (() => {
+              const ls = lookBlockStyle(lookEventColor(ev.color, ev.courseId || ev.subject, tokens.color.accent), lookNow, lookModeNow, "study");
+              return { background: ls.fill, color: ls.text, ...ls.outline ? { border: ls.outline } : {} };
+            })() : warnLegacy ? { background: blendOverBg(T.amber, 0.12, T.card), border: `1px solid ${tokens.color.warning}`, color: tokens.color.warning } : (() => {
+              const ls = lookBlockStyle(isWarningKind ? T.amber : subjectColor2, lookNow, lookModeNow, "subject");
+              return { background: ls.fill, color: ls.text, ...ls.outline ? { border: ls.outline } : {} };
+            })();
+            const lookFlatNow = !lookClassicNow && lookNow.blockStyle === "flat";
+            const subTxt = isStudy ? lookClassicNow ? T.ink + "aa" : kindStyle.color : lookFlatNow ? kindStyle.color : tokens.color.textSecondary;
+            const dimmedByRoutineMode = editRoutineMode && !isRoutine;
+            const highlightedByRoutineMode = editRoutineMode && isRoutine;
+            const acceptanceSummary = ev.proposalMemberUids ? computeAcceptanceSummary(ev.proposalMemberUids, ev.proposalResponses) : null;
+            const isPendingAcceptance = !!acceptanceSummary && !acceptanceSummary.allAccepted;
+            const isDeclined = !!acceptanceSummary && acceptanceSummary.declined > 0;
+            const isSelected = !isRoutine && selectedEventId === ev.id;
+            const isRoutineSelected = isRoutine && selectedRoutineKey === ev.routineId + "|" + ev.date;
+            const isNewlyAdded = !!newItemHighlightIds && (newItemHighlightIds.has(ev.id) || ev.routineId && newItemHighlightIds.has(ev.routineId));
+            const newItemBoxShadow = isNewlyAdded ? `inset 3px 0 0 0 ${T.lime}` + (kindStyle.boxShadow ? `, ${kindStyle.boxShadow}` : "") : null;
+            const leftPct = displayCol / displayTotalCols * 100;
+            const widthPct = 100 / displayTotalCols;
+            const commuteStripStyle = (mins, edge) => ({ position: "absolute", top: edge === "before" ? topPx - mins * (WK_PX_HR / 60) : topPx + heightPx, left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`, height: mins * (WK_PX_HR / 60), borderRadius: edge === "before" ? "5px 5px 0 0" : "0 0 5px 5px", background: `repeating-linear-gradient(135deg, ${subjectColor2}26, ${subjectColor2}26 4px, transparent 4px, transparent 8px)`, border: `1px dashed ${subjectColor2}55`, [edge === "before" ? "borderBottom" : "borderTop"]: "none", zIndex: 2, pointerEvents: "none", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" });
+            return /* @__PURE__ */ React.createElement(React.Fragment, { key: ev.id }, ev.commuteBefore > 0 && /* @__PURE__ */ React.createElement("div", { title: ev.commuteBefore + " min commute", style: commuteStripStyle(ev.commuteBefore, "before") }, ev.commuteBefore * (WK_PX_HR / 60) > 13 && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 8, color: subjectColor2, fontWeight: 600, whiteSpace: "nowrap" } }, ev.commuteBefore, "m commute")), /* @__PURE__ */ React.createElement(
+              "div",
+              {
+                draggable: true,
+                onDragStart: () => {
+                  if (!isRoutine) {
+                    setWkDragId(ev.id);
+                    setWkDragDeadline(ev.deadline || null);
+                    closePopover();
+                  } else {
+                    if (onRoutineDragStateChange) onRoutineDragStateChange(true);
+                    setWkDragRoutineOccurrence({ routineId: ev.routineId, fromDate: ev.date, duration: dur });
+                  }
+                },
+                onDoubleClick: () => {
+                  if (!isRoutine) openEdit(ev);
+                  else if (onEditRoutine) onEditRoutine(ev.routineId, ev.date);
+                },
+                onClick: (e) => {
+                  if (isRoutine) {
+                    if (editRoutineMode && onEditRoutine) {
+                      onEditRoutine(ev.routineId, ev.date);
+                      return;
+                    }
+                    e.stopPropagation();
+                    if (selectedEventId) closePopover();
+                    if (onSelectRoutineOccurrence) onSelectRoutineOccurrence(isRoutineSelected ? null : { routineId: ev.routineId, date: ev.date, title: ev.title });
                     return;
                   }
                   e.stopPropagation();
-                  if (selectedEventId) closePopover();
-                  if (onSelectRoutineOccurrence) onSelectRoutineOccurrence(isRoutineSelected ? null : { routineId: ev.routineId, date: ev.date, title: ev.title });
-                  return;
-                }
-                e.stopPropagation();
-                if (onSelectRoutineOccurrence) onSelectRoutineOccurrence(null);
-                if (selectedEventId === ev.id) {
-                  closePopover();
-                } else {
-                  setSelectedEventId(ev.id);
-                  setPopoverAnchor({ id: ev.id, rect: e.currentTarget.getBoundingClientRect() });
-                  if (onSelectEvent) onSelectEvent(ev.id);
-                  if (isPendingAcceptance) refreshPendingAcceptance(events, [ev.id]).then((next) => {
-                    if (next) setEvents2(next);
-                  });
-                }
-              },
-              onMouseEnter: () => {
-                if (isRoutine && setHoveredRoutineId) setHoveredRoutineId(ev.routineId);
-              },
-              onMouseLeave: () => {
-                if (isRoutine && setHoveredRoutineId) setHoveredRoutineId(null);
-              },
-              title: (isNewlyAdded ? "Just added \xB7 " : "") + (isRoutine ? "Click to select (Ctrl+C to copy) \xB7 Double-click to edit \xB7 Drag to reschedule" : "Click for actions (Backspace to delete) \xB7 Double-click to edit \xB7 Drag to reschedule"),
-              ref: (el) => {
-                if (el) blockRefs.current.set(ev.id, el);
-                else blockRefs.current.delete(ev.id);
-              },
-              style: { position: "absolute", top: topPx, left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`, height: heightPx, borderRadius: 5, padding: isReminderMarker ? "0 4px" : "2px 5px 2px 8px", cursor: "grab", overflow: "hidden", zIndex: 3, opacity: dimmedByRoutineMode ? 0.3 : isPendingAcceptance || isDone ? 0.6 : 1, boxSizing: "border-box", userSelect: "none", ...kindStyle, ...highlightedByRoutineMode ? { outline: `2px solid ${T.lime}`, outlineOffset: 1 } : {}, ...newItemBoxShadow ? { boxShadow: newItemBoxShadow } : {}, ...isSelected || isRoutineSelected ? { outline: `2px solid ${T.lime}`, outlineOffset: 1, boxShadow: `0 0 0 4px ${T.lime}22` } : {}, ...!isRoutine && highlightedSessionId === ev.id ? { outline: `2px solid ${T.amber}`, outlineOffset: 1, boxShadow: `0 0 0 4px ${T.amber}33` } : {} }
-            },
-            isReminderMarker ? (
-              // Compact treatment: dot + thin line + title, no
-              // filled box, no time/location/details lines, no
-              // resize handles -- there's no duration to resize
-              // and no room for progressive-disclosure lines in
-              // 13px anyway. Deliberately skips all the badges
-              // (overdue dot, overflow count, acceptance/conflict)
-              // that the normal block below carries -- a reminder
-              // never has those states in practice, and the
-              // marker is meant to read as minimal.
-              /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 5, height: "100%" } }, /* @__PURE__ */ React.createElement("span", { style: { width: 6, height: 6, borderRadius: "50%", background: subjectColor2, flexShrink: 0, boxShadow: `0 0 0 2px ${subjectColor2}2a` } }), /* @__PURE__ */ React.createElement("span", { style: { flex: "0 1 auto", minWidth: 8, height: 2, background: subjectColor2 + "77", borderRadius: 1 } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, fontWeight: 700, color: kindStyle.color, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, ev.title))
-            ) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: subjectColor2, borderRadius: "5px 0 0 5px" } }), !catchUpPending && over > 0 && /* @__PURE__ */ React.createElement("span", { title: "Scheduled " + over + (over === 1 ? " day" : " days") + " after its due date", style: { position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: "50%", background: T.red, boxShadow: "0 0 0 1.5px rgba(255,255,255,0.9)", zIndex: 1 } }), overflowCount > 0 && /* @__PURE__ */ React.createElement("span", { title: overflowCount + " more at this time \u2014 open the day to see them", style: { position: "absolute", bottom: 2, right: 2, fontSize: 8, fontWeight: 800, color: kindStyle.color, background: "rgba(0,0,0,0.18)", borderRadius: 8, padding: "1px 4px", lineHeight: 1.3, zIndex: 1 } }, "+", overflowCount), isPendingAcceptance && /* @__PURE__ */ React.createElement("span", { title: isDeclined ? "Declined" : acceptanceSummary.accepted + "/" + acceptanceSummary.total + " accepted", style: { position: "absolute", bottom: 2, left: 2, fontSize: 8, fontWeight: 800, color: isDeclined ? "#fff" : kindStyle.color, background: isDeclined ? T.red + "cc" : "rgba(0,0,0,0.18)", borderRadius: 8, padding: "1px 4px", lineHeight: 1.3, zIndex: 1 } }, isDeclined ? "Declined" : acceptanceSummary.accepted + "/" + acceptanceSummary.total), conflictTitles.length > 0 && /* @__PURE__ */ React.createElement("span", { title: "Overlaps with " + conflictTitles.join(", "), style: { position: "absolute", top: 2, left: 2, fontSize: 9, lineHeight: 1, zIndex: 1, filter: "drop-shadow(0 1px 1px rgba(0,0,0,0.35))" } }, "\u26A0\uFE0F"), isRoutine && (ev.dayNote || ev.dayTodo && ev.dayTodo.length > 0) && /* @__PURE__ */ React.createElement("span", { title: "This class has notes saved", style: { position: "absolute", top: 3, right: 3, width: 6, height: 6, borderRadius: "50%", background: T.lime, boxShadow: "0 0 0 1.5px rgba(255,255,255,0.9)", zIndex: 1 } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 9.5, fontWeight: 700, color: kindStyle.color, lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, isExam ? "EXAM \xB7 " : "", ev.title), heightPx > 34 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 8.5, color: isStudy ? subTxt : warnLegacy ? tokens.color.warning : subTxt, marginTop: 1 } }, fmtTimeRange2(String(Math.floor(effStartMin / 60)).padStart(2, "0") + ":" + String(effStartMin % 60).padStart(2, "0"), effDuration)), heightPx > 40 && ev.location && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 8.5, color: isStudy ? subTxt : warnLegacy ? tokens.color.warning : subTxt, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.location), heightPx > 40 && (isRoutine ? ev.dayNote : ev.notes) && /* @__PURE__ */ React.createElement("div", { onClick: (e) => {
-              e.stopPropagation();
-              if (isRoutine) {
-                if (onEditRoutine) onEditRoutine(ev.routineId, ev.date);
-              } else {
-                openEdit(ev);
-              }
-            }, title: "Has notes -- click to view", style: { fontSize: 8.5, color: isStudy ? subTxt : warnLegacy ? tokens.color.warning : subTxt, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 2 } }, "Details")),
-            !isReminderMarker && /* @__PURE__ */ React.createElement(
-              "div",
-              {
-                draggable: false,
-                onMouseDown: (e) => startWkResize(ev, "top", e, effStartMin, effDuration),
-                onClick: (e) => e.stopPropagation(),
-                style: { position: "absolute", top: -2, left: 0, right: 0, height: 6, cursor: "ns-resize", zIndex: 4 }
-              }
-            ),
-            !isReminderMarker && /* @__PURE__ */ React.createElement(
-              "div",
-              {
-                draggable: false,
-                onMouseDown: (e) => startWkResize(ev, "bottom", e, effStartMin, effDuration),
-                onClick: (e) => e.stopPropagation(),
-                style: { position: "absolute", bottom: -2, left: 0, right: 0, height: 6, cursor: "ns-resize", zIndex: 4 }
-              }
-            ),
-            isRoutine && editRoutineMode && hoveredRoutineId === ev.routineId && /* @__PURE__ */ React.createElement(
-              "button",
-              {
-                onClick: (e) => {
-                  e.stopPropagation();
-                  if (onDeleteRoutine) onDeleteRoutine(ev.routineId);
-                  if (setHoveredRoutineId) setHoveredRoutineId(null);
+                  if (onSelectRoutineOccurrence) onSelectRoutineOccurrence(null);
+                  if (selectedEventId === ev.id) {
+                    closePopover();
+                  } else {
+                    setSelectedEventId(ev.id);
+                    setPopoverAnchor({ id: ev.id, rect: e.currentTarget.getBoundingClientRect() });
+                    if (onSelectEvent) onSelectEvent(ev.id);
+                    if (isPendingAcceptance) refreshPendingAcceptance(events, [ev.id]).then((next) => {
+                      if (next) setEvents2(next);
+                    });
+                  }
                 },
-                title: "Delete this routine block (every week)",
-                style: { position: "absolute", top: -8, right: -8, width: 18, height: 18, borderRadius: "50%", border: `1px solid ${T.border}`, background: T.card, color: T.red, fontSize: 11, lineHeight: 1, cursor: "pointer", display: "grid", placeItems: "center", boxShadow: "0 4px 10px -2px rgba(0,0,0,0.4)" }
+                onMouseEnter: () => {
+                  if (isRoutine && setHoveredRoutineId) setHoveredRoutineId(ev.routineId);
+                },
+                onMouseLeave: () => {
+                  if (isRoutine && setHoveredRoutineId) setHoveredRoutineId(null);
+                },
+                title: (isNewlyAdded ? "Just added \xB7 " : "") + (isRoutine ? "Click to select (Ctrl+C to copy) \xB7 Double-click to edit \xB7 Drag to reschedule" : "Click for actions (Backspace to delete) \xB7 Double-click to edit \xB7 Drag to reschedule"),
+                ref: (el) => {
+                  if (el) blockRefs.current.set(ev.id, el);
+                  else blockRefs.current.delete(ev.id);
+                },
+                style: { position: "absolute", top: topPx, left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`, height: heightPx, borderRadius: 5, padding: isReminderMarker ? "0 4px" : "2px 5px 2px 8px", cursor: "grab", overflow: "hidden", zIndex: 3, opacity: dimmedByRoutineMode ? 0.3 : isPendingAcceptance || isDone ? 0.6 : 1, boxSizing: "border-box", userSelect: "none", ...kindStyle, ...highlightedByRoutineMode ? { outline: `2px solid ${T.lime}`, outlineOffset: 1 } : {}, ...newItemBoxShadow ? { boxShadow: newItemBoxShadow } : {}, ...isSelected || isRoutineSelected ? { outline: `2px solid ${T.lime}`, outlineOffset: 1, boxShadow: `0 0 0 4px ${T.lime}22` } : {}, ...!isRoutine && highlightedSessionId === ev.id ? { outline: `2px solid ${T.amber}`, outlineOffset: 1, boxShadow: `0 0 0 4px ${T.amber}33` } : {} }
               },
-              "\xD7"
-            )
-          ), ev.commuteAfter > 0 && /* @__PURE__ */ React.createElement("div", { title: ev.commuteAfter + " min commute", style: commuteStripStyle(ev.commuteAfter, "after") }, ev.commuteAfter * (WK_PX_HR / 60) > 13 && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 8, color: subjectColor2, fontWeight: 600, whiteSpace: "nowrap" } }, ev.commuteAfter, "m commute")));
-        });
-      })(),
-      gsBusyEl,
-      gsRecommendedEl,
-      ghostEl,
-      previewEl
-    );
-  }))), popoverAnchor && (() => {
+              isReminderMarker ? (
+                // Compact treatment: dot + thin line + title, no
+                // filled box, no time/location/details lines, no
+                // resize handles -- there's no duration to resize
+                // and no room for progressive-disclosure lines in
+                // 13px anyway. Deliberately skips all the badges
+                // (overdue dot, overflow count, acceptance/conflict)
+                // that the normal block below carries -- a reminder
+                // never has those states in practice, and the
+                // marker is meant to read as minimal.
+                /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 5, height: "100%" } }, /* @__PURE__ */ React.createElement("span", { style: { width: 6, height: 6, borderRadius: "50%", background: subjectColor2, flexShrink: 0, boxShadow: `0 0 0 2px ${subjectColor2}2a` } }), /* @__PURE__ */ React.createElement("span", { style: { flex: "0 1 auto", minWidth: 8, height: 2, background: subjectColor2 + "77", borderRadius: 1 } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, fontWeight: 700, color: kindStyle.color, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, ev.title))
+              ) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: subjectColor2, borderRadius: "5px 0 0 5px" } }), !catchUpPending && over > 0 && /* @__PURE__ */ React.createElement("span", { title: "Scheduled " + over + (over === 1 ? " day" : " days") + " after its due date", style: { position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: "50%", background: T.red, boxShadow: "0 0 0 1.5px rgba(255,255,255,0.9)", zIndex: 1 } }), overflowCount > 0 && /* @__PURE__ */ React.createElement("span", { title: overflowCount + " more at this time \u2014 open the day to see them", style: { position: "absolute", bottom: 2, right: 2, fontSize: 8, fontWeight: 800, color: kindStyle.color, background: "rgba(0,0,0,0.18)", borderRadius: 8, padding: "1px 4px", lineHeight: 1.3, zIndex: 1 } }, "+", overflowCount), isPendingAcceptance && /* @__PURE__ */ React.createElement("span", { title: isDeclined ? "Declined" : acceptanceSummary.accepted + "/" + acceptanceSummary.total + " accepted", style: { position: "absolute", bottom: 2, left: 2, fontSize: 8, fontWeight: 800, color: isDeclined ? "#fff" : kindStyle.color, background: isDeclined ? T.red + "cc" : "rgba(0,0,0,0.18)", borderRadius: 8, padding: "1px 4px", lineHeight: 1.3, zIndex: 1 } }, isDeclined ? "Declined" : acceptanceSummary.accepted + "/" + acceptanceSummary.total), conflictTitles.length > 0 && /* @__PURE__ */ React.createElement("span", { title: "Overlaps with " + conflictTitles.join(", "), style: { position: "absolute", top: 2, left: 2, fontSize: 9, lineHeight: 1, zIndex: 1, filter: "drop-shadow(0 1px 1px rgba(0,0,0,0.35))" } }, "\u26A0\uFE0F"), isRoutine && (ev.dayNote || ev.dayTodo && ev.dayTodo.length > 0) && /* @__PURE__ */ React.createElement("span", { title: "This class has notes saved", style: { position: "absolute", top: 3, right: 3, width: 6, height: 6, borderRadius: "50%", background: T.lime, boxShadow: "0 0 0 1.5px rgba(255,255,255,0.9)", zIndex: 1 } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 9.5, fontWeight: 700, color: kindStyle.color, lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, isExam ? "EXAM \xB7 " : "", ev.title), heightPx > 34 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 8.5, color: isStudy ? subTxt : warnLegacy ? tokens.color.warning : subTxt, marginTop: 1 } }, fmtTimeRange2(String(Math.floor(effStartMin / 60)).padStart(2, "0") + ":" + String(effStartMin % 60).padStart(2, "0"), effDuration)), heightPx > 40 && ev.location && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 8.5, color: isStudy ? subTxt : warnLegacy ? tokens.color.warning : subTxt, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.location), heightPx > 40 && (isRoutine ? ev.dayNote : ev.notes) && /* @__PURE__ */ React.createElement("div", { onClick: (e) => {
+                e.stopPropagation();
+                if (isRoutine) {
+                  if (onEditRoutine) onEditRoutine(ev.routineId, ev.date);
+                } else {
+                  openEdit(ev);
+                }
+              }, title: "Has notes -- click to view", style: { fontSize: 8.5, color: isStudy ? subTxt : warnLegacy ? tokens.color.warning : subTxt, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 2 } }, "Details")),
+              !isReminderMarker && /* @__PURE__ */ React.createElement(
+                "div",
+                {
+                  draggable: false,
+                  onMouseDown: (e) => startWkResize(ev, "top", e, effStartMin, effDuration),
+                  onClick: (e) => e.stopPropagation(),
+                  style: { position: "absolute", top: -2, left: 0, right: 0, height: 6, cursor: "ns-resize", zIndex: 4 }
+                }
+              ),
+              !isReminderMarker && /* @__PURE__ */ React.createElement(
+                "div",
+                {
+                  draggable: false,
+                  onMouseDown: (e) => startWkResize(ev, "bottom", e, effStartMin, effDuration),
+                  onClick: (e) => e.stopPropagation(),
+                  style: { position: "absolute", bottom: -2, left: 0, right: 0, height: 6, cursor: "ns-resize", zIndex: 4 }
+                }
+              ),
+              isRoutine && editRoutineMode && hoveredRoutineId === ev.routineId && /* @__PURE__ */ React.createElement(
+                "button",
+                {
+                  onClick: (e) => {
+                    e.stopPropagation();
+                    if (onDeleteRoutine) onDeleteRoutine(ev.routineId);
+                    if (setHoveredRoutineId) setHoveredRoutineId(null);
+                  },
+                  title: "Delete this routine block (every week)",
+                  style: { position: "absolute", top: -8, right: -8, width: 18, height: 18, borderRadius: "50%", border: `1px solid ${T.border}`, background: T.card, color: T.red, fontSize: 11, lineHeight: 1, cursor: "pointer", display: "grid", placeItems: "center", boxShadow: "0 4px 10px -2px rgba(0,0,0,0.4)" }
+                },
+                "\xD7"
+              )
+            ), ev.commuteAfter > 0 && /* @__PURE__ */ React.createElement("div", { title: ev.commuteAfter + " min commute", style: commuteStripStyle(ev.commuteAfter, "after") }, ev.commuteAfter * (WK_PX_HR / 60) > 13 && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 8, color: subjectColor2, fontWeight: 600, whiteSpace: "nowrap" } }, ev.commuteAfter, "m commute")));
+          });
+        })(),
+        gsBusyEl,
+        gsRecommendedEl,
+        ghostEl,
+        previewEl
+      );
+    }))))
+  ), popoverAnchor && (() => {
     const ev = events.find((e) => e.id === popoverAnchor.id);
     if (!ev) return null;
     const pendingSummary = ev.proposalMemberUids ? computeAcceptanceSummary(ev.proposalMemberUids, ev.proposalResponses) : null;
@@ -22818,7 +22886,7 @@ Examples:
       /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.muted, marginTop: 2 } }, item.subject ? item.subject + " \xB7 " : "", item.time ? fmtTime2(item.time) : "All day")
     ), isExpanded && /* @__PURE__ */ React.createElement("div", { style: { padding: "6px 0 6px 10px", display: "flex", flexDirection: "column", gap: 4 } }, expandedContent));
   };
-  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "flex-start" } }, /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, display: "flex", position: "relative", height: "calc(100vh - 150px)" } }, !calSidebarCollapsed && /* @__PURE__ */ React.createElement("div", { style: { width: 196, paddingRight: 20, maxHeight: "100%", overflowY: "auto" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Courses"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setQuickScanOpen(true), style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontFamily: T.font, cursor: "pointer", padding: 0 } }, "+ Add new")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 18 } }, currentTermSubjects.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, padding: "4px 0 8px" } }, "No courses yet."), currentTermSubjects.map(renderCourseRow)), pastTermSubjects.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 18 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setPastCoursesOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, marginBottom: 6, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.faint, transform: pastCoursesOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Past terms (", pastTermSubjects.length, ")")), pastCoursesOpen && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, opacity: 0.6 } }, pastTermSubjects.map(renderCourseRow))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Activities"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setRoutineCenterOpen(true), style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontFamily: T.font, cursor: "pointer", padding: 0 } }, "+ Add new")), (() => {
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "flex-start" } }, /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, display: "flex", position: "relative", alignSelf: "stretch" } }, !calSidebarCollapsed && /* @__PURE__ */ React.createElement("div", { style: { width: 196, paddingRight: 20, height: 0, minHeight: "100%", overflowY: "auto" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Courses"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setQuickScanOpen(true), style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontFamily: T.font, cursor: "pointer", padding: 0 } }, "+ Add new")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 18 } }, currentTermSubjects.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, padding: "4px 0 8px" } }, "No courses yet."), currentTermSubjects.map(renderCourseRow)), pastTermSubjects.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 18 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setPastCoursesOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, marginBottom: 6, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.faint, transform: pastCoursesOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Past terms (", pastTermSubjects.length, ")")), pastCoursesOpen && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, opacity: 0.6 } }, pastTermSubjects.map(renderCourseRow))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Activities"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setRoutineCenterOpen(true), style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontFamily: T.font, cursor: "pointer", padding: 0 } }, "+ Add new")), (() => {
     const fragmentGroups = findFragmentedRoutineGroups(routines);
     if (fragmentGroups.length === 0) return null;
     const rowCount = fragmentGroups.reduce((s, g) => s + g.length, 0);
@@ -23232,7 +23300,7 @@ Examples:
       onMoreOptions: quickCreateMoreOptions,
       onClose: cancelQuickCreate
     }
-  )), /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, display: "flex", position: "relative", height: "calc(100vh - 150px)" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 0, bottom: 0, left: calRightColCollapsed ? 0 : 14, width: 1, background: T.border, boxShadow: `-1px 0 3px rgba(0,0,0,0.12)` } }), !calRightColCollapsed && /* @__PURE__ */ React.createElement("div", { style: { width: 220, marginLeft: 34, maxHeight: "100%", overflowY: "auto" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontWeight: 700, color: T.white } }, selectedCourse ? selectedCourse.label : "Upcoming"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: toggleCalRightColCollapsed, style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontWeight: 600, fontFamily: T.font, cursor: "pointer", padding: 0 } }, "Close \u203A")), sidebarDueTodayItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 10, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setDueTodayOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.lime, transform: dueTodayOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.lime } }, "Due Today (", sidebarDueTodayItems.length, ")")), dueTodayOpen && sidebarDueTodayItems.map(renderSidebarItem)), sidebarOverdueItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setOverdueSectionOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.red, transform: overdueSectionOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.red } }, "Overdue (", sidebarOverdueItems.length, ")")), overdueSectionOpen && sidebarOverdueItems.map(renderSidebarItem)), sidebarUpcomingItems.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.faint } }, "Nothing upcoming."), sidebarUpcomingGroups.map((group) => /* @__PURE__ */ React.createElement("div", { key: group.label, style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, color: group.label === "Overdue" ? T.red : T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 } }, "Due: ", group.label), group.items.map(renderSidebarItem)))), calRightColCollapsed && /* @__PURE__ */ React.createElement(
+  )), /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, display: "flex", position: "relative", alignSelf: "stretch" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: 0, bottom: 0, left: calRightColCollapsed ? 0 : 14, width: 1, background: T.border, boxShadow: `-1px 0 3px rgba(0,0,0,0.12)` } }), !calRightColCollapsed && /* @__PURE__ */ React.createElement("div", { style: { width: 220, marginLeft: 34, height: 0, minHeight: "100%", overflowY: "auto", paddingBottom: 96, boxSizing: "border-box" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontWeight: 700, color: T.white } }, selectedCourse ? selectedCourse.label : "Upcoming"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: toggleCalRightColCollapsed, style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontWeight: 600, fontFamily: T.font, cursor: "pointer", padding: 0 } }, "Close \u203A")), sidebarDueTodayItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 10, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setDueTodayOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.lime, transform: dueTodayOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.lime } }, "Due Today (", sidebarDueTodayItems.length, ")")), dueTodayOpen && sidebarDueTodayItems.map(renderSidebarItem)), sidebarOverdueItems.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14, borderBottom: `1px solid ${T.border}`, paddingBottom: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setOverdueSectionOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.red, transform: overdueSectionOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 600, color: T.red } }, "Overdue (", sidebarOverdueItems.length, ")")), overdueSectionOpen && sidebarOverdueItems.map(renderSidebarItem)), sidebarUpcomingItems.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.faint } }, "Nothing upcoming."), sidebarUpcomingGroups.map((group) => /* @__PURE__ */ React.createElement("div", { key: group.label, style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, color: group.label === "Overdue" ? T.red : T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 } }, "Due: ", group.label), group.items.map(renderSidebarItem)))), calRightColCollapsed && /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
