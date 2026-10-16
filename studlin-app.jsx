@@ -5219,7 +5219,10 @@ function undoTier0Move(taskId){
 // needsAttention instead, same as a flexible block Studlin searched for
 // and genuinely couldn't find a new home for.
 function reconcileFixedEventConflicts(newFixedEvents){
-  const timed=newFixedEvents.filter(nf=>nf.time);
+  // An all-day marker (unconfirmed placeholder time, e.g. a Google all-day
+  // event) occupies no real time, so it never displaces or conflicts with
+  // anything.
+  const timed=newFixedEvents.filter(nf=>nf.time&&!(nf.kind==="reminder"&&nf.timeUnconfirmed));
   if(timed.length===0)return{events:lsGet("events",[]),moved:[],needsAttention:[]};
   const newIds=new Set(timed.map(e=>e.id));
   const existing=lsGet("events",[]).filter(e=>!newIds.has(e.id));
