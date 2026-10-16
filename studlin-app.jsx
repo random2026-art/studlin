@@ -12571,6 +12571,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
   // carries into every future plan too, not just this one.
   const [buildPlanInstructions,setBuildPlanInstructions]=useState("");
   const [buildPlanCritique,setBuildPlanCritique]=useState("");
+  const [buildPlanWhyOpen,setBuildPlanWhyOpen]=useState(false);
   const [buildPlanRefining,setBuildPlanRefining]=useState(false);
   const [buildPlanMemoryToast,setBuildPlanMemoryToast]=useState("");
   const [buildPlanFocuses,setBuildPlanFocuses]=useState([]);
@@ -15562,105 +15563,65 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                   analyzeLabel={"Building your sessions"+(buildPlanGenFlashcards&&buildPlanGenPE?", flashcards, and a practice exam":buildPlanGenFlashcards?" and flashcards":buildPlanGenPE?" and a practice exam":"")+"…"} />
               </div>
             ):(<>
-            {/* The "why" behind the plan -- session count and duration were
-                always computed from real signals (confidence, importance,
-                material volume, and this exam subject's own completed-
-                session history), just never shown. Shown for every plan,
-                generic or material-grounded, since the justification is
-                just as real either way. */}
-            {buildPlanPreview.reasoningInputs&&(()=>{
-              // Read straight off the actual last row rather than a flag
-              // frozen at generation time -- adjustBuildPlanCount can shift
-              // which index is "last" (or a student can hand-edit that
-              // row's duration directly), so this always matches whatever
-              // is really about to be confirmed instead of a stale claim.
+            {/* 2026-10-16: the preview used to stack five text boxes (why, also
+                included, replacing, generic notice, will-be-generated) that
+                mostly repeated each other and read as a wall of text. It is now
+                one summary line plus small chips. The full reasoning
+                (studyPlanReasoning) is still there behind a "Why?" link for
+                anyone who wants it. Nothing here is shown that Confirm does
+                not actually do: the counts are the same deterministic
+                scaledFlashcardCount/scaledQuizCount math commitBuildPlan uses,
+                and flashcards/practice exam are still only generated at
+                Confirm, never at preview time. */}
+            {(()=>{
               const lastOv=buildPlanOverrides[buildPlanOverrides.length-1];
               const lastIsLighter=buildPlanPreview.dates.length>=3&&lastOv&&lastOv.duration&&lastOv.duration<buildPlanPreview.sessionDuration;
+              const oldPending=lsGet("events",[]).filter(e=>e.dueEventId===buildPlanExam.id&&e.status==="pending"&&e.isExamPrepSession&&(e.interleavedReview||(!e.deckId&&!e.practiceExamId)));
+              const hasMaterial=!!materialText.trim();
+              const chips=[];
+              if(buildPlanGeneric)chips.push("General review");
+              if(buildPlanGenFlashcards&&hasMaterial)chips.push("~"+scaledFlashcardCount(materialText.length)+" flashcards");
+              if(buildPlanGenPE&&hasMaterial)chips.push(scaledQuizCount(materialText.length)+"-question practice exam");
+              if((buildPlanGenFlashcards||buildPlanGenPE)&&!hasMaterial)chips.push("Flashcards and exam need material");
+              if(oldPending.length>0)chips.push("Replaces "+oldPending.length+" session"+(oldPending.length!==1?"s":""));
+              const chipStyle={fontSize:11,fontWeight:600,padding:"3px 9px",borderRadius:99,background:T.card2,border:`1px solid ${T.border}`,color:T.text};
               return (
-                <div style={{fontSize:12,color:T.text,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",marginBottom:14,lineHeight:1.6}}>
-                  <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Why this plan</div>
-                  {studyPlanReasoning(buildPlanPreview.reasoningInputs.confidenceLevel,buildPlanPreview.reasoningInputs.importanceLevel,buildPlanPreview.reasoningInputs.materialCharCount,buildPlanPreview.reasoningInputs.hadHistoricalDuration,buildPlanPreview.reasoningInputs.hoursTargetAdjusted,buildPlanPreview.sessionCount,buildPlanPreview.sessionDuration,lastIsLighter,buildPlanPreview.reasoningInputs.daysUntil,buildPlanPreview.reasoningInputs.weekPressured,buildPlanPreview.reasoningInputs.confidenceKnown).map((line,i)=>(
-                    <div key={i}>{line}</div>
-                  ))}
+                <div style={{marginBottom:14}}>
+                  <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:10}}>
+                    <div style={{fontSize:15,fontWeight:700,color:T.white}}>
+                      {buildPlanPreview.dates.length===0?"No room before the exam":buildPlanPreview.sessionCount+" session"+(buildPlanPreview.sessionCount!==1?"s":"")+" · "+buildPlanPreview.sessionDuration+" min each"}
+                    </div>
+                    {buildPlanPreview.reasoningInputs&&(
+                      <button type="button" onClick={()=>setBuildPlanWhyOpen(o=>!o)} aria-expanded={buildPlanWhyOpen} style={{background:"none",border:"none",padding:0,color:T.muted,fontSize:11.5,cursor:"pointer",fontFamily:T.font,textDecoration:"underline",flexShrink:0}}>{buildPlanWhyOpen?"Hide":"Why?"}</button>
+                    )}
+                  </div>
+                  {chips.length>0&&(
+                    <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:8}}>
+                      {chips.map((c,i)=><span key={i} style={chipStyle}>{c}</span>)}
+                    </div>
+                  )}
+                  {buildPlanWhyOpen&&buildPlanPreview.reasoningInputs&&(
+                    <div style={{fontSize:12,color:T.muted,marginTop:8,lineHeight:1.55}}>
+                      {studyPlanReasoning(buildPlanPreview.reasoningInputs.confidenceLevel,buildPlanPreview.reasoningInputs.importanceLevel,buildPlanPreview.reasoningInputs.materialCharCount,buildPlanPreview.reasoningInputs.hadHistoricalDuration,buildPlanPreview.reasoningInputs.hoursTargetAdjusted,buildPlanPreview.sessionCount,buildPlanPreview.sessionDuration,lastIsLighter,buildPlanPreview.reasoningInputs.daysUntil,buildPlanPreview.reasoningInputs.weekPressured,buildPlanPreview.reasoningInputs.confidenceKnown).map((line,i)=>(
+                        <div key={i}>{line}</div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               );
             })()}
-            {/* The flashcard/practice-exam checkboxes from the calibration
-                screen actually generate via AI at Confirm time (not here --
-                doing it now would burn the monthly generation quota, and
-                write a real deck/practice-exam to storage, before the
-                student has actually committed to this plan). Still,
-                nothing about the plan should be a surprise once Confirm is
-                clicked -- these counts are the same deterministic
-                scaledFlashcardCount/scaledQuizCount math Confirm will
-                actually use, just computed here for free to preview.
-                Copy matches what commitBuildPlan's interleaving actually
-                does now -- woven into these same sessions, not a second,
-                separately-scheduled deck/quiz. */}
-            {(buildPlanGenFlashcards||buildPlanGenPE)&&materialText.trim()&&(
-              <div style={{fontSize:12,color:T.text,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",marginBottom:14,lineHeight:1.6}}>
-                <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Also included</div>
-                {buildPlanGenFlashcards&&<div>~{scaledFlashcardCount(materialText.length)} flashcards{buildPlanWeaveCards?", woven into every session below as a quick review before you start.":" -- created on their own, not part of these sessions. Schedule review time separately from Flashcards."}</div>}
-                {buildPlanGenPE&&<div>A {scaledQuizCount(materialText.length)}-question practice exam{buildPlanWeavePE?" -- your last session becomes a sit-down for it instead of new material.":" -- created on its own, not part of these sessions. Schedule it separately from Practice Exams."}</div>}
-              </div>
-            )}
-            {/* P1 in the audit: weekPrepLoad/pressuredExamItems already
-                exist and work in Syllabus Review and Brain Dump, but this
-                flow -- Studlin Prep's own Build Study Plan, one of the two
-                primary ways a student actually schedules exam prep -- never
-                called either one. A student building plans for 3 exams the
-                same week got each one generated in total isolation. Same
-                "Spread out" affordance Syllabus Review uses, reusing the
-                count-adjust action this modal already has. */}
             {buildPlanPreview.dates.length>0&&(()=>{
               const pressure=weekPrepLoad(buildPlanPreview.dates[0],buildPlanExam,lsGet("events",[]),getSchedulePreferences());
               if(!pressure.isPressured)return null;
               return (
                 <div style={{fontSize:12,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:8,padding:"8px 12px",marginBottom:14,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
-                  <span>{pressure.competingTitle?"The week this starts in is already busy with "+pressure.competingTitle+".":"The week this starts in is already busy."} You can build it as planned, or spread it out.</span>
+                  <span>{pressure.competingTitle?"Busy week: "+pressure.competingTitle+".":"Busy week."}</span>
                   {buildPlanPreview.sessionCount>1&&(
                     <button type="button" onClick={()=>adjustBuildPlanCount(buildPlanPreview.sessionCount-1)} style={{background:"none",border:"none",color:T.amber,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline",flexShrink:0,padding:0}}>Spread out</button>
                   )}
                 </div>
               );
             })()}
-            {/* "Redo" specifically (not a fresh Build) -- show what's
-                actually being replaced before it's gone. Reads straight
-                from storage since commitBuildPlan hasn't run yet at
-                preview time, so these are still the real current
-                sessions, not a stale snapshot. Already-completed sessions
-                are never touched by a redo (removeGenericExamPrepSessions
-                only ever removes pending ones) -- they're not shown here
-                since nothing about them is changing. */}
-            {(()=>{
-              // Same interleavedReview carve-out as removeGenericExamPrepSessions
-              // -- a prior interleaved session carries deckId/practiceExamId
-              // too, but Redo IS about to replace it, so it belongs in this
-              // list same as any other generic session would.
-              const oldPending=lsGet("events",[]).filter(e=>e.dueEventId===buildPlanExam.id&&e.status==="pending"&&e.isExamPrepSession&&(e.interleavedReview||(!e.deckId&&!e.practiceExamId)));
-              if(oldPending.length===0)return null;
-              return (
-                <div style={{marginBottom:14}}>
-                  <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>Replacing {oldPending.length} current session{oldPending.length!==1?"s":""}</div>
-                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                    {oldPending.slice().sort((a,b)=>(a.date+a.time)<(b.date+b.time)?-1:1).map(s=>(
-                      <div key={s.id} style={{fontSize:11.5,color:T.faint,textDecoration:"line-through",padding:"2px 0"}}>{s.date} · {fmtRolloverClock(s.time)} · {s.duration||25}min</div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })()}
-            {buildPlanGeneric&&(
-              <div style={{fontSize:12,color:T.muted,background:T.card2,borderRadius:8,padding:"10px 12px",marginBottom:14,lineHeight:1.5}}>
-                No material yet, so these are general review blocks, not focused sessions. Add material anytime to unlock real flashcards for this exam.
-              </div>
-            )}
-            {(buildPlanGenFlashcards||buildPlanGenPE)&&(
-              <div style={{fontSize:12,color:T.muted,background:T.card2,borderRadius:8,padding:"10px 12px",marginBottom:14,lineHeight:1.5}}>
-                {buildPlanGenFlashcards&&buildPlanGenPE?"+ Flashcards and a practice exam will also be generated.":buildPlanGenFlashcards?"+ Flashcards will also be generated.":"+ A practice exam will also be generated."}
-                {(allDecks.some(d=>deckLinkedToExam(d,buildPlanExam.id))||allPracticeExams.some(p=>p.examEventId===buildPlanExam.id))?" This replaces what's already there for this exam.":""}
-              </div>
-            )}
             {buildPlanPreview.dates.length===0?(
               <div style={{fontSize:12.5,color:T.muted,textAlign:"center",padding:"14px 0",marginBottom:14}}>Too close to the exam to fit a session.</div>
             ):(
@@ -15671,7 +15632,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                   // Same interleaving commitBuildPlan actually does (isLast
                   // -> the practice exam session, every row -> a flashcard
                   // warm-up when a deck was requested) -- shown per-row here
-                  // too, not just in the general "Also included" summary
+                  // too, not just in the summary chips
                   // above, so the preview never disagrees with what
                   // Confirm is about to do.
                   const isLastRow=i===buildPlanPreview.dates.length-1;
