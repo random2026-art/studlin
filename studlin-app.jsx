@@ -24708,32 +24708,97 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
     document.addEventListener("keydown",handler);
     return ()=>document.removeEventListener("keydown",handler);
   },[selectedEventId,events,onDeleteEvent,onSelectEvent]);
-  // Two-finger horizontal swipe on a trackpad (or shift+scroll) moves the week
-  // grid one week at a time. A swipe is accumulated and counted once, then the
-  // rest of its momentum tail is ignored until the wheel goes quiet, so one
-  // flick never skips several weeks. Vertical scrolling is untouched.
-  const swipeRef=useRef({acc:0,locked:false,timer:null});
-  useEffect(()=>{
-    const SWIPE_THRESHOLD=90,QUIET_MS=160;
-    const onWheel=(e)=>{
-      const t=e.target;
-      if(!(t&&t.closest&&t.closest("[data-wk-hdr],[data-wk-grid]")))return;
-      const dx=e.shiftKey&&e.deltaX===0?e.deltaY:e.deltaX;
-      if(Math.abs(dx)<=Math.abs(e.shiftKey?0:e.deltaY)||dx===0)return; // vertical scroll, leave it alone
-      e.preventDefault();
-      const s=swipeRef.current;
-      clearTimeout(s.timer);
-      s.timer=setTimeout(()=>{s.acc=0;s.locked=false;},QUIET_MS);
-      if(s.locked)return;
-      s.acc+=dx;
-      if(Math.abs(s.acc)>=SWIPE_THRESHOLD){
-        setWeekOffset(o=>o+(s.acc>0?1:-1));
-        s.acc=0;s.locked=true;
-      }
+  // Continuous horizontal week scroll (2026-10-16). The grid is one scroller
+  // holding WK_STRIP_DAYS (3 weeks: previous, current, next) of columns, so a
+  // two-finger swipe, shift+wheel or touch drag pans smoothly through time
+  // instead of stepping. The strip is silently re-centered by exactly one
+  // week whenever the view drifts past a week boundary (weekOffset +/- 1 and
+  // scrollLeft -/+ 7 columns in the same layout pass), which is invisible
+  // because the same dates end up at the same pixels. Prev/next/Today still
+  // work and now slide there. A short pause after scrolling snaps to the
+  // nearest day column.
+  const WK_STRIP_DAYS=21;
+  const WK_GUTTER_PX=52;
+  const [wkColW,setWkColW]=useState(120);
+  const wkColWRef=useRef(120);
+  const wkPendingRatioRef=useRef(7);
+  const wkPrevOffsetRef=useRef(null);
+  const wkInternalShiftRef=useRef(false);
+  const wkProgrammaticRef=useRef(false);
+  const wkSnapTimerRef=useRef(null);
+  useLayoutEffect(()=>{
+    const el=weekScrollRef.current;
+    if(!el)return;
+    const measure=()=>{
+      const w=(el.clientWidth-WK_GUTTER_PX)/7;
+      if(!(w>=48)||Math.abs(w-wkColWRef.current)<0.01)return;
+      if(wkPrevOffsetRef.current!==null)wkPendingRatioRef.current=wkColWRef.current?el.scrollLeft/wkColWRef.current:7;
+      wkColWRef.current=w;
+      setWkColW(w);
     };
-    document.addEventListener("wheel",onWheel,{passive:false});
-    return ()=>{document.removeEventListener("wheel",onWheel);clearTimeout(swipeRef.current.timer);};
-  },[setWeekOffset]);
+    measure();
+    if(typeof ResizeObserver==="undefined")return;
+    const ro=new ResizeObserver(measure);
+    ro.observe(el);
+    return ()=>ro.disconnect();
+  },[]);
+  useLayoutEffect(()=>{
+    const el=weekScrollRef.current;
+    if(!el||wkPendingRatioRef.current==null)return;
+    el.scrollLeft=wkPendingRatioRef.current*wkColW;
+    wkPendingRatioRef.current=null;
+  },[wkColW]);
+  useLayoutEffect(()=>{
+    const el=weekScrollRef.current;
+    if(!el)return;
+    const c=wkColWRef.current;
+    const prev=wkPrevOffsetRef.current;
+    wkPrevOffsetRef.current=weekOffset;
+    if(prev===null||prev===weekOffset){el.scrollLeft=7*c;return;}
+    const delta=weekOffset-prev;
+    if(wkInternalShiftRef.current){
+      // The scroll itself moved the strip: keep the same dates under the same pixels.
+      wkInternalShiftRef.current=false;
+      el.scrollLeft=el.scrollLeft-delta*7*c;
+      return;
+    }
+    // Prev/next/Today or a jump to a date: keep the old view for a frame, then slide to the new week.
+    if(Math.abs(delta)===1){
+      el.scrollLeft=Math.max(0,Math.min(14*c,el.scrollLeft-delta*7*c));
+      wkProgrammaticRef.current=true;
+      el.scrollTo({left:7*c,behavior:"smooth"});
+      setTimeout(()=>{wkProgrammaticRef.current=false;},650);
+    }else{
+      el.scrollLeft=7*c;
+    }
+  },[weekOffset]);
+  useEffect(()=>()=>clearTimeout(wkSnapTimerRef.current),[]);
+  const onWkScroll=()=>{
+    const el=weekScrollRef.current;
+    const c=wkColWRef.current;
+    if(!el||!c)return;
+    clearTimeout(wkSnapTimerRef.current);
+    if(wkProgrammaticRef.current||wkInternalShiftRef.current)return;
+    const pos=el.scrollLeft/c;
+    let k=0;
+    if(pos<3)k=-Math.ceil((3-pos)/7);
+    else if(pos>11)k=Math.ceil((pos-11)/7);
+    if(k!==0){
+      wkInternalShiftRef.current=true;
+      setWeekOffset(o=>o+k);
+      return;
+    }
+    wkSnapTimerRef.current=setTimeout(()=>{
+      const e2=weekScrollRef.current;
+      const c2=wkColWRef.current;
+      if(!e2||!c2||wkProgrammaticRef.current||wkInternalShiftRef.current)return;
+      const target=Math.round(e2.scrollLeft/c2)*c2;
+      if(Math.abs(target-e2.scrollLeft)<=1.5)return;
+      wkProgrammaticRef.current=true;
+      e2.scrollTo({left:target,behavior:"smooth"});
+      setTimeout(()=>{wkProgrammaticRef.current=false;},450);
+    },160);
+  };
   // Same shortcut for a selected recurring (routine) block. No on-block Delete
   // button: select it and press Backspace/Delete, which opens the usual
   // "Delete this routine?" confirm (onDeleteRoutine never deletes directly).
@@ -24896,16 +24961,18 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
     const d = new Date();
     const day = d.getDay();
     const diff = -day; // weeks start on Sunday, like Google Calendar
-    d.setDate(d.getDate() + diff + weekOffset * 7);
+    // Strip starts one full week BEFORE the current week (see the continuous
+    // scroll comment above): previous, current and next week side by side.
+    d.setDate(d.getDate() + diff + (weekOffset - 1) * 7);
     d.setHours(0, 0, 0, 0);
-    return Array.from({length: 7}, (_, i) => { const x = new Date(d); x.setDate(x.getDate() + i); return x; });
+    return Array.from({length: WK_STRIP_DAYS}, (_, i) => { const x = new Date(d); x.setDate(x.getDate() + i); return x; });
   })();
 
   const byDay = {};
   events.forEach(ev => { (byDay[ev.date] = byDay[ev.date] || []).push(ev); });
   // Merge in virtual Weekly Routine occurrences for the visible week — same
   // never-persisted expansion CalendarTab does for the Monthly grid.
-  expandRoutineOccurrences(routines||[], dayKey(weekDays[0]), dayKey(weekDays[6]))
+  expandRoutineOccurrences(routines||[], dayKey(weekDays[0]), dayKey(weekDays[weekDays.length-1]))
     .forEach(ev => { (byDay[ev.date] = byDay[ev.date] || []).push(ev); });
   // A syllabus-scanned due date (assignment or exam) has no real duration —
   // it's a fact, not an appointment. Positioning it in the timed grid below
@@ -24993,8 +25060,11 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
   return (
     <>
     <Card style={{padding:0,overflow:"hidden"}}>
-      <div data-wk-hdr="1" style={{display:"grid",gridTemplateColumns:"52px repeat(7,1fr)",borderBottom:`1px solid ${T.borderTint}`,background:T.hdrBg}}>
-        <div style={{height:48}} />
+      <div ref={weekScrollRef} data-wk-grid="1" onScroll={onWkScroll} onDragEnd={handleDragEnd}
+        style={{overflow:"auto",overscrollBehaviorX:"contain",maxHeight:"calc(100vh - 85px)",scrollbarWidth:"thin"}}>
+      <div style={{width:WK_GUTTER_PX+wkColW*WK_STRIP_DAYS,position:"relative"}}>
+      <div data-wk-hdr="1" style={{borderBottom:`1px solid ${T.borderTint}`,background:T.hdrBg,display:"grid",gridTemplateColumns:`${WK_GUTTER_PX}px repeat(${WK_STRIP_DAYS},${wkColW}px)`,position:"sticky",top:0,zIndex:8}}>
+        <div style={{height:48,position:"sticky",left:0,zIndex:9,background:T.hdrBg}} />
         {weekDays.map((d, i) => {
           const dk = dayKey(d);
           const isToday = dk === todayK;
@@ -25002,7 +25072,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
           const duePills = (byDay[dk] || []).filter(isDuePill);
           return (
             <div key={i} onClick={()=>{if(setSelDay)setSelDay(dk);}} style={{textAlign:"center",padding:"7px 4px 9px",borderLeft:`1px solid ${T.borderTint}`,cursor:setSelDay?"pointer":"default",background:isSel?T.accentSoft:"transparent",minWidth:0}}>
-              <div style={{fontSize:T.lookOn?10:9,fontWeight:700,letterSpacing:"0.1em",color:T.hdrText,marginBottom:4}}>{DAY_NAMES[i]}</div>
+              <div style={{fontSize:T.lookOn?10:9,fontWeight:700,letterSpacing:"0.1em",color:T.hdrText,marginBottom:4}}>{DAY_NAMES[d.getDay()]}</div>
               <div onDoubleClick={(e)=>{e.stopPropagation();openNew(dk);}} style={{width:28,height:28,borderRadius:"50%",background:isToday?T.todayBg:"transparent",color:isToday?T.todayText:T.white,fontSize:13,fontWeight:700,display:"inline-flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>{d.getDate()}</div>
               {/* Phase 10b: a compact "N due" bar instead of listing each
                   due-marker title, matching the monthly grid's same
@@ -25021,14 +25091,14 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
       {/* Fixed estimate for the chrome above this grid (global top bar + the
           slim Calendar toolbar) now that there's no more agenda-collapse
           state to branch on -- this page never has an agenda panel. */}
-      <div ref={weekScrollRef} data-wk-grid="1" style={{display:"flex",overflowY:"auto",overscrollBehaviorX:"contain",maxHeight:"calc(100vh - 170px)"}} onDragEnd={handleDragEnd}>
-        <div style={{width:52,flexShrink:0,background:T.card,borderRight:`1px solid ${T.border}`,zIndex:2,position:"relative"}}>
+      <div style={{display:"flex"}}>
+        <div style={{width:WK_GUTTER_PX,flexShrink:0,background:T.card,borderRight:`1px solid ${T.border}`,zIndex:7,position:"sticky",left:0}}>
           {/* Phase 10b: user-driven zoom handle -- thin line + circular grip
               on the time-axis edge, matching Shovel's own (101410). Drag
               vertically to rescale WK_PX_HR; sticky so it stays reachable
               regardless of scroll position. */}
           <div onMouseDown={startWkZoomDrag} title="Drag to zoom"
-            style={{position:"sticky",top:8,left:0,right:-1,height:0,zIndex:7,display:"flex",justifyContent:"flex-end",cursor:"ns-resize"}}>
+            style={{position:"sticky",top:56,left:0,right:-1,height:0,zIndex:7,display:"flex",justifyContent:"flex-end",cursor:"ns-resize"}}>
             <div style={{width:18,height:18,borderRadius:"50%",background:T.lime,border:`2px solid ${T.card}`,marginRight:-9,boxShadow:"0 2px 6px rgba(0,0,0,0.35)"}} />
           </div>
           {Array.from({length:24}, (_, h) => (
@@ -25037,7 +25107,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
             </div>
           ))}
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",flex:1,minWidth:0}}>
+        <div style={{display:"grid",gridTemplateColumns:`repeat(${WK_STRIP_DAYS},${wkColW}px)`,flex:1,minWidth:0}}>
           {weekDays.map((day, colIdx) => {
             const dk = dayKey(day);
             const colEvs = (byDay[dk] || []).filter(ev => ev.time && !isDuePill(ev));
@@ -25549,6 +25619,8 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
             );
           })}
         </div>
+      </div>
+      </div>
       </div>
       {/* Block popover -- portaled to document.body (same [data-page]
           containing-block gotcha as elsewhere in this file: this Card sits
