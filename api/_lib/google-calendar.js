@@ -53,14 +53,23 @@ function googleItemToEvent(item) {
     const mins = Math.round((new Date(item.end.dateTime) - new Date(item.start.dateTime)) / 60000);
     if (mins > 0) duration = mins;
   }
+  // 2026-10-16: an all-day Google event (a trip, a friend visiting, a birthday)
+  // used to be imported as kind 'deadline', which Studlin treats as an
+  // assignment, so a plain "meet up with Liz" showed up in Prep and the due
+  // lists. Nothing in a personal calendar says an all-day item is schoolwork,
+  // so guessing 'assignment' was wrong. It is now a 'reminder' marker (no
+  // duration, placeholder 23:59 flagged timeUnconfirmed), the same shape the
+  // Canvas/Schoology all-day import uses. Real coursework still arrives through
+  // Canvas/Schoology/syllabus imports, which classify properly.
   return {
     id: 'gcal-' + item.id,
     date: (item.start.dateTime || item.start.date).slice(0, 10),
-    time: timed ? item.start.dateTime.slice(11, 16) : '',
+    time: timed ? item.start.dateTime.slice(11, 16) : '23:59',
     duration: timed ? duration : null,
     title: item.summary || 'Untitled',
     subject: 'General',
-    kind: timed ? 'busy block' : 'deadline',
+    kind: timed ? 'busy block' : 'reminder',
+    ...(timed ? {} : { timeUnconfirmed: true }),
     // Bug fix, 2026-09-04: the events endpoint below is called with
     // singleEvents=true, which is what makes a recurring Google event (a
     // weekly office-hours block, say) come back as one separate item per

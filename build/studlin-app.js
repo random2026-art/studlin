@@ -3420,7 +3420,7 @@ function undoTier0Move(taskId) {
   return { events: next, blocked: false };
 }
 function reconcileFixedEventConflicts(newFixedEvents) {
-  const timed = newFixedEvents.filter((nf) => nf.time);
+  const timed = newFixedEvents.filter((nf) => nf.time && !(nf.kind === "reminder" && nf.timeUnconfirmed));
   if (timed.length === 0) return { events: lsGet("events", []), moved: [], needsAttention: [] };
   const newIds = new Set(timed.map((e) => e.id));
   const existing = lsGet("events", []).filter((e) => !newIds.has(e.id));
