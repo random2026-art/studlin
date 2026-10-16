@@ -14,7 +14,7 @@ test("handoff seeds title, time, duration and date into the full form", () => {
   const body = SRC.slice(i, i + 700);
   for (const t of ["setEvTitle(","setEvTime(draft.startTime)","setEvDuration(duration)","setEvDurationTouched(true)","setEvDate(draft.dateKey)"]) assert.ok(body.includes(t), t);
 });
-test("selected routine block shows Delete that opens the confirm modal", () => {
-  assert.ok(SRC.includes("isRoutine&&!editRoutineMode&&isRoutineSelected&&onDeleteRoutine&&("));
+test("selected routine block deletes via Backspace/Delete and opens the confirm modal (corner button removed 2026-10-15)", () => {
+  assert.ok(!SRC.includes("isRoutine&&!editRoutineMode&&isRoutineSelected&&onDeleteRoutine&&("));
   assert.ok(SRC.includes("onDeleteRoutine={setPendingDeleteRoutineId}"));
 });
