@@ -13,8 +13,8 @@ const darkT = {
   limeLt: "#CBDF92",
   glow:   "rgba(174,206,94,0.22)",
   text:   "#E8EFE7",
-  muted:  "#849389",
-  faint:  "#3F5147",
+  muted:  "#9AA99F",
+  faint:  "#66796E",
   white:  "#ffffff",
   red:    "#D9806B",
   blue:   "#7BACDF",
@@ -48,8 +48,8 @@ const lightT = {
   limeLt: "#CBDF92",
   glow:   "rgba(158,200,61,0.20)",
   text:   "#0E1F18",
-  muted:  "rgba(14,31,24,0.55)",
-  faint:  "rgba(14,31,24,0.30)",
+  muted:  "rgba(14,31,24,0.70)",
+  faint:  "rgba(14,31,24,0.52)",
   white:  "#14342A",
   red:    "#A8412C",
   blue:   "#2D6FB8",
@@ -42572,7 +42572,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                         block always has a real duration, so the range
                         reads faster than making a student do the mental
                         math themselves. */}
-                    <span style={{fontFamily:T.mono,fontSize:10,color:T.faint}}>{t.duration>0?fmtTimeRange(t.time,t.duration):fmtClock(t.time)}</span>
+                    <span style={{fontFamily:T.mono,fontSize:11,fontWeight:500,color:T.muted}}>{t.duration>0?fmtTimeRange(t.time,t.duration):fmtClock(t.time)}</span>
                   </div>
                 );
               }
@@ -42587,7 +42587,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                   <div key={t.id} style={{display:"flex",alignItems:"center",gap:12,padding:"7px 14px 7px 34px",marginBottom:8,opacity:0.55}}>
                     <span style={{fontSize:12,color:t.done?T.faint:T.muted,textDecoration:t.done?"line-through":"none",fontStyle:t.isBreak?"italic":"normal"}}>{t.title}</span>
                     <span style={{flex:1}} />
-                    <span style={{fontFamily:T.mono,fontSize:10,color:T.faint}}>{fmtClock(t.time)}</span>
+                    <span style={{fontFamily:T.mono,fontSize:11,fontWeight:500,color:T.muted}}>{fmtClock(t.time)}</span>
                   </div>
                 );
               }
@@ -42614,7 +42614,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                       date/no-duration item (t.duration falsy/0) still just
                       shows its single time, a range would be meaningless
                       ("5 - 5 PM"). */}
-                  <span style={{fontFamily:T.mono,fontSize:10,color:T.faint}}>{t.duration>0?fmtTimeRange(t.time,t.duration):fmtClock(t.time)}</span>
+                  <span style={{fontFamily:T.mono,fontSize:11,fontWeight:500,color:T.muted}}>{t.duration>0?fmtTimeRange(t.time,t.duration):fmtClock(t.time)}</span>
                   {!t.done&&isTimerEligible(t)&&(
                     <button onClick={(e)=>{e.stopPropagation();if(window._setTimerTask)window._setTimerTask(t.isChunk?{...t,duration:t.fullDuration}:t);}} style={{flexShrink:0,padding:"3px 9px",borderRadius:6,border:`1px solid ${T.lime}`,background:T.lime,color:dashBtnPrimaryFg,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Begin</button>
                   )}

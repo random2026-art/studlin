@@ -11,8 +11,8 @@ const darkT = {
   limeLt: "#CBDF92",
   glow: "rgba(174,206,94,0.22)",
   text: "#E8EFE7",
-  muted: "#849389",
-  faint: "#3F5147",
+  muted: "#9AA99F",
+  faint: "#66796E",
   white: "#ffffff",
   red: "#D9806B",
   blue: "#7BACDF",
@@ -46,8 +46,8 @@ const lightT = {
   limeLt: "#CBDF92",
   glow: "rgba(158,200,61,0.20)",
   text: "#0E1F18",
-  muted: "rgba(14,31,24,0.55)",
-  faint: "rgba(14,31,24,0.30)",
+  muted: "rgba(14,31,24,0.70)",
+  faint: "rgba(14,31,24,0.52)",
   white: "#14342A",
   red: "#A8412C",
   blue: "#2D6FB8",
@@ -26295,10 +26295,10 @@ function Dashboard({ setActive, seriousMode = false, rescheduleTask, setReschedu
     setActive("calendar");
   }, style: { display: "inline-flex", alignItems: "center", gap: 7, padding: "9px 18px", ...dashBtnOutline({}), borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: T.font } }, "Brain dump everything"))) : plan.map((t) => {
     if (t.isRoutine) {
-      return /* @__PURE__ */ React.createElement("div", { key: t.id, ...dashRowHover, style: { display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", borderRadius: 12, border: `1px solid ${T.lookOn ? T.borderTint : T.border}`, borderLeft: T.lookOn && subjectColor(t.subject, null) ? `4px solid ${subjectColor(t.subject, null)}` : void 0, marginBottom: 8, background: T.card } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13.5, color: T.text, fontWeight: 500 } }, t.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 1 } }, t.subject, t.subject ? " \xB7 " : "", t.kind === "class" ? "Class" : "Recurring")), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.mono, fontSize: 10, color: T.faint } }, t.duration > 0 ? fmtTimeRange(t.time, t.duration) : fmtClock(t.time)));
+      return /* @__PURE__ */ React.createElement("div", { key: t.id, ...dashRowHover, style: { display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", borderRadius: 12, border: `1px solid ${T.lookOn ? T.borderTint : T.border}`, borderLeft: T.lookOn && subjectColor(t.subject, null) ? `4px solid ${subjectColor(t.subject, null)}` : void 0, marginBottom: 8, background: T.card } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13.5, color: T.text, fontWeight: 500 } }, t.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 1 } }, t.subject, t.subject ? " \xB7 " : "", t.kind === "class" ? "Class" : "Recurring")), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.mono, fontSize: 11, fontWeight: 500, color: T.muted } }, t.duration > 0 ? fmtTimeRange(t.time, t.duration) : fmtClock(t.time)));
     }
     if (!isPlanPrimaryRow(t)) {
-      return /* @__PURE__ */ React.createElement("div", { key: t.id, style: { display: "flex", alignItems: "center", gap: 12, padding: "7px 14px 7px 34px", marginBottom: 8, opacity: 0.55 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: t.done ? T.faint : T.muted, textDecoration: t.done ? "line-through" : "none", fontStyle: t.isBreak ? "italic" : "normal" } }, t.title), /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.mono, fontSize: 10, color: T.faint } }, fmtClock(t.time)));
+      return /* @__PURE__ */ React.createElement("div", { key: t.id, style: { display: "flex", alignItems: "center", gap: 12, padding: "7px 14px 7px 34px", marginBottom: 8, opacity: 0.55 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: t.done ? T.faint : T.muted, textDecoration: t.done ? "line-through" : "none", fontStyle: t.isBreak ? "italic" : "normal" } }, t.title), /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.mono, fontSize: 11, fontWeight: 500, color: T.muted } }, fmtClock(t.time)));
     }
     return /* @__PURE__ */ React.createElement("div", { key: t.id, onClick: () => {
       if (t.done) uncrossEventDone(t.id);
@@ -26307,7 +26307,7 @@ function Dashboard({ setActive, seriousMode = false, rescheduleTask, setReschedu
         onTaskCompleted && onTaskCompleted(t.id);
       }
       forcePlan((x) => x + 1);
-    }, ...dashRowHover, style: { display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", borderRadius: 12, border: `1px solid ${T.lookOn ? T.borderTint : T.border}`, borderLeft: T.lookOn && subjectColor(t.subject, null) ? `4px solid ${subjectColor(t.subject, null)}` : void 0, marginBottom: 8, cursor: "pointer", background: T.lookOn ? T.card : T.card2 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 20, height: 20, borderRadius: "50%", border: `1.5px solid ${t.done ? T.lookOn ? T.lime : T.text : T.lookOn ? T.borderTint : T.border}`, background: t.done ? T.lookOn ? T.lime : T.text : "transparent", flex: "none", display: "grid", placeItems: "center" } }, t.done && /* @__PURE__ */ React.createElement("svg", { width: "11", height: "11", viewBox: "0 0 24 24", fill: "none", stroke: T.lookOn ? lookTextOnFill(T.lime) : T.lime, strokeWidth: "3", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("polyline", { points: "20 6 9 17 4 12" }))), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13.5, color: t.done ? T.faint : T.text, textDecoration: t.done ? "line-through" : "none", fontWeight: 500 } }, t.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: t.kind === "deadline" ? T.amber : T.muted, marginTop: 1 } }, t.subject, t.kind === "deadline" ? " \xB7 Due" : t.kind === "study block" ? t.isGeneralTask ? " \xB7 Your task" : " \xB7 Your study session" : t.kind ? " \xB7 " + t.kind : "")), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.mono, fontSize: 10, color: T.faint } }, t.duration > 0 ? fmtTimeRange(t.time, t.duration) : fmtClock(t.time)), !t.done && isTimerEligible(t) && /* @__PURE__ */ React.createElement("button", { onClick: (e) => {
+    }, ...dashRowHover, style: { display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", borderRadius: 12, border: `1px solid ${T.lookOn ? T.borderTint : T.border}`, borderLeft: T.lookOn && subjectColor(t.subject, null) ? `4px solid ${subjectColor(t.subject, null)}` : void 0, marginBottom: 8, cursor: "pointer", background: T.lookOn ? T.card : T.card2 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 20, height: 20, borderRadius: "50%", border: `1.5px solid ${t.done ? T.lookOn ? T.lime : T.text : T.lookOn ? T.borderTint : T.border}`, background: t.done ? T.lookOn ? T.lime : T.text : "transparent", flex: "none", display: "grid", placeItems: "center" } }, t.done && /* @__PURE__ */ React.createElement("svg", { width: "11", height: "11", viewBox: "0 0 24 24", fill: "none", stroke: T.lookOn ? lookTextOnFill(T.lime) : T.lime, strokeWidth: "3", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("polyline", { points: "20 6 9 17 4 12" }))), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13.5, color: t.done ? T.faint : T.text, textDecoration: t.done ? "line-through" : "none", fontWeight: 500 } }, t.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: t.kind === "deadline" ? T.amber : T.muted, marginTop: 1 } }, t.subject, t.kind === "deadline" ? " \xB7 Due" : t.kind === "study block" ? t.isGeneralTask ? " \xB7 Your task" : " \xB7 Your study session" : t.kind ? " \xB7 " + t.kind : "")), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.mono, fontSize: 11, fontWeight: 500, color: T.muted } }, t.duration > 0 ? fmtTimeRange(t.time, t.duration) : fmtClock(t.time)), !t.done && isTimerEligible(t) && /* @__PURE__ */ React.createElement("button", { onClick: (e) => {
       e.stopPropagation();
       if (window._setTimerTask) window._setTimerTask(t.isChunk ? { ...t, duration: t.fullDuration } : t);
     }, style: { flexShrink: 0, padding: "3px 9px", borderRadius: 6, border: `1px solid ${T.lime}`, background: T.lime, color: dashBtnPrimaryFg, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: T.font } }, "Begin"), !t.done && t.duration && (t.kind === "study block" || t.kind === "deadline") && /* @__PURE__ */ React.createElement("button", { onClick: (e) => {
