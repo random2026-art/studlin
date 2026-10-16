@@ -7988,30 +7988,46 @@ function StudlinPrep({ setActive = () => {
   const [buildPlanConfidenceKnown, setBuildPlanConfidenceKnown] = useState(false);
   const [buildPlanMaterialOpen, setBuildPlanMaterialOpen] = useState(false);
   const [manualSessionRows, setManualSessionRows] = useState([]);
-  const addManualSessionRow = () => setManualSessionRows((rows) => [...rows, { text: "", date: "", time: "", duration: 25 }]);
+  const MANUAL_DEFAULT_MINS = 45;
+  const suggestManualSlot = (dk, duration) => {
+    if (!buildPlanExam) return "";
+    const events = lsGet("events", []), routines = getWeeklyRoutine(), prefs = getSchedulePreferences();
+    const win = getWorkWindowMinsFor(prefs, dk);
+    const tries = [Math.max(win.start, 16 * 60), win.start];
+    for (const t of tries) {
+      const slot = findLegalSlotOrNull(events, routines, prefs, dk, minutesToTime(t), duration, buildPlanExam.date);
+      if (slot && slot.date === dk) return slot.time;
+    }
+    return "";
+  };
+  const toggleManualDay = (dk) => setManualSessionRows((rows) => {
+    if (rows.some((r) => r.date === dk)) return rows.filter((r) => r.date !== dk);
+    return rows.concat([{ text: "", date: dk, time: suggestManualSlot(dk, MANUAL_DEFAULT_MINS), duration: MANUAL_DEFAULT_MINS }]).sort((a, b) => a.date < b.date ? -1 : 1);
+  });
+  const updateManualRow = (dk, patch) => setManualSessionRows((rows) => rows.map((r) => r.date === dk ? { ...r, ...patch } : r));
   const openManualSessions = () => {
-    setManualSessionRows([{ text: "", date: "", time: "", duration: 25 }]);
+    setManualSessionRows([]);
     setBuildPlanStep("manual");
   };
   const commitManualSessions = () => {
     if (!buildPlanExam) return;
-    const realRows = manualSessionRows.filter((r) => r.text.trim());
-    if (realRows.length === 0) {
+    if (manualSessionRows.length === 0) {
       closeBuildPlan();
       return;
     }
     const sessionPriority = computeSessionPriority(buildPlanExam, dayKey());
     const events = lsGet("events", []);
-    const newSessions = realRows.map((r, i) => {
+    let unscheduled = 0;
+    const newSessions = manualSessionRows.map((r, i) => {
       const base = {
         id: "manual-" + buildPlanExam.id + "-" + Date.now() + "-" + i,
         title: "Study: " + buildPlanExam.title,
         date: "",
         time: "",
         subject: buildPlanExam.subject,
-        notes: r.text.trim(),
+        notes: (r.text || "").trim(),
         kind: "study block",
-        duration: r.duration || 25,
+        duration: r.duration || MANUAL_DEFAULT_MINS,
         priority: sessionPriority,
         difficulty: buildPlanExam.difficulty ?? 500,
         deadline: buildPlanExam.date,
@@ -8022,12 +8038,16 @@ function StudlinPrep({ setActive = () => {
         dueEventId: buildPlanExam.id
       };
       if (r.date && r.time) {
-        const slot = findLegalSlotOrNull(events, getWeeklyRoutine(), getSchedulePreferences(), r.date, r.time, r.duration || 25, buildPlanExam.date);
+        const slot = findLegalSlotOrNull(events, getWeeklyRoutine(), getSchedulePreferences(), r.date, r.time, r.duration || MANUAL_DEFAULT_MINS, buildPlanExam.date);
         if (slot) return { ...base, date: slot.date, time: slot.time };
       }
+      unscheduled++;
       return base;
     });
     lsSet("events", events.concat(newSessions));
+    const n = newSessions.length;
+    setSyllabusToast(n + " session" + (n !== 1 ? "s" : "") + " added" + (unscheduled > 0 ? ". " + unscheduled + " still need" + (unscheduled === 1 ? "s" : "") + " a time, drag " + (unscheduled === 1 ? "it" : "them") + " onto the calendar." : "."));
+    setTimeout(() => setSyllabusToast(""), 4200);
     closeBuildPlan();
     refresh();
   };
@@ -9487,19 +9507,50 @@ function StudlinPrep({ setActive = () => {
       title: buildPlanExam && lsGet("events", []).some((e) => e.dueEventId === buildPlanExam.id) ? "Redo study plan" : "Build study plan",
       sub: buildPlanExam ? buildPlanExam.title : "",
       width: 520,
-      footer: buildPlanStep === "preview" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeBuildPlan }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: commitBuildPlan, disabled: buildPlanLoading }, buildPlanLoading ? "Building\u2026" : "Confirm plan")) : buildPlanStep === "manual" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeBuildPlan }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: () => setBuildPlanStep("manual-preview"), disabled: manualSessionRows.filter((r) => r.text.trim()).length === 0 }, "Review")) : buildPlanStep === "manual-preview" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setBuildPlanStep("manual") }, "\u2190 Back"), /* @__PURE__ */ React.createElement(Btn, { onClick: commitManualSessions }, "Add session", manualSessionRows.filter((r) => r.text.trim()).length !== 1 ? "s" : "")) : buildPlanStep === "confidence" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeBuildPlan }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: generatePreview }, "Generate Plan")) : /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeBuildPlan }, "Cancel")
+      footer: buildPlanStep === "preview" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeBuildPlan }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: commitBuildPlan, disabled: buildPlanLoading }, buildPlanLoading ? "Building\u2026" : "Confirm plan")) : buildPlanStep === "manual" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeBuildPlan }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: commitManualSessions, disabled: manualSessionRows.length === 0 }, manualSessionRows.length === 0 ? "Add sessions" : "Add " + manualSessionRows.length + " session" + (manualSessionRows.length !== 1 ? "s" : ""))) : buildPlanStep === "confidence" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeBuildPlan }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: generatePreview }, "Generate Plan")) : /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeBuildPlan }, "Cancel")
     },
     buildPlanExam && buildPlanStep === "choice" && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, lineHeight: 1.6, marginBottom: 18 } }, "Studlin can build the plan for you. Or you can lay it out yourself."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: () => setBuildPlanStep("confidence"), style: { width: "100%", justifyContent: "center" } }, "Studlin generates"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: openManualSessions, style: { width: "100%", justifyContent: "center" } }, "Create manually"))),
-    buildPlanExam && buildPlanStep === "manual" && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, lineHeight: 1.6, marginBottom: 14 } }, "What do you want to study each session? Fill in a time to schedule it now, or leave it blank. You'll be able to drag it onto the calendar later."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 } }, manualSessionRows.map((row, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { padding: "10px", background: T.card2, borderRadius: 8, display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Session ", i + 1), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center" } }, /* @__PURE__ */ React.createElement(
-      Input,
-      {
-        value: row.text,
-        onChange: (e) => setManualSessionRows((rows) => rows.map((r, ri) => ri === i ? { ...r, text: e.target.value } : r)),
-        placeholder: "What to study",
-        style: { flex: 1, fontSize: 12.5 }
+    buildPlanExam && buildPlanStep === "manual" && (() => {
+      const today = dayKey();
+      const examKey = buildPlanExam.date;
+      const lastDay = examKey > today ? (() => {
+        const d = /* @__PURE__ */ new Date(examKey + "T12:00:00");
+        d.setDate(d.getDate() - 1);
+        const k = dayKey(d);
+        return k < today ? today : k;
+      })() : today;
+      const dayKeys = [];
+      for (let i = 0; i < 21; i++) {
+        const d = /* @__PURE__ */ new Date(today + "T12:00:00");
+        d.setDate(d.getDate() + i);
+        const k = dayKey(d);
+        if (k > lastDay) break;
+        dayKeys.push(k);
       }
-    ), manualSessionRows.length > 1 && /* @__PURE__ */ React.createElement("button", { onClick: () => setManualSessionRows((rows) => rows.filter((_, ri) => ri !== i)), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 14, lineHeight: 1 } }, "\xD7")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Input, { type: "date", value: row.date, onChange: (e) => setManualSessionRows((rows) => rows.map((r, ri) => ri === i ? { ...r, date: e.target.value } : r)), style: { width: 140 } }), /* @__PURE__ */ React.createElement(TimeInput, { value: row.time, onChange: (v) => setManualSessionRows((rows) => rows.map((r, ri) => ri === i ? { ...r, time: v } : r)) }), /* @__PURE__ */ React.createElement(NumField, { min: 5, max: 240, fallback: 25, value: row.duration, onChange: (v) => setManualSessionRows((rows) => rows.map((r, ri) => ri === i ? { ...r, duration: v } : r)), style: { width: 56 } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: T.muted } }, "min"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10, color: T.faint } }, row.date && row.time ? "" : "leave blank to schedule later"))))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addManualSessionRow, style: { background: "none", border: "none", color: T.muted, fontSize: 12, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, "+ Add another session")),
-    buildPlanExam && buildPlanStep === "manual-preview" && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, lineHeight: 1.6, marginBottom: 14 } }, manualSessionRows.filter((r) => r.text.trim()).length, " session", manualSessionRows.filter((r) => r.text.trim()).length !== 1 ? "s" : "", " ready to add. Go back to change anything."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, manualSessionRows.filter((r) => r.text.trim()).map((row, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { padding: "10px 12px", background: T.card2, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, marginBottom: 2 } }, row.text), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted } }, row.date && row.time ? row.date + " \xB7 " + row.time + " \xB7 " + (row.duration || 25) + " min" : "Not scheduled yet -- drag it onto the calendar later"))))),
+      const events = lsGet("events", []), routines = getWeeklyRoutine(), prefs = getSchedulePreferences();
+      const selected = new Set(manualSessionRows.map((r) => r.date));
+      const totalMins = manualSessionRows.reduce((a, r) => a + (r.duration || MANUAL_DEFAULT_MINS), 0);
+      const fmtTotal = (m) => m >= 60 ? Math.floor(m / 60) + "h" + (m % 60 ? " " + m % 60 + "m" : "") : m + "m";
+      const wd = (k) => (/* @__PURE__ */ new Date(k + "T12:00:00")).toLocaleDateString(void 0, { weekday: "short" });
+      const longDay = (k) => (/* @__PURE__ */ new Date(k + "T12:00:00")).toLocaleDateString(void 0, { weekday: "short", month: "short", day: "numeric" });
+      return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, marginBottom: 12 } }, "Tap the days you want to study. Studlin picks a free time for each."), /* @__PURE__ */ React.createElement("div", { role: "group", "aria-label": "Study days", style: { display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 } }, dayKeys.map((k) => {
+        const on = selected.has(k);
+        const full = !on && !dayHasRoomFor(events, routines, prefs, k, MANUAL_DEFAULT_MINS);
+        return /* @__PURE__ */ React.createElement(
+          "button",
+          {
+            key: k,
+            type: "button",
+            "aria-pressed": on,
+            onClick: () => toggleManualDay(k),
+            title: full ? "Pretty full, you can still add it" : longDay(k),
+            style: { width: 56, padding: "7px 0", borderRadius: 10, cursor: "pointer", fontFamily: T.font, textAlign: "center", border: `1px ${full ? "dashed" : "solid"} ${on ? T.lime : T.border}`, background: on ? T.lime + "22" : T.card2, color: T.text, opacity: full ? 0.6 : 1 }
+          },
+          /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, letterSpacing: "0.05em", color: on ? T.text : T.muted, textTransform: "uppercase" } }, wd(k)),
+          /* @__PURE__ */ React.createElement("div", { style: { fontSize: 15, fontWeight: 700, marginTop: 1 } }, (/* @__PURE__ */ new Date(k + "T12:00:00")).getDate())
+        );
+      })), manualSessionRows.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.faint, textAlign: "center", padding: "18px 0" } }, "No days picked yet.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, manualSessionRows.map((row) => /* @__PURE__ */ React.createElement("div", { key: row.date, style: { padding: "10px 12px", background: T.card2, borderRadius: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: T.white, minWidth: 92 } }, longDay(row.date)), /* @__PURE__ */ React.createElement(TimeInput, { value: row.time, onChange: (v) => updateManualRow(row.date, { time: v }) }), /* @__PURE__ */ React.createElement(NumField, { min: 5, max: 240, fallback: MANUAL_DEFAULT_MINS, value: row.duration, onChange: (v) => updateManualRow(row.date, { duration: v }), style: { width: 56 } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.muted } }, "min"), /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => toggleManualDay(row.date), "aria-label": "Remove " + longDay(row.date), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 16, lineHeight: 1 } }, "\xD7")), !row.time && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.amber, marginTop: 6 } }, "No free time that day. Pick a time, or leave it and drag it onto the calendar later."), /* @__PURE__ */ React.createElement(Input, { value: row.text, onChange: (e) => updateManualRow(row.date, { text: e.target.value }), placeholder: "What to study (optional)", style: { width: "100%", fontSize: 12, marginTop: 8 } })))), manualSessionRows.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginTop: 12 } }, manualSessionRows.length, " session", manualSessionRows.length !== 1 ? "s" : "", " \xB7 ", fmtTotal(totalMins), " total"));
+    })(),
     buildPlanExam && buildPlanStep === "confidence" && (() => {
       const hasMaterialForPlan = fileTexts.length > 0 || materialLinks.length > 0;
       return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, marginBottom: 6 } }, "What kind of exam is this?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } }, [["quiz", "Quiz"], ["midterm", "Midterm"], ["final", "Final"], ["project", "Project"], ["other", "Other"]].map(([v, label]) => /* @__PURE__ */ React.createElement(
