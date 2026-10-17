@@ -12544,6 +12544,16 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
   // Phase 9b: hover-expand on the behind/on-track pill (see the exam
   // detail view below) -- explains why, not just the status.
   const [hoverExamId,setHoverExamId]=useState(null); // row whose Create plan / View plan button is showing
+  const [selectedProjectId,setSelectedProjectId]=useState(null); // open project page
+  const [projPopStepId,setProjPopStepId]=useState(null); // step whose Schedule options are open
+  const [projNewStep,setProjNewStep]=useState("");
+  // Coming back from the calendar after "Pick my own time" -> straight to that project.
+  useEffect(()=>{
+    const q=lsGet("openProjectId",null);
+    if(!q)return;
+    lsSet("openProjectId",null);
+    setTab("projects");setSelectedProjectId(q);
+  },[]);
   // ── Build study plan (Prep redesign Part C) ── the opt-in trigger that
   // replaces auto-generation at exam creation. buildPlanExamId is the exam
   // this modal is open for; buildPlanStep walks choice (no material yet) ->
@@ -14597,6 +14607,146 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
       {tab==="projects"&&(()=>{
         const today=dayKey();
         const allProjects=upcomingProjects();
+        // 2026-10-17: a real project page (was: clicking a project opened the big edit
+        // modal, where the checklist was awkward to change). Steps are editable in
+        // place, and any step can go on the calendar: Stu offers free times, or the
+        // student drags a block into a gap themselves and presses Done.
+        const renderProjectPage=(p)=>{
+          const hasPhases=!!(p.phases&&p.phases.length>0);
+          const rawSteps=hasPhases?p.phases:(p.outline||[]);
+          const items=rawSteps.map((r,i)=>hasPhases
+            ?{id:r.id||null,text:r.name||"",done:r.status==="done",raw:r,idx:i}
+            :{id:r.id||null,text:r.text||"",done:!!r.done,raw:r,idx:i,dueDate:r.dueDate||""});
+          const allEvents=lsGet("events",[]);
+          const blocks=allEvents.filter(e=>e.dueEventId===p.id&&e.stepId);
+          const blockFor=(it)=>it.id?(blocks.find(b=>b.stepId===it.id&&b.status!=="done")||null):null;
+          const mkId=()=>"st-"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+          const write=(nextRaw)=>patchExam(p.id,hasPhases?{phases:nextRaw}:{outline:nextRaw});
+          const patchStep=(it,patch)=>write(rawSteps.map((r,i)=>i===it.idx?{...r,...patch}:r));
+          const toggleStep=(it)=>patchStep(it,hasPhases?{status:it.done?"pending":"done"}:{done:!it.done});
+          const renameStep=(it,text)=>{const t=(text||"").trim();if(!t||t===it.text)return;patchStep(it,hasPhases?{name:t}:{text:t});};
+          const addStep=()=>{
+            const t=projNewStep.trim();
+            if(!t)return;
+            write(rawSteps.concat([hasPhases?{name:t,status:"pending",id:mkId()}:{text:t,done:false,id:mkId()}]));
+            setProjNewStep("");
+          };
+          const removeStep=(it)=>{
+            // A project is only a project while it has at least one step (isProjectMarker).
+            if(rawSteps.length<=1){setSyllabusToast("A project needs at least one step.");setTimeout(()=>setSyllabusToast(""),2600);return;}
+            const b=it.id?blocks.filter(x=>x.stepId===it.id&&x.status!=="done").map(x=>x.id):[];
+            if(b.length>0)lsSet("events",lsGet("events",[]).filter(e=>!b.includes(e.id)));
+            write(rawSteps.filter((_,i)=>i!==it.idx));
+          };
+          const ensureStepId=(it)=>{
+            if(it.id)return it.id;
+            const id=mkId();
+            patchStep(it,{id});
+            return id;
+          };
+          // Up to three free times, one per day, from today until the day before it's due.
+          const suggestSlots=()=>{
+            const events=lsGet("events",[]),routines=getWeeklyRoutine(),prefs=getSchedulePreferences();
+            const out=[];
+            const lastKey=p.date&&p.date>dayKey()?(()=>{const d=new Date(p.date+"T12:00:00");d.setDate(d.getDate()-1);return dayKey(d);})():dayKey();
+            for(let i=0;i<14&&out.length<3;i++){
+              const d=new Date();d.setDate(d.getDate()+i);
+              const k=dayKey(d);
+              if(k>lastKey)break;
+              const win=getWorkWindowMinsFor(prefs,k);
+              for(const t of [Math.max(win.start,16*60),win.start]){
+                const slot=findLegalSlotOrNull(events,routines,prefs,k,minutesToTime(t),45,p.date||null);
+                if(slot&&slot.date===k){out.push(slot);break;}
+              }
+            }
+            return out;
+          };
+          const scheduleStep=(it,slot)=>{
+            const stepId=ensureStepId(it);
+            const ev={id:"step-"+p.id+"-"+Date.now(),title:it.text,date:slot.date,time:slot.time,subject:p.subject||"",courseId:p.courseId,
+              kind:"study block",notes:"",priority:p.priority??500,difficulty:p.difficulty??500,deadline:p.date||null,duration:45,
+              status:"pending",timeSpent:0,completedAt:null,dueEventId:p.id,stepId,projectStep:true};
+            lsSet("events",lsGet("events",[]).concat([ev]));
+            setProjPopStepId(null);
+            refresh();
+            setSyllabusToast("Scheduled \""+it.text+"\" for "+dayOfWeekLabel(slot.date).slice(0,3)+" "+fmtRolloverClock(slot.time)+".");
+            setTimeout(()=>setSyllabusToast(""),3200);
+          };
+          const unscheduleStep=(blk)=>{lsSet("events",lsGet("events",[]).filter(e=>e.id!==blk.id));refresh();};
+          // "Pick my own time": the calendar opens with a block for this step already
+          // on it. Drag it into a gap, resize it, then press Done to come back here.
+          const pickOwnTime=(it)=>{
+            const stepId=ensureStepId(it);
+            lsSet("openManualPlacement",{kind:"projectStep",refId:stepId,title:it.text,subject:p.subject||"",deadline:p.date||null,dueEventId:p.id,returnProjectId:p.id,courseId:p.courseId||null});
+            setActive("calendar");
+          };
+          const doneCount=items.filter(i=>i.done).length;
+          const daysUntil=p.date?Math.round((new Date(p.date+"T12:00:00")-new Date(today+"T12:00:00"))/86400000):null;
+          return (
+            <div>
+              <button onClick={()=>{setSelectedProjectId(null);setProjPopStepId(null);}} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,marginBottom:14}}>← All projects</button>
+              <div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"flex-start",flexWrap:"wrap",marginBottom:6}}>
+                <div style={{minWidth:0}}>
+                  <div style={{fontSize:24,fontWeight:800,color:T.white,letterSpacing:"-0.01em",lineHeight:1.2}}>{p.title}</div>
+                  <div style={{fontSize:12.5,color:T.muted,marginTop:4}}>{[p.subject,p.date?"Due "+niceDate(p.date):"No due date",daysUntil!=null&&daysUntil>=0?(daysUntil===0?"today":daysUntil+" day"+(daysUntil!==1?"s":"")+" left"):null].filter(Boolean).join(" · ")}</div>
+                </div>
+                <BtnSm variant="ghost" onClick={()=>setDetailEventId(p.id)}>Edit details</BtnSm>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:12,margin:"14px 0 16px"}}>
+                <div aria-hidden="true" style={{display:"flex",gap:4}}>
+                  {items.map((x,i)=><i key={i} style={{display:"block",width:22,height:6,borderRadius:99,background:x.done?T.teal:T.border}} />)}
+                </div>
+                <span style={{fontSize:13,color:T.muted,fontFamily:T.mono}}>{doneCount} of {items.length} {hasPhases?"phases":"steps"} done</span>
+              </div>
+              {items.map(it=>{
+                const blk=blockFor(it);
+                const popOpen=projPopStepId===(it.id||("idx-"+it.idx));
+                return (
+                  <div key={(it.id||"i")+"-"+it.idx} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,flexWrap:"wrap",background:T.card}}>
+                    <button type="button" aria-label={it.done?"Mark not done":"Mark done"} aria-pressed={it.done} onClick={()=>toggleStep(it)}
+                      style={{width:22,height:22,borderRadius:"50%",border:`1.5px solid ${it.done?T.teal:T.faint}`,background:it.done?T.teal:"transparent",color:"#fff",fontSize:12,cursor:"pointer",padding:0,flexShrink:0,display:"grid",placeItems:"center"}}>{it.done?"✓":""}</button>
+                    <input key={it.text} defaultValue={it.text} aria-label="Step" onBlur={e=>renameStep(it,e.target.value)} onKeyDown={e=>{if(e.key==="Enter")e.target.blur();}}
+                      style={{flex:1,minWidth:140,border:"none",borderBottom:"1px solid transparent",background:"transparent",color:it.done?T.faint:T.text,textDecoration:it.done?"line-through":"none",fontSize:14,fontFamily:T.font,padding:"4px 0",outline:"none"}}
+                      onFocus={e=>{e.target.style.borderBottomColor=T.border;}} />
+                    {blk?(
+                      <span style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:12,fontWeight:600,color:T.teal,background:T.teal+"14",border:`1px solid ${T.teal}44`,borderRadius:99,padding:"3px 4px 3px 10px"}}>
+                        {dayOfWeekLabel(blk.date).slice(0,3)} {blk.date.slice(5).replace("-","/")}, {fmtRolloverClock(blk.time)}
+                        <button type="button" aria-label="Take off my calendar" title="Take off my calendar" onClick={()=>unscheduleStep(blk)} style={{background:"none",border:"none",color:T.teal,cursor:"pointer",fontSize:14,lineHeight:1,padding:"0 4px"}}>&times;</button>
+                      </span>
+                    ):(!it.done&&(
+                      <BtnSm variant="ghost" onClick={()=>setProjPopStepId(popOpen?null:(it.id||("idx-"+it.idx)))}>Schedule</BtnSm>
+                    ))}
+                    <button type="button" aria-label="Remove step" title="Remove step" onClick={()=>removeStep(it)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:18,lineHeight:1,padding:"2px 6px"}}>&times;</button>
+                    {popOpen&&(()=>{
+                      const slots=suggestSlots();
+                      return (
+                        <div style={{flexBasis:"100%",display:"flex",alignItems:"flex-start",gap:10,background:T.lookOn?T.accentSoft:T.card2,borderRadius:10,padding:"10px 12px"}}>
+                          <div style={{flexShrink:0}}><StudMascot size={28} mood="happy" {...stuPalette()} /></div>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:12.5,color:T.text,marginBottom:8}}>{slots.length>0?"Free times I found:":"I couldn't find a free time before the due date. You can place it yourself."}</div>
+                            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                              {slots.map(sl=>(
+                                <BtnSm key={sl.date+sl.time} onClick={()=>scheduleStep(it,sl)}>{dayOfWeekLabel(sl.date).slice(0,3)} {sl.date.slice(5).replace("-","/")}, {fmtRolloverClock(sl.time)}</BtnSm>
+                              ))}
+                              <BtnSm variant="ghost" onClick={()=>pickOwnTime(it)}>Pick my own time</BtnSm>
+                              <BtnSm variant="ghost" onClick={()=>setProjPopStepId(null)}>Cancel</BtnSm>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                );
+              })}
+              <div style={{display:"flex",gap:8,marginTop:6}}>
+                <Input value={projNewStep} onChange={e=>setProjNewStep(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addStep();}} placeholder={hasPhases?"Add a phase":"Add a step"} aria-label="Add a step" style={{flex:1}} />
+                <Btn onClick={addStep} disabled={!projNewStep.trim()}>Add</Btn>
+              </div>
+            </div>
+          );
+        };
+        const selProject=selectedProjectId?allProjects.find(x=>x.id===selectedProjectId):null;
+        if(selProject)return renderProjectPage(selProject);
         const projectClasses=[...new Set(allProjects.map(p=>p.subject).filter(Boolean))];
         const projects=allProjects.filter(p=>{
           if(projectGroupFilter&&itemLifecycleState(p,today)!==projectGroupFilter)return false;
@@ -14643,7 +14793,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                   const activePhase=hasPhases?steps.find(s=>s.status==="active"):null;
                   return (
                     <div key={p.id} style={{display:"grid",gridTemplateColumns:gridCols,gap:8,padding:"7px 10px",borderBottom:`1px solid ${T.border}`,alignItems:"center"}}>
-                      <div onClick={()=>setDetailEventId(p.id)} style={{fontSize:11.5,fontWeight:600,color:T.white,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={p.title}>{p.title}</div>
+                      <div onClick={()=>setSelectedProjectId(p.id)} style={{fontSize:11.5,fontWeight:600,color:T.white,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={p.title}>{p.title}</div>
                       <div style={{fontSize:10.5,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.subject||"—"}</div>
                       <input type="date" value={p.date||""} onChange={e=>e.target.value&&patchExam(p.id,{date:e.target.value,checklist:false,time:p.time||"23:59"})} style={{...cellSelStyle}} />
                       <div style={{fontSize:10.5,color:daysUntil==null?T.amber:daysUntil<=1?T.red:T.muted,fontStyle:daysUntil==null?"italic":"normal"}}>{daysLabel}</div>
@@ -14651,7 +14801,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                         options={[{value:"low",label:"Low"},{value:"medium",label:"Med"},{value:"high",label:"High"}]} />
                       <CustomSelect value={bucketOf(p.difficulty)} onChange={v=>patchExam(p.id,{difficulty:BUCKET_VALS[v]})}
                         options={[{value:"low",label:"Easy"},{value:"medium",label:"Med"},{value:"high",label:"Hard"}]} />
-                      <div onClick={()=>setDetailEventId(p.id)} style={{fontSize:10.5,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",cursor:"pointer"}} title="Click to open">{steps.length===0?"no checklist yet":doneCount+"/"+steps.length+(hasPhases?" phases":" steps")+(activePhase&&activePhase.name?" — "+activePhase.name:"")}</div>
+                      <div onClick={()=>setSelectedProjectId(p.id)} style={{fontSize:10.5,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",cursor:"pointer"}} title="Open the project">{steps.length===0?"no checklist yet":doneCount+"/"+steps.length+(hasPhases?" phases":" steps")+(activePhase&&activePhase.name?" — "+activePhase.name:"")}</div>
                     </div>
                   );
                 })}
@@ -33856,7 +34006,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     if(!manualPlacement)return;
     const prefs=getSchedulePreferences();
     const routines=getWeeklyRoutine();
-    const duration=ATTACK_BLOCK_DEFAULT_PROBE_MINS;
+    const duration=manualPlacement.kind==="projectStep"?45:ATTACK_BLOCK_DEFAULT_PROBE_MINS;
     // Was findOpenSlotFor -- the plain nearest-gap finder with no reasoning
     // attached, unlike every other session-creation path in this file
     // (startAttackBlockChain, buildSpacedSessionPreviews, buildExamSessionEvents,
@@ -33876,7 +34026,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       setTimeout(()=>setDeadlineToast(""),2800);
       return;
     }
-    const kindTitle=manualPlacement.kind==="attack"?manualPlacement.title:(manualPlacement.kind==="deck"?"Review: "+manualPlacement.title:"Practice Exam: "+manualPlacement.title);
+    const kindTitle=(manualPlacement.kind==="attack"||manualPlacement.kind==="projectStep")?manualPlacement.title:(manualPlacement.kind==="deck"?"Review: "+manualPlacement.title:"Practice Exam: "+manualPlacement.title);
     const task={
       id:String(Date.now()+Math.random()*1000),
       title:kindTitle,date:slot.date,time:slot.time,
@@ -33884,15 +34034,28 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       priority:500,difficulty:500,deadline:manualPlacement.deadline||null,
       status:"pending",timeSpent:0,completedAt:null,userPinned:true,
       placementReason:slot.reason||null,
-      ...(manualPlacement.kind==="attack"?{}:manualPlacement.kind==="deck"?{deckId:manualPlacement.refId}:{practiceExamId:manualPlacement.refId}),
-      ...(manualPlacement.dueEventId?{dueEventId:manualPlacement.dueEventId,isExamPrepSession:manualPlacement.kind!=="attack"}:{}),
+      ...(manualPlacement.kind==="attack"?{}:manualPlacement.kind==="projectStep"?{stepId:manualPlacement.refId,projectStep:true,...(manualPlacement.courseId?{courseId:manualPlacement.courseId}:{})}:manualPlacement.kind==="deck"?{deckId:manualPlacement.refId}:{practiceExamId:manualPlacement.refId}),
+      ...(manualPlacement.dueEventId?{dueEventId:manualPlacement.dueEventId,isExamPrepSession:manualPlacement.kind!=="attack"&&manualPlacement.kind!=="projectStep"}:{}),
     };
     const next=events.concat([task]);
     setEvents(next);lsSet("events",next);
     setManualPlacementCount(c=>c+1);
     setSelDay(task.date);
   };
-  const finishManualPlacement=()=>{setManualPlacement(null);setManualPlacementCount(0);};
+  // A project step: the block is added the moment the calendar opens, so there is
+  // nothing to press before dragging. Done sends the student back to the project.
+  const projectStepAutoPlacedRef=useRef(false);
+  useEffect(()=>{
+    if(!manualPlacement||manualPlacement.kind!=="projectStep"||projectStepAutoPlacedRef.current)return;
+    projectStepAutoPlacedRef.current=true;
+    addManualPlacementSession();
+  },[manualPlacement]);
+  const finishManualPlacement=()=>{
+    const back=manualPlacement&&manualPlacement.kind==="projectStep"?manualPlacement.returnProjectId:null;
+    projectStepAutoPlacedRef.current=false;
+    setManualPlacement(null);setManualPlacementCount(0);
+    if(back){lsSet("openProjectId",back);setActive("prep");}
+  };
   // 2026-10-16: the automatic "your week's a bit lopsided" pop-up was removed
   // (users found it annoying). "Balance my week" is now only ever opened by the
   // student, from the calendar menu.
@@ -37065,8 +37228,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       )}
       {manualPlacement&&(
         <div style={{display:"flex",alignItems:"center",gap:12,padding:"9px 14px",background:T.lime+"10",border:`1px solid ${T.lime}33`,borderRadius:6,marginBottom:14,fontSize:12.5,color:T.text}}>
+          {manualPlacement.kind==="projectStep"?(
+            <span style={{flex:1}}>Drag <strong>{manualPlacement.title}</strong> into a free gap in your calendar. Resize it to change the length, then press Done.</span>
+          ):(<>
           <span style={{flex:1}}>Placing sessions for <strong>{manualPlacement.title}</strong>. Drag each one to where you want it, resize to change duration.{manualPlacementCount>0?" "+manualPlacementCount+" placed so far.":""}</span>
           <BtnSm variant="subtle" onClick={addManualPlacementSession}>+ Add a session</BtnSm>
+          </>)}
           <BtnSm onClick={finishManualPlacement}>Done</BtnSm>
         </div>
       )}
