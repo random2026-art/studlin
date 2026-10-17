@@ -1309,6 +1309,20 @@ function lookSubjectColorMap(subjects,look,mode){
 // THE single resolver for "what color is this class". Precedence: ev.color (callers handle it
 // themselves) > look.perClass > auto index > Classic subject.color. Classic never reads perClass.
 // `fallback` is what the caller used before for an unknown class (T.lime, T.muted...).
+// Dashboard row helpers (2026-10-16). A subject of "None"/"Other" is a dropdown
+// placeholder, never something to show a student; an event's own color (set on
+// a task, or inherited by a habit from its routine) beats the class color.
+const dashSubjectText=(s)=>(s&&s!=="None"&&s!=="Other")?s:"";
+const dashRowColor=(t)=>t.color||subjectColor(t.subject,null);
+function dashRowMeta(t){
+  const parts=[];
+  const subj=dashSubjectText(t.subject);
+  if(subj)parts.push(subj);
+  if(t.kind==="deadline")parts.push("Due");
+  else if(t.kind==="study block")parts.push(t.routineId?"Habit":(t.isGeneralTask?"Your task":"Your study session"));
+  else if(t.kind)parts.push(t.kind);
+  return parts.join(" · ");
+}
 function subjectColor(idOrLabel,fallback,subjects){
   const list=Array.isArray(subjects)?subjects:getSubjects();
   const s=list.find(x=>x.id===idOrLabel||x.label===idOrLabel);
@@ -3495,7 +3509,7 @@ function materializeHabitsForDate(dateKey,workingEvents){
     if(alreadyDone.has(r.id))return;
     const time=findHabitSlotForToday(working,routinesNow,prefsNow,dateKey,r.duration||30);
     if(!time)return; // no room today — skip gracefully, never rolls to tomorrow
-    const ev={id:"habit-"+r.id+"-"+dateKey,title:r.title,date:dateKey,time,subject:r.subject||"",color:r.color||null,kind:"study block",notes:"",priority:5,difficulty:5,deadline:null,duration:r.duration||30,status:"pending",timeSpent:0,completedAt:null,routineId:r.id,...(r.isGeneralTask?{isGeneralTask:true}:{})};
+    const ev={id:"habit-"+r.id+"-"+dateKey,title:r.title,date:dateKey,time,subject:(r.subject&&r.subject!=="None")?r.subject:"",color:r.color||null,kind:"study block",notes:"",priority:5,difficulty:5,deadline:null,duration:r.duration||30,status:"pending",timeSpent:0,completedAt:null,routineId:r.id,...(r.isGeneralTask?{isGeneralTask:true}:{})};
     created.push(ev);
     working=working.concat([ev]);
   });
@@ -30373,6 +30387,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   // no chip/option ever highlighted as selected. "None" is the actual
   // real option that shape is supposed to fall back to.
   const [subject,setSubject]=useState("None");
+  const [colorChoice,setColorChoice]=useState("");
   const [kind,setKind]=useState("deadline");
   // Project and To-do aren't real `kind` values (a project is
   // kind:"deadline"+phases/outline, a to-do is kind:"deadline"+checklist) --
@@ -30523,7 +30538,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
     setDuration(ev.duration||60);setDeadline(ev.deadline||"");setDeadlineTime(ev.deadlineTime||"");setDeadlineErr("");
     setPriority(toSliderVal(ev.priority,5));setDifficulty(toSliderVal(ev.difficulty,5));
     setMoreOpen(!!(ev.priority&&(ev.priority>10?ev.priority!==500:ev.priority!==5)));
-    setSubject(ev.subject||"None");setKind(ev.kind||"deadline");setNotes(ev.notes||"");
+    setSubject(ev.subject||"None");setColorChoice(ev.color||"");setKind(ev.kind||"deadline");setNotes(ev.notes||"");
     setAsProject(isProjectMarker(ev));setAsChecklist(!!ev.checklist);setAsGeneralTask(!!ev.isGeneralTask);setAsAssignment(!!ev.isAssignment);
     setCancelConfirmOpen(false);setDetailErr("");
     setExamSwitchAwayConfirm(false);setProjectSwitchAwayConfirm(false);
@@ -30808,7 +30823,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
         // Due date Fields' own comments for the paired time inputs this
         // reads from.
         deadlineTime:deadlineTime||null,
-        priority,difficulty,subject,courseId:courseIdForLabel(subject),kind,notes,checklist:asChecklist,isGeneralTask:asGeneralTask||undefined,isAssignment:asAssignment||undefined,...(timeChanged?{userPinned:true}:{}),
+        priority,difficulty,subject:subject==="None"?"":subject,courseId:courseIdForLabel(subject),kind,notes,color:colorChoice||undefined,checklist:asChecklist,isGeneralTask:asGeneralTask||undefined,isAssignment:asAssignment||undefined,...(timeChanged?{userPinned:true}:{}),
         ...(kind==="exam"?{sourceMaterials:examPlan.materialFiles,referenceLinks:examPlan.materialLinks,
           importanceLevel:examImportanceLevel,examWeight:examWeightFromImportance(examImportanceLevel),
           ...(examGradeWeightPercent!=null?{gradeWeightPercent:examGradeWeightPercent}:{})}:{}),
@@ -31093,6 +31108,12 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
           drew (CustomSelect doesn't render one) -- same tradeoff every
           other dropdown-style field in this app already makes. */}
       <Field label="Subject"><CustomSelect boxed options={SUBJ} value={subject} onChange={setSubject} minWidth={220} /></Field>
+      <Field label="Color" hint={colorChoice?"":"Matches the class color unless you pick one."}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <ColorSelect value={colorChoice||subjectColor(subject==="None"?"":subject,T.lime)} onChange={setColorChoice} />
+          {colorChoice&&<button type="button" onClick={()=>setColorChoice("")} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",textDecoration:"underline",padding:0}}>Use class color</button>}
+        </div>
+      </Field>
       {/* A To-do (asChecklist) has no scheduled work time at all -- only a
           due date, same as Add Task's own checklist-mode shape. Used to
           show Scheduled date + Start time here regardless, and the save
@@ -33428,6 +33449,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const [evSubject,setEvSubject]=useState("None");
   const [evCustom,setEvCustom]=useState("");
   const [evCustomColor,setEvCustomColor]=useState(T.lime);
+  // Optional color for any task (blank = follow the class color). "Other" keeps its own picker above.
+  const [evTaskColor,setEvTaskColor]=useState("");
   // "assignment" folds the old separate "study block"/"deadline" (To-Do)
   // type picks into one -- which real kind actually gets written is now
   // inferred at save time (see buildTask/saveManual/aiArrange) instead of
@@ -35072,7 +35095,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // AI mode keeps the date blank (a pre-filled date would read as a chosen target
   // date); manual mode always has a date so Save is never blocked.
   useEffect(()=>{if(newOpen&&taskMode==="manual"&&!evDate)setEvDate(evPrefillDate||dayKey());},[newOpen,taskMode]);
-  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("09:00");setEvSubject("None");setEvCustomColor(T.lime);setEvDate(smartFeaturesOn()?"":(dateK||selDay||dayKey()));setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setEvScheduleLater(false);setEvCommuteBefore("");setEvCommuteAfter("");setAsChecklist(false);setTaskRepeatDays([]);resetTypeExtras();setNewOpen(true);};
+  const openNew=(dateK)=>{setEvTaskColor("");setEvPrefillDate(dateK||selDay);setEvTime("09:00");setEvSubject("None");setEvCustomColor(T.lime);setEvDate(smartFeaturesOn()?"":(dateK||selDay||dayKey()));setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setEvScheduleLater(false);setEvCommuteBefore("");setEvCommuteAfter("");setAsChecklist(false);setTaskRepeatDays([]);resetTypeExtras();setNewOpen(true);};
   // Same form as openNew, just arriving with the scheduling mode already
   // decided by which "Add task" menu option was tapped -- the in-modal
   // manual/AI toggle stays visible so it's correctable, not a dead end.
@@ -35104,7 +35127,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     const params=computeStudyPlanParams(undefined,25,evConfidence,materialCharCount,undefined,daysUntilExam);
     if(params.sessionCount!==evExamPlan.sessionCount)setEvExamPlan(m=>({...m,sessionCount:params.sessionCount}));
   },[newOpen,evKind,evExamPlan.proposeSessions,evExamPlan.materialFiles,evConfidence,evSessionCountTouched]);
-  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvTitleError("");setEvNotes("");setEvCustom("");setEvCustomColor(T.lime);setEvDate("");setEvTime("09:00");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode(smartFeaturesOn()?"ai":"manual");setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setEvScheduleLater(false);setEvCommuteBefore("");setEvCommuteAfter("");setAiLoading(false);setAsChecklist(false);setTaskRepeatDays([]);resetTypeExtras();};
+  const resetForm=()=>{setEvTaskColor("");setNewOpen(false);setEvTitle("");setEvTitleError("");setEvNotes("");setEvCustom("");setEvCustomColor(T.lime);setEvDate("");setEvTime("09:00");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode(smartFeaturesOn()?"ai":"manual");setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setEvScheduleLater(false);setEvCommuteBefore("");setEvCommuteAfter("");setAiLoading(false);setAsChecklist(false);setTaskRepeatDays([]);resetTypeExtras();};
   // Stu chat bridge (2026-10-14): the chat drawer is App-level while Brain Dump
   // is CalendarTab-local state, so the drawer writes lsSet("pendingCalendarTool")
   // (read on mount, same one-shot pattern as pendingBrainDump above) AND fires a
@@ -35244,7 +35267,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       // same default lime as an untagged one -- an explicit color here is
       // what colorOf(ev.color||...) checks first, giving Other tasks the
       // student's actual chosen color instead of losing the choice.
-      ...(evSubject==="Other"?{color:evCustomColor}:{}),
+      ...(evSubject==="Other"?{color:evCustomColor}:(evTaskColor?{color:evTaskColor}:{})),
       ...(projectPhases.length>0?{phases:projectPhases.map((name,pi)=>({name,status:pi===0?"active":"pending"}))}:{}),
       ...(projectOutline.length>0?{outline:projectOutline}:{}),
       // C9 in the audit: only meaningful for fixed-time kinds (an "exam"
@@ -35425,7 +35448,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     if(!evTitle.trim()||taskRepeatDays.length===0)return;
     if(evDurationTouched)rememberLastDuration(resolveAssignmentKind(),evDuration);
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
-    const base={title:evTitle.trim(),kind:"habit",...(subj?{subject:subj}:{}),notes:evNotes||undefined,isGeneralTask:true};
+    const base={title:evTitle.trim(),kind:"habit",...(subj?{subject:subj}:{}),...(evTaskColor?{color:evTaskColor}:{}),notes:evNotes||undefined,isGeneralTask:true};
     persistRoutines([...routines,...buildRoutineObjectsForDays(base,taskRepeatDays,"09:00",evDuration||30,{})]);
     resetForm();
   };
@@ -37890,6 +37913,14 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             <div style={{display:"flex",alignItems:"center",gap:10}}>
               <ColorSelect value={evCustomColor} onChange={setEvCustomColor} />
               <Input placeholder="e.g. Drivers ed, SAT prep, club..." value={evCustom} onChange={ev=>setEvCustom(ev.target.value)} style={{flex:1}} />
+            </div>
+          </Field>
+        )}
+        {evSubject!=="Other"&&(
+          <Field label="Color" hint={evTaskColor?"":"Matches the class color unless you pick one."}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <ColorSelect value={evTaskColor||colorOf(evSubject==="None"?"":evSubject)} onChange={setEvTaskColor} />
+              {evTaskColor&&<button type="button" onClick={()=>setEvTaskColor("")} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",textDecoration:"underline",padding:0}}>Use class color</button>}
             </div>
           </Field>
         )}
@@ -42599,10 +42630,10 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
               // since there's no real events[] entry behind it to mark.
               if(t.isRoutine){
                 return(
-                  <div key={t.id} {...dashRowHover} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.lookOn?T.borderTint:T.border}`,borderLeft:T.lookOn&&subjectColor(t.subject,null)?`4px solid ${subjectColor(t.subject,null)}`:undefined,marginBottom:8,background:T.card}}>
+                  <div key={t.id} {...dashRowHover} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.lookOn?T.borderTint:T.border}`,borderLeft:T.lookOn&&dashRowColor(t)?`4px solid ${dashRowColor(t)}`:undefined,marginBottom:8,background:T.card}}>
                     <div style={{flex:1,minWidth:0}}>
                       <span style={{fontSize:13.5,color:T.text,fontWeight:500}}>{t.title}</span>
-                      <div style={{fontSize:11,color:T.muted,marginTop:1}}>{t.subject}{t.subject?" · ":""}{t.kind==="class"?"Class":"Recurring"}</div>
+                      <div style={{fontSize:11,color:T.muted,marginTop:1}}>{dashSubjectText(t.subject)}{dashSubjectText(t.subject)?" · ":""}{t.kind==="class"?"Class":"Recurring"}</div>
                     </div>
                     {/* End time, not just start (2026-09-04) -- a class
                         block always has a real duration, so the range
@@ -42628,7 +42659,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                 );
               }
               return(
-                <div key={t.id} onClick={()=>{if(t.done)uncrossEventDone(t.id);else{markEventDone(t.id);onTaskCompleted&&onTaskCompleted(t.id);}forcePlan(x=>x+1);}} {...dashRowHover} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.lookOn?T.borderTint:T.border}`,borderLeft:T.lookOn&&subjectColor(t.subject,null)?`4px solid ${subjectColor(t.subject,null)}`:undefined,marginBottom:8,cursor:"pointer",background:T.lookOn?T.card:T.card2}}>
+                <div key={t.id} onClick={()=>{if(t.done)uncrossEventDone(t.id);else{markEventDone(t.id);onTaskCompleted&&onTaskCompleted(t.id);}forcePlan(x=>x+1);}} {...dashRowHover} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.lookOn?T.borderTint:T.border}`,borderLeft:T.lookOn&&dashRowColor(t)?`4px solid ${dashRowColor(t)}`:undefined,marginBottom:8,cursor:"pointer",background:T.lookOn?T.card:T.card2}}>
                   <div style={{width:20,height:20,borderRadius:"50%",border:`1.5px solid ${t.done?(T.lookOn?T.lime:T.text):(T.lookOn?T.borderTint:T.border)}`,background:t.done?(T.lookOn?T.lime:T.text):"transparent",flex:"none",display:"grid",placeItems:"center"}}>
                     {t.done&&<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={T.lookOn?lookTextOnFill(T.lime):T.lime} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
                   </div>
@@ -42644,7 +42675,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                         due-date row gets a color cue since it's the one
                         that actually needs to stand out (nothing to click
                         Reschedule on, it's the real deadline). */}
-                    <div style={{fontSize:11,color:t.kind==="deadline"?T.amber:T.muted,marginTop:1}}>{t.subject}{t.kind==="deadline"?" · Due":t.kind==="study block"?(t.isGeneralTask?" · Your task":" · Your study session"):t.kind?" · "+t.kind:""}</div>
+                    <div style={{fontSize:11,color:t.kind==="deadline"?T.amber:T.muted,marginTop:1}}>{dashRowMeta(t)}</div>
                   </div>
                   {/* End time, not just start (2026-09-04) -- a bare due
                       date/no-duration item (t.duration falsy/0) still just
