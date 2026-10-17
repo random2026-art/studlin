@@ -15441,17 +15441,29 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
             three-way split (add material / just block out time / create
             manually) folded material-vs-not into a top-level branch, when
             it's really just an optional input to Generate. */}
-        {buildPlanExam&&buildPlanStep==="choice"&&(
+        {buildPlanExam&&buildPlanStep==="choice"&&(()=>{
+          // 2026-10-17: two clear options. "Let Stu plan it" generates straight away
+          // from sensible defaults (the calibration questions are now optional, one
+          // link away), so making a plan is one tap, not a form.
+          const daysLeft=Math.round((new Date(buildPlanExam.date+"T12:00:00")-new Date(dayKey()+"T12:00:00"))/86400000);
+          const optStyle={textAlign:"left",width:"100%",border:`1.5px solid ${T.border}`,background:T.card,borderRadius:14,padding:"16px 18px",cursor:"pointer",fontFamily:T.font,color:T.text};
+          return (
           <div>
-            <div style={{fontSize:13,color:T.text,lineHeight:1.6,marginBottom:18}}>
-              Studlin can build the plan for you. Or you can lay it out yourself.
+            <div style={{fontSize:13,color:T.muted,marginBottom:16}}>{niceDate(buildPlanExam.date)}{daysLeft>=0?" · "+(daysLeft===0?"today":daysLeft+" day"+(daysLeft!==1?"s":"")+" left"):""}</div>
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              <button type="button" onClick={generatePreview} style={{...optStyle,borderColor:T.lime,background:T.lookOn?T.accentSoft:T.lime+"10"}}>
+                <div style={{fontSize:15,fontWeight:700,color:T.white}}>Let Stu plan it</div>
+                <div style={{fontSize:12.5,color:T.muted,marginTop:3}}>He finds free time and spreads it out. You can change anything after.</div>
+              </button>
+              <button type="button" onClick={openManualSessions} style={optStyle}>
+                <div style={{fontSize:15,fontWeight:700,color:T.white}}>I'll pick the days</div>
+                <div style={{fontSize:12.5,color:T.muted,marginTop:3}}>Tap the days you want. Stu suggests a free time for each.</div>
+              </button>
             </div>
-            <div style={{display:"flex",flexDirection:"column",gap:8}}>
-              <Btn onClick={()=>setBuildPlanStep("confidence")} style={{width:"100%",justifyContent:"center"}}>Studlin generates</Btn>
-              <Btn variant="ghost" onClick={openManualSessions} style={{width:"100%",justifyContent:"center"}}>Create manually</Btn>
-            </div>
+            <button type="button" onClick={()=>setBuildPlanStep("confidence")} style={{background:"none",border:"none",padding:0,marginTop:16,color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",textDecoration:"underline"}}>Add notes, flashcards or a practice exam first</button>
           </div>
-        )}
+          );
+        })()}
         {buildPlanExam&&buildPlanStep==="manual"&&(()=>{
           const today=dayKey();
           const examKey=buildPlanExam.date;
