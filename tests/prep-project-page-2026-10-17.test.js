@@ -15,7 +15,7 @@ test("project rows open the page, the edit modal stays one click away", () => {
   assert.ok(page.includes('onClick={()=>setDetailEventId(p.id)}>Edit details'));
 });
 test("steps can be added, renamed, checked and removed in place (outline or phases)", () => {
-  assert.ok(page.includes("const hasPhases=!!(p.phases&&p.phases.length>0);"));
+  assert.ok(page.includes("const hasPhases=phasesAreObjects||(phasesAreStrings&&!(p.outline&&p.outline.length>0));"));
   assert.ok(page.includes("const addStep=()=>{"));
   assert.ok(page.includes("const renameStep=(it,text)=>{"));
   assert.ok(page.includes("const toggleStep=(it)=>"));

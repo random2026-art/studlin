@@ -14629,8 +14629,14 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
         // suggestions and a Done button. On a shared project it first asks whether to
         // schedule with partners (their busy times get blocked out) or just for them.
         const renderProjectPage=(p)=>{
-          const hasPhases=!!(p.phases&&p.phases.length>0);
-          const rawSteps=hasPhases?p.phases:(p.outline||[]);
+          // Steps usually live in phases ({name,status}) or an outline ({text,done}); a project
+          // saved with plain-string phases reads from its outline when it has one, else the
+          // strings become phases (and get saved in the proper shape on the first edit).
+          const rawPhases=p.phases||[];
+          const phasesAreObjects=rawPhases.length>0&&rawPhases.every(r=>r&&typeof r==="object");
+          const phasesAreStrings=rawPhases.length>0&&rawPhases.every(r=>typeof r==="string");
+          const hasPhases=phasesAreObjects||(phasesAreStrings&&!(p.outline&&p.outline.length>0));
+          const rawSteps=hasPhases?(phasesAreStrings?rawPhases.map(n=>({name:n,status:"pending"})):rawPhases):(p.outline||[]);
           const items=rawSteps.map((r,i)=>hasPhases
             ?{id:r.id||null,text:r.name||"",done:r.status==="done",raw:r,idx:i}
             :{id:r.id||null,text:r.text||"",done:!!r.done,raw:r,idx:i,dueDate:r.dueDate||""});
@@ -34110,7 +34116,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     lsSet("openProjectPlacing",null);
     if(!q.setAt||Date.now()-q.setAt>60000)return;
     setCalView("weekly");setWeekOffset(0);setCalSidebarCollapsedState(false);
-    setPlacing(q);setPlacingCount(0);
+    setPlacing({...q,title:(q.title||"").trim()||"Study block"});setPlacingCount(0);
   },[]);
   useEffect(()=>{
     if(!placing||!placing.withPartners||!placing.sharedProjectId){setPlacingPartner({busy:null,names:[],unshared:[],loading:false});return;}
@@ -34200,6 +34206,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     if(back){lsSet("openProjectId",back);setActive("prep");}
   };
   const placingDraft=placing?{id:"placing-"+placing.stepId,title:placing.title,subject:placing.subject,kind:"projectStepPlacing"}:null;
+  useEffect(()=>{
+    if(!placing)return;
+    const t=setTimeout(()=>{const el=document.getElementById("placing-chip");if(el&&el.scrollIntoView)el.scrollIntoView({block:"nearest",behavior:"smooth"});},300);
+    return ()=>clearTimeout(t);
+  },[placing&&placing.stepId]);
   // 2026-10-16: the automatic "your week's a bit lopsided" pop-up was removed
   // (users found it annoying). "Balance my week" is now only ever opened by the
   // student, from the calendar menu.
@@ -37016,17 +37027,6 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       <div style={{flexShrink:0,display:"flex",position:"relative",alignSelf:"stretch"}}>
         {!calSidebarCollapsed&&(
         <div style={{width:196,paddingRight:20,height:0,minHeight:"100%",overflowY:"auto"}}>
-          {placing&&(
-            <div style={{marginBottom:18}}>
-              <style>{"@keyframes studlinChipPulse{0%,100%{box-shadow:0 0 0 0 "+T.lime+"88}50%{box-shadow:0 0 0 7px "+T.lime+"00}}@media (prefers-reduced-motion:reduce){.studlin-chip-pulse{animation:none!important}}"}</style>
-              <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Place this</div>
-              <div className="studlin-chip-pulse" onMouseDown={startDraftChipDrag(placingDraft)} title="Drag onto the calendar to place it"
-                style={{cursor:"grab",border:`1.5px dashed ${T.lime}`,background:T.lookOn?T.accentSoft:T.lime+"12",borderRadius:10,padding:"10px 12px",userSelect:"none",animation:placingCount>0?"none":"studlinChipPulse 1.5s ease-in-out infinite"}}>
-                <div style={{fontSize:12.5,fontWeight:700,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{placing.title}</div>
-                <div style={{fontSize:10.5,color:T.muted,marginTop:2}}>Drag onto your calendar</div>
-              </div>
-            </div>
-          )}
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
             <span style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Courses</span>
             <button type="button" onClick={()=>setQuickScanOpen(true)} style={{background:"none",border:"none",color:T.lime,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:0}}>+ Add new</button>
@@ -37197,6 +37197,19 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
               </div>
             );
           })()}
+          {/* Project step being placed (see CalendarTab's placing mode): a pulsing block right
+              under Activities. Drag it onto the calendar as many times as you like. */}
+          {placing&&(
+            <div id="placing-chip-wrap" style={{marginTop:18}}>
+              <style>{"@keyframes studlinChipPulse{0%,100%{box-shadow:0 0 0 0 "+T.lime+"99}50%{box-shadow:0 0 0 8px "+T.lime+"00}}@media (prefers-reduced-motion:reduce){.studlin-chip-pulse{animation:none!important}}"}</style>
+              <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Place this</div>
+              <div id="placing-chip" className="studlin-chip-pulse" onMouseDown={startDraftChipDrag(placingDraft)} title="Drag onto the calendar to place it"
+                style={{...subjectRowStyle(colorOf(placing.subject)||T.lime),cursor:"grab",border:`1.5px dashed ${T.lime}`,flexDirection:"column",alignItems:"flex-start",gap:2,userSelect:"none",animation:"studlinChipPulse 1.5s ease-in-out infinite"}}>
+                <span style={{fontSize:12.5,fontWeight:700,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"100%"}}>{placing.title||"Study block"}</span>
+                <span style={{fontSize:10,color:T.muted}}>Drag onto your calendar</span>
+              </div>
+            </div>
+          )}
           {/* "To place" tray, 2026-09-16 user request: New Task's "Drag"
               action now adds here instead of starting a live drag itself
               (see unplacedTaskDrafts' own comment above for why) --
@@ -37433,26 +37446,36 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         </div>
       )}
       {placing&&(()=>{
+        // The full walk-through shows once, the first time anyone places a project step.
+        // After that it's just a slim bar so the calendar stays the focus.
         const firstTime=!lsGet("stuPlacingTipSeen",false);
+        const partnerLine=placing.withPartners?(
+          <div style={{fontSize:12,color:T.muted,marginTop:firstTime?6:0}}>
+            {placingPartner.loading?"Checking your partners' availability...":(<>
+              {placingPartner.names.length>0&&<span>Shaded in gray: {placingPartner.names.join(", ")}'s busy times. </span>}
+              {placingPartner.unshared.length>0&&<span>{placingPartner.unshared.join(", ")} {placingPartner.unshared.length>1?"haven't":"hasn't"} shared availability yet, so I can't block their busy times.</span>}
+            </>)}
+          </div>
+        ):null;
+        if(!firstTime)return (
+          <div style={{display:"flex",alignItems:"center",gap:12,padding:"8px 14px",background:T.lookOn?T.accentSoft:T.lime+"10",border:`1px solid ${T.lime}33`,borderRadius:10,marginBottom:14,flexWrap:"wrap"}}>
+            <div style={{flex:1,minWidth:200,fontSize:13,color:T.text}}>
+              Placing <strong>{placing.title}</strong>{placingCount>0?" · "+placingCount+" placed":""}
+              {partnerLine}
+            </div>
+            <BtnSm onClick={finishPlacing}>Done</BtnSm>
+          </div>
+        );
         return (
         <div style={{display:"flex",alignItems:"flex-start",gap:12,padding:"12px 14px",background:T.lookOn?T.accentSoft:T.lime+"10",border:`1px solid ${T.lime}33`,borderRadius:10,marginBottom:14}}>
           <div style={{flexShrink:0}}><StudMascot size={38} mood="waving" {...stuPalette()} /></div>
           <div style={{flex:1,minWidth:0}}>
-            <div style={{fontSize:13.5,fontWeight:700,color:T.white}}>{firstTime?"Drag the pulsing block onto your calendar":"Place \""+placing.title+"\""}</div>
+            <div style={{fontSize:13.5,fontWeight:700,color:T.white}}>Drag the pulsing block onto your calendar</div>
             <div style={{fontSize:12.5,color:T.muted,marginTop:2,lineHeight:1.5}}>
-              {firstTime
-                ?"Grab it on the left and drop it on any day and time. Want to work on it more than once? Drag it again to add another time. The dashed blocks are free times I suggest, tap one to place it. Press Done when you're finished."
-                :"Drag it from the left, or tap a dashed suggestion. Add as many times as you like, then press Done."}
+              It's under Activities on the left. Drop it on any day and time. Want to work on it more than once? Drag it again to add another time. The dashed blocks are free times I suggest, tap one to place it. Press Done when you're finished.
               {placingCount>0?" "+placingCount+" placed so far.":""}
             </div>
-            {placing.withPartners&&(
-              <div style={{fontSize:12,color:T.muted,marginTop:6}}>
-                {placingPartner.loading?"Checking your partners' availability...":(<>
-                  {placingPartner.names.length>0&&<span>I shaded {placingPartner.names.join(", ")}'s busy times in gray so you can pick a time that works for everyone. </span>}
-                  {placingPartner.unshared.length>0&&<span>{placingPartner.unshared.join(", ")} {placingPartner.unshared.length>1?"haven't":"hasn't"} shared availability yet, so I can't block {placingPartner.unshared.length>1?"their":"their"} busy times.</span>}
-                </>)}
-              </div>
-            )}
+            {partnerLine}
           </div>
           <BtnSm onClick={finishPlacing}>Done</BtnSm>
         </div>
