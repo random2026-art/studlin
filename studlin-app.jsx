@@ -34899,6 +34899,31 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       // reasoning the activity-routine branch below already establishes.
       lsSet("events",lsGet("events",[]).map(e=>e.id===sessionId?{...e,date,time:startTime,duration:duration||e.duration||25}:e));
       setEvents(lsGet("events",[]));
+    }else if(chipKind==="activity"&&routineId&&(routines.find(r=>r.id===routineId)||{}).kind==="habit"){
+      // 2026-10-17 fix: a habit (Gym) has no fixed clock time, so the generic
+      // activity branch below just added the dropped weekday to its repeat
+      // pattern and drew nothing -- the engine only places habits on the day
+      // itself, at app open -- so the block "disappeared". A drop is an
+      // explicit placement: put a real block on this date at the dropped time
+      // (pinned, so reflow doesn't move it), and only widen the habit's days
+      // when a repeat was actually chosen. materializeHabitsForDate dedups by
+      // routineId + date, so this day won't also get an automatic one.
+      const rule=routines.find(r=>r.id===routineId);
+      const dur=duration||rule.duration||60;
+      const all=lsGet("events",[]);
+      const existing=all.find(e=>e.routineId===rule.id&&e.date===date);
+      const placed={id:existing?existing.id:"habit-"+rule.id+"-"+date,title:rule.title,date,time:startTime,
+        subject:(rule.subject&&rule.subject!=="None")?rule.subject:"",color:rule.color||null,kind:"study block",notes:"",
+        priority:5,difficulty:5,deadline:null,duration:dur,status:"pending",timeSpent:0,completedAt:null,
+        routineId:rule.id,userPinned:true,...(rule.isGeneralTask?{isGeneralTask:true}:{})};
+      const nextEvents=existing?all.map(e=>e.id===existing.id?{...e,...placed}:e):all.concat([placed]);
+      lsSet("events",nextEvents);setEvents(nextEvents);
+      if(repeat!=="none"&&repeatDays&&repeatDays.length>0){
+        const mergedDays=Array.from(new Set([...(rule.days||[]),...repeatDays]));
+        persistRoutines(routines.map(r=>r.id===rule.id?{...r,days:mergedDays}:r));
+      }
+      setPlacementToast(rule.title+" added, "+fmtTimeRange(startTime,dur)+".");
+      setTimeout(()=>setPlacementToast(""),3200);
     }else if(chipKind==="activity"&&routineId){
       // Additive, not a blind overwrite (2026-08-08 fix): dropping the same
       // activity chip onto a day it's NOT already on adds that day at the
