@@ -7914,7 +7914,7 @@ function StudlinPrep({ setActive = () => {
 }, onStartPrepNow = () => {
 }, onDeclinePrep = () => {
 }, onTaskCompleted = () => {
-} } = {}) {
+}, onShowOnCalendar = null } = {}) {
   const [tab, setTab] = useState("exams");
   const [prepGuideOpen, setPrepGuideOpen] = useState(() => shouldShowPrepGuide());
   const closePrepGuide = () => {
@@ -7977,7 +7977,17 @@ function StudlinPrep({ setActive = () => {
   const refresh = () => forceTick((x) => x + 1);
   const [upgradeModal, setUpgradeModal] = useState(null);
   const [sessionScheduleLoading, setSessionScheduleLoading] = useState(false);
-  const [readinessExpanded, setReadinessExpanded] = useState(false);
+  const [hoverExamId, setHoverExamId] = useState(null);
+  const [selectedProjectId, setSelectedProjectId] = useState(null);
+  const [projPopStepId, setProjPopStepId] = useState(null);
+  const [projNewStep, setProjNewStep] = useState("");
+  useEffect(() => {
+    const q = lsGet("openProjectId", null);
+    if (!q) return;
+    lsSet("openProjectId", null);
+    setTab("projects");
+    setSelectedProjectId(q);
+  }, []);
   const [buildPlanExamId, setBuildPlanExamId] = useState(null);
   const [buildPlanStep, setBuildPlanStep] = useState("choice");
   const [buildPlanGeneric, setBuildPlanGeneric] = useState(false);
@@ -8901,8 +8911,8 @@ function StudlinPrep({ setActive = () => {
       setExpandedSessionId(null);
     };
     const cellSelStyle = { width: "100%", background: "transparent", border: "none", color: T.text, fontSize: 10.5, fontFamily: T.font, outline: "none", cursor: "pointer", padding: "2px 0" };
-    const gridCols = "minmax(120px,1.6fr) 84px 64px 68px 104px 56px 70px 70px 120px 76px";
-    return /* @__PURE__ */ React.createElement("div", null, visibleExams.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, textAlign: "center", padding: "14px 0" } }, "No exams match your search."), visibleExams.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { overflowX: "auto", border: `1px solid ${T.border}`, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 760 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, padding: "7px 10px", borderBottom: `1px solid ${T.border}`, background: T.card2 } }, ["Name", "Class", "Type", "Flex", "Due", "Days", "Urgency", "Difficulty", "Sessions", "Prep"].map((h, i) => /* @__PURE__ */ React.createElement("div", { key: h + i, style: { fontSize: 9, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, h))), visibleExams.map((ex, exIdx) => {
+    const gridCols = "minmax(120px,1.6fr) 84px 64px 68px 104px 56px 70px 70px 100px 104px";
+    return /* @__PURE__ */ React.createElement("div", null, visibleExams.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, textAlign: "center", padding: "14px 0" } }, "No exams match your search."), visibleExams.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { overflowX: "auto", border: `1px solid ${T.border}`, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 760 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, padding: "7px 10px", borderBottom: `1px solid ${T.border}`, background: T.card2 } }, ["Name", "Class", "Type", "Flex", "Due", "Days", "Urgency", "Difficulty", "Sessions", ""].map((h, i) => /* @__PURE__ */ React.createElement("div", { key: h + i, style: { fontSize: 9, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, h))), visibleExams.map((ex, exIdx) => {
       const examSessionsForEx = lsGet("events", []).filter((e) => e.dueEventId === ex.id);
       const pendingSessionsForEx = examSessionsForEx.filter((e) => e.status !== "done");
       const today = dayKey();
@@ -8910,7 +8920,7 @@ function StudlinPrep({ setActive = () => {
       const daysLabel = daysUntil <= 0 ? "Today" : daysUntil + "d";
       const sessionsLabel = examSessionsForEx.length === 0 ? "no plan yet" : pendingSessionsForEx.length + " left";
       const isFlexible = ex.sessionsMovable !== false;
-      return /* @__PURE__ */ React.createElement("div", { key: ex.id, ref: exIdx === 0 ? firstExamRowRef : null, style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, padding: "7px 10px", borderBottom: `1px solid ${T.border}`, alignItems: "center" } }, /* @__PURE__ */ React.createElement("div", { onClick: () => viewPlan(ex), style: { fontSize: 11.5, fontWeight: 600, color: T.white, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: ex.title }, ex.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ex.subject || "\u2014"), /* @__PURE__ */ React.createElement(
+      return /* @__PURE__ */ React.createElement("div", { key: ex.id, ref: exIdx === 0 ? firstExamRowRef : null, onMouseEnter: () => setHoverExamId(ex.id), onMouseLeave: () => setHoverExamId((id) => id === ex.id ? null : id), onFocus: () => setHoverExamId(ex.id), style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, padding: "7px 10px", borderBottom: `1px solid ${T.border}`, alignItems: "center", background: hoverExamId === ex.id ? T.lookOn ? T.accentSoft : T.card2 : "transparent" } }, /* @__PURE__ */ React.createElement("div", { onClick: () => viewPlan(ex), style: { fontSize: 11.5, fontWeight: 600, color: T.white, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: ex.title }, ex.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ex.subject || "\u2014"), /* @__PURE__ */ React.createElement(
         CustomSelect,
         {
           value: ex.examType || "",
@@ -8942,10 +8952,21 @@ function StudlinPrep({ setActive = () => {
           options: [{ value: "low", label: "Easy" }, { value: "medium", label: "Med" }, { value: "high", label: "Hard" }]
         }
       ), /* @__PURE__ */ React.createElement("div", { onClick: () => viewPlan(ex), style: { fontSize: 10.5, color: T.muted, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: "Click to open the study plan" }, sessionsLabel), (() => {
-        const prep = computePreparedness(ex, lsGet("events", []), today);
-        if (!prep || prep.score == null) return /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.faint } }, "\u2014");
-        const barColor = prep.score >= 70 ? T.lime : prep.score < 40 ? T.red : T.amber;
-        return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 5 }, title: "Preparedness" }, /* @__PURE__ */ React.createElement("div", { style: { width: 26, height: 4, borderRadius: 99, background: T.card2, overflow: "hidden", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { height: "100%", width: prep.score + "%", background: barColor, borderRadius: 99 } })), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9.5, color: T.muted } }, prep.score, "%"));
+        const has = examSessionsForEx.length > 0;
+        const canHover = typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(hover: hover)").matches : true;
+        const show = !canHover || hoverExamId === ex.id;
+        return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "flex-end" } }, /* @__PURE__ */ React.createElement(
+          BtnSm,
+          {
+            variant: has ? "ghost" : "lime",
+            onClick: () => {
+              if (has) viewPlan(ex);
+              else openBuildPlan(ex);
+            },
+            style: { opacity: show ? 1 : 0, transition: "opacity 0.12s", whiteSpace: "nowrap" }
+          },
+          has ? "View plan" : "Create plan"
+        ));
       })());
     }))));
   })()), tab === "assignments" && !selectedAssignment && (() => {
@@ -9192,6 +9213,148 @@ function StudlinPrep({ setActive = () => {
   })(), tab === "projects" && (() => {
     const today = dayKey();
     const allProjects = upcomingProjects();
+    const renderProjectPage = (p) => {
+      const hasPhases = !!(p.phases && p.phases.length > 0);
+      const rawSteps = hasPhases ? p.phases : p.outline || [];
+      const items = rawSteps.map((r, i) => hasPhases ? { id: r.id || null, text: r.name || "", done: r.status === "done", raw: r, idx: i } : { id: r.id || null, text: r.text || "", done: !!r.done, raw: r, idx: i, dueDate: r.dueDate || "" });
+      const allEvents = lsGet("events", []);
+      const blocks = allEvents.filter((e) => e.dueEventId === p.id && e.stepId);
+      const blockFor = (it) => it.id ? blocks.find((b) => b.stepId === it.id && b.status !== "done") || null : null;
+      const mkId = () => "st-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      const write = (nextRaw) => patchExam(p.id, hasPhases ? { phases: nextRaw } : { outline: nextRaw });
+      const patchStep = (it, patch) => write(rawSteps.map((r, i) => i === it.idx ? { ...r, ...patch } : r));
+      const toggleStep = (it) => patchStep(it, hasPhases ? { status: it.done ? "pending" : "done" } : { done: !it.done });
+      const renameStep = (it, text) => {
+        const t = (text || "").trim();
+        if (!t || t === it.text) return;
+        patchStep(it, hasPhases ? { name: t } : { text: t });
+      };
+      const addStep = () => {
+        const t = projNewStep.trim();
+        if (!t) return;
+        write(rawSteps.concat([hasPhases ? { name: t, status: "pending", id: mkId() } : { text: t, done: false, id: mkId() }]));
+        setProjNewStep("");
+      };
+      const removeStep = (it) => {
+        if (rawSteps.length <= 1) {
+          setSyllabusToast("A project needs at least one step.");
+          setTimeout(() => setSyllabusToast(""), 2600);
+          return;
+        }
+        const b = it.id ? blocks.filter((x) => x.stepId === it.id && x.status !== "done").map((x) => x.id) : [];
+        if (b.length > 0) lsSet("events", lsGet("events", []).filter((e) => !b.includes(e.id)));
+        write(rawSteps.filter((_, i) => i !== it.idx));
+      };
+      const ensureStepId = (it) => {
+        if (it.id) return it.id;
+        const id = mkId();
+        patchStep(it, { id });
+        return id;
+      };
+      const suggestSlots = () => {
+        const events = lsGet("events", []), routines = getWeeklyRoutine(), prefs = getSchedulePreferences();
+        const out = [];
+        const lastKey = p.date && p.date > dayKey() ? (() => {
+          const d = /* @__PURE__ */ new Date(p.date + "T12:00:00");
+          d.setDate(d.getDate() - 1);
+          return dayKey(d);
+        })() : dayKey();
+        for (let i = 0; i < 14 && out.length < 3; i++) {
+          const d = /* @__PURE__ */ new Date();
+          d.setDate(d.getDate() + i);
+          const k = dayKey(d);
+          if (k > lastKey) break;
+          const win = getWorkWindowMinsFor(prefs, k);
+          for (const t of [Math.max(win.start, 16 * 60), win.start]) {
+            const slot = findLegalSlotOrNull(events, routines, prefs, k, minutesToTime(t), 45, p.date || null);
+            if (slot && slot.date === k) {
+              out.push(slot);
+              break;
+            }
+          }
+        }
+        return out;
+      };
+      const scheduleStep = (it, slot) => {
+        const stepId = ensureStepId(it);
+        const ev = {
+          id: "step-" + p.id + "-" + Date.now(),
+          title: it.text,
+          date: slot.date,
+          time: slot.time,
+          subject: p.subject || "",
+          courseId: p.courseId,
+          kind: "study block",
+          notes: "",
+          priority: p.priority ?? 500,
+          difficulty: p.difficulty ?? 500,
+          deadline: p.date || null,
+          duration: 45,
+          status: "pending",
+          timeSpent: 0,
+          completedAt: null,
+          dueEventId: p.id,
+          stepId,
+          projectStep: true
+        };
+        lsSet("events", lsGet("events", []).concat([ev]));
+        setProjPopStepId(null);
+        refresh();
+        setSyllabusToast('Scheduled "' + it.text + '" for ' + dayOfWeekLabel(slot.date).slice(0, 3) + " " + fmtRolloverClock(slot.time) + ".");
+        setTimeout(() => setSyllabusToast(""), 3200);
+      };
+      const unscheduleStep = (blk) => {
+        lsSet("events", lsGet("events", []).filter((e) => e.id !== blk.id));
+        refresh();
+      };
+      const pickOwnTime = (it) => {
+        const stepId = ensureStepId(it);
+        lsSet("openManualPlacement", { kind: "projectStep", refId: stepId, title: it.text, subject: p.subject || "", deadline: p.date || null, dueEventId: p.id, returnProjectId: p.id, courseId: p.courseId || null });
+        setActive("calendar");
+      };
+      const doneCount = items.filter((i) => i.done).length;
+      const daysUntil = p.date ? Math.round((/* @__PURE__ */ new Date(p.date + "T12:00:00") - /* @__PURE__ */ new Date(today + "T12:00:00")) / 864e5) : null;
+      return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("button", { onClick: () => {
+        setSelectedProjectId(null);
+        setProjPopStepId(null);
+      }, style: { background: "none", border: "none", color: T.muted, fontSize: 12, fontFamily: T.font, cursor: "pointer", padding: 0, marginBottom: 14 } }, "\u2190 All projects"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap", marginBottom: 6 } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 24, fontWeight: 800, color: T.white, letterSpacing: "-0.01em", lineHeight: 1.2 } }, p.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginTop: 4 } }, [p.subject, p.date ? "Due " + niceDate(p.date) : "No due date", daysUntil != null && daysUntil >= 0 ? daysUntil === 0 ? "today" : daysUntil + " day" + (daysUntil !== 1 ? "s" : "") + " left" : null].filter(Boolean).join(" \xB7 "))), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setDetailEventId(p.id) }, "Edit details")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, margin: "14px 0 16px" } }, /* @__PURE__ */ React.createElement("div", { "aria-hidden": "true", style: { display: "flex", gap: 4 } }, items.map((x, i) => /* @__PURE__ */ React.createElement("i", { key: i, style: { display: "block", width: 22, height: 6, borderRadius: 99, background: x.done ? T.teal : T.border } }))), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13, color: T.muted, fontFamily: T.mono } }, doneCount, " of ", items.length, " ", hasPhases ? "phases" : "steps", " done")), items.map((it) => {
+        const blk = blockFor(it);
+        const popOpen = projPopStepId === (it.id || "idx-" + it.idx);
+        return /* @__PURE__ */ React.createElement("div", { key: (it.id || "i") + "-" + it.idx, style: { display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 12, border: `1px solid ${T.border}`, marginBottom: 8, flexWrap: "wrap", background: T.card } }, /* @__PURE__ */ React.createElement(
+          "button",
+          {
+            type: "button",
+            "aria-label": it.done ? "Mark not done" : "Mark done",
+            "aria-pressed": it.done,
+            onClick: () => toggleStep(it),
+            style: { width: 22, height: 22, borderRadius: "50%", border: `1.5px solid ${it.done ? T.teal : T.faint}`, background: it.done ? T.teal : "transparent", color: "#fff", fontSize: 12, cursor: "pointer", padding: 0, flexShrink: 0, display: "grid", placeItems: "center" }
+          },
+          it.done ? "\u2713" : ""
+        ), /* @__PURE__ */ React.createElement(
+          "input",
+          {
+            key: it.text,
+            defaultValue: it.text,
+            "aria-label": "Step",
+            onBlur: (e) => renameStep(it, e.target.value),
+            onKeyDown: (e) => {
+              if (e.key === "Enter") e.target.blur();
+            },
+            style: { flex: 1, minWidth: 140, border: "none", borderBottom: "1px solid transparent", background: "transparent", color: it.done ? T.faint : T.text, textDecoration: it.done ? "line-through" : "none", fontSize: 14, fontFamily: T.font, padding: "4px 0", outline: "none" },
+            onFocus: (e) => {
+              e.target.style.borderBottomColor = T.border;
+            }
+          }
+        ), blk ? /* @__PURE__ */ React.createElement("span", { style: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, color: T.teal, background: T.teal + "14", border: `1px solid ${T.teal}44`, borderRadius: 99, padding: "3px 4px 3px 10px" } }, dayOfWeekLabel(blk.date).slice(0, 3), " ", blk.date.slice(5).replace("-", "/"), ", ", fmtRolloverClock(blk.time), /* @__PURE__ */ React.createElement("button", { type: "button", "aria-label": "Take off my calendar", title: "Take off my calendar", onClick: () => unscheduleStep(blk), style: { background: "none", border: "none", color: T.teal, cursor: "pointer", fontSize: 14, lineHeight: 1, padding: "0 4px" } }, "\xD7")) : !it.done && /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setProjPopStepId(popOpen ? null : it.id || "idx-" + it.idx) }, "Schedule"), /* @__PURE__ */ React.createElement("button", { type: "button", "aria-label": "Remove step", title: "Remove step", onClick: () => removeStep(it), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 18, lineHeight: 1, padding: "2px 6px" } }, "\xD7"), popOpen && (() => {
+          const slots = suggestSlots();
+          return /* @__PURE__ */ React.createElement("div", { style: { flexBasis: "100%", display: "flex", alignItems: "flex-start", gap: 10, background: T.lookOn ? T.accentSoft : T.card2, borderRadius: 10, padding: "10px 12px" } }, /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0 } }, /* @__PURE__ */ React.createElement(StudMascot, { size: 28, mood: "happy", ...stuPalette() })), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, marginBottom: 8 } }, slots.length > 0 ? "Free times I found:" : "I couldn't find a free time before the due date. You can place it yourself."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } }, slots.map((sl) => /* @__PURE__ */ React.createElement(BtnSm, { key: sl.date + sl.time, onClick: () => scheduleStep(it, sl) }, dayOfWeekLabel(sl.date).slice(0, 3), " ", sl.date.slice(5).replace("-", "/"), ", ", fmtRolloverClock(sl.time))), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => pickOwnTime(it) }, "Pick my own time"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setProjPopStepId(null) }, "Cancel"))));
+        })());
+      }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 6 } }, /* @__PURE__ */ React.createElement(Input, { value: projNewStep, onChange: (e) => setProjNewStep(e.target.value), onKeyDown: (e) => {
+        if (e.key === "Enter") addStep();
+      }, placeholder: hasPhases ? "Add a phase" : "Add a step", "aria-label": "Add a step", style: { flex: 1 } }), /* @__PURE__ */ React.createElement(Btn, { onClick: addStep, disabled: !projNewStep.trim() }, "Add")));
+    };
+    const selProject = selectedProjectId ? allProjects.find((x) => x.id === selectedProjectId) : null;
+    if (selProject) return renderProjectPage(selProject);
     const projectClasses = [...new Set(allProjects.map((p) => p.subject).filter(Boolean))];
     const projects = allProjects.filter((p) => {
       if (projectGroupFilter && itemLifecycleState(p, today) !== projectGroupFilter) return false;
@@ -9217,7 +9380,7 @@ function StudlinPrep({ setActive = () => {
       const steps = hasPhases ? p.phases : p.outline || [];
       const doneCount = hasPhases ? steps.filter((s) => s.status === "done").length : steps.filter((s) => s.done).length;
       const activePhase = hasPhases ? steps.find((s) => s.status === "active") : null;
-      return /* @__PURE__ */ React.createElement("div", { key: p.id, style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, padding: "7px 10px", borderBottom: `1px solid ${T.border}`, alignItems: "center" } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setDetailEventId(p.id), style: { fontSize: 11.5, fontWeight: 600, color: T.white, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: p.title }, p.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, p.subject || "\u2014"), /* @__PURE__ */ React.createElement("input", { type: "date", value: p.date || "", onChange: (e) => e.target.value && patchExam(p.id, { date: e.target.value, checklist: false, time: p.time || "23:59" }), style: { ...cellSelStyle } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: daysUntil == null ? T.amber : daysUntil <= 1 ? T.red : T.muted, fontStyle: daysUntil == null ? "italic" : "normal" } }, daysLabel), /* @__PURE__ */ React.createElement(
+      return /* @__PURE__ */ React.createElement("div", { key: p.id, style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, padding: "7px 10px", borderBottom: `1px solid ${T.border}`, alignItems: "center" } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setSelectedProjectId(p.id), style: { fontSize: 11.5, fontWeight: 600, color: T.white, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: p.title }, p.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, p.subject || "\u2014"), /* @__PURE__ */ React.createElement("input", { type: "date", value: p.date || "", onChange: (e) => e.target.value && patchExam(p.id, { date: e.target.value, checklist: false, time: p.time || "23:59" }), style: { ...cellSelStyle } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: daysUntil == null ? T.amber : daysUntil <= 1 ? T.red : T.muted, fontStyle: daysUntil == null ? "italic" : "normal" } }, daysLabel), /* @__PURE__ */ React.createElement(
         CustomSelect,
         {
           value: bucketOf(p.priority),
@@ -9231,11 +9394,9 @@ function StudlinPrep({ setActive = () => {
           onChange: (v) => patchExam(p.id, { difficulty: BUCKET_VALS[v] }),
           options: [{ value: "low", label: "Easy" }, { value: "medium", label: "Med" }, { value: "high", label: "Hard" }]
         }
-      ), /* @__PURE__ */ React.createElement("div", { onClick: () => setDetailEventId(p.id), style: { fontSize: 10.5, color: T.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer" }, title: "Click to open" }, steps.length === 0 ? "no checklist yet" : doneCount + "/" + steps.length + (hasPhases ? " phases" : " steps") + (activePhase && activePhase.name ? " \u2014 " + activePhase.name : "")));
+      ), /* @__PURE__ */ React.createElement("div", { onClick: () => setSelectedProjectId(p.id), style: { fontSize: 10.5, color: T.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer" }, title: "Open the project" }, steps.length === 0 ? "no checklist yet" : doneCount + "/" + steps.length + (hasPhases ? " phases" : " steps") + (activePhase && activePhase.name ? " \u2014 " + activePhase.name : "")));
     }))));
   })(), tab === "exams" && selectedExam && (() => {
-    const readiness = computeExamReadiness(selectedExam, lsGet("events", []), dayKey());
-    const readinessTrajectory = computeReadinessTrajectory(selectedExam, lsGet("events", []), dayKey());
     const deck = allDecks.find((d) => deckLinkedToExam(d, selectedExam.id));
     const pes = allPracticeExams.filter((p) => p.examEventId === selectedExam.id);
     const examSessions = lsGet("events", []).filter((e) => e.dueEventId === selectedExam.id).sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
@@ -9330,6 +9491,15 @@ function StudlinPrep({ setActive = () => {
     const countdownLabel = daysUntil < 0 ? "already passed" : daysUntil === 0 ? "today" : daysUntil === 1 ? "in 1 day" : "in " + daysUntil + " days";
     const pendingSessions = examSessions.filter((s) => s.status !== "done");
     const nextSession = pendingSessions[0] || null;
+    const showOnCalendar = (ids, first) => {
+      if (onShowOnCalendar) {
+        onShowOnCalendar(ids, first);
+        return;
+      }
+      lsSet("calendarHighlightIds", { ids, setAt: Date.now() });
+      setActive("calendar");
+    };
+    const upcomingScheduled = pendingSessions.filter((x) => x.date && x.time).sort((a, b) => a.date + a.time < b.date + b.time ? -1 : 1);
     const cardsDue = deck ? (deck.cards || []).filter((c) => !c.dueAt || c.dueAt <= Date.now()).length : 0;
     const metaParts = [selectedExam.subject, niceDate(selectedExam.date)];
     if (examSessions.length === 0) metaParts.push("no study plan yet");
@@ -9340,7 +9510,7 @@ function StudlinPrep({ setActive = () => {
     return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("button", { onClick: () => {
       setSelectedExamId(null);
       setExamTimeEditOpen(false);
-    }, style: { background: "none", border: "none", color: T.muted, fontSize: 12, fontFamily: T.font, cursor: "pointer", padding: 0, marginBottom: 14, display: "flex", alignItems: "center", gap: 4 } }, "\u2190 All exams"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 24, fontWeight: 800, color: T.white, letterSpacing: "-0.01em", marginBottom: 4, lineHeight: 1.2 } }, selectedExam.title, " \xB7 ", countdownLabel), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginBottom: 14 } }, metaParts.join(" \xB7 ")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 14 } }, isExamCompleted ? /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: T.lookOn ? T.accentInk : T.lime, background: T.lookOn ? T.chipBg : T.lime + "14", border: `1px solid ${T.lookOn ? T.borderTint : T.lime + "44"}`, borderRadius: 6, padding: "4px 10px" } }, "COMPLETED") : itemLifecycleState(selectedExam, dayKey()) === "past-due" && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: T.amber, background: T.amber + "14", border: `1px solid ${T.amber}44`, borderRadius: 6, padding: "4px 10px" } }, "PAST DUE"), /* @__PURE__ */ React.createElement(BtnSm, { variant: isExamCompleted ? "ghost" : "subtle", onClick: toggleExamCompleted }, isExamCompleted ? "Mark as uncomplete" : "Mark as completed"), examSessions.length > 0 && /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => openBuildPlan(selectedExam) }, "Redo study plan"), (isExamCompleted || itemLifecycleState(selectedExam, dayKey()) === "past-due") && /* @__PURE__ */ React.createElement(React.Fragment, null, selectedExam.scoreTier && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: T.teal, background: T.teal + "14", border: `1px solid ${T.teal}44`, borderRadius: 6, padding: "4px 10px" } }, selectedExam.scorePercent != null ? selectedExam.scorePercent + "%" : SCORE_TIER_LABEL[selectedExam.scoreTier]), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => {
+    }, style: { background: "none", border: "none", color: T.muted, fontSize: 12, fontFamily: T.font, cursor: "pointer", padding: 0, marginBottom: 14, display: "flex", alignItems: "center", gap: 4 } }, "\u2190 All exams"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 24, fontWeight: 800, color: T.white, letterSpacing: "-0.01em", marginBottom: 4, lineHeight: 1.2 } }, selectedExam.title, " \xB7 ", countdownLabel), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginBottom: 14 } }, metaParts.join(" \xB7 ")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 14 } }, isExamCompleted ? /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: T.lookOn ? T.accentInk : T.lime, background: T.lookOn ? T.chipBg : T.lime + "14", border: `1px solid ${T.lookOn ? T.borderTint : T.lime + "44"}`, borderRadius: 6, padding: "4px 10px" } }, "COMPLETED") : itemLifecycleState(selectedExam, dayKey()) === "past-due" && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: T.amber, background: T.amber + "14", border: `1px solid ${T.amber}44`, borderRadius: 6, padding: "4px 10px" } }, "PAST DUE"), /* @__PURE__ */ React.createElement(BtnSm, { variant: isExamCompleted ? "ghost" : "subtle", onClick: toggleExamCompleted }, isExamCompleted ? "Mark as uncomplete" : "Mark as completed"), upcomingScheduled.length > 0 && /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => showOnCalendar(pendingSessions.map((x) => x.id), upcomingScheduled[0]) }, "See on calendar"), examSessions.length > 0 && /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => openBuildPlan(selectedExam) }, "Redo study plan"), (isExamCompleted || itemLifecycleState(selectedExam, dayKey()) === "past-due") && /* @__PURE__ */ React.createElement(React.Fragment, null, selectedExam.scoreTier && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: T.teal, background: T.teal + "14", border: `1px solid ${T.teal}44`, borderRadius: 6, padding: "4px 10px" } }, selectedExam.scorePercent != null ? selectedExam.scorePercent + "%" : SCORE_TIER_LABEL[selectedExam.scoreTier]), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => {
       setExamScoreDraft(selectedExam.scorePercent != null ? String(selectedExam.scorePercent) : "");
       setExamScoreDraftOpen((o) => !o);
     } }, selectedExam.scoreTier ? "Edit score" : "Add your score"))), examScoreDraftOpen && /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: "12px 14px", marginBottom: 20, fontSize: 12.5, color: T.text } }, /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 8, color: T.muted } }, "How'd it go? Optional -- only used to make your future plans for this subject smarter."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap", alignItems: "center" } }, /* @__PURE__ */ React.createElement(Input, { type: "number", min: 0, max: 100, placeholder: "Score % (optional)", value: examScoreDraft, onChange: (e) => setExamScoreDraft(e.target.value), style: { width: 150 } }), /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
@@ -9352,22 +9522,7 @@ function StudlinPrep({ setActive = () => {
     } }, "See what's using the time"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => {
       lsSet("openWeekBalanceOnMount", false);
       setWeekTightNudge(false);
-    } }, "Not now"))), readiness && (() => {
-      const stateColor = readiness.state === "behind" || readiness.state === "at-risk" ? T.red : readiness.state === "on-track" ? T.lime : readiness.state === "tight" ? T.amber : T.muted;
-      const suggestion = readiness.state === "behind" ? "Catching up: start your next session today, or ask Studlin to fit extra time before the exam if there genuinely isn't enough room left." : readiness.state === "at-risk" ? "Worth an extra review session before the exam, or revisiting whatever didn't click last time." : readiness.state === "tight" ? "Not behind yet, but there's little slack left before the exam. Worth keeping every remaining session, since there's not much room to lose one." : readiness.state === "no-data" ? "Build a study kit below to get review sessions started." : null;
-      const prep = computePreparedness(selectedExam, lsGet("events", []), dayKey());
-      const prepColor = prep && prep.score != null ? prep.score >= 70 ? T.lime : prep.score < 40 ? T.red : T.amber : T.faint;
-      return /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 20 } }, /* @__PURE__ */ React.createElement(
-        "span",
-        {
-          onMouseEnter: () => setReadinessExpanded(true),
-          onMouseLeave: () => setReadinessExpanded(false),
-          onClick: () => setReadinessExpanded((e) => !e),
-          style: { display: "inline-flex", fontSize: 11, fontWeight: 700, color: stateColor, background: stateColor + "14", border: `1px solid ${stateColor}44`, borderRadius: 6, padding: "4px 10px", cursor: "pointer" }
-        },
-        readiness.state.toUpperCase().replace("-", " ")
-      ), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, lineHeight: 1.5, marginTop: 8 } }, readiness.sentence), readinessExpanded && suggestion && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 6, padding: "10px 12px", borderRadius: 6, border: `1px solid ${T.border}`, background: T.card2, fontSize: 12, color: T.muted, lineHeight: 1.5 } }, suggestion), prep && prep.score != null ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, maxWidth: 220, height: 6, borderRadius: 99, background: T.card2, overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { height: "100%", width: prep.score + "%", background: prepColor, borderRadius: 99 } })), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11.5, fontWeight: 600, color: T.muted } }, prep.score, "% prepared")) : /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.faint, marginTop: 10 } }, "Not started yet"), /* @__PURE__ */ React.createElement(ReadinessTrajectoryChart, { trajectory: readinessTrajectory, todayKey: dayKey() }));
-    })(), (() => {
+    } }, "Not now"))), examSessions.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, margin: "2px 0 18px" } }, /* @__PURE__ */ React.createElement("div", { "aria-hidden": "true", style: { display: "flex", gap: 4 } }, examSessions.map((x) => /* @__PURE__ */ React.createElement("i", { key: x.id, style: { display: "block", width: 22, height: 6, borderRadius: 99, background: x.status === "done" ? T.teal : T.border } }))), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13, color: T.muted, fontFamily: T.mono } }, examSessions.length - pendingSessions.length, " of ", examSessions.length, " sessions done")), (() => {
       const suggestion = performanceConfidenceSuggestion(selectedExam);
       if (!suggestion) return null;
       return /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.amber}44`, borderRadius: 8, padding: "12px 14px", marginBottom: 20, fontSize: 12.5, color: T.text, lineHeight: 1.5 } }, "Your last real result on this came back ", /* @__PURE__ */ React.createElement("strong", { style: { color: T.amber } }, suggestion.suggested), ", below the ", /* @__PURE__ */ React.createElement("strong", null, suggestion.current), " you last said. Update your confidence?", /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
@@ -9387,56 +9542,28 @@ function StudlinPrep({ setActive = () => {
       /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: "16px 18px", marginBottom: 24, display: "flex", alignItems: "flex-start", gap: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, width: 38, height: 38, borderRadius: 8, background: mutedAlpha("1A"), display: "flex", alignItems: "center", justifyContent: "center", color: T.muted } }, Icon.brain), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "No study plan yet"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, lineHeight: 1.5, marginBottom: 14 } }, "Add material and Studlin will build one, or set it up yourself."), /* @__PURE__ */ React.createElement(Btn, { onClick: () => openBuildPlan(selectedExam), style: { padding: "7px 14px", fontSize: 12 } }, "Build study plan")))
     ) : /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 24 } }, examSessions.map((s) => {
       const isDone = s.status === "done";
-      const isMissed = !isDone && s.date < today;
-      const isNext = nextSession && s.id === nextSession.id;
-      const isExpanded = expandedSessionId === s.id;
-      const isEditing = editingSessionId === s.id;
-      const statusLabel = isDone ? "Done" : isMissed ? "Missed" : null;
-      const closeSession = () => {
-        setExpandedSessionId(null);
-        setEditingSessionId(null);
-      };
-      return /* @__PURE__ */ React.createElement("div", { key: s.id, style: { padding: "12px 2px", borderBottom: `1px solid ${T.border}`, opacity: isDone ? 0.55 : 1 } }, /* @__PURE__ */ React.createElement("div", { onClick: () => {
-        if (isDone) return;
-        setExpandedSessionId((id) => id === s.id ? null : s.id);
-        setEditingSessionId(null);
-      }, style: { display: "flex", justifyContent: "space-between", gap: 12, cursor: isDone ? "default" : "pointer" } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.faint, fontFamily: T.mono, textTransform: "uppercase", letterSpacing: "0.04em" } }, dayOfWeekLabel(s.date).slice(0, 3), " ", s.date.slice(5).replace("-", "/")), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: T.text, textDecoration: isDone ? "line-through" : "none", marginTop: 2 } }, s.title), s.notes && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, s.notes)), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: statusLabel === "Missed" ? T.red : T.muted, textAlign: "right", flexShrink: 0, whiteSpace: "nowrap" } }, statusLabel || (s.duration || 25) + "min \xB7 " + fmtRolloverClock(s.time))), !isDone && (s.reshuffleCount || 0) >= RESHUFFLE_ESCALATE_THRESHOLD && /* @__PURE__ */ React.createElement(
-        "button",
-        {
-          onClick: (e) => {
-            e.stopPropagation();
-            setExpandedSessionId(s.id);
-            setEditingSessionId(s.id);
-          },
-          style: { background: "none", border: "none", color: T.amber, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, marginTop: 4, textDecoration: "underline" }
-        },
-        "Moved ",
-        s.reshuffleCount,
-        "x \xB7 Lock in a time?"
-      ), (isNext || isExpanded) && !isDone && (isEditing ? (() => {
-        const conflict = findOverlapConflict(s.date, s.time, minutesToTime(timeToMinutes(s.time) + (s.duration || 25)), lsGet("events", []).filter((e) => e.id !== s.id), getWeeklyRoutine());
-        return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(Input, { value: s.title, onChange: (e) => patchSession(s.id, { title: e.target.value }), placeholder: "Session name", style: { fontSize: 12.5 } }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Input, { type: "date", value: s.date, onChange: (e) => patchSession(s.id, { date: e.target.value }), style: { width: 130 } }), /* @__PURE__ */ React.createElement(TimeInput, { value: s.time, onChange: (v) => patchSession(s.id, { time: v }) }), /* @__PURE__ */ React.createElement(NumField, { min: 5, max: 240, fallback: 25, value: s.duration || 25, onChange: (v) => patchSession(s.id, { duration: v }), style: { width: 56 } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: T.muted } }, "min"), confirmDeleteSessionId === s.id ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { onClick: () => {
-          deleteSession(s.id);
-          setConfirmDeleteSessionId(null);
-          closeSession();
-        }, style: { background: "none", border: "none", color: T.red, cursor: "pointer", fontSize: 11, fontWeight: 700, fontFamily: T.font, textDecoration: "underline" } }, "Confirm"), /* @__PURE__ */ React.createElement("button", { onClick: () => setConfirmDeleteSessionId(null), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 11, fontFamily: T.font, textDecoration: "underline" } }, "Cancel")) : /* @__PURE__ */ React.createElement("button", { onClick: () => setConfirmDeleteSessionId(s.id), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 11, fontFamily: T.font, textDecoration: "underline" } }, "Delete"), /* @__PURE__ */ React.createElement("button", { onClick: closeSession, style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 11, fontFamily: T.font, textDecoration: "underline" } }, "Done")), conflict && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.amber, background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 7, padding: "6px 9px", lineHeight: 1.4 } }, "This overlaps with ", /* @__PURE__ */ React.createElement("strong", null, conflict.title), " at ", (() => {
-          let h = Math.floor(conflict.start / 60), m = conflict.start % 60;
-          const ap = h >= 12 ? "PM" : "AM";
-          h = h % 12 || 12;
-          return h + ":" + String(m).padStart(2, "0") + " " + ap;
-        })(), "."));
-      })() : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, smartFeaturesOn() ? /* @__PURE__ */ React.createElement(BtnSm, { onClick: (e) => {
-        e.stopPropagation();
+      const isMissed = !isDone && !!s.date && s.date < today;
+      const dur = s.duration || 25;
+      const others = lsGet("events", []).filter((e) => e.id !== s.id);
+      const conflict = !isDone && s.date && s.time ? findOverlapConflict(s.date, s.time, minutesToTime(timeToMinutes(s.time) + dur), others, getWeeklyRoutine()) : null;
+      let shortenTo = null, moveTo = null;
+      if (conflict) {
+        const fit = conflict.start - timeToMinutes(s.time);
+        if (fit >= 15) shortenTo = Math.floor(fit / 5) * 5;
+        const slot = findLegalSlotOrNull(others, getWeeklyRoutine(), getSchedulePreferences(), s.date, minutesToTime(conflict.end), dur, selectedExam.date);
+        if (slot && slot.date === s.date && slot.time !== s.time) moveTo = slot.time;
+      }
+      const stepBtn = { border: "none", background: T.card, color: T.text, width: 28, height: 28, fontSize: 15, cursor: "pointer", fontFamily: T.font };
+      return /* @__PURE__ */ React.createElement("div", { key: s.id, style: { display: "grid", gridTemplateColumns: "60px minmax(0,1fr) auto", gap: 14, alignItems: "center", padding: "14px 16px", border: `1px solid ${isMissed ? T.red + "66" : T.border}`, borderRadius: 14, background: T.card, marginBottom: 10, opacity: isDone ? 0.6 : 1 } }, /* @__PURE__ */ React.createElement("div", { style: { borderRadius: 12, background: T.lookOn ? T.accentSoft : T.card2, textAlign: "center", padding: "8px 0" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", color: T.lookOn ? T.accentInk : T.muted } }, s.date ? dayOfWeekLabel(s.date).slice(0, 3).toUpperCase() : "TBD"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 21, fontWeight: 700, color: T.white, lineHeight: 1.1 } }, s.date ? parseInt(s.date.slice(8), 10) : "-")), /* @__PURE__ */ React.createElement("div", { style: { minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14.5, fontWeight: 600, color: T.text, textDecoration: isDone ? "line-through" : "none" } }, s.notes || s.title), isDone ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginTop: 4, fontFamily: T.mono } }, s.date ? dayOfWeekLabel(s.date).slice(0, 3) + " " + s.date.slice(5).replace("-", "/") : "", s.time ? " \xB7 " + fmtRolloverClock(s.time) : "") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 8 } }, /* @__PURE__ */ React.createElement(Input, { type: "date", value: s.date || "", onChange: (e) => patchSession(s.id, { date: e.target.value }), "aria-label": "Session date", style: { width: 132, fontSize: 12 } }), /* @__PURE__ */ React.createElement(TimeInput, { value: s.time || "", onChange: (v) => patchSession(s.id, { time: v }) }), /* @__PURE__ */ React.createElement("span", { style: { display: "inline-flex", alignItems: "center", border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" } }, /* @__PURE__ */ React.createElement("button", { type: "button", "aria-label": "Shorter", onClick: () => patchSession(s.id, { duration: Math.max(5, dur - 5) }), style: stepBtn }, "\u2212"), /* @__PURE__ */ React.createElement("span", { style: { minWidth: 58, textAlign: "center", fontFamily: T.mono, fontSize: 12.5, color: T.text } }, dur, " min"), /* @__PURE__ */ React.createElement("button", { type: "button", "aria-label": "Longer", onClick: () => patchSession(s.id, { duration: Math.min(240, dur + 5) }), style: stepBtn }, "+")), isMissed && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, fontWeight: 600, color: T.red } }, "Missed"), (!s.date || !s.time) && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.amber } }, "Pick a day and time"))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" } }, isDone ? /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11.5, fontWeight: 700, color: T.teal, background: T.teal + "14", border: `1px solid ${T.teal}44`, borderRadius: 99, padding: "3px 10px" } }, "Done") : /* @__PURE__ */ React.createElement(React.Fragment, null, smartFeaturesOn() && /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
         if (window._setTimerTask) window._setTimerTask(s);
-      } }, "Start") : /* @__PURE__ */ React.createElement(BtnSm, { onClick: (e) => {
-        e.stopPropagation();
+      } }, "Start"), /* @__PURE__ */ React.createElement(BtnSm, { variant: smartFeaturesOn() ? "ghost" : "lime", onClick: () => {
         lsSet("events", lsGet("events", []).map((x) => x.id === s.id ? { ...x, status: "done", completedAt: Date.now() } : x));
         onTaskCompleted(s.id);
         refresh();
-      } }, "Mark done"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: (e) => {
-        e.stopPropagation();
-        setEditingSessionId(s.id);
-      } }, "Move"))));
+      } }, "Mark done"), confirmDeleteSessionId === s.id ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+        deleteSession(s.id);
+        setConfirmDeleteSessionId(null);
+      }, style: { background: "none", border: "none", color: T.red, cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: T.font, textDecoration: "underline" } }, "Remove"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setConfirmDeleteSessionId(null), style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 12, fontFamily: T.font, textDecoration: "underline" } }, "Keep")) : /* @__PURE__ */ React.createElement("button", { type: "button", "aria-label": "Remove session", title: "Remove this session", onClick: () => setConfirmDeleteSessionId(s.id), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 18, lineHeight: 1, padding: "2px 6px" } }, "\xD7"))), conflict && /* @__PURE__ */ React.createElement("div", { style: { gridColumn: "1 / -1", display: "flex", gap: 10, alignItems: "flex-start", background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 10, padding: "10px 12px" } }, /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0 } }, /* @__PURE__ */ React.createElement(StudMascot, { size: 30, mood: "thinking", ...stuPalette() })), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, lineHeight: 1.5 } }, /* @__PURE__ */ React.createElement("strong", null, conflict.title), " is at ", fmtRolloverClock(minutesToTime(conflict.start)), " that day, so this overlaps.", /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 } }, shortenTo && /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => patchSession(s.id, { duration: shortenTo }) }, "Shorten to ", shortenTo, " min"), moveTo && /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => patchSession(s.id, { time: moveTo }) }, "Move to ", fmtRolloverClock(moveTo)), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => showOnCalendar([s.id], s) }, "Show me on the calendar")))));
     }), /* @__PURE__ */ React.createElement("div", { style: { padding: "12px 2px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.amber } }, selectedExam.title), examTimeEditOpen ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, flexShrink: 0 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, color: T.amber, fontFamily: T.mono } }, dayOfWeekLabel(selectedExam.date).slice(0, 3), " ", selectedExam.date.slice(5).replace("-", "/")), /* @__PURE__ */ React.createElement(TimeInput, { value: selectedExam.time && !selectedExam.timeUnconfirmed ? selectedExam.time : "09:00", onChange: (v) => {
       patchExam(selectedExam.id, { time: v, timeUnconfirmed: void 0 });
       refresh();
@@ -9450,7 +9577,7 @@ function StudlinPrep({ setActive = () => {
       // one once they actually know it -- clearing
       // timeUnconfirmed the moment they do.
       /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setExamTimeEditOpen(true), title: "Set the exam's time", style: { background: "none", border: "none", color: T.amber, fontFamily: T.mono, fontSize: 11.5, cursor: "pointer", padding: 0, flexShrink: 0, textDecoration: selectedExam.timeUnconfirmed ? "underline" : "none" } }, dayOfWeekLabel(selectedExam.date).slice(0, 3), " ", selectedExam.date.slice(5).replace("-", "/"), selectedExam.time && !selectedExam.timeUnconfirmed ? " \xB7 " + fmtRolloverClock(selectedExam.time) : " \xB7 time TBD")
-    )), hasUnfocusedGenericSessions && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: addFocusToExisting, disabled: sessionScheduleLoading }, sessionScheduleLoading ? "Reading your material\u2026" : "Add study focus from your material"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.faint, marginTop: 4 } }, 'Give your existing sessions a specific "what to study" line, grounded in the material below.')), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addOneSession, style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, marginTop: 10, textDecoration: "underline" } }, "+ Add a session")), examSessions.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 16 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => openBuildPlan(selectedExam) }, "Redo study plan"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.muted, marginTop: 6 } }, "Sessions calibrated to your confidence, plus flashcards and a practice exam if you want them."), genMsg && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginTop: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11.5, color: genMsg.startsWith("\u2713") ? T.teal : T.red } }, genMsg), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setGenMsg(""), style: { background: "none", border: "none", color: T.faint, fontSize: 11, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, "Hide"))), (deck || examSessions.length > 0) && /* @__PURE__ */ React.createElement(Card, { style: { padding: 20, marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: T.lookOn ? T.hdrText : T.white, marginBottom: 10, ...T.lookOn ? { background: T.hdrBg, padding: "6px 10px", borderRadius: 6 } : {} } }, "Flashcards"), !deck ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "No deck yet. Generate one from material above.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text } }, deck.name, " \xB7 ", deck.count, " cards"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexShrink: 0, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
+    )), hasUnfocusedGenericSessions && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: addFocusToExisting, disabled: sessionScheduleLoading }, sessionScheduleLoading ? "Reading your material\u2026" : "Add study focus from your material"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.faint, marginTop: 4 } }, 'Give your existing sessions a specific "what to study" line, grounded in the material below.')), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addOneSession, style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, marginTop: 10, textDecoration: "underline" } }, "+ Add a session")), examSessions.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 16 } }, genMsg && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginTop: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11.5, color: genMsg.startsWith("\u2713") ? T.teal : T.red } }, genMsg), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setGenMsg(""), style: { background: "none", border: "none", color: T.faint, fontSize: 11, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, "Hide"))), (deck || examSessions.length > 0) && /* @__PURE__ */ React.createElement(Card, { style: { padding: 20, marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: T.lookOn ? T.hdrText : T.white, marginBottom: 10, ...T.lookOn ? { background: T.hdrBg, padding: "6px 10px", borderRadius: 6 } : {} } }, "Flashcards"), !deck ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "No deck yet. Generate one from material above.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text } }, deck.name, " \xB7 ", deck.count, " cards"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexShrink: 0, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
       lsSet("openDeckId", deck.id);
       lsSet("openDeckAction", "study");
       setFlashcardsOverlay(true);
@@ -9520,7 +9647,11 @@ function StudlinPrep({ setActive = () => {
       width: 520,
       footer: buildPlanStep === "preview" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeBuildPlan }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: commitBuildPlan, disabled: buildPlanLoading }, buildPlanLoading ? "Building\u2026" : "Confirm plan")) : buildPlanStep === "manual" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeBuildPlan }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: commitManualSessions, disabled: manualSessionRows.length === 0 }, manualSessionRows.length === 0 ? "Add sessions" : "Add " + manualSessionRows.length + " session" + (manualSessionRows.length !== 1 ? "s" : ""))) : buildPlanStep === "confidence" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeBuildPlan }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: generatePreview }, "Generate Plan")) : /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeBuildPlan }, "Cancel")
     },
-    buildPlanExam && buildPlanStep === "choice" && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, lineHeight: 1.6, marginBottom: 18 } }, "Studlin can build the plan for you. Or you can lay it out yourself."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement(Btn, { onClick: () => setBuildPlanStep("confidence"), style: { width: "100%", justifyContent: "center" } }, "Studlin generates"), /* @__PURE__ */ React.createElement(Btn, { variant: "ghost", onClick: openManualSessions, style: { width: "100%", justifyContent: "center" } }, "Create manually"))),
+    buildPlanExam && buildPlanStep === "choice" && (() => {
+      const daysLeft = Math.round((/* @__PURE__ */ new Date(buildPlanExam.date + "T12:00:00") - /* @__PURE__ */ new Date(dayKey() + "T12:00:00")) / 864e5);
+      const optStyle = { textAlign: "left", width: "100%", border: `1.5px solid ${T.border}`, background: T.card, borderRadius: 14, padding: "16px 18px", cursor: "pointer", fontFamily: T.font, color: T.text };
+      return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, marginBottom: 16 } }, niceDate(buildPlanExam.date), daysLeft >= 0 ? " \xB7 " + (daysLeft === 0 ? "today" : daysLeft + " day" + (daysLeft !== 1 ? "s" : "") + " left") : ""), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: generatePreview, style: { ...optStyle, borderColor: T.lime, background: T.lookOn ? T.accentSoft : T.lime + "10" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 15, fontWeight: 700, color: T.white } }, "Let Stu plan it"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginTop: 3 } }, "He finds free time and spreads it out. You can change anything after.")), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: openManualSessions, style: optStyle }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 15, fontWeight: 700, color: T.white } }, "I'll pick the days"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginTop: 3 } }, "Tap the days you want. Stu suggests a free time for each."))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setBuildPlanStep("confidence"), style: { background: "none", border: "none", padding: 0, marginTop: 16, color: T.muted, fontSize: 12.5, fontFamily: T.font, cursor: "pointer", textDecoration: "underline" } }, "Add notes, flashcards or a practice exam first"));
+    })(),
     buildPlanExam && buildPlanStep === "manual" && (() => {
       const today = dayKey();
       const examKey = buildPlanExam.date;
@@ -20799,14 +20930,14 @@ function CalendarTab({ setActive = () => {
     if (!manualPlacement) return;
     const prefs = getSchedulePreferences();
     const routines2 = getWeeklyRoutine();
-    const duration = ATTACK_BLOCK_DEFAULT_PROBE_MINS;
+    const duration = manualPlacement.kind === "projectStep" ? 45 : ATTACK_BLOCK_DEFAULT_PROBE_MINS;
     const slot = findReliableSlotFor(events, routines2, prefs, dayKey(), prefs.workStartTime, duration, manualPlacement.deadline || null, 500);
     if (!slot) {
       setDeadlineToast("Couldn't find any open time for this before the deadline.");
       setTimeout(() => setDeadlineToast(""), 2800);
       return;
     }
-    const kindTitle = manualPlacement.kind === "attack" ? manualPlacement.title : manualPlacement.kind === "deck" ? "Review: " + manualPlacement.title : "Practice Exam: " + manualPlacement.title;
+    const kindTitle = manualPlacement.kind === "attack" || manualPlacement.kind === "projectStep" ? manualPlacement.title : manualPlacement.kind === "deck" ? "Review: " + manualPlacement.title : "Practice Exam: " + manualPlacement.title;
     const task = {
       id: String(Date.now() + Math.random() * 1e3),
       title: kindTitle,
@@ -20824,8 +20955,8 @@ function CalendarTab({ setActive = () => {
       completedAt: null,
       userPinned: true,
       placementReason: slot.reason || null,
-      ...manualPlacement.kind === "attack" ? {} : manualPlacement.kind === "deck" ? { deckId: manualPlacement.refId } : { practiceExamId: manualPlacement.refId },
-      ...manualPlacement.dueEventId ? { dueEventId: manualPlacement.dueEventId, isExamPrepSession: manualPlacement.kind !== "attack" } : {}
+      ...manualPlacement.kind === "attack" ? {} : manualPlacement.kind === "projectStep" ? { stepId: manualPlacement.refId, projectStep: true, ...manualPlacement.courseId ? { courseId: manualPlacement.courseId } : {} } : manualPlacement.kind === "deck" ? { deckId: manualPlacement.refId } : { practiceExamId: manualPlacement.refId },
+      ...manualPlacement.dueEventId ? { dueEventId: manualPlacement.dueEventId, isExamPrepSession: manualPlacement.kind !== "attack" && manualPlacement.kind !== "projectStep" } : {}
     };
     const next = events.concat([task]);
     setEvents2(next);
@@ -20833,9 +20964,21 @@ function CalendarTab({ setActive = () => {
     setManualPlacementCount((c) => c + 1);
     setSelDay(task.date);
   };
+  const projectStepAutoPlacedRef = useRef(false);
+  useEffect(() => {
+    if (!manualPlacement || manualPlacement.kind !== "projectStep" || projectStepAutoPlacedRef.current) return;
+    projectStepAutoPlacedRef.current = true;
+    addManualPlacementSession();
+  }, [manualPlacement]);
   const finishManualPlacement = () => {
+    const back = manualPlacement && manualPlacement.kind === "projectStep" ? manualPlacement.returnProjectId : null;
+    projectStepAutoPlacedRef.current = false;
     setManualPlacement(null);
     setManualPlacementCount(0);
+    if (back) {
+      lsSet("openProjectId", back);
+      setActive("prep");
+    }
   };
   const confirmWeekBalance = () => {
     if (!weekBalancePlan || weekBalancePlan.moves.length === 0) {
@@ -23177,7 +23320,7 @@ Examples:
   ].map((item) => /* @__PURE__ */ React.createElement("div", { key: item.label, onClick: item.onClick, style: { display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 14px", cursor: "pointer" }, onMouseEnter: (e) => e.currentTarget.style.background = T.card2, onMouseLeave: (e) => e.currentTarget.style.background = "transparent" }, /* @__PURE__ */ React.createElement("span", { style: { width: 16, color: item.danger ? T.red : T.muted, display: "flex", marginTop: 2 } }, item.icon), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: item.danger ? T.red : T.text } }, item.label), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 1 } }, item.sub))))))), /* @__PURE__ */ React.createElement("div", { style: { position: "relative" }, ref: addTaskBtnRef }, /* @__PURE__ */ React.createElement("button", { onClick: () => openNewAI(selDay), title: "Add", style: { width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", background: T.lime, border: "none", borderRadius: 4, color: T.lookOn ? lookTextOnFill(T.lime) : T.ink, cursor: "pointer" } }, Icon.plus)))), editRoutineMode && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "9px 14px", background: T.lime + "10", border: `1px solid ${T.lime}33`, borderRadius: 6, marginBottom: 14, fontSize: 12.5, color: T.text } }, /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, "Editing your Weekly Routine. One-off tasks are dimmed. Click a routine block to edit it, or hover and tap \xD7 to delete it everywhere it repeats."), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => {
     setEditRoutineMode(false);
     setHoveredRoutineId(null);
-  } }, "Done")), manualPlacement && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "9px 14px", background: T.lime + "10", border: `1px solid ${T.lime}33`, borderRadius: 6, marginBottom: 14, fontSize: 12.5, color: T.text } }, /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, "Placing sessions for ", /* @__PURE__ */ React.createElement("strong", null, manualPlacement.title), ". Drag each one to where you want it, resize to change duration.", manualPlacementCount > 0 ? " " + manualPlacementCount + " placed so far." : ""), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: addManualPlacementSession }, "+ Add a session"), /* @__PURE__ */ React.createElement(BtnSm, { onClick: finishManualPlacement }, "Done")), calView === "monthly" && /* @__PURE__ */ React.createElement(Card, { style: { padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 3 } }, ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d, i) => /* @__PURE__ */ React.createElement("div", { key: i, "data-month-hdr": "1", style: { fontSize: 10, fontWeight: T.lookOn ? 700 : 600, color: T.hdrText, textAlign: "center", padding: "6px 0", letterSpacing: "0.05em", ...T.lookOn ? { background: T.hdrBg, borderRadius: 6 } : null } }, d)), (() => {
+  } }, "Done")), manualPlacement && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "9px 14px", background: T.lime + "10", border: `1px solid ${T.lime}33`, borderRadius: 6, marginBottom: 14, fontSize: 12.5, color: T.text } }, manualPlacement.kind === "projectStep" ? /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, "Drag ", /* @__PURE__ */ React.createElement("strong", null, manualPlacement.title), " into a free gap in your calendar. Resize it to change the length, then press Done.") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, "Placing sessions for ", /* @__PURE__ */ React.createElement("strong", null, manualPlacement.title), ". Drag each one to where you want it, resize to change duration.", manualPlacementCount > 0 ? " " + manualPlacementCount + " placed so far." : ""), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: addManualPlacementSession }, "+ Add a session")), /* @__PURE__ */ React.createElement(BtnSm, { onClick: finishManualPlacement }, "Done")), calView === "monthly" && /* @__PURE__ */ React.createElement(Card, { style: { padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 3 } }, ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d, i) => /* @__PURE__ */ React.createElement("div", { key: i, "data-month-hdr": "1", style: { fontSize: 10, fontWeight: T.lookOn ? 700 : 600, color: T.hdrText, textAlign: "center", padding: "6px 0", letterSpacing: "0.05em", ...T.lookOn ? { background: T.hdrBg, borderRadius: 6 } : null } }, d)), (() => {
     const monthHeavyDays = computeMonthHeavyDays(cells.filter((c) => !c.out).map((c) => ({ key: c.key, minutes: dayWorkloadMinutes((byDay[c.key] || []).filter((ev) => ev.kind !== "free period")) })));
     return cells.map((c, i) => {
       const evs = (byDay[c.key] || []).filter((ev) => ev.kind !== "free period");
@@ -28145,7 +28288,11 @@ function App() {
     calendarSetEventsRef.current = fn;
   }, registerSkipSetEvents: (fn) => {
     calendarSkipSetEventsRef.current = fn;
-  }, onTaskCompleted: handleTaskCompleted, catchUpPending: !!catchUpBanner, onWizardOpenChange: setCalendarWizardOpen, jumpToSessionOnMount: pendingJumpSession, onJumpSessionConsumed: () => setPendingJumpSession(null), highlightDraftIdOnMount: pendingHighlightDraftId, onHighlightDraftConsumed: () => setPendingHighlightDraftId(null), setPricingOpen, setTheme }) : active === "notes" ? /* @__PURE__ */ React.createElement(Notes, { setActive }) : active === "friends" ? /* @__PURE__ */ React.createElement(FriendsChat, { onFriendRequestSent: askNotifIfNeeded, onActiveChatChange: setOpenChatRoomId, initialTarget: pendingChatTarget, onInitialTargetConsumed: () => setPendingChatTarget(null) }) : active === "profile" ? /* @__PURE__ */ React.createElement(Profile, { setActive, seriousMode }) : active === "prep" ? /* @__PURE__ */ React.createElement(StudlinPrep, { setActive, setDetailEventId, onStartPrepNow: acceptPrepPrompt, onDeclinePrep: declinePrepPrompt, onTaskCompleted: handleTaskCompleted }) : active === "flashcards" ? /* @__PURE__ */ React.createElement(Flashcards, { setActive }) : ActivePage ? /* @__PURE__ */ React.createElement(ActivePage, null) : null)), rescheduleTask && /* @__PURE__ */ React.createElement(RescheduleModal, { task: rescheduleTask, events: lsGet("events", []), onClose: () => setRescheduleTask(null), onManual: () => {
+  }, onTaskCompleted: handleTaskCompleted, catchUpPending: !!catchUpBanner, onWizardOpenChange: setCalendarWizardOpen, jumpToSessionOnMount: pendingJumpSession, onJumpSessionConsumed: () => setPendingJumpSession(null), highlightDraftIdOnMount: pendingHighlightDraftId, onHighlightDraftConsumed: () => setPendingHighlightDraftId(null), setPricingOpen, setTheme }) : active === "notes" ? /* @__PURE__ */ React.createElement(Notes, { setActive }) : active === "friends" ? /* @__PURE__ */ React.createElement(FriendsChat, { onFriendRequestSent: askNotifIfNeeded, onActiveChatChange: setOpenChatRoomId, initialTarget: pendingChatTarget, onInitialTargetConsumed: () => setPendingChatTarget(null) }) : active === "profile" ? /* @__PURE__ */ React.createElement(Profile, { setActive, seriousMode }) : active === "prep" ? /* @__PURE__ */ React.createElement(StudlinPrep, { setActive, setDetailEventId, onStartPrepNow: acceptPrepPrompt, onDeclinePrep: declinePrepPrompt, onTaskCompleted: handleTaskCompleted, onShowOnCalendar: (ids, first) => {
+    lsSet("calendarHighlightIds", { ids, setAt: Date.now() });
+    setPendingJumpSession(first || null);
+    setActive("calendar");
+  } }) : active === "flashcards" ? /* @__PURE__ */ React.createElement(Flashcards, { setActive }) : ActivePage ? /* @__PURE__ */ React.createElement(ActivePage, null) : null)), rescheduleTask && /* @__PURE__ */ React.createElement(RescheduleModal, { task: rescheduleTask, events: lsGet("events", []), onClose: () => setRescheduleTask(null), onManual: () => {
     setActive("calendar");
     setPendingJumpSession(rescheduleTask);
   }, commit: (next, evictedCount) => {

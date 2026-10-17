@@ -12434,7 +12434,7 @@ async function extractFileText(file,onProgress){
 // elsewhere (generateFlashcardsFromText/generateQuizFromText,
 // linkDeckToExamStorage, buildSpacedSessionPreviews, computeExamReadiness)
 // instead of inventing a parallel system.
-function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()=>{},onDeclinePrep=()=>{},onTaskCompleted=()=>{}}={}){
+function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()=>{},onDeclinePrep=()=>{},onTaskCompleted=()=>{},onShowOnCalendar=null}={}){
   const [tab,setTab]=useState("exams"); // exams | assignments | projects | flashcards | practiceExams
   // 2026-09-11: first-visit interactive guide (see shouldShowPrepGuide's
   // own comment) -- points at the first real exam row rather than showing
@@ -12543,7 +12543,17 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
   const [sessionScheduleLoading,setSessionScheduleLoading]=useState(false);
   // Phase 9b: hover-expand on the behind/on-track pill (see the exam
   // detail view below) -- explains why, not just the status.
-  const [readinessExpanded,setReadinessExpanded]=useState(false);
+  const [hoverExamId,setHoverExamId]=useState(null); // row whose Create plan / View plan button is showing
+  const [selectedProjectId,setSelectedProjectId]=useState(null); // open project page
+  const [projPopStepId,setProjPopStepId]=useState(null); // step whose Schedule options are open
+  const [projNewStep,setProjNewStep]=useState("");
+  // Coming back from the calendar after "Pick my own time" -> straight to that project.
+  useEffect(()=>{
+    const q=lsGet("openProjectId",null);
+    if(!q)return;
+    lsSet("openProjectId",null);
+    setTab("projects");setSelectedProjectId(q);
+  },[]);
   // ── Build study plan (Prep redesign Part C) ── the opt-in trigger that
   // replaces auto-generation at exam creation. buildPlanExamId is the exam
   // this modal is open for; buildPlanStep walks choice (no material yet) ->
@@ -14056,7 +14066,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
               // needed). Clicking the name is the only thing that navigates
               // into the exam detail page below (unchanged/not rebuilt).
               const cellSelStyle={width:"100%",background:"transparent",border:"none",color:T.text,fontSize:10.5,fontFamily:T.font,outline:"none",cursor:"pointer",padding:"2px 0"};
-              const gridCols="minmax(120px,1.6fr) 84px 64px 68px 104px 56px 70px 70px 120px 76px";
+              const gridCols="minmax(120px,1.6fr) 84px 64px 68px 104px 56px 70px 70px 100px 104px";
               return (
               <div>
                 {visibleExams.length===0&&(
@@ -14066,7 +14076,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                 <div style={{overflowX:"auto",border:`1px solid ${T.border}`,borderRadius:8}}>
                   <div style={{minWidth:760}}>
                     <div style={{display:"grid",gridTemplateColumns:gridCols,gap:8,padding:"7px 10px",borderBottom:`1px solid ${T.border}`,background:T.card2}}>
-                      {["Name","Class","Type","Flex","Due","Days","Urgency","Difficulty","Sessions","Prep"].map((h,i)=>(
+                      {["Name","Class","Type","Flex","Due","Days","Urgency","Difficulty","Sessions",""].map((h,i)=>(
                         <div key={h+i} style={{fontSize:9,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>{h}</div>
                       ))}
                     </div>
@@ -14079,7 +14089,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                       const sessionsLabel=examSessionsForEx.length===0?"no plan yet":pendingSessionsForEx.length+" left";
                       const isFlexible=ex.sessionsMovable!==false;
                       return (
-                        <div key={ex.id} ref={exIdx===0?firstExamRowRef:null} style={{display:"grid",gridTemplateColumns:gridCols,gap:8,padding:"7px 10px",borderBottom:`1px solid ${T.border}`,alignItems:"center"}}>
+                        <div key={ex.id} ref={exIdx===0?firstExamRowRef:null} onMouseEnter={()=>setHoverExamId(ex.id)} onMouseLeave={()=>setHoverExamId(id=>id===ex.id?null:id)} onFocus={()=>setHoverExamId(ex.id)} style={{display:"grid",gridTemplateColumns:gridCols,gap:8,padding:"7px 10px",borderBottom:`1px solid ${T.border}`,alignItems:"center",background:hoverExamId===ex.id?(T.lookOn?T.accentSoft:T.card2):"transparent"}}>
                           <div onClick={()=>viewPlan(ex)} style={{fontSize:11.5,fontWeight:600,color:T.white,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={ex.title}>{ex.title}</div>
                           <div style={{fontSize:10.5,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ex.subject||"—"}</div>
                           {/* Was the legacy Quiz/Major binary, a different
@@ -14117,16 +14127,16 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                           <div onClick={()=>viewPlan(ex)} style={{fontSize:10.5,color:T.muted,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title="Click to open the study plan">
                             {sessionsLabel}
                           </div>
+                          {/* Hover (or focus, or any touch screen) reveals the one thing
+                              you do from this row: build a plan, or open the one you have. */}
                           {(()=>{
-                            const prep=computePreparedness(ex,lsGet("events",[]),today);
-                            if(!prep||prep.score==null)return <div style={{fontSize:10.5,color:T.faint}}>—</div>;
-                            const barColor=prep.score>=70?T.lime:prep.score<40?T.red:T.amber;
+                            const has=examSessionsForEx.length>0;
+                            const canHover=typeof window!=="undefined"&&window.matchMedia?window.matchMedia("(hover: hover)").matches:true;
+                            const show=!canHover||hoverExamId===ex.id;
                             return (
-                              <div style={{display:"flex",alignItems:"center",gap:5}} title="Preparedness">
-                                <div style={{width:26,height:4,borderRadius:99,background:T.card2,overflow:"hidden",flexShrink:0}}>
-                                  <div style={{height:"100%",width:prep.score+"%",background:barColor,borderRadius:99}} />
-                                </div>
-                                <span style={{fontSize:9.5,color:T.muted}}>{prep.score}%</span>
+                              <div style={{display:"flex",justifyContent:"flex-end"}}>
+                                <BtnSm variant={has?"ghost":"lime"} onClick={()=>{if(has)viewPlan(ex);else openBuildPlan(ex);}}
+                                  style={{opacity:show?1:0,transition:"opacity 0.12s",whiteSpace:"nowrap"}}>{has?"View plan":"Create plan"}</BtnSm>
                               </div>
                             );
                           })()}
@@ -14597,6 +14607,146 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
       {tab==="projects"&&(()=>{
         const today=dayKey();
         const allProjects=upcomingProjects();
+        // 2026-10-17: a real project page (was: clicking a project opened the big edit
+        // modal, where the checklist was awkward to change). Steps are editable in
+        // place, and any step can go on the calendar: Stu offers free times, or the
+        // student drags a block into a gap themselves and presses Done.
+        const renderProjectPage=(p)=>{
+          const hasPhases=!!(p.phases&&p.phases.length>0);
+          const rawSteps=hasPhases?p.phases:(p.outline||[]);
+          const items=rawSteps.map((r,i)=>hasPhases
+            ?{id:r.id||null,text:r.name||"",done:r.status==="done",raw:r,idx:i}
+            :{id:r.id||null,text:r.text||"",done:!!r.done,raw:r,idx:i,dueDate:r.dueDate||""});
+          const allEvents=lsGet("events",[]);
+          const blocks=allEvents.filter(e=>e.dueEventId===p.id&&e.stepId);
+          const blockFor=(it)=>it.id?(blocks.find(b=>b.stepId===it.id&&b.status!=="done")||null):null;
+          const mkId=()=>"st-"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+          const write=(nextRaw)=>patchExam(p.id,hasPhases?{phases:nextRaw}:{outline:nextRaw});
+          const patchStep=(it,patch)=>write(rawSteps.map((r,i)=>i===it.idx?{...r,...patch}:r));
+          const toggleStep=(it)=>patchStep(it,hasPhases?{status:it.done?"pending":"done"}:{done:!it.done});
+          const renameStep=(it,text)=>{const t=(text||"").trim();if(!t||t===it.text)return;patchStep(it,hasPhases?{name:t}:{text:t});};
+          const addStep=()=>{
+            const t=projNewStep.trim();
+            if(!t)return;
+            write(rawSteps.concat([hasPhases?{name:t,status:"pending",id:mkId()}:{text:t,done:false,id:mkId()}]));
+            setProjNewStep("");
+          };
+          const removeStep=(it)=>{
+            // A project is only a project while it has at least one step (isProjectMarker).
+            if(rawSteps.length<=1){setSyllabusToast("A project needs at least one step.");setTimeout(()=>setSyllabusToast(""),2600);return;}
+            const b=it.id?blocks.filter(x=>x.stepId===it.id&&x.status!=="done").map(x=>x.id):[];
+            if(b.length>0)lsSet("events",lsGet("events",[]).filter(e=>!b.includes(e.id)));
+            write(rawSteps.filter((_,i)=>i!==it.idx));
+          };
+          const ensureStepId=(it)=>{
+            if(it.id)return it.id;
+            const id=mkId();
+            patchStep(it,{id});
+            return id;
+          };
+          // Up to three free times, one per day, from today until the day before it's due.
+          const suggestSlots=()=>{
+            const events=lsGet("events",[]),routines=getWeeklyRoutine(),prefs=getSchedulePreferences();
+            const out=[];
+            const lastKey=p.date&&p.date>dayKey()?(()=>{const d=new Date(p.date+"T12:00:00");d.setDate(d.getDate()-1);return dayKey(d);})():dayKey();
+            for(let i=0;i<14&&out.length<3;i++){
+              const d=new Date();d.setDate(d.getDate()+i);
+              const k=dayKey(d);
+              if(k>lastKey)break;
+              const win=getWorkWindowMinsFor(prefs,k);
+              for(const t of [Math.max(win.start,16*60),win.start]){
+                const slot=findLegalSlotOrNull(events,routines,prefs,k,minutesToTime(t),45,p.date||null);
+                if(slot&&slot.date===k){out.push(slot);break;}
+              }
+            }
+            return out;
+          };
+          const scheduleStep=(it,slot)=>{
+            const stepId=ensureStepId(it);
+            const ev={id:"step-"+p.id+"-"+Date.now(),title:it.text,date:slot.date,time:slot.time,subject:p.subject||"",courseId:p.courseId,
+              kind:"study block",notes:"",priority:p.priority??500,difficulty:p.difficulty??500,deadline:p.date||null,duration:45,
+              status:"pending",timeSpent:0,completedAt:null,dueEventId:p.id,stepId,projectStep:true};
+            lsSet("events",lsGet("events",[]).concat([ev]));
+            setProjPopStepId(null);
+            refresh();
+            setSyllabusToast("Scheduled \""+it.text+"\" for "+dayOfWeekLabel(slot.date).slice(0,3)+" "+fmtRolloverClock(slot.time)+".");
+            setTimeout(()=>setSyllabusToast(""),3200);
+          };
+          const unscheduleStep=(blk)=>{lsSet("events",lsGet("events",[]).filter(e=>e.id!==blk.id));refresh();};
+          // "Pick my own time": the calendar opens with a block for this step already
+          // on it. Drag it into a gap, resize it, then press Done to come back here.
+          const pickOwnTime=(it)=>{
+            const stepId=ensureStepId(it);
+            lsSet("openManualPlacement",{kind:"projectStep",refId:stepId,title:it.text,subject:p.subject||"",deadline:p.date||null,dueEventId:p.id,returnProjectId:p.id,courseId:p.courseId||null});
+            setActive("calendar");
+          };
+          const doneCount=items.filter(i=>i.done).length;
+          const daysUntil=p.date?Math.round((new Date(p.date+"T12:00:00")-new Date(today+"T12:00:00"))/86400000):null;
+          return (
+            <div>
+              <button onClick={()=>{setSelectedProjectId(null);setProjPopStepId(null);}} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,marginBottom:14}}>← All projects</button>
+              <div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"flex-start",flexWrap:"wrap",marginBottom:6}}>
+                <div style={{minWidth:0}}>
+                  <div style={{fontSize:24,fontWeight:800,color:T.white,letterSpacing:"-0.01em",lineHeight:1.2}}>{p.title}</div>
+                  <div style={{fontSize:12.5,color:T.muted,marginTop:4}}>{[p.subject,p.date?"Due "+niceDate(p.date):"No due date",daysUntil!=null&&daysUntil>=0?(daysUntil===0?"today":daysUntil+" day"+(daysUntil!==1?"s":"")+" left"):null].filter(Boolean).join(" · ")}</div>
+                </div>
+                <BtnSm variant="ghost" onClick={()=>setDetailEventId(p.id)}>Edit details</BtnSm>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:12,margin:"14px 0 16px"}}>
+                <div aria-hidden="true" style={{display:"flex",gap:4}}>
+                  {items.map((x,i)=><i key={i} style={{display:"block",width:22,height:6,borderRadius:99,background:x.done?T.teal:T.border}} />)}
+                </div>
+                <span style={{fontSize:13,color:T.muted,fontFamily:T.mono}}>{doneCount} of {items.length} {hasPhases?"phases":"steps"} done</span>
+              </div>
+              {items.map(it=>{
+                const blk=blockFor(it);
+                const popOpen=projPopStepId===(it.id||("idx-"+it.idx));
+                return (
+                  <div key={(it.id||"i")+"-"+it.idx} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,flexWrap:"wrap",background:T.card}}>
+                    <button type="button" aria-label={it.done?"Mark not done":"Mark done"} aria-pressed={it.done} onClick={()=>toggleStep(it)}
+                      style={{width:22,height:22,borderRadius:"50%",border:`1.5px solid ${it.done?T.teal:T.faint}`,background:it.done?T.teal:"transparent",color:"#fff",fontSize:12,cursor:"pointer",padding:0,flexShrink:0,display:"grid",placeItems:"center"}}>{it.done?"✓":""}</button>
+                    <input key={it.text} defaultValue={it.text} aria-label="Step" onBlur={e=>renameStep(it,e.target.value)} onKeyDown={e=>{if(e.key==="Enter")e.target.blur();}}
+                      style={{flex:1,minWidth:140,border:"none",borderBottom:"1px solid transparent",background:"transparent",color:it.done?T.faint:T.text,textDecoration:it.done?"line-through":"none",fontSize:14,fontFamily:T.font,padding:"4px 0",outline:"none"}}
+                      onFocus={e=>{e.target.style.borderBottomColor=T.border;}} />
+                    {blk?(
+                      <span style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:12,fontWeight:600,color:T.teal,background:T.teal+"14",border:`1px solid ${T.teal}44`,borderRadius:99,padding:"3px 4px 3px 10px"}}>
+                        {dayOfWeekLabel(blk.date).slice(0,3)} {blk.date.slice(5).replace("-","/")}, {fmtRolloverClock(blk.time)}
+                        <button type="button" aria-label="Take off my calendar" title="Take off my calendar" onClick={()=>unscheduleStep(blk)} style={{background:"none",border:"none",color:T.teal,cursor:"pointer",fontSize:14,lineHeight:1,padding:"0 4px"}}>&times;</button>
+                      </span>
+                    ):(!it.done&&(
+                      <BtnSm variant="ghost" onClick={()=>setProjPopStepId(popOpen?null:(it.id||("idx-"+it.idx)))}>Schedule</BtnSm>
+                    ))}
+                    <button type="button" aria-label="Remove step" title="Remove step" onClick={()=>removeStep(it)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:18,lineHeight:1,padding:"2px 6px"}}>&times;</button>
+                    {popOpen&&(()=>{
+                      const slots=suggestSlots();
+                      return (
+                        <div style={{flexBasis:"100%",display:"flex",alignItems:"flex-start",gap:10,background:T.lookOn?T.accentSoft:T.card2,borderRadius:10,padding:"10px 12px"}}>
+                          <div style={{flexShrink:0}}><StudMascot size={28} mood="happy" {...stuPalette()} /></div>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:12.5,color:T.text,marginBottom:8}}>{slots.length>0?"Free times I found:":"I couldn't find a free time before the due date. You can place it yourself."}</div>
+                            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                              {slots.map(sl=>(
+                                <BtnSm key={sl.date+sl.time} onClick={()=>scheduleStep(it,sl)}>{dayOfWeekLabel(sl.date).slice(0,3)} {sl.date.slice(5).replace("-","/")}, {fmtRolloverClock(sl.time)}</BtnSm>
+                              ))}
+                              <BtnSm variant="ghost" onClick={()=>pickOwnTime(it)}>Pick my own time</BtnSm>
+                              <BtnSm variant="ghost" onClick={()=>setProjPopStepId(null)}>Cancel</BtnSm>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                );
+              })}
+              <div style={{display:"flex",gap:8,marginTop:6}}>
+                <Input value={projNewStep} onChange={e=>setProjNewStep(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addStep();}} placeholder={hasPhases?"Add a phase":"Add a step"} aria-label="Add a step" style={{flex:1}} />
+                <Btn onClick={addStep} disabled={!projNewStep.trim()}>Add</Btn>
+              </div>
+            </div>
+          );
+        };
+        const selProject=selectedProjectId?allProjects.find(x=>x.id===selectedProjectId):null;
+        if(selProject)return renderProjectPage(selProject);
         const projectClasses=[...new Set(allProjects.map(p=>p.subject).filter(Boolean))];
         const projects=allProjects.filter(p=>{
           if(projectGroupFilter&&itemLifecycleState(p,today)!==projectGroupFilter)return false;
@@ -14643,7 +14793,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                   const activePhase=hasPhases?steps.find(s=>s.status==="active"):null;
                   return (
                     <div key={p.id} style={{display:"grid",gridTemplateColumns:gridCols,gap:8,padding:"7px 10px",borderBottom:`1px solid ${T.border}`,alignItems:"center"}}>
-                      <div onClick={()=>setDetailEventId(p.id)} style={{fontSize:11.5,fontWeight:600,color:T.white,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={p.title}>{p.title}</div>
+                      <div onClick={()=>setSelectedProjectId(p.id)} style={{fontSize:11.5,fontWeight:600,color:T.white,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={p.title}>{p.title}</div>
                       <div style={{fontSize:10.5,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.subject||"—"}</div>
                       <input type="date" value={p.date||""} onChange={e=>e.target.value&&patchExam(p.id,{date:e.target.value,checklist:false,time:p.time||"23:59"})} style={{...cellSelStyle}} />
                       <div style={{fontSize:10.5,color:daysUntil==null?T.amber:daysUntil<=1?T.red:T.muted,fontStyle:daysUntil==null?"italic":"normal"}}>{daysLabel}</div>
@@ -14651,7 +14801,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                         options={[{value:"low",label:"Low"},{value:"medium",label:"Med"},{value:"high",label:"High"}]} />
                       <CustomSelect value={bucketOf(p.difficulty)} onChange={v=>patchExam(p.id,{difficulty:BUCKET_VALS[v]})}
                         options={[{value:"low",label:"Easy"},{value:"medium",label:"Med"},{value:"high",label:"Hard"}]} />
-                      <div onClick={()=>setDetailEventId(p.id)} style={{fontSize:10.5,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",cursor:"pointer"}} title="Click to open">{steps.length===0?"no checklist yet":doneCount+"/"+steps.length+(hasPhases?" phases":" steps")+(activePhase&&activePhase.name?" — "+activePhase.name:"")}</div>
+                      <div onClick={()=>setSelectedProjectId(p.id)} style={{fontSize:10.5,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",cursor:"pointer"}} title="Open the project">{steps.length===0?"no checklist yet":doneCount+"/"+steps.length+(hasPhases?" phases":" steps")+(activePhase&&activePhase.name?" — "+activePhase.name:"")}</div>
                     </div>
                   );
                 })}
@@ -14663,8 +14813,6 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
       })()}
 
       {tab==="exams"&&selectedExam&&(()=>{
-        const readiness=computeExamReadiness(selectedExam,lsGet("events",[]),dayKey());
-        const readinessTrajectory=computeReadinessTrajectory(selectedExam,lsGet("events",[]),dayKey());
         const deck=allDecks.find(d=>deckLinkedToExam(d,selectedExam.id));
         const pes=allPracticeExams.filter(p=>p.examEventId===selectedExam.id);
         // Every session Studlin has ever scheduled for this exam, whatever
@@ -14788,6 +14936,14 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
         const countdownLabel=daysUntil<0?"already passed":daysUntil===0?"today":daysUntil===1?"in 1 day":"in "+daysUntil+" days";
         const pendingSessions=examSessions.filter(s=>s.status!=="done");
         const nextSession=pendingSessions[0]||null;
+        // "Show me on the calendar": highlights the given sessions and jumps the
+        // week view to the first one, so it can be dragged or resized right there.
+        const showOnCalendar=(ids,first)=>{
+          if(onShowOnCalendar){onShowOnCalendar(ids,first);return;}
+          lsSet("calendarHighlightIds",{ids,setAt:Date.now()});
+          setActive("calendar");
+        };
+        const upcomingScheduled=pendingSessions.filter(x=>x.date&&x.time).sort((a,b)=>(a.date+a.time)<(b.date+b.time)?-1:1);
         const cardsDue=deck?(deck.cards||[]).filter(c=>!c.dueAt||c.dueAt<=Date.now()).length:0;
         const metaParts=[selectedExam.subject,niceDate(selectedExam.date)];
         if(examSessions.length===0)metaParts.push("no study plan yet");
@@ -14821,6 +14977,9 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                   here since adjusting difficulty/hours/material is a far
                   more common action than raw file management once a plan
                   already exists. */}
+              {upcomingScheduled.length>0&&(
+                <BtnSm variant="ghost" onClick={()=>showOnCalendar(pendingSessions.map(x=>x.id),upcomingScheduled[0])}>See on calendar</BtnSm>
+              )}
               {examSessions.length>0&&(
                 <BtnSm variant="ghost" onClick={()=>openBuildPlan(selectedExam)}>Redo study plan</BtnSm>
               )}
@@ -14881,62 +15040,17 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                 </div>
               </div>
             )}
-            {readiness&&(()=>{
-              // Phase 9b: ported from Dashboard's renderExamItem pill
-              // (same computeExamReadiness, same color mapping) -- Prep's
-              // own exam page had this status only as plain text before,
-              // never a scannable pill, and never a "why" beyond the one-
-              // line sentence. The suggestion below is new: computed here,
-              // not added to computeExamReadiness's own return shape,
-              // since that function is shared with Dashboard and other
-              // callers that don't need it.
-              const stateColor=readiness.state==="behind"||readiness.state==="at-risk"?T.red:readiness.state==="on-track"?T.lime:readiness.state==="tight"?T.amber:T.muted;
-              const suggestion=readiness.state==="behind"
-                ?"Catching up: start your next session today, or ask Studlin to fit extra time before the exam if there genuinely isn't enough room left."
-                :readiness.state==="at-risk"
-                  ?"Worth an extra review session before the exam, or revisiting whatever didn't click last time."
-                  :readiness.state==="tight"
-                    ?"Not behind yet, but there's little slack left before the exam. Worth keeping every remaining session, since there's not much room to lose one."
-                    :readiness.state==="no-data"
-                      ?"Build a study kit below to get review sessions started."
-                      :null;
-              // Additive, next to readiness (behind/on-track/etc), not a
-              // replacement of it -- the category above answers "is the
-              // pace okay" (its own distinct rules), this answers "how
-              // prepared, as a percentage" (a separate weighted blend).
-              // Both stay visible since they're answering different
-              // questions.
-              const prep=computePreparedness(selectedExam,lsGet("events",[]),dayKey());
-              const prepColor=prep&&prep.score!=null?(prep.score>=70?T.lime:prep.score<40?T.red:T.amber):T.faint;
-              return (
-                <div style={{marginBottom:20}}>
-                  {/* P3 in the audit: this was mouseenter/mouseleave only --
-                      structurally unreachable on touch, the primary target
-                      device for an iOS-first app. onClick toggles it too,
-                      hover still works for desktop/trackpad. */}
-                  <span onMouseEnter={()=>setReadinessExpanded(true)} onMouseLeave={()=>setReadinessExpanded(false)} onClick={()=>setReadinessExpanded(e=>!e)}
-                    style={{display:"inline-flex",fontSize:11,fontWeight:700,color:stateColor,background:stateColor+"14",border:`1px solid ${stateColor}44`,borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>
-                    {readiness.state.toUpperCase().replace("-"," ")}
-                  </span>
-                  <div style={{fontSize:13,color:T.text,lineHeight:1.5,marginTop:8}}>{readiness.sentence}</div>
-                  {readinessExpanded&&suggestion&&(
-                    <div style={{marginTop:6,padding:"10px 12px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,fontSize:12,color:T.muted,lineHeight:1.5}}>{suggestion}</div>
-                  )}
-                  {prep&&prep.score!=null?(
-                    <div style={{display:"flex",alignItems:"center",gap:8,marginTop:10}}>
-                      <div style={{flex:1,maxWidth:220,height:6,borderRadius:99,background:T.card2,overflow:"hidden"}}>
-                        <div style={{height:"100%",width:prep.score+"%",background:prepColor,borderRadius:99}} />
-                      </div>
-                      <span style={{fontSize:11.5,fontWeight:600,color:T.muted}}>{prep.score}% prepared</span>
-                    </div>
-                  ):(
-                    <div style={{fontSize:11.5,color:T.faint,marginTop:10}}>Not started yet</div>
-                  )}
-                  <ReadinessTrajectoryChart trajectory={readinessTrajectory} todayKey={dayKey()} />
+            {/* 2026-10-17: the BEHIND tag, prepared-% bar and planned-vs-actual pace
+                chart were removed (more numbers than a student acts on). What stays
+                is one calm line: how many sessions are done. */}
+            {examSessions.length>0&&(
+              <div style={{display:"flex",alignItems:"center",gap:12,margin:"2px 0 18px"}}>
+                <div aria-hidden="true" style={{display:"flex",gap:4}}>
+                  {examSessions.map(x=><i key={x.id} style={{display:"block",width:22,height:6,borderRadius:99,background:x.status==="done"?T.teal:T.border}} />)}
                 </div>
-              );
-            })()}
-
+                <span style={{fontSize:13,color:T.muted,fontFamily:T.mono}}>{examSessions.length-pendingSessions.length} of {examSessions.length} sessions done</span>
+              </div>
+            )}
             {(()=>{
               const suggestion=performanceConfidenceSuggestion(selectedExam);
               if(!suggestion)return null;
@@ -14973,79 +15087,71 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
               <div style={{marginBottom:24}}>
                 {examSessions.map(s=>{
                   const isDone=s.status==="done";
-                  const isMissed=!isDone&&s.date<today;
-                  const isNext=nextSession&&s.id===nextSession.id;
-                  const isExpanded=expandedSessionId===s.id;
-                  const isEditing=editingSessionId===s.id;
-                  const statusLabel=isDone?"Done":isMissed?"Missed":null;
-                  const closeSession=()=>{setExpandedSessionId(null);setEditingSessionId(null);};
+                  const isMissed=!isDone&&!!s.date&&s.date<today;
+                  const dur=s.duration||25;
+                  const others=lsGet("events",[]).filter(e=>e.id!==s.id);
+                  // Stu points out an overlap right on the card and offers a fix.
+                  const conflict=(!isDone&&s.date&&s.time)?findOverlapConflict(s.date,s.time,minutesToTime(timeToMinutes(s.time)+dur),others,getWeeklyRoutine()):null;
+                  let shortenTo=null,moveTo=null;
+                  if(conflict){
+                    const fit=conflict.start-timeToMinutes(s.time);
+                    if(fit>=15)shortenTo=Math.floor(fit/5)*5;
+                    const slot=findLegalSlotOrNull(others,getWeeklyRoutine(),getSchedulePreferences(),s.date,minutesToTime(conflict.end),dur,selectedExam.date);
+                    if(slot&&slot.date===s.date&&slot.time!==s.time)moveTo=slot.time;
+                  }
+                  const stepBtn={border:"none",background:T.card,color:T.text,width:28,height:28,fontSize:15,cursor:"pointer",fontFamily:T.font};
                   return (
-                    <div key={s.id} style={{padding:"12px 2px",borderBottom:`1px solid ${T.border}`,opacity:isDone?0.55:1}}>
-                      <div onClick={()=>{if(isDone)return;setExpandedSessionId(id=>id===s.id?null:s.id);setEditingSessionId(null);}} style={{display:"flex",justifyContent:"space-between",gap:12,cursor:isDone?"default":"pointer"}}>
-                        <div style={{minWidth:0}}>
-                          <div style={{fontSize:10.5,color:T.faint,fontFamily:T.mono,textTransform:"uppercase",letterSpacing:"0.04em"}}>{dayOfWeekLabel(s.date).slice(0,3)} {s.date.slice(5).replace("-","/")}</div>
-                          <div style={{fontSize:14,fontWeight:600,color:T.text,textDecoration:isDone?"line-through":"none",marginTop:2}}>{s.title}</div>
-                          {s.notes&&<div style={{fontSize:11.5,color:T.muted,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.notes}</div>}
-                        </div>
-                        <div style={{fontSize:11.5,color:statusLabel==="Missed"?T.red:T.muted,textAlign:"right",flexShrink:0,whiteSpace:"nowrap"}}>
-                          {statusLabel||((s.duration||25)+"min · "+fmtRolloverClock(s.time))}
-                        </div>
+                    <div key={s.id} style={{display:"grid",gridTemplateColumns:"60px minmax(0,1fr) auto",gap:14,alignItems:"center",padding:"14px 16px",border:`1px solid ${isMissed?T.red+"66":T.border}`,borderRadius:14,background:T.card,marginBottom:10,opacity:isDone?0.6:1}}>
+                      <div style={{borderRadius:12,background:T.lookOn?T.accentSoft:T.card2,textAlign:"center",padding:"8px 0"}}>
+                        <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.08em",color:T.lookOn?T.accentInk:T.muted}}>{s.date?dayOfWeekLabel(s.date).slice(0,3).toUpperCase():"TBD"}</div>
+                        <div style={{fontSize:21,fontWeight:700,color:T.white,lineHeight:1.1}}>{s.date?parseInt(s.date.slice(8),10):"-"}</div>
                       </div>
-                      {/* Once a session has been silently reshuffled past
-                          RESHUFFLE_ESCALATE_THRESHOLD times, it's already
-                          excluded from further silent eviction/rebalance
-                          candidates (see findSlotWithEviction/
-                          computeWeekBalancePlan) -- this is the direct ask
-                          that replaces guessing a third time. */}
-                      {!isDone&&(s.reshuffleCount||0)>=RESHUFFLE_ESCALATE_THRESHOLD&&(
-                        <button onClick={(e)=>{e.stopPropagation();setExpandedSessionId(s.id);setEditingSessionId(s.id);}}
-                          style={{background:"none",border:"none",color:T.amber,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,marginTop:4,textDecoration:"underline"}}>
-                          Moved {s.reshuffleCount}x · Lock in a time?
-                        </button>
-                      )}
-                      {/* Any row that's expanded (clicked) or auto-shown as
-                          "next" surfaces Start+Move first -- Move is what
-                          drills into the date/time/duration editor below,
-                          not clicking the row itself. Previously these two
-                          states were the same piece of state, which meant
-                          every session except whichever one was "next" had
-                          no way to reach Start at all, only the editor. */}
-                      {(isNext||isExpanded)&&!isDone&&(
-                        isEditing?(()=>{
-                          const conflict=findOverlapConflict(s.date,s.time,minutesToTime(timeToMinutes(s.time)+(s.duration||25)),lsGet("events",[]).filter(e=>e.id!==s.id),getWeeklyRoutine());
-                          return (
-                          <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:10}}>
-                            <Input value={s.title} onChange={e=>patchSession(s.id,{title:e.target.value})} placeholder="Session name" style={{fontSize:12.5}} />
-                            <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-                              <Input type="date" value={s.date} onChange={e=>patchSession(s.id,{date:e.target.value})} style={{width:130}} />
-                              <TimeInput value={s.time} onChange={v=>patchSession(s.id,{time:v})} />
-                              <NumField min={5} max={240} fallback={25} value={s.duration||25} onChange={v=>patchSession(s.id,{duration:v})} style={{width:56}} />
-                              <span style={{fontSize:10.5,color:T.muted}}>min</span>
-                              {confirmDeleteSessionId===s.id?(
-                                <>
-                                  <button onClick={()=>{deleteSession(s.id);setConfirmDeleteSessionId(null);closeSession();}} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:11,fontWeight:700,fontFamily:T.font,textDecoration:"underline"}}>Confirm</button>
-                                  <button onClick={()=>setConfirmDeleteSessionId(null)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline"}}>Cancel</button>
-                                </>
-                              ):(
-                                <button onClick={()=>setConfirmDeleteSessionId(s.id)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline"}}>Delete</button>
-                              )}
-                              <button onClick={closeSession} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline"}}>Done</button>
+                      <div style={{minWidth:0}}>
+                        <div style={{fontSize:14.5,fontWeight:600,color:T.text,textDecoration:isDone?"line-through":"none"}}>{s.notes||s.title}</div>
+                        {isDone?(
+                          <div style={{fontSize:12.5,color:T.muted,marginTop:4,fontFamily:T.mono}}>{s.date?dayOfWeekLabel(s.date).slice(0,3)+" "+s.date.slice(5).replace("-","/"):""}{s.time?" · "+fmtRolloverClock(s.time):""}</div>
+                        ):(
+                          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginTop:8}}>
+                            <Input type="date" value={s.date||""} onChange={e=>patchSession(s.id,{date:e.target.value})} aria-label="Session date" style={{width:132,fontSize:12}} />
+                            <TimeInput value={s.time||""} onChange={v=>patchSession(s.id,{time:v})} />
+                            <span style={{display:"inline-flex",alignItems:"center",border:`1px solid ${T.border}`,borderRadius:8,overflow:"hidden"}}>
+                              <button type="button" aria-label="Shorter" onClick={()=>patchSession(s.id,{duration:Math.max(5,dur-5)})} style={stepBtn}>&minus;</button>
+                              <span style={{minWidth:58,textAlign:"center",fontFamily:T.mono,fontSize:12.5,color:T.text}}>{dur} min</span>
+                              <button type="button" aria-label="Longer" onClick={()=>patchSession(s.id,{duration:Math.min(240,dur+5)})} style={stepBtn}>+</button>
+                            </span>
+                            {isMissed&&<span style={{fontSize:12,fontWeight:600,color:T.red}}>Missed</span>}
+                            {(!s.date||!s.time)&&<span style={{fontSize:12,color:T.amber}}>Pick a day and time</span>}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>
+                        {isDone?(
+                          <span style={{fontSize:11.5,fontWeight:700,color:T.teal,background:T.teal+"14",border:`1px solid ${T.teal}44`,borderRadius:99,padding:"3px 10px"}}>Done</span>
+                        ):(<>
+                          {smartFeaturesOn()&&<BtnSm onClick={()=>{if(window._setTimerTask)window._setTimerTask(s);}}>Start</BtnSm>}
+                          <BtnSm variant={smartFeaturesOn()?"ghost":"lime"} onClick={()=>{lsSet("events",lsGet("events",[]).map(x=>x.id===s.id?{...x,status:"done",completedAt:Date.now()}:x));onTaskCompleted(s.id);refresh();}}>Mark done</BtnSm>
+                          {confirmDeleteSessionId===s.id?(
+                            <>
+                              <button type="button" onClick={()=>{deleteSession(s.id);setConfirmDeleteSessionId(null);}} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:T.font,textDecoration:"underline"}}>Remove</button>
+                              <button type="button" onClick={()=>setConfirmDeleteSessionId(null)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:12,fontFamily:T.font,textDecoration:"underline"}}>Keep</button>
+                            </>
+                          ):(
+                            <button type="button" aria-label="Remove session" title="Remove this session" onClick={()=>setConfirmDeleteSessionId(s.id)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:18,lineHeight:1,padding:"2px 6px"}}>&times;</button>
+                          )}
+                        </>)}
+                      </div>
+                      {conflict&&(
+                        <div style={{gridColumn:"1 / -1",display:"flex",gap:10,alignItems:"flex-start",background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:10,padding:"10px 12px"}}>
+                          <div style={{flexShrink:0}}><StudMascot size={30} mood="thinking" {...stuPalette()} /></div>
+                          <div style={{fontSize:12.5,color:T.text,lineHeight:1.5}}>
+                            <strong>{conflict.title}</strong> is at {fmtRolloverClock(minutesToTime(conflict.start))} that day, so this overlaps.
+                            <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
+                              {shortenTo&&<BtnSm onClick={()=>patchSession(s.id,{duration:shortenTo})}>Shorten to {shortenTo} min</BtnSm>}
+                              {moveTo&&<BtnSm variant="ghost" onClick={()=>patchSession(s.id,{time:moveTo})}>Move to {fmtRolloverClock(moveTo)}</BtnSm>}
+                              <BtnSm variant="ghost" onClick={()=>showOnCalendar([s.id],s)}>Show me on the calendar</BtnSm>
                             </div>
-                            {conflict&&(
-                              <div style={{fontSize:11,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:7,padding:"6px 9px",lineHeight:1.4}}>
-                                This overlaps with <strong>{conflict.title}</strong> at {(()=>{let h=Math.floor(conflict.start/60),m=conflict.start%60;const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+String(m).padStart(2,"0")+" "+ap;})()}.
-                              </div>
-                            )}
                           </div>
-                          );
-                        })():(
-                          <div style={{display:"flex",gap:8,marginTop:10}}>
-                            {smartFeaturesOn()
-                              ?<BtnSm onClick={(e)=>{e.stopPropagation();if(window._setTimerTask)window._setTimerTask(s);}}>Start</BtnSm>
-                              :<BtnSm onClick={(e)=>{e.stopPropagation();lsSet("events",lsGet("events",[]).map(x=>x.id===s.id?{...x,status:"done",completedAt:Date.now()}:x));onTaskCompleted(s.id);refresh();}}>Mark done</BtnSm>}
-                            <BtnSm variant="ghost" onClick={(e)=>{e.stopPropagation();setEditingSessionId(s.id);}}>Move</BtnSm>
-                          </div>
-                        )
+                        </div>
                       )}
                     </div>
                   );
@@ -15107,8 +15213,6 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                 separate add-material UI competing with it. */}
             {examSessions.length>0&&(
               <div style={{marginBottom:16}}>
-                <Btn variant="subtle" onClick={()=>openBuildPlan(selectedExam)}>Redo study plan</Btn>
-                <div style={{fontSize:10.5,color:T.muted,marginTop:6}}>Sessions calibrated to your confidence, plus flashcards and a practice exam if you want them.</div>
                 {genMsg&&(
                   <div style={{display:"flex",alignItems:"center",gap:10,marginTop:8}}>
                     <span style={{fontSize:11.5,color:genMsg.startsWith("✓")?T.teal:T.red}}>{genMsg}</span>
@@ -15337,17 +15441,29 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
             three-way split (add material / just block out time / create
             manually) folded material-vs-not into a top-level branch, when
             it's really just an optional input to Generate. */}
-        {buildPlanExam&&buildPlanStep==="choice"&&(
+        {buildPlanExam&&buildPlanStep==="choice"&&(()=>{
+          // 2026-10-17: two clear options. "Let Stu plan it" generates straight away
+          // from sensible defaults (the calibration questions are now optional, one
+          // link away), so making a plan is one tap, not a form.
+          const daysLeft=Math.round((new Date(buildPlanExam.date+"T12:00:00")-new Date(dayKey()+"T12:00:00"))/86400000);
+          const optStyle={textAlign:"left",width:"100%",border:`1.5px solid ${T.border}`,background:T.card,borderRadius:14,padding:"16px 18px",cursor:"pointer",fontFamily:T.font,color:T.text};
+          return (
           <div>
-            <div style={{fontSize:13,color:T.text,lineHeight:1.6,marginBottom:18}}>
-              Studlin can build the plan for you. Or you can lay it out yourself.
+            <div style={{fontSize:13,color:T.muted,marginBottom:16}}>{niceDate(buildPlanExam.date)}{daysLeft>=0?" · "+(daysLeft===0?"today":daysLeft+" day"+(daysLeft!==1?"s":"")+" left"):""}</div>
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              <button type="button" onClick={generatePreview} style={{...optStyle,borderColor:T.lime,background:T.lookOn?T.accentSoft:T.lime+"10"}}>
+                <div style={{fontSize:15,fontWeight:700,color:T.white}}>Let Stu plan it</div>
+                <div style={{fontSize:12.5,color:T.muted,marginTop:3}}>He finds free time and spreads it out. You can change anything after.</div>
+              </button>
+              <button type="button" onClick={openManualSessions} style={optStyle}>
+                <div style={{fontSize:15,fontWeight:700,color:T.white}}>I'll pick the days</div>
+                <div style={{fontSize:12.5,color:T.muted,marginTop:3}}>Tap the days you want. Stu suggests a free time for each.</div>
+              </button>
             </div>
-            <div style={{display:"flex",flexDirection:"column",gap:8}}>
-              <Btn onClick={()=>setBuildPlanStep("confidence")} style={{width:"100%",justifyContent:"center"}}>Studlin generates</Btn>
-              <Btn variant="ghost" onClick={openManualSessions} style={{width:"100%",justifyContent:"center"}}>Create manually</Btn>
-            </div>
+            <button type="button" onClick={()=>setBuildPlanStep("confidence")} style={{background:"none",border:"none",padding:0,marginTop:16,color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",textDecoration:"underline"}}>Add notes, flashcards or a practice exam first</button>
           </div>
-        )}
+          );
+        })()}
         {buildPlanExam&&buildPlanStep==="manual"&&(()=>{
           const today=dayKey();
           const examKey=buildPlanExam.date;
@@ -33902,7 +34018,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     if(!manualPlacement)return;
     const prefs=getSchedulePreferences();
     const routines=getWeeklyRoutine();
-    const duration=ATTACK_BLOCK_DEFAULT_PROBE_MINS;
+    const duration=manualPlacement.kind==="projectStep"?45:ATTACK_BLOCK_DEFAULT_PROBE_MINS;
     // Was findOpenSlotFor -- the plain nearest-gap finder with no reasoning
     // attached, unlike every other session-creation path in this file
     // (startAttackBlockChain, buildSpacedSessionPreviews, buildExamSessionEvents,
@@ -33922,7 +34038,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       setTimeout(()=>setDeadlineToast(""),2800);
       return;
     }
-    const kindTitle=manualPlacement.kind==="attack"?manualPlacement.title:(manualPlacement.kind==="deck"?"Review: "+manualPlacement.title:"Practice Exam: "+manualPlacement.title);
+    const kindTitle=(manualPlacement.kind==="attack"||manualPlacement.kind==="projectStep")?manualPlacement.title:(manualPlacement.kind==="deck"?"Review: "+manualPlacement.title:"Practice Exam: "+manualPlacement.title);
     const task={
       id:String(Date.now()+Math.random()*1000),
       title:kindTitle,date:slot.date,time:slot.time,
@@ -33930,15 +34046,28 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       priority:500,difficulty:500,deadline:manualPlacement.deadline||null,
       status:"pending",timeSpent:0,completedAt:null,userPinned:true,
       placementReason:slot.reason||null,
-      ...(manualPlacement.kind==="attack"?{}:manualPlacement.kind==="deck"?{deckId:manualPlacement.refId}:{practiceExamId:manualPlacement.refId}),
-      ...(manualPlacement.dueEventId?{dueEventId:manualPlacement.dueEventId,isExamPrepSession:manualPlacement.kind!=="attack"}:{}),
+      ...(manualPlacement.kind==="attack"?{}:manualPlacement.kind==="projectStep"?{stepId:manualPlacement.refId,projectStep:true,...(manualPlacement.courseId?{courseId:manualPlacement.courseId}:{})}:manualPlacement.kind==="deck"?{deckId:manualPlacement.refId}:{practiceExamId:manualPlacement.refId}),
+      ...(manualPlacement.dueEventId?{dueEventId:manualPlacement.dueEventId,isExamPrepSession:manualPlacement.kind!=="attack"&&manualPlacement.kind!=="projectStep"}:{}),
     };
     const next=events.concat([task]);
     setEvents(next);lsSet("events",next);
     setManualPlacementCount(c=>c+1);
     setSelDay(task.date);
   };
-  const finishManualPlacement=()=>{setManualPlacement(null);setManualPlacementCount(0);};
+  // A project step: the block is added the moment the calendar opens, so there is
+  // nothing to press before dragging. Done sends the student back to the project.
+  const projectStepAutoPlacedRef=useRef(false);
+  useEffect(()=>{
+    if(!manualPlacement||manualPlacement.kind!=="projectStep"||projectStepAutoPlacedRef.current)return;
+    projectStepAutoPlacedRef.current=true;
+    addManualPlacementSession();
+  },[manualPlacement]);
+  const finishManualPlacement=()=>{
+    const back=manualPlacement&&manualPlacement.kind==="projectStep"?manualPlacement.returnProjectId:null;
+    projectStepAutoPlacedRef.current=false;
+    setManualPlacement(null);setManualPlacementCount(0);
+    if(back){lsSet("openProjectId",back);setActive("prep");}
+  };
   // 2026-10-16: the automatic "your week's a bit lopsided" pop-up was removed
   // (users found it annoying). "Balance my week" is now only ever opened by the
   // student, from the calendar menu.
@@ -37111,8 +37240,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       )}
       {manualPlacement&&(
         <div style={{display:"flex",alignItems:"center",gap:12,padding:"9px 14px",background:T.lime+"10",border:`1px solid ${T.lime}33`,borderRadius:6,marginBottom:14,fontSize:12.5,color:T.text}}>
+          {manualPlacement.kind==="projectStep"?(
+            <span style={{flex:1}}>Drag <strong>{manualPlacement.title}</strong> into a free gap in your calendar. Resize it to change the length, then press Done.</span>
+          ):(<>
           <span style={{flex:1}}>Placing sessions for <strong>{manualPlacement.title}</strong>. Drag each one to where you want it, resize to change duration.{manualPlacementCount>0?" "+manualPlacementCount+" placed so far.":""}</span>
           <BtnSm variant="subtle" onClick={addManualPlacementSession}>+ Add a session</BtnSm>
+          </>)}
           <BtnSm onClick={finishManualPlacement}>Done</BtnSm>
         </div>
       )}
@@ -45528,7 +45661,7 @@ function App() {
            active==="notes"?<Notes setActive={setActive} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
            active==="profile"?<Profile setActive={setActive} seriousMode={seriousMode} />:
-           active==="prep"?<StudlinPrep setActive={setActive} setDetailEventId={setDetailEventId} onStartPrepNow={acceptPrepPrompt} onDeclinePrep={declinePrepPrompt} onTaskCompleted={handleTaskCompleted} />:
+           active==="prep"?<StudlinPrep setActive={setActive} setDetailEventId={setDetailEventId} onStartPrepNow={acceptPrepPrompt} onDeclinePrep={declinePrepPrompt} onTaskCompleted={handleTaskCompleted} onShowOnCalendar={(ids,first)=>{lsSet("calendarHighlightIds",{ids,setAt:Date.now()});setPendingJumpSession(first||null);setActive("calendar");}} />:
            active==="flashcards"?<Flashcards setActive={setActive} />:
            ActivePage?<ActivePage />:null}
         </div>

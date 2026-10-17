@@ -41,7 +41,9 @@ describe("looks surfaces: Dashboard", () => {
     const d = dash();
     for (const t of ["T.tint", "T.borderTint", "T.chipBg", "T.accentInk", "T.accentSoft", "T.lookOn"]) assert.ok(d.includes(t), t);
     assert.ok(/borderTop:`3px solid \$\{T\.lime\}`/.test(d), "accent top line");
-    assert.ok(d.includes("subjectColor(t.subject,null)"), "plan row class stripe");
+    // 2026-10-16: the stripe color moved into dashRowColor (an event's own color wins, else the class color).
+    assert.ok(d.includes("dashRowColor(t)"), "plan row class stripe");
+    assert.ok(fs.readFileSync(path.join(__dirname, "..", "studlin-app.jsx"), "utf8").includes("const dashRowColor=(t)=>t.color||subjectColor(t.subject,null);"));
   });
   test("every top-level Dashboard card goes through dashCardStyle", () => {
     const d = dash();
