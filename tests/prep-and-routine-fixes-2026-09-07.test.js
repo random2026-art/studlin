@@ -46,7 +46,7 @@ describe("CalendarTab: a new Habit materializes onto the calendar immediately on
   test("commitNewEvent calls materializeHabitsForDate right after persistRoutines for kind===\"habit\"", () => {
     const idx = SOURCE.indexOf("const commitNewEvent=(payload)=>{");
     assert.notEqual(idx, -1, "commitNewEvent must exist");
-    const body = SOURCE.slice(idx, idx + 8000);
+    const body = SOURCE.slice(idx, idx + 12000);
     assert.match(body, /if\(kind==="habit"\)\{\s*const createdHabits=materializeHabitsForDate\(dayKey\(\),events\);/);
   });
 });

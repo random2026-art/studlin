@@ -1900,6 +1900,16 @@ function undoCourseDelete(snapshot) {
   lsSet("events", [...lsGet("events", []), ...snapshot.events]);
 }
 const getRoutineSkips = () => lsGet("routineSkips", {});
+const habitInstanceRoutine = (ev, routines) => ev && ev.routineId ? (routines || getWeeklyRoutine()).find((r) => r.id === ev.routineId && r.kind === "habit") || null : null;
+function setHabitDaySkipped(routineId, dateKey, skipped) {
+  const skips = getRoutineSkips();
+  const cur = (skips[dateKey] || []).filter((id) => id !== routineId);
+  const next = { ...skips };
+  if (skipped) next[dateKey] = [...cur, routineId];
+  else if (cur.length > 0) next[dateKey] = cur;
+  else delete next[dateKey];
+  lsSet("routineSkips", next);
+}
 const getRoutineOverrides = () => lsGet("routineOverrides", {});
 const saveRoutineOverrides = (o) => lsSet("routineOverrides", o);
 function getRoutineOccurrenceNote(routineId, dateKey) {
@@ -2574,7 +2584,8 @@ function materializeHabitsForDate(dateKey, workingEvents) {
   if (habitRoutines.length === 0) return [];
   const dow = ((/* @__PURE__ */ new Date(dateKey + "T12:00:00")).getDay() + 6) % 7;
   const dueById = /* @__PURE__ */ new Map();
-  habitRoutines.filter((r) => r.days && r.days.includes(dow)).forEach((r) => {
+  const skippedToday = getRoutineSkips()[dateKey] || [];
+  habitRoutines.filter((r) => r.days && r.days.includes(dow) && !skippedToday.includes(r.id)).forEach((r) => {
     if (!dueById.has(r.id)) dueById.set(r.id, r);
   });
   const due = [...dueById.values()];
@@ -16487,7 +16498,7 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
     }, title: "Studlin moved this from " + fmtMovedFrom(ev.movedFrom) + "." + fmtMovedReasonSuffix(ev), style: itemStyle, onMouseEnter: (e) => e.currentTarget.style.background = T.card2, onMouseLeave: (e) => e.currentTarget.style.background = "none" }, "Undo move"), /* @__PURE__ */ React.createElement("button", { onClick: () => {
       closePopover();
       if (onDeleteEvent) onDeleteEvent(ev);
-    }, style: { ...itemStyle, color: T.red, borderTop: `1px solid ${T.border}` }, onMouseEnter: (e) => e.currentTarget.style.background = T.card2, onMouseLeave: (e) => e.currentTarget.style.background = "none" }, "Delete"))), document.body);
+    }, style: { ...itemStyle, color: T.red, borderTop: `1px solid ${T.border}` }, onMouseEnter: (e) => e.currentTarget.style.background = T.card2, onMouseLeave: (e) => e.currentTarget.style.background = "none" }, habitInstanceRoutine(ev, routines) ? "Skip this day" : "Delete"))), document.body);
   })(), exitGhosts.length > 0 && ReactDOM.createPortal(
     // Portaled to document.body, same pattern the popover above
     // already uses -- guarantees it paints above everything and is
@@ -20835,8 +20846,10 @@ function CalendarTab({ setActive = () => {
   const [fillPrompt, setFillPrompt] = useState(null);
   const deleteEventWithUndo = (ev) => {
     const examCleanup = removeEvent(ev.id);
+    const habit = habitInstanceRoutine(ev, routines);
+    if (habit) setHabitDaySkipped(habit.id, ev.date, true);
     setDeleteUndoSnapshot({ event: ev, ...examCleanup || {} });
-    setDeleteUndoToast(`Deleted "${ev.title}"`);
+    setDeleteUndoToast(habit ? `Skipped "${ev.title}" for this day` : `Deleted "${ev.title}"`);
     setTimeout(() => {
       setDeleteUndoToast("");
       setDeleteUndoSnapshot(null);
@@ -20849,6 +20862,7 @@ function CalendarTab({ setActive = () => {
   const undoDelete = () => {
     if (!deleteUndoSnapshot) return;
     const { event, prevEvents, prevDecks, prevPracticeExams } = deleteUndoSnapshot;
+    if (event && habitInstanceRoutine(event, routines)) setHabitDaySkipped(event.routineId, event.date, false);
     if (prevEvents) {
       setEvents2(prevEvents);
       lsSet("events", prevEvents);
@@ -21707,6 +21721,40 @@ function CalendarTab({ setActive = () => {
     if (chipKind === "session" && sessionId) {
       lsSet("events", lsGet("events", []).map((e) => e.id === sessionId ? { ...e, date, time: startTime, duration: duration || e.duration || 25 } : e));
       setEvents2(lsGet("events", []));
+    } else if (chipKind === "activity" && routineId && (routines.find((r) => r.id === routineId) || {}).kind === "habit") {
+      const rule = routines.find((r) => r.id === routineId);
+      const dur = duration || rule.duration || 60;
+      const all = lsGet("events", []);
+      const existing = all.find((e) => e.routineId === rule.id && e.date === date);
+      const placed = {
+        id: existing ? existing.id : "habit-" + rule.id + "-" + date,
+        title: rule.title,
+        date,
+        time: startTime,
+        subject: rule.subject && rule.subject !== "None" ? rule.subject : "",
+        color: rule.color || null,
+        kind: "study block",
+        notes: "",
+        priority: 5,
+        difficulty: 5,
+        deadline: null,
+        duration: dur,
+        status: "pending",
+        timeSpent: 0,
+        completedAt: null,
+        routineId: rule.id,
+        ...rule.isGeneralTask ? { isGeneralTask: true } : {}
+      };
+      const nextEvents = existing ? all.map((e) => e.id === existing.id ? { ...e, ...placed } : e) : all.concat([placed]);
+      lsSet("events", nextEvents);
+      setEvents2(nextEvents);
+      setHabitDaySkipped(rule.id, date, false);
+      if (repeat !== "none" && repeatDays && repeatDays.length > 0) {
+        const mergedDays = Array.from(/* @__PURE__ */ new Set([...rule.days || [], ...repeatDays]));
+        persistRoutines(routines.map((r) => r.id === rule.id ? { ...r, days: mergedDays } : r));
+      }
+      setPlacementToast(rule.title + " added, " + fmtTimeRange(startTime, dur) + ".");
+      setTimeout(() => setPlacementToast(""), 3200);
     } else if (chipKind === "activity" && routineId) {
       const rule = routines.find((r) => r.id === routineId);
       if (!rule) {

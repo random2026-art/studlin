@@ -2441,6 +2441,19 @@ function undoCourseDelete(snapshot){
 // is untouched, so every other week is unaffected. Written by "Studlin
 // Reschedule"'s skip_class intent (see computePausePlan/confirmPausePlan).
 const getRoutineSkips=()=>lsGet("routineSkips",{});
+// The habit routine behind a calendar block, or null. A habit's block is just a
+// normal event carrying its routineId (see materializeHabitsForDate).
+const habitInstanceRoutine=(ev,routines)=>ev&&ev.routineId?((routines||getWeeklyRoutine()).find(r=>r.id===ev.routineId&&r.kind==="habit")||null):null;
+// Skipping one day of a habit: remember it so the engine doesn't put it back.
+function setHabitDaySkipped(routineId,dateKey,skipped){
+  const skips=getRoutineSkips();
+  const cur=(skips[dateKey]||[]).filter(id=>id!==routineId);
+  const next={...skips};
+  if(skipped)next[dateKey]=[...cur,routineId];
+  else if(cur.length>0)next[dateKey]=cur;
+  else delete next[dateKey];
+  lsSet("routineSkips",next);
+}
 // Phase 7e: "just this occurrence" edits to an otherwise-recurring routine
 // (drag one Tuesday's Geology block to a new time without touching every
 // other Tuesday). Keyed the same way getRoutineSkips is -- {routineId:
@@ -3497,7 +3510,9 @@ function materializeHabitsForDate(dateKey,workingEvents){
   // events carrying the exact same id, silently colliding on any
   // downstream id-keyed lookup, update, or React key.
   const dueById=new Map();
-  habitRoutines.filter(r=>r.days&&r.days.includes(dow)).forEach(r=>{if(!dueById.has(r.id))dueById.set(r.id,r);});
+  // A day the student skipped (deleted the habit's block that day) stays skipped.
+  const skippedToday=(getRoutineSkips()[dateKey])||[];
+  habitRoutines.filter(r=>r.days&&r.days.includes(dow)&&!skippedToday.includes(r.id)).forEach(r=>{if(!dueById.has(r.id))dueById.set(r.id,r);});
   const due=[...dueById.values()];
   if(due.length===0)return[];
   const alreadyDone=new Set(workingEvents.filter(e=>e.date===dateKey&&e.routineId).map(e=>e.routineId));
@@ -25852,7 +25867,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
               {ev.movedByStudlin&&(
                 <button onClick={()=>{setEvents(undoTier0Move(ev.id).events);closePopover();}} title={"Studlin moved this from "+fmtMovedFrom(ev.movedFrom)+"."+fmtMovedReasonSuffix(ev)} style={itemStyle} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="none"}>Undo move</button>
               )}
-              <button onClick={()=>{closePopover();if(onDeleteEvent)onDeleteEvent(ev);}} style={{...itemStyle,color:T.red,borderTop:`1px solid ${T.border}`}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="none"}>Delete</button>
+              <button onClick={()=>{closePopover();if(onDeleteEvent)onDeleteEvent(ev);}} style={{...itemStyle,color:T.red,borderTop:`1px solid ${T.border}`}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="none"}>{habitInstanceRoutine(ev,routines)?"Skip this day":"Delete"}</button>
             </div>
           </>
         ), document.body);
@@ -33886,8 +33901,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // restore (the exam AND every prep session/deck/practice exam that got
     // cleaned up alongside it), not just resurrect the exam event on its own.
     const examCleanup=removeEvent(ev.id);
+    const habit=habitInstanceRoutine(ev,routines);
+    if(habit)setHabitDaySkipped(habit.id,ev.date,true);
     setDeleteUndoSnapshot({event:ev,...(examCleanup||{})});
-    setDeleteUndoToast(`Deleted "${ev.title}"`);
+    setDeleteUndoToast(habit?`Skipped "${ev.title}" for this day`:`Deleted "${ev.title}"`);
     setTimeout(()=>{setDeleteUndoToast("");setDeleteUndoSnapshot(null);},5000);
     if((ev.duration||0)>=15&&!isFillPromptSuppressed()){
       const suggestions=computeFillSuggestions(ev.date,ev.time,ev.duration);
@@ -33897,6 +33914,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   const undoDelete=()=>{
     if(!deleteUndoSnapshot)return;
     const {event,prevEvents,prevDecks,prevPracticeExams}=deleteUndoSnapshot;
+    if(event&&habitInstanceRoutine(event,routines))setHabitDaySkipped(event.routineId,event.date,false);
     if(prevEvents){
       setEvents(prevEvents);lsSet("events",prevEvents);
       lsSet("decks",prevDecks);lsSet("practiceExams",prevPracticeExams);
@@ -35028,6 +35046,34 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       // reasoning the activity-routine branch below already establishes.
       lsSet("events",lsGet("events",[]).map(e=>e.id===sessionId?{...e,date,time:startTime,duration:duration||e.duration||25}:e));
       setEvents(lsGet("events",[]));
+    }else if(chipKind==="activity"&&routineId&&(routines.find(r=>r.id===routineId)||{}).kind==="habit"){
+      // 2026-10-17 fix: a habit (Gym) has no fixed clock time, so the generic
+      // activity branch below just added the dropped weekday to its repeat
+      // pattern and drew nothing -- the engine only places habits on the day
+      // itself, at app open -- so the block "disappeared". A drop is an
+      // explicit placement: put a real block on this date at the dropped time,
+      // and only widen the habit's days when a repeat was actually chosen.
+      // Deliberately NOT pinned: a habit is a plan, not a promise, so if
+      // something comes up the usual reflow can still move it. Skipping one day
+      // is a delete (see habitInstanceRoutine). materializeHabitsForDate dedups
+      // by routineId + date, so this day won't also get an automatic one.
+      const rule=routines.find(r=>r.id===routineId);
+      const dur=duration||rule.duration||60;
+      const all=lsGet("events",[]);
+      const existing=all.find(e=>e.routineId===rule.id&&e.date===date);
+      const placed={id:existing?existing.id:"habit-"+rule.id+"-"+date,title:rule.title,date,time:startTime,
+        subject:(rule.subject&&rule.subject!=="None")?rule.subject:"",color:rule.color||null,kind:"study block",notes:"",
+        priority:5,difficulty:5,deadline:null,duration:dur,status:"pending",timeSpent:0,completedAt:null,
+        routineId:rule.id,...(rule.isGeneralTask?{isGeneralTask:true}:{})};
+      const nextEvents=existing?all.map(e=>e.id===existing.id?{...e,...placed}:e):all.concat([placed]);
+      lsSet("events",nextEvents);setEvents(nextEvents);
+      setHabitDaySkipped(rule.id,date,false); // placing it again un-skips that day
+      if(repeat!=="none"&&repeatDays&&repeatDays.length>0){
+        const mergedDays=Array.from(new Set([...(rule.days||[]),...repeatDays]));
+        persistRoutines(routines.map(r=>r.id===rule.id?{...r,days:mergedDays}:r));
+      }
+      setPlacementToast(rule.title+" added, "+fmtTimeRange(startTime,dur)+".");
+      setTimeout(()=>setPlacementToast(""),3200);
     }else if(chipKind==="activity"&&routineId){
       // Additive, not a blind overwrite (2026-08-08 fix): dropping the same
       // activity chip onto a day it's NOT already on adds that day at the
