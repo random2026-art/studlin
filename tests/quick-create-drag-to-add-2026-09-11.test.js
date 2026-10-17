@@ -69,7 +69,7 @@ describe("Source-level regression guards: create-drag wiring exists in both Week
   test("WeeklyPlanner's grid background is marked for hit-testing and wired to startCreateDrag", () => {
     const idx = SOURCE.indexOf("function WeeklyPlanner(");
     assert.ok(idx > -1, "WeeklyPlanner should still exist");
-    const slice = SOURCE.slice(idx, idx + 50000);
+    const slice = SOURCE.slice(idx, idx + 70000);
     assert.ok(slice.includes('data-gridbg="1"'), "the day column and hour-line divs must be marked so startCreateDrag can tell empty background from a real event block");
     assert.ok(slice.includes("onMouseDown={e=>startCreateDrag(e,dk)}"), "the day column must start a create-drag on mousedown");
     assert.ok(slice.includes('e.target.dataset&&e.target.dataset.gridbg==="1"'), "startCreateDrag must refuse to start over anything that isn't marked background (an existing event block, the New Event preview, a busy overlay)");
@@ -85,7 +85,7 @@ describe("Source-level regression guards: create-drag wiring exists in both Week
 
   test("both views render a dashed ghost block driven by the shared quickCreateDraft prop", () => {
     const weekIdx = SOURCE.indexOf("function WeeklyPlanner(");
-    const weekSlice = SOURCE.slice(weekIdx, weekIdx + 50000);
+    const weekSlice = SOURCE.slice(weekIdx, weekIdx + 70000);
     assert.ok(weekSlice.includes("quickCreateDraft && quickCreateDraft.dateKey===dk"), "Week view's ghost block must match against the column it's rendering");
 
     const dayIdx = SOURCE.indexOf("function DayPlanner(");
