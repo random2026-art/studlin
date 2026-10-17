@@ -59,13 +59,13 @@ describe("[MED] deleteSession (StudlinPrep exam session) now requires an inline 
 
   test("deleteSession is no longer called directly from a bare onClick with no gate", () => {
     assert.doesNotMatch(SOURCE, /onClick=\{\(\)=>\{deleteSession\(s\.id\);closeSession\(\);\}\}/, "the old ungated call must be gone");
-    const idx = SOURCE.indexOf("{confirmDeleteSessionId===s.id?(");
+    const idx = SOURCE.indexOf("confirmDeleteSessionId===s.id?(");
     assert.notEqual(idx, -1);
     const body = SOURCE.slice(idx, idx + 700);
     // 2026-10-17: the session cards' confirm reads Remove / Keep now (same gate, new wording).
     assert.match(body, />Remove<\/button>/);
     assert.match(body, />Keep<\/button>/);
-    assert.match(body, /deleteSession\(s\.id\);setConfirmDeleteSessionId\(null\);/);
+    assert.match(body, /removeIt\(s\.id\);setConfirmDeleteSessionId\(null\);/);
   });
 });
 

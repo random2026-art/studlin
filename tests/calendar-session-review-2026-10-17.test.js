@@ -26,7 +26,7 @@ test("Back / Next / Done, with a clear instruction and position", () => {
   assert.ok(APP.includes("disabled={reviewIdx>=reviewSessions.length-1}"));
 });
 test("Done returns to the same exam page", () => {
-  assert.ok(APP.includes('if(back){lsSet("openExamId",back);setActive("prep");}'));
+  assert.ok(APP.includes('if(backExam){lsSet("openExamId",backExam);setActive("prep");}'));
   assert.ok(APP.includes('if(ex){lsSet("openExamId",null);setTab("exams");setSelectedExamId(ex);}'));
 });
 test("the gold exam row is gone; the exam time edits from the header line", () => {

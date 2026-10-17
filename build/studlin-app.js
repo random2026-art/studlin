@@ -7956,31 +7956,20 @@ function StudlinPrep({ setActive = () => {
     return pending;
   });
   const [assignAddAttackBlock, setAssignAddAttackBlock] = useState(false);
+  const [assignFinding, setAssignFinding] = useState(false);
+  const [hoverAssignId, setHoverAssignId] = useState(null);
   const [assignAttackProbeMins, setAssignAttackProbeMins] = useState(ATTACK_BLOCK_DEFAULT_PROBE_MINS);
   const [assignAttackErr, setAssignAttackErr] = useState("");
-  const [assignAttackSlotPicker, setAssignAttackSlotPicker] = useState(null);
-  const [assignAttackManual, setAssignAttackManual] = useState(null);
-  const [assignAddManualBlock, setAssignAddManualBlock] = useState(false);
-  const [assignManualDate, setAssignManualDate] = useState("");
-  const [assignManualTime, setAssignManualTime] = useState("16:00");
-  const [assignManualDuration, setAssignManualDuration] = useState(30);
-  const [assignConfirmDeleteBlockId, setAssignConfirmDeleteBlockId] = useState(null);
   const [confirmDeleteSessionId, setConfirmDeleteSessionId] = useState(null);
   const [assignCompleteSessionPrompt, setAssignCompleteSessionPrompt] = useState(false);
-  const [assignCancelSessionsConfirm, setAssignCancelSessionsConfirm] = useState(false);
   const [assignPaceProposal, setAssignPaceProposal] = useState(null);
   const [assignPaceDismissed, setAssignPaceDismissed] = useState(false);
   useEffect(() => {
     setAssignAddAttackBlock(false);
     setAssignAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);
     setAssignAttackErr("");
-    setAssignAddManualBlock(false);
-    setAssignManualDate(dayKey());
-    setAssignManualTime("16:00");
-    setAssignManualDuration(30);
-    setAssignConfirmDeleteBlockId(null);
+    setAssignFinding(false);
     setAssignCompleteSessionPrompt(false);
-    setAssignCancelSessionsConfirm(false);
     setAssignPaceProposal(null);
     setAssignPaceDismissed(selectedAssignmentId ? isPaceNudgeDismissed(selectedAssignmentId) : false);
   }, [selectedAssignmentId]);
@@ -8004,6 +7993,12 @@ function StudlinPrep({ setActive = () => {
       lsSet("openExamId", null);
       setTab("exams");
       setSelectedExamId(ex);
+    }
+    const asg = lsGet("openAssignmentId", null);
+    if (asg) {
+      lsSet("openAssignmentId", null);
+      setTab("assignments");
+      setSelectedAssignmentId(asg);
     }
   }, []);
   const [buildPlanExamId, setBuildPlanExamId] = useState(null);
@@ -8523,6 +8518,42 @@ function StudlinPrep({ setActive = () => {
   const allPracticeExams = lsGet("practiceExams", []);
   const selectedExam = selectedExamId ? lsGet("events", []).find((e) => e.id === selectedExamId) : null;
   const selectedAssignment = selectedAssignmentId ? lsGet("events", []).find((e) => e.id === selectedAssignmentId) : null;
+  const patchEventById = (id, patch) => {
+    lsSet("events", lsGet("events", []).map((e) => e.id === id ? { ...e, ...patch } : e));
+    refresh();
+  };
+  const deleteEventById = (id) => {
+    lsSet("events", lsGet("events", []).filter((e) => e.id !== id));
+    refresh();
+  };
+  const renderSessionCard = (s, opts) => {
+    const { today, deadline, canRemove = true, onShow } = opts;
+    const markDone = opts.onMarkDone || ((id) => {
+      lsSet("events", lsGet("events", []).map((x) => x.id === id ? { ...x, status: "done", completedAt: Date.now() } : x));
+      onTaskCompleted(id);
+      refresh();
+    });
+    const removeIt = opts.onRemove || deleteEventById;
+    const isDone = s.status === "done";
+    const isMissed = !isDone && !!s.date && s.date < today;
+    const dur = s.duration || 25;
+    const others = lsGet("events", []).filter((e) => e.id !== s.id);
+    const conflict = !isDone && s.date && s.time ? findOverlapConflict(s.date, s.time, minutesToTime(timeToMinutes(s.time) + dur), others, getWeeklyRoutine()) : null;
+    let shortenTo = null, moveTo = null;
+    if (conflict) {
+      const fit = conflict.start - timeToMinutes(s.time);
+      if (fit >= 15) shortenTo = Math.floor(fit / 5) * 5;
+      const slot = findLegalSlotOrNull(others, getWeeklyRoutine(), getSchedulePreferences(), s.date, minutesToTime(conflict.end), dur, deadline);
+      if (slot && slot.date === s.date && slot.time !== s.time) moveTo = slot.time;
+    }
+    const stepBtn = { border: "none", background: T.card, color: T.text, width: 28, height: 28, fontSize: 15, cursor: "pointer", fontFamily: T.font };
+    return /* @__PURE__ */ React.createElement("div", { key: s.id, style: { display: "grid", gridTemplateColumns: "60px minmax(0,1fr) auto", gap: 14, alignItems: "center", padding: "14px 16px", border: `1px solid ${isMissed ? T.red + "66" : T.border}`, borderRadius: 14, background: T.card, marginBottom: 10, opacity: isDone ? 0.6 : 1 } }, /* @__PURE__ */ React.createElement("div", { style: { borderRadius: 12, background: T.lookOn ? T.accentSoft : T.card2, textAlign: "center", padding: "8px 0" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", color: T.lookOn ? T.accentInk : T.muted } }, s.date ? dayOfWeekLabel(s.date).slice(0, 3).toUpperCase() : "TBD"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 21, fontWeight: 700, color: T.white, lineHeight: 1.1 } }, s.date ? parseInt(s.date.slice(8), 10) : "-")), /* @__PURE__ */ React.createElement("div", { style: { minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14.5, fontWeight: 600, color: T.text, textDecoration: isDone ? "line-through" : "none" } }, s.notes || s.title), isDone ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginTop: 4, fontFamily: T.mono } }, s.date ? dayOfWeekLabel(s.date).slice(0, 3) + " " + s.date.slice(5).replace("-", "/") : "", s.time ? " \xB7 " + fmtRolloverClock(s.time) : "") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 8 } }, /* @__PURE__ */ React.createElement(Input, { type: "date", value: s.date || "", onChange: (e) => patchEventById(s.id, { date: e.target.value }), "aria-label": "Session date", style: { width: 132, fontSize: 12 } }), /* @__PURE__ */ React.createElement(TimeInput, { value: s.time || "", onChange: (v) => patchEventById(s.id, { time: v }) }), /* @__PURE__ */ React.createElement("span", { style: { display: "inline-flex", alignItems: "center", border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" } }, /* @__PURE__ */ React.createElement("button", { type: "button", "aria-label": "Shorter", onClick: () => patchEventById(s.id, { duration: Math.max(5, dur - 5) }), style: stepBtn }, "\u2212"), /* @__PURE__ */ React.createElement("span", { style: { minWidth: 58, textAlign: "center", fontFamily: T.mono, fontSize: 12.5, color: T.text } }, dur, " min"), /* @__PURE__ */ React.createElement("button", { type: "button", "aria-label": "Longer", onClick: () => patchEventById(s.id, { duration: Math.min(240, dur + 5) }), style: stepBtn }, "+")), isMissed && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, fontWeight: 600, color: T.red } }, "Missed"), (!s.date || !s.time) && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.amber } }, "Pick a day and time"))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" } }, isDone ? /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11.5, fontWeight: 700, color: T.teal, background: T.teal + "14", border: `1px solid ${T.teal}44`, borderRadius: 99, padding: "3px 10px" } }, "Done") : /* @__PURE__ */ React.createElement(React.Fragment, null, smartFeaturesOn() && /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
+      if (window._setTimerTask) window._setTimerTask(s);
+    } }, "Start"), /* @__PURE__ */ React.createElement(BtnSm, { variant: smartFeaturesOn() ? "ghost" : "lime", onClick: () => markDone(s.id) }, "Mark done"), !canRemove ? null : confirmDeleteSessionId === s.id ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+      removeIt(s.id);
+      setConfirmDeleteSessionId(null);
+    }, style: { background: "none", border: "none", color: T.red, cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: T.font, textDecoration: "underline" } }, "Remove"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setConfirmDeleteSessionId(null), style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 12, fontFamily: T.font, textDecoration: "underline" } }, "Keep")) : /* @__PURE__ */ React.createElement("button", { type: "button", "aria-label": "Remove session", title: "Remove this session", onClick: () => setConfirmDeleteSessionId(s.id), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 18, lineHeight: 1, padding: "2px 6px" } }, "\xD7"))), conflict && /* @__PURE__ */ React.createElement("div", { style: { gridColumn: "1 / -1", display: "flex", gap: 10, alignItems: "flex-start", background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 10, padding: "10px 12px" } }, /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0 } }, /* @__PURE__ */ React.createElement(StudMascot, { size: 30, mood: "thinking", ...stuPalette() })), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, lineHeight: 1.5 } }, /* @__PURE__ */ React.createElement("strong", null, conflict.title), " is at ", fmtRolloverClock(minutesToTime(conflict.start)), " that day, so this overlaps.", /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 } }, shortenTo && /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => patchEventById(s.id, { duration: shortenTo }) }, "Shorten to ", shortenTo, " min"), moveTo && /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => patchEventById(s.id, { time: moveTo }) }, "Move to ", fmtRolloverClock(moveTo)), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => onShow([s.id]) }, "Show me on the calendar")))));
+  };
   const patchExam = (examId, patch) => {
     const all = lsGet("events", []);
     lsSet("events", all.map((e) => e.id === examId ? { ...e, ...patch } : e));
@@ -9002,21 +9033,23 @@ function StudlinPrep({ setActive = () => {
       if (aOver !== bOver) return aOver ? 1 : -1;
       return (a.date || "9999").localeCompare(b.date || "9999");
     });
-    const gridCols = "minmax(140px,1.8fr) 100px 120px 70px 80px 80px 150px";
+    const gridCols = "minmax(140px,1.8fr) 100px 120px 70px 80px 80px 130px 104px";
     const cellSelStyle = { width: "100%", background: "transparent", border: "none", color: T.text, fontSize: 10.5, fontFamily: T.font, outline: "none", cursor: "pointer", padding: "2px 0" };
     return /* @__PURE__ */ React.createElement("div", null, assignments.length === 0 ? /* @__PURE__ */ React.createElement(Card, { style: { padding: "32px 20px", textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, marginBottom: allAssignments.length === 0 ? 14 : 0 } }, allAssignments.length === 0 ? "No upcoming assignments yet \u2014 add one to start tracking it." : "No assignments match your search."), allAssignments.length === 0 && /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
       lsSet("pendingAddTask", { kind: "assignment" });
       setActive("calendar");
-    } }, Icon.plus, " Add assignment")) : /* @__PURE__ */ React.createElement("div", { style: { overflowX: "auto", border: `1px solid ${T.border}`, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 700 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, padding: "7px 10px", borderBottom: `1px solid ${T.border}`, background: T.card2 } }, ["Name", "Class", "Due", "Days", "Urgency", "Difficulty", "Attack Blocks"].map((h) => /* @__PURE__ */ React.createElement("div", { key: h, style: { fontSize: 9, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, h))), assignments.map((a) => {
+    } }, Icon.plus, " Add assignment")) : /* @__PURE__ */ React.createElement("div", { style: { overflowX: "auto", border: `1px solid ${T.border}`, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 700 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, padding: "7px 10px", borderBottom: `1px solid ${T.border}`, background: T.card2 } }, ["Name", "Class", "Due", "Days", "Urgency", "Difficulty", "Plan", ""].map((h, hi) => /* @__PURE__ */ React.createElement("div", { key: h + hi, style: { fontSize: 9, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, h))), assignments.map((a) => {
       const today2 = dayKey();
       const daysUntil = a.date ? Math.round((/* @__PURE__ */ new Date(a.date + "T12:00:00") - /* @__PURE__ */ new Date(today2 + "T12:00:00")) / 864e5) : null;
       const daysLabel = daysUntil == null ? "No date" : daysUntil <= 0 ? "Today" : daysUntil + "d";
       const allEventsForRow = lsGet("events", []);
-      const chainId = (allEventsForRow.find((e) => e.dueEventId === a.id && e.attackChainId) || {}).attackChainId || null;
-      const pending = chainId ? allEventsForRow.filter((e) => e.attackChainId === chainId && e.status !== "done") : [];
+      const pending = allEventsForRow.filter((e) => e.dueEventId === a.id && e.status !== "done");
       const rowPace = computeAssignmentPace(a, allEventsForRow, today2);
-      const statusLabel = rowPace && rowPace.behind ? "behind pace" : rowPace && rowPace.ahead ? "ahead of pace" : pending.length === 0 ? "no blocks yet" : pending.length + " block" + (pending.length !== 1 ? "s" : "") + " scheduled";
-      return /* @__PURE__ */ React.createElement("div", { key: a.id, style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, padding: "7px 10px", borderBottom: `1px solid ${T.border}`, alignItems: "center" } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setSelectedAssignmentId(a.id), style: { fontSize: 11.5, fontWeight: 600, color: T.white, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: a.title }, a.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, a.subject || "\u2014"), /* @__PURE__ */ React.createElement("input", { type: "date", value: a.date || "", onChange: (e) => e.target.value && patchExam(a.id, { date: e.target.value, checklist: false, time: a.time || "23:59" }), style: { ...cellSelStyle } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: daysUntil == null ? T.amber : daysUntil <= 1 ? T.red : T.muted, fontStyle: daysUntil == null ? "italic" : "normal" } }, daysLabel), /* @__PURE__ */ React.createElement(
+      const statusLabel = rowPace && rowPace.behind ? "behind pace" : rowPace && rowPace.ahead ? "ahead of pace" : pending.length === 0 ? !!a.time && !!a.duration ? "1 block planned" : "no plan yet" : pending.length + " session" + (pending.length !== 1 ? "s" : "") + " planned";
+      const rowHasPlan = allEventsForRow.some((e) => e.dueEventId === a.id) || !!a.time && !!a.duration;
+      const rowCanHover = typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(hover: hover)").matches : true;
+      const rowShowAction = !rowCanHover || hoverAssignId === a.id;
+      return /* @__PURE__ */ React.createElement("div", { key: a.id, onMouseEnter: () => setHoverAssignId(a.id), onMouseLeave: () => setHoverAssignId((id) => id === a.id ? null : id), onFocus: () => setHoverAssignId(a.id), style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, padding: "7px 10px", borderBottom: `1px solid ${T.border}`, alignItems: "center", background: hoverAssignId === a.id ? T.lookOn ? T.accentSoft : T.card2 : "transparent" } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setSelectedAssignmentId(a.id), style: { fontSize: 11.5, fontWeight: 600, color: T.white, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: a.title }, a.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, a.subject || "\u2014"), /* @__PURE__ */ React.createElement("input", { type: "date", value: a.date || "", onChange: (e) => e.target.value && patchExam(a.id, { date: e.target.value, checklist: false, time: a.time || "23:59" }), style: { ...cellSelStyle } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: daysUntil == null ? T.amber : daysUntil <= 1 ? T.red : T.muted, fontStyle: daysUntil == null ? "italic" : "normal" } }, daysLabel), /* @__PURE__ */ React.createElement(
         CustomSelect,
         {
           value: bucketOf(a.priority),
@@ -9036,7 +9069,7 @@ function StudlinPrep({ setActive = () => {
       }, style: { background: "none", border: "none", color: T.lime, fontSize: 10, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, "Start now"), " \xB7 ", /* @__PURE__ */ React.createElement("button", { type: "button", onClick: (e) => {
         e.stopPropagation();
         onDeclinePrep({ id: a.id });
-      }, style: { background: "none", border: "none", color: T.muted, fontSize: 10, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, "Not needed")) : /* @__PURE__ */ React.createElement("div", { onClick: () => setSelectedAssignmentId(a.id), style: { fontSize: 10.5, fontWeight: rowPace && (rowPace.behind || rowPace.ahead) ? 700 : 400, color: rowPace && rowPace.behind ? T.amber : rowPace && rowPace.ahead ? T.teal : T.muted, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: "Click to open" }, statusLabel));
+      }, style: { background: "none", border: "none", color: T.muted, fontSize: 10, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, "Not needed")) : /* @__PURE__ */ React.createElement("div", { onClick: () => setSelectedAssignmentId(a.id), style: { fontSize: 10.5, fontWeight: rowPace && (rowPace.behind || rowPace.ahead) ? 700 : 400, color: rowPace && rowPace.behind ? T.amber : rowPace && rowPace.ahead ? T.teal : T.muted, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: "Click to open" }, statusLabel), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "flex-end" } }, /* @__PURE__ */ React.createElement(BtnSm, { variant: rowHasPlan ? "ghost" : "lime", onClick: () => setSelectedAssignmentId(a.id), style: { opacity: rowShowAction ? 1 : 0, transition: "opacity 0.12s", whiteSpace: "nowrap" } }, rowHasPlan ? "See plan" : "Schedule")));
     }))));
   })(), tab === "assignments" && selectedAssignment && (() => {
     const today = dayKey();
@@ -9071,15 +9104,6 @@ function StudlinPrep({ setActive = () => {
       setAssignCompleteSessionPrompt(false);
       refresh();
     };
-    const confirmCancelAllSessions = () => {
-      lsSet("events", lsGet("events", []).filter((e) => !(e.dueEventId === selectedAssignment.id && e.status === "pending")));
-      setAssignCancelSessionsConfirm(false);
-      refresh();
-    };
-    const jumpToCalendarFromPrep = (sessionId) => {
-      if (sessionId) lsSet("pendingCalendarJumpSessionId", sessionId);
-      setActive("calendar");
-    };
     const deleteLinkedBlock = (id) => {
       lsSet("events", lsGet("events", []).filter((e) => e.id !== id));
       refresh();
@@ -9089,85 +9113,68 @@ function StudlinPrep({ setActive = () => {
       onTaskCompleted(id);
       refresh();
     };
-    const addAssignManualBlock = () => {
-      if (!assignManualDate) return;
-      const block = {
-        id: "manual-" + selectedAssignment.id + "-" + Date.now(),
-        title: "Work on: " + selectedAssignment.title,
-        date: assignManualDate,
-        time: assignManualTime,
-        subject: selectedAssignment.subject || "",
-        kind: "study block",
-        notes: "",
-        priority: 5,
-        difficulty: 5,
-        deadline: selectedAssignment.deadline || selectedAssignment.date || null,
-        duration: assignManualDuration,
-        status: "pending",
-        timeSpent: 0,
-        completedAt: null,
-        dueEventId: selectedAssignment.id
-      };
-      lsSet("events", allEvents.concat([block]));
-      setAssignAddManualBlock(false);
-      refresh();
-    };
     const commitAssignAttackBlock = (fields, desiredDate, forcedSlot) => {
-      const routines = getWeeklyRoutine();
-      const prefs = getSchedulePreferences();
-      const pair = buildAssignmentAttackBlockPair(selectedAssignment.id, fields, [], allEvents, routines, prefs, desiredDate, prefs.workStartTime, false, forcedSlot);
+      const evs = lsGet("events", []);
+      const pair = buildAssignmentAttackBlockPair(selectedAssignment.id, fields, [], evs, getWeeklyRoutine(), getSchedulePreferences(), desiredDate, getSchedulePreferences().workStartTime, false, forcedSlot);
       if (!pair) {
-        setAssignAttackErr("Couldn't find room for a probe session before the deadline -- try a later deadline, or pick a time yourself.");
-        return;
+        setAssignAttackErr("I couldn't find room for a short session before the deadline. Try Schedule and pick a time yourself.");
+        return null;
       }
-      lsSet("events", allEvents.map((e) => e.id === selectedAssignment.id ? pair.marker : e).concat([pair.task]));
-      setAssignAttackSlotPicker(null);
-      setAssignAttackManual(null);
+      lsSet("events", evs.map((e) => e.id === selectedAssignment.id ? pair.marker : e).concat([pair.task]));
       setAssignAddAttackBlock(false);
       refresh();
+      return pair.task;
     };
-    const startAssignAttackBlock = () => {
-      const routines = getWeeklyRoutine();
-      const prefs = getSchedulePreferences();
-      const fields = {
-        title: selectedAssignment.title,
-        subject: selectedAssignment.subject,
-        courseId: selectedAssignment.courseId,
-        notes: selectedAssignment.notes,
-        deadline: selectedAssignment.deadline || selectedAssignment.date,
-        priority: selectedAssignment.priority,
-        difficulty: selectedAssignment.difficulty,
-        probeMins: assignAttackProbeMins
-      };
-      const desiredDate = selectedAssignment.date && selectedAssignment.date >= today ? selectedAssignment.date : today;
-      const candidates = computeNewSlotCandidates(allEvents, routines, prefs, desiredDate, prefs.workStartTime, assignAttackProbeMins, fields.deadline || null, fields.difficulty);
-      if (candidates.length > 0) {
-        setAssignAttackErr("");
-        setAssignAttackSlotPicker({ candidates, fields, desiredDate });
-        return;
-      }
-      commitAssignAttackBlock(fields, desiredDate, null);
+    const findTimeWithStu = () => {
+      setAssignAttackErr("");
+      setAssignFinding(true);
+      setTimeout(() => {
+        const routines = getWeeklyRoutine();
+        const prefs = getSchedulePreferences();
+        const fields = {
+          title: selectedAssignment.title,
+          subject: selectedAssignment.subject,
+          courseId: selectedAssignment.courseId,
+          notes: selectedAssignment.notes,
+          deadline: selectedAssignment.deadline || selectedAssignment.date,
+          priority: selectedAssignment.priority,
+          difficulty: selectedAssignment.difficulty,
+          probeMins: assignAttackProbeMins
+        };
+        const desiredDate = selectedAssignment.date && selectedAssignment.date >= today ? selectedAssignment.date : today;
+        const candidates = computeNewSlotCandidates(lsGet("events", []), routines, prefs, desiredDate, prefs.workStartTime, assignAttackProbeMins, fields.deadline || null, fields.difficulty);
+        const task = commitAssignAttackBlock(fields, desiredDate, candidates.length > 0 ? candidates[0] : null);
+        setAssignFinding(false);
+        if (!task) return;
+        lsSet("openSessionReview", {
+          title: selectedAssignment.title,
+          ids: [task.id],
+          returnAssignmentId: selectedAssignment.id,
+          message: "I found " + (task.duration || assignAttackProbeMins) + " minutes to work on " + selectedAssignment.title + ": " + niceDate(task.date) + ", " + fmtTimeRange(task.time, task.duration || assignAttackProbeMins) + ".",
+          setAt: Date.now()
+        });
+        setActive("calendar");
+      }, 1400);
     };
-    const confirmAssignAttackSlot = (slot) => {
-      commitAssignAttackBlock(assignAttackSlotPicker.fields, assignAttackSlotPicker.desiredDate, slot);
+    const goPlaceAssignment = () => {
+      lsSet("openProjectPlacing", {
+        kind: "assignment",
+        stepId: null,
+        title: "Work on: " + selectedAssignment.title,
+        subject: selectedAssignment.subject || "",
+        courseId: selectedAssignment.courseId || null,
+        projectId: selectedAssignment.id,
+        deadline: selectedAssignment.date || null,
+        returnAssignmentId: selectedAssignment.id,
+        withPartners: false,
+        sharedProjectId: null,
+        setAt: Date.now()
+      });
+      setActive("calendar");
     };
-    const startAssignAttackManual = () => {
-      setAssignAttackSlotPicker(null);
-      setAssignAttackManual({ date: selectedAssignment.date && selectedAssignment.date >= today ? selectedAssignment.date : today, time: "16:00" });
-    };
-    const confirmAssignAttackManual = () => {
-      if (!assignAttackManual) return;
-      const fields = {
-        title: selectedAssignment.title,
-        subject: selectedAssignment.subject,
-        courseId: selectedAssignment.courseId,
-        notes: selectedAssignment.notes,
-        deadline: selectedAssignment.deadline || selectedAssignment.date,
-        priority: selectedAssignment.priority,
-        difficulty: selectedAssignment.difficulty,
-        probeMins: assignAttackProbeMins
-      };
-      commitAssignAttackBlock(fields, assignAttackManual.date, { date: assignAttackManual.date, time: assignAttackManual.time });
+    const showAssignOnCalendar = (ids) => {
+      lsSet("openSessionReview", { title: selectedAssignment.title, ids, returnAssignmentId: selectedAssignment.id, setAt: Date.now() });
+      setActive("calendar");
     };
     const proposeAssignPaceBlock = () => {
       const slot = findReliableSlotFor(allEvents, getWeeklyRoutine(), getSchedulePreferences(), today, getSchedulePreferences().workStartTime, 30, selectedAssignment.deadline || selectedAssignment.date, selectedAssignment.difficulty);
@@ -9201,33 +9208,20 @@ function StudlinPrep({ setActive = () => {
       setAssignPaceDismissed(true);
       setAssignPaceProposal(null);
     };
-    return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("button", { onClick: () => setSelectedAssignmentId(null), style: { background: "none", border: "none", color: T.muted, fontSize: 12, fontFamily: T.font, cursor: "pointer", padding: 0, marginBottom: 14, display: "flex", alignItems: "center", gap: 4 } }, "\u2190 All assignments"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 24, fontWeight: 800, color: T.white, letterSpacing: "-0.01em", marginBottom: 4, lineHeight: 1.2 } }, selectedAssignment.title, " \xB7 ", countdownLabel), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginBottom: 14 } }, [selectedAssignment.subject, selectedAssignment.date ? niceDate(selectedAssignment.date) : null, linkedSessions.length > 0 ? linkedSessions.length + " block" + (linkedSessions.length !== 1 ? "s" : "") + " scheduled" : hasOwnScheduledTime ? "1 block scheduled" : "no plan yet"].filter(Boolean).join(" \xB7 ")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 14 } }, isCompleted ? /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: T.lookOn ? T.accentInk : T.lime, background: T.lookOn ? T.chipBg : T.lime + "14", border: `1px solid ${T.lookOn ? T.borderTint : T.lime + "44"}`, borderRadius: 6, padding: "4px 10px" } }, "COMPLETED") : itemLifecycleState(selectedAssignment, today) === "past-due" && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: T.amber, background: T.amber + "14", border: `1px solid ${T.amber}44`, borderRadius: 6, padding: "4px 10px" } }, "PAST DUE"), /* @__PURE__ */ React.createElement(BtnSm, { variant: isCompleted ? "ghost" : "subtle", onClick: toggleAssignCompleted }, isCompleted ? "Mark as uncomplete" : "Mark as completed")), assignCompleteSessionPrompt && /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.amber}44`, borderRadius: 8, padding: "12px 14px", marginBottom: 20, fontSize: 12.5, color: T.text, lineHeight: 1.5 } }, "You still have ", pendingLinked.length, " block", pendingLinked.length !== 1 ? "s" : "", " scheduled for this \u2014 cancel ", pendingLinked.length !== 1 ? "them" : "it", " too?", /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => finishMarkingAssignComplete(true) }, "Cancel ", pendingLinked.length !== 1 ? "them" : "it"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => finishMarkingAssignComplete(false) }, "Keep ", pendingLinked.length !== 1 ? "them" : "it"))), hasOwnScheduledTime && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 } }, "Your scheduled time"), /* @__PURE__ */ React.createElement("div", { style: { background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Input, { type: "date", value: selectedAssignment.date || "", onChange: (e) => {
-      patchExam(selectedAssignment.id, { date: e.target.value });
-      refresh();
-    }, style: { width: 140 } }), /* @__PURE__ */ React.createElement(TimeInput, { value: selectedAssignment.time || "16:00", onChange: (v) => {
-      patchExam(selectedAssignment.id, { time: v });
-      refresh();
-    } }), /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, fontSize: 11 } }, "for"), /* @__PURE__ */ React.createElement(NumField, { min: 5, max: 480, step: 5, fallback: 30, value: selectedAssignment.duration || 30, onChange: (v) => {
-      patchExam(selectedAssignment.id, { duration: v });
-      refresh();
-    } }), /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, fontSize: 11 } }, "min"))), canStartAttackBlock && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "12px 14px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { onClick: () => setAssignAddAttackBlock((a) => !a), style: { display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text } }, hasOwnScheduledTime ? "Turn this into a full Attack Block plan" : "Start an Attack Block for this"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, "A short probe session, scheduled the moment you confirm. Studlin figures out the rest from there.")), /* @__PURE__ */ React.createElement("div", { style: { width: 36, height: 20, borderRadius: 10, background: assignAddAttackBlock ? T.lime : T.faint, position: "relative", transition: "background 0.2s", cursor: "pointer", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 16, height: 16, borderRadius: "50%", background: "#fff", position: "absolute", top: 2, left: assignAddAttackBlock ? 18 : 2, transition: "left 0.2s" } }))), /* @__PURE__ */ React.createElement(AttackBlockExplainer, null), assignAddAttackBlock && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` } }, assignAttackManual ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 } }, /* @__PURE__ */ React.createElement(Input, { type: "date", value: assignAttackManual.date, onChange: (e) => setAssignAttackManual((m) => ({ ...m, date: e.target.value })), style: { width: 140 } }), /* @__PURE__ */ React.createElement(TimeInput, { value: assignAttackManual.time, onChange: (v) => setAssignAttackManual((m) => ({ ...m, time: v })) })), assignAttackErr && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.red, marginTop: 8 } }, assignAttackErr), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10, display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: confirmAssignAttackManual }, "Schedule here"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setAssignAttackManual(null) }, "Cancel"))) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "Probe session length" }, /* @__PURE__ */ React.createElement(NumField, { min: 15, max: 60, fallback: ATTACK_BLOCK_DEFAULT_PROBE_MINS, value: assignAttackProbeMins, onChange: setAssignAttackProbeMins })), assignAttackErr && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.red, marginTop: 8 } }, assignAttackErr), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10, display: "flex", alignItems: "center", gap: 12 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: startAssignAttackBlock }, "Schedule probe session"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: startAssignAttackManual, style: { background: "none", border: "none", color: T.muted, fontSize: 11.5, textDecoration: "underline", cursor: "pointer", fontFamily: T.font, padding: 0 } }, "I'll pick a time myself")))))), linkedSessions.length > 0 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 2px", marginBottom: 10, fontSize: 12, color: T.muted } }, /* @__PURE__ */ React.createElement("span", null, "Studlin scheduled ", linkedSessions.length, " block", linkedSessions.length !== 1 ? "s" : "", " for this", pendingLinked.length < linkedSessions.length ? " (" + (linkedSessions.length - pendingLinked.length) + " of " + linkedSessions.length + " done)" : "", "."), pendingLinked.length > 0 && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setAssignCancelSessionsConfirm(true), style: { background: "none", border: "none", color: T.red, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: T.font, textDecoration: "underline" } }, "Cancel blocks")), assignCancelSessionsConfirm && /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.red}44`, borderRadius: 8, padding: "12px 14px", marginBottom: 14, fontSize: 12.5, color: T.text, lineHeight: 1.5 } }, "Cancel all ", pendingLinked.length, " pending block", pendingLinked.length !== 1 ? "s" : "", " scheduled for this?", /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { variant: "danger", onClick: confirmCancelAllSessions }, "Cancel ", pendingLinked.length !== 1 ? "them" : "it"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setAssignCancelSessionsConfirm(false) }, "Never mind"))), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 } }, "Scheduled blocks"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" } }, linkedSessions.map((s, si) => {
-      const isPast = s.status === "pending" && s.date && s.date < today;
-      return /* @__PURE__ */ React.createElement("div", { key: s.id, style: { padding: "8px 10px", borderTop: si === 0 ? "none" : `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { onClick: () => jumpToCalendarFromPrep(s.id), style: { cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }, title: "Jump to calendar" }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, fontWeight: 600, color: s.status === "done" ? T.muted : T.text, textDecoration: s.status === "done" ? "line-through" : "none" } }, s.date, " \xB7 ", s.time, " \xB7 ", s.duration || 30, "min")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center" } }, s.status === "pending" && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => markLinkedBlockDone(s.id), style: { background: "none", border: "none", color: T.lime, cursor: "pointer", fontSize: 11, fontWeight: 600, fontFamily: T.font, textDecoration: "underline" } }, "Mark done"), assignConfirmDeleteBlockId === s.id ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
-        deleteLinkedBlock(s.id);
-        setAssignConfirmDeleteBlockId(null);
-      }, style: { background: "none", border: "none", color: T.red, cursor: "pointer", fontSize: 11, fontWeight: 700, fontFamily: T.font, textDecoration: "underline" } }, "Confirm"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setAssignConfirmDeleteBlockId(null), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 11, fontFamily: T.font, textDecoration: "underline" } }, "Cancel")) : /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setAssignConfirmDeleteBlockId(s.id), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 11, fontFamily: T.font, textDecoration: "underline" } }, "Delete"))), isPast && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 6, paddingTop: 6, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.amber } }, "Did you get to this?"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => markLinkedBlockDone(s.id), style: { background: "none", border: "none", color: T.lime, cursor: "pointer", fontSize: 11, fontWeight: 600, fontFamily: T.font, textDecoration: "underline" } }, "Mark done")));
-    })))), pace && pace.behind && !assignPaceDismissed && /* @__PURE__ */ React.createElement("div", { style: { background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 8, padding: "10px 12px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, marginBottom: 2 } }, "Behind pace on this one"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 8 } }, Math.round(pace.loggedMins), " of an expected ", Math.round(pace.expectedMins), " min logged so far, aiming to finish by ", pace.gate.finishByDate, "."), assignPaceProposal ? assignPaceProposal.date ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.text } }, assignPaceProposal.date, " \xB7 ", assignPaceProposal.time, " \xB7 ", assignPaceProposal.duration, "min"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: confirmAssignPaceProposal }, "Add it"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setAssignPaceProposal(null) }, "Never mind"))) : /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted } }, "Couldn't find an open slot before the deadline -- try adding a time manually below.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: proposeAssignPaceBlock }, "Propose a catch-up block"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: dismissAssignPaceOffer }, "Not now"))), pace && pace.ahead && /* @__PURE__ */ React.createElement("div", { style: { background: T.teal + "14", border: `1px solid ${T.teal}33`, borderRadius: 8, padding: "10px 12px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, marginBottom: 2 } }, "Ahead of pace on this one"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted } }, Math.round(pace.loggedMins), " of an expected ", Math.round(pace.expectedMins), " min logged so far \u2014 nice work.")), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, !assignAddManualBlock ? /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setAssignAddManualBlock(true), style: { background: "none", border: "none", color: T.lime, fontSize: 12, fontWeight: 600, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, "+ Add my own time block") : /* @__PURE__ */ React.createElement("div", { style: { background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 8 } }, "A specific time you'll work on this -- shows up on your calendar like any other block, drag/resize it same as usual."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(Input, { type: "date", value: assignManualDate, onChange: (e) => setAssignManualDate(e.target.value), style: { width: 140 } }), /* @__PURE__ */ React.createElement(TimeInput, { value: assignManualTime, onChange: setAssignManualTime }), /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, fontSize: 11 } }, "\u2013"), /* @__PURE__ */ React.createElement(TimeInput, { value: minutesToTime(timeToMinutes(assignManualTime) + assignManualDuration), onChange: (v) => setAssignManualDuration(Math.max(5, timeToMinutes(v) - timeToMinutes(assignManualTime))) })), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: addAssignManualBlock, disabled: !assignManualDate }, "Add block"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setAssignAddManualBlock(false) }, "Cancel")))), assignAttackSlotPicker && /* @__PURE__ */ React.createElement(
-      NewSlotPickerModal,
-      {
-        title: "Choose when to start",
-        sub: "Studlin found a few real options for your first probe session:",
-        candidates: assignAttackSlotPicker.candidates,
-        confirmLabel: "Start here",
-        onConfirm: confirmAssignAttackSlot,
-        onClose: () => setAssignAttackSlotPicker(null),
-        onManual: startAssignAttackManual
+    return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("button", { onClick: () => setSelectedAssignmentId(null), style: { background: "none", border: "none", color: T.muted, fontSize: 12, fontFamily: T.font, cursor: "pointer", padding: 0, marginBottom: 14, display: "flex", alignItems: "center", gap: 4 } }, "\u2190 All assignments"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 24, fontWeight: 800, color: T.white, letterSpacing: "-0.01em", marginBottom: 4, lineHeight: 1.2 } }, selectedAssignment.title, " \xB7 ", countdownLabel), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginBottom: 14 } }, [selectedAssignment.subject, selectedAssignment.date ? niceDate(selectedAssignment.date) : null, linkedSessions.length > 0 ? linkedSessions.length + " block" + (linkedSessions.length !== 1 ? "s" : "") + " scheduled" : hasOwnScheduledTime ? "1 block scheduled" : "no plan yet"].filter(Boolean).join(" \xB7 ")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 14 } }, isCompleted ? /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: T.lookOn ? T.accentInk : T.lime, background: T.lookOn ? T.chipBg : T.lime + "14", border: `1px solid ${T.lookOn ? T.borderTint : T.lime + "44"}`, borderRadius: 6, padding: "4px 10px" } }, "COMPLETED") : itemLifecycleState(selectedAssignment, today) === "past-due" && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: T.amber, background: T.amber + "14", border: `1px solid ${T.amber}44`, borderRadius: 6, padding: "4px 10px" } }, "PAST DUE"), /* @__PURE__ */ React.createElement(BtnSm, { variant: isCompleted ? "ghost" : "subtle", onClick: toggleAssignCompleted }, isCompleted ? "Mark as uncomplete" : "Mark as completed")), assignCompleteSessionPrompt && /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.amber}44`, borderRadius: 8, padding: "12px 14px", marginBottom: 20, fontSize: 12.5, color: T.text, lineHeight: 1.5 } }, "You still have ", pendingLinked.length, " block", pendingLinked.length !== 1 ? "s" : "", " scheduled for this \u2014 cancel ", pendingLinked.length !== 1 ? "them" : "it", " too?", /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => finishMarkingAssignComplete(true) }, "Cancel ", pendingLinked.length !== 1 ? "them" : "it"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => finishMarkingAssignComplete(false) }, "Keep ", pendingLinked.length !== 1 ? "them" : "it"))), (() => {
+      const ownBlock = !!selectedAssignment.time && !!selectedAssignment.duration;
+      const planItems = (ownBlock ? [selectedAssignment] : []).concat(linkedSessions).sort((a, b) => (a.date || "") + (a.time || "") < (b.date || "") + (b.time || "") ? -1 : 1);
+      const hasPlan = planItems.length > 0;
+      const pendingPlan = planItems.filter((x) => x.status !== "done" && x.date && x.time);
+      if (isCompleted && !hasPlan) return null;
+      if (!hasPlan) {
+        if (assignFinding) {
+          return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 14, padding: "18px 20px", border: `1px solid ${T.border}`, borderRadius: 14, background: T.card, marginBottom: 14 } }, /* @__PURE__ */ React.createElement(StudMascot, { size: 52, mood: "thinking", walking: !reduceMotionOn(), ...stuPalette() }), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14.5, fontWeight: 700, color: T.white } }, "Looking for time to work on this..."), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginTop: 2 } }, "Checking your classes, your routine and the days before it's due.")));
+        }
+        return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: goPlaceAssignment, style: { textAlign: "left", width: "100%", border: `1.5px solid ${T.lime}`, background: T.lookOn ? T.accentSoft : T.lime + "10", borderRadius: 14, padding: "16px 18px", cursor: "pointer", fontFamily: T.font, color: T.text } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 15, fontWeight: 700, color: T.white } }, "Schedule"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginTop: 3 } }, "Pick when you'll work on it. Drag a block onto your calendar, as many times as you like.")), canStartAttackBlock && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: findTimeWithStu, style: { textAlign: "left", width: "100%", border: `1px solid ${T.border}`, background: T.card, borderRadius: 14, padding: "14px 18px", cursor: "pointer", fontFamily: T.font, color: T.text } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: T.white } }, "I don't know how long this will take"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginTop: 3 } }, "Stu finds ", assignAttackProbeMins, " minutes to get started, then helps you plan the rest.")), assignAttackErr && /* @__PURE__ */ React.createElement("div", { role: "alert", style: { fontSize: 12.5, color: T.red } }, assignAttackErr));
       }
-    ));
+      return /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 18 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, fontFamily: T.mono } }, planItems.length - pendingPlan.length, " of ", planItems.length, " sessions done"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } }, pendingPlan.length > 0 && /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => showAssignOnCalendar(pendingPlan.map((x) => x.id)) }, "See on calendar"), !isCompleted && /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: goPlaceAssignment }, "+ Add time"))), planItems.map((x) => renderSessionCard(x, { today, deadline: selectedAssignment.deadline || selectedAssignment.date || null, canRemove: x.id !== selectedAssignment.id, onShow: showAssignOnCalendar, onMarkDone: markLinkedBlockDone, onRemove: deleteLinkedBlock })), assignAttackErr && /* @__PURE__ */ React.createElement("div", { role: "alert", style: { fontSize: 12.5, color: T.red, marginTop: 6 } }, assignAttackErr));
+    })(), pace && pace.behind && !assignPaceDismissed && /* @__PURE__ */ React.createElement("div", { style: { background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 8, padding: "10px 12px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, marginBottom: 2 } }, "Behind pace on this one"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 8 } }, Math.round(pace.loggedMins), " of an expected ", Math.round(pace.expectedMins), " min logged so far, aiming to finish by ", pace.gate.finishByDate, "."), assignPaceProposal ? assignPaceProposal.date ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.text } }, assignPaceProposal.date, " \xB7 ", assignPaceProposal.time, " \xB7 ", assignPaceProposal.duration, "min"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: confirmAssignPaceProposal }, "Add it"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => setAssignPaceProposal(null) }, "Never mind"))) : /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted } }, "Couldn't find an open slot before the deadline -- try adding a time manually below.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: proposeAssignPaceBlock }, "Propose a catch-up block"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: dismissAssignPaceOffer }, "Not now"))), pace && pace.ahead && /* @__PURE__ */ React.createElement("div", { style: { background: T.teal + "14", border: `1px solid ${T.teal}33`, borderRadius: 8, padding: "10px 12px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, marginBottom: 2 } }, "Ahead of pace on this one"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted } }, Math.round(pace.loggedMins), " of an expected ", Math.round(pace.expectedMins), " min logged so far \u2014 nice work.")));
   })(), tab === "projects" && (() => {
     const today = dayKey();
     const allProjects = upcomingProjects();
@@ -9528,31 +9522,7 @@ function StudlinPrep({ setActive = () => {
       // section's own Generate button, below, only ever renders
       // once sessions already exist -- see its own comment).
       /* @__PURE__ */ React.createElement("div", { style: { background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: "16px 18px", marginBottom: 24, display: "flex", alignItems: "flex-start", gap: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, width: 38, height: 38, borderRadius: 8, background: mutedAlpha("1A"), display: "flex", alignItems: "center", justifyContent: "center", color: T.muted } }, Icon.brain), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "No study plan yet"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text, lineHeight: 1.5, marginBottom: 14 } }, "Add material and Studlin will build one, or set it up yourself."), /* @__PURE__ */ React.createElement(Btn, { onClick: () => openBuildPlan(selectedExam), style: { padding: "7px 14px", fontSize: 12 } }, "Build study plan")))
-    ) : /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 24 } }, examSessions.map((s) => {
-      const isDone = s.status === "done";
-      const isMissed = !isDone && !!s.date && s.date < today;
-      const dur = s.duration || 25;
-      const others = lsGet("events", []).filter((e) => e.id !== s.id);
-      const conflict = !isDone && s.date && s.time ? findOverlapConflict(s.date, s.time, minutesToTime(timeToMinutes(s.time) + dur), others, getWeeklyRoutine()) : null;
-      let shortenTo = null, moveTo = null;
-      if (conflict) {
-        const fit = conflict.start - timeToMinutes(s.time);
-        if (fit >= 15) shortenTo = Math.floor(fit / 5) * 5;
-        const slot = findLegalSlotOrNull(others, getWeeklyRoutine(), getSchedulePreferences(), s.date, minutesToTime(conflict.end), dur, selectedExam.date);
-        if (slot && slot.date === s.date && slot.time !== s.time) moveTo = slot.time;
-      }
-      const stepBtn = { border: "none", background: T.card, color: T.text, width: 28, height: 28, fontSize: 15, cursor: "pointer", fontFamily: T.font };
-      return /* @__PURE__ */ React.createElement("div", { key: s.id, style: { display: "grid", gridTemplateColumns: "60px minmax(0,1fr) auto", gap: 14, alignItems: "center", padding: "14px 16px", border: `1px solid ${isMissed ? T.red + "66" : T.border}`, borderRadius: 14, background: T.card, marginBottom: 10, opacity: isDone ? 0.6 : 1 } }, /* @__PURE__ */ React.createElement("div", { style: { borderRadius: 12, background: T.lookOn ? T.accentSoft : T.card2, textAlign: "center", padding: "8px 0" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", color: T.lookOn ? T.accentInk : T.muted } }, s.date ? dayOfWeekLabel(s.date).slice(0, 3).toUpperCase() : "TBD"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 21, fontWeight: 700, color: T.white, lineHeight: 1.1 } }, s.date ? parseInt(s.date.slice(8), 10) : "-")), /* @__PURE__ */ React.createElement("div", { style: { minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14.5, fontWeight: 600, color: T.text, textDecoration: isDone ? "line-through" : "none" } }, s.notes || s.title), isDone ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginTop: 4, fontFamily: T.mono } }, s.date ? dayOfWeekLabel(s.date).slice(0, 3) + " " + s.date.slice(5).replace("-", "/") : "", s.time ? " \xB7 " + fmtRolloverClock(s.time) : "") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 8 } }, /* @__PURE__ */ React.createElement(Input, { type: "date", value: s.date || "", onChange: (e) => patchSession(s.id, { date: e.target.value }), "aria-label": "Session date", style: { width: 132, fontSize: 12 } }), /* @__PURE__ */ React.createElement(TimeInput, { value: s.time || "", onChange: (v) => patchSession(s.id, { time: v }) }), /* @__PURE__ */ React.createElement("span", { style: { display: "inline-flex", alignItems: "center", border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" } }, /* @__PURE__ */ React.createElement("button", { type: "button", "aria-label": "Shorter", onClick: () => patchSession(s.id, { duration: Math.max(5, dur - 5) }), style: stepBtn }, "\u2212"), /* @__PURE__ */ React.createElement("span", { style: { minWidth: 58, textAlign: "center", fontFamily: T.mono, fontSize: 12.5, color: T.text } }, dur, " min"), /* @__PURE__ */ React.createElement("button", { type: "button", "aria-label": "Longer", onClick: () => patchSession(s.id, { duration: Math.min(240, dur + 5) }), style: stepBtn }, "+")), isMissed && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, fontWeight: 600, color: T.red } }, "Missed"), (!s.date || !s.time) && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.amber } }, "Pick a day and time"))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" } }, isDone ? /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11.5, fontWeight: 700, color: T.teal, background: T.teal + "14", border: `1px solid ${T.teal}44`, borderRadius: 99, padding: "3px 10px" } }, "Done") : /* @__PURE__ */ React.createElement(React.Fragment, null, smartFeaturesOn() && /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
-        if (window._setTimerTask) window._setTimerTask(s);
-      } }, "Start"), /* @__PURE__ */ React.createElement(BtnSm, { variant: smartFeaturesOn() ? "ghost" : "lime", onClick: () => {
-        lsSet("events", lsGet("events", []).map((x) => x.id === s.id ? { ...x, status: "done", completedAt: Date.now() } : x));
-        onTaskCompleted(s.id);
-        refresh();
-      } }, "Mark done"), confirmDeleteSessionId === s.id ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
-        deleteSession(s.id);
-        setConfirmDeleteSessionId(null);
-      }, style: { background: "none", border: "none", color: T.red, cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: T.font, textDecoration: "underline" } }, "Remove"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setConfirmDeleteSessionId(null), style: { background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 12, fontFamily: T.font, textDecoration: "underline" } }, "Keep")) : /* @__PURE__ */ React.createElement("button", { type: "button", "aria-label": "Remove session", title: "Remove this session", onClick: () => setConfirmDeleteSessionId(s.id), style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 18, lineHeight: 1, padding: "2px 6px" } }, "\xD7"))), conflict && /* @__PURE__ */ React.createElement("div", { style: { gridColumn: "1 / -1", display: "flex", gap: 10, alignItems: "flex-start", background: T.amber + "14", border: `1px solid ${T.amber}33`, borderRadius: 10, padding: "10px 12px" } }, /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0 } }, /* @__PURE__ */ React.createElement(StudMascot, { size: 30, mood: "thinking", ...stuPalette() })), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, lineHeight: 1.5 } }, /* @__PURE__ */ React.createElement("strong", null, conflict.title), " is at ", fmtRolloverClock(minutesToTime(conflict.start)), " that day, so this overlaps.", /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 } }, shortenTo && /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => patchSession(s.id, { duration: shortenTo }) }, "Shorten to ", shortenTo, " min"), moveTo && /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => patchSession(s.id, { time: moveTo }) }, "Move to ", fmtRolloverClock(moveTo)), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => showOnCalendar([s.id]) }, "Show me on the calendar")))));
-    }), hasUnfocusedGenericSessions && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: addFocusToExisting, disabled: sessionScheduleLoading }, sessionScheduleLoading ? "Reading your material\u2026" : "Add study focus from your material"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.faint, marginTop: 4 } }, 'Give your existing sessions a specific "what to study" line, grounded in the material below.')), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addOneSession, style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, marginTop: 10, textDecoration: "underline" } }, "+ Add a session")), examSessions.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 16 } }, genMsg && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginTop: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11.5, color: genMsg.startsWith("\u2713") ? T.teal : T.red } }, genMsg), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setGenMsg(""), style: { background: "none", border: "none", color: T.faint, fontSize: 11, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, "Hide"))), (deck || examSessions.length > 0) && /* @__PURE__ */ React.createElement(Card, { style: { padding: 20, marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: T.lookOn ? T.hdrText : T.white, marginBottom: 10, ...T.lookOn ? { background: T.hdrBg, padding: "6px 10px", borderRadius: 6 } : {} } }, "Flashcards"), !deck ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "No deck yet. Generate one from material above.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text } }, deck.name, " \xB7 ", deck.count, " cards"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexShrink: 0, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
+    ) : /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 24 } }, examSessions.map((s) => renderSessionCard(s, { today, deadline: selectedExam.date, onShow: showOnCalendar })), hasUnfocusedGenericSessions && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: addFocusToExisting, disabled: sessionScheduleLoading }, sessionScheduleLoading ? "Reading your material\u2026" : "Add study focus from your material"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.faint, marginTop: 4 } }, 'Give your existing sessions a specific "what to study" line, grounded in the material below.')), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addOneSession, style: { background: "none", border: "none", color: T.muted, fontSize: 10.5, fontFamily: T.font, cursor: "pointer", padding: 0, marginTop: 10, textDecoration: "underline" } }, "+ Add a session")), examSessions.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 16 } }, genMsg && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginTop: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11.5, color: genMsg.startsWith("\u2713") ? T.teal : T.red } }, genMsg), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setGenMsg(""), style: { background: "none", border: "none", color: T.faint, fontSize: 11, fontFamily: T.font, cursor: "pointer", padding: 0, textDecoration: "underline" } }, "Hide"))), (deck || examSessions.length > 0) && /* @__PURE__ */ React.createElement(Card, { style: { padding: 20, marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: T.lookOn ? T.hdrText : T.white, marginBottom: 10, ...T.lookOn ? { background: T.hdrBg, padding: "6px 10px", borderRadius: 6 } : {} } }, "Flashcards"), !deck ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted } }, "No deck yet. Generate one from material above.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text } }, deck.name, " \xB7 ", deck.count, " cards"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexShrink: 0, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
       lsSet("openDeckId", deck.id);
       lsSet("openDeckAction", "study");
       setFlashcardsOverlay(true);
@@ -20988,7 +20958,7 @@ function CalendarTab({ setActive = () => {
     lsSet("openSessionReview", null);
     if (!q.setAt || Date.now() - q.setAt > 6e4) return;
     setCalView("weekly");
-    setSessionReview({ title: q.title || "Study plan", ids: q.ids || [], idx: 0, examId: q.examId || null });
+    setSessionReview({ title: q.title || "Study plan", ids: q.ids || [], idx: 0, examId: q.examId || null, message: q.message || null, returnAssignmentId: q.returnAssignmentId || null });
     setNewItemHighlightIds(q.ids || []);
   }, []);
   const reviewSessions = sessionReview ? sessionReview.ids.map((id) => events.find((e) => e.id === id)).filter((e) => e && e.date && e.time && e.status !== "done").sort((a, b) => a.date + a.time < b.date + b.time ? -1 : 1) : [];
@@ -20999,11 +20969,15 @@ function CalendarTab({ setActive = () => {
   }, [reviewCurrent && reviewCurrent.id]);
   const stepReview = (d) => setSessionReview((r) => r ? { ...r, idx: Math.max(0, Math.min(Math.max(0, reviewSessions.length - 1), Math.max(0, Math.min(r.idx, reviewSessions.length - 1)) + d)) } : r);
   const finishReview = () => {
-    const back = sessionReview && sessionReview.examId;
+    const backExam = sessionReview && sessionReview.examId;
+    const backAsg = sessionReview && sessionReview.returnAssignmentId;
     setSessionReview(null);
     setNewItemHighlightIds([]);
-    if (back) {
-      lsSet("openExamId", back);
+    if (backExam) {
+      lsSet("openExamId", backExam);
+      setActive("prep");
+    } else if (backAsg) {
+      lsSet("openAssignmentId", backAsg);
       setActive("prep");
     }
   };
@@ -21060,12 +21034,12 @@ function CalendarTab({ setActive = () => {
     const routines2 = getWeeklyRoutine(), prefs = getSchedulePreferences();
     const busyBy = placingPartner.busy || {};
     const todayK2 = dayKey();
-    const lastKey = placing.deadline && placing.deadline > todayK2 ? (() => {
-      const d = /* @__PURE__ */ new Date(placing.deadline + "T12:00:00");
-      d.setDate(d.getDate() - 1);
+    const lastKey = placing.deadline ? placing.deadline >= todayK2 ? placing.deadline : todayK2 : (() => {
+      const d = /* @__PURE__ */ new Date();
+      d.setDate(d.getDate() + 7);
       return dayKey(d);
-    })() : todayK2;
-    const taken = new Set(events.filter((e) => e.stepId === placing.stepId).map((e) => e.date));
+    })();
+    const taken = new Set(events.filter((e) => placing.stepId ? e.stepId === placing.stepId : e.dueEventId === placing.projectId && e.status !== "done").map((e) => e.date));
     const out = [];
     for (let i = 0; i < 14 && out.length < 3; i++) {
       const d = /* @__PURE__ */ new Date();
@@ -21114,8 +21088,7 @@ function CalendarTab({ setActive = () => {
       timeSpent: 0,
       completedAt: null,
       dueEventId: placing.projectId,
-      stepId: placing.stepId,
-      projectStep: true
+      ...placing.stepId ? { stepId: placing.stepId, projectStep: true } : {}
     };
     const next = events.concat([ev]);
     setEvents2(next);
@@ -21132,11 +21105,15 @@ function CalendarTab({ setActive = () => {
   };
   const finishPlacing = () => {
     const back = placing && placing.returnProjectId;
+    const backAsg = placing && placing.returnAssignmentId;
     lsSet("stuPlacingTipSeen", true);
     setPlacing(null);
     setPlacingCount(0);
     if (back) {
       lsSet("openProjectId", back);
+      setActive("prep");
+    } else if (backAsg) {
+      lsSet("openAssignmentId", backAsg);
       setActive("prep");
     }
   };
@@ -23534,7 +23511,7 @@ Examples:
   ].map((item) => /* @__PURE__ */ React.createElement("div", { key: item.label, onClick: item.onClick, style: { display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 14px", cursor: "pointer" }, onMouseEnter: (e) => e.currentTarget.style.background = T.card2, onMouseLeave: (e) => e.currentTarget.style.background = "transparent" }, /* @__PURE__ */ React.createElement("span", { style: { width: 16, color: item.danger ? T.red : T.muted, display: "flex", marginTop: 2 } }, item.icon), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: item.danger ? T.red : T.text } }, item.label), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 1 } }, item.sub))))))), /* @__PURE__ */ React.createElement("div", { style: { position: "relative" }, ref: addTaskBtnRef }, /* @__PURE__ */ React.createElement("button", { onClick: () => openNewAI(selDay), title: "Add", style: { width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", background: T.lime, border: "none", borderRadius: 4, color: T.lookOn ? lookTextOnFill(T.lime) : T.ink, cursor: "pointer" } }, Icon.plus)))), editRoutineMode && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "9px 14px", background: T.lime + "10", border: `1px solid ${T.lime}33`, borderRadius: 6, marginBottom: 14, fontSize: 12.5, color: T.text } }, /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, "Editing your Weekly Routine. One-off tasks are dimmed. Click a routine block to edit it, or hover and tap \xD7 to delete it everywhere it repeats."), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => {
     setEditRoutineMode(false);
     setHoveredRoutineId(null);
-  } }, "Done")), manualPlacement && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "9px 14px", background: T.lime + "10", border: `1px solid ${T.lime}33`, borderRadius: 6, marginBottom: 14, fontSize: 12.5, color: T.text } }, /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, "Placing sessions for ", /* @__PURE__ */ React.createElement("strong", null, manualPlacement.title), ". Drag each one to where you want it, resize to change duration.", manualPlacementCount > 0 ? " " + manualPlacementCount + " placed so far." : ""), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: addManualPlacementSession }, "+ Add a session"), /* @__PURE__ */ React.createElement(BtnSm, { onClick: finishManualPlacement }, "Done")), sessionReview && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: T.lookOn ? T.accentSoft : T.lime + "10", border: `1px solid ${T.lime}33`, borderRadius: 10, marginBottom: 14, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0 } }, /* @__PURE__ */ React.createElement(StudMascot, { size: 34, mood: "happy", ...stuPalette() })), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 200 } }, reviewCurrent ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 700, color: T.white } }, sessionReview.title, ": session ", reviewIdx + 1, " of ", reviewSessions.length), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginTop: 2 } }, niceDate(reviewCurrent.date), ", ", fmtTimeRange(reviewCurrent.time, reviewCurrent.duration || 25), ". Drag the pulsing block to move it, or drag its bottom edge to change the length.")) : /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text } }, "No upcoming study sessions to show.")), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", disabled: reviewIdx <= 0, onClick: () => stepReview(-1) }, "\u2039 Back"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", disabled: reviewIdx >= reviewSessions.length - 1, onClick: () => stepReview(1) }, "Next \u203A"), /* @__PURE__ */ React.createElement(BtnSm, { onClick: finishReview }, "Done")), placing && (() => {
+  } }, "Done")), manualPlacement && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "9px 14px", background: T.lime + "10", border: `1px solid ${T.lime}33`, borderRadius: 6, marginBottom: 14, fontSize: 12.5, color: T.text } }, /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }, "Placing sessions for ", /* @__PURE__ */ React.createElement("strong", null, manualPlacement.title), ". Drag each one to where you want it, resize to change duration.", manualPlacementCount > 0 ? " " + manualPlacementCount + " placed so far." : ""), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: addManualPlacementSession }, "+ Add a session"), /* @__PURE__ */ React.createElement(BtnSm, { onClick: finishManualPlacement }, "Done")), sessionReview && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: T.lookOn ? T.accentSoft : T.lime + "10", border: `1px solid ${T.lime}33`, borderRadius: 10, marginBottom: 14, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0 } }, /* @__PURE__ */ React.createElement(StudMascot, { size: 34, mood: "happy", ...stuPalette() })), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 200 } }, reviewCurrent && sessionReview.message ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 700, color: T.white } }, sessionReview.message), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginTop: 2 } }, "Move it anywhere you like: drag the pulsing block, or drag its bottom edge to change the length. Press Done when you're happy.")) : reviewCurrent ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 700, color: T.white } }, sessionReview.title, ": session ", reviewIdx + 1, " of ", reviewSessions.length), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginTop: 2 } }, niceDate(reviewCurrent.date), ", ", fmtTimeRange(reviewCurrent.time, reviewCurrent.duration || 25), ". Drag the pulsing block to move it, or drag its bottom edge to change the length.")) : /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.text } }, "No upcoming study sessions to show.")), reviewSessions.length > 1 && /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", disabled: reviewIdx <= 0, onClick: () => stepReview(-1) }, "\u2039 Back"), reviewSessions.length > 1 && /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", disabled: reviewIdx >= reviewSessions.length - 1, onClick: () => stepReview(1) }, "Next \u203A"), /* @__PURE__ */ React.createElement(BtnSm, { onClick: finishReview }, "Done")), placing && (() => {
     const firstTime = !lsGet("stuPlacingTipSeen", false);
     const partnerLine = placing.withPartners ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginTop: firstTime ? 6 : 0 } }, placingPartner.loading ? "Checking your partners' availability..." : /* @__PURE__ */ React.createElement(React.Fragment, null, placingPartner.names.length > 0 && /* @__PURE__ */ React.createElement("span", null, "Shaded in gray: ", placingPartner.names.join(", "), "'s busy times. "), placingPartner.unshared.length > 0 && /* @__PURE__ */ React.createElement("span", null, placingPartner.unshared.join(", "), " ", placingPartner.unshared.length > 1 ? "haven't" : "hasn't", " shared availability yet, so I can't block their busy times."))) : null;
     if (!firstTime) return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "8px 14px", background: T.lookOn ? T.accentSoft : T.lime + "10", border: `1px solid ${T.lime}33`, borderRadius: 10, marginBottom: 14, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 200, fontSize: 13, color: T.text } }, "Placing ", /* @__PURE__ */ React.createElement("strong", null, placing.title), placingCount > 0 ? " \xB7 " + placingCount + " placed" : "", partnerLine), /* @__PURE__ */ React.createElement(BtnSm, { onClick: finishPlacing }, "Done"));

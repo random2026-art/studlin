@@ -78,6 +78,9 @@ describe("StudlinPrep is now wired to the same onTaskCompleted check-in Dashboar
   });
 
   test("a scheduled block can now be marked done even before its date arrives -- not just once it's already past", () => {
-    assert.ok(SOURCE.includes('{s.status==="pending"&&<button type="button" onClick={()=>markLinkedBlockDone(s.id)}'));
+    // 2026-10-17: the assignment's blocks are session cards now; Mark done shows on every unfinished
+    // one (not only past ones) and routes through markLinkedBlockDone's check-in.
+    assert.ok(SOURCE.includes("onClick={()=>markDone(s.id)}>Mark done</BtnSm>"));
+    assert.ok(SOURCE.includes("onMarkDone:markLinkedBlockDone"));
   });
 });
