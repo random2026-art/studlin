@@ -100,11 +100,11 @@ describe("StudlinPrep: a prepPending assignment gets a real, always-visible Star
     // onTaskCompleted (2026-09-10) added alongside these -- see
     // prep-attack-block-checkin-2026-09-10.test.js for that fix's own
     // coverage; unrelated to what this test itself checks.
-    assert.match(SOURCE, /function StudlinPrep\(\{setActive=\(\)=>\{\},setDetailEventId=\(\)=>\{\},onStartPrepNow=\(\)=>\{\},onDeclinePrep=\(\)=>\{\},onTaskCompleted=\(\)=>\{\},onShowOnCalendar=null\}=\{\}\)\{/);
+    assert.match(SOURCE, /function StudlinPrep\(\{setActive=\(\)=>\{\},setDetailEventId=\(\)=>\{\},onStartPrepNow=\(\)=>\{\},onDeclinePrep=\(\)=>\{\},onTaskCompleted=\(\)=>\{\}\}=\{\}\)\{/);
   });
 
   test("App() wires the real acceptPrepPrompt/declinePrepPrompt functions into StudlinPrep -- one implementation, not a second copy", () => {
-    assert.match(SOURCE, /<StudlinPrep setActive=\{setActive\} setDetailEventId=\{setDetailEventId\} onStartPrepNow=\{acceptPrepPrompt\} onDeclinePrep=\{declinePrepPrompt\} onTaskCompleted=\{handleTaskCompleted\} onShowOnCalendar=/);
+    assert.match(SOURCE, /<StudlinPrep setActive=\{setActive\} setDetailEventId=\{setDetailEventId\} onStartPrepNow=\{acceptPrepPrompt\} onDeclinePrep=\{declinePrepPrompt\} onTaskCompleted=\{handleTaskCompleted\} \/>/);
   });
 
   test("the Assignments row shows the prepPending control instead of the plain status label, with stopPropagation so it never also opens the detail modal", () => {

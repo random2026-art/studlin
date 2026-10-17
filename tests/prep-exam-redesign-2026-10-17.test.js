@@ -36,9 +36,10 @@ test("Stu flags an overlap on the card and offers shorten / move / show me", () 
   assert.ok(APP.includes("Show me on the calendar"));
   assert.ok(APP.includes('<StudMascot size={30} mood="thinking" {...stuPalette()} />'));
 });
-test("See on calendar highlights the blocks and jumps to the first one", () => {
-  assert.ok(APP.includes("onShowOnCalendar={(ids,first)=>{lsSet(\"calendarHighlightIds\",{ids,setAt:Date.now()});setPendingJumpSession(first||null);setActive(\"calendar\");}}"));
-  assert.ok(APP.includes("showOnCalendar(pendingSessions.map(x=>x.id),upcomingScheduled[0])"));
+test("See on calendar opens a session review on the calendar (not just a highlight)", () => {
+  assert.ok(APP.includes('lsSet("openSessionReview",{title:selectedExam.title,ids,examId:selectedExam.id,setAt:Date.now()});'));
+  assert.ok(APP.includes("showOnCalendar(upcomingScheduled.map(x=>x.id))"));
+  assert.ok(APP.includes("showOnCalendar([s.id])"));
 });
 test("no em dashes in the new comments or copy", () => {
   const i = APP.indexOf("2026-10-17: the BEHIND tag");
