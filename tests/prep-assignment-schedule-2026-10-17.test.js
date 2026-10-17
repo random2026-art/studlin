@@ -30,7 +30,7 @@ test("page: Schedule is the primary action and the Attack Block is the quieter s
   assert.ok(page.includes("{canStartAttackBlock&&("), "only offered where an Attack Block is allowed");
 });
 test("the old centerpiece toggle, typed block form and slot picker are gone", () => {
-  assert.ok(!APP.includes("Start an Attack Block for this"));
+  assert.ok(!page.includes("Start an Attack Block for this"), "the toggle on the assignment page (the event editor keeps its own)");
   assert.ok(!APP.includes("assignAddManualBlock"), "the typed date/time form on the assignment page");
   assert.ok(!APP.includes("candidates={assignAttackSlotPicker"), "the Attack Block slot picker on the assignment page");
   assert.ok(!APP.includes("assignAttackManual"));
