@@ -56,11 +56,11 @@ describe("shouldOfferProjectCheckIn correctly distinguishes a real Attack Block 
 
 describe("StudlinPrep is now wired to the same onTaskCompleted check-in Dashboard/Calendar already use (source-level regression guards)", () => {
   test("App() passes onTaskCompleted={handleTaskCompleted} to StudlinPrep, same as it already does for Dashboard and CalendarTab", () => {
-    assert.match(SOURCE, /active==="prep"\?<StudlinPrep setActive=\{setActive\} setDetailEventId=\{setDetailEventId\} onStartPrepNow=\{acceptPrepPrompt\} onDeclinePrep=\{declinePrepPrompt\} onTaskCompleted=\{handleTaskCompleted\} onShowOnCalendar=/);
+    assert.match(SOURCE, /active==="prep"\?<StudlinPrep setActive=\{setActive\} setDetailEventId=\{setDetailEventId\} onStartPrepNow=\{acceptPrepPrompt\} onDeclinePrep=\{declinePrepPrompt\} onTaskCompleted=\{handleTaskCompleted\} \/>:/);
   });
 
   test("StudlinPrep's own function signature accepts the new prop", () => {
-    assert.match(SOURCE, /function StudlinPrep\(\{setActive=\(\)=>\{\},setDetailEventId=\(\)=>\{\},onStartPrepNow=\(\)=>\{\},onDeclinePrep=\(\)=>\{\},onTaskCompleted=\(\)=>\{\},onShowOnCalendar=null\}=\{\}\)\{/);
+    assert.match(SOURCE, /function StudlinPrep\(\{setActive=\(\)=>\{\},setDetailEventId=\(\)=>\{\},onStartPrepNow=\(\)=>\{\},onDeclinePrep=\(\)=>\{\},onTaskCompleted=\(\)=>\{\}\}=\{\}\)\{/);
   });
 
   test("the assignment page's markLinkedBlockDone calls onTaskCompleted after the status flip, same order Dashboard/Calendar's own markDone already uses", () => {
