@@ -1044,6 +1044,17 @@ function lookSubjectColorMap(subjects, look, mode) {
   });
   return map;
 }
+const dashSubjectText = (s) => s && s !== "None" && s !== "Other" ? s : "";
+const dashRowColor = (t) => t.color || subjectColor(t.subject, null);
+function dashRowMeta(t) {
+  const parts = [];
+  const subj = dashSubjectText(t.subject);
+  if (subj) parts.push(subj);
+  if (t.kind === "deadline") parts.push("Due");
+  else if (t.kind === "study block") parts.push(t.routineId ? "Habit" : t.isGeneralTask ? "Your task" : "Your study session");
+  else if (t.kind) parts.push(t.kind);
+  return parts.join(" \xB7 ");
+}
 function subjectColor(idOrLabel, fallback, subjects) {
   const list = Array.isArray(subjects) ? subjects : getSubjects();
   const s = list.find((x) => x.id === idOrLabel || x.label === idOrLabel);
@@ -2577,7 +2588,7 @@ function materializeHabitsForDate(dateKey, workingEvents) {
     if (alreadyDone.has(r.id)) return;
     const time = findHabitSlotForToday(working, routinesNow, prefsNow, dateKey, r.duration || 30);
     if (!time) return;
-    const ev = { id: "habit-" + r.id + "-" + dateKey, title: r.title, date: dateKey, time, subject: r.subject || "", color: r.color || null, kind: "study block", notes: "", priority: 5, difficulty: 5, deadline: null, duration: r.duration || 30, status: "pending", timeSpent: 0, completedAt: null, routineId: r.id, ...r.isGeneralTask ? { isGeneralTask: true } : {} };
+    const ev = { id: "habit-" + r.id + "-" + dateKey, title: r.title, date: dateKey, time, subject: r.subject && r.subject !== "None" ? r.subject : "", color: r.color || null, kind: "study block", notes: "", priority: 5, difficulty: 5, deadline: null, duration: r.duration || 30, status: "pending", timeSpent: 0, completedAt: null, routineId: r.id, ...r.isGeneralTask ? { isGeneralTask: true } : {} };
     created.push(ev);
     working = working.concat([ev]);
   });
@@ -18877,6 +18888,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
   const [difficulty, setDifficulty] = useState(500);
   const [moreOpen, setMoreOpen] = useState(false);
   const [subject, setSubject] = useState("None");
+  const [colorChoice, setColorChoice] = useState("");
   const [kind, setKind] = useState("deadline");
   const [asProject, setAsProject] = useState(false);
   const [asChecklist, setAsChecklist] = useState(false);
@@ -18932,6 +18944,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
     setDifficulty(toSliderVal(ev.difficulty, 5));
     setMoreOpen(!!(ev.priority && (ev.priority > 10 ? ev.priority !== 500 : ev.priority !== 5)));
     setSubject(ev.subject || "None");
+    setColorChoice(ev.color || "");
     setKind(ev.kind || "deadline");
     setNotes(ev.notes || "");
     setAsProject(isProjectMarker(ev));
@@ -19178,10 +19191,11 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
         deadlineTime: deadlineTime || null,
         priority,
         difficulty,
-        subject,
+        subject: subject === "None" ? "" : subject,
         courseId: courseIdForLabel(subject),
         kind,
         notes,
+        color: colorChoice || void 0,
         checklist: asChecklist,
         isGeneralTask: asGeneralTask || void 0,
         isAssignment: asAssignment || void 0,
@@ -19381,6 +19395,7 @@ function EventDetailModal({ eventId, onClose, commit, onToast, setActive, setPri
     /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement(Input, { value: title, onChange: (e) => setTitle(e.target.value), autoFocus: true })),
     /* @__PURE__ */ React.createElement(Field, { label: "Type" }, /* @__PURE__ */ React.createElement(SelectChip, { options: [{ value: "assignment", label: "Assignment" }, { value: "study block", label: "Study Session" }, { value: "task", label: "Task" }, { value: "project", label: "Project" }, { value: "todo", label: "To-do" }, "exam", "reminder", { value: "busy block", label: "Activity" }], value: typeChoice, onChange: onTypeChange })),
     /* @__PURE__ */ React.createElement(Field, { label: "Subject" }, /* @__PURE__ */ React.createElement(CustomSelect, { boxed: true, options: SUBJ, value: subject, onChange: setSubject, minWidth: 220 })),
+    /* @__PURE__ */ React.createElement(Field, { label: "Color", hint: colorChoice ? "" : "Matches the class color unless you pick one." }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement(ColorSelect, { value: colorChoice || subjectColor(subject === "None" ? "" : subject, T.lime), onChange: setColorChoice }), colorChoice && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setColorChoice(""), style: { background: "none", border: "none", color: T.muted, fontSize: 12, fontFamily: T.font, cursor: "pointer", textDecoration: "underline", padding: 0 } }, "Use class color"))),
     /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: asChecklist ? date ? "1fr 1fr" : "1fr" : kind === "reminder" ? "1fr 1fr" : "1fr 1fr 1fr", gap: 12 } }, /* @__PURE__ */ React.createElement(Field, { label: asChecklist ? "Due date (optional)" : "Scheduled date" }, /* @__PURE__ */ React.createElement(Input, { type: "date", value: date, onChange: (e) => {
       setDate(e.target.value);
       setDeadlineErr("");
@@ -20490,6 +20505,7 @@ function CalendarTab({ setActive = () => {
   const [evSubject, setEvSubject] = useState("None");
   const [evCustom, setEvCustom] = useState("");
   const [evCustomColor, setEvCustomColor] = useState(T.lime);
+  const [evTaskColor, setEvTaskColor] = useState("");
   const [evKind, setEvKind] = useState("assignment");
   const [evNotes, setEvNotes] = useState("");
   const [evDetailErr, setEvDetailErr] = useState("");
@@ -21690,6 +21706,7 @@ function CalendarTab({ setActive = () => {
     if (newOpen && taskMode === "manual" && !evDate) setEvDate(evPrefillDate || dayKey());
   }, [newOpen, taskMode]);
   const openNew = (dateK) => {
+    setEvTaskColor("");
     setEvPrefillDate(dateK || selDay);
     setEvTime("09:00");
     setEvSubject("None");
@@ -21742,6 +21759,7 @@ function CalendarTab({ setActive = () => {
     if (params.sessionCount !== evExamPlan.sessionCount) setEvExamPlan((m) => ({ ...m, sessionCount: params.sessionCount }));
   }, [newOpen, evKind, evExamPlan.proposeSessions, evExamPlan.materialFiles, evConfidence, evSessionCountTouched]);
   const resetForm = () => {
+    setEvTaskColor("");
     setNewOpen(false);
     setEvTitle("");
     setEvTitleError("");
@@ -21852,7 +21870,7 @@ function CalendarTab({ setActive = () => {
       // same default lime as an untagged one -- an explicit color here is
       // what colorOf(ev.color||...) checks first, giving Other tasks the
       // student's actual chosen color instead of losing the choice.
-      ...evSubject === "Other" ? { color: evCustomColor } : {},
+      ...evSubject === "Other" ? { color: evCustomColor } : evTaskColor ? { color: evTaskColor } : {},
       ...projectPhases.length > 0 ? { phases: projectPhases.map((name, pi) => ({ name, status: pi === 0 ? "active" : "pending" })) } : {},
       ...projectOutline.length > 0 ? { outline: projectOutline } : {},
       // C9 in the audit: only meaningful for fixed-time kinds (an "exam"
@@ -21996,7 +22014,7 @@ function CalendarTab({ setActive = () => {
     if (!evTitle.trim() || taskRepeatDays.length === 0) return;
     if (evDurationTouched) rememberLastDuration(resolveAssignmentKind(), evDuration);
     const subj = evSubject === "None" ? "" : evSubject === "Other" && evCustom.trim() ? evCustom.trim() : evSubject;
-    const base = { title: evTitle.trim(), kind: "habit", ...subj ? { subject: subj } : {}, notes: evNotes || void 0, isGeneralTask: true };
+    const base = { title: evTitle.trim(), kind: "habit", ...subj ? { subject: subj } : {}, ...evTaskColor ? { color: evTaskColor } : {}, notes: evNotes || void 0, isGeneralTask: true };
     persistRoutines([...routines, ...buildRoutineObjectsForDays(base, taskRepeatDays, "09:00", evDuration || 30, {})]);
     resetForm();
   };
@@ -23680,6 +23698,7 @@ Examples:
     /* @__PURE__ */ React.createElement(Field, { label: "Type", hint: isFixedKind ? "Won't be moved or rescheduled." : isRepeatingTask ? "Repeats on the days you pick below." : isChecklistMode ? "Just a due date -- no calendar time yet." : evKind === "studySession" ? "A focused block of study time at the exact time you pick." : evKind === "task" ? taskMode === "manual" ? "Happens at this exact time." : "Studlin finds the time before it's due." : evKind === "assignment" ? taskMode === "manual" ? "You pick when you'll work on it -- due date is optional." : "Studlin finds the time before it's due." : void 0 }, /* @__PURE__ */ React.createElement(CustomSelect, { boxed: true, options: [{ value: "assignment", label: "Assignment" }, { value: "studySession", label: "Study Session" }, { value: "task", label: "Task" }, { value: "project", label: "Project" }, { value: "exam", label: "Exam" }, { value: "busy block", label: "Activity" }, { value: "reminder", label: "Reminder" }], value: evKind, onChange: onEvKindChange, minWidth: 220 })),
     /* @__PURE__ */ React.createElement(Field, { label: "Subject" }, /* @__PURE__ */ React.createElement(CustomSelect, { boxed: true, options: SUBJ, value: evSubject, onChange: setEvSubject, minWidth: 220 })),
     evSubject === "Other" && /* @__PURE__ */ React.createElement(Field, { label: "Custom subject", hint: "Pick a color so it doesn't get lost on the calendar." }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement(ColorSelect, { value: evCustomColor, onChange: setEvCustomColor }), /* @__PURE__ */ React.createElement(Input, { placeholder: "e.g. Drivers ed, SAT prep, club...", value: evCustom, onChange: (ev) => setEvCustom(ev.target.value), style: { flex: 1 } }))),
+    evSubject !== "Other" && /* @__PURE__ */ React.createElement(Field, { label: "Color", hint: evTaskColor ? "" : "Matches the class color unless you pick one." }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, /* @__PURE__ */ React.createElement(ColorSelect, { value: evTaskColor || colorOf(evSubject === "None" ? "" : evSubject), onChange: setEvTaskColor }), evTaskColor && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setEvTaskColor(""), style: { background: "none", border: "none", color: T.muted, fontSize: 12, fontFamily: T.font, cursor: "pointer", textDecoration: "underline", padding: 0 } }, "Use class color"))),
     evKind === "task" && /* @__PURE__ */ React.createElement(Field, { label: "Repeat", hint: taskRepeatDays.length > 0 ? "No fixed time -- Studlin fits it in wherever there's room each day it repeats." : "Leave off for a one-time task." }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement("select", { value: taskRepeatMode, onChange: (e) => {
       const mode = e.target.value;
       setTaskRepeatMode(mode);
@@ -26346,7 +26365,7 @@ function Dashboard({ setActive, seriousMode = false, rescheduleTask, setReschedu
     setActive("calendar");
   }, style: { display: "inline-flex", alignItems: "center", gap: 7, padding: "9px 18px", ...dashBtnOutline({}), borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: T.font } }, "Brain dump everything"))) : plan.map((t) => {
     if (t.isRoutine) {
-      return /* @__PURE__ */ React.createElement("div", { key: t.id, ...dashRowHover, style: { display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", borderRadius: 12, border: `1px solid ${T.lookOn ? T.borderTint : T.border}`, borderLeft: T.lookOn && subjectColor(t.subject, null) ? `4px solid ${subjectColor(t.subject, null)}` : void 0, marginBottom: 8, background: T.card } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13.5, color: T.text, fontWeight: 500 } }, t.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 1 } }, t.subject, t.subject ? " \xB7 " : "", t.kind === "class" ? "Class" : "Recurring")), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.mono, fontSize: 11, fontWeight: 500, color: T.muted } }, t.duration > 0 ? fmtTimeRange(t.time, t.duration) : fmtClock(t.time)));
+      return /* @__PURE__ */ React.createElement("div", { key: t.id, ...dashRowHover, style: { display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", borderRadius: 12, border: `1px solid ${T.lookOn ? T.borderTint : T.border}`, borderLeft: T.lookOn && dashRowColor(t) ? `4px solid ${dashRowColor(t)}` : void 0, marginBottom: 8, background: T.card } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13.5, color: T.text, fontWeight: 500 } }, t.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 1 } }, dashSubjectText(t.subject), dashSubjectText(t.subject) ? " \xB7 " : "", t.kind === "class" ? "Class" : "Recurring")), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.mono, fontSize: 11, fontWeight: 500, color: T.muted } }, t.duration > 0 ? fmtTimeRange(t.time, t.duration) : fmtClock(t.time)));
     }
     if (!isPlanPrimaryRow(t)) {
       return /* @__PURE__ */ React.createElement("div", { key: t.id, style: { display: "flex", alignItems: "center", gap: 12, padding: "7px 14px 7px 34px", marginBottom: 8, opacity: 0.55 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: t.done ? T.faint : T.muted, textDecoration: t.done ? "line-through" : "none", fontStyle: t.isBreak ? "italic" : "normal" } }, t.title), /* @__PURE__ */ React.createElement("span", { style: { flex: 1 } }), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.mono, fontSize: 11, fontWeight: 500, color: T.muted } }, fmtClock(t.time)));
@@ -26358,7 +26377,7 @@ function Dashboard({ setActive, seriousMode = false, rescheduleTask, setReschedu
         onTaskCompleted && onTaskCompleted(t.id);
       }
       forcePlan((x) => x + 1);
-    }, ...dashRowHover, style: { display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", borderRadius: 12, border: `1px solid ${T.lookOn ? T.borderTint : T.border}`, borderLeft: T.lookOn && subjectColor(t.subject, null) ? `4px solid ${subjectColor(t.subject, null)}` : void 0, marginBottom: 8, cursor: "pointer", background: T.lookOn ? T.card : T.card2 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 20, height: 20, borderRadius: "50%", border: `1.5px solid ${t.done ? T.lookOn ? T.lime : T.text : T.lookOn ? T.borderTint : T.border}`, background: t.done ? T.lookOn ? T.lime : T.text : "transparent", flex: "none", display: "grid", placeItems: "center" } }, t.done && /* @__PURE__ */ React.createElement("svg", { width: "11", height: "11", viewBox: "0 0 24 24", fill: "none", stroke: T.lookOn ? lookTextOnFill(T.lime) : T.lime, strokeWidth: "3", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("polyline", { points: "20 6 9 17 4 12" }))), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13.5, color: t.done ? T.faint : T.text, textDecoration: t.done ? "line-through" : "none", fontWeight: 500 } }, t.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: t.kind === "deadline" ? T.amber : T.muted, marginTop: 1 } }, t.subject, t.kind === "deadline" ? " \xB7 Due" : t.kind === "study block" ? t.isGeneralTask ? " \xB7 Your task" : " \xB7 Your study session" : t.kind ? " \xB7 " + t.kind : "")), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.mono, fontSize: 11, fontWeight: 500, color: T.muted } }, t.duration > 0 ? fmtTimeRange(t.time, t.duration) : fmtClock(t.time)), !t.done && isTimerEligible(t) && /* @__PURE__ */ React.createElement("button", { onClick: (e) => {
+    }, ...dashRowHover, style: { display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", borderRadius: 12, border: `1px solid ${T.lookOn ? T.borderTint : T.border}`, borderLeft: T.lookOn && dashRowColor(t) ? `4px solid ${dashRowColor(t)}` : void 0, marginBottom: 8, cursor: "pointer", background: T.lookOn ? T.card : T.card2 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 20, height: 20, borderRadius: "50%", border: `1.5px solid ${t.done ? T.lookOn ? T.lime : T.text : T.lookOn ? T.borderTint : T.border}`, background: t.done ? T.lookOn ? T.lime : T.text : "transparent", flex: "none", display: "grid", placeItems: "center" } }, t.done && /* @__PURE__ */ React.createElement("svg", { width: "11", height: "11", viewBox: "0 0 24 24", fill: "none", stroke: T.lookOn ? lookTextOnFill(T.lime) : T.lime, strokeWidth: "3", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("polyline", { points: "20 6 9 17 4 12" }))), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13.5, color: t.done ? T.faint : T.text, textDecoration: t.done ? "line-through" : "none", fontWeight: 500 } }, t.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: t.kind === "deadline" ? T.amber : T.muted, marginTop: 1 } }, dashRowMeta(t))), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: T.mono, fontSize: 11, fontWeight: 500, color: T.muted } }, t.duration > 0 ? fmtTimeRange(t.time, t.duration) : fmtClock(t.time)), !t.done && isTimerEligible(t) && /* @__PURE__ */ React.createElement("button", { onClick: (e) => {
       e.stopPropagation();
       if (window._setTimerTask) window._setTimerTask(t.isChunk ? { ...t, duration: t.fullDuration } : t);
     }, style: { flexShrink: 0, padding: "3px 9px", borderRadius: 6, border: `1px solid ${T.lime}`, background: T.lime, color: dashBtnPrimaryFg, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: T.font } }, "Begin"), !t.done && t.duration && (t.kind === "study block" || t.kind === "deadline") && /* @__PURE__ */ React.createElement("button", { onClick: (e) => {
