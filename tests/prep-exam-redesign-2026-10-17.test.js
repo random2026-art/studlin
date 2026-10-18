@@ -26,8 +26,8 @@ test("exam page: no BEHIND pill, prepared bar or pace chart", () => {
 test("session cards are editable in place", () => {
   assert.ok(APP.includes('aria-label="Session date"'));
   assert.ok(APP.includes('aria-label="Shorter"') && APP.includes('aria-label="Longer"'));
-  assert.ok(APP.includes("patchSession(s.id,{duration:Math.max(5,dur-5)})"));
-  assert.ok(APP.includes("patchSession(s.id,{date:e.target.value})"));
+  assert.ok(APP.includes("patchEventById(s.id,{duration:Math.max(5,dur-5)})"));
+  assert.ok(APP.includes("patchEventById(s.id,{date:e.target.value})"));
 });
 test("Stu flags an overlap on the card and offers shorten / move / show me", () => {
   assert.ok(APP.includes("is at {fmtRolloverClock(minutesToTime(conflict.start))} that day, so this overlaps."));
@@ -39,7 +39,7 @@ test("Stu flags an overlap on the card and offers shorten / move / show me", () 
 test("See on calendar opens a session review on the calendar (not just a highlight)", () => {
   assert.ok(APP.includes('lsSet("openSessionReview",{title:selectedExam.title,ids,examId:selectedExam.id,setAt:Date.now()});'));
   assert.ok(APP.includes("showOnCalendar(upcomingScheduled.map(x=>x.id))"));
-  assert.ok(APP.includes("showOnCalendar([s.id])"));
+  assert.ok(APP.includes("onShow([s.id])"));
 });
 test("no em dashes in the new comments or copy", () => {
   const i = APP.indexOf("2026-10-17: the BEHIND tag");

@@ -99,7 +99,8 @@ describe("Assignment detail page navigation wiring (source-level regression guar
   test("clicking an assignment's name/status cell opens the new page instead of the shared edit modal", () => {
     assert.match(APP_SOURCE, /onClick=\{\(\)=>setSelectedAssignmentId\(a\.id\)\}/g);
     const matches = APP_SOURCE.match(/onClick=\{\(\)=>setSelectedAssignmentId\(a\.id\)\}/g) || [];
-    assert.equal(matches.length, 2, "expected both the name cell and the status cell to route to the new page");
+    // 2026-10-17: the hover Schedule / See plan button is a third route to the same page.
+    assert.equal(matches.length, 3, "expected the name cell, the status cell and the hover action to route to the new page");
   });
 
   test("the assignments list is hidden while the detail page is open, and vice versa", () => {

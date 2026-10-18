@@ -12512,32 +12512,14 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
     return pending;
   });
   const [assignAddAttackBlock,setAssignAddAttackBlock]=useState(false);
+  const [assignFinding,setAssignFinding]=useState(false); // Stu is looking for time (Attack Block)
+  const [hoverAssignId,setHoverAssignId]=useState(null); // row showing its Schedule / See plan button
   const [assignAttackProbeMins,setAssignAttackProbeMins]=useState(ATTACK_BLOCK_DEFAULT_PROBE_MINS);
   const [assignAttackErr,setAssignAttackErr]=useState("");
-  // Multi-option Attack Block placement (see NewSlotPickerModal/
-  // computeNewSlotCandidates) -- 2026-09-29 user report: "Schedule probe
-  // session" used to commit silently with no preview and no way to place
-  // it yourself, the one Attack Block entry point in the app that didn't
-  // already show real candidates first the way EventDetailModal's own
-  // proceedSave does. assignAttackSlotPicker holds {candidates,fields,
-  // desiredDate} while the picker's open; assignAttackManual holds
-  // {date,time} while picking a time by hand instead (NewSlotPickerModal's
-  // own "I'll pick the day and time myself" escape hatch).
-  const [assignAttackSlotPicker,setAssignAttackSlotPicker]=useState(null);
-  const [assignAttackManual,setAssignAttackManual]=useState(null);
-  const [assignAddManualBlock,setAssignAddManualBlock]=useState(false);
-  const [assignManualDate,setAssignManualDate]=useState("");
-  const [assignManualTime,setAssignManualTime]=useState("16:00");
-  const [assignManualDuration,setAssignManualDuration]=useState(30);
-  const [assignConfirmDeleteBlockId,setAssignConfirmDeleteBlockId]=useState(null);
-  // Internal audit finding, 2026-09-17: deleteSession (an exam's own
-  // scheduled study session) fired on a single click with no confirm at
-  // all -- same inline "Delete -> Confirm/Cancel" convention as
-  // assignConfirmDeleteBlockId right above, just for this sibling delete
-  // path.
+  // Inline "Remove -> Keep/Remove" confirm for a session card (an exam's or an assignment's),
+  // so a plan session never disappears on a single click.
   const [confirmDeleteSessionId,setConfirmDeleteSessionId]=useState(null);
   const [assignCompleteSessionPrompt,setAssignCompleteSessionPrompt]=useState(false);
-  const [assignCancelSessionsConfirm,setAssignCancelSessionsConfirm]=useState(false);
   const [assignPaceProposal,setAssignPaceProposal]=useState(null);
   const [assignPaceDismissed,setAssignPaceDismissed]=useState(false);
   // Fresh per assignment, same reasoning EventDetailModal's own
@@ -12547,9 +12529,8 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
   // component (unlike EventDetailModal) stays mounted across the whole
   // Prep tab rather than remounting per item.
   useEffect(()=>{
-    setAssignAddAttackBlock(false);setAssignAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setAssignAttackErr("");
-    setAssignAddManualBlock(false);setAssignManualDate(dayKey());setAssignManualTime("16:00");setAssignManualDuration(30);
-    setAssignConfirmDeleteBlockId(null);setAssignCompleteSessionPrompt(false);setAssignCancelSessionsConfirm(false);
+    setAssignAddAttackBlock(false);setAssignAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setAssignAttackErr("");setAssignFinding(false);
+    setAssignCompleteSessionPrompt(false);
     setAssignPaceProposal(null);setAssignPaceDismissed(selectedAssignmentId?isPaceNudgeDismissed(selectedAssignmentId):false);
   },[selectedAssignmentId]);
   const [,forceTick]=useState(0);
@@ -12568,6 +12549,8 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
     if(q){lsSet("openProjectId",null);setTab("projects");setSelectedProjectId(q);}
     const ex=lsGet("openExamId",null);
     if(ex){lsSet("openExamId",null);setTab("exams");setSelectedExamId(ex);}
+    const asg=lsGet("openAssignmentId",null);
+    if(asg){lsSet("openAssignmentId",null);setTab("assignments");setSelectedAssignmentId(asg);}
   },[]);
   // ── Build study plan (Prep redesign Part C) ── the opt-in trigger that
   // replaces auto-generation at exam creation. buildPlanExamId is the exam
@@ -13537,6 +13520,86 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
   // component already follows (see commitBuildPlan above) -- no separate
   // React state mirror of `events` exists here, storage is the source of
   // truth and `refresh()` (forceTick) is what makes the new value show.
+  // One study-session card, shared by an exam's plan and an assignment's plan: day, what to do,
+  // editable date / time / length, Stu's overlap help, Start / Mark done / remove.
+  const patchEventById=(id,patch)=>{lsSet("events",lsGet("events",[]).map(e=>e.id===id?{...e,...patch}:e));refresh();};
+  const deleteEventById=(id)=>{lsSet("events",lsGet("events",[]).filter(e=>e.id!==id));refresh();};
+  const renderSessionCard=(s,opts)=>{
+    const {today,deadline,canRemove=true,onShow}=opts;
+    // Default: flip the status, then the same check-in Dashboard and Calendar run. An assignment
+    // passes its own (markLinkedBlockDone / deleteLinkedBlock), which do exactly that.
+    const markDone=opts.onMarkDone||((id)=>{lsSet("events",lsGet("events",[]).map(x=>x.id===id?{...x,status:"done",completedAt:Date.now()}:x));onTaskCompleted(id);refresh();});
+    const removeIt=opts.onRemove||deleteEventById;
+                  const isDone=s.status==="done";
+                  const isMissed=!isDone&&!!s.date&&s.date<today;
+                  const dur=s.duration||25;
+                  const others=lsGet("events",[]).filter(e=>e.id!==s.id);
+                  // Stu points out an overlap right on the card and offers a fix.
+                  const conflict=(!isDone&&s.date&&s.time)?findOverlapConflict(s.date,s.time,minutesToTime(timeToMinutes(s.time)+dur),others,getWeeklyRoutine()):null;
+                  let shortenTo=null,moveTo=null;
+                  if(conflict){
+                    const fit=conflict.start-timeToMinutes(s.time);
+                    if(fit>=15)shortenTo=Math.floor(fit/5)*5;
+                    const slot=findLegalSlotOrNull(others,getWeeklyRoutine(),getSchedulePreferences(),s.date,minutesToTime(conflict.end),dur,deadline);
+                    if(slot&&slot.date===s.date&&slot.time!==s.time)moveTo=slot.time;
+                  }
+                  const stepBtn={border:"none",background:T.card,color:T.text,width:28,height:28,fontSize:15,cursor:"pointer",fontFamily:T.font};
+                  return (
+                    <div key={s.id} style={{display:"grid",gridTemplateColumns:"60px minmax(0,1fr) auto",gap:14,alignItems:"center",padding:"14px 16px",border:`1px solid ${isMissed?T.red+"66":T.border}`,borderRadius:14,background:T.card,marginBottom:10,opacity:isDone?0.6:1}}>
+                      <div style={{borderRadius:12,background:T.lookOn?T.accentSoft:T.card2,textAlign:"center",padding:"8px 0"}}>
+                        <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.08em",color:T.lookOn?T.accentInk:T.muted}}>{s.date?dayOfWeekLabel(s.date).slice(0,3).toUpperCase():"TBD"}</div>
+                        <div style={{fontSize:21,fontWeight:700,color:T.white,lineHeight:1.1}}>{s.date?parseInt(s.date.slice(8),10):"-"}</div>
+                      </div>
+                      <div style={{minWidth:0}}>
+                        <div style={{fontSize:14.5,fontWeight:600,color:T.text,textDecoration:isDone?"line-through":"none"}}>{s.notes||s.title}</div>
+                        {isDone?(
+                          <div style={{fontSize:12.5,color:T.muted,marginTop:4,fontFamily:T.mono}}>{s.date?dayOfWeekLabel(s.date).slice(0,3)+" "+s.date.slice(5).replace("-","/"):""}{s.time?" · "+fmtRolloverClock(s.time):""}</div>
+                        ):(
+                          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginTop:8}}>
+                            <Input type="date" value={s.date||""} onChange={e=>patchEventById(s.id,{date:e.target.value})} aria-label="Session date" style={{width:132,fontSize:12}} />
+                            <TimeInput value={s.time||""} onChange={v=>patchEventById(s.id,{time:v})} />
+                            <span style={{display:"inline-flex",alignItems:"center",border:`1px solid ${T.border}`,borderRadius:8,overflow:"hidden"}}>
+                              <button type="button" aria-label="Shorter" onClick={()=>patchEventById(s.id,{duration:Math.max(5,dur-5)})} style={stepBtn}>&minus;</button>
+                              <span style={{minWidth:58,textAlign:"center",fontFamily:T.mono,fontSize:12.5,color:T.text}}>{dur} min</span>
+                              <button type="button" aria-label="Longer" onClick={()=>patchEventById(s.id,{duration:Math.min(240,dur+5)})} style={stepBtn}>+</button>
+                            </span>
+                            {isMissed&&<span style={{fontSize:12,fontWeight:600,color:T.red}}>Missed</span>}
+                            {(!s.date||!s.time)&&<span style={{fontSize:12,color:T.amber}}>Pick a day and time</span>}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>
+                        {isDone?(
+                          <span style={{fontSize:11.5,fontWeight:700,color:T.teal,background:T.teal+"14",border:`1px solid ${T.teal}44`,borderRadius:99,padding:"3px 10px"}}>Done</span>
+                        ):(<>
+                          {smartFeaturesOn()&&<BtnSm onClick={()=>{if(window._setTimerTask)window._setTimerTask(s);}}>Start</BtnSm>}
+                          <BtnSm variant={smartFeaturesOn()?"ghost":"lime"} onClick={()=>markDone(s.id)}>Mark done</BtnSm>
+                          {!canRemove?null:confirmDeleteSessionId===s.id?(
+                            <>
+                              <button type="button" onClick={()=>{removeIt(s.id);setConfirmDeleteSessionId(null);}} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:T.font,textDecoration:"underline"}}>Remove</button>
+                              <button type="button" onClick={()=>setConfirmDeleteSessionId(null)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:12,fontFamily:T.font,textDecoration:"underline"}}>Keep</button>
+                            </>
+                          ):(
+                            <button type="button" aria-label="Remove session" title="Remove this session" onClick={()=>setConfirmDeleteSessionId(s.id)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:18,lineHeight:1,padding:"2px 6px"}}>&times;</button>
+                          )}
+                        </>)}
+                      </div>
+                      {conflict&&(
+                        <div style={{gridColumn:"1 / -1",display:"flex",gap:10,alignItems:"flex-start",background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:10,padding:"10px 12px"}}>
+                          <div style={{flexShrink:0}}><StudMascot size={30} mood="thinking" {...stuPalette()} /></div>
+                          <div style={{fontSize:12.5,color:T.text,lineHeight:1.5}}>
+                            <strong>{conflict.title}</strong> is at {fmtRolloverClock(minutesToTime(conflict.start))} that day, so this overlaps.
+                            <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
+                              {shortenTo&&<BtnSm onClick={()=>patchEventById(s.id,{duration:shortenTo})}>Shorten to {shortenTo} min</BtnSm>}
+                              {moveTo&&<BtnSm variant="ghost" onClick={()=>patchEventById(s.id,{time:moveTo})}>Move to {fmtRolloverClock(moveTo)}</BtnSm>}
+                              <BtnSm variant="ghost" onClick={()=>onShow([s.id])}>Show me on the calendar</BtnSm>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+  };
   const patchExam=(examId,patch)=>{
     const all=lsGet("events",[]);
     lsSet("events",all.map(e=>e.id===examId?{...e,...patch}:e));
@@ -14196,7 +14259,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
           if(aOver!==bOver)return aOver?1:-1;
           return (a.date||"9999").localeCompare(b.date||"9999");
         });
-        const gridCols="minmax(140px,1.8fr) 100px 120px 70px 80px 80px 150px";
+        const gridCols="minmax(140px,1.8fr) 100px 120px 70px 80px 80px 130px 104px";
         const cellSelStyle={width:"100%",background:"transparent",border:"none",color:T.text,fontSize:10.5,fontFamily:T.font,outline:"none",cursor:"pointer",padding:"2px 0"};
         return (
           <div>
@@ -14209,8 +14272,8 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
             <div style={{overflowX:"auto",border:`1px solid ${T.border}`,borderRadius:8}}>
               <div style={{minWidth:700}}>
                 <div style={{display:"grid",gridTemplateColumns:gridCols,gap:8,padding:"7px 10px",borderBottom:`1px solid ${T.border}`,background:T.card2}}>
-                  {["Name","Class","Due","Days","Urgency","Difficulty","Attack Blocks"].map(h=>(
-                    <div key={h} style={{fontSize:9,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>{h}</div>
+                  {["Name","Class","Due","Days","Urgency","Difficulty","Plan",""].map((h,hi)=>(
+                    <div key={h+hi} style={{fontSize:9,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>{h}</div>
                   ))}
                 </div>
                 {assignments.map(a=>{
@@ -14218,15 +14281,18 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                   const daysUntil=a.date?Math.round((new Date(a.date+"T12:00:00")-new Date(today+"T12:00:00"))/86400000):null;
                   const daysLabel=daysUntil==null?"No date":daysUntil<=0?"Today":daysUntil+"d";
                   const allEventsForRow=lsGet("events",[]);
-                  const chainId=(allEventsForRow.find(e=>e.dueEventId===a.id&&e.attackChainId)||{}).attackChainId||null;
-                  const pending=chainId?allEventsForRow.filter(e=>e.attackChainId===chainId&&e.status!=="done"):[];
+                  const pending=allEventsForRow.filter(e=>e.dueEventId===a.id&&e.status!=="done");
                   // Same computeAssignmentPace check as the detail modal --
                   // one glance at the table shows what used to need opening
                   // every row to know.
                   const rowPace=computeAssignmentPace(a,allEventsForRow,today);
-                  const statusLabel=rowPace&&rowPace.behind?"behind pace":rowPace&&rowPace.ahead?"ahead of pace":pending.length===0?"no blocks yet":pending.length+" block"+(pending.length!==1?"s":"")+" scheduled";
+                  const statusLabel=rowPace&&rowPace.behind?"behind pace":rowPace&&rowPace.ahead?"ahead of pace":pending.length===0?((!!a.time&&!!a.duration)?"1 block planned":"no plan yet"):pending.length+" session"+(pending.length!==1?"s":"")+" planned";
+                  // A plan = any session linked to it, or a block it carries itself.
+                  const rowHasPlan=allEventsForRow.some(e=>e.dueEventId===a.id)||(!!a.time&&!!a.duration);
+                  const rowCanHover=typeof window!=="undefined"&&window.matchMedia?window.matchMedia("(hover: hover)").matches:true;
+                  const rowShowAction=!rowCanHover||hoverAssignId===a.id;
                   return (
-                    <div key={a.id} style={{display:"grid",gridTemplateColumns:gridCols,gap:8,padding:"7px 10px",borderBottom:`1px solid ${T.border}`,alignItems:"center"}}>
+                    <div key={a.id} onMouseEnter={()=>setHoverAssignId(a.id)} onMouseLeave={()=>setHoverAssignId(id=>id===a.id?null:id)} onFocus={()=>setHoverAssignId(a.id)} style={{display:"grid",gridTemplateColumns:gridCols,gap:8,padding:"7px 10px",borderBottom:`1px solid ${T.border}`,alignItems:"center",background:hoverAssignId===a.id?(T.lookOn?T.accentSoft:T.card2):"transparent"}}>
                       <div onClick={()=>setSelectedAssignmentId(a.id)} style={{fontSize:11.5,fontWeight:600,color:T.white,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={a.title}>{a.title}</div>
                       <div style={{fontSize:10.5,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.subject||"—"}</div>
                       {/* Setting a date on a class-linked no-date-yet item
@@ -14264,6 +14330,9 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
                       ):(
                         <div onClick={()=>setSelectedAssignmentId(a.id)} style={{fontSize:10.5,fontWeight:rowPace&&(rowPace.behind||rowPace.ahead)?700:400,color:rowPace&&rowPace.behind?T.amber:rowPace&&rowPace.ahead?T.teal:T.muted,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title="Click to open">{statusLabel}</div>
                       )}
+                      <div style={{display:"flex",justifyContent:"flex-end"}}>
+                        <BtnSm variant={rowHasPlan?"ghost":"lime"} onClick={()=>setSelectedAssignmentId(a.id)} style={{opacity:rowShowAction?1:0,transition:"opacity 0.12s",whiteSpace:"nowrap"}}>{rowHasPlan?"See plan":"Schedule"}</BtnSm>
+                      </div>
                     </div>
                   );
                 })}
@@ -14319,15 +14388,6 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
           setAssignCompleteSessionPrompt(false);
           refresh();
         };
-        const confirmCancelAllSessions=()=>{
-          lsSet("events",lsGet("events",[]).filter(e=>!(e.dueEventId===selectedAssignment.id&&e.status==="pending")));
-          setAssignCancelSessionsConfirm(false);
-          refresh();
-        };
-        const jumpToCalendarFromPrep=(sessionId)=>{
-          if(sessionId)lsSet("pendingCalendarJumpSessionId",sessionId);
-          setActive("calendar");
-        };
         const deleteLinkedBlock=(id)=>{lsSet("events",lsGet("events",[]).filter(e=>e.id!==id));refresh();};
         const markLinkedBlockDone=(id)=>{
           lsSet("events",lsGet("events",[]).map(e=>e.id===id?{...e,status:"done",completedAt:Date.now()}:e));
@@ -14340,72 +14400,47 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
           onTaskCompleted(id);
           refresh();
         };
-        const addAssignManualBlock=()=>{
-          if(!assignManualDate)return;
-          const block={id:"manual-"+selectedAssignment.id+"-"+Date.now(),title:"Work on: "+selectedAssignment.title,date:assignManualDate,time:assignManualTime,
-            subject:selectedAssignment.subject||"",kind:"study block",notes:"",priority:5,difficulty:5,deadline:selectedAssignment.deadline||selectedAssignment.date||null,
-            duration:assignManualDuration,status:"pending",timeSpent:0,completedAt:null,dueEventId:selectedAssignment.id};
-          lsSet("events",allEvents.concat([block]));
-          setAssignAddManualBlock(false);
-          refresh();
-        };
-        // Retroactive Attack Block -- same buildAssignmentAttackBlockPair
-        // conversion EventDetailModal's own save() already uses
-        // (markerId=selectedAssignment.id turns THIS item into the real
-        // marker in place, same id/position, whatever its prior kind was).
-        // commitAssignAttackBlock is the one place that actually persists
-        // it, shared by all three paths below (old single-shot fallback,
-        // picker confirm, manual confirm) instead of three near-copies.
+        // Attack Block: converts THIS item into the marker and adds the short probe session
+        // (same buildAssignmentAttackBlockPair EventDetailModal's save() uses). Returns the new
+        // probe block, or null if there was no room before the deadline.
         const commitAssignAttackBlock=(fields,desiredDate,forcedSlot)=>{
-          const routines=getWeeklyRoutine();
-          const prefs=getSchedulePreferences();
-          const pair=buildAssignmentAttackBlockPair(selectedAssignment.id,fields,[],allEvents,routines,prefs,desiredDate,prefs.workStartTime,false,forcedSlot);
-          if(!pair){setAssignAttackErr("Couldn't find room for a probe session before the deadline -- try a later deadline, or pick a time yourself.");return;}
-          lsSet("events",allEvents.map(e=>e.id===selectedAssignment.id?pair.marker:e).concat([pair.task]));
-          setAssignAttackSlotPicker(null);
-          setAssignAttackManual(null);
+          const evs=lsGet("events",[]);
+          const pair=buildAssignmentAttackBlockPair(selectedAssignment.id,fields,[],evs,getWeeklyRoutine(),getSchedulePreferences(),desiredDate,getSchedulePreferences().workStartTime,false,forcedSlot);
+          if(!pair){setAssignAttackErr("I couldn't find room for a short session before the deadline. Try Schedule and pick a time yourself.");return null;}
+          lsSet("events",evs.map(e=>e.id===selectedAssignment.id?pair.marker:e).concat([pair.task]));
           setAssignAddAttackBlock(false);
           refresh();
+          return pair.task;
         };
-        // Multi-option picker (see NewSlotPickerModal/computeNewSlotCandidates,
-        // same pattern EventDetailModal's own proceedSave already uses) --
-        // 2026-09-29 user report: this used to commit straight away with no
-        // preview and no way to place it yourself. Falls back to the old
-        // single-shot commit when computeNewSlotCandidates finds nothing
-        // within its bounded scan window, same fallback every other caller
-        // of this pattern already uses.
-        const startAssignAttackBlock=()=>{
-          const routines=getWeeklyRoutine();
-          const prefs=getSchedulePreferences();
-          const fields={title:selectedAssignment.title,subject:selectedAssignment.subject,courseId:selectedAssignment.courseId,notes:selectedAssignment.notes,
-            deadline:selectedAssignment.deadline||selectedAssignment.date,priority:selectedAssignment.priority,difficulty:selectedAssignment.difficulty,probeMins:assignAttackProbeMins};
-          const desiredDate=selectedAssignment.date&&selectedAssignment.date>=today?selectedAssignment.date:today;
-          const candidates=computeNewSlotCandidates(allEvents,routines,prefs,desiredDate,prefs.workStartTime,assignAttackProbeMins,fields.deadline||null,fields.difficulty);
-          if(candidates.length>0){
-            setAssignAttackErr("");
-            setAssignAttackSlotPicker({candidates,fields,desiredDate});
-            return;
-          }
-          commitAssignAttackBlock(fields,desiredDate,null);
+        // "I don't know how long this will take": Stu looks for a short first session, then the
+        // calendar opens on it (pulsing, with what he found) so it can be moved anywhere.
+        const findTimeWithStu=()=>{
+          setAssignAttackErr("");
+          setAssignFinding(true);
+          setTimeout(()=>{
+            const routines=getWeeklyRoutine();
+            const prefs=getSchedulePreferences();
+            const fields={title:selectedAssignment.title,subject:selectedAssignment.subject,courseId:selectedAssignment.courseId,notes:selectedAssignment.notes,
+              deadline:selectedAssignment.deadline||selectedAssignment.date,priority:selectedAssignment.priority,difficulty:selectedAssignment.difficulty,probeMins:assignAttackProbeMins};
+            const desiredDate=selectedAssignment.date&&selectedAssignment.date>=today?selectedAssignment.date:today;
+            const candidates=computeNewSlotCandidates(lsGet("events",[]),routines,prefs,desiredDate,prefs.workStartTime,assignAttackProbeMins,fields.deadline||null,fields.difficulty);
+            const task=commitAssignAttackBlock(fields,desiredDate,candidates.length>0?candidates[0]:null);
+            setAssignFinding(false);
+            if(!task)return;
+            lsSet("openSessionReview",{title:selectedAssignment.title,ids:[task.id],returnAssignmentId:selectedAssignment.id,
+              message:"I found "+(task.duration||assignAttackProbeMins)+" minutes to work on "+selectedAssignment.title+": "+niceDate(task.date)+", "+fmtTimeRange(task.time,task.duration||assignAttackProbeMins)+".",setAt:Date.now()});
+            setActive("calendar");
+          },1400);
         };
-        const confirmAssignAttackSlot=(slot)=>{
-          commitAssignAttackBlock(assignAttackSlotPicker.fields,assignAttackSlotPicker.desiredDate,slot);
+        // Schedule: open the weekly calendar in placing mode for this assignment (see CalendarTab).
+        const goPlaceAssignment=()=>{
+          lsSet("openProjectPlacing",{kind:"assignment",stepId:null,title:"Work on: "+selectedAssignment.title,subject:selectedAssignment.subject||"",courseId:selectedAssignment.courseId||null,
+            projectId:selectedAssignment.id,deadline:selectedAssignment.date||null,returnAssignmentId:selectedAssignment.id,withPartners:false,sharedProjectId:null,setAt:Date.now()});
+          setActive("calendar");
         };
-        // NewSlotPickerModal's own "I'll pick the day and time myself" link
-        // -- the previously-missing half of the user's ask ("or there's an
-        // option for me to put the attack block anywhere"). Trusted as-is,
-        // same convention as every other manual placement in this file
-        // (Add Task's hand-typed time, moveTaskLaterToday's undo-backed
-        // moves) -- no legality re-check on a deliberate manual choice.
-        const startAssignAttackManual=()=>{
-          setAssignAttackSlotPicker(null);
-          setAssignAttackManual({date:selectedAssignment.date&&selectedAssignment.date>=today?selectedAssignment.date:today,time:"16:00"});
-        };
-        const confirmAssignAttackManual=()=>{
-          if(!assignAttackManual)return;
-          const fields={title:selectedAssignment.title,subject:selectedAssignment.subject,courseId:selectedAssignment.courseId,notes:selectedAssignment.notes,
-            deadline:selectedAssignment.deadline||selectedAssignment.date,priority:selectedAssignment.priority,difficulty:selectedAssignment.difficulty,probeMins:assignAttackProbeMins};
-          commitAssignAttackBlock(fields,assignAttackManual.date,{date:assignAttackManual.date,time:assignAttackManual.time});
+        const showAssignOnCalendar=(ids)=>{
+          lsSet("openSessionReview",{title:selectedAssignment.title,ids,returnAssignmentId:selectedAssignment.id,setAt:Date.now()});
+          setActive("calendar");
         };
         const proposeAssignPaceBlock=()=>{
           const slot=findReliableSlotFor(allEvents,getWeeklyRoutine(),getSchedulePreferences(),today,getSchedulePreferences().workStartTime,30,selectedAssignment.deadline||selectedAssignment.date,selectedAssignment.difficulty);
@@ -14445,119 +14480,60 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
               </div>
             )}
 
-            {/* Legacy single-block shape -- this item IS its own one
-                scheduled block (no separate marker). Shown as a real,
-                editable row same as any linked session, plus the option
-                to upgrade into a full Attack Block plan. */}
-            {hasOwnScheduledTime&&(
-              <div style={{marginBottom:14}}>
-                <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>Your scheduled time</div>
-                <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                  <Input type="date" value={selectedAssignment.date||""} onChange={e=>{patchExam(selectedAssignment.id,{date:e.target.value});refresh();}} style={{width:140}} />
-                  <TimeInput value={selectedAssignment.time||"16:00"} onChange={v=>{patchExam(selectedAssignment.id,{time:v});refresh();}} />
-                  <span style={{color:T.muted,fontSize:11}}>for</span>
-                  <NumField min={5} max={480} step={5} fallback={30} value={selectedAssignment.duration||30} onChange={v=>{patchExam(selectedAssignment.id,{duration:v});refresh();}} />
-                  <span style={{color:T.muted,fontSize:11}}>min</span>
-                </div>
-              </div>
-            )}
-
-            {canStartAttackBlock&&(<>
-              <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:14}}>
-                <div onClick={()=>setAssignAddAttackBlock(a=>!a)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
-                  <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>{hasOwnScheduledTime?"Turn this into a full Attack Block plan":"Start an Attack Block for this"}</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>A short probe session, scheduled the moment you confirm. Studlin figures out the rest from there.</div></div>
-                  <div style={{width:36,height:20,borderRadius:10,background:assignAddAttackBlock?T.lime:T.faint,position:"relative",transition:"background 0.2s",cursor:"pointer",flexShrink:0}}><div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:assignAddAttackBlock?18:2,transition:"left 0.2s"}} /></div>
-                </div>
-                <AttackBlockExplainer />
-                {assignAddAttackBlock&&(
-                  <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
-                    {assignAttackManual?(<>
-                      <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:8}}>
-                        <Input type="date" value={assignAttackManual.date} onChange={e=>setAssignAttackManual(m=>({...m,date:e.target.value}))} style={{width:140}} />
-                        <TimeInput value={assignAttackManual.time} onChange={v=>setAssignAttackManual(m=>({...m,time:v}))} />
+            {(()=>{
+              // 2026-10-17: Schedule is the main action now (you pick the time yourself, on the
+              // calendar). "I don't know how long this will take" is the Attack Block: Stu finds a
+              // short first session and shows it on the calendar. Once there is a plan, it reads
+              // like an exam's: one card per session, editable in place.
+              // An item that carries its own block (time + duration; a syllabus marker has no duration)
+              // stays in its plan alongside any sessions added later.
+              const ownBlock=!!selectedAssignment.time&&!!selectedAssignment.duration;
+              const planItems=(ownBlock?[selectedAssignment]:[]).concat(linkedSessions).sort((a,b)=>((a.date||"")+(a.time||""))<((b.date||"")+(b.time||""))?-1:1);
+              const hasPlan=planItems.length>0;
+              const pendingPlan=planItems.filter(x=>x.status!=="done"&&x.date&&x.time);
+              if(isCompleted&&!hasPlan)return null;
+              if(!hasPlan){
+                if(assignFinding){
+                  return (
+                    <div style={{display:"flex",alignItems:"center",gap:14,padding:"18px 20px",border:`1px solid ${T.border}`,borderRadius:14,background:T.card,marginBottom:14}}>
+                      <StudMascot size={52} mood="thinking" walking={!reduceMotionOn()} {...stuPalette()} />
+                      <div>
+                        <div style={{fontSize:14.5,fontWeight:700,color:T.white}}>Looking for time to work on this...</div>
+                        <div style={{fontSize:12.5,color:T.muted,marginTop:2}}>Checking your classes, your routine and the days before it's due.</div>
                       </div>
-                      {assignAttackErr&&<div style={{fontSize:11.5,color:T.red,marginTop:8}}>{assignAttackErr}</div>}
-                      <div style={{marginTop:10,display:"flex",gap:8}}>
-                        <BtnSm onClick={confirmAssignAttackManual}>Schedule here</BtnSm>
-                        <BtnSm variant="ghost" onClick={()=>setAssignAttackManual(null)}>Cancel</BtnSm>
-                      </div>
-                    </>):(<>
-                      <Field label="Probe session length"><NumField min={15} max={60} fallback={ATTACK_BLOCK_DEFAULT_PROBE_MINS} value={assignAttackProbeMins} onChange={setAssignAttackProbeMins} /></Field>
-                      {assignAttackErr&&<div style={{fontSize:11.5,color:T.red,marginTop:8}}>{assignAttackErr}</div>}
-                      <div style={{marginTop:10,display:"flex",alignItems:"center",gap:12}}>
-                        <BtnSm onClick={startAssignAttackBlock}>Schedule probe session</BtnSm>
-                        <button type="button" onClick={startAssignAttackManual} style={{background:"none",border:"none",color:T.muted,fontSize:11.5,textDecoration:"underline",cursor:"pointer",fontFamily:T.font,padding:0}}>I'll pick a time myself</button>
-                      </div>
-                    </>)}
+                    </div>
+                  );
+                }
+                return (
+                  <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:14}}>
+                    <button type="button" onClick={goPlaceAssignment} style={{textAlign:"left",width:"100%",border:`1.5px solid ${T.lime}`,background:T.lookOn?T.accentSoft:T.lime+"10",borderRadius:14,padding:"16px 18px",cursor:"pointer",fontFamily:T.font,color:T.text}}>
+                      <div style={{fontSize:15,fontWeight:700,color:T.white}}>Schedule</div>
+                      <div style={{fontSize:12.5,color:T.muted,marginTop:3}}>Pick when you'll work on it. Drag a block onto your calendar, as many times as you like.</div>
+                    </button>
+                    {canStartAttackBlock&&(
+                      <button type="button" onClick={findTimeWithStu} style={{textAlign:"left",width:"100%",border:`1px solid ${T.border}`,background:T.card,borderRadius:14,padding:"14px 18px",cursor:"pointer",fontFamily:T.font,color:T.text}}>
+                        <div style={{fontSize:14,fontWeight:600,color:T.white}}>I don't know how long this will take</div>
+                        <div style={{fontSize:12.5,color:T.muted,marginTop:3}}>Stu finds {assignAttackProbeMins} minutes to get started, then helps you plan the rest.</div>
+                      </button>
+                    )}
+                    {assignAttackErr&&<div role="alert" style={{fontSize:12.5,color:T.red}}>{assignAttackErr}</div>}
                   </div>
-                )}
-              </div>
-            </>)}
-
-            {linkedSessions.length>0&&(<>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 2px",marginBottom:10,fontSize:12,color:T.muted}}>
-                <span>Studlin scheduled {linkedSessions.length} block{linkedSessions.length!==1?"s":""} for this{pendingLinked.length<linkedSessions.length?" ("+(linkedSessions.length-pendingLinked.length)+" of "+linkedSessions.length+" done)":""}.</span>
-                {pendingLinked.length>0&&<button type="button" onClick={()=>setAssignCancelSessionsConfirm(true)} style={{background:"none",border:"none",color:T.red,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline"}}>Cancel blocks</button>}
-              </div>
-              {assignCancelSessionsConfirm&&(
-                <div style={{background:T.card,border:`1px solid ${T.red}44`,borderRadius:8,padding:"12px 14px",marginBottom:14,fontSize:12.5,color:T.text,lineHeight:1.5}}>
-                  Cancel all {pendingLinked.length} pending block{pendingLinked.length!==1?"s":""} scheduled for this?
-                  <div style={{display:"flex",gap:8,marginTop:10}}>
-                    <BtnSm variant="danger" onClick={confirmCancelAllSessions}>Cancel {pendingLinked.length!==1?"them":"it"}</BtnSm>
-                    <BtnSm variant="ghost" onClick={()=>setAssignCancelSessionsConfirm(false)}>Never mind</BtnSm>
+                );
+              }
+              return (
+                <div style={{marginBottom:18}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap",marginBottom:12}}>
+                    <div style={{fontSize:13,color:T.muted,fontFamily:T.mono}}>{planItems.length-pendingPlan.length} of {planItems.length} sessions done</div>
+                    <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                      {pendingPlan.length>0&&<BtnSm variant="ghost" onClick={()=>showAssignOnCalendar(pendingPlan.map(x=>x.id))}>See on calendar</BtnSm>}
+                      {!isCompleted&&<BtnSm variant="ghost" onClick={goPlaceAssignment}>+ Add time</BtnSm>}
+                    </div>
                   </div>
+                  {planItems.map(x=>renderSessionCard(x,{today,deadline:selectedAssignment.deadline||selectedAssignment.date||null,canRemove:x.id!==selectedAssignment.id,onShow:showAssignOnCalendar,onMarkDone:markLinkedBlockDone,onRemove:deleteLinkedBlock}))}
+                  {assignAttackErr&&<div role="alert" style={{fontSize:12.5,color:T.red,marginTop:6}}>{assignAttackErr}</div>}
                 </div>
-              )}
-              <div style={{marginBottom:14}}>
-                <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>Scheduled blocks</div>
-                <div style={{display:"flex",flexDirection:"column",border:`1px solid ${T.border}`,borderRadius:8,overflow:"hidden"}}>
-                  {linkedSessions.map((s,si)=>{
-                    const isPast=s.status==="pending"&&s.date&&s.date<today;
-                    return (
-                      <div key={s.id} style={{padding:"8px 10px",borderTop:si===0?"none":`1px solid ${T.border}`}}>
-                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                          <div onClick={()=>jumpToCalendarFromPrep(s.id)} style={{cursor:"pointer",display:"flex",alignItems:"center",gap:6}} title="Jump to calendar">
-                            <span style={{fontSize:12,fontWeight:600,color:s.status==="done"?T.muted:T.text,textDecoration:s.status==="done"?"line-through":"none"}}>{s.date} · {s.time} · {s.duration||30}min</span>
-                          </div>
-                          <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                            {/* User report, 2026-09-10 (with a screenshot): a
-                                scheduled Attack Block probe session had no
-                                way to be marked done at all unless it was
-                                already past -- and even then, marking it
-                                done never asked "how much did you get
-                                through" to build a real plan for the rest,
-                                the entire reason Attack Block exists. This
-                                button is now always available for any
-                                pending block, not just past ones (you may
-                                have genuinely finished it early), and
-                                markLinkedBlockDone now routes through the
-                                same onTaskCompleted the Dashboard/Calendar
-                                checkbox-complete paths already use --
-                                StudlinPrep just never received that prop
-                                before. */}
-                            {s.status==="pending"&&<button type="button" onClick={()=>markLinkedBlockDone(s.id)} style={{background:"none",border:"none",color:T.lime,cursor:"pointer",fontSize:11,fontWeight:600,fontFamily:T.font,textDecoration:"underline"}}>Mark done</button>}
-                            {assignConfirmDeleteBlockId===s.id?(
-                              <>
-                                <button type="button" onClick={()=>{deleteLinkedBlock(s.id);setAssignConfirmDeleteBlockId(null);}} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:11,fontWeight:700,fontFamily:T.font,textDecoration:"underline"}}>Confirm</button>
-                                <button type="button" onClick={()=>setAssignConfirmDeleteBlockId(null)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline"}}>Cancel</button>
-                              </>
-                            ):(
-                              <button type="button" onClick={()=>setAssignConfirmDeleteBlockId(s.id)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline"}}>Delete</button>
-                            )}
-                          </div>
-                        </div>
-                        {isPast&&(
-                          <div style={{display:"flex",alignItems:"center",gap:8,marginTop:6,paddingTop:6,borderTop:`1px solid ${T.border}`}}>
-                            <span style={{fontSize:11,color:T.amber}}>Did you get to this?</span>
-                            <button type="button" onClick={()=>markLinkedBlockDone(s.id)} style={{background:"none",border:"none",color:T.lime,cursor:"pointer",fontSize:11,fontWeight:600,fontFamily:T.font,textDecoration:"underline"}}>Mark done</button>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </>)}
+              );
+            })()}
 
             {pace&&pace.behind&&!assignPaceDismissed&&(
               <div style={{background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:8,padding:"10px 12px",marginBottom:14}}>
@@ -14590,31 +14566,6 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
               </div>
             )}
 
-            <div style={{marginBottom:14}}>
-              {!assignAddManualBlock?(
-                <button type="button" onClick={()=>setAssignAddManualBlock(true)} style={{background:"none",border:"none",color:T.lime,fontSize:12,fontWeight:600,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>+ Add my own time block</button>
-              ):(
-                <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px"}}>
-                  <div style={{fontSize:11.5,color:T.muted,marginBottom:8}}>A specific time you'll work on this -- shows up on your calendar like any other block, drag/resize it same as usual.</div>
-                  <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
-                    <Input type="date" value={assignManualDate} onChange={e=>setAssignManualDate(e.target.value)} style={{width:140}} />
-                    <TimeInput value={assignManualTime} onChange={setAssignManualTime} />
-                    <span style={{color:T.muted,fontSize:11}}>–</span>
-                    <TimeInput value={minutesToTime(timeToMinutes(assignManualTime)+assignManualDuration)} onChange={v=>setAssignManualDuration(Math.max(5,timeToMinutes(v)-timeToMinutes(assignManualTime)))} />
-                  </div>
-                  <div style={{display:"flex",gap:8,marginTop:10}}>
-                    <BtnSm onClick={addAssignManualBlock} disabled={!assignManualDate}>Add block</BtnSm>
-                    <BtnSm variant="ghost" onClick={()=>setAssignAddManualBlock(false)}>Cancel</BtnSm>
-                  </div>
-                </div>
-              )}
-            </div>
-            {assignAttackSlotPicker&&(
-              <NewSlotPickerModal title="Choose when to start" sub="Studlin found a few real options for your first probe session:"
-                candidates={assignAttackSlotPicker.candidates} confirmLabel="Start here"
-                onConfirm={confirmAssignAttackSlot} onClose={()=>setAssignAttackSlotPicker(null)}
-                onManual={startAssignAttackManual} />
-            )}
           </div>
         );
       })()}
@@ -15099,77 +15050,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{},onStartPrepNow=()
               </div>
             ):(
               <div style={{marginBottom:24}}>
-                {examSessions.map(s=>{
-                  const isDone=s.status==="done";
-                  const isMissed=!isDone&&!!s.date&&s.date<today;
-                  const dur=s.duration||25;
-                  const others=lsGet("events",[]).filter(e=>e.id!==s.id);
-                  // Stu points out an overlap right on the card and offers a fix.
-                  const conflict=(!isDone&&s.date&&s.time)?findOverlapConflict(s.date,s.time,minutesToTime(timeToMinutes(s.time)+dur),others,getWeeklyRoutine()):null;
-                  let shortenTo=null,moveTo=null;
-                  if(conflict){
-                    const fit=conflict.start-timeToMinutes(s.time);
-                    if(fit>=15)shortenTo=Math.floor(fit/5)*5;
-                    const slot=findLegalSlotOrNull(others,getWeeklyRoutine(),getSchedulePreferences(),s.date,minutesToTime(conflict.end),dur,selectedExam.date);
-                    if(slot&&slot.date===s.date&&slot.time!==s.time)moveTo=slot.time;
-                  }
-                  const stepBtn={border:"none",background:T.card,color:T.text,width:28,height:28,fontSize:15,cursor:"pointer",fontFamily:T.font};
-                  return (
-                    <div key={s.id} style={{display:"grid",gridTemplateColumns:"60px minmax(0,1fr) auto",gap:14,alignItems:"center",padding:"14px 16px",border:`1px solid ${isMissed?T.red+"66":T.border}`,borderRadius:14,background:T.card,marginBottom:10,opacity:isDone?0.6:1}}>
-                      <div style={{borderRadius:12,background:T.lookOn?T.accentSoft:T.card2,textAlign:"center",padding:"8px 0"}}>
-                        <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.08em",color:T.lookOn?T.accentInk:T.muted}}>{s.date?dayOfWeekLabel(s.date).slice(0,3).toUpperCase():"TBD"}</div>
-                        <div style={{fontSize:21,fontWeight:700,color:T.white,lineHeight:1.1}}>{s.date?parseInt(s.date.slice(8),10):"-"}</div>
-                      </div>
-                      <div style={{minWidth:0}}>
-                        <div style={{fontSize:14.5,fontWeight:600,color:T.text,textDecoration:isDone?"line-through":"none"}}>{s.notes||s.title}</div>
-                        {isDone?(
-                          <div style={{fontSize:12.5,color:T.muted,marginTop:4,fontFamily:T.mono}}>{s.date?dayOfWeekLabel(s.date).slice(0,3)+" "+s.date.slice(5).replace("-","/"):""}{s.time?" · "+fmtRolloverClock(s.time):""}</div>
-                        ):(
-                          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginTop:8}}>
-                            <Input type="date" value={s.date||""} onChange={e=>patchSession(s.id,{date:e.target.value})} aria-label="Session date" style={{width:132,fontSize:12}} />
-                            <TimeInput value={s.time||""} onChange={v=>patchSession(s.id,{time:v})} />
-                            <span style={{display:"inline-flex",alignItems:"center",border:`1px solid ${T.border}`,borderRadius:8,overflow:"hidden"}}>
-                              <button type="button" aria-label="Shorter" onClick={()=>patchSession(s.id,{duration:Math.max(5,dur-5)})} style={stepBtn}>&minus;</button>
-                              <span style={{minWidth:58,textAlign:"center",fontFamily:T.mono,fontSize:12.5,color:T.text}}>{dur} min</span>
-                              <button type="button" aria-label="Longer" onClick={()=>patchSession(s.id,{duration:Math.min(240,dur+5)})} style={stepBtn}>+</button>
-                            </span>
-                            {isMissed&&<span style={{fontSize:12,fontWeight:600,color:T.red}}>Missed</span>}
-                            {(!s.date||!s.time)&&<span style={{fontSize:12,color:T.amber}}>Pick a day and time</span>}
-                          </div>
-                        )}
-                      </div>
-                      <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>
-                        {isDone?(
-                          <span style={{fontSize:11.5,fontWeight:700,color:T.teal,background:T.teal+"14",border:`1px solid ${T.teal}44`,borderRadius:99,padding:"3px 10px"}}>Done</span>
-                        ):(<>
-                          {smartFeaturesOn()&&<BtnSm onClick={()=>{if(window._setTimerTask)window._setTimerTask(s);}}>Start</BtnSm>}
-                          <BtnSm variant={smartFeaturesOn()?"ghost":"lime"} onClick={()=>{lsSet("events",lsGet("events",[]).map(x=>x.id===s.id?{...x,status:"done",completedAt:Date.now()}:x));onTaskCompleted(s.id);refresh();}}>Mark done</BtnSm>
-                          {confirmDeleteSessionId===s.id?(
-                            <>
-                              <button type="button" onClick={()=>{deleteSession(s.id);setConfirmDeleteSessionId(null);}} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:T.font,textDecoration:"underline"}}>Remove</button>
-                              <button type="button" onClick={()=>setConfirmDeleteSessionId(null)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:12,fontFamily:T.font,textDecoration:"underline"}}>Keep</button>
-                            </>
-                          ):(
-                            <button type="button" aria-label="Remove session" title="Remove this session" onClick={()=>setConfirmDeleteSessionId(s.id)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:18,lineHeight:1,padding:"2px 6px"}}>&times;</button>
-                          )}
-                        </>)}
-                      </div>
-                      {conflict&&(
-                        <div style={{gridColumn:"1 / -1",display:"flex",gap:10,alignItems:"flex-start",background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:10,padding:"10px 12px"}}>
-                          <div style={{flexShrink:0}}><StudMascot size={30} mood="thinking" {...stuPalette()} /></div>
-                          <div style={{fontSize:12.5,color:T.text,lineHeight:1.5}}>
-                            <strong>{conflict.title}</strong> is at {fmtRolloverClock(minutesToTime(conflict.start))} that day, so this overlaps.
-                            <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
-                              {shortenTo&&<BtnSm onClick={()=>patchSession(s.id,{duration:shortenTo})}>Shorten to {shortenTo} min</BtnSm>}
-                              {moveTo&&<BtnSm variant="ghost" onClick={()=>patchSession(s.id,{time:moveTo})}>Move to {fmtRolloverClock(moveTo)}</BtnSm>}
-                              <BtnSm variant="ghost" onClick={()=>showOnCalendar([s.id])}>Show me on the calendar</BtnSm>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                {examSessions.map(s=>renderSessionCard(s,{today,deadline:selectedExam.date,onShow:showOnCalendar}))}
                 {hasUnfocusedGenericSessions&&(
                   <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
                     <BtnSm variant="subtle" onClick={addFocusToExisting} disabled={sessionScheduleLoading}>{sessionScheduleLoading?"Reading your material…":"Add study focus from your material"}</BtnSm>
@@ -34089,7 +33970,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     lsSet("openSessionReview",null);
     if(!q.setAt||Date.now()-q.setAt>60000)return;
     setCalView("weekly");
-    setSessionReview({title:q.title||"Study plan",ids:q.ids||[],idx:0,examId:q.examId||null});
+    setSessionReview({title:q.title||"Study plan",ids:q.ids||[],idx:0,examId:q.examId||null,message:q.message||null,returnAssignmentId:q.returnAssignmentId||null});
     setNewItemHighlightIds(q.ids||[]);
   },[]);
   const reviewSessions=sessionReview?sessionReview.ids.map(id=>events.find(e=>e.id===id)).filter(e=>e&&e.date&&e.time&&e.status!=="done").sort((a,b)=>(a.date+a.time)<(b.date+b.time)?-1:1):[];
@@ -34098,9 +33979,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   useEffect(()=>{if(reviewCurrent)jumpToSession(reviewCurrent);},[reviewCurrent&&reviewCurrent.id]);
   const stepReview=(d)=>setSessionReview(r=>r?{...r,idx:Math.max(0,Math.min(Math.max(0,reviewSessions.length-1),Math.max(0,Math.min(r.idx,reviewSessions.length-1))+d))}:r);
   const finishReview=()=>{
-    const back=sessionReview&&sessionReview.examId;
+    const backExam=sessionReview&&sessionReview.examId;
+    const backAsg=sessionReview&&sessionReview.returnAssignmentId;
     setSessionReview(null);setNewItemHighlightIds([]);
-    if(back){lsSet("openExamId",back);setActive("prep");}
+    if(backExam){lsSet("openExamId",backExam);setActive("prep");}
+    else if(backAsg){lsSet("openAssignmentId",backAsg);setActive("prep");}
   };
   // ===== Project-step placing (Prep project page "Schedule") =====
   // The step is a pulsing chip in the left sidebar. Drag it onto any day and time,
@@ -34154,8 +34037,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     const routines=getWeeklyRoutine(),prefs=getSchedulePreferences();
     const busyBy=placingPartner.busy||{};
     const todayK2=dayKey();
-    const lastKey=placing.deadline&&placing.deadline>todayK2?(()=>{const d=new Date(placing.deadline+"T12:00:00");d.setDate(d.getDate()-1);return dayKey(d);})():todayK2;
-    const taken=new Set(events.filter(e=>e.stepId===placing.stepId).map(e=>e.date));
+    // Working on the due date itself is fine (it is due at the end of that day).
+    const lastKey=placing.deadline
+      ?(placing.deadline>=todayK2?placing.deadline:todayK2)
+      :(()=>{const d=new Date();d.setDate(d.getDate()+7);return dayKey(d);})(); // no due date: the next week
+    const taken=new Set(events.filter(e=>placing.stepId?e.stepId===placing.stepId:(e.dueEventId===placing.projectId&&e.status!=="done")).map(e=>e.date));
     const out=[];
     for(let i=0;i<14&&out.length<3;i++){
       const d=new Date();d.setDate(d.getDate()+i);
@@ -34186,7 +34072,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     const ev={id:"step-"+placing.projectId+"-"+Date.now()+"-"+Math.round(Math.random()*1000),title:placing.title,date:dateKey,time:startTime,
       subject:placing.subject||"",...(placing.courseId?{courseId:placing.courseId}:{}),kind:"study block",notes:"",priority:500,difficulty:500,
       deadline:placing.deadline||null,duration:dur,status:"pending",timeSpent:0,completedAt:null,
-      dueEventId:placing.projectId,stepId:placing.stepId,projectStep:true};
+      dueEventId:placing.projectId,...(placing.stepId?{stepId:placing.stepId,projectStep:true}:{})};
     const next=events.concat([ev]);
     setEvents(next);lsSet("events",next);
     setPlacingCount(c=>c+1);
@@ -34201,9 +34087,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   };
   const finishPlacing=()=>{
     const back=placing&&placing.returnProjectId;
+    const backAsg=placing&&placing.returnAssignmentId;
     lsSet("stuPlacingTipSeen",true);
     setPlacing(null);setPlacingCount(0);
     if(back){lsSet("openProjectId",back);setActive("prep");}
+    else if(backAsg){lsSet("openAssignmentId",backAsg);setActive("prep");}
   };
   const placingDraft=placing?{id:"placing-"+placing.stepId,title:placing.title,subject:placing.subject,kind:"projectStepPlacing"}:null;
   useEffect(()=>{
@@ -37433,15 +37321,18 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         <div style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",background:T.lookOn?T.accentSoft:T.lime+"10",border:`1px solid ${T.lime}33`,borderRadius:10,marginBottom:14,flexWrap:"wrap"}}>
           <div style={{flexShrink:0}}><StudMascot size={34} mood="happy" {...stuPalette()} /></div>
           <div style={{flex:1,minWidth:200}}>
-            {reviewCurrent?(<>
+            {reviewCurrent&&sessionReview.message?(<>
+              <div style={{fontSize:13.5,fontWeight:700,color:T.white}}>{sessionReview.message}</div>
+              <div style={{fontSize:12.5,color:T.muted,marginTop:2}}>Move it anywhere you like: drag the pulsing block, or drag its bottom edge to change the length. Press Done when you're happy.</div>
+            </>):reviewCurrent?(<>
               <div style={{fontSize:13.5,fontWeight:700,color:T.white}}>{sessionReview.title}: session {reviewIdx+1} of {reviewSessions.length}</div>
               <div style={{fontSize:12.5,color:T.muted,marginTop:2}}>{niceDate(reviewCurrent.date)}, {fmtTimeRange(reviewCurrent.time,reviewCurrent.duration||25)}. Drag the pulsing block to move it, or drag its bottom edge to change the length.</div>
             </>):(
               <div style={{fontSize:13,color:T.text}}>No upcoming study sessions to show.</div>
             )}
           </div>
-          <BtnSm variant="ghost" disabled={reviewIdx<=0} onClick={()=>stepReview(-1)}>‹ Back</BtnSm>
-          <BtnSm variant="ghost" disabled={reviewIdx>=reviewSessions.length-1} onClick={()=>stepReview(1)}>Next ›</BtnSm>
+          {reviewSessions.length>1&&<BtnSm variant="ghost" disabled={reviewIdx<=0} onClick={()=>stepReview(-1)}>‹ Back</BtnSm>}
+          {reviewSessions.length>1&&<BtnSm variant="ghost" disabled={reviewIdx>=reviewSessions.length-1} onClick={()=>stepReview(1)}>Next ›</BtnSm>}
           <BtnSm onClick={finishReview}>Done</BtnSm>
         </div>
       )}
