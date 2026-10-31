@@ -39877,7 +39877,7 @@ function StuSleepingFab({asleep}){
   );
 }
 const STU_EXIT_MOOD={yes:"happy",cheer:"proud",no:"sad",late:"worried"};
-function StudCompanion({mode,title,clock,navExpanded,onYes,onDone,sub:subProp,firstPrompt=true,onNightRoutine,onTurnOff}){
+function StudCompanion({mode,title,clock,navExpanded,onYes,onSecond,onDone,sub:subProp,firstPrompt=true,onNightRoutine,onTurnOff}){
   const [phase,setPhase]=useState("in"); // in > talk > yes|no|late > out
   const declinesBefore=useRef(stuDeclinesToday()).current;
   const howRef=useRef(mode==="cheer"?"cheer":"late");
@@ -39891,7 +39891,7 @@ function StudCompanion({mode,title,clock,navExpanded,onYes,onDone,sub:subProp,fi
     if(phase==="in")t.push(setTimeout(()=>setPhase("talk"),1500));
     if(phase==="talk"&&(mode==="ask"||mode==="bedtime"||mode==="catchup"))t.push(setTimeout(()=>{howRef.current="late";setPhase("late");},32000));
     if(phase==="talk"&&mode==="cheer")t.push(setTimeout(()=>setPhase("out"),4200));
-    if(phase==="yes")t.push(setTimeout(()=>{if(onYes)onYes();setPhase("out");},800));
+    if(phase==="yes")t.push(setTimeout(()=>{const go=(howRef.current==="second"&&onSecond)?onSecond:onYes;if(go)go();setPhase("out");},800));
     if(phase==="no"||phase==="late")t.push(setTimeout(()=>setPhase("out"),phase==="no"?2000:2800));
     if(phase==="out")t.push(setTimeout(()=>{if(onDone)onDone(howRef.current);},1300));
     return()=>t.forEach(clearTimeout);
@@ -39904,7 +39904,7 @@ function StudCompanion({mode,title,clock,navExpanded,onYes,onDone,sub:subProp,fi
   else if(phase==="yes"&&mode==="alert"){mood="happy";line="Opening your calendar.";}
   else if(phase==="no"&&mode==="alert"){mood="happy";line="Okay, dismissed.";}
   else if(phase==="talk"&&mode==="catchup"){mood="thinking";line=title;sub=subProp||"";}
-  else if(phase==="yes"&&mode==="catchup"){mood="happy";line="On it. Let's look.";}
+  else if(phase==="yes"&&mode==="catchup"){mood="happy";line=howRef.current==="second"?"On it. I'll find a time.":"Here they are.";}
   else if(phase==="no"&&mode==="catchup"){mood="thinking";line="No problem. I'll leave it for now.";}
   else if(phase==="late"&&mode==="catchup"){mood="thinking";line="It will keep. Find it on your Dashboard.";}
   else if(phase==="talk"&&mode==="bedtime"){mood="sleepy";line="Getting late. Want to wrap up for tonight?";sub="Bedtime is "+(clock||"soon")+".";}
@@ -39946,6 +39946,7 @@ function StudCompanion({mode,title,clock,navExpanded,onYes,onDone,sub:subProp,fi
           {phase==="talk"&&mode==="catchup"&&(
             <div style={{display:"flex",gap:8,marginTop:10}}>
               <BtnSm onClick={()=>{howRef.current="yes";setPhase("yes");}} style={{padding:"6px 12px",fontSize:11.5}}>Show me</BtnSm>
+              {onSecond&&<BtnSm variant="subtle" onClick={()=>{howRef.current="second";setPhase("yes");}} style={{padding:"6px 12px",fontSize:11.5}}>Find time</BtnSm>}
               <BtnSm variant="ghost" onClick={()=>{howRef.current="no";setPhase("no");}} style={{padding:"6px 12px",fontSize:11.5}}>Not now</BtnSm>
             </div>
           )}
@@ -43867,6 +43868,10 @@ function App() {
   const [stuCatchUpDone,setStuCatchUpDone]=useState(false); // Stu has had his turn this session
   const [catchUpPlan,setCatchUpPlan]=useState(null); // {moves,unplaceable} | null
   const [catchUpPreviewOpen,setCatchUpPreviewOpen]=useState(false);
+  // Plain "here is what you missed" list (no proposed times). Opened by Stu's
+  // "Show me"; each row can be marked complete or sent to Find time.
+  const [catchUpListOpen,setCatchUpListOpen]=useState(false);
+  const [catchUpListItems,setCatchUpListItems]=useState([]);
   // Per-item edits made in the preview before confirming, keyed by event
   // id -- {skip:true} leaves it exactly where it was, {defer:true} is
   // "Not this week", {date,time} is a manual override from "Move it
@@ -44375,12 +44380,15 @@ function App() {
   // not while the banner is merely sitting there unread). Fresh read from
   // storage -- nothing about any missed item has moved yet, since missed
   // items are never committed without this preview being accepted.
-  const openCatchUpPreview=()=>{
+  const openCatchUpPreview=(onlyId)=>{
     const events=lsGet("events",[]);
     const routines=getWeeklyRoutine();
     const prefs=getSchedulePreferences();
     const now=new Date();
-    const plan=computeCatchUpPlan(events,routines,prefs,dayKey(),null,now.getHours()*60+now.getMinutes());
+    let plan=computeCatchUpPlan(events,routines,prefs,dayKey(),null,now.getHours()*60+now.getMinutes());
+    // "Find time" on one row of the missed list: only that task is proposed.
+    if(typeof onlyId==="string")plan={moves:plan.moves.filter(m=>m.id===onlyId),unplaceable:plan.unplaceable.filter(u=>u.id===onlyId)};
+    setCatchUpListOpen(false);
     setCatchUpPlan(plan);
     setCatchUpOverrides({});
     // One item: open its Move it myself / Skip / Not this week controls up
@@ -44392,6 +44400,18 @@ function App() {
     setCatchUpMoveError("");
     setCatchUpPreviewOpen(true);
     logCatchUpEvent("rebuild_previewed",{moveCount:plan.moves.length,unplaceableCount:plan.unplaceable.length});
+  };
+  const openCatchUpList=()=>{
+    setCatchUpListItems(computeCatchUpMissedItems(lsGet("events",[]),dayKey()));
+    setCatchUpBanner(null);
+    setCatchUpListOpen(true);
+  };
+  const markCatchUpItemsDone=(ids)=>{
+    ids.forEach(id=>markEventDone(id));
+    setCatchUpListItems(items=>items.filter(ev=>!ids.includes(ev.id)));
+    setDashToast(ids.length===1?"Marked complete.":ids.length+" marked complete.");
+    setTimeout(()=>setDashToast(""),2800);
+    logCatchUpEvent("missed_marked_done",{count:ids.length});
   };
   const closeCatchUpPreview=()=>{
     setCatchUpPreviewOpen(false);
@@ -45668,9 +45688,19 @@ function App() {
     // cooldown since this is inherently a once-per-day mount effect anyway.
     // The missed items themselves are untouched either way -- dismissing
     // only silences today's nudge about them, it never marks anything done.
-    if(catchUpOffered&&lsGet("catchUpBannerDismissedDate",null)!==today){
-      setCatchUpBanner({count:missedItems.length,staleDays:catchUpStalenessDays(missedItems,today),title:missedItems.length===1?missedItems[0].title:null});
-      logCatchUpEvent("recovery_banner_shown",{count:missedItems.length});
+    // User report, 2026-10-31: Stu asked about the same missed tasks on
+    // every visit. He now asks ONCE per missed task: each task is
+    // remembered the moment it is asked about (answered or ignored), and
+    // only a task that is newly missed brings him back. The tasks stay
+    // missed and visible in the calendar either way.
+    const askedKeys=new Set(lsGet("catchUpAskedKeys",[]));
+    const missedKey=ev=>ev.id+"|"+ev.date;
+    const freshMissed=missedItems.filter(ev=>!askedKeys.has(missedKey(ev)));
+    if(catchUpOffered&&freshMissed.length>0){
+      setCatchUpBanner({count:freshMissed.length,staleDays:catchUpStalenessDays(freshMissed,today),title:freshMissed.length===1?freshMissed[0].title:null});
+      missedItems.forEach(ev=>askedKeys.add(missedKey(ev)));
+      lsSet("catchUpAskedKeys",Array.from(askedKeys).slice(-300));
+      logCatchUpEvent("recovery_banner_shown",{count:freshMissed.length});
     }
   },[]);
   const dismissCatchUpBanner=()=>{
@@ -46271,8 +46301,8 @@ function App() {
       {catchUpBanner&&!headsUpEvent&&!stuCheer&&!stuBedtime&&!timerTask&&!stuCatchUpDone&&stuSettingOn("mascotReminders")&&(
         <StudCompanion key="stu-catchup" mode="catchup" navExpanded={navExpanded}
           title={catchUpBanner.count===1&&catchUpBanner.title?"\""+catchUpBanner.title+"\" from "+catchUpStalenessLabel(catchUpBanner.staleDays||1)+" didn't get done.":catchUpBanner.count+" thing"+(catchUpBanner.count!==1?"s":"")+" from "+catchUpStalenessLabel(catchUpBanner.staleDays||1)+" didn't get done."}
-          sub={catchUpBanner.count===1?"Want me to find a new spot for it?":"Want me to line them back up?"}
-          onYes={()=>{openCatchUpPreview();}}
+          sub={catchUpBanner.count===1?"Mark it done, or I can find time for it.":"Mark them done, or I can find time."}
+          onYes={()=>{openCatchUpList();}} onSecond={()=>{openCatchUpPreview();}}
           onDone={how=>{setStuCatchUpDone(true);if(how==="no")dismissCatchUpBanner();}} />
       )}
       {catchUpBanner&&!stuSettingOn("mascotReminders")&&(()=>{
@@ -46284,11 +46314,42 @@ function App() {
                 ?"\""+catchUpBanner.title+"\" from "+catchUpStalenessLabel(catchUpBanner.staleDays||1)+" didn't get done."
                 :catchUpBanner.count+" thing"+(catchUpBanner.count!==1?"s":"")+" from "+catchUpStalenessLabel(catchUpBanner.staleDays||1)+" didn't get done."}
             </div>
-            <Btn onClick={openCatchUpPreview} style={{flexShrink:0}}>{catchUpBanner.count===1?"Reschedule":"Rebuild my week"}</Btn>
+            <Btn onClick={openCatchUpList} style={{flexShrink:0}}>Show me</Btn>
             <button onClick={dismissCatchUpBanner} title="Dismiss for today" aria-label="Dismiss" style={{flexShrink:0,width:26,height:26,display:"flex",alignItems:"center",justifyContent:"center",background:"none",border:"none",borderRadius:6,color:tokens.color.textPrimary,opacity:0.55,cursor:"pointer"}}>{Icon.xmark}</button>
           </div>
         );
       })()}
+      {/* What you missed -- Stu's "Show me". A plain list, no proposed times:
+          each row can be marked complete or sent to Find time (which opens
+          the preview below and still asks before anything moves). */}
+      <Modal open={catchUpListOpen} onClose={()=>setCatchUpListOpen(false)} title="What you missed"
+        sub={catchUpListItems.length===0?"All caught up.":"Nothing moves unless you tap Find time and confirm."}
+        width={560}
+        footer={<>
+          <div style={{flex:1}} />
+          <Btn variant="subtle" onClick={()=>setCatchUpListOpen(false)}>Close</Btn>
+          {catchUpListItems.length>1&&<Btn variant="subtle" onClick={()=>markCatchUpItemsDone(catchUpListItems.map(ev=>ev.id))}>Mark all complete</Btn>}
+          {catchUpListItems.length>1&&<Btn onClick={()=>openCatchUpPreview()}>Find time for all</Btn>}
+        </>}>
+        {catchUpListItems.length===0?(
+          <div style={{padding:"18px 4px",fontSize:13,color:T.muted}}>Nothing missed. Nice.</div>
+        ):(
+          <div style={{display:"flex",flexDirection:"column",maxHeight:420,overflowY:"auto"}}>
+            {catchUpListItems.map(ev=>(
+              <div key={ev.id} style={{padding:"12px 4px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap"}}>
+                <div style={{minWidth:0,flex:"1 1 180px"}}>
+                  <div style={{fontSize:14,fontWeight:600,color:T.text}}>{ev.title}</div>
+                  <div style={{fontSize:12,color:T.muted,marginTop:2}}>{dayOfWeekLabel(ev.date).slice(0,3)} {ev.date.slice(5)}{ev.time?" at "+fmtRolloverClock(ev.time):""}</div>
+                </div>
+                <div style={{display:"flex",gap:8,flexShrink:0}}>
+                  <BtnSm onClick={()=>markCatchUpItemsDone([ev.id])}>Mark complete</BtnSm>
+                  <BtnSm variant="subtle" onClick={()=>openCatchUpPreview(ev.id)}>Find time</BtnSm>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Modal>
       {/* Rebuild preview -- Part 3. Does NOT apply immediately; one tap
           ("Looks good") accepts everything exactly as proposed, or any
           item can be expanded for optional Move-it-myself/Skip/Not-this-

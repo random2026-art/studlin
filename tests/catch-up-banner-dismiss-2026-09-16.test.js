@@ -21,11 +21,11 @@ describe("catchUpBanner now has a real dismiss control", () => {
     assert.match(body, /setCatchUpBanner\(null\)/);
   });
 
-  test("the mount effect that shows the banner is gated on that same dismissed-date check", () => {
+  test("the mount effect that shows the banner is gated on the ask-once check (2026-10-31: no longer a once-a-day dismiss)", () => {
     // 2026-09-21: gate renamed recoveryPending -> catchUpOffered when the
     // banner started showing for a single missed item too (see
     // pinned-never-moved-and-preview-before-move-2026-09-21.test.js).
-    assert.match(SOURCE, /if\(catchUpOffered&&lsGet\("catchUpBannerDismissedDate",null\)!==today\)\{/);
+    assert.match(SOURCE, /if\(catchUpOffered&&freshMissed\.length>0\)\{/);
   });
 
   test("the banner renders a visible close button wired to dismissCatchUpBanner, not just the Rebuild action", () => {
@@ -33,7 +33,7 @@ describe("catchUpBanner now has a real dismiss control", () => {
     const idx = SOURCE.indexOf('{catchUpBanner&&!stuSettingOn("mascotReminders")&&(()=>{');
     assert.notEqual(idx, -1);
     const body = SOURCE.slice(idx, idx + 1200);
-    assert.match(body, /<Btn onClick=\{openCatchUpPreview\}/, "the existing Rebuild my week action must still be there");
+    assert.match(body, /<Btn onClick=\{openCatchUpList\}/, "the Show me action (plain list) must still be there");
     assert.match(body, /onClick=\{dismissCatchUpBanner\}/, "a real dismiss control must exist alongside it");
   });
 
