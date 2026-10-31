@@ -25175,7 +25175,7 @@ function StuSleepingFab({ asleep }) {
   return /* @__PURE__ */ React.createElement("div", { "aria-hidden": "true", className: "stu-sleep-fab", style: { position: "fixed", bottom: "calc(20px + env(safe-area-inset-bottom, 0px))", right: 20, minWidth: 44, minHeight: 44, display: "grid", placeItems: "center", pointerEvents: "none", filter: "drop-shadow(0 4px 8px rgba(0,0,0,0.28))", zIndex: STUDLIN_AI_BUBBLE_Z } }, /* @__PURE__ */ React.createElement(StudMascot, { size: 56, mood: "sleepy", ...pal }), /* @__PURE__ */ React.createElement("span", { className: "stu-zz", style: { top: -2, right: -2, fontSize: 13, color: T.muted } }, "z"), /* @__PURE__ */ React.createElement("span", { className: "stu-zz", style: { top: -12, right: -12, fontSize: 10, color: T.muted, animationDelay: "1.2s" } }, "z"));
 }
 const STU_EXIT_MOOD = { yes: "happy", cheer: "proud", no: "sad", late: "worried" };
-function StudCompanion({ mode, title, clock, navExpanded, onYes, onDone, sub: subProp, firstPrompt = true, onNightRoutine, onTurnOff }) {
+function StudCompanion({ mode, title, clock, navExpanded, onYes, onSecond, onDone, sub: subProp, firstPrompt = true, onNightRoutine, onTurnOff }) {
   const [phase, setPhase] = useState("in");
   const declinesBefore = useRef(stuDeclinesToday()).current;
   const howRef = useRef(mode === "cheer" ? "cheer" : "late");
@@ -25194,7 +25194,8 @@ function StudCompanion({ mode, title, clock, navExpanded, onYes, onDone, sub: su
     }, 32e3));
     if (phase === "talk" && mode === "cheer") t.push(setTimeout(() => setPhase("out"), 4200));
     if (phase === "yes") t.push(setTimeout(() => {
-      if (onYes) onYes();
+      const go = howRef.current === "second" && onSecond ? onSecond : onYes;
+      if (go) go();
       setPhase("out");
     }, 800));
     if (phase === "no" || phase === "late") t.push(setTimeout(() => setPhase("out"), phase === "no" ? 2e3 : 2800));
@@ -25226,7 +25227,7 @@ function StudCompanion({ mode, title, clock, navExpanded, onYes, onDone, sub: su
     sub = subProp || "";
   } else if (phase === "yes" && mode === "catchup") {
     mood = "happy";
-    line = "On it. Let's look.";
+    line = howRef.current === "second" ? "On it. I'll find a time." : "Here they are.";
   } else if (phase === "no" && mode === "catchup") {
     mood = "thinking";
     line = "No problem. I'll leave it for now.";
@@ -25281,7 +25282,10 @@ function StudCompanion({ mode, title, clock, navExpanded, onYes, onDone, sub: su
   }, style: { padding: "6px 12px", fontSize: 11.5 } }, "Dismiss")), phase === "talk" && onTurnOff && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onTurnOff, style: { display: "block", marginTop: 8, background: "none", border: "none", padding: 0, color: T.muted, fontSize: 11, cursor: "pointer", fontFamily: T.font, textDecoration: "underline" } }, "Turn off Stu notifications"), phase === "talk" && mode === "catchup" && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
     howRef.current = "yes";
     setPhase("yes");
-  }, style: { padding: "6px 12px", fontSize: 11.5 } }, "Show me"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => {
+  }, style: { padding: "6px 12px", fontSize: 11.5 } }, "Show me"), onSecond && /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => {
+    howRef.current = "second";
+    setPhase("yes");
+  }, style: { padding: "6px 12px", fontSize: 11.5 } }, "Find time"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "ghost", onClick: () => {
     howRef.current = "no";
     setPhase("no");
   }, style: { padding: "6px 12px", fontSize: 11.5 } }, "Not now")), phase === "talk" && mode === "bedtime" && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => {
@@ -27275,6 +27279,8 @@ function App() {
   const [stuCatchUpDone, setStuCatchUpDone] = useState(false);
   const [catchUpPlan, setCatchUpPlan] = useState(null);
   const [catchUpPreviewOpen, setCatchUpPreviewOpen] = useState(false);
+  const [catchUpListOpen, setCatchUpListOpen] = useState(false);
+  const [catchUpListItems, setCatchUpListItems] = useState([]);
   const [catchUpOverrides, setCatchUpOverrides] = useState({});
   const [catchUpLastConfirmed, setCatchUpLastConfirmed] = useState(null);
   const [catchUpExpandedId, setCatchUpExpandedId] = useState(null);
@@ -27557,12 +27563,14 @@ function App() {
     h = h % 12 || 12;
     return h + ":" + p[1] + ap;
   };
-  const openCatchUpPreview = () => {
+  const openCatchUpPreview = (onlyId) => {
     const events = lsGet("events", []);
     const routines = getWeeklyRoutine();
     const prefs = getSchedulePreferences();
     const now = /* @__PURE__ */ new Date();
-    const plan = computeCatchUpPlan(events, routines, prefs, dayKey(), null, now.getHours() * 60 + now.getMinutes());
+    let plan = computeCatchUpPlan(events, routines, prefs, dayKey(), null, now.getHours() * 60 + now.getMinutes());
+    if (typeof onlyId === "string") plan = { moves: plan.moves.filter((m) => m.id === onlyId), unplaceable: plan.unplaceable.filter((u) => u.id === onlyId) };
+    setCatchUpListOpen(false);
     setCatchUpPlan(plan);
     setCatchUpOverrides({});
     setCatchUpExpandedId(plan.moves.length === 1 ? plan.moves[0].id : null);
@@ -27570,6 +27578,18 @@ function App() {
     setCatchUpMoveError("");
     setCatchUpPreviewOpen(true);
     logCatchUpEvent("rebuild_previewed", { moveCount: plan.moves.length, unplaceableCount: plan.unplaceable.length });
+  };
+  const openCatchUpList = () => {
+    setCatchUpListItems(computeCatchUpMissedItems(lsGet("events", []), dayKey()));
+    setCatchUpBanner(null);
+    setCatchUpListOpen(true);
+  };
+  const markCatchUpItemsDone = (ids) => {
+    ids.forEach((id) => markEventDone(id));
+    setCatchUpListItems((items) => items.filter((ev) => !ids.includes(ev.id)));
+    setDashToast(ids.length === 1 ? "Marked complete." : ids.length + " marked complete.");
+    setTimeout(() => setDashToast(""), 2800);
+    logCatchUpEvent("missed_marked_done", { count: ids.length });
   };
   const closeCatchUpPreview = () => {
     setCatchUpPreviewOpen(false);
@@ -28475,9 +28495,14 @@ function App() {
       logCatchUpEvent("missed_blocks_detected", { count: missedItems.length });
       logCatchUpEvent("user_returned_after_missing_blocks", { count: missedItems.length });
     }
-    if (catchUpOffered && lsGet("catchUpBannerDismissedDate", null) !== today) {
-      setCatchUpBanner({ count: missedItems.length, staleDays: catchUpStalenessDays(missedItems, today), title: missedItems.length === 1 ? missedItems[0].title : null });
-      logCatchUpEvent("recovery_banner_shown", { count: missedItems.length });
+    const askedKeys = new Set(lsGet("catchUpAskedKeys", []));
+    const missedKey = (ev) => ev.id + "|" + ev.date;
+    const freshMissed = missedItems.filter((ev) => !askedKeys.has(missedKey(ev)));
+    if (catchUpOffered && freshMissed.length > 0) {
+      setCatchUpBanner({ count: freshMissed.length, staleDays: catchUpStalenessDays(freshMissed, today), title: freshMissed.length === 1 ? freshMissed[0].title : null });
+      missedItems.forEach((ev) => askedKeys.add(missedKey(ev)));
+      lsSet("catchUpAskedKeys", Array.from(askedKeys).slice(-300));
+      logCatchUpEvent("recovery_banner_shown", { count: freshMissed.length });
     }
   }, []);
   const dismissCatchUpBanner = () => {
@@ -28764,8 +28789,11 @@ function App() {
       mode: "catchup",
       navExpanded,
       title: catchUpBanner.count === 1 && catchUpBanner.title ? '"' + catchUpBanner.title + '" from ' + catchUpStalenessLabel(catchUpBanner.staleDays || 1) + " didn't get done." : catchUpBanner.count + " thing" + (catchUpBanner.count !== 1 ? "s" : "") + " from " + catchUpStalenessLabel(catchUpBanner.staleDays || 1) + " didn't get done.",
-      sub: catchUpBanner.count === 1 ? "Want me to find a new spot for it?" : "Want me to line them back up?",
+      sub: catchUpBanner.count === 1 ? "Mark it done, or I can find time for it." : "Mark them done, or I can find time.",
       onYes: () => {
+        openCatchUpList();
+      },
+      onSecond: () => {
         openCatchUpPreview();
       },
       onDone: (how) => {
@@ -28775,8 +28803,19 @@ function App() {
     }
   ), catchUpBanner && !stuSettingOn("mascotReminders") && (() => {
     const tokens = StudlinTokens(T);
-    return /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 76, left: "50%", transform: "translateX(-50%)", zIndex: 999, width: "min(480px, calc(100vw - 40px))", padding: "16px 20px", borderRadius: tokens.radius.card, background: tokens.color.accentSubtle, border: `1px solid ${tokens.color.accent}55`, boxShadow: "0 8px 24px rgba(0,0,0,0.25)", animation: "studlinPop 0.2s ease", display: "flex", alignItems: "center", gap: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: tokens.type.size.itemTitle, color: tokens.color.textPrimary } }, catchUpBanner.count === 1 && catchUpBanner.title ? '"' + catchUpBanner.title + '" from ' + catchUpStalenessLabel(catchUpBanner.staleDays || 1) + " didn't get done." : catchUpBanner.count + " thing" + (catchUpBanner.count !== 1 ? "s" : "") + " from " + catchUpStalenessLabel(catchUpBanner.staleDays || 1) + " didn't get done."), /* @__PURE__ */ React.createElement(Btn, { onClick: openCatchUpPreview, style: { flexShrink: 0 } }, catchUpBanner.count === 1 ? "Reschedule" : "Rebuild my week"), /* @__PURE__ */ React.createElement("button", { onClick: dismissCatchUpBanner, title: "Dismiss for today", "aria-label": "Dismiss", style: { flexShrink: 0, width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", borderRadius: 6, color: tokens.color.textPrimary, opacity: 0.55, cursor: "pointer" } }, Icon.xmark));
+    return /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 76, left: "50%", transform: "translateX(-50%)", zIndex: 999, width: "min(480px, calc(100vw - 40px))", padding: "16px 20px", borderRadius: tokens.radius.card, background: tokens.color.accentSubtle, border: `1px solid ${tokens.color.accent}55`, boxShadow: "0 8px 24px rgba(0,0,0,0.25)", animation: "studlinPop 0.2s ease", display: "flex", alignItems: "center", gap: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, fontSize: tokens.type.size.itemTitle, color: tokens.color.textPrimary } }, catchUpBanner.count === 1 && catchUpBanner.title ? '"' + catchUpBanner.title + '" from ' + catchUpStalenessLabel(catchUpBanner.staleDays || 1) + " didn't get done." : catchUpBanner.count + " thing" + (catchUpBanner.count !== 1 ? "s" : "") + " from " + catchUpStalenessLabel(catchUpBanner.staleDays || 1) + " didn't get done."), /* @__PURE__ */ React.createElement(Btn, { onClick: openCatchUpList, style: { flexShrink: 0 } }, "Show me"), /* @__PURE__ */ React.createElement("button", { onClick: dismissCatchUpBanner, title: "Dismiss for today", "aria-label": "Dismiss", style: { flexShrink: 0, width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", borderRadius: 6, color: tokens.color.textPrimary, opacity: 0.55, cursor: "pointer" } }, Icon.xmark));
   })(), /* @__PURE__ */ React.createElement(
+    Modal,
+    {
+      open: catchUpListOpen,
+      onClose: () => setCatchUpListOpen(false),
+      title: "What you missed",
+      sub: catchUpListItems.length === 0 ? "All caught up." : "Nothing moves unless you tap Find time and confirm.",
+      width: 560,
+      footer: /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { flex: 1 } }), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setCatchUpListOpen(false) }, "Close"), catchUpListItems.length > 1 && /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => markCatchUpItemsDone(catchUpListItems.map((ev) => ev.id)) }, "Mark all complete"), catchUpListItems.length > 1 && /* @__PURE__ */ React.createElement(Btn, { onClick: () => openCatchUpPreview() }, "Find time for all"))
+    },
+    catchUpListItems.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { padding: "18px 4px", fontSize: 13, color: T.muted } }, "Nothing missed. Nice.") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", maxHeight: 420, overflowY: "auto" } }, catchUpListItems.map((ev) => /* @__PURE__ */ React.createElement("div", { key: ev.id, style: { padding: "12px 4px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { minWidth: 0, flex: "1 1 180px" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: T.text } }, ev.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginTop: 2 } }, dayOfWeekLabel(ev.date).slice(0, 3), " ", ev.date.slice(5), ev.time ? " at " + fmtRolloverClock(ev.time) : "")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexShrink: 0 } }, /* @__PURE__ */ React.createElement(BtnSm, { onClick: () => markCatchUpItemsDone([ev.id]) }, "Mark complete"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => openCatchUpPreview(ev.id) }, "Find time")))))
+  ), /* @__PURE__ */ React.createElement(
     Modal,
     {
       open: catchUpPreviewOpen,

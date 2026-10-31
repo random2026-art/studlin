@@ -153,7 +153,7 @@ describe("source guards for the component-closure code", () => {
   test("the banner is offered for a single missed item, and the threshold constant says so", () => {
     assert.match(SOURCE, /const CATCHUP_BANNER_THRESHOLD=1;/);
     assert.match(SOURCE, /const catchUpOffered=missedItems\.length>=CATCHUP_BANNER_THRESHOLD;/);
-    assert.match(SOURCE, /if\(catchUpOffered&&lsGet\("catchUpBannerDismissedDate",null\)!==today\)\{/);
+    assert.match(SOURCE, /if\(catchUpOffered&&freshMissed\.length>0\)\{/);
   });
 
   test("the rough-week threshold (nudge gating, Dashboard overrun card) is untouched", () => {
@@ -161,13 +161,13 @@ describe("source guards for the component-closure code", () => {
   });
 
   test("openCatchUpPreview hands the plan the real current time so the exam-passed guard is live", () => {
-    const start = SOURCE.indexOf("const openCatchUpPreview=()=>{");
+    const start = SOURCE.indexOf("const openCatchUpPreview=(onlyId)=>{");
     const body = SOURCE.slice(start, start + 900);
     assert.match(body, /computeCatchUpPlan\(events,routines,prefs,dayKey\(\),null,now\.getHours\(\)\*60\+now\.getMinutes\(\)\)/);
   });
 
   test("a single-item preview opens with its Move it myself / Skip / Not this week controls already expanded", () => {
-    const start = SOURCE.indexOf("const openCatchUpPreview=()=>{");
+    const start = SOURCE.indexOf("const openCatchUpPreview=(onlyId)=>{");
     const body = SOURCE.slice(start, start + 1400);
     assert.match(body, /setCatchUpExpandedId\(plan\.moves\.length===1\?plan\.moves\[0\]\.id:null\)/);
   });
