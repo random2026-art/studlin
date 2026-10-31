@@ -97,3 +97,30 @@ describe("dueReminders", () => {
     assert.equal(C.dueReminders({ events: [ev()], routines: [], prefs: { tz: "Nope/Zone" }, nowMs, firedKeys: [] }).length, 0);
   });
 });
+
+describe("per-task reminder time (remindMins)", () => {
+  const core = require("../api/_lib/reminders-core");
+  const prefs = { tz: "UTC", notifMaster: true, deadline: true, classReminders: false };
+  // 2026-11-02 12:00 UTC; the task starts at 12:20 UTC
+  const nowAt = (min) => Date.UTC(2026, 10, 2, 12, 0) + min * 60000;
+  const ev = (extra) => Object.assign({ id: "t1", title: "Read ch 4", date: "2026-11-02", time: "12:20", status: "pending", kind: "study block" }, extra);
+
+  test("remindMins 20 fires 20 minutes before and not at the default 10/5", () => {
+    const e = ev({ remindMins: 20 });
+    assert.equal(core.dueReminders({ events: [e], routines: [], prefs, nowMs: nowAt(0), firedKeys: [] }).length, 1);
+    assert.equal(core.dueReminders({ events: [e], routines: [], prefs, nowMs: nowAt(0), firedKeys: [] })[0].lead, 20);
+    assert.equal(core.dueReminders({ events: [e], routines: [], prefs, nowMs: nowAt(10), firedKeys: [] }).length, 0);
+    assert.equal(core.dueReminders({ events: [e], routines: [], prefs, nowMs: nowAt(15), firedKeys: [] }).length, 0);
+  });
+
+  test("remindMins 0 means no reminder at all for that task", () => {
+    const e = ev({ remindMins: 0 });
+    [0, 10, 15].forEach((m) => assert.equal(core.dueReminders({ events: [e], routines: [], prefs, nowMs: nowAt(m), firedKeys: [] }).length, 0));
+  });
+
+  test("no remindMins keeps the default 10 and 5", () => {
+    const e = ev({});
+    assert.equal(core.dueReminders({ events: [e], routines: [], prefs, nowMs: nowAt(10), firedKeys: [] }).length, 1);
+    assert.equal(core.dueReminders({ events: [e], routines: [], prefs, nowMs: nowAt(15), firedKeys: [] }).length, 1);
+  });
+});

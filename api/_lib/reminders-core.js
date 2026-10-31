@@ -94,6 +94,16 @@ function routineOccurrencesForDate(routines, dateKey, prefs) {
   return out;
 }
 
+// Per-task override (ev.remindMins): 0 = none, N = one reminder N minutes
+// before, anything else = the default leads. Mirrors reminderLeadsFor in
+// studlin-app.jsx.
+function leadsFor(ev) {
+  const r = ev && ev.remindMins;
+  if (r === 0) return [];
+  if (typeof r === 'number' && r > 0 && r <= 1440) return [r];
+  return LEAD_TIMES;
+}
+
 // -> [{key, title, lead}] for every reminder due right now that hasn't
 // already been sent (firedKeys: array/Set of keys).
 function dueReminders({ events, routines, prefs, nowMs, firedKeys }) {
@@ -120,7 +130,7 @@ function dueReminders({ events, routines, prefs, nowMs, firedKeys }) {
     const startMs = wallClockToMs(ev.date, ev.time, p.tz);
     if (isNaN(startMs)) return;
     const minsUntil = (startMs - nowMs) / 60000;
-    LEAD_TIMES.forEach(lead => {
+    leadsFor(ev).forEach(lead => {
       if (!(minsUntil <= lead && minsUntil > lead - WINDOW_MINS)) return;
       // Only the smaller lead wins if both windows overlap (they don't with
       // 10/5 and a 2-minute window, but keep it safe).

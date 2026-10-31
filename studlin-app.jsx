@@ -8169,6 +8169,25 @@ function useIsPhone(){
   },[]);
   return phone;
 }
+// Per-task reminder time. ev.remindMins: undefined = the default (10 and 5
+// minutes before), 0 = no reminder for this task, N = one reminder N minutes
+// before. Shared by the in-app reminders and (same rule, ported) api/reminders.
+const REMIND_OPTIONS=[
+  {value:"",label:"Default (10 and 5 min before)"},
+  {value:"5",label:"5 min before"},
+  {value:"10",label:"10 min before"},
+  {value:"15",label:"15 min before"},
+  {value:"20",label:"20 min before"},
+  {value:"30",label:"30 min before"},
+  {value:"60",label:"1 hour before"},
+  {value:"0",label:"No reminder"}
+];
+function reminderLeadsFor(ev,defaults){
+  const r=ev&&ev.remindMins;
+  if(r===0)return [];
+  if(typeof r==="number"&&r>0)return [r];
+  return defaults;
+}
 // iPhone (and Android Chrome) don't support `new Notification(...)` at all --
 // it throws -- only a service worker registration can show one. Try that
 // first, fall back to the constructor on desktop browsers without a worker.
@@ -30617,6 +30636,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
   // every other real placement in this file uses, shown for the student
   // to confirm or reject rather than added straight to the calendar.
   const [paceProposal,setPaceProposal]=useState(null); // {date,time,duration}|null
+  const [remindMins,setRemindMins]=useState(""); // "" = default, "0" = none, else minutes before
   const [paceDismissed,setPaceDismissedState]=useState(false);
 
   useEffect(()=>{
@@ -30625,7 +30645,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
     setDuration(ev.duration||60);setDeadline(ev.deadline||"");setDeadlineTime(ev.deadlineTime||"");setDeadlineErr("");
     setPriority(toSliderVal(ev.priority,5));setDifficulty(toSliderVal(ev.difficulty,5));
     setMoreOpen(!!(ev.priority&&(ev.priority>10?ev.priority!==500:ev.priority!==5)));
-    setSubject(ev.subject||"None");setColorChoice(ev.color||"");setKind(ev.kind||"deadline");setNotes(ev.notes||"");
+    setSubject(ev.subject||"None");setColorChoice(ev.color||"");setKind(ev.kind||"deadline");setNotes(ev.notes||"");setRemindMins(ev.remindMins==null?"":String(ev.remindMins));
     setAsProject(isProjectMarker(ev));setAsChecklist(!!ev.checklist);setAsGeneralTask(!!ev.isGeneralTask);setAsAssignment(!!ev.isAssignment);
     setCancelConfirmOpen(false);setDetailErr("");
     setExamSwitchAwayConfirm(false);setProjectSwitchAwayConfirm(false);
@@ -30910,7 +30930,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
         // Due date Fields' own comments for the paired time inputs this
         // reads from.
         deadlineTime:deadlineTime||null,
-        priority,difficulty,subject:subject==="None"?"":subject,courseId:courseIdForLabel(subject),kind,notes,color:colorChoice||undefined,checklist:asChecklist,isGeneralTask:asGeneralTask||undefined,isAssignment:asAssignment||undefined,...(timeChanged?{userPinned:true}:{}),
+        priority,difficulty,subject:subject==="None"?"":subject,courseId:courseIdForLabel(subject),kind,notes,color:colorChoice||undefined,checklist:asChecklist,isGeneralTask:asGeneralTask||undefined,isAssignment:asAssignment||undefined,remindMins:remindMins===""?undefined:Number(remindMins),...(timeChanged?{userPinned:true}:{}),
         ...(kind==="exam"?{sourceMaterials:examPlan.materialFiles,referenceLinks:examPlan.materialLinks,
           importanceLevel:examImportanceLevel,examWeight:examWeightFromImportance(examImportanceLevel),
           ...(examGradeWeightPercent!=null?{gradeWeightPercent:examGradeWeightPercent}:{})}:{}),
@@ -31229,6 +31249,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive,setPricingOp
         {asChecklist&&date&&<Field label="Due time"><BoxedTimeInput value={deadlineTime} onChange={setDeadlineTime} /></Field>}
         {!asChecklist&&<Field label={kind==="reminder"?"Reminder time":"Start time"}><BoxedTimeInput value={time} onChange={setTime} /></Field>}
         {!asChecklist&&kind!=="reminder"&&<Field label="End time"><BoxedTimeInput value={minutesToTime(timeToMinutes(time)+duration)} onChange={v=>setDuration(Math.max(5,timeToMinutes(v)-timeToMinutes(time)))} /></Field>}
+        {!asChecklist&&<Field label="Remind me"><CustomSelect boxed options={REMIND_OPTIONS} value={remindMins} onChange={setRemindMins} minWidth={220} /></Field>}
       </div>
       {/* Google Calendar-inspired polish: these were pure read-only
           notices (a status line plus one small text-link action) using
@@ -34203,7 +34224,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // useState would silently reset this to "monthly" every time.
   // Defaults to Week for anyone who's never touched this preference --
   // existing users who already picked a view keep it.
-  const [calView,setCalViewState]=useState(()=>lsGet("calView",(typeof window!=="undefined"&&window.innerWidth<=PHONE_MAX_WIDTH)?"daily":"weekly"));
+  const isPhone=useIsPhone();
+  const [calViewStored,setCalViewState]=useState(()=>lsGet("calView",(typeof window!=="undefined"&&window.innerWidth<=PHONE_MAX_WIDTH)?"daily":"weekly"));
+  // Phone is Day view only (Week/Month grids do not fit); desktop keeps the saved choice.
+  const calView=isPhone?"daily":calViewStored;
   const setCalView=(v)=>{setCalViewState(v);lsSet("calView",v);};
   const [weekOffset,setWeekOffset]=useState(0);
   // Monthly grid double-click used to just open "add a task" -- the same
@@ -36983,7 +37007,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     <div style={{display:"flex",alignItems:"flex-start"}}>
       {/* Courses/Activities sidebar (Phase 5, Shovel-inspired) -- own
           collapse state, independent of the global icon rail's. */}
-      <div style={{flexShrink:0,display:"flex",position:"relative",alignSelf:"stretch"}}>
+      <div style={{flexShrink:0,display:isPhone?"none":"flex",position:"relative",alignSelf:"stretch"}}>
         {!calSidebarCollapsed&&(
         <div style={{width:196,paddingRight:20,height:0,minHeight:"100%",overflowY:"auto"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
@@ -37207,7 +37231,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         <button type="button" onClick={toggleCalSidebarCollapsed} title={calSidebarCollapsed?"Show courses & activities":"Hide courses & activities"}
           style={{position:"absolute",top:16,right:(calSidebarCollapsed?0:14)-9,width:18,height:18,borderRadius:"50%",background:T.card,border:`1px solid ${T.border}`,color:T.faint,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:0,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 1px 3px rgba(0,0,0,0.2)"}}>{calSidebarCollapsed?"›":"‹"}</button>
       </div>
-    <div style={{flex:1,minWidth:0,paddingLeft:14}}>
+    <div style={{flex:1,minWidth:0,paddingLeft:isPhone?0:14}}>
       {/* Term rollover (Phase 8 follow-up): a one-time-per-ended-term,
           dismissible prompt once today's date passes schoolTerm.end.
           Courses always start fresh each term (no auto-copy) -- Activities
@@ -37281,20 +37305,20 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           the page instead of the toolbar eating vertical space. */}
       <div style={{display:"flex",alignItems:"center",gap:8,minHeight:30,marginBottom:10}}>
         <div style={{display:"flex",alignItems:"center",gap:3}}>
-          <button onClick={()=>calView==="monthly"?nav(-1):calView==="weekly"?setWeekOffset(o=>o-1):stepSelDay(-1)} style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:11,...calTbSoft()}}>‹</button>
+          <button onClick={()=>calView==="monthly"?nav(-1):calView==="weekly"?setWeekOffset(o=>o-1):stepSelDay(-1)} style={{width:isPhone?36:22,height:isPhone?36:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:11,...calTbSoft()}}>‹</button>
           <span onClick={()=>{if(calView==="monthly"){setYm({y:now.getFullYear(),m:now.getMonth()});setSelDay(todayK);}else if(calView==="weekly"){setWeekOffset(0);}else{setSelDay(todayK);}}} title="Jump to today" style={{fontSize:13,fontWeight:500,color:T.text,padding:"0 5px",cursor:"pointer",userSelect:"none",whiteSpace:"nowrap"}}>
             {calView==="monthly"?monthNames[ym.m]+" "+ym.y:calView==="weekly"?weekRangeLabel:niceDate(selDay)}
           </span>
-          <button onClick={()=>calView==="monthly"?nav(1):calView==="weekly"?setWeekOffset(o=>o+1):stepSelDay(1)} style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:11,...calTbSoft()}}>›</button>
+          <button onClick={()=>calView==="monthly"?nav(1):calView==="weekly"?setWeekOffset(o=>o+1):stepSelDay(1)} style={{width:isPhone?36:22,height:isPhone?36:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:11,...calTbSoft()}}>›</button>
         </div>
         {/* Undo/redo -- same 22x22 icon-button footprint as the day-nav
             ‹/› pair just to the left, so it reads as one grouped toolbar
             control instead of a mismatched addition. Grayed + inert when
             the respective stack is empty rather than hidden, so their
             position never shifts as you use them. */}
-        <div style={{display:"flex",alignItems:"center",gap:3}}>
-          <button onClick={undoCal} disabled={calHistoryUndo.current.length===0} title="Undo (Ctrl+Z)" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:calHistoryUndo.current.length===0?T.faint:T.muted,cursor:calHistoryUndo.current.length===0?"default":"pointer",opacity:calHistoryUndo.current.length===0?0.5:1,...(T.lookOn?{background:T.accentSoft,border:`1px solid ${T.borderTint}`,color:calHistoryUndo.current.length===0?T.faint:T.accentInk}:null)}}>{Icon.undo}</button>
-          <button onClick={redoCal} disabled={calHistoryRedo.current.length===0} title="Redo (Ctrl+Shift+Z)" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:calHistoryRedo.current.length===0?T.faint:T.muted,cursor:calHistoryRedo.current.length===0?"default":"pointer",opacity:calHistoryRedo.current.length===0?0.5:1,...(T.lookOn?{background:T.accentSoft,border:`1px solid ${T.borderTint}`,color:calHistoryRedo.current.length===0?T.faint:T.accentInk}:null)}}>{Icon.redo}</button>
+        <div style={{display:isPhone?"none":"flex",alignItems:"center",gap:3}}>
+          <button onClick={undoCal} disabled={calHistoryUndo.current.length===0} title="Undo (Ctrl+Z)" style={{width:isPhone?36:22,height:isPhone?36:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:calHistoryUndo.current.length===0?T.faint:T.muted,cursor:calHistoryUndo.current.length===0?"default":"pointer",opacity:calHistoryUndo.current.length===0?0.5:1,...(T.lookOn?{background:T.accentSoft,border:`1px solid ${T.borderTint}`,color:calHistoryUndo.current.length===0?T.faint:T.accentInk}:null)}}>{Icon.undo}</button>
+          <button onClick={redoCal} disabled={calHistoryRedo.current.length===0} title="Redo (Ctrl+Shift+Z)" style={{width:isPhone?36:22,height:isPhone?36:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:calHistoryRedo.current.length===0?T.faint:T.muted,cursor:calHistoryRedo.current.length===0?"default":"pointer",opacity:calHistoryRedo.current.length===0?0.5:1,...(T.lookOn?{background:T.accentSoft,border:`1px solid ${T.borderTint}`,color:calHistoryRedo.current.length===0?T.faint:T.accentInk}:null)}}>{Icon.redo}</button>
         </div>
         {/* Only appears when something's actually wrong -- unlike Undo/Redo
             (an always-available capability, shown dimmed at rest) a warning
@@ -37309,15 +37333,15 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           </button>
         )}
         <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:6}}>
-          <button type="button" onClick={()=>setLookPanelOpen(true)} title="Change your calendar colors and block style" style={{height:22,padding:"0 8px",display:"flex",alignItems:"center",gap:4,background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:11,fontWeight:600,fontFamily:T.font,...calTbSoft()}}>Customize</button>
+          <button type="button" onClick={()=>setLookPanelOpen(true)} title="Change your calendar colors and block style" style={{height:22,padding:"0 8px",display:isPhone?"none":"flex",alignItems:"center",gap:4,background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:11,fontWeight:600,fontFamily:T.font,...calTbSoft()}}>Customize</button>
           <LookCustomizePanel open={lookPanelOpen} onClose={()=>setLookPanelOpen(false)} />
-          <div style={{display:"flex",gap:2,background:T.lookOn?T.accentSoft:T.card2,padding:2,borderRadius:4,...(T.lookOn?{border:`1px solid ${T.borderTint}`}:null)}}>
+          <div style={{display:isPhone?"none":"flex",gap:2,background:T.lookOn?T.accentSoft:T.card2,padding:2,borderRadius:4,...(T.lookOn?{border:`1px solid ${T.borderTint}`}:null)}}>
             {[{id:"daily",label:"Day"},{id:"weekly",label:"Week"},{id:"monthly",label:"Month"}].map(v=>(
               <button key={v.id} onClick={()=>setCalView(v.id)} style={{padding:"3px 9px",borderRadius:4,fontSize:11.5,fontWeight:calView===v.id?500:400,cursor:"pointer",background:calView===v.id?(T.lookOn?T.lime:T.card):"transparent",color:calView===v.id?(T.lookOn?lookTextOnFill(T.lime):T.text):(T.lookOn?T.accentInk:T.muted),border:"none",fontFamily:T.font,transition:"all 0.15s"}}>{v.label}</button>
             ))}
           </div>
           <div style={{position:"relative"}} ref={rescheduleBtnRef}>
-            <button onClick={()=>setToolsMenuOpen(o=>!o)} title="More tools" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:editRoutineMode?T.lime+"18":"transparent",border:`1px solid ${editRoutineMode?T.lime+"55":T.border}`,borderRadius:4,color:editRoutineMode?T.lime:T.muted,cursor:"pointer",fontSize:13,lineHeight:1,...(T.lookOn&&!editRoutineMode?calTbSoft():null)}}>⋯</button>
+            <button onClick={()=>setToolsMenuOpen(o=>!o)} title="More tools" style={{width:isPhone?36:22,height:isPhone?36:22,display:"flex",alignItems:"center",justifyContent:"center",background:editRoutineMode?T.lime+"18":"transparent",border:`1px solid ${editRoutineMode?T.lime+"55":T.border}`,borderRadius:4,color:editRoutineMode?T.lime:T.muted,cursor:"pointer",fontSize:13,lineHeight:1,...(T.lookOn&&!editRoutineMode?calTbSoft():null)}}>⋯</button>
             {toolsMenuOpen&&(<>
               <div onClick={()=>setToolsMenuOpen(false)} style={{position:"fixed",inset:0,zIndex:40}} />
               <div style={{position:"absolute",top:"calc(100% + 6px)",right:0,width:220,background:T.card,border:`1px solid ${T.border}`,borderRadius:6,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:50,overflow:"hidden",animation:"studlinPop 0.18s cubic-bezier(.2,.85,.3,1)"}}>
@@ -37371,7 +37395,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
                 matches what the onboarding tour already tells students
                 this button does ("Tap Add Task and Studlin finds the time
                 for it"). Manual is still one click away inside the modal. */}
-            <button onClick={()=>openNewAI(selDay)} title="Add" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:T.lime,border:"none",borderRadius:4,color:T.lookOn?lookTextOnFill(T.lime):T.ink,cursor:"pointer"}}>{Icon.plus}</button>
+            <button onClick={()=>openNewAI(selDay)} title="Add" style={{width:isPhone?36:22,height:isPhone?36:22,display:"flex",alignItems:"center",justifyContent:"center",background:T.lime,border:"none",borderRadius:4,color:T.lookOn?lookTextOnFill(T.lime):T.ink,cursor:"pointer"}}>{Icon.plus}</button>
           </div>
         </div>
       </div>
@@ -37603,7 +37627,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
           own header (matching Shovel exactly) instead of a separate
           margined strip -- that strip was the actual cause of the
           reported gap between this column and the calendar grid. */}
-      <div style={{flexShrink:0,display:"flex",position:"relative",alignSelf:"stretch"}}>
+      <div style={{flexShrink:0,display:isPhone?"none":"flex",position:"relative",alignSelf:"stretch"}}>
         {/* Full-height divider with a subtle shadow (173547), independent
             of the content's own scroll height -- same fix as the left
             sidebar's divider above. */}
@@ -39918,7 +39942,8 @@ function StudCompanion({mode,title,clock,navExpanded,onYes,onSecond,onDone,sub:s
   else if(phase==="out"){mood=mode==="bedtime"?"sleepy":mode==="catchup"?"thinking":mode==="alert"?"happy":(STU_EXIT_MOOD[howRef.current]||"happy");}
   const walking=phase==="in"||phase==="out";
   const pal=stuPalette();
-  const left=(navExpanded?230:48)+16;
+  const isPhone=useIsPhone();
+  const left=isPhone?10:(navExpanded?230:48)+16;
   const showBubble=!walking;
   // Springy physics: squash and stretch hops while walking, a landing boing, jumps
   // when celebrating, a slump when sad, and a poke boing when clicked.
@@ -39927,11 +39952,11 @@ function StudCompanion({mode,title,clock,navExpanded,onYes,onSecond,onDone,sub:s
   const physAnim=reduceMotionOn()?"none":poked>0&&phase==="talk"?"stuPoke .45s ease-out":phase==="in"?"stuHop .3s ease-in-out 5":phase==="out"?"stuHop .3s ease-in-out infinite":phase==="talk"&&mode==="cheer"?"stuJump .75s ease-in-out infinite":phase==="yes"?"stuJump .75s ease-in-out 2":phase==="no"&&mode==="ask"?"stuSlump 1s ease-out forwards":phase==="talk"?"stuLand .55s ease-out":"none";
   const reduce=typeof document!=="undefined"&&!!document.body&&document.body.getAttribute("data-motion")==="reduce";
   return (
-    <div className="stu-wrap-anim" role="status" aria-live="polite" style={{position:"fixed",bottom:14,left,zIndex:999,display:"flex",alignItems:"flex-end",gap:6,pointerEvents:"none",animation:reduce?"none":phase==="in"?"stuWalkIn 1.6s ease-out both":phase==="out"?"stuWalkOut 1.3s ease-in both":"none"}}>
+    <div className="stu-wrap-anim" role="status" aria-live="polite" style={{position:"fixed",bottom:isPhone?"calc(70px + env(safe-area-inset-bottom, 0px))":14,left,zIndex:999,display:"flex",alignItems:"flex-end",gap:6,pointerEvents:"none",animation:reduce?"none":phase==="in"?"stuWalkIn 1.6s ease-out both":phase==="out"?"stuWalkOut 1.3s ease-in both":"none"}}>
       <style>{"@keyframes stuWalkIn{0%{transform:translateX(-340px)}72%{transform:translateX(9px)}86%{transform:translateX(-3px)}100%{transform:translateX(0)}}@keyframes stuWalkOut{0%{transform:translateX(0)}14%{transform:translateX(10px)}100%{transform:translateX(-340px)}}@keyframes stuBubbleIn{0%{opacity:0;transform:translateY(10px) scale(.6)}55%{opacity:1;transform:translateY(-2px) scale(1.06)}78%{transform:scale(.98)}100%{opacity:1;transform:none}}@keyframes stuHop{0%{transform:translateY(0) scale(1.08,.92)}25%{transform:translateY(-12px) scale(.94,1.08)}50%{transform:translateY(0) scale(1.08,.92)}62%,100%{transform:translateY(0) scale(1,1)}}@keyframes stuLand{0%{transform:scale(1.18,.82)}35%{transform:scale(.92,1.1)}65%{transform:scale(1.04,.97)}100%{transform:scale(1,1)}}@keyframes stuJump{0%,100%{transform:translateY(0) scale(1.12,.88)}20%{transform:translateY(-4px) scale(.93,1.1)}50%{transform:translateY(-26px) scale(.95,1.07)}80%{transform:translateY(0) scale(1.1,.9)}}@keyframes stuSlump{0%{transform:scale(1,1)}60%{transform:translateY(4px) scale(1.06,.9)}100%{transform:translateY(3px) scale(1.04,.93)}}@keyframes stuPoke{0%{transform:scale(1,1)}30%{transform:scale(1.2,.8)}60%{transform:translateY(-8px) scale(.9,1.14)}100%{transform:scale(1,1)}}@media (prefers-reduced-motion:reduce){.stu-wrap-anim,.stu-wrap-anim *{animation:none!important}}"}</style>
-      <span key={"phys-"+phase+"-"+poked} onClick={poke} style={{pointerEvents:"auto",display:"inline-block",transformOrigin:"50% 100%",cursor:"pointer",animation:physAnim}}><StudMascot mood={mood} size={88} walking={walking} facing={phase==="out"?"left":"right"} speaking={phase==="talk"&&mode==="cheer"} ariaLabel={STU_NAME} {...pal} /></span>
+      <span key={"phys-"+phase+"-"+poked} onClick={poke} style={{pointerEvents:"auto",display:"inline-block",transformOrigin:"50% 100%",cursor:"pointer",animation:physAnim}}><StudMascot mood={mood} size={isPhone?60:88} walking={walking} facing={phase==="out"?"left":"right"} speaking={phase==="talk"&&mode==="cheer"} ariaLabel={STU_NAME} {...pal} /></span>
       {showBubble&&(
-        <div style={{pointerEvents:"auto",marginBottom:46,maxWidth:270,padding:"12px 14px",borderRadius:14,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 10px 30px rgba(0,0,0,0.22)",animation:reduce?"none":"stuBubbleIn .22s ease both"}}>
+        <div style={{pointerEvents:"auto",marginBottom:isPhone?30:46,maxWidth:isPhone?"calc(100vw - 96px)":270,padding:"12px 14px",borderRadius:14,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 10px 30px rgba(0,0,0,0.22)",animation:reduce?"none":"stuBubbleIn .22s ease both"}}>
           <div style={{fontSize:13,fontWeight:600,color:T.text,lineHeight:1.45}}>{line}</div>
           {sub&&<div style={{fontSize:11.5,color:T.muted,marginTop:3}}>{sub}</div>}
           {phase==="talk"&&mode==="alert"&&(
@@ -42500,6 +42525,7 @@ function LevelRoadmapModal({open,onClose,currentMinutes}){
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
 function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleTask, dashToast, setDashToast, setDetailEventId, onTaskCompleted, setPendingHighlightDraftId=()=>{}, setPendingOpenSetting=()=>{}}) {
+  const isPhone=useIsPhone(); // phone gets the simple Today view: checklist first, no extra cards
   const realStats=sessionStats();
   // D5 in the audit: levelInfo() used to be computed here (const lvl=...)
   // but never rendered anywhere in Dashboard -- dead since whatever level
@@ -42832,11 +42858,11 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
     <>
     <div style={{display:"flex",flexDirection:"column",gap:16,paddingBottom:40}}>
 
-      <JournalCard />
+      {!isPhone&&<JournalCard />}
 
       {/* One-time "Studlin is learning you" reveal -- see
           shouldShowLearnsYouReveal's own comment. */}
-      {learnsYouReveal&&(
+      {learnsYouReveal&&!isPhone&&(
         <div style={dashCardStyle({border:`1px solid ${T.lime}44`,padding:"18px 20px",display:"flex",alignItems:"flex-start",gap:16})}>
           <div style={{flexShrink:0,width:38,height:38,borderRadius:8,background:T.lime+"1A",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🧠</div>
           <div style={{flex:1,minWidth:0}}>
@@ -42854,7 +42880,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
           (18px/600, same sectionTitleStyle(false) treatment every other
           non-primary Dashboard card title uses) so it guides a new student
           without competing with Today's plan as the actual focal point. */}
-      {showSetupChecklist&&(
+      {showSetupChecklist&&!isPhone&&(
         <div style={dashCardStyle({padding:checklistExpanded?20:"12px 16px"})}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
             <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
@@ -42938,7 +42964,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
           Magic-Calendar plan). Comes before Your Classes -- "what do I do
           right now" leads on a calendar app's dashboard, a browsable
           everything-assigned reference comes after. */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+      <div style={{display:"grid",gridTemplateColumns:isPhone?"1fr":"1fr 1fr",gap:16}}>
         {/* Today's plan */}
         <div style={dashCardStyle({padding:20,display:"flex",flexDirection:"column"})}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8,flexWrap:"wrap"}}>
@@ -43034,7 +43060,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
             calendar/Today's-plan entirely; this is the only place they live.
             Restored here after briefly being removed — replaces "Jump back
             in", which just duplicated what the sidebar nav already does. */}
-        <div style={dashCardStyle({padding:20})}>
+        <div style={dashCardStyle({padding:20,order:isPhone?-1:0})}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
               <span style={sectionTitleStyle(false)}>Checklist</span>
@@ -43101,7 +43127,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
       </div>
 
       {/* ROW 5: Upcoming + Pick up where you left off */}
-      <div style={{display:"grid",gridTemplateColumns:"5fr 7fr",gap:16}}>
+      <div style={{display:"grid",gridTemplateColumns:isPhone?"1fr":"5fr 7fr",gap:16}}>
         <div style={dashCardStyle({padding:20})}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -43138,7 +43164,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
             </button>
           )}
         </div>
-        <div style={dashCardStyle({padding:20})}>
+        <div style={dashCardStyle({padding:20,display:isPhone?"none":undefined})}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
               <span style={sectionTitleStyle(false)}>Pick up where you left off</span>
@@ -43665,7 +43691,7 @@ function App() {
         if(timerTask&&timerTask.id===ev.id)return;
         const startMs=new Date(ev.date+"T"+ev.time).getTime();
         const minsUntil=(startMs-now)/60000;
-        LEAD_TIMES.forEach(lead=>{
+        reminderLeadsFor(ev,LEAD_TIMES).forEach(lead=>{
           const key=ev.id+"-"+lead;
           if(notifiedRef.current.has(key))return;
           // Bug fix, 2026-09-06 user report: also check the persisted
@@ -44652,6 +44678,7 @@ function App() {
   // pointer position; the new Calendar-scoped Courses/Activities sidebar
   // is where a real second panel belongs, not a hover-reveal of this one).
   const isPhone=useIsPhone();
+  const [phoneMoreOpen,setPhoneMoreOpen]=useState(false);
   useEffect(()=>{syncReminderPrefs();},[]);
   const [navCollapsed,setNavCollapsed]=useState(()=>lsGet("navCollapsed",true));
   const toggleNavCollapsed=()=>{setNavCollapsed(v=>{lsSet("navCollapsed",!v);return !v;});};
@@ -45723,6 +45750,15 @@ function App() {
     ]},
   ];
   const bottomItems=[];
+  // Phone: four tabs. Prep, Settings and Profile live under More so the bar
+  // stays calm. Network keeps its unread badge.
+  const PHONE_MORE_IDS=["prep","settings","profile"];
+  const phoneTabs=[
+    {id:"dashboard",label:"Today"},
+    {id:"calendar",label:"Calendar"},
+    {id:"friends",label:"Network",badge:String((unreadCount+pendingFriendRequestCount)||"")},
+    {id:"more",label:"More",icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>},
+  ];
   const pages={prep:StudlinPrep,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,profile:Profile};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
@@ -45906,19 +45942,32 @@ function App() {
           indicator. Network keeps its unread badge. */}
       {isPhone&&(
         <nav aria-label="Main" style={{position:"fixed",left:0,right:0,bottom:0,zIndex:900,display:"flex",background:isLight?T.surface:T.card,borderTop:`1px solid ${T.border}`,paddingBottom:"env(safe-area-inset-bottom)",boxShadow:"0 -8px 24px -12px rgba(0,0,0,0.35)"}}>
-          {navSections.flatMap(sec=>sec.items).map(item=>{
-            const act=active===item.id;
+          {phoneTabs.map(item=>{
+            const act=item.id==="more"?(phoneMoreOpen||PHONE_MORE_IDS.includes(active)):active===item.id;
             return (
-              <button key={item.id} type="button" onClick={()=>setActive(item.id)} aria-label={item.label} aria-current={act?"page":undefined} style={{flex:1,minWidth:0,minHeight:56,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:3,background:"transparent",border:"none",cursor:"pointer",padding:"6px 0",fontFamily:T.font,color:act?(T.lookOn?T.accentInk:T.lime):T.muted,position:"relative"}}>
+              <button key={item.id} type="button" onClick={()=>{if(item.id==="more"){setPhoneMoreOpen(o=>!o);}else{setPhoneMoreOpen(false);setActive(item.id);}}} aria-label={item.label} aria-current={act?"page":undefined} style={{flex:1,minWidth:0,minHeight:56,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:3,background:"transparent",border:"none",cursor:"pointer",padding:"6px 0",fontFamily:T.font,color:act?(T.lookOn?T.accentInk:T.lime):T.muted,position:"relative"}}>
                 <span style={{width:20,height:20,display:"flex",alignItems:"center",justifyContent:"center",position:"relative"}}>
-                  {navIcon[item.id]}
+                  {item.icon||navIcon[item.id]}
                   {item.badge&&<span style={{position:"absolute",top:-6,right:-10,background:T.lime,color:T.onLime,borderRadius:8,padding:"1px 5px",fontSize:9,fontWeight:700,lineHeight:1.1,minWidth:14,textAlign:"center"}}>{item.badge}</span>}
                 </span>
-                <span style={{fontSize:10,fontWeight:act?700:500,letterSpacing:"0.01em",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"100%"}}>{item.id==="friends"?"Network":item.id==="prep"?"Prep":item.label}</span>
+                <span style={{fontSize:10,fontWeight:act?700:500,letterSpacing:"0.01em",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"100%"}}>{item.label}</span>
               </button>
             );
           })}
         </nav>
+      )}
+      {isPhone&&phoneMoreOpen&&(
+        <>
+          <div onClick={()=>setPhoneMoreOpen(false)} style={{position:"fixed",inset:0,zIndex:898,background:"rgba(0,0,0,0.45)"}} />
+          <div role="menu" style={{position:"fixed",left:12,right:12,bottom:"calc(68px + env(safe-area-inset-bottom))",zIndex:899,background:T.card,border:`1px solid ${T.border}`,borderRadius:14,padding:8,boxShadow:"0 18px 50px -12px rgba(0,0,0,0.5)",animation:"studlinPop 0.15s cubic-bezier(.2,.85,.3,1)"}}>
+            {[{id:"prep",label:"Studlin Prep"},{id:"settings",label:"Settings"},{id:"profile",label:"Profile"}].map(it=>(
+              <button key={it.id} type="button" role="menuitem" onClick={()=>{setActive(it.id);setPhoneMoreOpen(false);}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",minHeight:52,padding:"0 14px",background:active===it.id?T.lime+"18":"transparent",border:"none",borderRadius:10,cursor:"pointer",fontFamily:T.font,fontSize:15,fontWeight:600,color:T.text,textAlign:"left"}}>
+                <span style={{width:20,height:20,display:"flex",alignItems:"center",justifyContent:"center",color:active===it.id?T.lime:T.muted}}>{navIcon[it.id]}</span>
+                {it.label}
+              </button>
+            ))}
+          </div>
+        </>
       )}
 
       {/* DASHBOARD RESCHEDULE CONFIRM + TOAST — true sibling of [data-page],

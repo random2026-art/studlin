@@ -47,6 +47,11 @@
     [data-page] > * { min-width: 0; }
     ::-webkit-scrollbar { width: 0; height: 0; }
     button, [role="button"], select { touch-action: manipulation; }
+    /* Toasts and floating buttons are pinned a few px off the bottom; on a
+       phone that is underneath the tab bar. Lift every one of them above it. */
+    [style*="position: fixed"][style*="bottom: 24px"],
+    [style*="position: fixed"][style*="bottom: 22px"],
+    [style*="position: fixed"][style*="bottom: calc(20px + env"] { bottom: calc(76px + env(safe-area-inset-bottom)) !important; }
     /* Centered modals: never wider than the screen. */
     [style*="position: fixed"][style*="inset: 0"] > div { max-width: calc(100vw - 24px) !important; }
   }
@@ -114,6 +119,6 @@ window._pdfjs=import("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.
 </div>
 <script src="datastore-events-sync.js?v=2"></script>
 <script src="design-tokens.js?v=1"></script>
-<script src="build/studlin-app.js?v=248"></script>
+<script src="build/studlin-app.js?v=250"></script>
 </body>
 </html>
