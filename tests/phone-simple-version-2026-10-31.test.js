@@ -73,3 +73,12 @@ describe("per-task reminder time", () => {
     assert.ok(SOURCE.includes('setRemindMins(ev.remindMins==null?"":String(ev.remindMins));'));
   });
 });
+
+describe("friend chat on a phone", () => {
+  const SRC = require("fs").readFileSync(require("path").join(__dirname, "..", "studlin-app.jsx"), "utf8").split("\r\n").join("\n");
+  test("chat drawer goes full screen above the tab bar so the message box is reachable", () => {
+    assert.ok(SRC.includes('height:isPhone?"100dvh":"100vh",width:isPhone?"100vw":400'));
+    assert.ok(SRC.includes("zIndex:isPhone?1100:401"));
+    assert.ok(SRC.includes('padding:isPhone?"12px 16px calc(12px + env(safe-area-inset-bottom, 0px)) 16px":"12px 90px 12px 16px"'));
+  });
+});

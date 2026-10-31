@@ -20939,6 +20939,7 @@ async function findSharedStudyWindow(myUid,otherUids,params){
 }
 // ─── NETWORK: sliding chat drawer (DM + Group, w/ Quick Actions) ─────────────
 function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onUnfriend}){
+  const isPhone=useIsPhone();
   const isGroup=!!(target&&target.kind==="group");
   const roomId=target?(isGroup?target.group.id:(myUid&&target.user.uid?dmRoomId(myUid,target.user.uid):null)):null;
   const [messages,setMessages]=useState([]);
@@ -21331,8 +21332,8 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
 
   return ReactDOM.createPortal(
     <>
-      <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(8,12,10,0.5)",zIndex:400,opacity:open?1:0,pointerEvents:open?"auto":"none",transition:"opacity 0.25s"}} />
-      <div style={{position:"fixed",top:0,right:0,height:"100vh",width:400,maxWidth:"92vw",background:T.surface,borderLeft:`1px solid ${pp.border}`,boxShadow:"-24px 0 60px -20px rgba(0,0,0,0.5)",zIndex:401,display:"flex",flexDirection:"column",transform:open?"translateX(0)":"translateX(100%)",transition:"transform 0.28s cubic-bezier(.2,.85,.3,1)"}}>
+      <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(8,12,10,0.5)",zIndex:isPhone?1099:400,opacity:open?1:0,pointerEvents:open?"auto":"none",transition:"opacity 0.25s"}} />
+      <div style={{position:"fixed",top:0,right:0,height:isPhone?"100dvh":"100vh",width:isPhone?"100vw":400,maxWidth:isPhone?"100vw":"92vw",background:T.surface,borderLeft:`1px solid ${pp.border}`,boxShadow:"-24px 0 60px -20px rgba(0,0,0,0.5)",zIndex:isPhone?1100:401,display:"flex",flexDirection:"column",transform:open?"translateX(0)":"translateX(100%)",transition:"transform 0.28s cubic-bezier(.2,.85,.3,1)"}}>
         {target&&(<>
           <div style={{padding:"18px 18px 14px",borderBottom:`1px solid ${pp.border}`,display:"flex",alignItems:"center",gap:12}}>
             {isGroup
@@ -21422,7 +21423,7 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
               now floats over blank panel background there, not over
               anything clickable.
           */}
-          <div style={{display:"flex",alignItems:"center",gap:8,padding:"12px 90px 12px 16px",borderTop:`1px solid ${pp.border}`}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,padding:isPhone?"12px 16px calc(12px + env(safe-area-inset-bottom, 0px)) 16px":"12px 90px 12px 16px",borderTop:`1px solid ${pp.border}`}}>
             <button onClick={()=>{setQuickOpen(q=>!q);setDeckPicker(false);}} style={{width:34,height:34,borderRadius:9,border:`1px solid ${quickOpen?T.lime+"55":pp.border}`,background:quickOpen?T.lime+"20":pp.card2,color:quickOpen?T.lime:pp.muted,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.plus}</button>
             <input value={input} onChange={e=>{setInput(e.target.value);if(sendTextError)setSendTextError("");}} onKeyDown={e=>{if(e.key==="Enter")sendText();}} placeholder="Message…" style={{flex:1,background:pp.card2,border:`1px solid ${sendTextError?T.red+"88":pp.border}`,borderRadius:9,padding:"9px 12px",color:pp.text,fontSize:13,fontFamily:T.font,outline:"none"}} />
             <button onClick={sendText} style={{width:34,height:34,borderRadius:9,border:"none",background:input.trim()?T.lime:pp.card2,color:input.trim()?T.bg:pp.faint,display:"grid",placeItems:"center",cursor:input.trim()?"pointer":"default",flexShrink:0}}>{Icon.send}</button>
@@ -45941,16 +45942,16 @@ function App() {
           icons-first, 44px+ tap targets, padded for the iPhone home
           indicator. Network keeps its unread badge. */}
       {isPhone&&(
-        <nav aria-label="Main" style={{position:"fixed",left:0,right:0,bottom:0,zIndex:900,display:"flex",background:isLight?T.surface:T.card,borderTop:`1px solid ${T.border}`,paddingBottom:"env(safe-area-inset-bottom)",boxShadow:"0 -8px 24px -12px rgba(0,0,0,0.35)"}}>
+        <nav aria-label="Main" style={{position:"fixed",left:0,right:0,bottom:0,zIndex:900,display:"flex",background:T.card,borderTop:`2px solid ${T.lime}55`,paddingBottom:"env(safe-area-inset-bottom)",boxShadow:"0 -8px 24px -12px rgba(0,0,0,0.35)"}}>
           {phoneTabs.map(item=>{
             const act=item.id==="more"?(phoneMoreOpen||PHONE_MORE_IDS.includes(active)):active===item.id;
             return (
-              <button key={item.id} type="button" onClick={()=>{if(item.id==="more"){setPhoneMoreOpen(o=>!o);}else{setPhoneMoreOpen(false);setActive(item.id);}}} aria-label={item.label} aria-current={act?"page":undefined} style={{flex:1,minWidth:0,minHeight:56,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:3,background:"transparent",border:"none",cursor:"pointer",padding:"6px 0",fontFamily:T.font,color:act?(T.lookOn?T.accentInk:T.lime):T.muted,position:"relative"}}>
-                <span style={{width:20,height:20,display:"flex",alignItems:"center",justifyContent:"center",position:"relative"}}>
+              <button key={item.id} type="button" onClick={()=>{if(item.id==="more"){setPhoneMoreOpen(o=>!o);}else{setPhoneMoreOpen(false);setActive(item.id);}}} aria-label={item.label} aria-current={act?"page":undefined} style={{flex:1,minWidth:0,minHeight:60,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:4,background:act?T.lime+"18":"transparent",border:"none",cursor:"pointer",padding:"6px 0",fontFamily:T.font,color:act?(T.lookOn?T.accentInk:T.lime):T.text,position:"relative"}}>
+                <span style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",position:"relative"}}>
                   {item.icon||navIcon[item.id]}
                   {item.badge&&<span style={{position:"absolute",top:-6,right:-10,background:T.lime,color:T.onLime,borderRadius:8,padding:"1px 5px",fontSize:9,fontWeight:700,lineHeight:1.1,minWidth:14,textAlign:"center"}}>{item.badge}</span>}
                 </span>
-                <span style={{fontSize:10,fontWeight:act?700:500,letterSpacing:"0.01em",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"100%"}}>{item.label}</span>
+                <span style={{fontSize:11,fontWeight:act?700:600,letterSpacing:"0.01em",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"100%"}}>{item.label}</span>
               </button>
             );
           })}
@@ -45959,7 +45960,7 @@ function App() {
       {isPhone&&phoneMoreOpen&&(
         <>
           <div onClick={()=>setPhoneMoreOpen(false)} style={{position:"fixed",inset:0,zIndex:898,background:"rgba(0,0,0,0.45)"}} />
-          <div role="menu" style={{position:"fixed",left:12,right:12,bottom:"calc(68px + env(safe-area-inset-bottom))",zIndex:899,background:T.card,border:`1px solid ${T.border}`,borderRadius:14,padding:8,boxShadow:"0 18px 50px -12px rgba(0,0,0,0.5)",animation:"studlinPop 0.15s cubic-bezier(.2,.85,.3,1)"}}>
+          <div role="menu" style={{position:"fixed",left:12,right:12,bottom:"calc(72px + env(safe-area-inset-bottom))",zIndex:899,background:T.card,border:`1px solid ${T.border}`,borderRadius:14,padding:8,boxShadow:"0 18px 50px -12px rgba(0,0,0,0.5)",animation:"studlinPop 0.15s cubic-bezier(.2,.85,.3,1)"}}>
             {[{id:"prep",label:"Studlin Prep"},{id:"settings",label:"Settings"},{id:"profile",label:"Profile"}].map(it=>(
               <button key={it.id} type="button" role="menuitem" onClick={()=>{setActive(it.id);setPhoneMoreOpen(false);}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",minHeight:52,padding:"0 14px",background:active===it.id?T.lime+"18":"transparent",border:"none",borderRadius:10,cursor:"pointer",fontFamily:T.font,fontSize:15,fontWeight:600,color:T.text,textAlign:"left"}}>
                 <span style={{width:20,height:20,display:"flex",alignItems:"center",justifyContent:"center",color:active===it.id?T.lime:T.muted}}>{navIcon[it.id]}</span>
