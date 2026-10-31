@@ -536,6 +536,44 @@ async function syncOneUser(ref, data) {
   return accessToken;
 }
 
+// Stores what api/reminders.js needs to send closed-app "starts in N minutes"
+// pushes. users/{uid} is unreadable client-side, so this is the only write
+// path. routineSkips/routineOverrides/schoolTerm are local-only on the client,
+// so they ride along here; size-capped so a client can't bloat the doc.
+const { validTimeZone } = require('./_lib/reminders-core');
+async function handleSetReminderPrefs(user, req, res) {
+  if (!db) return res.status(200).json({ ok: false, reason: 'admin_unconfigured' });
+  const b = req.body || {};
+  if (!validTimeZone(b.tz)) return res.status(400).json({ error: 'Invalid time zone.' });
+  const isDate = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+  const term = b.schoolTerm && isDate(b.schoolTerm.start) && isDate(b.schoolTerm.end)
+    ? { start: b.schoolTerm.start, end: b.schoolTerm.end } : null;
+  const plainObj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
+  const routineSkips = plainObj(b.routineSkips);
+  const routineOverrides = plainObj(b.routineOverrides);
+  if (JSON.stringify(routineSkips).length > 40000 || JSON.stringify(routineOverrides).length > 40000) {
+    return res.status(400).json({ error: 'Reminder data too large.' });
+  }
+  const reminderPrefs = {
+    tz: b.tz,
+    classReminders: b.classReminders === true,
+    notifMaster: b.notifMaster !== false,
+    deadline: b.deadline !== false,
+    sysPush: b.sysPush === true,
+    schoolTerm: term,
+    routineSkips,
+    routineOverrides,
+    updatedAt: new Date().toISOString(),
+  };
+  try {
+    await db.collection('users').doc(user.uid).set({ reminderPrefs }, { merge: true });
+    return res.status(200).json({ ok: true });
+  } catch (err) {
+    console.error('set reminder prefs error:', err);
+    return res.status(500).json({ error: 'Could not save reminder settings.' });
+  }
+}
+
 const CHANNEL_RENEW_WITHIN_MS = 48 * 60 * 60 * 1000;
 
 // Vercel Cron target for the daily background sync -- folded into this
@@ -989,6 +1027,7 @@ module.exports = withSentry(async (req, res) => {
     if (action === 'redeem-beta') return handleRedeemBeta(user, req, res);
     if (action === 'accept-friend-referral') return handleReferralTrialGrant(user, req, res);
     if (action === 'billing-info') return handleBillingInfo(user, res);
+    if (action === 'set-reminder-prefs') return handleSetReminderPrefs(user, req, res);
     return handleSubscriptionAction(user, req, res);
   }
 

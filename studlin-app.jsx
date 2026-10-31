@@ -1078,7 +1078,9 @@ const lsGet=(k,d)=>{try{const v=localStorage.getItem("studlin-"+k);return v===nu
 // call sites needs zero changes -- the Firestore mirroring is injected
 // transparently at this single choke point instead.
 const syncWriteHooks={};
-const lsSet=(k,v)=>{try{localStorage.setItem("studlin-"+k,JSON.stringify(v));}catch(e){}if(syncWriteHooks[k])syncWriteHooks[k](v);};
+// Keys whose value the server-side reminder job needs (see syncReminderPrefs).
+const REMINDER_PREF_KEYS={settings:1,schoolTerm:1,routineSkips:1,routineOverrides:1};
+const lsSet=(k,v)=>{try{localStorage.setItem("studlin-"+k,JSON.stringify(v));}catch(e){}if(syncWriteHooks[k])syncWriteHooks[k](v);if(REMINDER_PREF_KEYS[k])syncReminderPrefs();};
 // Settings > Privacy "Anonymous usage analytics". 2026-09-25 persona audit:
 // this toggle used to be read by nothing while PostHog and Firebase
 // Analytics started unconditionally on every page load -- and it defaulted
@@ -8087,6 +8089,37 @@ syncWriteHooks["wakeSleep"]=()=>pushSettingsSync();
 syncWriteHooks["schoolTerm"]=()=>pushSettingsSync();
 syncWriteHooks["holidays"]=()=>pushSettingsSync();
 syncWriteHooks["settings"]=()=>pushSettingsSync();
+// Closed-app class/event reminders: api/reminders.js (hit every minute by a
+// scheduler) reads the student's events + routines from Firestore, but it
+// can't see anything that only lives in localStorage -- timezone, the
+// reminder toggles, term dates, skipped/overridden class days. This mirrors
+// exactly those into users/{uid}.reminderPrefs through /api/me (users/{uid}
+// is unreadable/unwritable-by-shape from the client, same reason as every
+// other cross-device pref). Debounced so a burst of settings writes is one
+// request; silent on failure since the in-app reminders still work.
+var reminderPrefsTimer=null;
+function syncReminderPrefs(){
+  if(typeof window==="undefined")return;
+  clearTimeout(reminderPrefsTimer);
+  reminderPrefsTimer=setTimeout(()=>{
+    try{
+      if(!firebase.auth().currentUser)return;
+      const st=lsGet("settings",{});
+      let tz="";try{tz=Intl.DateTimeFormat().resolvedOptions().timeZone||"";}catch(e){}
+      if(!tz)return;
+      authFetch("/api/me",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+        action:"set-reminder-prefs",tz,
+        classReminders:st.classReminders===true,
+        notifMaster:st.notifMaster!==false,
+        deadline:st.deadline!==false,
+        sysPush:st.sysPush===true,
+        schoolTerm:lsGet("schoolTerm",null),
+        routineSkips:lsGet("routineSkips",{}),
+        routineOverrides:lsGet("routineOverrides",{})
+      })}).catch(()=>{});
+    }catch(e){}
+  },1500);
+}
 const dayKey=(d)=>{const x=d||new Date();return x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");};
 // Dashboard's plain Checklist card (2026-08-19): checking an item used to
 // remove it from view instantly -- no visible confirmation it registered.
@@ -8121,6 +8154,44 @@ function daysUntilDeadline(ev){if(!ev.deadline)return null;const d1=new Date(ev.
 // reminder effect in App() (checks the live task list every 30s against the
 // real clock), which covers every task regardless of when/how it was
 // scheduled. See that effect for the single source of truth now.
+// Phone-width breakpoint shared by the app shell and any screen that needs a
+// different layout on a phone (bottom tab bar instead of the sidebar, single
+// column cards, Day view as the calendar default). 768 keeps tablets on the
+// desktop layout and every phone in portrait on the phone one.
+const PHONE_MAX_WIDTH=768;
+function useIsPhone(){
+  const [phone,setPhone]=useState(()=>typeof window!=="undefined"&&window.innerWidth<=PHONE_MAX_WIDTH);
+  useEffect(()=>{
+    const on=()=>setPhone(window.innerWidth<=PHONE_MAX_WIDTH);
+    window.addEventListener("resize",on);
+    window.addEventListener("orientationchange",on);
+    return()=>{window.removeEventListener("resize",on);window.removeEventListener("orientationchange",on);};
+  },[]);
+  return phone;
+}
+// iPhone (and Android Chrome) don't support `new Notification(...)` at all --
+// it throws -- only a service worker registration can show one. Try that
+// first, fall back to the constructor on desktop browsers without a worker.
+async function showLocalNotification(title,body){
+  try{
+    if("serviceWorker"in navigator){
+      const reg=await navigator.serviceWorker.ready;
+      await reg.showNotification(title,{body,icon:"/studlin-icon.png",data:{url:"/app"}});
+      return true;
+    }
+  }catch(e){}
+  try{new Notification(title,{body});return true;}catch(e){return false;}
+}
+// "Installed" = launched from the home screen icon. On iPhone this is the
+// only context where web push exists at all (iOS 16.4+), so Settings uses it
+// to tell students to install first instead of showing a dead toggle.
+function isIOSDevice(){
+  if(typeof navigator==="undefined")return false;
+  return /iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);
+}
+function isInstalledApp(){
+  try{return (window.matchMedia&&window.matchMedia("(display-mode: standalone)").matches)||window.navigator.standalone===true;}catch(e){return false;}
+}
 function requestNotifPermission(){if(!("Notification" in window))return;Notification.requestPermission();}
 function stripHtml(html){return(html||"").replace(/<[^>]*>/g," ");}
 function sanitizeHtml(html){if(typeof DOMPurify==='undefined')return html||'';return DOMPurify.sanitize(html||'',{ALLOWED_TAGS:['p','br','h1','h2','h3','h4','h5','h6','ul','ol','li','strong','em','b','i','u','s','blockquote','span','a','code','pre','table','thead','tbody','tr','th','td','hr','sub','sup'],ALLOWED_ATTR:['href','target','rel'],FORCE_BODY:true,ALLOW_UNKNOWN_PROTOCOLS:false});}
@@ -34132,7 +34203,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // useState would silently reset this to "monthly" every time.
   // Defaults to Week for anyone who's never touched this preference --
   // existing users who already picked a view keep it.
-  const [calView,setCalViewState]=useState(()=>lsGet("calView","weekly"));
+  const [calView,setCalViewState]=useState(()=>lsGet("calView",(typeof window!=="undefined"&&window.innerWidth<=PHONE_MAX_WIDTH)?"daily":"weekly"));
   const setCalView=(v)=>{setCalViewState(v);lsSet("calView",v);};
   const [weekOffset,setWeekOffset]=useState(0);
   // Monthly grid double-click used to just open "add a task" -- the same
@@ -40165,13 +40236,13 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     if(Notification.permission==="granted"){
       tog("sysPush");setSysPushStatus("granted");syncPushPref(true);
       registerPushToken(myUid); // see registerPushToken's own comment -- the actual fix, permission alone was never enough
-      new Notification("Studlin",{body:"Desktop notifications are on. We'll keep you in sync."});
+      showLocalNotification("Studlin","Notifications are on. We'll keep you in sync.");
       return;
     }
     if(Notification.permission==="denied"){setSysPushStatus("denied");return;}
     Notification.requestPermission().then(perm=>{
       setSysPushStatus(perm);
-      if(perm==="granted"){tog("sysPush");syncPushPref(true);registerPushToken(myUid);new Notification("Studlin",{body:"Desktop notifications are on. We'll keep you in sync."});}
+      if(perm==="granted"){tog("sysPush");syncPushPref(true);registerPushToken(myUid).then(()=>syncReminderPrefs());showLocalNotification("Studlin","Notifications are on. We'll keep you in sync.");}
     });
   };
   const [resettingDevices,setResettingDevices]=useState(false);
@@ -41230,27 +41301,34 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
           {active==="Notifications" && (<>
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.lookOn?T.accentInk:T.white,marginBottom:4,paddingBottom:T.lookOn?6:0,borderBottom:T.lookOn?`2px solid ${T.accentSoft}`:"none"}}>Notification Preferences</div>
-              <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Control how incoming chat messages reach you: a soft chime, a native desktop alert, or both, depending on what you're doing.</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Control how incoming chat messages and class reminders reach you: a soft chime, a native alert on your phone or desktop, or both, depending on what you're doing.</div>
               <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:14,padding:"13px 0",borderBottom:`1px solid ${T.border}`}}>
                 <div style={{flex:1,marginRight:14}}>
-                  <div style={{fontSize:13,color:T.text,fontWeight:500}}>Enable Desktop Notifications</div>
-                  <div style={{fontSize:11.5,color:T.muted,marginTop:2,lineHeight:1.45}}>Native desktop alerts for incoming chat messages and study session updates, even when this tab is closed or in the background.</div>
+                  <div style={{fontSize:13,color:T.text,fontWeight:500}}>Enable Phone &amp; Desktop Notifications</div>
+                  <div style={{fontSize:11.5,color:T.muted,marginTop:2,lineHeight:1.45}}>Alerts for friend messages and class reminders on your phone or desktop, even when Studlin is closed.</div>
                 </div>
-                <button type="button" role="switch" aria-checked={!!(toggles.sysPush)} aria-label="Enable Desktop Notifications" onClick={handleSysPushToggle} style={{padding:0,boxSizing:"border-box",width:38,height:20,borderRadius:10,background:toggles.sysPush?T.lime:T.card2,border:`1px solid ${toggles.sysPush?T.lime:T.border}`,position:"relative",cursor:sysPushStatus==="denied"?"not-allowed":"pointer",transition:"all 0.2s",flexShrink:0,opacity:sysPushStatus==="unsupported"?0.45:1}}>
+                <button type="button" role="switch" aria-checked={!!(toggles.sysPush)} aria-label="Enable Phone and Desktop Notifications" onClick={handleSysPushToggle} style={{padding:0,boxSizing:"border-box",width:38,height:20,borderRadius:10,background:toggles.sysPush?T.lime:T.card2,border:`1px solid ${toggles.sysPush?T.lime:T.border}`,position:"relative",cursor:sysPushStatus==="denied"?"not-allowed":"pointer",transition:"all 0.2s",flexShrink:0,opacity:sysPushStatus==="unsupported"?0.45:1}}>
                   <div style={{width:14,height:14,borderRadius:"50%",background:toggles.sysPush?T.bg:"#fff",position:"absolute",top:2,left:toggles.sysPush?21:2,transition:"left 0.2s"}} />
                 </button>
               </div>
               {sysPushStatus==="denied"&&(
                 <div style={{fontSize:11.5,color:T.amber,background:T.amber+"10",border:`1px solid ${T.amber}22`,borderRadius:6,padding:"9px 12px",lineHeight:1.5,marginTop:10}}>
-                  Notifications are blocked in your browser. Open browser site settings and allow notifications for this site, then refresh.
+                  Notifications are blocked for Studlin. Allow them in your browser or phone settings (on iPhone: Settings, Notifications, Studlin), then reopen the app.
                 </div>
               )}
               {sysPushStatus==="unsupported"&&(
-                <div style={{fontSize:11.5,color:T.muted,lineHeight:1.5,marginTop:10}}>Your browser does not support desktop push notifications.</div>
+                isIOSDevice()&&!isInstalledApp()?(
+                  <div style={{fontSize:12,color:T.text,background:T.lime+"12",border:`1px solid ${T.lime}33`,borderRadius:8,padding:"12px 14px",lineHeight:1.6,marginTop:10}}>
+                    <div style={{fontWeight:700,marginBottom:4}}>Install Studlin to get notifications on your iPhone</div>
+                    <div style={{color:T.muted}}>1. Open Studlin in Safari.<br/>2. Tap the Share button, then <b>Add to Home Screen</b>.<br/>3. Open Studlin from your home screen and turn this on.</div>
+                  </div>
+                ):(
+                  <div style={{fontSize:11.5,color:T.muted,lineHeight:1.5,marginTop:10}}>This browser does not support push notifications. Try Chrome, Edge, or Safari on iPhone with Studlin added to your Home Screen.</div>
+                )
               )}
               {sysPushStatus==="granted"&&toggles.sysPush&&(
                 <div style={{fontSize:11.5,color:T.teal,background:T.teal+"10",border:`1px solid ${T.teal}22`,borderRadius:6,padding:"9px 12px",lineHeight:1.5,marginTop:10}}>
-                  Active · Studlin will send alerts to your desktop even when this tab is in the background.
+                  Active · Studlin will send alerts to this device even when the app is closed.
                 </div>
               )}
               {sysPushStatus==="granted"&&toggles.sysPush&&(
@@ -43600,7 +43678,7 @@ function App() {
           if(minsUntil<=lead&&minsUntil>lead-1){
             notifiedRef.current.add(key);
             markReminderFired(key);
-            try{new Notification("Studlin",{body:ev.title+" starts in "+lead+" minutes"});}catch(e){}
+            showLocalNotification("Studlin",ev.title+" starts in "+lead+" minutes");
           }
         });
         // The old "still doing this? tap to reschedule" nudge at 15 min
@@ -44553,6 +44631,8 @@ function App() {
   // (Phase 5: removed -- the global rail is icon-only now regardless of
   // pointer position; the new Calendar-scoped Courses/Activities sidebar
   // is where a real second panel belongs, not a hover-reveal of this one).
+  const isPhone=useIsPhone();
+  useEffect(()=>{syncReminderPrefs();},[]);
   const [navCollapsed,setNavCollapsed]=useState(()=>lsGet("navCollapsed",true));
   const toggleNavCollapsed=()=>{setNavCollapsed(v=>{lsSet("navCollapsed",!v);return !v;});};
   const navExpanded=!navCollapsed;
@@ -45648,12 +45728,12 @@ function App() {
   // instead of each independently deciding it's the one to show.
   const bottomRightSlot=bottomRightNotifSlot(lockInErrorToast,prepAutoToast,prepPromptBatch.length,examPrepSuggestion);
   return (
-    <div style={{display:"flex",height:"100vh",overflow:"hidden",background:isLight?T.bg:`radial-gradient(1200px 600px at 78% -8%, ${T.glow}, transparent 60%), ${T.bg}`,fontFamily:T.font,color:T.text}}>
+    <div className="studlin-shell" data-phone={isPhone?"1":undefined} style={{display:"flex",height:isPhone?"100dvh":"100vh",overflow:"hidden",background:isLight?T.bg:`radial-gradient(1200px 600px at 78% -8%, ${T.glow}, transparent 60%), ${T.bg}`,fontFamily:T.font,color:T.text}}>
       {/* SIDEBAR -- collapses to a ~48px icon rail by default (navCollapsed),
           pinned open/closed only by the toggle button below (Phase 5:
           hover-to-expand removed -- icon-only regardless of pointer
           position; a real second panel now lives in Calendar instead). */}
-      <div style={{width:navExpanded?230:48,flexShrink:0,background:isLight?T.surface:"linear-gradient(180deg, #18241D 0%, #0D120F00 60%)",backgroundColor:softSide?T.tint:T.surface,display:"flex",flexDirection:"column",padding:navExpanded?"20px 12px":"16px 6px",borderRight:`1px solid ${softSide?T.borderTint:isLight?"transparent":T.border}`,overflowY:"auto",overflowX:"hidden",transition:"width 0.22s cubic-bezier(.2,.8,.2,1), padding 0.22s cubic-bezier(.2,.8,.2,1)"}}>
+      <div style={{width:navExpanded?230:48,flexShrink:0,background:isLight?T.surface:"linear-gradient(180deg, #18241D 0%, #0D120F00 60%)",backgroundColor:softSide?T.tint:T.surface,display:isPhone?"none":"flex",flexDirection:"column",padding:navExpanded?"20px 12px":"16px 6px",borderRight:`1px solid ${softSide?T.borderTint:isLight?"transparent":T.border}`,overflowY:"auto",overflowX:"hidden",transition:"width 0.22s cubic-bezier(.2,.8,.2,1), padding 0.22s cubic-bezier(.2,.8,.2,1)"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,padding:"0 6px",marginBottom:20,justifyContent:navExpanded?"space-between":"center"}}>
           {navExpanded&&(
             <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
@@ -45778,7 +45858,7 @@ function App() {
             such modal's centering into being relative to this scrolled
             container instead of the real viewport. Clearing it once done
             keeps the entrance animation but stops that side effect. */}
-        <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?T.bg:undefined}}>
+        <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",padding:isPhone?"calc(14px + env(safe-area-inset-top)) 14px calc(84px + env(safe-area-inset-bottom))":"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?T.bg:undefined}}>
           {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} setDetailEventId={setDetailEventId} onTaskCompleted={handleTaskCompleted} setPendingHighlightDraftId={setPendingHighlightDraftId} setPendingOpenSetting={setPendingOpenSetting} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineCenter={openRoutineCenterOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} setActivePage={setActive} pendingOpenSetting={pendingOpenSetting} onSettingOpened={()=>setPendingOpenSetting(null)} />:
            active==="calendar"?<CalendarTab setActive={setActive} onTaskSaved={handleTaskSaved} openRoutineCenterOnMount={pendingRoutineCenter} onRoutineCenterOpenedFromSettings={()=>setPendingRoutineCenter(false)} detailEventId={detailEventId} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} registerSkipSetEvents={(fn)=>{calendarSkipSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} onWizardOpenChange={setCalendarWizardOpen} jumpToSessionOnMount={pendingJumpSession} onJumpSessionConsumed={()=>setPendingJumpSession(null)} highlightDraftIdOnMount={pendingHighlightDraftId} onHighlightDraftConsumed={()=>setPendingHighlightDraftId(null)} setPricingOpen={setPricingOpen} setTheme={setTheme} />:
@@ -45790,6 +45870,26 @@ function App() {
            ActivePage?<ActivePage />:null}
         </div>
       </div>
+
+      {/* PHONE TAB BAR -- replaces the sidebar at phone width. Same nav items,
+          icons-first, 44px+ tap targets, padded for the iPhone home
+          indicator. Network keeps its unread badge. */}
+      {isPhone&&(
+        <nav aria-label="Main" style={{position:"fixed",left:0,right:0,bottom:0,zIndex:900,display:"flex",background:isLight?T.surface:T.card,borderTop:`1px solid ${T.border}`,paddingBottom:"env(safe-area-inset-bottom)",boxShadow:"0 -8px 24px -12px rgba(0,0,0,0.35)"}}>
+          {navSections.flatMap(sec=>sec.items).map(item=>{
+            const act=active===item.id;
+            return (
+              <button key={item.id} type="button" onClick={()=>setActive(item.id)} aria-label={item.label} aria-current={act?"page":undefined} style={{flex:1,minWidth:0,minHeight:56,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:3,background:"transparent",border:"none",cursor:"pointer",padding:"6px 0",fontFamily:T.font,color:act?(T.lookOn?T.accentInk:T.lime):T.muted,position:"relative"}}>
+                <span style={{width:20,height:20,display:"flex",alignItems:"center",justifyContent:"center",position:"relative"}}>
+                  {navIcon[item.id]}
+                  {item.badge&&<span style={{position:"absolute",top:-6,right:-10,background:T.lime,color:T.onLime,borderRadius:8,padding:"1px 5px",fontSize:9,fontWeight:700,lineHeight:1.1,minWidth:14,textAlign:"center"}}>{item.badge}</span>}
+                </span>
+                <span style={{fontSize:10,fontWeight:act?700:500,letterSpacing:"0.01em",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"100%"}}>{item.id==="friends"?"Network":item.id==="prep"?"Prep":item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+      )}
 
       {/* DASHBOARD RESCHEDULE CONFIRM + TOAST — true sibling of [data-page],
           see the state declaration above for why. */}
