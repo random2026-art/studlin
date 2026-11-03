@@ -7979,10 +7979,13 @@ function createCollectionSync(config){
     pushTimer=setTimeout(flushQueue,800);
   }
 
-  async function hydrateOnAuth(){
+  // force=true re-pulls even after this session already hydrated once. A phone
+  // app stays open in memory for days, so a one-time pull meant an event added
+  // on the desktop never showed up there until the app was fully closed.
+  async function hydrateOnAuth(force){
     if(!S)return;
     const uid=currentUid();
-    if(!uid||hydrating||hydratedForUid===uid)return;
+    if(!uid||hydrating||(hydratedForUid===uid&&force!==true))return;
     hydrating=true;
     try{
       // Flush anything queued from a previous offline session first (this
@@ -8004,7 +8007,15 @@ function createCollectionSync(config){
         remote.push(Object.assign({},rest,{id:doc.id}));
       });
       const localUpdatedAtMs=lsGet(updatedAtKey,{});
-      const {merged,adoptedFromRemote}=S.mergeRemoteIntoLocal(lsGet(localKey,[]),remote,remoteDeletedIds,localUpdatedAtMs,remoteUpdatedAtMs);
+      const localBefore=lsGet(localKey,[]);
+      const {merged,adoptedFromRemote}=S.mergeRemoteIntoLocal(localBefore,remote,remoteDeletedIds,localUpdatedAtMs,remoteUpdatedAtMs);
+      const beforeSigs={};
+      let beforeCount=0;
+      for(const item of localBefore){if(item&&isSyncable(item.id)){beforeSigs[item.id]=S.sigOf(item);beforeCount++;}}
+      let afterCount=0;
+      let dataChanged=false;
+      for(const item of merged){if(item&&isSyncable(item.id)){afterCount++;if(beforeSigs[item.id]!==S.sigOf(item))dataChanged=true;}}
+      if(afterCount!==beforeCount)dataChanged=true;
 
       // Re-seed bookkeeping to reflect the ACTUAL merged content, not "now"
       // -- otherwise the lsSet below would route through onLocalWrite and
@@ -8030,6 +8041,9 @@ function createCollectionSync(config){
       syncedSigs=nextSyncedSigs;
       lsSet(localKey,merged);
       hydratedForUid=uid;
+      // Screens read these collections once when they mount, so tell the app
+      // something arrived from another device and let it redraw.
+      if(dataChanged){try{window.dispatchEvent(new CustomEvent("studlin:remote-data",{detail:{collection:firestoreCollection}}));}catch(e){}}
     }catch(e){
       // Leaves hydratedForUid unset so a transient failure (offline,
       // Firestore hiccup) can retry on the next auth-state tick rather
@@ -40024,6 +40038,7 @@ function SettingsRow({label,sub,k,right,highlight}){
 
 function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}, onOpenRoutineCenter=()=>{}, setScheduleSettingsOpen=()=>{}, setPricingOpen=()=>{}, setActivePage=()=>{}, pendingOpenSetting=null, onSettingOpened=()=>{}}) {
   const [lookPanelOpen,setLookPanelOpen]=useState(false);
+  const isPhone=useIsPhone();
   const settingsLook=useLook();
   // "integrations": the setup checklist's Connect your school's LMS/Google
   // Calendar buttons (Dashboard, 2026-09-30) -- lands directly on this tab instead
@@ -41148,10 +41163,10 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     <SettingsCtx.Provider value={{toggles,tog}}>
     <div>
       <PH title="Settings" sub="Manage your account and preferences" />
-      <div style={{display:"grid",gridTemplateColumns:"200px 1fr",gap:16}}>
-        <div>
+      <div style={{display:"grid",gridTemplateColumns:isPhone?"minmax(0,1fr)":"200px 1fr",gap:16}}>
+        <div style={isPhone?{display:"flex",gap:6,overflowX:"auto",paddingBottom:4}:undefined}>
           {sections.map(s=>(
-            <div key={s.id} onClick={()=>setActive(s.id)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderRadius:6,marginBottom:3,fontSize:12.5,cursor:"pointer",background:active===s.id?T.lime+"10":"transparent",color:active===s.id?T.lime:T.muted,fontWeight:active===s.id?600:400,border:`1px solid ${active===s.id?T.lime+"22":"transparent"}`,transition:"all 0.15s"}}>
+            <div key={s.id} onClick={()=>setActive(s.id)} style={{display:"flex",alignItems:"center",gap:10,...(isPhone?{flexShrink:0,whiteSpace:"nowrap"}:{}),padding:"8px 10px",borderRadius:6,marginBottom:3,fontSize:12.5,cursor:"pointer",background:active===s.id?T.lime+"10":"transparent",color:active===s.id?T.lime:T.muted,fontWeight:active===s.id?600:400,border:`1px solid ${active===s.id?T.lime+"22":"transparent"}`,transition:"all 0.15s"}}>
               <span style={{color:active===s.id?T.lime:T.faint,width:14,height:14,display:"flex"}}>{s.icon}</span>
               {s.id}
             </div>
@@ -44680,6 +44695,42 @@ function App() {
   // is where a real second panel belongs, not a hover-reveal of this one).
   const isPhone=useIsPhone();
   const [phoneMoreOpen,setPhoneMoreOpen]=useState(false);
+  // Bumped when another device's changes land, so the open screen re-reads them.
+  const [dataEpoch,setDataEpoch]=useState(0);
+  useEffect(()=>{
+    let redrawTimer=null;
+    let lastPull=0;
+    const redraw=(tries)=>{
+      if(redrawTimer)clearTimeout(redrawTimer);
+      redrawTimer=setTimeout(()=>{
+        const el=document.activeElement;
+        const typing=el&&(el.tagName==="INPUT"||el.tagName==="TEXTAREA"||el.isContentEditable);
+        if(typing&&tries<20){redraw(tries+1);return;}
+        setDataEpoch(n=>n+1);
+      },typing?3000:300);
+    };
+    const onRemote=()=>redraw(0);
+    const pull=()=>{
+      if(document.visibilityState==="hidden")return;
+      const now=Date.now();
+      if(now-lastPull<20000)return;
+      lastPull=now;
+      ["events","routines","subjects","decks","notes"].forEach(k=>{try{DataStore[k].hydrateOnAuth(true);}catch(e){}});
+    };
+    const iv=setInterval(pull,180000);
+    window.addEventListener("studlin:remote-data",onRemote);
+    document.addEventListener("visibilitychange",pull);
+    window.addEventListener("focus",pull);
+    window.addEventListener("online",pull);
+    return()=>{
+      clearInterval(iv);
+      if(redrawTimer)clearTimeout(redrawTimer);
+      window.removeEventListener("studlin:remote-data",onRemote);
+      document.removeEventListener("visibilitychange",pull);
+      window.removeEventListener("focus",pull);
+      window.removeEventListener("online",pull);
+    };
+  },[]);
   useEffect(()=>{syncReminderPrefs();},[]);
   const [navCollapsed,setNavCollapsed]=useState(()=>lsGet("navCollapsed",true));
   const toggleNavCollapsed=()=>{setNavCollapsed(v=>{lsSet("navCollapsed",!v);return !v;});};
@@ -45925,7 +45976,7 @@ function App() {
             such modal's centering into being relative to this scrolled
             container instead of the real viewport. Clearing it once done
             keeps the entrance animation but stops that side effect. */}
-        <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",padding:isPhone?"calc(14px + env(safe-area-inset-top)) 14px calc(84px + env(safe-area-inset-bottom))":"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?T.bg:undefined}}>
+        <div key={active+"-"+dataEpoch} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",padding:isPhone?"calc(14px + env(safe-area-inset-top)) 14px calc(84px + env(safe-area-inset-bottom))":"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?T.bg:undefined}}>
           {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} setDetailEventId={setDetailEventId} onTaskCompleted={handleTaskCompleted} setPendingHighlightDraftId={setPendingHighlightDraftId} setPendingOpenSetting={setPendingOpenSetting} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineCenter={openRoutineCenterOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} setActivePage={setActive} pendingOpenSetting={pendingOpenSetting} onSettingOpened={()=>setPendingOpenSetting(null)} />:
            active==="calendar"?<CalendarTab setActive={setActive} onTaskSaved={handleTaskSaved} openRoutineCenterOnMount={pendingRoutineCenter} onRoutineCenterOpenedFromSettings={()=>setPendingRoutineCenter(false)} detailEventId={detailEventId} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} registerSkipSetEvents={(fn)=>{calendarSkipSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} onWizardOpenChange={setCalendarWizardOpen} jumpToSessionOnMount={pendingJumpSession} onJumpSessionConsumed={()=>setPendingJumpSession(null)} highlightDraftIdOnMount={pendingHighlightDraftId} onHighlightDraftConsumed={()=>setPendingHighlightDraftId(null)} setPricingOpen={setPricingOpen} setTheme={setTheme} />:

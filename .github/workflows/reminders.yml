@@ -1,0 +1,25 @@
+name: Class and task reminders
+
+# Vercel Hobby crons only run once a day, so this pokes /api/reminders every
+# 5 minutes instead. GitHub may delay a run by a few minutes; the server
+# looks 5 minutes ahead and never sends the same reminder twice.
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call /api/reminders
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "CRON_SECRET is not set in GitHub secrets; skipping."
+            exit 0
+          fi
+          curl --fail --silent --show-error --max-time 50 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            https://www.studlin.com/api/reminders

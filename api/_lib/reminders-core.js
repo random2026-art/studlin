@@ -7,10 +7,10 @@
 // every calculation here is done in the student's own IANA timezone.
 
 const LEAD_TIMES = [10, 5];
-// The client fires only inside a 1-minute trailing window. A cron tick can
-// land a few seconds late, so the server allows 2 minutes; firedKeys makes
-// the wider window safe (a key can only ever send once).
-const WINDOW_MINS = 2;
+// The server is poked every 5 minutes (GitHub Actions cron, .github/workflows/
+// reminders.yml), so each lead owns a 5-minute window: 10 covers (5,10] minutes
+// out and 5 covers (0,5]. firedKeys makes sure a key can only ever send once.
+const WINDOW_MINS = 5;
 const ROUTINE_KIND_TO_EVENT_KIND = { class: 'class', busy: 'busy block', free: 'free period' };
 
 function validTimeZone(tz) {
@@ -137,7 +137,7 @@ function dueReminders({ events, routines, prefs, nowMs, firedKeys }) {
       const key = ev.id + '-' + lead + '-' + ev.date;
       if (fired.has(key) || seen.has(key)) return;
       seen.add(key);
-      due.push({ key, title: ev.title || 'Your next item', lead });
+      due.push({ key, title: ev.title || 'Your next item', lead, mins: Math.max(1, Math.round(minsUntil)) });
     });
   });
   return due;

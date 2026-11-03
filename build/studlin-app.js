@@ -5193,10 +5193,10 @@ function createCollectionSync(config) {
     if (pushTimer) clearTimeout(pushTimer);
     pushTimer = setTimeout(flushQueue, 800);
   }
-  async function hydrateOnAuth() {
+  async function hydrateOnAuth(force) {
     if (!S) return;
     const uid = currentUid();
-    if (!uid || hydrating || hydratedForUid === uid) return;
+    if (!uid || hydrating || hydratedForUid === uid && force !== true) return;
     hydrating = true;
     try {
       await flushQueue();
@@ -5216,7 +5216,25 @@ function createCollectionSync(config) {
         remote.push(Object.assign({}, rest, { id: doc.id }));
       });
       const localUpdatedAtMs = lsGet(updatedAtKey, {});
-      const { merged, adoptedFromRemote } = S.mergeRemoteIntoLocal(lsGet(localKey, []), remote, remoteDeletedIds, localUpdatedAtMs, remoteUpdatedAtMs);
+      const localBefore = lsGet(localKey, []);
+      const { merged, adoptedFromRemote } = S.mergeRemoteIntoLocal(localBefore, remote, remoteDeletedIds, localUpdatedAtMs, remoteUpdatedAtMs);
+      const beforeSigs = {};
+      let beforeCount = 0;
+      for (const item of localBefore) {
+        if (item && isSyncable(item.id)) {
+          beforeSigs[item.id] = S.sigOf(item);
+          beforeCount++;
+        }
+      }
+      let afterCount = 0;
+      let dataChanged = false;
+      for (const item of merged) {
+        if (item && isSyncable(item.id)) {
+          afterCount++;
+          if (beforeSigs[item.id] !== S.sigOf(item)) dataChanged = true;
+        }
+      }
+      if (afterCount !== beforeCount) dataChanged = true;
       const nextLocalMap = {};
       const nextSyncedSigs = {};
       lastSeenSigs = {};
@@ -5231,6 +5249,12 @@ function createCollectionSync(config) {
       syncedSigs = nextSyncedSigs;
       lsSet(localKey, merged);
       hydratedForUid = uid;
+      if (dataChanged) {
+        try {
+          window.dispatchEvent(new CustomEvent("studlin:remote-data", { detail: { collection: firestoreCollection } }));
+        } catch (e) {
+        }
+      }
     } catch (e) {
     } finally {
       hydrating = false;
@@ -15917,8 +15941,8 @@ function WeeklyPlanner({ events, setEvents: setEvents2, moveEvent, weekOffset, s
     const handler = (e) => {
       if (e.key !== "Backspace" && e.key !== "Delete") return;
       const el = document.activeElement;
-      const typing = el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
-      if (typing) return;
+      const typing2 = el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+      if (typing2) return;
       const ev = events.find((x) => x.id === selectedEventId);
       setSelectedEventId(null);
       if (onSelectEvent) onSelectEvent(null);
@@ -21370,8 +21394,8 @@ function CalendarTab({ setActive = () => {
       const mod = e.ctrlKey || e.metaKey;
       if (!mod) return;
       const el = document.activeElement;
-      const typing = el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
-      if (typing) return;
+      const typing2 = el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+      if (typing2) return;
       const key = e.key.toLowerCase();
       if (key === "z") {
         e.preventDefault();
@@ -25355,6 +25379,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
 }, pendingOpenSetting = null, onSettingOpened = () => {
 } }) {
   const [lookPanelOpen, setLookPanelOpen] = useState(false);
+  const isPhone = useIsPhone();
   const settingsLook = useLook();
   const [active, setActive] = useState(pendingOpenSetting === "shareAvailability" ? "Privacy" : pendingOpenSetting === "integrations" ? "Integrations" : "General");
   const [highlightSetting, setHighlightSetting] = useState(pendingOpenSetting);
@@ -26210,7 +26235,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     setCourseDeleteSnapshots(null);
     setCourseDeleteToast("");
   };
-  return /* @__PURE__ */ React.createElement(SettingsCtx.Provider, { value: { toggles, tog } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(PH, { title: "Settings", sub: "Manage your account and preferences" }), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "200px 1fr", gap: 16 } }, /* @__PURE__ */ React.createElement("div", null, sections.map((s) => /* @__PURE__ */ React.createElement("div", { key: s.id, onClick: () => setActive(s.id), style: { display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 6, marginBottom: 3, fontSize: 12.5, cursor: "pointer", background: active === s.id ? T.lime + "10" : "transparent", color: active === s.id ? T.lime : T.muted, fontWeight: active === s.id ? 600 : 400, border: `1px solid ${active === s.id ? T.lime + "22" : "transparent"}`, transition: "all 0.15s" } }, /* @__PURE__ */ React.createElement("span", { style: { color: active === s.id ? T.lime : T.faint, width: 14, height: 14, display: "flex" } }, s.icon), s.id))), /* @__PURE__ */ React.createElement("div", null, active === "General" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.lookOn ? T.accentInk : T.white, marginBottom: 4, paddingBottom: T.lookOn ? 6 : 0, borderBottom: T.lookOn ? `2px solid ${T.accentSoft}` : "none" } }, "Profile basics"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 16 } }, "How you appear across Studlin."), /* @__PURE__ */ React.createElement(Field, { label: "Display name" }, /* @__PURE__ */ React.createElement(Input, { value: profile.name, onChange: (e) => updProfile({ name: e.target.value }) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement(Input, { value: account.email || "", disabled: true })), /* @__PURE__ */ React.createElement(Field, { label: "School / status" }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 12px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, profile.school || "Not set", profile.status ? " \xB7 " + (profile.status === "highschool" ? "High School" : "College") : ""), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setActivePage("profile"), style: { background: "none", border: "none", color: T.lime, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: T.font, textDecoration: "underline", padding: 0, flexShrink: 0 } }, "Edit in Profile")))), dupGroups.length > 0 && /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12, border: `1px solid ${T.amber}44` } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.lookOn ? T.accentInk : T.white, marginBottom: 4, paddingBottom: T.lookOn ? 6 : 0, borderBottom: T.lookOn ? `2px solid ${T.accentSoft}` : "none" } }, "Possible duplicate classes"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 16 } }, "These look like the same class under slightly different names -- pick which one to keep, and everything from the others moves over to it."), dupGroups.map((group, gi) => {
+  return /* @__PURE__ */ React.createElement(SettingsCtx.Provider, { value: { toggles, tog } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(PH, { title: "Settings", sub: "Manage your account and preferences" }), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: isPhone ? "minmax(0,1fr)" : "200px 1fr", gap: 16 } }, /* @__PURE__ */ React.createElement("div", { style: isPhone ? { display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4 } : void 0 }, sections.map((s) => /* @__PURE__ */ React.createElement("div", { key: s.id, onClick: () => setActive(s.id), style: { display: "flex", alignItems: "center", gap: 10, ...isPhone ? { flexShrink: 0, whiteSpace: "nowrap" } : {}, padding: "8px 10px", borderRadius: 6, marginBottom: 3, fontSize: 12.5, cursor: "pointer", background: active === s.id ? T.lime + "10" : "transparent", color: active === s.id ? T.lime : T.muted, fontWeight: active === s.id ? 600 : 400, border: `1px solid ${active === s.id ? T.lime + "22" : "transparent"}`, transition: "all 0.15s" } }, /* @__PURE__ */ React.createElement("span", { style: { color: active === s.id ? T.lime : T.faint, width: 14, height: 14, display: "flex" } }, s.icon), s.id))), /* @__PURE__ */ React.createElement("div", null, active === "General" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.lookOn ? T.accentInk : T.white, marginBottom: 4, paddingBottom: T.lookOn ? 6 : 0, borderBottom: T.lookOn ? `2px solid ${T.accentSoft}` : "none" } }, "Profile basics"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 16 } }, "How you appear across Studlin."), /* @__PURE__ */ React.createElement(Field, { label: "Display name" }, /* @__PURE__ */ React.createElement(Input, { value: profile.name, onChange: (e) => updProfile({ name: e.target.value }) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement(Input, { value: account.email || "", disabled: true })), /* @__PURE__ */ React.createElement(Field, { label: "School / status" }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 12px", background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, profile.school || "Not set", profile.status ? " \xB7 " + (profile.status === "highschool" ? "High School" : "College") : ""), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setActivePage("profile"), style: { background: "none", border: "none", color: T.lime, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: T.font, textDecoration: "underline", padding: 0, flexShrink: 0 } }, "Edit in Profile")))), dupGroups.length > 0 && /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12, border: `1px solid ${T.amber}44` } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.lookOn ? T.accentInk : T.white, marginBottom: 4, paddingBottom: T.lookOn ? 6 : 0, borderBottom: T.lookOn ? `2px solid ${T.accentSoft}` : "none" } }, "Possible duplicate classes"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 16 } }, "These look like the same class under slightly different names -- pick which one to keep, and everything from the others moves over to it."), dupGroups.map((group, gi) => {
     const withCounts = group.map((s) => ({ ...s, count: courseItemCount(s) })).sort((a, b) => b.count - a.count);
     return /* @__PURE__ */ React.createElement("div", { key: gi, style: { padding: "10px 0", borderTop: gi > 0 ? `1px solid ${T.border}` : "none" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 8 } }, withCounts.map((s) => /* @__PURE__ */ React.createElement(
       "button",
@@ -27813,6 +27838,49 @@ function App() {
   const [scheduleSettingsOpen, setScheduleSettingsOpen] = useState(false);
   const isPhone = useIsPhone();
   const [phoneMoreOpen, setPhoneMoreOpen] = useState(false);
+  const [dataEpoch, setDataEpoch] = useState(0);
+  useEffect(() => {
+    let redrawTimer = null;
+    let lastPull = 0;
+    const redraw = (tries) => {
+      if (redrawTimer) clearTimeout(redrawTimer);
+      redrawTimer = setTimeout(() => {
+        const el = document.activeElement;
+        const typing2 = el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+        if (typing2 && tries < 20) {
+          redraw(tries + 1);
+          return;
+        }
+        setDataEpoch((n) => n + 1);
+      }, typing ? 3e3 : 300);
+    };
+    const onRemote = () => redraw(0);
+    const pull = () => {
+      if (document.visibilityState === "hidden") return;
+      const now = Date.now();
+      if (now - lastPull < 2e4) return;
+      lastPull = now;
+      ["events", "routines", "subjects", "decks", "notes"].forEach((k) => {
+        try {
+          DataStore[k].hydrateOnAuth(true);
+        } catch (e) {
+        }
+      });
+    };
+    const iv = setInterval(pull, 18e4);
+    window.addEventListener("studlin:remote-data", onRemote);
+    document.addEventListener("visibilitychange", pull);
+    window.addEventListener("focus", pull);
+    window.addEventListener("online", pull);
+    return () => {
+      clearInterval(iv);
+      if (redrawTimer) clearTimeout(redrawTimer);
+      window.removeEventListener("studlin:remote-data", onRemote);
+      document.removeEventListener("visibilitychange", pull);
+      window.removeEventListener("focus", pull);
+      window.removeEventListener("online", pull);
+    };
+  }, []);
   useEffect(() => {
     syncReminderPrefs();
   }, []);
@@ -28611,7 +28679,7 @@ function App() {
       e.stopPropagation();
       setActive("settings");
     }, title: "Settings", style: { width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: "none", color: sidebarMuted, cursor: "pointer", borderRadius: 6, flexShrink: 0 } }, /* @__PURE__ */ React.createElement("svg", { width: "13", height: "13", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("circle", { cx: "12", cy: "12", r: "3" }), /* @__PURE__ */ React.createElement("path", { d: "M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" }))))));
-  })()), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: T.bg } }, /* @__PURE__ */ React.createElement("div", { key: active, "data-page": true, onAnimationEnd: (e) => {
+  })()), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: T.bg } }, /* @__PURE__ */ React.createElement("div", { key: active + "-" + dataEpoch, "data-page": true, onAnimationEnd: (e) => {
     e.currentTarget.style.animation = "none";
   }, style: { flex: 1, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: isPhone ? "calc(14px + env(safe-area-inset-top)) 14px calc(84px + env(safe-area-inset-bottom))" : "24px 32px", animation: "studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both", background: active === "dashboard" ? T.bg : void 0 } }, active === "dashboard" ? /* @__PURE__ */ React.createElement(Dashboard, { setActive, seriousMode, rescheduleTask, setRescheduleTask, dashToast, setDashToast, setDetailEventId, onTaskCompleted: handleTaskCompleted, setPendingHighlightDraftId, setPendingOpenSetting }) : active === "settings" ? /* @__PURE__ */ React.createElement(SettingsTab, { theme, setTheme, accent, setAccent, density, setDensity, seriousMode, setSeriousMode, onOpenRoutineCenter: openRoutineCenterOnCalendar, setScheduleSettingsOpen, setPricingOpen, setActivePage: setActive, pendingOpenSetting, onSettingOpened: () => setPendingOpenSetting(null) }) : active === "calendar" ? /* @__PURE__ */ React.createElement(CalendarTab, { setActive, onTaskSaved: handleTaskSaved, openRoutineCenterOnMount: pendingRoutineCenter, onRoutineCenterOpenedFromSettings: () => setPendingRoutineCenter(false), detailEventId, setDetailEventId, registerSetEvents: (fn) => {
     calendarSetEventsRef.current = fn;

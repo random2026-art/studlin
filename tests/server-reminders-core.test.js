@@ -18,8 +18,11 @@ describe("dueReminders", () => {
     assert.equal(run(5)[0].lead, 5);
     assert.equal(run(5)[0].title, "Chem quiz");
     assert.equal(run(20).length, 0);
-    assert.equal(run(7).length, 0);
-    assert.equal(run(2).length, 0);
+    assert.equal(run(7).length, 1);
+    assert.equal(run(7)[0].lead, 10);
+    assert.equal(run(7)[0].mins, 7);
+    assert.equal(run(11).length, 0);
+    assert.equal(run(2)[0].lead, 5);
     assert.equal(run(-1).length, 0);
   });
   test("never twice once the key is fired", () => {

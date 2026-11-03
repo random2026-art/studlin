@@ -45,7 +45,7 @@ async function remindOneUser(doc, nowMs) {
       try {
         await admin.messaging().send({
           token,
-          notification: { title: 'Studlin', body: r.title + ' starts in ' + r.lead + ' minutes' },
+          notification: { title: 'Studlin', body: r.title + ' starts in ' + r.mins + (r.mins === 1 ? ' minute' : ' minutes') },
           data: { url: '/app' },
         });
         sent++;
